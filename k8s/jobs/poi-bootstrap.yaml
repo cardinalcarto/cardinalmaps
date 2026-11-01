@@ -1,0 +1,48 @@
+# Loads every POI from a planet into the empty POI database. Not part of the
+# kustomization; `k8s/release.sh bootstrap-pois` fills in the variables and
+# starts it.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: poi-bootstrap
+  namespace: cardinal
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+      containers:
+        - name: bootstrap
+          image: ${POI_SERVICE_IMAGE}
+          args:
+            - bootstrap
+            - --planet=/data/planets/${PLANET}
+            - --replication-url=${REPLICATION_URL}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pois-app
+                  key: uri
+          volumeMounts:
+            - name: data
+              mountPath: /data
+              readOnly: true
+          resources:
+            requests:
+              memory: 4Gi
+              cpu: "4"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data
+            readOnly: true

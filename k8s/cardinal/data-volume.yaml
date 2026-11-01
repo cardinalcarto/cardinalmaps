@@ -1,0 +1,38 @@
+# A directory on the node that runs builds, which holds input planets and the
+# releases that release.sh builds. Pods only read it:
+#
+#   planets/<file>.osm.pbf   extracts, read by the POI bootstrap
+#   releases/<id>/           tiles.mbtiles, index/, categories/, manifest.json
+#
+# If you change the path, set CARDINAL_DATA for release.sh to match. It's a
+# hostPath volume, which only suits a single-node cluster: on more nodes, use
+# a local volume with node affinity for the build node, or shared storage.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: cardinal-data
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadOnlyMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef:
+    namespace: cardinal
+    name: data
+  hostPath:
+    path: /var/lib/cardinal
+    # Fail to mount rather than create an empty directory.
+    type: Directory
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data
+spec:
+  accessModes: [ReadOnlyMany]
+  storageClassName: ""
+  volumeName: cardinal-data
+  resources:
+    requests:
+      storage: 1Ti

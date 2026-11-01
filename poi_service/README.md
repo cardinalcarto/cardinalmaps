@@ -84,6 +84,16 @@ database) are counted and left without an identifier.
 whenever the identifiers `patch` would add can, so builds use them to tell
 whether an earlier patched file is still current.
 
+`covers --input extract.osm.pbf` fails unless the database has applied diffs
+up to the file's replication timestamp, so that `patch` can identify all of
+its POIs.
+
+## Container image
+
+`Dockerfile` builds the `cardinal-poi-service` image, which
+`.github/workflows/images.yml` publishes on pushes to `main`. See
+`k8s/README.md` for an example deployment.
+
 ## Tests
 
 `cargo test` runs the unit tests. `matches_python_labels` (ignored by default)

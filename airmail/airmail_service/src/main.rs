@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     debug!("Loading index from {}", args.index);
-    let index = AirmailIndex::new(&args.index)?;
+    let index = AirmailIndex::open_read_only(&args.index)?;
     let categories = match &args.categories {
         Some(path) => {
             let models = CategoryModels::open(path)?;

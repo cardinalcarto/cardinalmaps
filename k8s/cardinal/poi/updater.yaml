@@ -1,0 +1,43 @@
+# Applies daily replication diffs to the POI database as they're published.
+# It exits until the database is bootstrapped (k8s/jobs/poi-bootstrap.yaml),
+# so it crash-loops until then.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: poi-updater
+spec:
+  replicas: 1
+  # Two updaters would race to apply the same diff.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: poi-updater
+  template:
+    metadata:
+      labels:
+        app: poi-updater
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+      containers:
+        - name: poi-updater
+          image: cardinal-poi-service
+          args: [update, --follow]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pois-app
+                  key: uri
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 100m
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]

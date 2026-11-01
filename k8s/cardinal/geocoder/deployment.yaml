@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: geocoder
+spec:
+  replicas: 1
+  # The new release is served before the old pod stops.
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: geocoder
+  template:
+    metadata:
+      labels:
+        app: geocoder
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+      containers:
+        - name: geocoder
+          image: cardinal-airmail
+          args:
+            - --index=/releases/$(MAP_RELEASE)/index
+            - --categories=/releases/$(MAP_RELEASE)/categories
+          env:
+            - name: MAP_RELEASE
+              valueFrom:
+                configMapKeyRef:
+                  name: map-release
+                  key: MAP_RELEASE
+            - name: AIRMAIL_BIND
+              value: 0.0.0.0:3000
+          ports:
+            - name: http
+              containerPort: 3000
+          volumeMounts:
+            - name: data
+              mountPath: /releases
+              subPath: releases
+              readOnly: true
+          # The service only listens once the index and models are loaded.
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            tcpSocket:
+              port: http
+          livenessProbe:
+            tcpSocket:
+              port: http
+          resources:
+            requests:
+              memory: 2Gi
+              cpu: 250m
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data
+            readOnly: true

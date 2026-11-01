@@ -11,7 +11,11 @@ use tantivy::schema::Value;
 use tantivy::{
     TantivyDocument, Term,
     collector::TopDocs,
-    directory::MmapDirectory,
+    directory::{
+        Directory, DirectoryLock, FileHandle, Lock, MmapDirectory, WatchCallback, WatchHandle,
+        WritePtr,
+        error::{DeleteError, LockError, OpenReadError, OpenWriteError},
+    },
     query::{BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery, Query, TermQuery},
     schema::{
         IndexRecordOption, NumericOptions, OwnedValue, STORED, STRING, Schema, TextFieldIndexing,
@@ -37,6 +41,50 @@ pub const FIELD_S2CELL: &str = "s2cell";
 pub const FIELD_S2CELL_PARENTS: &str = "s2cell_parents";
 pub const FIELD_CATEGORY_JSON: &str = "category";
 pub const FIELD_TAGS: &str = "tags";
+
+/// A directory that's only searched. Readers lock `meta.json` against
+/// concurrent commits with a lock file, which can't be created on a read-only
+/// filesystem; with no writer there's nothing to lock against.
+#[derive(Clone, Debug)]
+struct ReadOnlyDirectory(MmapDirectory);
+
+impl Directory for ReadOnlyDirectory {
+    fn get_file_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>, OpenReadError> {
+        self.0.get_file_handle(path)
+    }
+
+    fn delete(&self, path: &Path) -> Result<(), DeleteError> {
+        self.0.delete(path)
+    }
+
+    fn exists(&self, path: &Path) -> Result<bool, OpenReadError> {
+        self.0.exists(path)
+    }
+
+    fn open_write(&self, path: &Path) -> Result<WritePtr, OpenWriteError> {
+        self.0.open_write(path)
+    }
+
+    fn atomic_read(&self, path: &Path) -> Result<Vec<u8>, OpenReadError> {
+        self.0.atomic_read(path)
+    }
+
+    fn atomic_write(&self, path: &Path, data: &[u8]) -> std::io::Result<()> {
+        self.0.atomic_write(path, data)
+    }
+
+    fn sync_directory(&self) -> std::io::Result<()> {
+        self.0.sync_directory()
+    }
+
+    fn acquire_lock(&self, _lock: &Lock) -> Result<DirectoryLock, LockError> {
+        Ok(DirectoryLock::from(Box::new(())))
+    }
+
+    fn watch(&self, watch_callback: WatchCallback) -> tantivy::Result<WatchHandle> {
+        self.0.watch(watch_callback)
+    }
+}
 
 #[derive(Clone)]
 pub struct AirmailIndex {
@@ -125,6 +173,16 @@ impl AirmailIndex {
 
     pub fn new(index_dir: &str) -> Result<Self> {
         let tantivy_index = tantivy::Index::open_in_dir(index_dir)?;
+        Ok(Self {
+            tantivy_index: Arc::new(tantivy_index),
+        })
+    }
+
+    /// Opens an index for searching only, which works on a read-only
+    /// filesystem. Nothing may write to the index while it's open.
+    pub fn open_read_only(index_dir: &str) -> Result<Self> {
+        let directory = ReadOnlyDirectory(MmapDirectory::open(index_dir)?);
+        let tantivy_index = tantivy::Index::open(directory)?;
         Ok(Self {
             tantivy_index: Arc::new(tantivy_index),
         })

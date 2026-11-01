@@ -1,18 +1,18 @@
-# Exposed publicly with Tailscale Funnel at https://tiles.<tailnet>.ts.net.
+# Exposed publicly with Tailscale Funnel at https://cardinal.<tailnet>.ts.net.
 # The tailnet policy must grant the funnel node attribute to tag:k8s.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: martin
+  name: cardinal
   annotations:
     tailscale.com/funnel: "true"
 spec:
   ingressClassName: tailscale
   defaultBackend:
     service:
-      name: martin
+      name: proxy
       port:
         name: http
   tls:
     - hosts:
-        - tiles
+        - cardinal

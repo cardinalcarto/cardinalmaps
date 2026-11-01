@@ -1,0 +1,61 @@
+# Routes cardinal.<tailnet>.ts.net to the services by path: /tiles/* to
+# Martin and /geocoder/* to airmail (without the prefix).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy
+spec:
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: proxy
+  template:
+    metadata:
+      labels:
+        app: proxy
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+      containers:
+        - name: caddy
+          image: docker.io/library/caddy:2.11.7-alpine
+          args: [caddy, run, --config, /etc/caddy/Caddyfile]
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: caddyfile
+              mountPath: /etc/caddy
+              readOnly: true
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+          readinessProbe:
+            tcpSocket:
+              port: http
+          livenessProbe:
+            tcpSocket:
+              port: http
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: caddyfile
+          configMap:
+            name: caddyfile
+        - name: data
+          emptyDir: {}
+        - name: config
+          emptyDir: {}

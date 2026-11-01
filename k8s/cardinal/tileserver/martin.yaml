@@ -1,0 +1,4 @@
+# The basemap of the release in MAP_RELEASE, at /tiles/basemap.
+mbtiles:
+  sources:
+    basemap: /releases/${MAP_RELEASE}/tiles.mbtiles

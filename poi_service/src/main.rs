@@ -5,6 +5,7 @@
 //!     poi_service update --follow
 //!     poi_service patch --input planet.osm.pbf --output planet-with-ids.osm.pbf
 //!     poi_service checkpoint
+//!     poi_service covers --input extract.osm.pbf
 
 mod bootstrap;
 mod db;
@@ -71,6 +72,14 @@ enum Command {
     /// Print the latest checkpoint's sequence and checksum, which together
     /// identify every identifier `patch` can add.
     Checkpoint,
+    /// Check that the database has applied diffs up to an .osm.pbf file's
+    /// replication timestamp, so `patch` can identify all of its POIs. Prints
+    /// the file's timestamp, then the latest checkpoint's sequence and
+    /// timestamp, and fails if the database is behind.
+    Covers {
+        #[arg(long)]
+        input: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -93,6 +102,20 @@ async fn main() -> Result<()> {
         Command::Checkpoint => {
             let checkpoint = db::latest_checkpoint(&pool).await?.context("no checkpoint")?;
             println!("{} {}", checkpoint.sequence, hex::encode(&checkpoint.checksum));
+            Ok(())
+        }
+        Command::Covers { input } => {
+            let file = bootstrap::replication_timestamp(&input)?;
+            let checkpoint = db::latest_checkpoint(&pool).await?.context("no checkpoint")?;
+            println!("{} {} {}", file.to_rfc3339(), checkpoint.sequence, checkpoint.timestamp.to_rfc3339());
+            if checkpoint.timestamp < file {
+                bail!(
+                    "the database is at {} ({}), behind {} ({file})",
+                    checkpoint.sequence,
+                    checkpoint.timestamp,
+                    input.display()
+                );
+            }
             Ok(())
         }
     }

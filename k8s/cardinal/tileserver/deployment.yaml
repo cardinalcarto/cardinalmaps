@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: martin
+spec:
+  replicas: 1
+  # The new release is served before the old pod stops.
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: martin
+  template:
+    metadata:
+      labels:
+        app: martin
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+      containers:
+        - name: martin
+          image: ghcr.io/maplibre/martin:1.16.1
+          # The proxy forwards /tiles/* unchanged.
+          args: [--config, /etc/martin/martin.yaml, --route-prefix, /tiles]
+          env:
+            - name: MAP_RELEASE
+              valueFrom:
+                configMapKeyRef:
+                  name: map-release
+                  key: MAP_RELEASE
+          ports:
+            - name: http
+              containerPort: 3000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/martin
+              readOnly: true
+            - name: data
+              mountPath: /releases
+              subPath: releases
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /tiles/health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /tiles/health
+              port: http
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: config
+          configMap:
+            name: martin-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: data
+            readOnly: true

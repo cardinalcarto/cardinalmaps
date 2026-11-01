@@ -1,0 +1,30 @@
+# The poi_service database, run by CloudNativePG. The operator generates the
+# pois-app secret, whose `uri` is the poi_service user's connection string;
+# the service is pois-rw.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pois
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie
+  # A single instance on a single node: there's nothing to fail over to, and
+  # a disruption budget would only block draining the node.
+  enablePDB: false
+  bootstrap:
+    initdb:
+      database: pois
+      owner: poi_service
+  storage:
+    storageClass: local-path
+    size: 200Gi
+  postgresql:
+    parameters:
+      # Bootstrapping loads the planet's POIs in one transaction.
+      shared_buffers: 4GB
+      maintenance_work_mem: 2GB
+      max_wal_size: 16GB
+  resources:
+    requests:
+      memory: 6Gi
+      cpu: "1"

@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cardinal
+resources:
+  - namespace.yaml
+  - data-volume.yaml
+  - poi/database.yaml
+  - poi/updater.yaml
+  - tileserver/deployment.yaml
+  - tileserver/service.yaml
+  - geocoder/deployment.yaml
+  - geocoder/service.yaml
+  - proxy/deployment.yaml
+  - proxy/service.yaml
+  - proxy/ingress.yaml
+configMapGenerator:
+  # The release the tileserver and geocoder serve; see release.sh promote.
+  - name: map-release
+    envs: [releases.env]
+  - name: martin-config
+    files: [tileserver/martin.yaml]
+  - name: caddyfile
+    files: [proxy/Caddyfile]
+# Images published by .github/workflows/images.yml, which pushes to the
+# GitHub Container Registry of the repository's owner. Point newName at your
+# own registry if you publish elsewhere, and set newTag to the sha- tag of
+# the commit to deploy.
+images:
+  - name: cardinal-poi-service
+    newName: ghcr.io/ellenhp/cardinal-poi-service
+    newTag: main
+  - name: cardinal-airmail
+    newName: ghcr.io/ellenhp/cardinal-airmail
+    newTag: main

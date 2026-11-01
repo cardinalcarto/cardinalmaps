@@ -1,0 +1,23 @@
+{
+	admin off
+	auto_https off
+	persist_config off
+	servers {
+		# Pass on the Tailscale proxy's X-Forwarded-* headers, which Martin
+		# uses for the public tile URLs in its TileJSON.
+		trusted_proxies static private_ranges
+	}
+}
+
+:8080 {
+	handle /tiles/* {
+		reverse_proxy martin:80
+	}
+	handle_path /geocoder/* {
+		reverse_proxy geocoder:80
+	}
+	# /routing/* is reserved for the routing engine.
+	handle {
+		respond 404
+	}
+}
