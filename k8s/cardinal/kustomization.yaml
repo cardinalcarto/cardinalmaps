@@ -14,7 +14,7 @@ resources:
   - proxy/service.yaml
   - proxy/ingress.yaml
 configMapGenerator:
-  # The release the tileserver and geocoder serve; see release.sh promote.
+  # The release the tileserver and geocoder serve; overlays replace it.
   - name: map-release
     envs: [releases.env]
   - name: martin-config
@@ -23,8 +23,8 @@ configMapGenerator:
     files: [proxy/Caddyfile]
 # Images published by .github/workflows/images.yml, which pushes to the
 # GitHub Container Registry of the repository's owner. Point newName at your
-# own registry if you publish elsewhere, and set newTag to the sha- tag of
-# the commit to deploy.
+# own registry if you publish elsewhere. Deployments pin sha- tags in their
+# overlay (see release.sh init).
 images:
   - name: cardinal-poi-service
     newName: ghcr.io/ellenhp/cardinal-poi-service

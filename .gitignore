@@ -4,3 +4,4 @@ target/
 **/perf.data
 **/perf.data.old
 *.mbtiles
+k8s/local/

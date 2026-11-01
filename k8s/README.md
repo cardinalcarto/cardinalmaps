@@ -29,10 +29,24 @@ and `poi-updater` applies OSM's daily diffs to it.
 
 ## Adapting it
 
+`k8s/cardinal` is the example; a deployment is a kustomize overlay of it in
+`k8s/local/`, which git ignores. `k8s/release.sh init [TAG]` creates one that
+pins the images to `TAG` and holds the release being served in
+`releases.env`. Apply the overlay, not `k8s/cardinal`, so the pins and the
+release stay in effect:
+
+```sh
+kubectl apply -k k8s/local
+```
+
+Set `CARDINAL_SITE` to keep the overlay somewhere else. To change anything
+else for your cluster, edit the example or patch it in the overlay:
+
 | What | Where |
 | --- | --- |
 | Data directory | [cardinal/data-volume.yaml](cardinal/data-volume.yaml); set `CARDINAL_DATA` for `release.sh` if it isn't `/var/lib/cardinal` |
-| Images | `images` in [cardinal/kustomization.yaml](cardinal/kustomization.yaml) |
+| Image registry | `newName` in [cardinal/kustomization.yaml](cardinal/kustomization.yaml)'s `images` |
+| Image tags | `newTag` in `k8s/local/kustomization.yaml` |
 | Public hostname and exposure | [cardinal/proxy/ingress.yaml](cardinal/proxy/ingress.yaml); replace it with your own ingress if you don't use Tailscale |
 | Database storage and memory | [cardinal/poi/database.yaml](cardinal/poi/database.yaml) |
 | Storage class | `local-path` in [cardinal/poi/database.yaml](cardinal/poi/database.yaml) |
@@ -47,8 +61,8 @@ names the build node, or put the releases on shared storage.
 `cardinal-poi-service` and `cardinal-airmail` to the GitHub Container
 Registry of the repository's owner on pushes to `main` that change
 `poi_service/` or `airmail/`, tagged `sha-<short commit>` and `main`. To
-deploy a build, set `newTag` in the kustomization to its `sha-` tag and
-apply. `release.sh` uses the same images.
+deploy a build, set `newTag` in `k8s/local/kustomization.yaml` to its `sha-`
+tag and apply the overlay. `release.sh` uses the same images.
 
 ## Data releases
 
@@ -63,7 +77,7 @@ A release is a directory built from one OSM extract by the data pipeline
 ```
 
 The tileserver and geocoder serve the release named by `MAP_RELEASE` in
-[cardinal/releases.env](cardinal/releases.env). Both must serve the same
+`k8s/local/releases.env`. Both must serve the same
 release, since the tiles and the index agree on POI identifiers. Changing it
 rolls both deployments, and each new pod is ready before the old one stops.
 
@@ -88,16 +102,15 @@ The ID defaults to the extract's name and date (`planet-20261102`,
 `DAGGER_ENGINE` if the pipeline's README says you need to. Only one build or
 prune runs at a time.
 
-`promote` only accepts finished releases (with a `manifest.json`). It writes
-`releases.env`, applies the kustomization, waits for the rollout, and checks
-that `/tiles/catalog` lists `basemap` and that `/geocoder/search` finds
-something for `--query` (default `park`). Commit `releases.env` afterwards
-if you keep your deployment's state in git. To roll back, promote the
+`promote` only accepts finished releases (with a `manifest.json`). It writes the
+overlay's `releases.env`, applies the overlay, waits for the rollout, and
+checks that `/tiles/catalog` lists `basemap` and that `/geocoder/search`
+finds something for `--query` (default `park`). To roll back, promote the
 previous release.
 
 `list` shows finished releases and which one is live. `prune --keep N`
-deletes all but the newest N (default 2), never the live or committed one,
-plus partial builds, after asking.
+deletes all but the newest N (default 2), never the live one or the one the
+overlay names, plus partial builds, after asking.
 
 ## Setting up
 
@@ -109,7 +122,8 @@ sudo chown -R "$USER": /var/lib/cardinal
 kubectl apply -f k8s/operators/cloudnative-pg.yaml
 kubectl -n kube-system wait --for=condition=complete job/helm-install-cloudnative-pg --timeout=300s
 kubectl -n cnpg-system rollout status deploy/cloudnative-pg
-kubectl apply -k k8s/cardinal
+k8s/release.sh init sha-<short commit>
+kubectl apply -k k8s/local
 ```
 
 Martin and the geocoder fail until a release is promoted, and `poi-updater`
@@ -134,7 +148,7 @@ k8s/release.sh bootstrap-pois /var/lib/cardinal/planets/washington-latest.osm.pb
 
 Identifiers depend on the planet and replication URL, so changing either
 means a new database: delete the `pois` cluster (which deletes its volume),
-apply the kustomization again, and bootstrap.
+apply the overlay again, and bootstrap.
 
 ## Notes
 

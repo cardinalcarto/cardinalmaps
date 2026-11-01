@@ -2,6 +2,7 @@
 # Builds Cardinal's data releases and switches the cluster between them. See
 # k8s/README.md.
 #
+#   k8s/release.sh init
 #   k8s/release.sh bootstrap-pois PLANET.osm.pbf [REPLICATION_URL]
 #   k8s/release.sh build EXTRACT.osm.pbf [--id ID] [--wof-db FILE]
 #   k8s/release.sh promote ID [--query Q]
@@ -14,26 +15,29 @@ ns=cardinal
 root=${CARDINAL_DATA:-/var/lib/cardinal}
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/.." && pwd)
-releases_env=$here/cardinal/releases.env
+# This deployment's overlay of k8s/cardinal, which git ignores: the image
+# tags it runs and the release it serves.
+site=${CARDINAL_SITE:-$here/local}
+releases_env=$site/releases.env
 # Local end of the database port-forward, clear of a PostgreSQL on the
 # build machine itself.
 db_port=${CARDINAL_DB_PORT:-5433}
 
 die() { echo "$*" >&2; exit 1; }
-usage() { sed -n '5,9p' "$0" | sed 's/^# //' >&2; exit 2; }
+usage() { sed -n '5,10p' "$0" | sed 's/^# //' >&2; exit 2; }
 
 valid_id() { [[ $1 =~ ^[a-z0-9][a-z0-9._-]*$ ]]; }
 
-# The image k8s/cardinal deploys for one of the images.yml images, from its
-# newName and newTag in the kustomization.
+require_site() {
+  [[ -f $site/kustomization.yaml ]] || die "$site doesn't exist; run k8s/release.sh init"
+}
+
+# The image the overlay deploys for one of the images.yml images.
 image() {
+  require_site
   local ref
-  ref=$(awk -v n="$1" '
-    $1 == "-" && $2 == "name:" { m = ($3 == n) }
-    m && $1 == "newName:" { name = $2 }
-    m && $1 == "newTag:" { tag = $2 }
-    END { if (name != "" && tag != "") print name ":" tag }' "$here/cardinal/kustomization.yaml")
-  [[ -n $ref ]] || die "no newName and newTag for $1 in k8s/cardinal/kustomization.yaml"
+  ref=$(kubectl kustomize "$site" | awk -v n="/$1:" '$1 == "image:" && index($2, n) { print $2; exit }')
+  [[ -n $ref ]] || die "the overlay in $site deploys no $1 image"
   echo "$ref"
 }
 
@@ -46,7 +50,7 @@ live_release() {
   [[ -z $cm ]] || kubectl -n "$ns" get configmap "$cm" -o jsonpath='{.data.MAP_RELEASE}'
 }
 
-committed_release() { sed -n 's/^MAP_RELEASE=//p' "$releases_env"; }
+site_release() { [[ ! -f $releases_env ]] || sed -n 's/^MAP_RELEASE=//p' "$releases_env"; }
 
 # Holds a lock on the releases directory until the script exits, so builds
 # and prunes don't run at the same time.
@@ -74,6 +78,36 @@ forward_db() {
 # The POI database's connection string, with its host replaced by $1.
 database_url() {
   kubectl -n "$ns" get secret pois-app -o jsonpath='{.data.uri}' | base64 -d | sed -E "s#@[^/]+/#@$1/#"
+}
+
+# Creates the overlay, pinning the images to $1 (default main).
+cmd_init() {
+  [[ $# -le 1 ]] || usage
+  local tag=${1:-main} name
+  [[ ! -e $site ]] || die "$site already exists"
+  mkdir -p "$site"
+  {
+    echo "# This deployment of k8s/cardinal. Created by \`k8s/release.sh init\`; git"
+    echo "# ignores it. Set newTag to the image tags to run, then apply with"
+    echo "# \`kubectl apply -k ${site#"$repo/"}\`."
+    echo "apiVersion: kustomize.config.k8s.io/v1beta1"
+    echo "kind: Kustomization"
+    echo "resources:"
+    echo "  - $(realpath --relative-to="$site" "$here/cardinal")"
+    echo "configMapGenerator:"
+    echo "  # Written by \`k8s/release.sh promote\`."
+    echo "  - name: map-release"
+    echo "    behavior: replace"
+    echo "    envs: [releases.env]"
+    echo "images:"
+    for name in $(awk '$1 == "newName:" { print $2 }' "$here/cardinal/kustomization.yaml"); do
+      echo "  - name: $name"
+      echo "    newTag: $tag"
+    done
+  } >"$site/kustomization.yaml"
+  echo "MAP_RELEASE=none" >"$releases_env"
+  echo "Created $site. Apply it with:"
+  echo "  kubectl apply -k ${site#"$repo/"}"
 }
 
 cmd_bootstrap_pois() {
@@ -180,8 +214,9 @@ cmd_promote() {
 
   local previous
   previous=$(live_release)
-  sed -i "s/^MAP_RELEASE=.*/MAP_RELEASE=$id/" "$releases_env"
-  kubectl apply -k "$here/cardinal" >/dev/null
+  require_site
+  echo "MAP_RELEASE=$id" >"$releases_env"
+  kubectl apply -k "$site" >/dev/null
   echo "Rolling out $id..."
   for deploy in martin geocoder; do
     kubectl -n "$ns" rollout status "deploy/$deploy" --timeout=600s >/dev/null || {
@@ -202,7 +237,6 @@ cmd_promote() {
       die "https://$host/geocoder/search found nothing for \"$query\"; try another --query"
     echo "Serving $id at https://$host/tiles/basemap and https://$host/geocoder/search"
   fi
-  echo "Commit k8s/cardinal/releases.env to record it."
 }
 
 # Finished releases, newest first, as "built_at id" lines.
@@ -234,12 +268,12 @@ cmd_prune() {
   done
   [[ $keep =~ ^[0-9]+$ ]] || usage
   lock_releases
-  local live committed n=0 built id doomed=()
+  local live pinned n=0 built id doomed=()
   live=$(live_release)
-  committed=$(committed_release)
+  pinned=$(site_release)
   while read -r built id; do
     n=$((n + 1))
-    if [[ $n -gt $keep && $id != "$live" && $id != "$committed" ]]; then
+    if [[ $n -gt $keep && $id != "$live" && $id != "$pinned" ]]; then
       doomed+=("$root/releases/$id")
     fi
   done < <(releases)
@@ -264,6 +298,7 @@ cmd_prune() {
 command=$1
 shift
 case $command in
+  init) cmd_init "$@" ;;
   bootstrap-pois) cmd_bootstrap_pois "$@" ;;
   build) cmd_build "$@" ;;
   promote) cmd_promote "$@" ;;
