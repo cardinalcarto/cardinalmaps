@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/openmaptiles/planetiler-openmaptiles
+	branch = main
+	commit = f2efa69faefed4b8f59ea8b1dacc38d2c37bacd0
+	parent = 78cbebc58777f90850887c59c9e251b3905757cb
+	method = merge
+	cmdver = 0.4.9

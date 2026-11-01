@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: martin
+spec:
+  replicas: 1
+  # The volume is ReadWriteOnce; don't overlap old and new pods.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: martin
+  template:
+    metadata:
+      labels:
+        app: martin
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+      containers:
+        - name: martin
+          image: ghcr.io/maplibre/martin:1.16.1
+          args: ["/tiles"]
+          ports:
+            - name: http
+              containerPort: 3000
+          volumeMounts:
+            - name: tiles
+              mountPath: /tiles
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: tiles
+          persistentVolumeClaim:
+            claimName: tiles

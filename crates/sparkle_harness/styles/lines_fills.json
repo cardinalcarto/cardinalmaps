@@ -1,0 +1,123 @@
+{
+  "version": 8,
+  "name": "lines and fills test",
+  "sources": {
+    "openmaptiles": {"type": "vector", "url": "local"},
+    "metrics": {"type": "geojson", "data": "local", "lineMetrics": true}
+  },
+  "layers": [
+    {"id": "bg", "type": "background", "paint": {"background-color": "#efe9dc"}},
+    {
+      "id": "bg-pattern", "type": "background",
+      "paint": {"background-pattern": "stripes", "background-opacity": 0.35}
+    },
+    {
+      "id": "water", "type": "fill", "source": "openmaptiles", "source-layer": "water",
+      "paint": {
+        "fill-pattern": ["step", ["zoom"], "checker", 16, "brick"],
+        "fill-opacity": 0.7
+      }
+    },
+    {
+      "id": "park", "type": "fill", "source": "openmaptiles", "source-layer": "park",
+      "paint": {
+        "fill-color": "rgba(80, 170, 80, 0.4)",
+        "fill-outline-color": "#d00000"
+      }
+    },
+    {
+      "id": "landcover-no-antialias", "type": "fill", "source": "openmaptiles",
+      "source-layer": "landcover",
+      "paint": {"fill-color": "rgba(150, 200, 120, 0.5)", "fill-antialias": false}
+    },
+    {
+      "id": "building-shadow", "type": "fill", "source": "openmaptiles",
+      "source-layer": "building",
+      "paint": {
+        "fill-color": "rgba(0, 0, 0, 0.35)",
+        "fill-translate": [4, 4],
+        "fill-translate-anchor": "viewport"
+      }
+    },
+    {
+      "id": "building", "type": "fill", "source": "openmaptiles", "source-layer": "building",
+      "layout": {"fill-sort-key": ["get", "render_height"]},
+      "paint": {
+        "fill-pattern": ["case", [">", ["get", "render_height"], 30], "brick", "checker"],
+        "fill-outline-color": "#202020"
+      }
+    },
+    {
+      "id": "road-shadow", "type": "line", "source": "openmaptiles",
+      "source-layer": "transportation",
+      "filter": ["==", ["get", "class"], "secondary"],
+      "paint": {
+        "line-color": "rgba(0, 0, 0, 0.3)", "line-width": 10,
+        "line-translate": [0, 6], "line-translate-anchor": "viewport"
+      }
+    },
+    {
+      "id": "road-pattern", "type": "line", "source": "openmaptiles",
+      "source-layer": "transportation",
+      "filter": ["==", ["get", "class"], "secondary"],
+      "layout": {"line-cap": "round"},
+      "paint": {"line-pattern": "arrow", "line-width": 10}
+    },
+    {
+      "id": "road-casing", "type": "line", "source": "openmaptiles",
+      "source-layer": "transportation",
+      "filter": ["in", ["get", "class"], ["literal", ["motorway", "trunk"]]],
+      "layout": {"line-join": "round"},
+      "paint": {
+        "line-color": "#303030", "line-width": 2,
+        "line-gap-width": ["interpolate", ["linear"], ["zoom"], 14, 4, 18, 20]
+      }
+    },
+    {
+      "id": "road-dashed", "type": "line", "source": "openmaptiles",
+      "source-layer": "transportation",
+      "filter": ["==", ["get", "class"], "primary"],
+      "layout": {"line-cap": "round", "line-join": "round"},
+      "paint": {
+        "line-color": "#d07000", "line-width": 5,
+        "line-dasharray": ["step", ["zoom"], ["literal", [0, 2]], 16, ["literal", [2, 1.5]]]
+      }
+    },
+    {
+      "id": "minor-center", "type": "line", "source": "openmaptiles",
+      "source-layer": "transportation",
+      "filter": ["==", ["get", "class"], "minor"],
+      "paint": {"line-color": "#000000", "line-width": 1}
+    },
+    {
+      "id": "minor-offset", "type": "line", "source": "openmaptiles",
+      "source-layer": "transportation",
+      "filter": ["==", ["get", "class"], "minor"],
+      "layout": {"line-sort-key": ["case", ["==", ["get", "oneway"], 1], 1, 0]},
+      "paint": {
+        "line-color": ["case", ["==", ["get", "oneway"], 1], "#c02060", "#2050c0"],
+        "line-width": 2.5,
+        "line-offset": ["case", ["==", ["get", "oneway"], 1], 4, -4],
+        "line-blur": 1.5
+      }
+    },
+    {
+      "id": "path-dashes", "type": "line", "source": "openmaptiles",
+      "source-layer": "transportation",
+      "filter": ["in", ["get", "class"], ["literal", ["path", "service"]]],
+      "paint": {
+        "line-color": "#6a3d9a", "line-width": 2,
+        "line-dasharray": ["match", ["get", "class"], "path", ["literal", [1, 1]], ["literal", [4, 2]]]
+      }
+    },
+    {
+      "id": "gradient", "type": "line", "source": "metrics", "source-layer": "transportation",
+      "filter": ["in", ["get", "class"], ["literal", ["tertiary"]]],
+      "layout": {"line-cap": "round"},
+      "paint": {
+        "line-width": 6,
+        "line-gradient": ["interpolate", ["linear"], ["line-progress"], 0, "#00c000", 0.5, "#ffd000", 1, "#e00000"]
+      }
+    }
+  ]
+}

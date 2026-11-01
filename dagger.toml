@@ -1,0 +1,9 @@
+[modules.go-sdk]
+source = "dagger.io/sdk/go"
+
+[sdks.go]
+module = "go-sdk"
+
+[sdks.go.scopes.data_pipeline]
+is-module = true
+name = "data-pipeline"

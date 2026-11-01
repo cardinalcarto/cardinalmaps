@@ -1,0 +1,342 @@
+[
+ {
+  "query": "restaurant",
+  "categories": {
+   "amenity=restaurant": 0.5288884043693542,
+   "tourism=hotel": 0.16178111732006073,
+   "amenity=cafe": 0.051229726523160934,
+   "amenity=parking": 0.05069999769330025,
+   "amenity=fast_food": 0.034814849495887756,
+   "amenity=bar": 0.021041421219706535,
+   "natural=peak": 0.013872023671865463,
+   "piste:type=downhill": 0.010913330130279064,
+   "amenity=pub": 0.009692895226180553,
+   "building=apartments": 0.009637112729251385
+  },
+  "cuisine": {
+   "regional": 0.30736804008483887,
+   "european": 0.18714269995689392,
+   "international": 0.06755668669939041,
+   "italian": 0.06755668669939041,
+   "pizza": 0.05835584178566933,
+   "asian": 0.056662432849407196,
+   "middle_eastern": 0.03515484184026718,
+   "swiss": 0.024433093145489693,
+   "sushi": 0.0229873675853014,
+   "french": 0.02162533439695835
+  },
+  "diet": {
+   "none": 1.0000100135803223,
+   "gluten_free": 1.0000003385357559e-05,
+   "vegetarian": 1.0000003385357559e-05,
+   "vegan": 1.0000003385357559e-05,
+   "halal": 1.0000003385357559e-05
+  }
+ },
+ {
+  "query": "vegan pizza",
+  "categories": {
+   "amenity=fast_food": 0.5998033285140991,
+   "natural=saddle": 0.06752479076385498,
+   "amenity=restaurant": 0.04999198764562607,
+   "natural=peak": 0.04947303980588913,
+   "amenity=kindergarten": 0.01784459874033928,
+   "amenity=childcare": 0.016951996833086014,
+   "shop=bakery": 0.015393976122140884,
+   "amenity=cafe": 0.014550870284438133,
+   "amenity=bar": 0.011140208691358566,
+   "shop=hairdresser": 0.009834814816713333
+  },
+  "cuisine": {
+   "pizza": 0.607673168182373,
+   "sandwich": 0.03022458776831627,
+   "middle_eastern": 0.029322227463126183,
+   "chicken": 0.022296184673905373,
+   "kebab": 0.02162533439695835,
+   "european": 0.017452487722039223,
+   "pasta": 0.01244165189564228,
+   "turkish": 0.010662510991096497,
+   "sushi": 0.007355827372521162,
+   "italian": 0.005230126902461052
+  },
+  "diet": {
+   "vegan": 0.9996300339698792,
+   "vegetarian": 0.0018202114151790738,
+   "gluten_free": 0.0016584827098995447,
+   "none": 0.0013770253863185644,
+   "halal": 0.0004542184469755739
+  }
+ },
+ {
+  "query": "chinesisches Restaurant",
+  "categories": {
+   "amenity=restaurant": 0.13474419713020325,
+   "amenity=cafe": 0.06931986659765244,
+   "tourism=hotel": 0.05539776012301445,
+   "amenity=fast_food": 0.039736632257699966,
+   "amenity=bar": 0.03433310613036156,
+   "tourism=artwork": 0.02558334544301033,
+   "natural=peak": 0.025366589426994324,
+   "piste:type=downhill": 0.021508146077394485,
+   "tourism=guest_house": 0.02052450366318226,
+   "building=apartments": 0.01895246095955372
+  },
+  "cuisine": {
+   "asian": 0.9019306898117065,
+   "chinese": 0.3276783227920532,
+   "european": 0.1778208613395691,
+   "regional": 0.09010298550128937,
+   "italian": 0.09010298550128937,
+   "thai": 0.08036746829748154,
+   "indian": 0.07808816432952881,
+   "japanese": 0.0695517510175705,
+   "vietnamese": 0.040855713188648224,
+   "pizza": 0.03964884206652641
+  },
+  "diet": {
+   "none": 0.9994215965270996,
+   "vegan": 0.0004144815029576421,
+   "vegetarian": 1.0000003385357559e-05,
+   "gluten_free": 1.0000003385357559e-05,
+   "halal": 1.0000003385357559e-05
+  }
+ },
+ {
+  "query": "Bäckerei",
+  "categories": {
+   "shop=bakery": 0.8749074935913086,
+   "shop=butcher": 0.05088558420538902,
+   "amenity=cafe": 0.010652408003807068,
+   "amenity=fast_food": 0.006937917321920395,
+   "natural=peak": 0.005906519014388323,
+   "shop=jewelry": 0.004688626620918512,
+   "shop=travel_agency": 0.0029399972409009933,
+   "natural=water": 0.002934863790869713,
+   "landuse=farmland": 0.002424926497042179,
+   "place=locality": 0.0019776569679379463
+  },
+  "cuisine": {
+   "coffee_shop": 0.7981967926025391,
+   "burger": 0.3140605390071869,
+   "breakfast": 0.287777841091156,
+   "cake": 0.24509501457214355,
+   "sandwich": 0.23935934901237488,
+   "tea": 0.1732981950044632,
+   "regional": 0.1294127255678177,
+   "crepe": 0.1259327530860901,
+   "ice_cream": 0.10375863313674927,
+   "local": 0.08757384121417999
+  },
+  "diet": {
+   "none": 1.0000100135803223,
+   "gluten_free": 1.0000003385357559e-05,
+   "vegetarian": 1.0000003385357559e-05,
+   "vegan": 1.0000003385357559e-05,
+   "halal": 1.0000003385357559e-05
+  }
+ },
+ {
+  "query": "zürich hb",
+  "categories": {
+   "amenity=car_sharing": 0.07552585005760193,
+   "leisure=fitness_centre": 0.04030926153063774,
+   "shop=optician": 0.03266137093305588,
+   "amenity=bicycle_rental": 0.030199866741895676,
+   "amenity=post_office": 0.026781607419252396,
+   "public_transport=stop_position": 0.024419493973255157,
+   "amenity=doctors": 0.022689783945679665,
+   "emergency=defibrillator": 0.02056211046874523,
+   "power=substation": 0.02052692137658596,
+   "leisure=sports_centre": 0.019860487431287766
+  },
+  "cuisine": {
+   "asian": 0.16886694729328156,
+   "pizza": 0.13661839067935944,
+   "indian": 0.04604391008615494,
+   "burger": 0.03623005375266075,
+   "kebab": 0.03515484184026718,
+   "sushi": 0.031153826043009758,
+   "japanese": 0.028446035459637642,
+   "european": 0.024433093145489693,
+   "regional": 0.02369946800172329,
+   "middle_eastern": 0.020974241197109222
+  },
+  "diet": {
+   "none": 1.0000100135803223,
+   "gluten_free": 1.0000003385357559e-05,
+   "vegetarian": 1.0000003385357559e-05,
+   "vegan": 1.0000003385357559e-05,
+   "halal": 1.0000003385357559e-05
+  }
+ },
+ {
+  "query": "Café Sprüngli",
+  "categories": {
+   "amenity=cafe": 0.6379241347312927,
+   "amenity=bar": 0.13943451642990112,
+   "amenity=fast_food": 0.04984280467033386,
+   "amenity=pub": 0.0310962051153183,
+   "shop=bakery": 0.029829196631908417,
+   "amenity=restaurant": 0.0189459677785635,
+   "natural=stone": 0.010125366970896721,
+   "shop=kiosk": 0.010008309036493301,
+   "shop=travel_agency": 0.00941816158592701,
+   "amenity=ice_cream": 0.008981860242784023
+  },
+  "cuisine": {
+   "regional": 0.6150978803634644,
+   "coffee_shop": 0.22816647589206696,
+   "european": 0.14805719256401062,
+   "local": 0.06372499465942383,
+   "italian": 0.04743587225675583,
+   "cake": 0.04604391008615494,
+   "french": 0.04337579756975174,
+   "breakfast": 0.034110426902770996,
+   "asian": 0.03022458776831627,
+   "ice_cream": 0.027595279738307
+  },
+  "diet": {
+   "none": 1.0000100135803223,
+   "gluten_free": 1.0000003385357559e-05,
+   "vegetarian": 1.0000003385357559e-05,
+   "vegan": 1.0000003385357559e-05,
+   "halal": 1.0000003385357559e-05
+  }
+ },
+ {
+  "query": "  Thai  FOOD ",
+  "categories": {
+   "amenity=fast_food": 0.6829348206520081,
+   "shop=hairdresser": 0.03998970985412598,
+   "amenity=bar": 0.03135241940617561,
+   "amenity=restaurant": 0.018829813227057457,
+   "amenity=cafe": 0.01863258332014084,
+   "shop=bakery": 0.01509432215243578,
+   "shop=massage": 0.01161194033920765,
+   "shop=clothes": 0.011410162784159184,
+   "amenity=dentist": 0.011258183047175407,
+   "natural=saddle": 0.010985207743942738
+  },
+  "cuisine": {
+   "asian": 1.0000100135803223,
+   "thai": 0.9958112239837646,
+   "vietnamese": 0.0229873675853014,
+   "indian": 0.022296184673905373,
+   "kebab": 0.013646835461258888,
+   "international": 0.010662510991096497,
+   "burger": 0.00507033197209239,
+   "coffee_shop": 0.0017646141350269318,
+   "japanese": 0.0014203583123162389,
+   "ramen": 0.0009797518141567707
+  },
+  "diet": {
+   "none": 1.0000100135803223,
+   "gluten_free": 1.0000003385357559e-05,
+   "vegetarian": 1.0000003385357559e-05,
+   "vegan": 1.0000003385357559e-05,
+   "halal": 1.0000003385357559e-05
+  }
+ },
+ {
+  "query": "ristorante italiano",
+  "categories": {
+   "shop=beauty": 0.0754566416144371,
+   "amenity=bar": 0.04648153856396675,
+   "amenity=cafe": 0.04480194300413132,
+   "shop=clothes": 0.03235761076211929,
+   "amenity=fast_food": 0.032115768641233444,
+   "tourism=artwork": 0.027755560353398323,
+   "amenity=restaurant": 0.024175133556127548,
+   "historic=memorial": 0.018943723291158676,
+   "shop=hairdresser": 0.01741424761712551,
+   "shop=massage": 0.01636986993253231
+  },
+  "cuisine": {
+   "italian": 0.771853506565094,
+   "european": 0.771853506565094,
+   "pizza": 0.26285186409950256,
+   "regional": 0.16027602553367615,
+   "italian_pizza": 0.01323282066732645,
+   "pasta": 0.011341754347085953,
+   "burger": 0.007355827372521162,
+   "mediterranean": 0.0071314298547804356,
+   "french": 0.005921069998294115,
+   "kebab": 0.004915405530482531
+  },
+  "diet": {
+   "none": 1.0000100135803223,
+   "gluten_free": 1.0000003385357559e-05,
+   "vegetarian": 1.0000003385357559e-05,
+   "vegan": 1.0000003385357559e-05,
+   "halal": 1.0000003385357559e-05
+  }
+ },
+ {
+  "query": "unknownword xyz",
+  "categories": {
+   "amenity=social_facility": 0.03110446408390999,
+   "amenity=place_of_worship": 0.027379168197512627,
+   "building=apartments": 0.023755038157105446,
+   "tourism=museum": 0.02340957708656788,
+   "tourism=chalet": 0.02071847952902317,
+   "tourism=hotel": 0.020296569913625717,
+   "amenity=cafe": 0.018723268061876297,
+   "tourism=artwork": 0.018648579716682434,
+   "amenity=restaurant": 0.017958007752895355,
+   "tourism=guest_house": 0.017214788123965263
+  },
+  "cuisine": {
+   "asian": 0.6001983880996704,
+   "burger": 0.21207880973815918,
+   "regional": 0.20690405368804932,
+   "thai": 0.16027602553367615,
+   "chinese": 0.07160120457410812,
+   "vietnamese": 0.034110426902770996,
+   "indian": 0.029322227463126183,
+   "cake": 0.027595279738307,
+   "breakfast": 0.026769286021590233,
+   "japanese": 0.026769286021590233
+  },
+  "diet": {
+   "none": 1.0000100135803223,
+   "vegetarian": 0.00038998457603156567,
+   "gluten_free": 1.0000003385357559e-05,
+   "vegan": 1.0000003385357559e-05,
+   "halal": 1.0000003385357559e-05
+  }
+ },
+ {
+  "query": "halal kebab",
+  "categories": {
+   "amenity=fast_food": 0.5947349071502686,
+   "amenity=restaurant": 0.03908772021532059,
+   "amenity=cafe": 0.03901578485965729,
+   "shop=kiosk": 0.03780286759138107,
+   "shop=convenience": 0.02487972192466259,
+   "amenity=bar": 0.02290268987417221,
+   "amenity=childcare": 0.017207518219947815,
+   "shop=hairdresser": 0.013521846383810043,
+   "shop=bakery": 0.013147891499102116,
+   "amenity=pub": 0.012180373072624207
+  },
+  "cuisine": {
+   "kebab": 0.8311530351638794,
+   "middle_eastern": 0.10375863313674927,
+   "pizza": 0.03623005375266075,
+   "turkish": 0.03623005375266075,
+   "lebanese": 0.01323282066732645,
+   "burger": 0.01206377986818552,
+   "sandwich": 0.009135636501014233,
+   "coffee_shop": 0.008325778879225254,
+   "european": 0.004080137703567743,
+   "international": 0.003717252518981695
+  },
+  "diet": {
+   "halal": 1.0000100135803223,
+   "none": 0.0016584827098995447,
+   "gluten_free": 0.0007893660222180188,
+   "vegetarian": 0.00044055713806301355,
+   "vegan": 1.0000003385357559e-05
+  }
+ }
+]

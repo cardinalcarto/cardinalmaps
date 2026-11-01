@@ -1,0 +1,23 @@
+[package]
+name = "sparkle"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytemuck = { version = "1.25.2", features = ["derive"] }
+earcut = "0.4.5"
+image-webp = "0.2.4"
+maplibre-expr = "0.5.4"
+mlt-core = "0.22.0"
+png = "0.18.1"
+rustybuzz = "0.20.1"
+self_cell = "1.3.0"
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+unicode-bidi = "0.3.18"
+unicode-properties = "0.1.4"
+zune-jpeg = "0.5.15"
+
+[dev-dependencies]
+jpeg-encoder = "0.7.1"
+rusqlite = { version = "0.41.0", features = ["bundled"] }

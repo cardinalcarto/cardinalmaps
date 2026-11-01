@@ -1,0 +1,20 @@
+[project]
+name = "stable-ids"
+version = "0.1.0"
+description = "Measures the rules behind Cardinal's stable OSM POI identifiers"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=2.0",
+    "osmium>=4.0",
+    "pyarrow>=17.0",
+]
+
+[project.scripts]
+stable-ids-diffs = "stable_ids.diffs:main"
+stable-ids-extract = "stable_ids.extract:main"
+stable-ids-pairs = "stable_ids.pairs:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+

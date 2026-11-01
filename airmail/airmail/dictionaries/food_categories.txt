@@ -1,0 +1,18 @@
+# POI category tags for places that serve food, one `key=value` per line.
+#
+# A query's cuisines only count in proportion to how likely it is to be for one
+# of these ("thai restaurant" yes, "thai embassy" no). Training copies this list
+# into each model file.
+#
+# Shops (bakery, pastry, deli) are left out: they rarely carry cuisine tags, so
+# the model's cuisine guesses for "boulangerie" (cake, ice cream) are noise,
+# and searching on them would return cafés instead of bakeries.
+
+amenity=restaurant
+amenity=fast_food
+amenity=cafe
+amenity=food_court
+amenity=ice_cream
+amenity=biergarten
+amenity=pub
+craft=caterer

@@ -1,0 +1,26 @@
+[package]
+name = "airmail"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+deunicode.workspace = true
+geo.workspace = true
+itertools = "0.15.0"
+lazy_static.workspace = true
+lingua.workspace = true
+log.workspace = true
+regex = "1.13.1"
+s2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+isolang = "2.4.0"
+tantivy = "0.27.0"
+thiserror.workspace = true
+tokio.workspace = true
+unicode-segmentation = "1.13.3"
+
+[features]
+invasive_logging = []

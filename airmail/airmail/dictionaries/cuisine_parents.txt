@@ -1,0 +1,137 @@
+# Cuisine hierarchy: `child parent [parent ...]`, one cuisine per line.
+#
+# Edges encode regional containment only: a child is a cuisine from a place
+# inside its parent's region. Dish and food-type values (pizza, sushi, kebab,
+# ...) have no parents; any association between them and a regional cuisine is
+# left for the model to learn.
+#
+# Used at indexing time (a POI is indexed under every ancestor of its cuisine
+# values) and at training time (ancestors count as positive labels).
+
+# Sub-national cuisines
+cantonese chinese
+sichuan chinese
+hunan chinese
+shanghainese chinese
+okinawan japanese
+punjabi indian
+south_indian indian
+north_indian indian
+sicilian italian
+tuscan italian
+neapolitan italian
+bavarian german
+swabian german
+galician spanish
+catalan spanish
+basque spanish
+breton french
+alsatian french
+cajun american
+tex-mex mexican american
+hawaiian american
+oaxacan mexican
+
+# Asia
+chinese asian
+japanese asian
+korean asian
+taiwanese asian
+mongolian asian
+tibetan asian
+thai asian
+vietnamese asian
+lao asian
+cambodian asian
+burmese asian
+malaysian asian
+singaporean asian
+indonesian asian
+filipino asian
+indian asian
+pakistani asian
+bangladeshi asian
+nepalese asian
+sri_lankan asian
+afghan asian
+uzbek asian
+
+# Middle East
+lebanese middle_eastern
+syrian middle_eastern
+persian middle_eastern
+turkish middle_eastern
+israeli middle_eastern
+iraqi middle_eastern
+jordanian middle_eastern
+palestinian middle_eastern
+yemeni middle_eastern
+kurdish middle_eastern
+
+# Europe
+balkan european
+croatian balkan
+serbian balkan
+bosnian balkan
+albanian balkan
+macedonian balkan
+montenegrin balkan
+bulgarian balkan
+italian european
+french european
+german european
+austrian european
+swiss european
+spanish european
+portuguese european
+greek european
+british european
+irish european
+belgian european
+dutch european
+danish european
+swedish european
+norwegian european
+finnish european
+polish european
+czech european
+slovak european
+hungarian european
+romanian european
+slovenian european
+lithuanian european
+latvian european
+estonian european
+ukrainian european
+russian european
+
+# Africa
+moroccan african
+tunisian african
+algerian african
+egyptian african
+ethiopian african
+eritrean african
+somali african
+nigerian african
+ghanaian african
+senegalese african
+kenyan african
+south_african african
+
+# Latin America and the Caribbean
+mexican latin_american
+peruvian latin_american
+brazilian latin_american
+argentinian latin_american
+colombian latin_american
+venezuelan latin_american
+chilean latin_american
+bolivian latin_american
+ecuadorian latin_american
+salvadoran latin_american
+cuban latin_american caribbean
+dominican latin_american caribbean
+puerto_rican latin_american caribbean
+jamaican caribbean
+haitian caribbean

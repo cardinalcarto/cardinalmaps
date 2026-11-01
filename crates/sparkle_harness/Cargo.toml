@@ -1,0 +1,18 @@
+[package]
+name = "sparkle_harness"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+bytemuck = "1.25.2"
+env_logger = "0.11.11"
+log = "0.4.34"
+maplibre-expr = "0.5.4"
+png = "0.18.1"
+pollster = "1.0.1"
+serde_json = "1.0.154"
+sparkle = { version = "0.1.0", path = "../sparkle" }
+sparkle_view = { version = "0.1.0", path = "../sparkle_view" }
+wgpu = "30.0.1"
+winit = "0.30.13"

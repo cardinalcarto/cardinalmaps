@@ -1,0 +1,146 @@
+{
+  "ClipVertex": {
+    "type": "vertex",
+    "file": "shaders/clip.vert"
+  },
+  "ClipFragment": {
+    "type": "fragment",
+    "file": "shaders/clip.frag"
+  },
+  "ClipMeshVertex": {
+    "type": "vertex",
+    "file": "shaders/clip_mesh.vert"
+  },
+  "ClipMeshFragment": {
+    "type": "fragment",
+    "file": "shaders/clip_mesh.frag"
+  },
+  "BackgroundVertex": {
+    "type": "vertex",
+    "file": "shaders/background.vert"
+  },
+  "BackgroundFragment": {
+    "type": "fragment",
+    "file": "shaders/background.frag"
+  },
+  "TerrainVertex": {
+    "type": "vertex",
+    "file": "shaders/terrain.vert"
+  },
+  "TerrainFragment": {
+    "type": "fragment",
+    "file": "shaders/terrain.frag"
+  },
+  "SkyVertex": {
+    "type": "vertex",
+    "file": "shaders/sky.vert"
+  },
+  "SkyFragment": {
+    "type": "fragment",
+    "file": "shaders/sky.frag"
+  },
+  "FillExtrusionVertex": {
+    "type": "vertex",
+    "file": "shaders/fill_extrusion.vert"
+  },
+  "FillExtrusionFragment": {
+    "type": "fragment",
+    "file": "shaders/fill_extrusion.frag"
+  },
+  "FillExtrusionCompositeVertex": {
+    "type": "vertex",
+    "file": "shaders/fill_extrusion_composite.vert"
+  },
+  "FillExtrusionCompositeFragment": {
+    "type": "fragment",
+    "file": "shaders/fill_extrusion_composite.frag"
+  },
+  "RasterVertex": {
+    "type": "vertex",
+    "file": "shaders/raster.vert"
+  },
+  "RasterFragment": {
+    "type": "fragment",
+    "file": "shaders/raster.frag"
+  },
+  "HillshadeVertex": {
+    "type": "vertex",
+    "file": "shaders/hillshade.vert"
+  },
+  "HillshadeFragment": {
+    "type": "fragment",
+    "file": "shaders/hillshade.frag"
+  },
+  "ColorReliefVertex": {
+    "type": "vertex",
+    "file": "shaders/color_relief.vert"
+  },
+  "ColorReliefFragment": {
+    "type": "fragment",
+    "file": "shaders/color_relief.frag"
+  },
+  "CircleVertex": {
+    "type": "vertex",
+    "file": "shaders/circle.vert"
+  },
+  "CircleFragment": {
+    "type": "fragment",
+    "file": "shaders/circle.frag"
+  },
+  "HeatmapVertex": {
+    "type": "vertex",
+    "file": "shaders/heatmap.vert"
+  },
+  "HeatmapFragment": {
+    "type": "fragment",
+    "file": "shaders/heatmap.frag"
+  },
+  "HeatmapColorVertex": {
+    "type": "vertex",
+    "file": "shaders/heatmap_color.vert"
+  },
+  "HeatmapColorFragment": {
+    "type": "fragment",
+    "file": "shaders/heatmap_color.frag"
+  },
+  "SymbolTextVertex": {
+    "type": "vertex",
+    "file": "shaders/symbol_text.vert"
+  },
+  "SymbolTextFragment": {
+    "type": "fragment",
+    "file": "shaders/symbol_text.frag"
+  },
+  "SymbolIconVertex": {
+    "type": "vertex",
+    "file": "shaders/symbol_icon.vert"
+  },
+  "SymbolIconFragment": {
+    "type": "fragment",
+    "file": "shaders/symbol_icon.frag"
+  },
+  "FillVertex": {
+    "type": "vertex",
+    "file": "shaders/fill.vert"
+  },
+  "FillFragment": {
+    "type": "fragment",
+    "file": "shaders/fill.frag"
+  },
+  "LineVertex": {
+    "type": "vertex",
+    "file": "shaders/line.vert"
+  },
+  "LineFragment": {
+    "type": "fragment",
+    "file": "shaders/line.frag"
+  },
+  "LineMergedVertex": {
+    "type": "vertex",
+    "file": "shaders/line_merged.vert"
+  },
+  "LineMergedFragment": {
+    "type": "fragment",
+    "file": "shaders/line_merged.frag"
+  }
+}

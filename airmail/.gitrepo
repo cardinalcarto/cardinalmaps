@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/ellenhp/airmail
+	branch = main
+	commit = b15e48e85a859fcb2d5e678db689db61ec4f897b
+	parent = 0263a6fc216b705ff44b2b13a116bf96240b9cdf
+	method = merge
+	cmdver = 0.4.9

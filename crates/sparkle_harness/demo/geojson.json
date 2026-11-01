@@ -1,0 +1,88 @@
+{
+    "version": 8,
+    "name": "GeoJSON demo",
+    "center": [-122.333, 47.607],
+    "zoom": 13.5,
+    "transition": {"duration": 600, "delay": 0},
+    "state": {
+        "routeColor": {"default": "#2a5bd7"},
+        "highlight": {"default": "none"}
+    },
+    "sources": {
+        "openmaptiles": {"type": "vector", "url": "https://example.invalid/tiles.json"},
+        "areas": {
+            "type": "geojson",
+            "data": "seattle-areas.geojson",
+            "lineMetrics": true
+        },
+        "pois": {
+            "type": "geojson",
+            "data": "seattle-pois.geojson",
+            "cluster": true,
+            "clusterRadius": 40,
+            "clusterMaxZoom": 15,
+            "clusterProperties": {"rank_sum": ["+", ["get", "rank"]]}
+        }
+    },
+    "layers": [
+        {"id": "background", "type": "background", "paint": {"background-color": "#f2efe9"}},
+        {"id": "water", "type": "fill", "source": "openmaptiles", "source-layer": "water",
+         "paint": {"fill-color": "#a8c8e8"}},
+        {"id": "park", "type": "fill", "source": "openmaptiles", "source-layer": "park",
+         "paint": {"fill-color": "#cfe6b8"}},
+        {"id": "roads", "type": "line", "source": "openmaptiles", "source-layer": "transportation",
+         "filter": ["in", ["get", "class"], ["literal", ["primary", "secondary", "tertiary", "motorway", "trunk"]]],
+         "paint": {"line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 16, 6]}},
+        {"id": "areas-fill", "type": "fill", "source": "areas",
+         "filter": ["==", ["geometry-type"], "Polygon"],
+         "paint": {
+             "fill-color": ["case",
+                 ["boolean", ["feature-state", "selected"], false], "#d62828",
+                 ["boolean", ["feature-state", "hover"], false], "#ffd166",
+                 ["==", ["get", "name"], ["global-state", "highlight"]], "#06d6a0",
+                 ["get", "color"]],
+             "fill-opacity": 0.55
+         }},
+        {"id": "areas-outline", "type": "line", "source": "areas",
+         "filter": ["==", ["geometry-type"], "Polygon"],
+         "paint": {"line-color": ["get", "color"], "line-width": 2}},
+        {"id": "routes", "type": "line", "source": "areas",
+         "filter": ["==", ["get", "kind"], "route"],
+         "layout": {"line-cap": "round", "line-join": "round"},
+         "paint": {
+             "line-color": ["case", ["boolean", ["feature-state", "hover"], false], "#ff006e",
+                 ["global-state", "routeColor"]],
+             "line-width": ["case", ["boolean", ["feature-state", "hover"], false], 9, 5]
+         }},
+        {"id": "routes-progress", "type": "line", "source": "areas",
+         "filter": ["==", ["get", "kind"], "route"],
+         "layout": {"line-cap": "round", "line-join": "round"},
+         "paint": {
+             "line-width": 2,
+             "line-gradient": ["interpolate", ["linear"], ["line-progress"],
+                 0, "#00e676", 0.5, "#ffd600", 1, "#d50000"]
+         }},
+        {"id": "clusters", "type": "circle", "source": "pois",
+         "filter": ["has", "point_count"],
+         "paint": {
+             "circle-color": ["step", ["get", "point_count"], "#51bbd6", 10, "#f1f075", 25, "#f28cb1"],
+             "circle-radius": ["step", ["get", "point_count"], 12, 10, 18, 25, 24],
+             "circle-stroke-width": 2, "circle-stroke-color": "#ffffff"
+         }},
+        {"id": "points", "type": "circle", "source": "pois",
+         "filter": ["!", ["has", "point_count"]],
+         "paint": {
+             "circle-color": ["case", ["boolean", ["feature-state", "hover"], false], "#ff006e", "#11b4da"],
+             "circle-radius": 5, "circle-stroke-width": 1, "circle-stroke-color": "#ffffff"
+         }},
+        {"id": "cluster-count", "type": "symbol", "source": "pois",
+         "filter": ["has", "point_count"],
+         "layout": {
+             "text-field": ["get", "point_count_abbreviated"],
+             "text-font": ["Noto Sans Bold"],
+             "text-size": 12,
+             "text-allow-overlap": true
+         },
+         "paint": {"text-color": "#333333"}}
+    ]
+}

@@ -1,0 +1,39 @@
+name: sparkle
+description: "MapLibre-style vector maps from local tiles, processed in Rust by sparkle and drawn with Flutter GPU."
+version: 0.0.1
+publish_to: none
+
+environment:
+  sdk: ^3.13.7
+  flutter: '>=3.47.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_gpu:
+    sdk: flutter
+  flutter_gpu_shaders: ^0.5.2
+  flutter_rust_bridge: 2.13.0
+  hooks: ^2.2.0
+  vector_math: ^2.4.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        ffiPlugin: true
+      ios:
+        ffiPlugin: true
+      linux:
+        ffiPlugin: true
+      macos:
+        ffiPlugin: true
+      windows:
+        ffiPlugin: true
+
+  # Written by hook/build.dart.
+  assets:
+    - build/shaderbundles/sparkle.shaderbundle

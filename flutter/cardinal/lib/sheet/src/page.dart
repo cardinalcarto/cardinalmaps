@@ -1,0 +1,235 @@
+part of '../sheet.dart';
+
+/// A page of the sheet's navigator, usually showing a [SheetContent].
+///
+/// Pages swap within the one sheet: the content slides across from one page to the
+/// next while the sheet moves between their anchors, and an Android back gesture scrubs
+/// both back towards the page below.
+class SheetPage<T> extends Page<T> {
+  const SheetPage({
+    required this.child,
+    super.key,
+    super.name,
+    super.arguments,
+    super.restorationId,
+  });
+
+  final Widget child;
+
+  @override
+  Route<T> createRoute(BuildContext context) => _SheetPageRoute<T>(this);
+}
+
+class _SheetPageRoute<T> extends PageRoute<T> {
+  _SheetPageRoute(SheetPage<T> page) : super(settings: page);
+
+  SheetPage<T> get _page => settings as SheetPage<T>;
+
+  @override
+  Duration get transitionDuration => Durations.medium4;
+
+  @override
+  Duration get reverseTransitionDuration => Durations.medium4;
+
+  @override
+  Color? get barrierColor => null;
+
+  @override
+  String? get barrierLabel => null;
+
+  @override
+  bool get maintainState => true;
+
+  @override
+  bool canTransitionTo(TransitionRoute<dynamic> nextRoute) => nextRoute is _SheetPageRoute;
+
+  @override
+  bool canTransitionFrom(TransitionRoute<dynamic> previousRoute) =>
+      previousRoute is _SheetPageRoute;
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) => _page.child;
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    return _SheetBackGesture(
+      route: this,
+      child: _SheetSlide(
+        animation: animation,
+        secondaryAnimation: secondaryAnimation,
+        navigator: navigator,
+        child: child,
+      ),
+    );
+  }
+
+  /// Follows a back gesture at [progress] (1 showing this page, 0 showing the one
+  /// below), taking over from the route's own animation.
+  void _startBackGesture(double progress) {
+    navigator!.didStartUserGesture();
+    controller!.value = progress;
+  }
+
+  void _updateBackGesture(double progress) {
+    if (isCurrent) controller!.value = progress;
+  }
+
+  /// Finishes a back gesture from wherever it was let go, popping if [pop].
+  ///
+  /// The route's own handling of predictive back starts the pop over from the top,
+  /// which jumps the content and the sheet back before they leave.
+  void _endBackGesture({required bool pop}) {
+    final navigator = this.navigator!;
+    final controller = this.controller!;
+    if (pop) {
+      navigator.pop();
+      if (controller.isAnimating) {
+        controller.animateBack(
+          0,
+          duration: reverseTransitionDuration * controller.value,
+          curve: Curves.easeOutCubic,
+        );
+      }
+    } else if (!controller.isCompleted) {
+      controller.animateTo(
+        1,
+        duration: transitionDuration * (1 - controller.value),
+        curve: Curves.easeOutCubic,
+      );
+    }
+    // The transition follows the gesture linearly until it's over.
+    if (controller.isAnimating) {
+      void stop(AnimationStatus status) {
+        if (status.isAnimating) return;
+        controller.removeStatusListener(stop);
+        navigator.didStopUserGesture();
+      }
+
+      controller.addStatusListener(stop);
+    } else {
+      navigator.didStopUserGesture();
+    }
+  }
+}
+
+/// How far a transition at [value] has got: eased, unless a gesture is driving it, in
+/// which case it follows the gesture. Only ever switches between the two at either end
+/// of a transition, where both agree.
+double _transitionProgress(double value, NavigatorState? navigator) {
+  final t = value.clamp(0.0, 1.0);
+  if (navigator?.userGestureInProgress ?? false) return t;
+  return Curves.easeInOutCubicEmphasized.transform(t);
+}
+
+/// Slides a page's content in from the end edge as it's pushed, over the page below,
+/// which slides a little way towards the start edge; popping runs the same in reverse.
+class _SheetSlide extends StatelessWidget {
+  const _SheetSlide({
+    required this.animation,
+    required this.secondaryAnimation,
+    required this.navigator,
+    required this.child,
+  });
+
+  final Animation<double> animation;
+  final Animation<double> secondaryAnimation;
+  final NavigatorState? navigator;
+  final Widget child;
+
+  /// How far, as a fraction of its width, the page below slides as one is pushed over it.
+  static const double _parallax = 1 / 3;
+
+  @override
+  Widget build(BuildContext context) {
+    final direction = Directionality.of(context) == TextDirection.rtl ? -1.0 : 1.0;
+    final color = _SheetScope.of(context).color;
+    return AnimatedBuilder(
+      animation: Listenable.merge([animation, secondaryAnimation]),
+      // Opaque, to cover the page below as it slides over it, and a Material of its
+      // own for ink to show on.
+      child: Material(color: color, child: child),
+      builder: (context, child) {
+        final incoming = 1 - _transitionProgress(animation.value, navigator);
+        final outgoing = _transitionProgress(secondaryAnimation.value, navigator);
+        final dx = (incoming - _parallax * outgoing) * direction;
+        if (dx == 0) return child!;
+        return FractionalTranslation(translation: Offset(dx, 0), child: child);
+      },
+    );
+  }
+}
+
+/// Hands Android back gestures to its route while that route is current, both in the
+/// sheet's navigator and above it, so the gesture scrubs the route's transition (and so
+/// the sheet's move between the two pages' anchors).
+class _SheetBackGesture extends StatefulWidget {
+  const _SheetBackGesture({required this.route, required this.child});
+
+  final _SheetPageRoute<dynamic> route;
+  final Widget child;
+
+  @override
+  State<_SheetBackGesture> createState() => _SheetBackGestureState();
+}
+
+class _SheetBackGestureState extends State<_SheetBackGesture> with WidgetsBindingObserver {
+  bool _gesturing = false;
+
+  bool get _enabled {
+    final route = widget.route;
+    if (!route.isCurrent || !route.popGestureEnabled) return false;
+    final scope = context.getInheritedWidgetOfExactType<_SheetScope>();
+    return scope?.state._isRouteCurrent ?? true;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  bool handleStartBackGesture(PredictiveBackEvent backEvent) {
+    if (backEvent.isButtonEvent || !_enabled) return false;
+    _gesturing = true;
+    widget.route._startBackGesture(1 - backEvent.progress);
+    return true;
+  }
+
+  @override
+  void handleUpdateBackGestureProgress(PredictiveBackEvent backEvent) {
+    if (_gesturing) widget.route._updateBackGesture(1 - backEvent.progress);
+  }
+
+  @override
+  void handleCancelBackGesture() {
+    if (!_gesturing) return;
+    _gesturing = false;
+    widget.route._endBackGesture(pop: false);
+  }
+
+  @override
+  void handleCommitBackGesture() {
+    if (!_gesturing) return;
+    _gesturing = false;
+    widget.route._endBackGesture(pop: true);
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
