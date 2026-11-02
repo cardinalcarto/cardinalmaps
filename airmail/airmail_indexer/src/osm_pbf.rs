@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -8,27 +8,40 @@ use std::{
 };
 
 use crate::cache::{IndexerCache, WofCacheItem};
-use airmail::poi::ToIndexPoi;
+use crate::multipolygon::{self, Role};
+use airmail::poi::{OsmRef, OsmType, ToIndexPoi};
 use anyhow::Result;
 use clap::ValueEnum;
 use crossbeam::channel::Sender;
 use log::{info, warn};
-use osmpbf::{Element, ElementReader};
+use osmpbf::{Element, ElementReader, RelMemberType};
 
 use crate::osm::OsmPoi;
 
 /// An OpenStreetMap PBF file loader.
 ///
-/// OSM PBF contains nodes, ways and relations. This loader extracts points of interest from
-/// nodes and ways. The location of a node or way may be present in the data, or
-/// may require a lookup from other nodes. To prevent a full scan, the location of all nodes
-/// is cached.
+/// Extracts points of interest from nodes, ways and multipolygon relations.
+/// Way and relation shapes are built from node locations, which the first
+/// pass caches; it also notes the ways that interesting relations need, whose
+/// coordinates the second pass caches, so the third can assemble relations
+/// without holding every way in memory.
 pub struct OsmPbf {
     pbf_path: PathBuf,
     nodes_already_cached: bool,
     ignore: Vec<ParseOsmTypes>,
     sender: Sender<ToIndexPoi>,
     indexer_cache: Arc<IndexerCache>,
+}
+
+fn version(version: Option<i32>) -> Option<u32> {
+    version.and_then(|v| u32::try_from(v).ok()).filter(|v| *v > 0)
+}
+
+/// Whether a relation might be indexed: a named multipolygon or one with an
+/// address. Its tags are checked again once it's assembled.
+fn wants_relation(tags: &HashMap<&str, &str>) -> bool {
+    tags.get("type") == Some(&"multipolygon")
+        && (tags.contains_key("name") || (tags.contains_key("addr:housenumber") && tags.contains_key("addr:street")))
 }
 
 impl OsmPbf {
@@ -39,178 +52,188 @@ impl OsmPbf {
         sender: Sender<ToIndexPoi>,
         indexer_cache: Arc<IndexerCache>,
     ) -> Self {
-        Self {
-            pbf_path: osm_pbf_path.to_path_buf(),
-            nodes_already_cached,
-            ignore,
-            sender,
-            indexer_cache,
+        Self { pbf_path: osm_pbf_path.to_path_buf(), nodes_already_cached, ignore, sender, indexer_cache }
+    }
+
+    fn send(&self, poi: Option<OsmPoi>, counter: &AtomicUsize) -> u64 {
+        match poi.and_then(OsmPoi::index_poi) {
+            Some(poi) => {
+                counter.fetch_add(1, Ordering::Relaxed);
+                self.sender.send(poi).expect("sender failed");
+                1
+            }
+            None => 0,
         }
     }
 
     pub fn parse_osm(self) -> Result<()> {
-        // This call is very expensive as everything has to be read from the PBF file,
-        // decompressing and parsing.
-        if !self.nodes_already_cached {
+        let relations = !self.ignore.contains(&ParseOsmTypes::Relations);
+        if self.nodes_already_cached {
+            info!("Finding the ways multipolygons need in {}", self.pbf_path.display());
+        } else {
             info!("Generating OSM node map from: {}", self.pbf_path.display());
-            self.cache_nodes_for_ways()?;
         }
+        let needed_ways = self.scan(!self.nodes_already_cached, relations)?;
+        info!("Multipolygon relations need {} ways", needed_ways.len());
 
         let count_ways = AtomicUsize::new(0);
         let count_nodes = AtomicUsize::new(0);
-        let count_dense_nodes = AtomicUsize::new(0);
+        let count_relations = AtomicUsize::new(0);
 
         info!("Parsing POIs");
-
-        // Extract points of interest. Par_map_reduce is used to paralleliase the extraction of
-        // POIs from the OSM PBF file.
         let pois = ElementReader::from_path(&self.pbf_path)?.par_map_reduce(
             |element| match element {
-                // A dense node is a POI (with tags), and has the location embedded in the data.
                 Element::DenseNode(dn) => {
                     if self.ignore.contains(&ParseOsmTypes::DenseNodes) {
                         return 0;
                     }
+                    let osm = OsmRef { osm_type: OsmType::Node, id: dn.id(), version: version(dn.info().map(|i| i.version())) };
                     let tags = dn.tags().collect::<HashMap<_, _>>();
-
-                    if let Some(interesting_poi) = OsmPoi::new_from_node(tags, (dn.lat(), dn.lon()))
-                        .and_then(OsmPoi::index_poi)
-                    {
-                        count_dense_nodes.fetch_add(1, Ordering::Relaxed);
-                        self.sender.send(interesting_poi).expect("sender failed");
-                        1
-                    } else {
-                        0
-                    }
+                    self.send(OsmPoi::new_from_node(tags, (dn.lat(), dn.lon()), osm), &count_nodes)
                 }
-
-                // A node maps something by ID to a location, without tags.
                 Element::Node(node) => {
                     if self.ignore.contains(&ParseOsmTypes::Nodes) {
                         return 0;
                     }
+                    let osm = OsmRef { osm_type: OsmType::Node, id: node.id(), version: version(node.info().version()) };
                     let tags = node.tags().collect::<HashMap<_, _>>();
-
-                    if let Some(interesting_poi) =
-                        OsmPoi::new_from_node(tags, (node.lat(), node.lon()))
-                            .and_then(OsmPoi::index_poi)
-                    {
-                        count_nodes.fetch_add(1, Ordering::Relaxed);
-                        self.sender.send(interesting_poi).expect("sender failed");
-                        1
-                    } else {
-                        0
-                    }
+                    self.send(OsmPoi::new_from_node(tags, (node.lat(), node.lon()), osm), &count_nodes)
                 }
-
-                // A way is a polyline or polygon, like a road.
                 Element::Way(way) => {
+                    let needed = needed_ways.contains(&way.id());
+                    if self.ignore.contains(&ParseOsmTypes::Ways) && !needed {
+                        return 0;
+                    }
+                    // Locations are in the way if the file was written with
+                    // LocationsOnWays, else in the node cache.
+                    let mut points: Vec<(f64, f64)> = way.node_locations().map(|n| (n.lat(), n.lon())).collect();
+                    if points.is_empty() {
+                        points = way
+                            .refs()
+                            .filter_map(|node_id| self.indexer_cache.query_node_location(node_id).ok().flatten())
+                            .collect();
+                    }
+                    if points.is_empty() {
+                        return 0;
+                    }
+                    if needed {
+                        let coords = points.iter().map(|&(lat, lon)| (lon, lat)).collect();
+                        if let Err(e) = self.indexer_cache.buffered_write_item(WofCacheItem::WayCoords(way.id(), coords)) {
+                            warn!("Error caching way {}: {e}", way.id());
+                        }
+                    }
                     if self.ignore.contains(&ParseOsmTypes::Ways) {
                         return 0;
                     }
-
-                    // Attempt to get the location from the way from the underlying way data,
-                    // this requires the way is stored with the option LocationsOnWays enabled.
-                    let mut way_points = way
-                        .node_locations()
-                        .map(|n| (n.lat(), n.lon()))
-                        .collect::<Vec<(f64, f64)>>();
-
-                    // If the location is not present in the way data, attempt to get the location
-                    // from the node_map previously built.
-                    if way_points.is_empty() {
-                        way_points = way
-                            .refs()
-                            .filter_map(|node_id| {
-                                self.indexer_cache
-                                    .query_node_location(node_id)
-                                    .ok()
-                                    .flatten()
-                            })
-                            .collect::<Vec<(f64, f64)>>();
-                    }
-
-                    // Clippy doesn't seem to realise way_points may have been populated
-                    #[allow(clippy::if_not_else)]
-                    if !way_points.is_empty() {
-                        let tags = way.tags().collect::<HashMap<_, _>>();
-                        if let Some(interesting_poi) =
-                            OsmPoi::new_from_way(tags, &way_points).and_then(OsmPoi::index_poi)
-                        {
-                            count_ways.fetch_add(1, Ordering::Relaxed);
-                            self.sender.send(interesting_poi).expect("sender failed");
-                            1
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    }
+                    let osm = OsmRef { osm_type: OsmType::Way, id: way.id(), version: version(way.info().version()) };
+                    let tags = way.tags().collect::<HashMap<_, _>>();
+                    self.send(OsmPoi::new_from_way(tags, &points, osm), &count_ways)
                 }
-
-                // Ignored
                 Element::Relation(_) => 0,
             },
             || 0_u64,
             |a, b| a + b,
         )?;
+        self.indexer_cache.flush()?;
+
+        let pois = if relations {
+            info!("Assembling multipolygons");
+            let relation_pois = ElementReader::from_path(&self.pbf_path)?.par_map_reduce(
+                |element| {
+                    let Element::Relation(relation) = element else {
+                        return 0;
+                    };
+                    let tags = relation.tags().collect::<HashMap<_, _>>();
+                    if !wants_relation(&tags) {
+                        return 0;
+                    }
+                    let mut members = Vec::new();
+                    for member in relation.members() {
+                        if member.member_type != RelMemberType::Way {
+                            continue;
+                        }
+                        let Some(role) = member.role().ok().and_then(Role::parse) else {
+                            continue;
+                        };
+                        match self.indexer_cache.query_way_coords(member.member_id) {
+                            Ok(Some(coords)) => members.push((role, coords)),
+                            // Members outside an extract are missing.
+                            Ok(None) => {}
+                            Err(e) => warn!("Error reading way {}: {e}", member.member_id),
+                        }
+                    }
+                    let Some(shape) = multipolygon::assemble(members) else {
+                        return 0;
+                    };
+                    let osm = OsmRef {
+                        osm_type: OsmType::Relation,
+                        id: relation.id(),
+                        version: version(relation.info().version()),
+                    };
+                    self.send(OsmPoi::new_from_relation(tags, shape, osm), &count_relations)
+                },
+                || 0_u64,
+                |a, b| a + b,
+            )?;
+            pois + relation_pois
+        } else {
+            pois
+        };
 
         let count_ways = count_ways.load(Ordering::Relaxed);
         let count_nodes = count_nodes.load(Ordering::Relaxed);
-        let count_dense_nodes = count_dense_nodes.load(Ordering::Relaxed);
-
-        info!(
-            "Loaded {pois} interesting pois, made up of {count_dense_nodes} dense nodes, {count_nodes} nodes, and {count_ways} ways"
-        );
-
+        let count_relations = count_relations.load(Ordering::Relaxed);
+        info!("Loaded {pois} interesting pois: {count_nodes} nodes, {count_ways} ways and {count_relations} relations");
         if count_ways == 0 {
-            warn!(
-                "No ways found in OSM PBF file. Ensure your pbf file has locations present, see Google: LocationsOnWays"
-            );
+            warn!("No ways found in OSM PBF file. Ensure your pbf file has locations present, see Google: LocationsOnWays");
         }
-
         Ok(())
     }
 
-    fn cache_nodes_for_ways(&self) -> Result<()> {
+    /// Caches node locations if `cache_nodes`, and returns the IDs of ways
+    /// that interesting multipolygon relations have as members.
+    fn scan(&self, cache_nodes: bool, relations: bool) -> Result<HashSet<i64>> {
+        if !cache_nodes && !relations {
+            return Ok(HashSet::new());
+        }
         // Increase buffer to reduce writes to disk
         self.indexer_cache.buffer_size(10_000_000)?;
-
-        // Store a map of nodes to their locations for quick lookups in the second pass.
-        let cached_count = ElementReader::from_path(&self.pbf_path)?.par_map_reduce(
-            |element| match element {
-                Element::Node(node) => {
-                    let location = (node.lat(), node.lon());
-                    let _ = self
-                        .indexer_cache
-                        .buffered_write_item(WofCacheItem::NodeLocation(node.id(), location))
-                        .map_err(|e| {
-                            warn!("Error writing node location to cache: {e}");
-                        });
-                    1
+        let cache = |id: i64, location: (f64, f64)| {
+            if cache_nodes {
+                let _ = self
+                    .indexer_cache
+                    .buffered_write_item(WofCacheItem::NodeLocation(id, location))
+                    .map_err(|e| warn!("Error writing node location to cache: {e}"));
+            }
+        };
+        let needed = ElementReader::from_path(&self.pbf_path)?.par_map_reduce(
+            |element| {
+                match element {
+                    Element::Node(node) => cache(node.id(), (node.lat(), node.lon())),
+                    Element::DenseNode(node) => cache(node.id(), (node.lat(), node.lon())),
+                    Element::Relation(relation) if relations => {
+                        let tags = relation.tags().collect::<HashMap<_, _>>();
+                        if wants_relation(&tags) {
+                            return relation
+                                .members()
+                                .filter(|m| m.member_type == RelMemberType::Way)
+                                .map(|m| m.member_id)
+                                .collect();
+                        }
+                    }
+                    _ => {}
                 }
-                Element::DenseNode(node) => {
-                    let location = (node.lat(), node.lon());
-                    let _ = self
-                        .indexer_cache
-                        .buffered_write_item(WofCacheItem::NodeLocation(node.id(), location))
-                        .map_err(|e| {
-                            warn!("Error writing node location to cache: {e}");
-                        });
-                    1
-                }
-                _ => 0,
+                HashSet::new()
             },
-            || 0_u64,
-            |a, b| a + b,
+            HashSet::new,
+            |mut a, b| {
+                a.extend(b);
+                a
+            },
         )?;
-
         // Revert buffer size to default
         self.indexer_cache.buffer_size_default()?;
-
-        info!("{cached_count} node locations are cached");
-
-        Ok(())
+        Ok(needed)
     }
 }
 
@@ -219,4 +242,5 @@ pub enum ParseOsmTypes {
     Ways,
     Nodes,
     DenseNodes,
+    Relations,
 }

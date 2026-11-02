@@ -29,6 +29,7 @@ path = "src/lib.rs"
 airmail.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+flate2 = "1.1.10"
 crossbeam = { version = "0.8.5", features = ["crossbeam-channel"] }
 deunicode.workspace = true
 env_logger.workspace = true

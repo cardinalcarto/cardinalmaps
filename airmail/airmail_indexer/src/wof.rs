@@ -6,6 +6,7 @@ use sqlx::{
     Pool, Sqlite,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
 };
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Performs simple point-in-polygon queries against the WhosOnFirst database.
@@ -126,6 +127,92 @@ impl WhosOnFirst {
         Ok(rows)
     }
 
+    /// Every name of a place, in every language and with every tag
+    /// (`default`, `preferred`, `variant`, `colloquial`).
+    pub async fn names(&self, id: u64) -> Result<Vec<WofName>> {
+        let id: i64 = id.try_into()?;
+        Ok(sqlx::query_as::<_, WofName>(
+            "SELECT lang, tag, abbr, name FROM main.name WHERE source = 'wof' AND id = ?1",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    /// A place's placetype, if it's in the database.
+    pub async fn placetype(&self, id: u64) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT type FROM main.place WHERE source = 'wof' AND id = ?1")
+            .bind(id.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|(placetype,)| placetype))
+    }
+
+    /// The IDs of the places containing a place, in every branch of its
+    /// hierarchy, not including itself.
+    pub async fn ancestors(&self, id: u64) -> Result<Vec<u64>> {
+        let id: i64 = id.try_into()?;
+        let rows: Vec<(String,)> = sqlx::query_as(
+            r"
+                SELECT DISTINCT parent_id FROM main.hierarchy
+                WHERE child_source = 'wof' AND child_id = ?1 AND parent_id != child_id
+            ",
+        )
+        .bind(id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().filter_map(|(id,)| id.parse().ok()).collect())
+    }
+
+    /// The values of some of a place's properties.
+    pub async fn properties(&self, id: u64, keys: &[&str]) -> Result<HashMap<String, String>> {
+        let id: i64 = id.try_into()?;
+        let rows = sqlx::query_as::<_, WofKV>(
+            "SELECT key, value FROM main.property WHERE source = 'wof' AND id = ?1",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter(|kv| keys.contains(&kv.key.as_str()))
+            .map(|kv| (kv.key, kv.value))
+            .collect())
+    }
+
+    /// A place's geometries by role (`boundary`, `label_position`,
+    /// `centroid`, ...).
+    pub async fn geometries(&self, id: u64) -> Result<HashMap<String, geo_types::Geometry<f64>>> {
+        let id: i64 = id.try_into()?;
+        let rows: Vec<(String, Option<Vec<u8>>)> = sqlx::query_as(
+            "SELECT role, AsGPB(geom) FROM main.geometry WHERE source = 'wof' AND id = ?1",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(role, blob)| Some((role, GpkgWkb(blob?).to_geo().ok()?)))
+            .collect())
+    }
+
+    /// Every place that's a search result, by ID and placetype.
+    pub async fn searchable_places(&self) -> Result<Vec<(u64, String)>> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            r"
+                SELECT id, type FROM main.place
+                WHERE source = 'wof'
+                AND type NOT IN ('planet', 'timezone', 'marketarea', 'campus')
+            ",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id, placetype)| Some((id.parse().ok()?, placetype)))
+            .collect())
+    }
+
     /// Retrieve a flat representation of all polygons in the database.
     /// This call can be 10GB+ of data.
     pub async fn all_polygons(&self) -> Result<Vec<PipWithGeometry>> {
@@ -177,6 +264,28 @@ pub struct ConcisePipResponse {
     pub class: String,
 
     pub r#type: String,
+}
+
+/// One of a place's names.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct WofName {
+    /// ISO 639-3, or `und` for the default name.
+    pub lang: String,
+    /// `default`, `preferred`, `variant` or `colloquial`.
+    pub tag: String,
+    /// Whether it's an abbreviation.
+    pub abbr: bool,
+    pub name: String,
+}
+
+impl WofName {
+    /// Whether the place is searched by this name. Colloquial names are
+    /// nicknames, like Seattle's "Coffee Capital of the World", that would
+    /// make every place there match their words.
+    #[must_use]
+    pub fn is_searchable(&self) -> bool {
+        self.tag != "colloquial"
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, sqlx::FromRow)]

@@ -1,19 +1,22 @@
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use anyhow::Result;
 use crossbeam::channel::Sender;
 use futures_util::future::join_all;
 use serde::Deserialize;
 
+use airmail::poi::is_containing_admin;
+
 use crate::{
     COUNTRIES,
-    cache::{IndexerCache, WofCacheItem},
+    cache::{AdminInfo, IndexerCache, WofCacheItem},
     pip_tree::PipTree,
     wof::{ConcisePipResponse, PipLangsResponse, WhosOnFirst},
 };
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PipResponse {
+    pub admin_ids: Vec<u64>,
     pub admin_names: Vec<String>,
     pub admin_langs: Vec<String>,
 }
@@ -88,43 +91,37 @@ async fn query_pip_inner(
     })
 }
 
-async fn query_names(admin_id: u64, wof_db: &WhosOnFirst) -> Option<(u64, Vec<String>)> {
-    let response = wof_db.place_name_by_id(admin_id).await.ok()?;
-    if response.is_empty() {
-        return None;
+/// An admin's placetype and names, from the cache or the database.
+async fn admin_info(
+    admin_id: u64,
+    indexer_cache: &IndexerCache,
+    to_cache_sender: &Sender<WofCacheItem>,
+    wof_db: &WhosOnFirst,
+) -> Result<AdminInfo> {
+    if let Some(info) = indexer_cache.query_admin_info(admin_id)? {
+        return Ok(info);
     }
-    let names = response
-        .iter()
-        // These languages and filters are also applied in SQL
-        .filter(|place_name| place_name.tag == "preferred" || place_name.tag == "default")
-        .filter(|place_name| match place_name.lang.as_str() {
-            "ara" => true, // Arabic.
-            "dan" => true, // Danish.
-            "deu" => true, // German.
-            "fra" => true, // French.
-            "fin" => true, // Finnish.
-            "hun" => true, // Hungarian.
-            "gre" => true, // Greek.
-            "ita" => true, // Italian.
-            "nld" => true, // Dutch.
-            "por" => true, // Portuguese.
-            "rus" => true, // Russian.
-            "ron" => true, // Romanian.
-            "spa" => true, // Spanish.
-            "eng" => true, // English.
-            "swe" => true, // Swedish.
-            "tam" => true, // Tamil.
-            "tur" => true, // Turkish.
-            "zho" => true, // Chinese.
-            _ => false,
-        })
-        .map(|place_name| deunicode::deunicode(&place_name.name).to_lowercase())
-        .collect::<HashSet<_>>()
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
+    let info = AdminInfo {
+        placetype: wof_db.placetype(admin_id).await?.unwrap_or_default(),
+        names: wof_db.names(admin_id).await?,
+    };
+    to_cache_sender.send(WofCacheItem::AdminInfo(admin_id, info.clone())).unwrap();
+    Ok(info)
+}
 
-    Some((admin_id, names))
+/// The ancestors of an admin, from the cache or the database.
+async fn ancestors(
+    admin_id: u64,
+    indexer_cache: &IndexerCache,
+    to_cache_sender: &Sender<WofCacheItem>,
+    wof_db: &WhosOnFirst,
+) -> Result<Vec<u64>> {
+    if let Some(ancestors) = indexer_cache.query_ancestors(admin_id)? {
+        return Ok(ancestors);
+    }
+    let ancestors = wof_db.ancestors(admin_id).await?;
+    to_cache_sender.send(WofCacheItem::Ancestors(admin_id, ancestors.clone())).unwrap();
+    Ok(ancestors)
 }
 
 async fn query_langs(country_id: u64, wof_db: &WhosOnFirst) -> Option<(u64, Vec<String>)> {
@@ -136,6 +133,9 @@ async fn query_langs(country_id: u64, wof_db: &WhosOnFirst) -> Option<(u64, Vec<
     Some((country_id, langs))
 }
 
+/// The admins containing a point, with the names a POI there is searched
+/// by: every name in the languages spoken there, English, and the default
+/// names, abbreviations included.
 pub(crate) async fn query_pip(
     indexer_cache: &IndexerCache,
     to_cache_sender: Sender<WofCacheItem>,
@@ -143,54 +143,46 @@ pub(crate) async fn query_pip(
     wof_db: &WhosOnFirst,
     pip_tree: &Option<PipTree<ConcisePipResponse>>,
 ) -> Result<PipResponse> {
-    let wof_ids = query_pip_inner(
-        s2cell,
-        indexer_cache,
-        to_cache_sender.clone(),
-        wof_db,
-        pip_tree,
-    )
-    .await?;
-    let mut response = PipResponse::default();
-    let mut admin_name_futures = vec![];
-    let mut lang_futures = vec![];
+    let wof_ids = query_pip_inner(s2cell, indexer_cache, to_cache_sender.clone(), wof_db, pip_tree).await?;
 
-    // Query names for the admin areas
-    for admin_id in wof_ids.all_admin_ids {
-        if COUNTRIES.contains(&admin_id) {
+    // The point-in-polygon lookup skips some placetypes, such as counties,
+    // which the hierarchy has.
+    let mut admin_ids: BTreeSet<u64> = wof_ids.all_admin_ids.iter().copied().collect();
+    let ancestor_lists = join_all(
+        wof_ids.all_admin_ids.iter().map(|id| ancestors(*id, indexer_cache, &to_cache_sender, wof_db)),
+    )
+    .await;
+    for list in ancestor_lists {
+        admin_ids.extend(list?);
+    }
+    let country = wof_ids.country.or_else(|| admin_ids.iter().find(|id| COUNTRIES.contains(*id)).copied());
+
+    let mut response = PipResponse::default();
+    if let Some(country_id) = country {
+        if let Ok(Some(langs)) = indexer_cache.query_languages_cache(country_id) {
+            response.admin_langs = langs;
+        } else if let Some((_, langs)) = query_langs(country_id, wof_db).await {
+            to_cache_sender.send(WofCacheItem::Langs(country_id, langs.clone())).unwrap();
+            response.admin_langs = langs;
+        }
+    }
+
+    let infos = join_all(admin_ids.iter().map(|id| admin_info(*id, indexer_cache, &to_cache_sender, wof_db))).await;
+    let mut admin_names = BTreeSet::new();
+    for (id, info) in admin_ids.iter().zip(infos) {
+        let info = info?;
+        if !is_containing_admin(&info.placetype) {
             continue;
         }
-
-        if let Ok(Some(names)) = indexer_cache.query_names_cache(admin_id) {
-            response.admin_names.extend(names);
-        } else {
-            admin_name_futures.push(query_names(admin_id, wof_db));
+        response.admin_ids.push(*id);
+        for name in info.names {
+            if name.is_searchable()
+                && (name.lang == "und" || name.lang == "eng" || response.admin_langs.contains(&name.lang))
+            {
+                admin_names.insert(name.name);
+            }
         }
     }
-
-    // Query languages for the country
-    if let Some(country_id) = wof_ids.country {
-        if let Ok(Some(langs)) = indexer_cache.query_languages_cache(country_id) {
-            response.admin_langs.extend(langs);
-        } else {
-            lang_futures.push(query_langs(country_id, wof_db));
-        }
-    }
-
-    // Drive the futures to completion
-    for (admin_id, names) in join_all(admin_name_futures).await.into_iter().flatten() {
-        to_cache_sender
-            .send(WofCacheItem::Names(admin_id, names.clone()))
-            .unwrap();
-        response.admin_names.extend(names);
-    }
-
-    for (country_id, langs) in join_all(lang_futures).await.into_iter().flatten() {
-        to_cache_sender
-            .send(WofCacheItem::Langs(country_id, langs.clone()))
-            .unwrap();
-        response.admin_langs.extend(langs);
-    }
-
+    response.admin_names = admin_names.into_iter().collect();
     Ok(response)
 }

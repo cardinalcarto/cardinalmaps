@@ -4,7 +4,7 @@
 #
 #   k8s/release.sh init
 #   k8s/release.sh bootstrap-pois PLANET.osm.pbf [REPLICATION_URL]
-#   k8s/release.sh build EXTRACT.osm.pbf [--id ID] [--wof-db FILE]
+#   k8s/release.sh build EXTRACT.osm.pbf [--id ID] [--wof-db FILE] [--qrank FILE]
 #   k8s/release.sh promote ID [--query Q]
 #   k8s/release.sh list
 #   k8s/release.sh prune [--keep N] [--yes]
@@ -127,11 +127,12 @@ cmd_bootstrap_pois() {
 }
 
 cmd_build() {
-  local extract='' id='' wof=$root/wof/whosonfirst-data-admin-latest.spatial.db
+  local extract='' id='' wof=$root/wof/whosonfirst-data-admin-latest.spatial.db qrank=$root/qrank/qrank.csv.gz
   while [[ $# -gt 0 ]]; do
     case $1 in
       --id) id=$2; shift 2 ;;
       --wof-db) wof=$2; shift 2 ;;
+      --qrank) qrank=$2; shift 2 ;;
       -*) usage ;;
       *) [[ -z $extract ]] || usage; extract=$1; shift ;;
     esac
@@ -141,6 +142,12 @@ cmd_build() {
   [[ -f $wof ]] || die "no Who's On First database at $wof; pass --wof-db"
   extract=$(realpath "$extract")
   wof=$(realpath "$wof")
+  local qrank_args=()
+  if [[ -f $qrank ]]; then
+    qrank_args=(--qrank="$(realpath "$qrank")")
+  else
+    echo "No QRank at $qrank; POIs' Wikidata entities will all count the same." >&2
+  fi
   command -v dagger >/dev/null || die "dagger isn't installed"
   command -v podman >/dev/null || die "podman isn't installed"
   lock_releases
@@ -168,9 +175,12 @@ cmd_build() {
   (cd "$repo" && DATABASE_URL=$(database_url "database:$db_port") dagger -m data_pipeline api call build \
     --osm="$extract" --wof-db="$wof" \
     --database-url=env://DATABASE_URL --database="tcp://localhost:$db_port" \
-    -o "$partial")
+    "${qrank_args[@]}" -o "$partial")
   [[ -s $partial/tiles.mbtiles ]] || die "the build has no tiles.mbtiles; left in $partial"
   [[ -f $partial/index/meta.json ]] || die "the build has no geocoder index; left in $partial"
+  local schema_version
+  schema_version=$(jq -er .schema_version "$partial/index/airmail-index.json") ||
+    die "the geocoder index has no schema version; left in $partial"
   # Small extracts may have no language with enough POIs for a model.
   mkdir -p "$partial/categories"
   # Pods run as nobody.
@@ -189,9 +199,12 @@ cmd_build() {
     --arg checkpoint_ts "$checkpoint_ts" \
     --arg commit "$commit" \
     --argjson dirty "$dirty" \
+    --argjson schema_version "$schema_version" \
+    --argjson qrank "$([[ ${#qrank_args[@]} -gt 0 ]] && echo true || echo false)" \
     '{id: $id, built_at: $built_at,
       extract: {path: $path, size: $size, replication_timestamp: $extract_ts},
       poi_checkpoint: {sequence: $sequence, timestamp: $checkpoint_ts},
+      index: {schema_version: $schema_version, qrank: $qrank},
       git: {commit: $commit, dirty: $dirty}}' >"$partial/manifest.json"
   chmod a+r "$partial/manifest.json"
   mv "$partial" "$dest"
@@ -233,9 +246,9 @@ cmd_promote() {
   else
     curl -fsS -m 20 "https://$host/tiles/catalog" | jq -e '.tiles.basemap' >/dev/null ||
       die "https://$host/tiles/catalog doesn't list basemap"
-    curl -fsS -m 20 -G "https://$host/geocoder/search" --data-urlencode "q=$query" | jq -e '.features | length > 0' >/dev/null ||
-      die "https://$host/geocoder/search found nothing for \"$query\"; try another --query"
-    echo "Serving $id at https://$host/tiles/basemap and https://$host/geocoder/search"
+    curl -fsS -m 20 -G "https://$host/geocoder/v1/search" --data-urlencode "q=$query" | jq -e '.results | length > 0' >/dev/null ||
+      die "https://$host/geocoder/v1/search found nothing for \"$query\"; try another --query"
+    echo "Serving $id at https://$host/tiles/basemap and https://$host/geocoder/v1/search"
   fi
 }
 

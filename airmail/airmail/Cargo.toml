@@ -8,6 +8,7 @@ rust-version.workspace = true
 anyhow.workspace = true
 deunicode.workspace = true
 geo.workspace = true
+geozero = { version = "0.15.1", default-features = false, features = ["with-geo", "with-wkb"] }
 itertools = "0.15.0"
 lazy_static.workspace = true
 lingua.workspace = true

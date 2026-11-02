@@ -7,19 +7,16 @@ use std::sync::Arc;
 use std::path::PathBuf;
 
 use airmail::categories::{CategoryModels, DEFAULT_INCLUDE_THRESHOLD};
-use airmail::index::AirmailIndex;
+use airmail::index::{self, AirmailIndex};
+use airmail_service::api::AppState;
 use anyhow::Result;
-use api::{AppState, search};
-use axum::{Router, http::HeaderValue, routing::get};
+use axum::http::HeaderValue;
 use clap::Parser;
 use env_logger::Env;
 use log::{debug, info, warn};
 use tokio::net::TcpListener;
 use tokio::select;
 use tower_http::cors::CorsLayer;
-
-mod api;
-mod error;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -70,10 +67,13 @@ async fn main() -> Result<()> {
         }
         None => CategoryModels::default(),
     };
+    let documents = index.num_docs().await?;
     let state = Arc::new(AppState {
         index,
         categories,
         category_include_threshold: args.category_include_threshold,
+        schema_version: index::schema_version(std::path::Path::new(&args.index))?,
+        documents,
     });
 
     let mut cors = CorsLayer::new();
@@ -81,12 +81,10 @@ async fn main() -> Result<()> {
         cors = cors.allow_origin(origin.parse::<HeaderValue>()?);
     }
 
-    info!("Loaded {} docs from index", state.index.num_docs().await?);
-    let app = Router::new()
-        .route("/search", get(search).with_state(state))
-        .layer(cors);
+    info!("Loaded {documents} docs from index");
+    let app = airmail_service::router(state).layer(cors);
 
-    info!("Listening at: {}/search?q=query", args.bind);
+    info!("Listening at: {}/v1/search?q=query", args.bind);
     let listener = TcpListener::bind(args.bind).await?;
     let server = axum::serve(listener, app.into_make_service()).into_future();
 

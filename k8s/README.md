@@ -19,7 +19,7 @@ Everything runs in the `cardinal` namespace, behind one public hostname:
 | Path | Service |
 | --- | --- |
 | `/tiles/basemap/{z}/{x}/{y}` | [Martin](https://maplibre.org/martin/) serving the release's `tiles.mbtiles` (TileJSON at `/tiles/basemap`) |
-| `/geocoder/search?q=…` | `airmail_service` serving the release's `index/` and `categories/` |
+| `/geocoder/v1/search?q=…` | `airmail_service` serving the release's `index/` and `categories/` ([API](../airmail/airmail_service/openapi.yaml)) |
 | `/routing/…` | reserved for a routing engine |
 
 A Caddy proxy ([cardinal/proxy/Caddyfile](cardinal/proxy/Caddyfile)) routes
@@ -73,6 +73,7 @@ A release is a directory built from one OSM extract by the data pipeline
 /var/lib/cardinal/
   planets/                 extracts, including the one the POI database was bootstrapped from
   wof/                     Who's On First databases for builds
+  qrank/qrank.csv.gz       QRank, for POI importance (https://qrank.wmcloud.org)
   releases/<id>/           tiles.mbtiles, index/, categories/, manifest.json
 ```
 
@@ -93,20 +94,28 @@ k8s/release.sh promote planet-20261102
    identifiers;
 2. runs the pipeline's `build` against the database, through a port-forward
    on `localhost:5433` (`CARDINAL_DB_PORT`), into `releases/.<id>.partial`;
-3. checks the outputs, writes `manifest.json` (extract, POI checkpoint, git
-   commit), and renames the directory to `releases/<id>`.
+3. checks the outputs, writes `manifest.json` (extract, POI checkpoint, the
+   index's schema version, git commit), and renames the directory to
+   `releases/<id>`.
 
 The ID defaults to the extract's name and date (`planet-20261102`,
 `washington-20261101`); pass `--id` to choose another. `--wof-db` defaults to
-`wof/whosonfirst-data-admin-latest.spatial.db` in the data directory. Set
+`wof/whosonfirst-data-admin-latest.spatial.db` in the data directory, whose
+administrative areas are all indexed, and `--qrank` to `qrank/qrank.csv.gz`,
+which is used if it's there. Set
 `DAGGER_ENGINE` if the pipeline's README says you need to. Only one build or
 prune runs at a time.
 
 `promote` only accepts finished releases (with a `manifest.json`). It writes the
 overlay's `releases.env`, applies the overlay, waits for the rollout, and
-checks that `/tiles/catalog` lists `basemap` and that `/geocoder/search`
+checks that `/tiles/catalog` lists `basemap` and that `/geocoder/v1/search`
 finds something for `--query` (default `park`). To roll back, promote the
 previous release.
+
+The geocoder only reads indexes of the schema version it was built for, which
+the manifest records, and exits at startup with any other. When a change
+bumps the version, deploy the new image and promote a release built at that
+commit together; the old pods keep serving until both are ready.
 
 `list` shows finished releases and which one is live. `prune --keep N`
 deletes all but the newest N (default 2), never the live one or the one the

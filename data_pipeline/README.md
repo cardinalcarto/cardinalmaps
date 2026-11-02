@@ -26,9 +26,14 @@ Omit the first line if you're using docker instead of podman.
   use host `database` in the URL. A patched extract is reused until the
   database's latest checkpoint changes.
 - `--wof-db` is a Who's On First SpatiaLite database covering the extract.
+  Every administrative area in it is indexed for search, so for a regional
+  deployment use one covering the region, and the planet's for a global one.
   Point-in-polygon caches built from it are kept in an `airmail-wof-<digest>`
   cache volume, which the engine's garbage collection can reclaim once the
   database is replaced.
+- `--qrank=./qrank.csv.gz` ranks POIs with Wikidata entities by their
+  Wikipedia articles' page views, from [QRank](https://qrank.wmcloud.org).
+  Without it, having an entity counts the same for every POI.
 - `--pip-tree=false` uses SpatiaLite lookups instead of an in-memory polygon
   tree, which is slower for the planet but avoids the tree's ~10GB of memory.
 

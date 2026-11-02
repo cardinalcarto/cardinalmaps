@@ -81,6 +81,11 @@ func (m *DataPipeline) Build(
 	// lookups; see PipTree on Index.
 	// +default=true
 	pipTree bool,
+	// QRank (qrank.csv.gz from https://qrank.wmcloud.org), which ranks POIs
+	// with Wikidata entities by their articles' page views. Without it,
+	// having an entity counts the same for every POI.
+	// +optional
+	qrank *dagger.File,
 ) (*dagger.Directory, error) {
 	patched := osm
 	if databaseUrl != nil {
@@ -93,7 +98,7 @@ func (m *DataPipeline) Build(
 	if err != nil {
 		return nil, err
 	}
-	index, err := m.index(ctx, patched, wofDb, pipTree)
+	index, err := m.index(ctx, patched, wofDb, pipTree, qrank)
 	if err != nil {
 		return nil, err
 	}
@@ -315,6 +320,11 @@ func (m *DataPipeline) Index(
 	// uses around 10GB of memory and takes minutes to build the first time.
 	// +default=true
 	pipTree bool,
+	// QRank (qrank.csv.gz from https://qrank.wmcloud.org), which ranks POIs
+	// with Wikidata entities by their articles' page views. Without it,
+	// having an entity counts the same for every POI.
+	// +optional
+	qrank *dagger.File,
 ) (*dagger.Directory, error) {
 	if databaseUrl != nil {
 		var err error
@@ -322,20 +332,26 @@ func (m *DataPipeline) Index(
 			return nil, err
 		}
 	}
-	return m.index(ctx, osm, wofDb, pipTree)
+	return m.index(ctx, osm, wofDb, pipTree, qrank)
 }
 
-func (m *DataPipeline) index(ctx context.Context, osm *dagger.File, wofDb *dagger.File, pipTree bool) (*dagger.Directory, error) {
+// Indexes the extract's POIs and addresses, then every administrative area
+// in the Who's On First database.
+func (m *DataPipeline) index(ctx context.Context, osm *dagger.File, wofDb *dagger.File, pipTree bool, qrank *dagger.File) (*dagger.Directory, error) {
 	ctr, flags, err := m.withWof(ctx, m.AirmailIndexer(), wofDb, pipTree)
 	if err != nil {
 		return nil, err
 	}
-	cmd := append([]string{"indexer", "--index=/out/index"}, flags...)
-	cmd = append(cmd, "load-osm-pbf", "/input/input.osm.pbf")
+	if qrank != nil {
+		ctr = ctr.WithMountedFile("/input/qrank.csv.gz", qrank)
+		flags = append(flags, "--qrank=/input/qrank.csv.gz")
+	}
+	indexer := append([]string{"indexer", "--index=/out/index"}, flags...)
 	ctr, err = ctr.
 		WithMountedFile("/input/input.osm.pbf", osm).
 		WithExec([]string{"mkdir", "-p", "/out/index"}).
-		WithExec(cmd).
+		WithExec(append(append([]string{}, indexer...), "load-osm-pbf", "/input/input.osm.pbf")).
+		WithExec(append(append([]string{}, indexer...), "load-wof")).
 		Sync(ctx)
 	if err != nil {
 		return nil, err

@@ -1,7 +1,9 @@
 use airmail::{
+    geometry, importance,
     index::{AirmailIndex, AirmailIndexWriter},
-    poi::{SchemafiedPoi, ToIndexPoi},
+    poi::{Kind, SchemafiedPoi, ToIndexPoi},
 };
+use s2::{cellid::CellID, latlng::LatLng};
 use anyhow::Result;
 use crossbeam::channel::{Receiver, Sender};
 use futures_util::future::join_all;
@@ -20,6 +22,7 @@ use tokio::{
 use crate::{
     cache::{IndexerCache, WofCacheItem},
     pip_tree::PipTree,
+    qrank::QRank,
     query_pip,
     wof::{ConcisePipResponse, WhosOnFirst},
 };
@@ -45,8 +48,10 @@ pub struct IndexSink {
 impl IndexSink {
     pub fn new(index_path: &Path, source: &str) -> Result<Self> {
         let mut index = AirmailIndex::create(index_path)?;
+        let mut writer = index.writer()?;
+        writer.delete_source(source);
         Ok(Self {
-            writer: index.writer()?,
+            writer,
             source: source.to_string(),
         })
     }
@@ -66,6 +71,7 @@ pub struct ImporterBuilder {
     admin_cache_path: Option<PathBuf>,
     wof_db_path: PathBuf,
     pip_tree_path: Option<PathBuf>,
+    qrank_path: Option<PathBuf>,
 }
 
 impl ImporterBuilder {
@@ -74,7 +80,14 @@ impl ImporterBuilder {
             admin_cache_path: None,
             wof_db_path: wof_db_path.to_path_buf(),
             pip_tree_path: None,
+            qrank_path: None,
         })
+    }
+
+    /// QRank, for the importance of POIs with Wikidata entities.
+    pub fn qrank(mut self, qrank: &Path) -> Self {
+        self.qrank_path = Some(qrank.to_path_buf());
+        self
     }
 
     pub fn admin_cache(mut self, admin_cache: &Path) -> Self {
@@ -104,7 +117,9 @@ impl ImporterBuilder {
             None
         };
 
-        Importer::new(admin_cache, wof_db, pip_tree).await
+        let qrank = self.qrank_path.map(|path| QRank::load(&path)).transpose()?.map(Arc::new);
+
+        Importer::new(admin_cache, wof_db, pip_tree, qrank).await
     }
 }
 
@@ -112,6 +127,7 @@ pub struct Importer {
     indexer_cache: Arc<IndexerCache>,
     wof_db: WhosOnFirst,
     pip_tree: Option<PipTree<ConcisePipResponse>>,
+    qrank: Option<Arc<QRank>>,
 }
 
 impl Importer {
@@ -119,12 +135,18 @@ impl Importer {
         indexer_cache: IndexerCache,
         wof_db: WhosOnFirst,
         pip_tree: Option<PipTree<ConcisePipResponse>>,
+        qrank: Option<Arc<QRank>>,
     ) -> Result<Self> {
         Ok(Self {
             indexer_cache: Arc::new(indexer_cache),
             wof_db,
             pip_tree,
+            qrank,
         })
+    }
+
+    pub fn wof_db(&self) -> &WhosOnFirst {
+        &self.wof_db
     }
 
     pub async fn run_import(
@@ -185,6 +207,7 @@ impl Importer {
             let indexer_cache = self.indexer_cache.clone();
             let wof_db = self.wof_db.clone();
             let pip_tree = self.pip_tree.clone();
+            let qrank = self.qrank.clone();
 
             handles.push(spawn(async move {
                 let mut counter = 0;
@@ -204,6 +227,7 @@ impl Importer {
                         to_cache_sender.clone(),
                         &wof_db,
                         &pip_tree,
+                        qrank.as_deref(),
                     )
                     .await
                     {
@@ -239,13 +263,26 @@ impl Importer {
         to_cache_sender: Sender<WofCacheItem>,
         wof_db: &WhosOnFirst,
         pip_tree: &Option<PipTree<ConcisePipResponse>>,
+        qrank: Option<&QRank>,
     ) -> Result<WithLanguages> {
+        let center = CellID::from(LatLng::from_degrees(poi.center.y(), poi.center.x()));
         let pip_response =
-            query_pip::query_pip(indexer_cache, to_cache_sender, poi.s2cell, wof_db, pip_tree)
+            query_pip::query_pip(indexer_cache, to_cache_sender, center.0, wof_db, pip_tree)
                 .await?;
-        for admin in pip_response.admin_names {
-            poi.admins.push(admin);
-        }
+        poi.admin_ids = pip_response.admin_ids;
+        poi.admin_names = pip_response.admin_names;
+        poi.importance = match poi.kind {
+            Kind::Address => importance::ADDRESS_IMPORTANCE,
+            _ => {
+                let wikidata = poi.tag("wikidata");
+                importance::poi_importance(importance::PoiSignals {
+                    has_wikidata: wikidata.is_some(),
+                    qrank: wikidata.zip(qrank).and_then(|(id, qrank)| qrank.get(id)),
+                    area_m2: geometry::area_m2(&poi.geometry),
+                    transit_stop: importance::is_transit_stop(&poi.tags),
+                })
+            }
+        };
         for lang in &pip_response.admin_langs {
             if let Ok(iso) = IsoCode639_3::from_str(lang) {
                 poi.languages.push(Language::from_iso_code_639_3(&iso))

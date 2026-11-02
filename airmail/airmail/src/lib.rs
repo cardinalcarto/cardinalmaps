@@ -7,6 +7,8 @@ extern crate lazy_static;
 pub mod categories;
 pub mod cuisine;
 pub mod error;
+pub mod geometry;
+pub mod importance;
 pub mod index;
 pub mod poi;
 pub mod query;

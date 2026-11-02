@@ -44,15 +44,18 @@ spec:
               readOnly: true
           # The service only listens once the index and models are loaded.
           startupProbe:
-            tcpSocket:
+            httpGet:
+              path: /health
               port: http
             periodSeconds: 5
             failureThreshold: 120
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health
               port: http
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health
               port: http
           resources:
             requests:

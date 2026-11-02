@@ -1,7 +1,10 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::pedantic)]
 
+use airmail::index::AirmailIndex;
+use airmail_indexer::load_wof::load_wof;
 use airmail_indexer::osm_pbf::{OsmPbf, ParseOsmTypes};
+use airmail_indexer::wof::WhosOnFirst;
 use airmail_indexer::{ImporterBuilder, importer::IndexSink};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -39,6 +42,12 @@ struct Args {
     #[clap(long, short)]
     pip_tree: Option<PathBuf>,
 
+    /// QRank (`qrank.csv` or `qrank.csv.gz` from https://qrank.wmcloud.org),
+    /// which ranks POIs with Wikidata entities by their articles' page views.
+    /// Without it, having an entity counts the same for every POI.
+    #[clap(long)]
+    qrank: Option<PathBuf>,
+
     /// The loader to use for importing data.
     #[clap(subcommand)]
     loader: Loader,
@@ -60,14 +69,26 @@ enum Loader {
         #[clap(long)]
         ignore: Vec<ParseOsmTypes>,
     },
+    /// Index every Who's On First place in `--wof-db` that's a search
+    /// result, as an administrative area.
+    LoadWof,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(Env::default().default_filter_or("info,geo=error")).init();
 
     let args = Args::parse();
     let mut handles = vec![];
+
+    if args.loader == Loader::LoadWof {
+        let wof = WhosOnFirst::new(&args.wof_db).await?;
+        let mut index = AirmailIndex::create(&args.index)?;
+        let mut writer = index.writer()?;
+        writer.delete_source("wof");
+        load_wof(&wof, &mut writer).await?;
+        return writer.commit();
+    }
 
     // Setup the import pipeline
     let sink = IndexSink::new(&args.index, "osm")?;
@@ -77,6 +98,9 @@ async fn main() -> Result<()> {
     }
     if let Some(pip_tree) = args.pip_tree {
         import_builder = import_builder.pip_tree_cache(&pip_tree);
+    }
+    if let Some(qrank) = args.qrank {
+        import_builder = import_builder.qrank(&qrank);
     }
     let importer = import_builder.build().await?;
 
@@ -103,6 +127,7 @@ async fn main() -> Result<()> {
                 e
             })
         }
+        Loader::LoadWof => unreachable!("handled above"),
     }));
 
     // Spawn the importer

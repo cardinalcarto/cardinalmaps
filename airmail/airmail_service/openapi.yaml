@@ -1,0 +1,583 @@
+openapi: 3.1.0
+info:
+  title: Airmail geocoder
+  version: 1.0.0
+  description: |
+    Forward geocoding over OpenStreetMap POIs and addresses and Who's On First
+    administrative areas.
+
+    Within `/v1`, changes are additive: new optional parameters, new optional
+    response fields, and new values in enums documented as open. Clients must
+    ignore unknown fields and treat unknown enum values as unrecognized
+    rather than as errors.
+  license:
+    name: MIT OR Apache-2.0
+servers:
+  - url: /
+paths:
+  /v1/search:
+    get:
+      operationId: search
+      summary: Search for places by text.
+      description: |
+        Every word of `q` must match the result's name, address or the names of
+        the administrative areas containing it, so `starbucks bellevue` finds
+        Starbucks in Bellevue. Results are ranked by how well they match,
+        weighted by importance, most relevant first.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: The search text.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
+        - name: lang
+          in: query
+          description: |
+            The language of the query and of the response, as a BCP 47 tag such
+            as `de-CH`. Display names prefer this language, then the place's
+            default name. Categorical search only runs for languages with a
+            model; see `query.category_language` in the response.
+          schema:
+            type: string
+            examples: [en, de-CH]
+        - name: prefix
+          in: query
+          description: |
+            Match the last word of `q` as a prefix, for search-as-you-type.
+          schema:
+            type: boolean
+            default: false
+        - name: typos
+          in: query
+          description: |
+            Tolerate typos in every word of `q`: one edit in words of 5 to 8
+            characters, two in longer words. Exact spellings still rank first.
+          schema:
+            type: boolean
+            default: false
+        - name: bbox
+          in: query
+          description: |
+            Only return results whose shape intersects this box, as
+            `min_lon,min_lat,max_lon,max_lat` in WGS 84 degrees. Boxes crossing
+            the antimeridian have `min_lon > max_lon`.
+          style: form
+          explode: false
+          schema:
+            type: array
+            minItems: 4
+            maxItems: 4
+            items:
+              type: number
+          examples:
+            seattle:
+              value: [-122.46, 47.48, -122.22, 47.74]
+        - name: within
+          in: query
+          description: |
+            Only return results inside this administrative area, by its result
+            ID. The area itself isn't returned.
+          schema:
+            type: string
+            pattern: '^wof:[0-9]+$'
+            examples: ['wof:101730401']
+        - name: kind
+          in: query
+          description: Only return results of these kinds.
+          style: form
+          explode: false
+          schema:
+            type: array
+            minItems: 1
+            uniqueItems: true
+            items:
+              $ref: '#/components/schemas/Kind'
+        - name: tags
+          in: query
+          description: |
+            Only return results with all of these category tags, as
+            `key=value`, such as `amenity=cafe` or `cuisine=vietnamese`.
+            Cuisines match their more specific cuisines too, so
+            `cuisine=asian` finds `cuisine=vietnamese`.
+          style: form
+          explode: false
+          schema:
+            type: array
+            minItems: 1
+            items:
+              type: string
+              pattern: '^[^=,]+=[^=,]+$'
+        - name: limit
+          in: query
+          description: The most results to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: geometry
+          in: query
+          description: |
+            `shape` returns each result's stored shape in `feature.geometry`;
+            `point` returns only its `center` there, for smaller responses.
+          schema:
+            type: string
+            enum: [shape, point]
+            default: shape
+        - name: category_include_threshold
+          in: query
+          description: |
+            Overrides the service's minimum model confidence for returning
+            places that match the query only by category. For tuning; may be
+            removed without a new API version.
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+      responses:
+        '200':
+          description: Results, most relevant first. There may be none.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          description: A parameter is missing or invalid.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          description: The search failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /health:
+    get:
+      operationId: health
+      summary: Whether the service is ready to search.
+      responses:
+        '200':
+          description: The index and models are loaded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /openapi.yaml:
+    get:
+      operationId: openapi
+      summary: This description of the API.
+      responses:
+        '200':
+          description: The OpenAPI document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+components:
+  schemas:
+    SearchResponse:
+      type: object
+      required: [query, results]
+      properties:
+        query:
+          $ref: '#/components/schemas/QueryEcho'
+        results:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/Result'
+
+    QueryEcho:
+      description: The request as the service understood it, with defaults filled in.
+      type: object
+      required: [text, lang, prefix, typos, bbox, within, kind, tags, limit, geometry, category_language, categories]
+      properties:
+        text:
+          type: string
+          description: '`q` as given.'
+        lang:
+          type: [string, 'null']
+        prefix:
+          type: boolean
+        typos:
+          type: boolean
+        bbox:
+          oneOf:
+            - $ref: '#/components/schemas/BBox'
+            - type: 'null'
+        within:
+          type: [string, 'null']
+        kind:
+          description: The kinds searched; all of them if `kind` wasn't given.
+          type: array
+          items:
+            $ref: '#/components/schemas/Kind'
+        tags:
+          type: array
+          items:
+            type: string
+        limit:
+          type: integer
+        geometry:
+          type: string
+          enum: [shape, point]
+        category_language:
+          description: ISO 639-3 code of the categorical model used, if any.
+          type: [string, 'null']
+          examples: [eng]
+        categories:
+          description: What the categorical model understood the query to ask for, if a model ran.
+          oneOf:
+            - $ref: '#/components/schemas/QueryCategories'
+            - type: 'null'
+
+    QueryCategories:
+      type: object
+      required: [categories, food, cuisines, diets]
+      properties:
+        categories:
+          description: POI category tags, most likely first.
+          type: array
+          items:
+            $ref: '#/components/schemas/ScoredValue'
+        food:
+          description: Probability that the query is for a place that serves food.
+          $ref: '#/components/schemas/Probability'
+        cuisines:
+          description: Cuisine values, keeping only the most specific confident ones.
+          type: array
+          items:
+            $ref: '#/components/schemas/ScoredValue'
+        diets:
+          description: Diet keys such as `vegan`.
+          type: array
+          items:
+            $ref: '#/components/schemas/ScoredValue'
+
+    ScoredValue:
+      type: object
+      required: [value, confidence]
+      properties:
+        value:
+          type: string
+          examples: [amenity=cafe, vietnamese, vegan]
+        confidence:
+          $ref: '#/components/schemas/Probability'
+
+    Probability:
+      type: number
+      minimum: 0
+      maximum: 1
+
+    Kind:
+      description: |
+        What a result is. Open: clients must accept values they don't know.
+        `poi`: a named OSM feature. `address`: an OSM address without a name.
+        `admin`: a Who's On First administrative area.
+      type: string
+      enum: [poi, address, admin]
+
+    Result:
+      type: object
+      required: [id, kind, name, center, address, admins, importance, score, poi, osm, wof, feature]
+      properties:
+        id:
+          description: |
+            Identifies the result across releases where the source allows:
+            `poi:<id>` for OSM POIs with a stable identifier, `wof:<id>` for
+            administrative areas, and `osm:<type>/<id>` otherwise, which
+            changes if the element is deleted and recreated.
+          type: string
+          pattern: '^(poi:[0-9]+|wof:[0-9]+|osm:(node|way|relation)/[0-9]+)$'
+          examples: ['poi:51234', 'wof:101730401', 'osm:node/2470190871']
+        kind:
+          $ref: '#/components/schemas/Kind'
+        name:
+          description: |
+            The display name, in `lang` if the place has a name in it. Null
+            only for addresses, which are described by `address`.
+          type: [string, 'null']
+        center:
+          description: |
+            A representative point inside the shape (on it, for lines): where
+            to put a pin or label, and what distance is measured from.
+          $ref: '#/components/schemas/Position'
+        address:
+          oneOf:
+            - $ref: '#/components/schemas/Address'
+            - type: 'null'
+        admins:
+          description: |
+            The administrative areas containing the result, smallest first.
+            For an administrative area, its ancestors.
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminRef'
+        importance:
+          description: |
+            How prominent the place is regardless of the query, from its type,
+            population, Wikidata entry and size. Comparable across responses
+            from the same release.
+          type: number
+          minimum: 0
+          maximum: 1
+        score:
+          description: |
+            Relevance to this query, including importance. Only comparable
+            between results of one response.
+          type: number
+          minimum: 0
+        poi:
+          description: Cardinal's stable identifier for OSM POIs, as in the map tiles' feature IDs.
+          oneOf:
+            - $ref: '#/components/schemas/PoiRef'
+            - type: 'null'
+        osm:
+          description: The OSM element the result comes from, if any.
+          oneOf:
+            - $ref: '#/components/schemas/OsmRef'
+            - type: 'null'
+        wof:
+          description: The Who's On First place the result comes from, if any.
+          oneOf:
+            - $ref: '#/components/schemas/WofRef'
+            - type: 'null'
+        feature:
+          $ref: '#/components/schemas/Feature'
+
+    Address:
+      description: From the element's `addr:*` tags. Administrative areas are in `admins`.
+      type: object
+      required: [housenumber, street, unit, postcode]
+      properties:
+        housenumber:
+          type: [string, 'null']
+        street:
+          type: [string, 'null']
+        unit:
+          type: [string, 'null']
+        postcode:
+          type: [string, 'null']
+
+    AdminRef:
+      type: object
+      required: [id, placetype, name, abbreviation]
+      properties:
+        id:
+          type: string
+          pattern: '^wof:[0-9]+$'
+        placetype:
+          $ref: '#/components/schemas/Placetype'
+        name:
+          description: The display name, chosen as for `Result.name`.
+          type: string
+        abbreviation:
+          description: A short form such as `WA`, if Who's On First has one.
+          type: [string, 'null']
+
+    Placetype:
+      description: |
+        A Who's On First placetype
+        (https://whosonfirst.org/docs/placetypes/). Open: clients must accept
+        values they don't know.
+      type: string
+      enum: [continent, empire, country, dependency, disputed, macroregion, region,
+             macrocounty, county, localadmin, locality, borough, macrohood,
+             neighbourhood, microhood, ocean, marinearea]
+
+    PoiRef:
+      type: object
+      required: [id, version]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        version:
+          description: The OSM version the result was indexed from.
+          type: integer
+          minimum: 1
+
+    OsmRef:
+      type: object
+      required: [type, id, version, tags]
+      properties:
+        type:
+          type: string
+          enum: [node, way, relation]
+        id:
+          type: integer
+          minimum: 1
+        version:
+          type: integer
+          minimum: 1
+        tags:
+          description: The element's OSM tags, except Cardinal's own `cardinal:*` tags.
+          type: object
+          additionalProperties:
+            type: string
+
+    WofRef:
+      type: object
+      required: [id, placetype, population]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        placetype:
+          $ref: '#/components/schemas/Placetype'
+        population:
+          type: [integer, 'null']
+          minimum: 0
+
+    Feature:
+      description: |
+        The result's shape as a GeoJSON Feature (RFC 7946). Shapes are
+        simplified to at most about 1,000 vertices. With `geometry=point`,
+        `geometry` is the result's `center`.
+      type: object
+      required: [type, bbox, geometry, properties]
+      properties:
+        type:
+          const: Feature
+        bbox:
+          $ref: '#/components/schemas/BBox'
+        geometry:
+          $ref: '#/components/schemas/Geometry'
+        properties:
+          description: Always null; the result's own fields describe it.
+          type: 'null'
+
+    BBox:
+      description: '`[min_lon, min_lat, max_lon, max_lat]` in WGS 84 degrees.'
+      type: array
+      minItems: 4
+      maxItems: 4
+      items:
+        type: number
+
+    Position:
+      description: '`[lon, lat]` in WGS 84 degrees.'
+      type: array
+      minItems: 2
+      maxItems: 2
+      items:
+        type: number
+      prefixItems:
+        - type: number
+          minimum: -180
+          maximum: 180
+        - type: number
+          minimum: -90
+          maximum: 90
+
+    Geometry:
+      oneOf:
+        - $ref: '#/components/schemas/Point'
+        - $ref: '#/components/schemas/LineString'
+        - $ref: '#/components/schemas/Polygon'
+        - $ref: '#/components/schemas/MultiPolygon'
+      discriminator:
+        propertyName: type
+
+    Point:
+      type: object
+      required: [type, coordinates]
+      properties:
+        type:
+          const: Point
+        coordinates:
+          $ref: '#/components/schemas/Position'
+
+    LineString:
+      type: object
+      required: [type, coordinates]
+      properties:
+        type:
+          const: LineString
+        coordinates:
+          type: array
+          minItems: 2
+          items:
+            $ref: '#/components/schemas/Position'
+
+    Polygon:
+      type: object
+      required: [type, coordinates]
+      properties:
+        type:
+          const: Polygon
+        coordinates:
+          $ref: '#/components/schemas/PolygonCoordinates'
+
+    MultiPolygon:
+      type: object
+      required: [type, coordinates]
+      properties:
+        type:
+          const: MultiPolygon
+        coordinates:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PolygonCoordinates'
+
+    PolygonCoordinates:
+      description: Linear rings, the exterior first; each ring is closed.
+      type: array
+      minItems: 1
+      items:
+        type: array
+        minItems: 4
+        items:
+          $ref: '#/components/schemas/Position'
+
+    Problem:
+      description: An error, as RFC 9457 Problem Details.
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          examples: ['about:blank']
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        invalid_params:
+          description: For 400 responses, each invalid parameter and why.
+          type: array
+          items:
+            type: object
+            required: [name, reason]
+            properties:
+              name:
+                type: string
+              reason:
+                type: string
+
+    Health:
+      type: object
+      required: [status, index_schema_version, documents, category_languages]
+      properties:
+        status:
+          const: ok
+        index_schema_version:
+          type: integer
+        documents:
+          type: integer
+          minimum: 0
+        category_languages:
+          description: ISO 639-3 codes of the loaded categorical models.
+          type: array
+          items:
+            type: string

@@ -55,6 +55,10 @@ type DataPipelineBuildOpts struct {
 	//
 	// Default: true
 	PipTree bool
+	// QRank (qrank.csv.gz from https://qrank.wmcloud.org), which ranks POIs
+	// with Wikidata entities by their articles' page views. Without it,
+	// having an entity counts the same for every POI.
+	Qrank *File
 }
 
 // Builds tiles, the geocoder index and the categorical search models from
@@ -85,6 +89,10 @@ func (r *DataPipeline) Build(osm *File, wofDb *File, opts ...DataPipelineBuildOp
 		// `pipTree` optional argument
 		if !querybuilder.IsZeroValue(opts[i].PipTree) {
 			q = q.Arg("pipTree", opts[i].PipTree)
+		}
+		// `qrank` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Qrank) {
+			q = q.Arg("qrank", opts[i].Qrank)
 		}
 	}
 	q = q.Arg("osm", osm)
@@ -210,6 +218,10 @@ type DataPipelineIndexOpts struct {
 	//
 	// Default: true
 	PipTree bool
+	// QRank (qrank.csv.gz from https://qrank.wmcloud.org), which ranks POIs
+	// with Wikidata entities by their articles' page views. Without it,
+	// having an entity counts the same for every POI.
+	Qrank *File
 }
 
 // Builds an airmail geocoder index from an OSM extract.
@@ -229,6 +241,10 @@ func (r *DataPipeline) Index(osm *File, wofDb *File, opts ...DataPipelineIndexOp
 		// `pipTree` optional argument
 		if !querybuilder.IsZeroValue(opts[i].PipTree) {
 			q = q.Arg("pipTree", opts[i].PipTree)
+		}
+		// `qrank` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Qrank) {
+			q = q.Arg("qrank", opts[i].Qrank)
 		}
 	}
 	q = q.Arg("osm", osm)

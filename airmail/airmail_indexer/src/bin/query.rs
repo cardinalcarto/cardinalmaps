@@ -4,11 +4,10 @@
 
 use airmail::{
     categories::{self, CategoryModels, DEFAULT_INCLUDE_THRESHOLD, QueryCategories},
-    index::AirmailIndex,
-    poi::AirmailPoi,
+    index::{AirmailIndex, SearchHit, SearchRequest},
+    poi::{Kind, osm_display_name},
 };
 use clap::Parser;
-use geo::Coord;
 use rustyline::{DefaultEditor, error::ReadlineError};
 
 #[derive(Debug, Parser)]
@@ -30,9 +29,15 @@ struct Args {
     /// Minimum model confidence to also return places matching only by category
     #[clap(long, default_value_t = DEFAULT_INCLUDE_THRESHOLD)]
     category_include_threshold: f32,
+    /// Match the last word as a prefix
+    #[clap(long)]
+    prefix: bool,
+    /// Tolerate typos
+    #[clap(long)]
+    typos: bool,
 }
 
-fn parse_bbox(s: &str) -> geo::Rect {
+fn parse_bbox(s: &str) -> [f64; 4] {
     let parts: Vec<f64> = s
         .split(',')
         .map(|p| p.trim().parse().expect("bbox values must be numbers"))
@@ -40,16 +45,7 @@ fn parse_bbox(s: &str) -> geo::Rect {
     let [min_lng, min_lat, max_lng, max_lat] = parts[..] else {
         panic!("Invalid bbox format. Need: `lng1,lat1,lng2,lat2`");
     };
-    geo::Rect::new(
-        Coord {
-            y: min_lat,
-            x: min_lng,
-        },
-        Coord {
-            y: max_lat,
-            x: max_lng,
-        },
-    )
+    [min_lng, min_lat, max_lng, max_lat]
 }
 
 fn format_scored(values: &[(String, f32)]) -> String {
@@ -79,38 +75,33 @@ fn print_understood(understood: &QueryCategories, threshold: f32) {
     );
 }
 
-/// One line per result: score, name (or address), category tags, cuisine and diets.
-fn format_poi(poi: &AirmailPoi, score: f32) -> String {
-    let tag = |key: &str| {
-        poi.tags
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
+/// One line per result: score, kind, name (or address), category tags,
+/// cuisine and diets.
+fn format_hit(hit: &SearchHit) -> String {
+    let name = match (&hit.wof, osm_display_name(&hit.tags, None)) {
+        (Some(wof), _) => format!("{} ({})", wof.default_name, wof.placetype),
+        (None, Some(name)) => name.to_string(),
+        (None, None) => format!(
+            "{} {}",
+            hit.tag("addr:housenumber").unwrap_or_default(),
+            hit.tag("addr:street").unwrap_or("(unnamed)")
+        ),
     };
-    let name = tag("name").map_or_else(
-        || {
-            format!(
-                "{} {}",
-                tag("addr:housenumber").unwrap_or_default(),
-                tag("addr:street").unwrap_or("(unnamed)")
-            )
-        },
-        str::to_string,
-    );
-    let mut details: Vec<String> = poi
+    let mut details: Vec<String> = hit
         .tags
         .iter()
-        .filter(|(k, v)| {
-            categories::is_category_tag(k, v) || k == "cuisine" || k.starts_with("diet:")
-        })
+        .filter(|(k, v)| categories::is_category_tag(k, v) || k == "cuisine" || k.starts_with("diet:"))
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
     details.sort();
     format!(
-        "{score:7.2}  {name}  [{}]  ({:.4}, {:.4})",
+        "{:7.2}  {:<7}  {name}  [{}]  ({:.4}, {:.4})  importance {:.2}",
+        hit.score,
+        hit.kind.as_str(),
         details.join(" "),
-        poi.lat,
-        poi.lng
+        hit.center.y(),
+        hit.center.x(),
+        hit.importance,
     )
 }
 
@@ -163,25 +154,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let Some(index) = &index else { continue };
 
-        // The index holds ASCII-transliterated text, as the service searches it.
-        let query = deunicode::deunicode(line.trim()).to_lowercase();
         let start = std::time::Instant::now();
-        let mut results = index
-            .search(
-                &query,
-                true,
-                None,
-                understood
-                    .as_ref()
-                    .map(|c| (c, c.mode(args.category_include_threshold))),
-                bbox,
-                &[],
-            )
-            .await?;
-        results.sort_by(|(_, a), (_, b)| b.total_cmp(a));
-        for (poi, score) in results.iter().take(10) {
-            println!("{}", format_poi(poi, *score));
+        let request = SearchRequest {
+            text: line.trim(),
+            prefix: args.prefix,
+            typos: args.typos,
+            categories: understood.as_ref().map(|c| (c, c.mode(args.category_include_threshold))),
+            bbox,
+            kinds: Kind::ALL.to_vec(),
+            limit: 10,
+            ..Default::default()
+        };
+        let results = index.search(&request).await?;
+        for hit in &results.hits {
+            println!("{}", format_hit(hit));
         }
-        println!("{} results in {:?}\n", results.len(), start.elapsed());
+        println!("{} results in {:?}\n", results.hits.len(), start.elapsed());
     }
 }

@@ -1,0 +1,92 @@
+# Search ranking evaluation; see search_eval.py.
+#
+# region	query	params	expect
+#
+# params: extra query parameters (lang=en&typos=true), or - for none.
+# expect: what the right result looks like, as `;`-separated conditions:
+#   name=A|B     its name is one of these (case-insensitive)
+#   name~A       its name contains A (case-insensitive)
+#   near=lat,lon,km   its center is within km of the point
+#   tag=k=v      it has OSM tag k=v (v matched as a `;` list element)
+#   kind=admin   it's of this kind (v1 responses only; ignored for legacy ones)
+
+# Cities, counties and neighbourhoods.
+wa	seattle	-	name=Seattle;near=47.6062,-122.3321,15
+wa	tacoma	-	name=Tacoma;near=47.2529,-122.4443,15
+wa	spokane	-	name=Spokane;near=47.6588,-117.4260,15
+wa	bellevue	-	name=Bellevue;near=47.6101,-122.2015,10
+wa	redmond	-	name=Redmond;near=47.6740,-122.1215,10
+wa	olympia	-	name=Olympia;near=47.0379,-122.9007,10
+wa	leavenworth	-	name=Leavenworth;near=47.5962,-120.6615,10
+wa	forks	-	name=Forks;near=47.9504,-124.3855,10
+wa	seattle wa	-	name=Seattle;near=47.6062,-122.3321,15
+wa	seattle washington	-	name=Seattle;near=47.6062,-122.3321,15
+wa	king county	-	name=King|King County;near=47.49,-121.83,80
+wa	ballard	-	name=Ballard;near=47.6687,-122.3847,4
+wa	capitol hill seattle	-	name=Capitol Hill;near=47.6253,-122.3222,4
+wa	fremont seattle	-	name=Fremont;near=47.6505,-122.3509,4
+wa	queen anne	-	name=Queen Anne;near=47.6370,-122.3570,4
+wa	vancouver wa	-	name=Vancouver;near=45.6387,-122.6615,15
+# Larger places elsewhere should win over smaller namesakes.
+wa	vancouver	-	name=Vancouver;near=49.2827,-123.1207,20
+wa	portland	-	name=Portland;near=45.5152,-122.6784,20
+wa	portland oregon	-	name=Portland;near=45.5152,-122.6784,20
+
+# POIs, including ones whose names contain admin names.
+wa	space needle	-	name=Space Needle;near=47.6205,-122.3493,1
+wa	pike place market	-	name=Pike Place Market;near=47.6097,-122.3422,1
+wa	university of washington	-	name=University of Washington;near=47.6553,-122.3035,2
+wa	seattle center	-	name=Seattle Center;near=47.6215,-122.3509,1
+wa	seattle tacoma international airport	-	name~Seattle-Tacoma International;near=47.4502,-122.3088,4
+wa	mount rainier	-	name=Mount Rainier;near=46.8523,-121.7603,5
+wa	lake washington	-	name=Lake Washington;near=47.6200,-122.2600,15
+wa	green lake	-	name=Green Lake;near=47.6798,-122.3281,2
+wa	discovery park	-	name=Discovery Park;near=47.6573,-122.4055,2
+wa	kerry park	-	name=Kerry Park;near=47.6295,-122.3599,1
+wa	gas works park	-	name=Gas Works Park;near=47.6456,-122.3344,1
+wa	woodland park zoo	-	name=Woodland Park Zoo;near=47.6685,-122.3504,1
+wa	museum of pop culture	-	name~Museum of Pop Culture;near=47.6215,-122.3481,1
+wa	climate pledge arena	-	name=Climate Pledge Arena;near=47.6221,-122.3540,1
+wa	lumen field	-	name=Lumen Field;near=47.5952,-122.3316,1
+wa	t-mobile park	-	name=T-Mobile Park;near=47.5914,-122.3325,1
+wa	seattle art museum	-	name=Seattle Art Museum;near=47.6073,-122.3381,1
+wa	seattle aquarium	-	name=Seattle Aquarium;near=47.6076,-122.3430,1
+
+# Addresses.
+wa	1530 post alley	-	near=47.6095,-122.3414,0.2
+wa	400 broad street seattle	-	near=47.6205,-122.3493,0.3
+
+# Typos and prefixes.
+wa	seatle	typos=true	name=Seattle;near=47.6062,-122.3321,15
+wa	tacomma	typos=true	name=Tacoma;near=47.2529,-122.4443,15
+wa	spokan	prefix=true	name=Spokane;near=47.6588,-117.4260,15
+wa	pike plac	prefix=true	name=Pike Place Market;near=47.6097,-122.3422,1
+wa	space neeedle	typos=true	name=Space Needle;near=47.6205,-122.3493,1
+
+# Categorical search, regressions only.
+wa	coffee capitol hill	lang=en	tag=amenity=cafe;near=47.6253,-122.3222,3
+wa	pho seattle	lang=en	tag=cuisine=vietnamese;near=47.6062,-122.3321,15
+
+# Bounding boxes. The second box holds the north-east of the campus but not
+# its center, so only a result with its real shape matches.
+wa	starbucks	bbox=-122.21,47.605,-122.19,47.62	name=Starbucks;near=47.6101,-122.2015,3
+wa	university of washington	bbox=-122.296,47.657,-122.290,47.661	name=University of Washington;near=47.6553,-122.3035,2
+
+# Switzerland: names in several languages.
+ch	zürich	-	name=Zürich;near=47.3769,8.5417,10
+ch	zurich	-	name=Zürich;near=47.3769,8.5417,10
+ch	genf	-	name=Genève|Genf|Geneva;near=46.2044,6.1432,10
+ch	ginevra	-	name=Genève|Ginevra|Geneva;near=46.2044,6.1432,10
+ch	geneva	-	name=Genève|Geneva;near=46.2044,6.1432,10
+ch	bern	-	name=Bern|Berne;near=46.9480,7.4474,10
+ch	basel	-	name=Basel;near=47.5596,7.5886,10
+ch	bâle	-	name=Basel|Bâle;near=47.5596,7.5886,10
+ch	luzern	-	name=Luzern|Lucerne;near=47.0502,8.3093,10
+ch	lucerne	-	name=Luzern|Lucerne;near=47.0502,8.3093,10
+ch	lugano	-	name=Lugano;near=46.0037,8.9511,10
+ch	winterthur	-	name=Winterthur;near=47.4988,8.7237,10
+ch	kunsthaus zürich	-	name~Kunsthaus;near=47.3703,8.5481,1
+ch	eth zürich	-	name~ETH;near=47.3763,8.5480,2
+ch	uetliberg	-	name=Uetliberg;near=47.3497,8.4914,2
+ch	jet d'eau	-	name~Jet d'eau;near=46.2074,6.1556,1
+ch	zürich hb	-	name~Zürich HB|Zürich Hauptbahnhof;near=47.3779,8.5403,1

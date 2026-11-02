@@ -10,6 +10,9 @@
 }
 
 :8080 {
+	# Geocoder results carry shapes, which compress well. Tiles are already
+	# compressed, and Caddy leaves responses with an encoding alone.
+	encode zstd gzip
 	handle /tiles/* {
 		reverse_proxy martin:80
 	}

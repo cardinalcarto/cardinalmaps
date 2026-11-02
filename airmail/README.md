@@ -60,6 +60,10 @@ docker compose run indexer \
 indexer --wof-db /data/whosonfirst-data-admin-latest.spatial.db \
 --index /data/index/ \
 load-osm-pbf /data/australia-oceania-latest.osm.pbf
+docker compose run indexer \
+indexer --wof-db /data/whosonfirst-data-admin-latest.spatial.db \
+--index /data/index/ \
+load-wof
 
 # Launch the service
 docker compose up airmail
@@ -76,6 +80,10 @@ cargo run --bin indexer -- \
 --wof-db /data/whosonfirst-data-admin-latest.spatial.db \
 --index /data/index/ \
 load-osm-pbf /data/australia-oceania-latest.osm.pbf
+cargo run --bin indexer -- \
+--wof-db /data/whosonfirst-data-admin-latest.spatial.db \
+--index /data/index/ \
+load-wof
 
 # Run service
 cargo run --bin airmail_service -- \
