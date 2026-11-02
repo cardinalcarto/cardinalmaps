@@ -354,12 +354,14 @@ impl QueryCategories {
     /// categories, else diets (see `AirmailIndex::category_query`).
     #[must_use]
     pub fn primary_confidence(&self) -> f32 {
-        [&self.cuisines, &self.categories, &self.diets]
-            .into_iter()
-            .find(|signal| !signal.is_empty())
-            .map_or(0.0, |signal| {
-                signal.iter().map(|(_, p)| *p).fold(0.0, f32::max)
-            })
+        let max = |signal: &[(String, f32)]| signal.iter().map(|(_, p)| *p).fold(0.0, f32::max);
+        if !self.cuisines.is_empty() {
+            max(&self.cuisines)
+        } else if !self.categories.is_empty() {
+            self.categories.iter().map(|(_, p)| *p).sum::<f32>().min(1.0)
+        } else {
+            max(&self.diets)
+        }
     }
 
     /// Whether search should also return POIs matching only by category, or

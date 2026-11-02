@@ -45,6 +45,8 @@ def parse_expect(expect):
             conditions.append(("tag", (key, value)))
         elif condition.startswith("kind="):
             conditions.append(("kind", condition[5:]))
+        elif condition.startswith("in="):
+            conditions.append(("in", condition[3:].casefold()))
         else:
             raise ValueError(f"unknown condition {condition!r}")
     return conditions
@@ -68,6 +70,7 @@ def search(base, query, params):
                 "lat": r["center"][1],
                 "tags": (r.get("osm") or {}).get("tags", {}),
                 "kind": r["kind"],
+                "admins": [a["name"].casefold() for a in r["admins"]],
             }
             for r in v1["results"]
         ]
@@ -84,7 +87,7 @@ def search(base, query, params):
     for feature in response["features"]:
         tags = dict(feature["tags"])
         results.append(
-            {"name": tags.get("name"), "lat": feature["lat"], "lon": feature["lng"], "tags": tags, "kind": None}
+            {"name": tags.get("name"), "lat": feature["lat"], "lon": feature["lng"], "tags": tags, "kind": None, "admins": None}
         )
     return results
 
@@ -114,6 +117,8 @@ def matches(result, conditions):
             if arg[1] not in values:
                 return False
         if kind == "kind" and result["kind"] is not None and result["kind"] != arg:
+            return False
+        if kind == "in" and result["admins"] is not None and arg not in result["admins"]:
             return False
     return True
 

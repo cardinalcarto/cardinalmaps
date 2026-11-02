@@ -9,28 +9,29 @@
 #   near=lat,lon,km   its center is within km of the point
 #   tag=k=v      it has OSM tag k=v (v matched as a `;` list element)
 #   kind=admin   it's of this kind (v1 responses only; ignored for legacy ones)
+#   in=A         one of its admins is named A (v1 responses only)
 
 # Cities, counties and neighbourhoods.
-wa	seattle	-	name=Seattle;near=47.6062,-122.3321,15
-wa	tacoma	-	name=Tacoma;near=47.2529,-122.4443,15
-wa	spokane	-	name=Spokane;near=47.6588,-117.4260,15
-wa	bellevue	-	name=Bellevue;near=47.6101,-122.2015,10
-wa	redmond	-	name=Redmond;near=47.6740,-122.1215,10
-wa	olympia	-	name=Olympia;near=47.0379,-122.9007,10
-wa	leavenworth	-	name=Leavenworth;near=47.5962,-120.6615,10
-wa	forks	-	name=Forks;near=47.9504,-124.3855,10
-wa	seattle wa	-	name=Seattle;near=47.6062,-122.3321,15
-wa	seattle washington	-	name=Seattle;near=47.6062,-122.3321,15
-wa	king county	-	name=King|King County;near=47.49,-121.83,80
-wa	ballard	-	name=Ballard;near=47.6687,-122.3847,4
-wa	capitol hill seattle	-	name=Capitol Hill;near=47.6253,-122.3222,4
-wa	fremont seattle	-	name=Fremont;near=47.6505,-122.3509,4
-wa	queen anne	-	name=Queen Anne;near=47.6370,-122.3570,4
-wa	vancouver wa	-	name=Vancouver;near=45.6387,-122.6615,15
+wa	seattle	-	name=Seattle;near=47.6062,-122.3321,15;kind=admin
+wa	tacoma	-	name=Tacoma;near=47.2529,-122.4443,15;kind=admin
+wa	spokane	-	name=Spokane;near=47.6588,-117.4260,15;kind=admin
+wa	bellevue	-	name=Bellevue;near=47.6101,-122.2015,10;kind=admin
+wa	redmond	-	name=Redmond;near=47.6740,-122.1215,10;kind=admin
+wa	olympia	-	name=Olympia;near=47.0379,-122.9007,10;kind=admin
+wa	leavenworth	-	name=Leavenworth;near=47.5962,-120.6615,10;kind=admin
+wa	forks	-	name=Forks;near=47.9504,-124.3855,10;kind=admin
+wa	seattle wa	-	name=Seattle;near=47.6062,-122.3321,15;kind=admin
+wa	seattle washington	-	name=Seattle;near=47.6062,-122.3321,15;kind=admin
+wa	king county	-	name=King|King County;near=47.49,-121.83,80;kind=admin
+wa	ballard	-	name=Ballard;near=47.6687,-122.3847,4;kind=admin
+wa	capitol hill seattle	-	name=Capitol Hill;near=47.6253,-122.3222,4;kind=admin
+wa	fremont seattle	-	name=Fremont;near=47.6505,-122.3509,4;kind=admin
+wa	queen anne	-	name=Queen Anne;near=47.6370,-122.3570,4;kind=admin
+wa	vancouver wa	-	name=Vancouver;near=45.6387,-122.6615,15;kind=admin
 # Larger places elsewhere should win over smaller namesakes.
-wa	vancouver	-	name=Vancouver;near=49.2827,-123.1207,20
-wa	portland	-	name=Portland;near=45.5152,-122.6784,20
-wa	portland oregon	-	name=Portland;near=45.5152,-122.6784,20
+wa	vancouver	-	name=Vancouver;near=49.2827,-123.1207,20;kind=admin
+wa	portland	-	name=Portland;near=45.5152,-122.6784,20;kind=admin
+wa	portland oregon	-	name=Portland;near=45.5152,-122.6784,20;kind=admin
 
 # POIs, including ones whose names contain admin names.
 wa	space needle	-	name=Space Needle;near=47.6205,-122.3493,1
@@ -66,6 +67,22 @@ wa	space neeedle	typos=true	name=Space Needle;near=47.6205,-122.3493,1
 # Categorical search, regressions only.
 wa	coffee capitol hill	lang=en	tag=amenity=cafe;near=47.6253,-122.3222,3
 wa	pho seattle	lang=en	tag=cuisine=vietnamese;near=47.6062,-122.3321,15
+# Where the place is should count for more than the category's name.
+wa	bookstore fremont	lang=en	tag=shop=books;in=Fremont
+wa	bookstore ballard	lang=en	tag=shop=books;in=Ballard
+wa	bookstore capitol hill	lang=en	tag=shop=books;in=Capitol Hill
+wa	bakery fremont	lang=en	tag=shop=bakery;in=Fremont
+wa	pharmacy ballard	lang=en	tag=amenity=pharmacy;in=Ballard
+wa	hardware store ballard	lang=en	tag=shop=hardware;in=Ballard
+wa	supermercado ballard	lang=es	tag=shop=supermarket;in=Ballard
+# But not over a name that matches.
+wa	fremont brewing	lang=en	name~Fremont Brewing
+wa	university book store	lang=en	name=University Book Store;near=47.6580,-122.3090,2
+wa	seattle art museum	lang=en	name=Seattle Art Museum;near=47.6073,-122.3381,1
+# Names the category model reads as categories (Spokane as a station).
+wa	spokane	lang=en	name=Spokane;near=47.6588,-117.4260,15;kind=admin
+wa	seattle	lang=en	name=Seattle;near=47.6062,-122.3321,15;kind=admin
+wa	kerry park	lang=en	name=Kerry Park;near=47.6295,-122.3599,1
 
 # Bounding boxes. The second box holds the north-east of the campus but not
 # its center, so only a result with its real shape matches.

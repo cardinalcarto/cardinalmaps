@@ -66,6 +66,12 @@ pub const FIELD_IMPORTANCE: &str = "importance";
 const NAME_BOOST: f32 = 3.0;
 const ADDRESS_BOOST: f32 = 1.5;
 const ADMIN_BOOST: f32 = 1.0;
+/// How much a word naming one of its admins counts for a POI that matches a
+/// category search by its category alone. The category already accounts for
+/// words like `bookstore`, so where a place is matters more there than its
+/// name repeating the category: a bookshop in Fremont beats one named
+/// "Bookstore" elsewhere.
+const CATEGORY_ADMIN_BOOST: f32 = 6.0;
 /// For a query that is exactly a name.
 const EXACT_NAME_BOOST: f32 = 15.0;
 /// For a query whose first words are exactly a name, with the rest matching
@@ -74,6 +80,16 @@ const EXACT_NAME_BOOST: f32 = 15.0;
 const EXACT_NAME_PREFIX_BOOST: f32 = 10.0;
 /// For a query that's a name with typos, or its prefix.
 const NEAR_EXACT_NAME_BOOST: f32 = 10.0;
+
+/// A query's words as `AirmailIndex::text_query` builds them.
+struct TextQueries {
+    /// Matches documents with all the words.
+    all: Box<dyn Query>,
+    /// Each word, for scoring category matches.
+    any_text: Vec<Box<dyn Query>>,
+    /// Each word with admin matches weighted by `CATEGORY_ADMIN_BOOST`.
+    any_text_located: Vec<Box<dyn Query>>,
+}
 
 #[derive(Serialize, Deserialize)]
 struct VersionFile {
@@ -318,22 +334,25 @@ impl AirmailIndex {
     /// Requires every word of the query, each in some text field, and ranks
     /// phrase and exact name matches higher. Also returns the per-word
     /// queries, for ranking category matches.
-    fn text_query(&self, tokens: &[String], prefix: bool, typos: bool) -> (Box<dyn Query>, Vec<Box<dyn Query>>) {
-        let words: Vec<Box<dyn Query>> = tokens
-            .iter()
-            .enumerate()
-            .map(|(i, word)| {
-                let last = i + 1 == tokens.len();
-                let fields = [(FIELD_NAME, NAME_BOOST), (FIELD_ADDRESS, ADDRESS_BOOST), (FIELD_ADMIN, ADMIN_BOOST)];
-                let per_field = fields
-                    .into_iter()
-                    .map(|(field, boost)| -> Box<dyn Query> {
-                        Box::new(BoostQuery::new(self.word_query(field, word, prefix && last, typos), boost))
-                    })
-                    .collect();
-                Box::new(BooleanQuery::union(per_field)) as Box<dyn Query>
-            })
-            .collect();
+    fn text_query(&self, tokens: &[String], prefix: bool, typos: bool) -> TextQueries {
+        let words_with = |admin_boost: f32| -> Vec<Box<dyn Query>> {
+            tokens
+                .iter()
+                .enumerate()
+                .map(|(i, word)| {
+                    let last = i + 1 == tokens.len();
+                    let fields = [(FIELD_NAME, NAME_BOOST), (FIELD_ADDRESS, ADDRESS_BOOST), (FIELD_ADMIN, admin_boost)];
+                    let per_field = fields
+                        .into_iter()
+                        .map(|(field, boost)| -> Box<dyn Query> {
+                            Box::new(BoostQuery::new(self.word_query(field, word, prefix && last, typos), boost))
+                        })
+                        .collect();
+                    Box::new(BooleanQuery::union(per_field)) as Box<dyn Query>
+                })
+                .collect()
+        };
+        let words = words_with(ADMIN_BOOST);
 
         let mut optional: Vec<Box<dyn Query>> = Vec::new();
         for subsequence in all_subsequences(tokens) {
@@ -373,11 +392,11 @@ impl AirmailIndex {
         }
 
         let any_text = words.iter().map(|q| q.box_clone()).collect();
-        let query = Box::new(BooleanQuery::new(vec![
+        let all = Box::new(BooleanQuery::new(vec![
             (Occur::Must, Box::new(BooleanQuery::intersection(words)) as Box<dyn Query>),
             (Occur::Should, Box::new(BooleanQuery::union(optional))),
         ]));
-        (query, any_text)
+        TextQueries { all, any_text, any_text_located: words_with(CATEGORY_ADMIN_BOOST) }
     }
 
     /// Matches documents whose covering intersects the S2 cells.
@@ -401,19 +420,29 @@ impl AirmailIndex {
 
     fn construct_query(&self, request: &SearchRequest, bbox_cells: Option<&[s2::cellid::CellID]>) -> Box<dyn Query> {
         let tokens = self.tokens(&request.text.replace("'s", "s"));
-        let (text_query, any_text) = self.text_query(&tokens, request.prefix, request.typos);
+        let text = self.text_query(&tokens, request.prefix, request.typos);
 
-        // A query matches either by its words or by the categories it asks for.
-        let mut query: Box<dyn Query> = match request
-            .categories
-            .and_then(|(c, mode)| Some((self.category_query(c, any_text)?, mode)))
-        {
-            Some((category_query, CategoryMode::Include)) => Box::new(BooleanQuery::union(vec![text_query, category_query])),
-            Some((category_query, CategoryMode::Boost)) => Box::new(BooleanQuery::new(vec![
-                (Occur::Must, text_query),
-                (Occur::Should, category_query),
-            ])),
-            None => text_query,
+        // A query matches either by its words or by the categories it asks
+        // for. A POI with all the words is scored as a name match, so the
+        // Spokane station doesn't outrank Spokane for being in Spokane.
+        let mut query: Box<dyn Query> = match request.categories {
+            Some((categories, mode)) => match self.category_query(categories, text.any_text) {
+                Some(category_query) => {
+                    let matched = Box::new(BooleanQuery::new(vec![
+                        (Occur::Must, text.all.box_clone()),
+                        (Occur::Should, category_query),
+                    ]));
+                    match (mode, self.category_query(categories, text.any_text_located)) {
+                        (CategoryMode::Include, Some(located)) => Box::new(BooleanQuery::union(vec![
+                            matched,
+                            Box::new(BooleanQuery::new(vec![(Occur::Must, located), (Occur::MustNot, text.all)])),
+                        ])),
+                        _ => matched,
+                    }
+                }
+                None => text.all,
+            },
+            None => text.all,
         };
 
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
