@@ -33,6 +33,11 @@ struct Args {
     #[arg(long, env = "AIRMAIL_CATEGORIES")]
     categories: Option<PathBuf>,
 
+    /// A query tagger model (from `tagger train`): reads which words of a
+    /// query are what, rather than finding area names at its end.
+    #[arg(long, env = "AIRMAIL_TAGGER")]
+    tagger: Option<PathBuf>,
+
     /// Minimum model confidence for search to also return places that match a
     /// query only by category; below it, categories only rerank word matches
     #[arg(long, env = "AIRMAIL_CATEGORY_INCLUDE_THRESHOLD", default_value_t = DEFAULT_INCLUDE_THRESHOLD)]
@@ -54,7 +59,12 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     debug!("Loading index from {}", args.index);
-    let index = AirmailIndex::open_read_only(&args.index)?;
+    let mut index = AirmailIndex::open_read_only(&args.index)?;
+    if let Some(path) = &args.tagger {
+        let tagger = airmail_tagger::Tagger::read(&mut std::io::BufReader::new(std::fs::File::open(path)?))?;
+        info!("Loaded the query tagger from {}", path.display());
+        index = index.with_tagger(tagger);
+    }
     let categories = match &args.categories {
         Some(path) => {
             let models = CategoryModels::open(path)?;

@@ -22,12 +22,18 @@ const MAX_COVER_CELLS: usize = 16;
 const MIN_COVER_LEVEL: u64 = 3;
 
 /// Reduces a geometry to the kinds results can have, Point, LineString,
-/// Polygon or MultiPolygon, or `None` if it has no usable shape. Other
+/// MultiLineString, Polygon or MultiPolygon, or `None` if it has no usable
+/// shape. Other
 /// kinds are replaced by the point that stands for them.
 #[must_use]
 pub fn normalize(geometry: Geometry<f64>) -> Option<Geometry<f64>> {
     let geometry = match geometry {
         Geometry::Point(_) | Geometry::LineString(_) | Geometry::Polygon(_) => geometry,
+        Geometry::MultiLineString(mut multi) => match multi.0.len() {
+            0 => return None,
+            1 => Geometry::LineString(multi.0.remove(0)),
+            _ => Geometry::MultiLineString(multi),
+        },
         Geometry::MultiPolygon(mut multi) => match multi.0.len() {
             0 => return None,
             1 => Geometry::Polygon(multi.0.remove(0)),
@@ -59,6 +65,7 @@ pub fn simplify(geometry: Geometry<f64>, max_vertices: usize) -> Geometry<f64> {
     for _ in 0..64 {
         let simplified = match &geometry {
             Geometry::LineString(line) => Geometry::LineString(line.simplify_vw_preserve(epsilon)),
+            Geometry::MultiLineString(multi) => Geometry::MultiLineString(multi.simplify_vw_preserve(epsilon)),
             Geometry::Polygon(polygon) => Geometry::Polygon(polygon.simplify_vw_preserve(epsilon)),
             Geometry::MultiPolygon(multi) => Geometry::MultiPolygon(drop_degenerate(multi.simplify_vw_preserve(epsilon))),
             _ => return geometry,
@@ -232,7 +239,11 @@ pub fn to_wkb(geometry: &Geometry<f64>) -> Result<Vec<u8>> {
 /// If `wkb` isn't a geometry.
 pub fn from_wkb(wkb: &[u8]) -> Result<Geometry<f64>> {
     match Wkb(wkb.to_vec()).to_geo()? {
-        geometry @ (Geometry::Point(_) | Geometry::LineString(_) | Geometry::Polygon(_) | Geometry::MultiPolygon(_)) => {
+        geometry @ (Geometry::Point(_)
+        | Geometry::LineString(_)
+        | Geometry::MultiLineString(_)
+        | Geometry::Polygon(_)
+        | Geometry::MultiPolygon(_)) => {
             Ok(geometry)
         }
         other => bail!("unexpected stored geometry {other:?}"),

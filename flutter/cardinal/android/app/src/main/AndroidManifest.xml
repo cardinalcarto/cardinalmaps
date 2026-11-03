@@ -1,9 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Tiles and search results come from servers. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="cardinal"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true">
+        <!-- The map draws with Flutter GPU, which the engine only enables when asked. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableFlutterGPU"
+            android:value="true" />
+        <!-- Don't force io.flutter.embedding.android.ImpellerBackend to vulkan: forcing it
+             disables the GLES fallback, and devices whose Vulkan driver Impeller denylists
+             (e.g. Adreno 610) then abort with "invalid Android context". -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

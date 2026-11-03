@@ -1,0 +1,38 @@
+Resources bundled with airmail_parser
+=====================================
+
+Everything in this directory was copied from pelias/parser
+(https://github.com/pelias/parser, commit 1cd1a23, MIT licence, see
+../LICENSE-pelias-parser), which in turn bundles the third-party data below.
+Only the files the classifiers read are included. Files whose names contained
+':' were renamed to use '-' (e.g. name:eng_x_preferred.txt ->
+name-eng_x_preferred.txt). Sizes are in bytes.
+
+libpostal/            645,984   libpostal dictionaries (street types, stop
+                                words, given names, surnames, place names,
+                                ...), from https://github.com/openvenues/libpostal
+                                (resources/dictionaries). MIT licence,
+                                Copyright (c) 2015 openvenues.
+
+whosonfirst/        3,923,377   Locality, region and country names extracted
+                                from Who's On First (https://whosonfirst.org)
+                                by pelias/parser's resources/whosonfirst/generate.js.
+                                Who's On First data is licensed under CC-BY 4.0
+                                and other open licences per source; see
+                                https://whosonfirst.org/docs/licenses/.
+                                Attribution: Who's On First contributors.
+
+pelias/                 5,589   pelias/parser's own additions to and removals
+                                from the dictionaries above. MIT licence,
+                                Copyright (c) 2019 Pelias Contributors.
+
+chromium-i18n/         22,462   Postal address metadata for 15 countries (only
+                                the "zip" pattern is used), from Google's
+                                address data service
+                                https://chromium-i18n.appspot.com/ssl-address
+                                (libaddressinput), as redistributed by
+                                pelias/parser.
+
+accents.tsv             2,853   Generated for this crate (not from upstream):
+                                accent folding table for Latin letters, a
+                                stand-in for the `remove-accents` npm package.

@@ -69,7 +69,7 @@ class _SheetContentState extends State<SheetContent> {
   @override
   Widget build(BuildContext context) {
     final bottom = math.max(
-      _entry.geometry?.padding.bottom ?? 0,
+      _entry.geometry?.bottomInset ?? 0,
       MediaQuery.viewInsetsOf(context).bottom,
     );
     return _SheetContentScope(

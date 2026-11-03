@@ -59,6 +59,9 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
   /// The furthest the sheet can be pulled up at all.
   double _maxExtent = double.infinity;
 
+  /// The lowest the sheet goes, even pulled past its lowest anchor: the keyboard's top.
+  double _floor = 0;
+
   double get _min => _anchors.isEmpty ? 0 : _anchors.first.extent;
   double get _max => _anchors.isEmpty ? _maxExtent : _anchors.last.extent;
 
@@ -107,7 +110,8 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
 
   /// Moves a held sheet by [delta] logical pixels (positive upwards), as far as its
   /// anchors allow, and returns how much of [delta] it took: the rest is for the content
-  /// to scroll by. Below the lowest anchor the sheet follows with resistance.
+  /// to scroll by. Below the lowest anchor the sheet follows with resistance, down to
+  /// the keyboard's top while it shows.
   double dragBy(double delta) {
     if (!isHeld || _anchors.isEmpty) return 0;
     var extent = this.extent;
@@ -118,7 +122,7 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
       final step = math.max(rest, -free);
       extent += step;
       rest -= step;
-      if (rest < 0) extent = math.max(0, extent + rest * resistance);
+      if (rest < 0) extent = math.max(math.min(_floor, extent), extent + rest * resistance);
       rest = 0;
     } else {
       if (extent < _min) {
@@ -159,15 +163,20 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
     _settleOn(_anchors[_physics.target(_anchors, extent, velocity)], velocity);
   }
 
+  /// The anchor the sheet is springing to, and where it was when the spring started.
+  ResolvedAnchor? _settlingTo;
+
   void _settleOn(ResolvedAnchor target, double velocity) {
     _wheelSettle?.cancel();
     if ((extent - target.extent).abs() < _epsilon && velocity.abs() < 1) {
       _spring.stop();
+      _settlingTo = null;
       _rest(target);
       return;
     }
     _phase = _Phase.settling;
     _restingAt = null;
+    _settlingTo = target;
     final simulation = SpringSimulation(
       _physics.spring,
       extent,
@@ -176,7 +185,11 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
       tolerance: const Tolerance(distance: 0.5, velocity: 10),
     );
     _spring.value = extent;
-    _spring.animateWith(simulation).then((_) => _rest(target));
+    _spring.animateWith(simulation).then((_) {
+      _settlingTo = null;
+      // Where the anchor is now, should it have moved on the last frame.
+      _rest(_anchors.firstWhereOrNull((a) => a.anchor == target.anchor) ?? target);
+    });
   }
 
   void _rest(ResolvedAnchor anchor) {
@@ -197,9 +210,20 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
   }
 
   /// Takes the current page's [anchors], following the one the sheet rests at if it moved.
-  void _setAnchors(List<ResolvedAnchor> anchors, double maxExtent) {
+  void _setAnchors(List<ResolvedAnchor> anchors, double maxExtent, {double floor = 0}) {
     _anchors = anchors;
     _maxExtent = maxExtent;
+    _floor = floor;
+    if (_phase == _Phase.settling) {
+      // Springing to an anchor that moved (as when the keyboard hides): spring on to
+      // where it is now, from where the sheet is and at its speed.
+      final target = _settlingTo;
+      final moved = _anchors.firstWhereOrNull((a) => a.anchor == target?.anchor);
+      if (target != null && moved != null && (moved.extent - target.extent).abs() > _epsilon) {
+        _settleOn(moved, _spring.velocity);
+      }
+      return;
+    }
     if (_phase != _Phase.idle) return;
     final resting = _anchors.firstWhereOrNull((a) => a.anchor == _restingAt);
     if (resting != null) {

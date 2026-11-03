@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["airmail", "airmail_indexer", "airmail_service"]
+members = ["airmail", "airmail_indexer", "airmail_parser", "airmail_service", "airmail_tagger"]
 
 [workspace.package]
 edition = "2024"

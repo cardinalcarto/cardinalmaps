@@ -2,7 +2,7 @@
 #
 # region	query	params	expect
 #
-# params: extra query parameters (lang=en&typos=true), or - for none.
+# params: extra query parameters (lang=en&typos=true, focus=lon,lat), or - for none.
 # expect: what the right result looks like, as `;`-separated conditions:
 #   name=A|B     its name is one of these (case-insensitive)
 #   name~A       its name contains A (case-insensitive)
@@ -32,6 +32,8 @@ wa	vancouver wa	-	name=Vancouver;near=45.6387,-122.6615,15;kind=admin
 wa	vancouver	-	name=Vancouver;near=49.2827,-123.1207,20;kind=admin
 wa	portland	-	name=Portland;near=45.5152,-122.6784,20;kind=admin
 wa	portland oregon	-	name=Portland;near=45.5152,-122.6784,20;kind=admin
+# The best known of many namesakes.
+wa	springfield	-	name=Springfield;near=39.7817,-89.6501,20;kind=admin
 
 # POIs, including ones whose names contain admin names.
 wa	space needle	-	name=Space Needle;near=47.6205,-122.3493,1
@@ -107,3 +109,51 @@ ch	eth zürich	-	name~ETH;near=47.3763,8.5480,2
 ch	uetliberg	-	name=Uetliberg;near=47.3497,8.4914,2
 ch	jet d'eau	-	name~Jet d'eau;near=46.2074,6.1556,1
 ch	zürich hb	-	name~Zürich HB|Zürich Hauptbahnhof;near=47.3779,8.5403,1
+
+# Focus: the nearest of a chain, for search-as-you-type from a map viewport.
+wa	starbucks	focus=-122.3365,47.6097	name=Starbucks;near=47.6097,-122.3365,0.5
+wa	starbucks	focus=-117.4260,47.6588	name=Starbucks;near=47.6588,-117.4260,5
+wa	starb	prefix=true&focus=-122.2015,47.6101	name=Starbucks;near=47.6101,-122.2015,2
+wa	starb	prefix=true&focus=-122.3321,47.6062	name=Starbucks;near=47.6062,-122.3321,2
+wa	safeway	focus=-122.6615,45.6387	name=Safeway;near=45.6387,-122.6615,8
+wa	mcdonald's	focus=-122.4443,47.2529	name~McDonald;near=47.2529,-122.4443,5
+wa	coffee	lang=en&focus=-122.3509,47.6505	tag=amenity=cafe;near=47.6505,-122.3509,1.5
+# Focus picks the nearby one of same-named places.
+wa	springfield	focus=-123.0220,44.0462	name=Springfield;near=44.0462,-123.0220,10;kind=admin
+wa	vancouver	focus=-122.6615,45.6387	name=Vancouver;near=45.6387,-122.6615,15;kind=admin
+wa	vancouver	focus=-123.1207,49.2827	name=Vancouver;near=49.2827,-123.1207,15;kind=admin
+wa	portland	focus=-70.2553,43.6591	name=Portland;near=43.6591,-70.2553,15;kind=admin
+wa	vancouver	focus=-122.6784,45.5152	name=Vancouver;near=45.6387,-122.6615,15;kind=admin
+# But a strong match far away beats a weak one nearby.
+wa	zurich	focus=-122.3321,47.6062	name=Zürich|Zurich;near=47.3769,8.5417,10;kind=admin
+wa	paris	focus=-122.3321,47.6062	name=Paris;near=48.8566,2.3522,20;kind=admin
+wa	portland	focus=-122.3321,47.6062	name=Portland;near=45.5152,-122.6784,20;kind=admin
+wa	vancouver	focus=-122.3321,47.6062	name=Vancouver;near=49.2827,-123.1207,20;kind=admin
+wa	tacoma	focus=8.5417,47.3769	name=Tacoma;near=47.2529,-122.4443,15;kind=admin
+ch	seattle	focus=8.5417,47.3769	name=Seattle;near=47.6062,-122.3321,15;kind=admin
+ch	zürich	focus=7.4474,46.9480	name=Zürich;near=47.3769,8.5417,10;kind=admin
+ch	bern	focus=8.5417,47.3769	name=Bern|Berne;near=46.9480,7.4474,10;kind=admin
+ch	migros	focus=7.4474,46.9480	name~Migros;near=46.9480,7.4474,2
+ch	coop	focus=8.9511,46.0037	name~Coop;near=46.0037,8.9511,3
+# Focus at the scale of regions: of two places with one name, the one in your
+# part of the world, unless the other is far better known.
+wa	leavenworth	focus=-122.3321,47.6062	name=Leavenworth;near=47.5962,-120.6615,10;kind=admin
+wa	forks	focus=-122.3321,47.6062	name=Forks;near=47.9504,-124.3855,10;kind=admin
+wa	kent	focus=-122.3321,47.6062	name=Kent;near=47.3809,-122.2348,10;kind=admin
+wa	springfield	focus=-87.6298,41.8781	name=Springfield;near=39.7817,-89.6501,20;kind=admin
+wa	portland	focus=-71.0589,42.3601	name=Portland;near=43.6591,-70.2568,20;kind=admin
+wa	london	focus=-122.3321,47.6062	name=London;near=51.5074,-0.1278,30;kind=admin
+wa	rome	focus=-122.3321,47.6062	name=Rome|Roma;near=41.9028,12.4964,30;kind=admin
+wa	berlin	focus=-122.3321,47.6062	name=Berlin;near=52.5200,13.4050,30;kind=admin
+wa	athens	focus=-122.3321,47.6062	name=Athens|Athina;near=37.9838,23.7275,30;kind=admin
+wa	tokyo	focus=-122.3321,47.6062	name~Tokyo;near=35.6762,139.6503,60;kind=admin
+wa	new york	focus=-122.3321,47.6062	name~New York;near=40.7128,-74.0060,60;kind=admin
+# Autocomplete as the app sends it (prefix and typos): the word being typed
+# completes to well-known places rather than matching obscure ones exactly.
+wa	londo	prefix=true&typos=true	name=London;near=51.5074,-0.1278,30;kind=admin
+wa	broo	prefix=true&typos=true	name=Brooklyn;near=40.6782,-73.9442,20;kind=admin
+wa	germa	prefix=true&typos=true	name=Germany;kind=admin
+wa	wales	prefix=true&typos=true	name=Wales;kind=admin
+wa	california	prefix=true&typos=true	name=California;kind=admin
+wa	starb	prefix=true&typos=true&focus=-122.2015,47.6101	name=Starbucks;near=47.6101,-122.2015,2
+wa	seatt	prefix=true&typos=true&focus=-122.2015,47.6101	name=Seattle;near=47.6062,-122.3321,15;kind=admin

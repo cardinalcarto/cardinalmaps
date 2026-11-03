@@ -18,6 +18,10 @@ name = "merge"
 path = "src/bin/merge.rs"
 
 [[bin]]
+name = "tagger"
+path = "src/bin/tagger.rs"
+
+[[bin]]
 name = "categories_export"
 path = "src/bin/categories_export.rs"
 
@@ -26,6 +30,8 @@ name = "airmail_indexer"
 path = "src/lib.rs"
 
 [dependencies]
+airmail_tagger = { path = "../airmail_tagger" }
+rand = "0.9"
 airmail.workspace = true
 anyhow.workspace = true
 clap.workspace = true

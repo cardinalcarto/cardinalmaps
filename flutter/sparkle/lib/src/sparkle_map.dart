@@ -2,6 +2,7 @@
 // executor draws it with Flutter GPU into an image surface that this shows.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:math';
@@ -69,6 +70,136 @@ class _QuickZoom {
   bool dragging = false;
 }
 
+/// Moves a [SparkleMap]'s camera and changes its GeoJSON sources' data.
+///
+/// Until the map is set up (it waits for its first layout), [camera] and the other queries
+/// return null and [flyTo] does nothing; GeoJSON data set before then is applied once it
+/// is.
+class SparkleMapController {
+  _SparkleMapState? _state;
+
+  /// GeoJSON set before the map was, by source.
+  final Map<String, String> _pending = {};
+
+  rust.SparkleMap? get _map => _state?._map;
+
+  /// Whether the map is set up, so the camera can be queried and moved.
+  bool get isReady => _map != null;
+
+  /// Where the camera is.
+  rust.CameraState? get camera => _map?.camera();
+
+  /// The longitude and latitude of the ground at [position] (logical pixels within the
+  /// map), if the map shows the ground there.
+  ({double lng, double lat})? screenToLngLat(Offset position) {
+    final p = _map?.screenToLngLat(x: position.dx, y: position.dy);
+    return p == null ? null : (lng: p.lng, lat: p.lat);
+  }
+
+  /// Cover [padding] at the edges of the map, as a sheet over it does.
+  ///
+  /// The map is still drawn behind it, but the camera centers things in the rest: it
+  /// keeps the subject in view (see [setSubject]), or else keeps the middle of the rest
+  /// where it is on the map, as well as the zoom.
+  void setPadding(EdgeInsets padding) {
+    _padding = padding;
+    final map = _map;
+    if (map != null && map.setPadding(padding: _mapPadding(padding))) {
+      _state!._requestFrame();
+    }
+  }
+
+  EdgeInsets _padding = EdgeInsets.zero;
+
+  /// Fly to the bounds (in degrees; `west > east` crosses the antimeridian), zoomed in
+  /// no closer than [maxZoom] and with [margin] logical pixels clear around them, and
+  /// keep them in view as the padding changes, until the map is moved by hand or
+  /// [clearSubject]. Point-like bounds show at [maxZoom]. However little the padding
+  /// leaves, the camera zooms out only so far from how they'd show with none
+  /// (`SUBJECT_ZOOM_GIVE` levels at most, in `crates/sparkle_flutter/src/app.rs`).
+  void setSubject({
+    required double west,
+    required double south,
+    required double east,
+    required double north,
+    required double maxZoom,
+    double margin = 0,
+  }) {
+    _subject = (west, south, east, north, maxZoom, margin);
+    final map = _map;
+    if (map == null) return;
+    map.setSubject(
+      west: west,
+      south: south,
+      east: east,
+      north: north,
+      maxZoom: maxZoom,
+      margin: margin,
+    );
+    _state!._requestFrame();
+  }
+
+  /// Stop keeping the subject in view, leaving the camera where it is.
+  void clearSubject() {
+    _subject = null;
+    _map?.clearSubject();
+  }
+
+  /// Whether the camera is keeping a subject in view: one was set, and neither moving
+  /// the map by hand nor [clearSubject] has let go of it since.
+  bool get hasSubject => _map?.hasSubject() ?? _subject != null;
+
+  /// The subject set before the map was.
+  (double, double, double, double, double, double)? _subject;
+
+  /// Fly to show [lng], [lat] at [zoom] in the middle of the map less the padding,
+  /// zooming out on the way if it's far, and dropping any subject. Moving the map stops
+  /// it.
+  void flyTo({required double lng, required double lat, required double zoom}) {
+    _subject = null;
+    final map = _map;
+    if (map == null) {
+      return;
+    }
+    map.flyTo(lng: lng, lat: lat, zoom: zoom);
+    _state!._requestFrame();
+  }
+
+  /// Replace the data of the style's GeoJSON source [source] with [geojson], a GeoJSON
+  /// object (as decoded JSON).
+  ///
+  /// Throws if the style has no such GeoJSON source or the data isn't GeoJSON, once the
+  /// map is set up.
+  void setGeoJson(String source, Object geojson) {
+    final text = jsonEncode(geojson);
+    final map = _map;
+    if (map == null) {
+      _pending[source] = text;
+      return;
+    }
+    map.setGeojson(source: source, geojson: text);
+    _state!._requestFrame();
+  }
+
+  void _attached(rust.SparkleMap map) {
+    map.setPadding(padding: _mapPadding(_padding));
+    if (_subject case (final w, final s, final e, final n, final zoom, final margin)?) {
+      map.setSubject(west: w, south: s, east: e, north: n, maxZoom: zoom, margin: margin);
+    }
+    for (final MapEntry(key: source, value: text) in _pending.entries) {
+      try {
+        map.setGeojson(source: source, geojson: text);
+      } on Object catch (e) {
+        _state?.widget.onError?.call(e);
+      }
+    }
+    _pending.clear();
+  }
+
+  static rust.MapPadding _mapPadding(EdgeInsets p) =>
+      rust.MapPadding(top: p.top, right: p.right, bottom: p.bottom, left: p.left);
+}
+
 /// Loads the native library; [SparkleMap] waits for it, so calling this is optional.
 Future<void> initSparkle() => _init ??= RustLib.init();
 Future<void>? _init;
@@ -82,6 +213,7 @@ class SparkleMap extends StatefulWidget {
   const SparkleMap({
     super.key,
     required this.args,
+    this.controller,
     this.multisample = true,
     this.onStatus,
     this.onScreenshot,
@@ -89,6 +221,9 @@ class SparkleMap extends StatefulWidget {
   });
 
   final List<String> args;
+
+  /// Moves the camera and sets GeoJSON data.
+  final SparkleMapController? controller;
 
   /// Whether to multisample when the device can.
   final bool multisample;
@@ -156,7 +291,22 @@ class _SparkleMapState extends State<SparkleMap> {
   @override
   void initState() {
     super.initState();
+    widget.controller?._state = this;
     _load();
+  }
+
+  @override
+  void didUpdateWidget(SparkleMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      if (oldWidget.controller?._state == this) {
+        oldWidget.controller!._state = null;
+      }
+      widget.controller?._state = this;
+      if (_map case final map?) {
+        widget.controller?._attached(map);
+      }
+    }
   }
 
   Future<void> _load() async {
@@ -184,6 +334,9 @@ class _SparkleMapState extends State<SparkleMap> {
 
   @override
   void dispose() {
+    if (widget.controller?._state == this) {
+      widget.controller!._state = null;
+    }
     _wake?.cancel();
     _stylePoll?.cancel();
     _tapClick?.cancel();
@@ -225,6 +378,7 @@ class _SparkleMapState extends State<SparkleMap> {
         _executor = GpuExecutor(context, _library!, _surface!.format);
         _screenshot = created.screenshotPath();
         _wake = created.wakeStream().listen((_) => _requestFrame());
+        widget.controller?._attached(created);
         _stylePoll = Timer.periodic(const Duration(milliseconds: 500), (_) {
           if (_map?.pollStyle() ?? false) {
             _requestFrame();

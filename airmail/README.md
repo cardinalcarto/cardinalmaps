@@ -19,7 +19,7 @@ Airmail is an extremely lightweight geocoder[^1] written in pure Rust. Built on 
 - [ ] Categorical search, e.g. "coffee shop seattle".
 - [x] Typo tolerance (limited to >=8 character input tokens)
 - [x] Bounding box restriction.
-- [ ] Focus point queries.
+- [x] Focus point queries.
 - [ ] Systematic/automatic quality testing in CI.
 
 ## Quickstart

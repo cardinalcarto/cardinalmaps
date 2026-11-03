@@ -1,0 +1,13 @@
+[package]
+name = "airmail_parser"
+version = "0.1.0"
+description = "Rust port of the Pelias address/query parser (pelias/parser), for soft query understanding"
+license = "MIT"
+edition.workspace = true
+rust-version.workspace = true
+include = ["src/**", "resources/**", "build.rs", "Cargo.toml", "README.md", "examples/**", "tests/**"]
+
+[dependencies]
+regex = "1.13.1"
+serde.workspace = true
+serde_json.workspace = true

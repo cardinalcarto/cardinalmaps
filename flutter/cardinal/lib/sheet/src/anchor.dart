@@ -14,7 +14,8 @@ sealed class SheetAnchor {
   /// Rests with the section [id] (see [SheetSection]) and everything above it showing.
   const factory SheetAnchor.section(Object id, {double? gravity}) = _SectionAnchor;
 
-  /// Rests at [fraction] of the furthest the sheet can be pulled up.
+  /// Rests at [fraction] of the furthest the sheet can be pulled up, measured from the
+  /// keyboard's top while it shows.
   const factory SheetAnchor.fraction(double fraction, {double? gravity}) = _FractionAnchor;
 
   /// Rests as far up as the sheet goes: the full screen, or the top of a docked column.
@@ -58,7 +59,7 @@ final class _FractionAnchor extends SheetAnchor {
 
   @override
   double _resolve(SheetGeometry geometry, Map<Object, _Span> sections) =>
-      geometry.maxExtent * fraction.clamp(0.0, 1.0);
+      geometry.extentAtFraction(fraction);
 
   @override
   bool operator ==(Object other) =>

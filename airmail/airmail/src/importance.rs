@@ -6,26 +6,6 @@
 /// How much importance can raise a result's score.
 pub const IMPORTANCE_WEIGHT: f32 = 2.0;
 
-/// The prior for an administrative area of each placetype, before its
-/// population is known.
-fn placetype_prior(placetype: &str) -> f64 {
-    match placetype {
-        "continent" | "country" => 0.9,
-        "dependency" | "ocean" => 0.8,
-        "empire" => 0.6,
-        "macroregion" | "region" => 0.55,
-        "disputed" | "marinearea" => 0.5,
-        "locality" => 0.5,
-        "localadmin" | "borough" => 0.4,
-        "macrocounty" => 0.35,
-        "county" => 0.3,
-        "macrohood" => 0.35,
-        "neighbourhood" => 0.3,
-        "microhood" => 0.2,
-        _ => 0.3,
-    }
-}
-
 /// Whether a placetype is a settlement, where people live and go, rather
 /// than an area that groups them. A settlement's population says how much
 /// people look for it; an area's mostly says how many settlements it holds.
@@ -33,26 +13,39 @@ fn is_settlement(placetype: &str) -> bool {
     matches!(placetype, "locality" | "localadmin" | "borough" | "macrohood" | "neighbourhood" | "microhood")
 }
 
-/// An administrative area's importance from its placetype and Who's On
-/// First's `wof:population_rank`, from 0 (unknown or tiny) to 18 (the
-/// largest megacities).
+/// The most importance an administrative area gets: about the top of what
+/// POIs get, so even the biggest cities and countries only win queries they
+/// match well, not every vague prefix the world over.
+const MAX_ADMIN_IMPORTANCE: f64 = 0.6;
+
+/// An administrative area's importance from its population, on the same
+/// scale as POIs': a town of a thousand people ranks with an ordinary POI,
+/// Seattle (about 750,000) around 0.5, above most POIs named after it, and
+/// cities of a few million and up at [`MAX_ADMIN_IMPORTANCE`]. An area that groups settlements (a county, a
+/// region, a country) counts a tenth of its population, since that's mostly
+/// its settlements' and they shouldn't be outranked by it. Without a
+/// population, Who's On First's `wof:population_rank` (0 to 18) stands in for
+/// it; without either, an area ranks as an ordinary POI.
 #[must_use]
-pub fn admin_importance(placetype: &str, population_rank: Option<u32>) -> f64 {
-    // For settlements population counts for more than placetype, so a big
-    // city outranks a small region of the same name; for areas less, so a
-    // county doesn't outrank its seat.
-    let prior = placetype_prior(placetype);
-    let population = population_rank.map_or(prior * 0.5, |rank| f64::from(rank.min(18)) / 18.0);
-    let population_weight = if is_settlement(placetype) { 0.7 } else { 0.4 };
-    ((1.0 - population_weight) * prior + population_weight * population).clamp(0.0, 1.0)
+pub fn admin_importance(placetype: &str, population: Option<u64>, population_rank: Option<u32>) -> f64 {
+    // Rank 11 is Seattle's, 18 the largest megacities'.
+    let decades = match (population, population_rank) {
+        (Some(population), _) if population > 0 => (population as f64).log10(),
+        (_, Some(rank)) => 0.5 * f64::from(rank.min(18)) + 0.3,
+        _ => return 0.08,
+    };
+    let decades = if is_settlement(placetype) { decades } else { decades - 1.0 };
+    // 0.1 at a thousand people, rising 0.14 a decade.
+    (0.1 + 0.14 * (decades - 3.0)).clamp(0.05, MAX_ADMIN_IMPORTANCE)
 }
 
 /// A neighbourhood's importance, which is at least a share of its city's:
 /// neighbourhoods rarely have populations, and a big city's are better known
-/// than small towns elsewhere.
+/// than small towns elsewhere, though not than cities: a megacity's come to
+/// about a city of 50,000.
 #[must_use]
 pub fn neighbourhood_importance(own: f64, city: f64) -> f64 {
-    own.max(0.65 * city)
+    own.max(0.45 * city)
 }
 
 /// Whether a placetype is part of a city, inheriting its importance.
@@ -102,6 +95,24 @@ pub fn poi_importance(signals: PoiSignals) -> f64 {
 /// An address's importance.
 pub const ADDRESS_IMPORTANCE: f64 = 0.02;
 
+/// A postcode: above the shops and buildings named with one (`10119`), below
+/// towns.
+pub const POSTCODE_IMPORTANCE: f64 = 0.25;
+
+/// A street, by its OSM `highway` class: above addresses on it, and more for
+/// the bigger roads.
+#[must_use]
+pub fn street_importance(highway: Option<&str>) -> f64 {
+    match highway {
+        Some("motorway" | "trunk") => 0.25,
+        Some("primary") => 0.2,
+        Some("secondary") => 0.17,
+        Some("tertiary") => 0.14,
+        Some("pedestrian" | "living_street" | "residential" | "unclassified") => 0.1,
+        _ => 0.06,
+    }
+}
+
 /// Whether OSM tags describe a transit stop or platform.
 #[must_use]
 pub fn is_transit_stop(tags: &[(String, String)]) -> bool {
@@ -127,27 +138,50 @@ mod test {
 
     #[test]
     fn bigger_cities_are_more_important() {
-        assert!(admin_importance("locality", Some(11)) > admin_importance("locality", Some(5)));
-        assert!(admin_importance("country", Some(14)) > admin_importance("neighbourhood", Some(14)));
+        assert!(admin_importance("locality", Some(755_078), None) > admin_importance("locality", Some(5_000), None));
+        assert!(admin_importance("locality", None, Some(11)) > admin_importance("locality", None, Some(5)));
     }
 
     #[test]
     fn a_county_doesnt_outrank_its_seat() {
         // Spokane County and Spokane.
-        assert!(admin_importance("locality", Some(10)) > admin_importance("county", Some(12)));
+        assert!(admin_importance("locality", Some(229_000), None) > admin_importance("county", Some(540_000), None));
     }
 
     #[test]
     fn a_big_citys_neighbourhoods_outrank_small_towns() {
         // Ballard, Seattle and Ballard, Utah.
-        let ballard = neighbourhood_importance(admin_importance("neighbourhood", None), admin_importance("locality", Some(12)));
-        assert!(ballard > admin_importance("locality", Some(3)));
+        let ballard = neighbourhood_importance(
+            admin_importance("neighbourhood", None, None),
+            admin_importance("locality", Some(755_078), None),
+        );
+        assert!(ballard > admin_importance("locality", Some(1_500), None));
     }
 
     #[test]
     fn a_big_city_outranks_a_small_region() {
         // Portland, Oregon and Portland Parish, Jamaica.
-        assert!(admin_importance("locality", Some(11)) > admin_importance("region", Some(7)));
+        assert!(admin_importance("locality", Some(650_000), None) > admin_importance("region", Some(82_000), None));
+    }
+
+    #[test]
+    fn a_megacitys_neighbourhoods_dont_outrank_cities() {
+        // The neighbourhood in Manhattan also called Bellevue, and Bellevue, Washington.
+        let manhattan = neighbourhood_importance(0.08, admin_importance("locality", Some(8_300_000), None));
+        assert!(manhattan < admin_importance("locality", Some(150_000), None));
+    }
+
+    #[test]
+    fn tiny_towns_rank_below_ordinary_pois_and_megacities_stay_in_range() {
+        let cafe = poi_importance(PoiSignals::default());
+        // Starbuck, Washington.
+        assert!(admin_importance("locality", Some(130), None) < cafe);
+        // Tokyo, and China: no more than a famous POI could get.
+        let famous = poi_importance(PoiSignals { has_wikidata: true, qrank: Some(1_000_000_000), area_m2: 1e9, ..Default::default() });
+        assert!(admin_importance("locality", Some(37_000_000), None) <= MAX_ADMIN_IMPORTANCE);
+        assert!(admin_importance("country", Some(1_400_000_000), None) <= famous + 0.05);
+        // Without a population, an ordinary POI's.
+        assert!((admin_importance("county", None, None) - cafe).abs() < 0.01);
     }
 
     #[test]

@@ -21,6 +21,7 @@ use tokio::{
 
 use crate::{
     cache::{IndexerCache, WofCacheItem},
+    postcodes::Postcodes,
     pip_tree::PipTree,
     qrank::QRank,
     query_pip,
@@ -39,10 +40,12 @@ pub trait PoiSink: Send + 'static {
     fn finish(self) -> Result<()>;
 }
 
-/// Writes POIs into an Airmail index.
+/// Writes POIs into an Airmail index, and the postcodes of their addresses
+/// once they all are.
 pub struct IndexSink {
     writer: AirmailIndexWriter,
     source: String,
+    postcodes: Postcodes,
 }
 
 impl IndexSink {
@@ -53,16 +56,22 @@ impl IndexSink {
         Ok(Self {
             writer,
             source: source.to_string(),
+            postcodes: Postcodes::default(),
         })
     }
 }
 
 impl PoiSink for IndexSink {
     fn add(&mut self, poi: ToIndexPoi, _languages: &[String]) -> Result<()> {
+        self.postcodes.add(&poi);
         self.writer.add_poi(SchemafiedPoi::from(poi), &self.source)
     }
 
-    fn finish(self) -> Result<()> {
+    fn finish(mut self) -> Result<()> {
+        info!("Indexing {} postcodes", self.postcodes.len());
+        for poi in std::mem::take(&mut self.postcodes).into_pois() {
+            self.writer.add_poi(SchemafiedPoi::from(poi), &self.source)?;
+        }
         self.writer.commit()
     }
 }
@@ -271,8 +280,11 @@ impl Importer {
                 .await?;
         poi.admin_ids = pip_response.admin_ids;
         poi.admin_names = pip_response.admin_names;
+        poi.country_code = pip_response.country_code;
         poi.importance = match poi.kind {
             Kind::Address => importance::ADDRESS_IMPORTANCE,
+            Kind::Postcode => importance::POSTCODE_IMPORTANCE,
+            Kind::Street => importance::street_importance(poi.tag("highway")),
             _ => {
                 let wikidata = poi.tag("wikidata");
                 importance::poi_importance(importance::PoiSignals {

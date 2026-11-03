@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use airmail::{
     importance,
     index::AirmailIndexWriter,
-    poi::{Kind, SchemafiedPoi, ToIndexPoi, WofPlace, is_containing_admin},
+    poi::{AdminBand, Kind, SchemafiedPoi, ToIndexPoi, WofPlace, is_containing_admin, iso_country_code},
 };
 use anyhow::Result;
 use futures_util::{StreamExt, stream};
@@ -37,10 +37,9 @@ impl Memo {
             return Ok(ancestor.clone());
         }
         let placetype = wof.placetype(id).await?.unwrap_or_default();
-        let properties = wof.properties(id, &["wof:population_rank"]).await?;
-        let rank = properties.get("wof:population_rank").and_then(|r| r.parse().ok());
+        let properties = wof.properties(id, &["wof:population", "wof:population_rank"]).await?;
         let ancestor = Arc::new(Ancestor {
-            importance: importance::admin_importance(&placetype, rank),
+            importance: importance::admin_importance(&placetype, population(&properties), population_rank(&properties)),
             placetype,
             names: wof.names(id).await?,
         });
@@ -100,11 +99,12 @@ pub async fn load_wof(wof: &WhosOnFirst, writer: &mut AirmailIndexWriter) -> Res
 /// A place as a document, or `None` if it has no name or no location.
 async fn admin(wof: &WhosOnFirst, memo: &Memo, id: u64, placetype: String) -> Result<Option<ToIndexPoi>> {
     let names = wof.names(id).await?;
-    if place(id, &placetype, &names, None).is_none() {
+    if place(id, &placetype, &names, None, None).is_none() {
         return Ok(None);
     }
     let ancestors = wof.ancestors(id).await?;
-    let properties = wof.properties(id, &["wof:population", "wof:population_rank"]).await?;
+    // SpatiaLite databases have `wof:country` as `alpha2`.
+    let properties = wof.properties(id, &["wof:population", "wof:population_rank", "alpha2", "wof:country"]).await?;
     let mut geometries = wof.geometries(id).await?;
 
     // Its shape if it has one, else its label point.
@@ -138,34 +138,55 @@ async fn admin(wof: &WhosOnFirst, memo: &Memo, id: u64, placetype: String) -> Re
         if ancestor.placetype == "locality" {
             city_importance = city_importance.max(ancestor.importance);
         }
+        let Some(band) = AdminBand::of(&ancestor.placetype) else { continue };
         for name in &ancestor.names {
             if name.is_searchable() && (name.lang == "und" || name.lang == "eng" || languages.contains(&name.lang)) {
-                admin_names.insert(name.name.clone());
+                admin_names.insert((band, name.name.clone()));
             }
         }
     }
 
-    let searchable: BTreeSet<String> = names.iter().filter(|n| n.is_searchable()).map(|n| n.name.clone()).collect();
-    let Some(mut doc) = ToIndexPoi::new(Kind::Admin, searchable.into_iter().collect(), shape, Vec::new()) else {
+    // Variant names (often historical) find a place, but aren't its name.
+    let searchable = |variant: bool| -> BTreeSet<String> {
+        names.iter().filter(|n| n.is_searchable() && (n.tag == "variant") == variant).map(|n| n.name.clone()).collect()
+    };
+    let mut own = searchable(false);
+    let mut variants: Vec<String> = searchable(true).into_iter().filter(|n| !own.contains(n)).collect();
+    if own.is_empty() {
+        // A place known only by variants is known by them.
+        own.extend(variants.drain(..));
+    }
+    let Some(mut doc) = ToIndexPoi::new(Kind::Admin, own.into_iter().collect(), shape, Vec::new()) else {
         return Ok(None);
     };
+    doc.variant_names = variants;
     if let Some(label) = label {
         doc.center = label;
     }
-    let population_rank = properties.get("wof:population_rank").and_then(|r| r.parse().ok());
-    doc.importance = importance::admin_importance(&placetype, population_rank);
+    doc.importance = importance::admin_importance(&placetype, population(&properties), population_rank(&properties));
     if importance::is_neighbourhood(&placetype) {
         doc.importance = importance::neighbourhood_importance(doc.importance, city_importance);
     }
     doc.admin_ids = containing;
     doc.admin_names = admin_names.into_iter().collect();
-    let population = properties.get("wof:population").and_then(|p| p.parse::<f64>().ok()).map(|p| p as u64);
-    doc.wof = place(id, &placetype, &names, population);
+    let population = population(&properties);
+    let country = properties.get("alpha2").or_else(|| properties.get("wof:country")).and_then(|c| iso_country_code(c));
+    doc.country_code = country.clone();
+    doc.wof = place(id, &placetype, &names, population, country);
     Ok(Some(doc))
 }
 
+/// A place's `wof:population`, which Who's On First sometimes writes as a decimal.
+fn population(properties: &HashMap<String, String>) -> Option<u64> {
+    properties.get("wof:population").and_then(|p| p.parse::<f64>().ok()).map(|p| p as u64)
+}
+
+fn population_rank(properties: &HashMap<String, String>) -> Option<u32> {
+    properties.get("wof:population_rank").and_then(|r| r.parse().ok())
+}
+
 /// What results show of a place, from its names, or `None` if it has none.
-fn place(id: u64, placetype: &str, names: &[WofName], population: Option<u64>) -> Option<WofPlace> {
+fn place(id: u64, placetype: &str, names: &[WofName], population: Option<u64>, country: Option<String>) -> Option<WofPlace> {
     let full = || names.iter().filter(|n| !n.abbr);
     let default_name = full()
         .find(|n| n.lang == "und" && n.tag == "default")
@@ -193,6 +214,7 @@ fn place(id: u64, placetype: &str, names: &[WofName], population: Option<u64>) -
         default_name,
         names: preferred,
         abbreviation,
+        country,
     })
 }
 
@@ -213,7 +235,7 @@ mod test {
             name("eng", "variant", false, "ZRH"),
             name("deu", "preferred", false, "Zürich"),
         ];
-        let place = place(85682309, "region", &names, Some(1_500_000)).unwrap();
+        let place = place(85682309, "region", &names, Some(1_500_000), Some("CH".into())).unwrap();
         assert_eq!(place.default_name, "Zürich");
         assert_eq!(place.names.get("eng").map(String::as_str), Some("Zurich"));
         assert_eq!(place.abbreviation.as_deref(), Some("ZH"));
@@ -222,6 +244,6 @@ mod test {
 
     #[test]
     fn place_needs_a_name() {
-        assert!(place(1, "locality", &[], None).is_none());
+        assert!(place(1, "locality", &[], None, None).is_none());
     }
 }

@@ -23,7 +23,8 @@ paths:
         Every word of `q` must match the result's name, address or the names of
         the administrative areas containing it, so `starbucks bellevue` finds
         Starbucks in Bellevue. Results are ranked by how well they match,
-        weighted by importance, most relevant first.
+        weighted by importance and, with `focus`, by nearness, most relevant
+        first.
       parameters:
         - name: q
           in: query
@@ -75,6 +76,41 @@ paths:
           examples:
             seattle:
               value: [-122.46, 47.48, -122.22, 47.74]
+        - name: focus
+          in: query
+          description: |
+            Rank results nearer this point higher, as `lon,lat` in WGS 84
+            degrees, such as the center of the map the user is looking at.
+            Unlike `bbox`, it doesn't exclude anything. Nearness counts most
+            within a few kilometers and fades with distance; for
+            administrative areas it also counts across hundreds of
+            kilometers, so of two towns with one name the one in the user's
+            part of the world comes first unless the other is far better
+            known. It reorders similar matches rather than overriding
+            relevance: with `focus` in Seattle, `starbucks` finds the nearest
+            Starbucks first and `leavenworth` the town in Washington, but
+            `zurich` still finds Zürich rather than a nearby place that only
+            has the word in its name. Distance is measured to each result's
+            `center`, or for an administrative area containing the point, is
+            taken as zero.
+          style: form
+          explode: false
+          schema:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: number
+            prefixItems:
+              - type: number
+                minimum: -180
+                maximum: 180
+              - type: number
+                minimum: -90
+                maximum: 90
+          examples:
+            seattle:
+              value: [-122.3321, 47.6062]
         - name: within
           in: query
           description: |
@@ -156,6 +192,63 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/place:
+    get:
+      operationId: place
+      summary: Look up a place by its result ID.
+      description: |
+        Returns the place a search result came from, by `Result.id`, such as
+        one saved earlier or shared in a link. IDs of the `osm:` form also
+        find places whose `id` is a `poi:` ID, by `osm.type` and `osm.id`.
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: A result's `id`.
+          schema:
+            type: string
+            pattern: '^(poi:[0-9]+|wof:[0-9]+|osm:(node|way|relation)/[0-9]+|postcode:[A-Z]{2}/[A-Z0-9-]+)$'
+            examples: ['poi:51234', 'wof:101730401', 'osm:node/2470190871', 'postcode:CA/M2M1C8']
+        - name: lang
+          in: query
+          description: As for `/v1/search`, the language of display names.
+          schema:
+            type: string
+            examples: [en, de-CH]
+        - name: geometry
+          in: query
+          description: As for `/v1/search`.
+          schema:
+            type: string
+            enum: [shape, point]
+            default: shape
+      responses:
+        '200':
+          description: The place.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceResponse'
+        '400':
+          description: '`id` is missing or malformed, or another parameter is invalid.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: |
+            There's no place with this ID in this release, for example because
+            it was deleted from OpenStreetMap or its `poi:` ID ended.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          description: The lookup failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /health:
     get:
       operationId: health
@@ -192,10 +285,18 @@ components:
           items:
             $ref: '#/components/schemas/Result'
 
+    PlaceResponse:
+      type: object
+      required: [result]
+      properties:
+        result:
+          description: The place, as search returns it, with a `score` of 0.
+          $ref: '#/components/schemas/Result'
+
     QueryEcho:
       description: The request as the service understood it, with defaults filled in.
       type: object
-      required: [text, lang, prefix, typos, bbox, within, kind, tags, limit, geometry, category_language, categories]
+      required: [text, lang, prefix, typos, bbox, focus, within, kind, tags, limit, geometry, category_language, categories]
       properties:
         text:
           type: string
@@ -209,6 +310,11 @@ components:
         bbox:
           oneOf:
             - $ref: '#/components/schemas/BBox'
+            - type: 'null'
+        focus:
+          description: '`focus` as `[lon, lat]`, or null if it wasn''t given.'
+          oneOf:
+            - $ref: '#/components/schemas/Position'
             - type: 'null'
         within:
           type: [string, 'null']
@@ -278,23 +384,28 @@ components:
       description: |
         What a result is. Open: clients must accept values they don't know.
         `poi`: a named OSM feature. `address`: an OSM address without a name.
-        `admin`: a Who's On First administrative area.
+        `admin`: a Who's On First administrative area. `street`: a named OSM
+        road or path, its ways near each other merged. `postcode`: a postcode,
+        where the OSM addresses with it are.
       type: string
-      enum: [poi, address, admin]
+      enum: [poi, address, admin, street, postcode]
 
     Result:
       type: object
-      required: [id, kind, name, center, address, admins, importance, score, poi, osm, wof, feature]
+      required: [id, kind, name, center, address, admins, country_code, importance, score, poi, osm, wof, feature]
       properties:
         id:
           description: |
             Identifies the result across releases where the source allows:
             `poi:<id>` for OSM POIs with a stable identifier, `wof:<id>` for
-            administrative areas, and `osm:<type>/<id>` otherwise, which
-            changes if the element is deleted and recreated.
+            administrative areas, `postcode:<country>/<postcode>` for
+            postcodes, with the country's ISO 3166-1 alpha-2 code and the
+            postcode in capitals without spaces, and `osm:<type>/<id>`
+            otherwise, which changes if the element is deleted and recreated.
+            A street's is its way with the lowest ID.
           type: string
-          pattern: '^(poi:[0-9]+|wof:[0-9]+|osm:(node|way|relation)/[0-9]+)$'
-          examples: ['poi:51234', 'wof:101730401', 'osm:node/2470190871']
+          pattern: '^(poi:[0-9]+|wof:[0-9]+|osm:(node|way|relation)/[0-9]+|postcode:[A-Z]{2}/[A-Z0-9-]+)$'
+          examples: ['poi:51234', 'wof:101730401', 'osm:node/2470190871', 'postcode:CA/M2M1C8']
         kind:
           $ref: '#/components/schemas/Kind'
         name:
@@ -318,6 +429,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AdminRef'
+        country_code:
+          description: |
+            The ISO 3166-1 alpha-2 code of the country the result is in, from
+            Who's On First, or a country's own code. Places in dependencies
+            such as Puerto Rico have the dependency's code. Null if unknown,
+            including for disputed areas Who's On First assigns no country.
+          type: [string, 'null']
+          pattern: '^[A-Z]{2}$'
+          examples: [US, CH]
         importance:
           description: |
             How prominent the place is regardless of the query, from its type,
@@ -328,8 +448,9 @@ components:
           maximum: 1
         score:
           description: |
-            Relevance to this query, including importance. Only comparable
-            between results of one response.
+            Relevance to this query, including importance and nearness to
+            `focus`. Only comparable between results of one response. Always 0
+            from `/v1/place`.
           type: number
           minimum: 0
         poi:
@@ -423,7 +544,7 @@ components:
 
     WofRef:
       type: object
-      required: [id, placetype, population]
+      required: [id, placetype, population, abbreviation]
       properties:
         id:
           type: integer
@@ -433,6 +554,9 @@ components:
         population:
           type: [integer, 'null']
           minimum: 0
+        abbreviation:
+          description: Its short form, such as `WA` or `NYC`, if Who's On First has one.
+          type: [string, 'null']
 
     Feature:
       description: |
@@ -479,6 +603,7 @@ components:
       oneOf:
         - $ref: '#/components/schemas/Point'
         - $ref: '#/components/schemas/LineString'
+        - $ref: '#/components/schemas/MultiLineString'
         - $ref: '#/components/schemas/Polygon'
         - $ref: '#/components/schemas/MultiPolygon'
       discriminator:
@@ -504,6 +629,22 @@ components:
           minItems: 2
           items:
             $ref: '#/components/schemas/Position'
+
+    MultiLineString:
+      description: A street's ways.
+      type: object
+      required: [type, coordinates]
+      properties:
+        type:
+          const: MultiLineString
+        coordinates:
+          type: array
+          minItems: 2
+          items:
+            type: array
+            minItems: 2
+            items:
+              $ref: '#/components/schemas/Position'
 
     Polygon:
       type: object

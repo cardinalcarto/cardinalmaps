@@ -9,25 +9,25 @@ lazy_static! {
 
 lazy_static! {
     static ref EN_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(include_str!("../dictionaries/en/street_types.txt")).unwrap();
+        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("en/street_types.txt").expect("dictionary")).unwrap();
     static ref CA_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(include_str!("../dictionaries/ca/street_types.txt")).unwrap();
+        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("ca/street_types.txt").expect("dictionary")).unwrap();
     static ref ES_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(include_str!("../dictionaries/es/street_types.txt")).unwrap();
+        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("es/street_types.txt").expect("dictionary")).unwrap();
     static ref AR_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(include_str!("../dictionaries/ar/street_types.txt")).unwrap();
+        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("ar/street_types.txt").expect("dictionary")).unwrap();
     static ref FR_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(include_str!("../dictionaries/fr/street_types.txt")).unwrap();
+        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("fr/street_types.txt").expect("dictionary")).unwrap();
     static ref DE_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(include_str!("../dictionaries/de/street_types.txt")).unwrap();
+        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("de/street_types.txt").expect("dictionary")).unwrap();
     static ref IT_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(include_str!("../dictionaries/it/street_types.txt")).unwrap();
+        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("it/street_types.txt").expect("dictionary")).unwrap();
     static ref PT_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(include_str!("../dictionaries/pt/street_types.txt")).unwrap();
+        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("pt/street_types.txt").expect("dictionary")).unwrap();
     static ref RU_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(include_str!("../dictionaries/ru/street_types.txt")).unwrap();
+        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("ru/street_types.txt").expect("dictionary")).unwrap();
     static ref ZH_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(include_str!("../dictionaries/zh/street_types.txt")).unwrap();
+        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("zh/street_types.txt").expect("dictionary")).unwrap();
     static ref EMPTY_SUBS: SubstitutionDict = SubstitutionDict::empty();
 }
 
@@ -87,26 +87,35 @@ fn sanitize(field: &str) -> String {
         .to_string()
 }
 
-pub(super) fn apply_subs(
-    prefix: &[String],
-    remaining: &[String],
-    dict: &SubstitutionDict,
-) -> Result<Vec<String>, Box<dyn Error>> {
-    if remaining.is_empty() {
-        return Ok(vec![prefix.join(" ")]);
+/// The most forms of a road name to index. Each word with synonyms multiplies
+/// them (an "ave" has 8), so a long name made of such words, as OSM has, would
+/// otherwise mean billions of strings.
+const MAX_ROAD_FORMS: usize = 64;
+
+/// Every way of writing `words` with `dict`'s synonyms, the words as they are
+/// first, up to [`MAX_ROAD_FORMS`]. Later words vary before earlier ones, so a
+/// capped list still has the street type's forms.
+pub(super) fn apply_subs(words: &[String], dict: &SubstitutionDict) -> Vec<String> {
+    fn walk(prefix: &mut Vec<String>, remaining: &[String], dict: &SubstitutionDict, out: &mut Vec<String>) {
+        if out.len() >= MAX_ROAD_FORMS {
+            return;
+        }
+        let Some((first, rest)) = remaining.split_first() else {
+            out.push(prefix.join(" "));
+            return;
+        };
+        for sub in dict.substitute(first) {
+            prefix.push(sub);
+            walk(prefix, rest, dict, out);
+            prefix.pop();
+            if out.len() >= MAX_ROAD_FORMS {
+                return;
+            }
+        }
     }
-
-    let mut permutations = vec![];
-
-    for sub in dict.substitute(&remaining[0]) {
-        let mut prefix = prefix.to_vec();
-        prefix.push(sub);
-        let mut remaining = remaining.to_vec();
-        remaining.remove(0);
-        permutations.extend(apply_subs(&prefix, &remaining, dict)?);
-    }
-
-    Ok(permutations)
+    let mut out = Vec::new();
+    walk(&mut Vec::with_capacity(words.len()), words, dict, &mut out);
+    out
 }
 
 pub fn permute_road(road: &str, language: &Language) -> Result<Vec<String>, Box<dyn Error>> {
@@ -127,7 +136,7 @@ pub fn permute_road(road: &str, language: &Language) -> Result<Vec<String>, Box<
         .split_ascii_whitespace()
         .map(|s| s.to_string())
         .collect();
-    apply_subs(&[], &road_tokens, sub_dict)
+    Ok(apply_subs(&road_tokens, sub_dict))
 }
 
 #[cfg(test)]
@@ -166,6 +175,20 @@ mod test {
                 "c / de villarroel"
             ]
         );
+    }
+
+    #[test]
+    fn long_roads_have_a_bounded_number_of_forms() {
+        // Each "ave" has 8 forms: 8^30 of them in all.
+        let road = vec!["fremont ave"; 30].join(" ");
+        let start = std::time::Instant::now();
+        let permutations = permute_road(&road, &Language::English).unwrap();
+        assert!(start.elapsed().as_millis() < 100);
+        assert_eq!(permutations.len(), 64);
+        assert_eq!(permutations[0], road);
+        assert_unique(&permutations);
+        // The last word varies first.
+        assert!(permutations[1].ends_with("fremont avenue"));
     }
 
     #[test]

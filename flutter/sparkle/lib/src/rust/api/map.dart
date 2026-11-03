@@ -8,17 +8,33 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `of`, `to_button`, `view`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<SparkleMap>>
 abstract class SparkleMap implements RustOpaqueInterface {
+  /// Where the camera is: its center is the middle of the view less the padding.
+  CameraState camera();
+
+  /// Stop keeping the subject in view, leaving the camera where it is.
+  void clearSubject();
+
   /// A click or tap at `x, y`. Returns whether a frame should be drawn.
   bool click({required double x, required double y});
 
   /// A double tap: glide in a level around it.
   void doubleTapZoom({required double x, required double y});
 
+  /// Fly to show `lng, lat` at `zoom` in the middle of the view less the padding,
+  /// zooming out on the way if it's far, and dropping any subject. Input that moves
+  /// the map stops it. Draw a frame after.
+  void flyTo({required double lng, required double lat, required double zoom});
+
   /// Draw a frame. Dart must be done with the previous frame's commands.
   FrameOutput frame();
+
+  /// Whether the camera is keeping a subject in view: one was set, and neither input
+  /// that moves the map nor [`Self::clear_subject`] has let go of it since.
+  bool hasSubject();
 
   /// With `--hover x,y`, hover that point. Returns whether a frame should be drawn.
   bool hoverArgument();
@@ -86,11 +102,37 @@ abstract class SparkleMap implements RustOpaqueInterface {
     required double pixelRatio,
   });
 
+  /// The ground at `x, y` (logical pixels), if the view shows the ground there.
+  LngLat? screenToLngLat({required double x, required double y});
+
   /// Where `--screenshot` wants the first complete frame saved, if anywhere.
   String? screenshotPath();
 
   /// A mouse wheel turned by `delta` logical pixels (positive scrolls down).
   void scroll({required double x, required double y, required double delta});
+
+  /// Replace the data of the style's GeoJSON source `source` with `geojson`, a GeoJSON
+  /// object as text. Draw a frame after.
+  void setGeojson({required String source, required String geojson});
+
+  /// Cover `padding` at the edges of the view, as a sheet over the map does. The map
+  /// is still drawn behind it, but the camera centers things in the rest: it keeps the
+  /// subject in view, or else keeps the middle of the rest where it is on the map, as
+  /// well as the zoom. Returns whether a frame should be drawn.
+  bool setPadding({required MapPadding padding});
+
+  /// Fly to the bounds (`west > east` crosses the antimeridian), zoomed in no closer
+  /// than `max_zoom`, with `margin` logical pixels clear around them, and keep them in
+  /// view as the padding changes until input moves the map or [`Self::clear_subject`].
+  /// Point-like bounds show at `max_zoom`. Draw a frame after.
+  void setSubject({
+    required double west,
+    required double south,
+    required double east,
+    required double north,
+    required double maxZoom,
+    required double margin,
+  });
 
   /// Two fingers dragged up or down together by `dy` logical pixels: up tilts further.
   void tilt({required double dy});
@@ -116,6 +158,46 @@ class Address {
           runtimeType == other.runtimeType &&
           address == other.address &&
           length == other.length;
+}
+
+/// Where the camera is.
+class CameraState {
+  final double lng;
+  final double lat;
+  final double zoom;
+
+  /// Degrees clockwise from north.
+  final double bearing;
+
+  /// Degrees from looking straight down.
+  final double pitch;
+
+  const CameraState({
+    required this.lng,
+    required this.lat,
+    required this.zoom,
+    required this.bearing,
+    required this.pitch,
+  });
+
+  @override
+  int get hashCode =>
+      lng.hashCode ^
+      lat.hashCode ^
+      zoom.hashCode ^
+      bearing.hashCode ^
+      pitch.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CameraState &&
+          runtimeType == other.runtimeType &&
+          lng == other.lng &&
+          lat == other.lat &&
+          zoom == other.zoom &&
+          bearing == other.bearing &&
+          pitch == other.pitch;
 }
 
 /// What the device can do, as Flutter GPU reports it.
@@ -222,4 +304,52 @@ class FrameOutput {
           zoom == other.zoom &&
           bearing == other.bearing &&
           pitch == other.pitch;
+}
+
+class LngLat {
+  final double lng;
+  final double lat;
+
+  const LngLat({required this.lng, required this.lat});
+
+  @override
+  int get hashCode => lng.hashCode ^ lat.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LngLat &&
+          runtimeType == other.runtimeType &&
+          lng == other.lng &&
+          lat == other.lat;
+}
+
+/// Space at the edges of the view to keep clear, such as under a sheet, in logical
+/// pixels.
+class MapPadding {
+  final double top;
+  final double right;
+  final double bottom;
+  final double left;
+
+  const MapPadding({
+    required this.top,
+    required this.right,
+    required this.bottom,
+    required this.left,
+  });
+
+  @override
+  int get hashCode =>
+      top.hashCode ^ right.hashCode ^ bottom.hashCode ^ left.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is MapPadding &&
+          runtimeType == other.runtimeType &&
+          top == other.top &&
+          right == other.right &&
+          bottom == other.bottom &&
+          left == other.left;
 }

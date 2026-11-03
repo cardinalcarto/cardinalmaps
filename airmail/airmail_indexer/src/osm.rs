@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use airmail::poi::{Kind, OsmRef, ToIndexPoi};
-use geo::{Geometry, LineString, MultiPolygon, Point, Polygon, coord};
+use geo::{Geometry, LineString, MultiLineString, MultiPolygon, Point, Polygon, Simplify, coord};
 
 /// `place` values Who's On First covers as administrative areas, which are
 /// indexed from there instead.
@@ -25,6 +25,138 @@ const ADMIN_PLACES: [&str; 15] = [
 
 /// Name keys a place is searched by, each also with a `:<language>` suffix.
 const NAME_KEYS: [&str; 6] = ["name", "alt_name", "official_name", "short_name", "loc_name", "int_name"];
+
+/// `highway` values of roads and paths that are found by name as streets,
+/// biggest first.
+const STREET_HIGHWAYS: [&str; 17] = [
+    "motorway",
+    "trunk",
+    "primary",
+    "secondary",
+    "tertiary",
+    "unclassified",
+    "residential",
+    "living_street",
+    "pedestrian",
+    "road",
+    "busway",
+    "service",
+    "track",
+    "cycleway",
+    "footway",
+    "path",
+    "bridleway",
+];
+
+/// Ways with the same name whose middles are in the same S2 cell of this
+/// level (a few kilometres across) are pieces of the same street.
+const STREET_CELL_LEVEL: u64 = 12;
+
+/// The most points a street's shape keeps, after simplifying its ways.
+const MAX_STREET_POINTS: usize = 1000;
+
+/// How much a street's ways are simplified, in degrees (about 5 m).
+const STREET_SIMPLIFY_DEGREES: f64 = 0.00005;
+
+/// One way of a named street.
+#[derive(Debug, Clone)]
+pub struct StreetWay {
+    /// The street's name, lowercased, and the S2 cell its middle is in.
+    pub key: (String, u64),
+    /// Its `highway` and name tags.
+    pub tags: Vec<(String, String)>,
+    pub osm: OsmRef,
+    /// Simplified, as `(lon, lat)` in single precision (about a metre),
+    /// since every named road in the world is held until they're all read.
+    line: Vec<(f32, f32)>,
+}
+
+impl StreetWay {
+    /// A named road or path through `(lat, lon)` points, or `None` if it isn't one.
+    pub fn new(tags: &HashMap<&str, &str>, points: &[(f64, f64)], osm: OsmRef) -> Option<Self> {
+        let highway = tags.get("highway")?;
+        let name = tags.get("name")?.trim();
+        if !STREET_HIGHWAYS.contains(highway) || name.is_empty() || points.len() < 2 {
+            return None;
+        }
+        let line: LineString<f64> = points.iter().map(|&(lat, lon)| coord! { x: lon, y: lat }).collect();
+        let (lat, lon) = points[points.len() / 2];
+        let cell = s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(lat, lon)).parent(STREET_CELL_LEVEL);
+        let tags = tags
+            .iter()
+            .filter(|(k, _)| **k == "highway" || is_name_key(k))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let line = line.simplify(STREET_SIMPLIFY_DEGREES).0.into_iter().map(|c| (c.x as f32, c.y as f32)).collect();
+        Some(Self { key: (name.to_lowercase(), cell.0), tags, osm, line })
+    }
+
+    fn highway_rank(&self) -> usize {
+        let highway = self.tags.iter().find(|(k, _)| k == "highway").map(|(_, v)| v.as_str());
+        STREET_HIGHWAYS.iter().position(|h| Some(*h) == highway).unwrap_or(STREET_HIGHWAYS.len())
+    }
+}
+
+/// The ways of a street, merged.
+#[derive(Debug, Clone)]
+pub struct Street {
+    /// The tags of its biggest way, lowest ID first.
+    tags: Vec<(String, String)>,
+    /// Its way with the lowest ID, which identifies it.
+    osm: OsmRef,
+    rank: usize,
+    lines: Vec<Vec<(f32, f32)>>,
+    points: usize,
+}
+
+impl From<StreetWay> for Street {
+    fn from(way: StreetWay) -> Self {
+        let rank = way.highway_rank();
+        let points = way.line.len();
+        Self { tags: way.tags, osm: way.osm, rank, lines: vec![way.line], points }
+    }
+}
+
+impl Street {
+    /// Adds another of its ways.
+    pub fn add(&mut self, way: StreetWay) {
+        let rank = way.highway_rank();
+        if (rank, way.osm.id) < (self.rank, self.osm.id) {
+            self.rank = rank;
+            self.tags = way.tags;
+        }
+        if way.osm.id < self.osm.id {
+            self.osm = way.osm;
+        }
+        if self.points + way.line.len() <= MAX_STREET_POINTS {
+            self.points += way.line.len();
+            self.lines.push(way.line);
+        }
+    }
+
+    /// The street as a document, found by its names, and by them as a road
+    /// (`w 26th st` for West 26th Street).
+    pub fn index_poi(self) -> Option<ToIndexPoi> {
+        let mut names: Vec<String> = self
+            .tags
+            .iter()
+            .filter(|(k, _)| is_name_key(k))
+            .flat_map(|(_, v)| v.split(';').map(str::trim).filter(|n| !n.is_empty()).map(str::to_string))
+            .collect();
+        names.sort();
+        names.dedup();
+        let road = self.tags.iter().find(|(k, _)| k == "name").map(|(_, v)| v.clone());
+        let lines = self
+            .lines
+            .into_iter()
+            .map(|line| line.into_iter().map(|(x, y)| coord! { x: f64::from(x), y: f64::from(y) }).collect::<LineString<f64>>())
+            .collect();
+        let mut poi = ToIndexPoi::new(Kind::Street, names, Geometry::MultiLineString(MultiLineString(lines)), self.tags)?;
+        poi.road = road;
+        poi.osm = Some(self.osm);
+        Some(poi)
+    }
+}
 
 /// An OSM element worth indexing, with its shape.
 #[derive(Debug, Clone)]
@@ -195,6 +327,30 @@ mod test {
         .unwrap();
         assert_eq!(poi.names, vec!["UW", "University of Washington"]);
         assert_eq!(poi.kind, Kind::Poi);
+    }
+
+    #[test]
+    fn named_roads_are_streets() {
+        let way = |id: i64, highway: &str, points: &[(f64, f64)]| {
+            let osm = OsmRef { osm_type: OsmType::Way, id, version: Some(1) };
+            StreetWay::new(&[("highway", highway), ("name", "Broadway"), ("surface", "asphalt")].into(), points, osm)
+        };
+        let a = way(5, "residential", &[(47.60, -122.32), (47.61, -122.32)]).unwrap();
+        let b = way(3, "secondary", &[(47.6101, -122.3201), (47.6102, -122.3202)]).unwrap();
+        assert_eq!(a.key, b.key);
+        assert!(way(6, "residential", &[(40.7, -74.0), (40.71, -74.0)]).unwrap().key != a.key);
+        assert!(way(7, "proposed", &[(47.60, -122.32), (47.61, -122.32)]).is_none());
+
+        let mut street = Street::from(a);
+        street.add(b);
+        let poi = street.index_poi().unwrap();
+        assert_eq!(poi.kind, Kind::Street);
+        assert_eq!(poi.names, vec!["Broadway"]);
+        assert_eq!(poi.road.as_deref(), Some("Broadway"));
+        assert_eq!(poi.osm.unwrap().id, 3);
+        assert_eq!(poi.tag("highway"), Some("secondary"));
+        assert_eq!(poi.tag("surface"), None);
+        assert!(matches!(poi.geometry, Geometry::MultiLineString(ref m) if m.0.len() == 2));
     }
 
     #[test]

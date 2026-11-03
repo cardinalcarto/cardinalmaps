@@ -199,8 +199,11 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
       under = current;
     }
     if (_transition?.top != top || _transition?.under != under) {
-      // Remember where the sheet was left on the page it's leaving.
-      if (!controller.isTransitioning) _active?.memory = controller._nearestAnchor;
+      // Remember where the sheet was left on the page it's leaving. A page only just
+      // pushed may already be active (an update can come before its transition starts),
+      // but the sheet is still where the page below left it.
+      final arriving = _active == top && top.memory == null;
+      if (!controller.isTransitioning && !arriving) _active?.memory = controller._nearestAnchor;
       top.memory ??= top.initial;
       under?.memory ??= under.initial;
       _transition = (top: top, under: under);
@@ -221,7 +224,7 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
     _active = entry;
     final geometry = _geometry;
     if (entry == null || geometry == null) return;
-    _controller._setAnchors(entry.resolved, geometry.maxExtent);
+    _controller._setAnchors(entry.resolved, geometry.maxExtent, floor: geometry.keyboard);
     if (!_controller.hasExtent && entry.resting != null) _controller._place(entry.resting!);
   }
 
@@ -237,12 +240,14 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
     final theme = Theme.of(context);
     final color = widget.color ?? theme.colorScheme.surfaceContainerLow;
     final padding = MediaQuery.viewPaddingOf(context);
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
     final controller = _controller;
     return LayoutBuilder(
       builder: (context, constraints) {
         final geometry = SheetGeometry.forWindow(
           constraints.biggest,
           padding,
+          keyboard: keyboard,
           dockedBreakpoint: widget.dockedBreakpoint,
         );
         if (geometry != _geometry) {

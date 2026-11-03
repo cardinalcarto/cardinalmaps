@@ -6,9 +6,10 @@
 //! from its cache, or else are handed to a [`Fetcher`] and processed once they arrive, so
 //! no worker waits on the network.
 //!
-//! The style can be replaced while tiles load ([`TileLoader::set_style`]); every tile is
-//! processed with the style current when its processing starts, and comes back tagged
-//! with that style's generation so the map can tell stale results.
+//! The style, and the data of GeoJSON sources, can be replaced while tiles load
+//! ([`TileLoader::set_style`], [`TileLoader::set_geojson`]); every tile is processed with
+//! what was current when its processing starts, and comes back tagged with that
+//! generation so the map can tell stale results.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -52,7 +53,8 @@ pub struct SourceConfig {
     /// For an image source, the one tile its image file is drawn in; `path` is the image
     /// rather than an MBTiles file.
     pub image_tile: Option<TileId>,
-    /// Set for GeoJSON sources, whose tiles are cut from this instead of read from `path`.
+    /// Set for GeoJSON sources, whose tiles are cut from this instead of read from `path`
+    /// (until [`TileLoader::set_geojson`] replaces it).
     pub geojson: Option<Arc<GeoJsonIndex>>,
     /// Set for sources fetched from a tile server instead of read from `path`.
     pub server: Option<Arc<TileServer>>,
@@ -67,17 +69,24 @@ pub struct LoaderConfig {
     pub fonts: Option<PathBuf>,
 }
 
-/// The style workers process tiles with.
+/// The style workers process tiles with, and the data of GeoJSON sources.
 struct CurrentStyle {
     generation: u64,
     style: Arc<Style>,
     /// Per source, the source layers some style layer draws: only those are worth
     /// converting from MVT.
     used_layers: Vec<HashSet<String>>,
+    /// Per source, the index GeoJSON sources' tiles are cut from.
+    geojson: Vec<Option<Arc<GeoJsonIndex>>>,
 }
 
 impl CurrentStyle {
-    fn new(generation: u64, style: Arc<Style>, sources: &[SourceConfig]) -> Self {
+    fn new(
+        generation: u64,
+        style: Arc<Style>,
+        sources: &[SourceConfig],
+        geojson: Vec<Option<Arc<GeoJsonIndex>>>,
+    ) -> Self {
         let used_layers = sources
             .iter()
             .map(|source| {
@@ -93,6 +102,7 @@ impl CurrentStyle {
             generation,
             style,
             used_layers,
+            geojson,
         }
     }
 }
@@ -131,6 +141,7 @@ impl TileLoader {
             0,
             config.style.clone(),
             &config.sources,
+            config.sources.iter().map(|s| s.geojson.clone()).collect(),
         ))));
         // Fonts are found and read as text first needs them, shared by all workers.
         let glyphs = Arc::new(FontLibrary::new(config.fonts.clone()));
@@ -185,6 +196,7 @@ impl TileLoader {
                             config: &config,
                             style: &current.style,
                             source: &config.sources[source],
+                            geojson: current.geojson[source].as_ref(),
                             used_layers: &current.used_layers[source],
                             glyphs: &glyphs,
                         };
@@ -227,7 +239,29 @@ impl TileLoader {
     pub fn set_style(&self, style: Arc<Style>) -> u64 {
         let mut current = self.current.write().unwrap();
         let generation = current.generation + 1;
-        *current = Arc::new(CurrentStyle::new(generation, style, &self.config.sources));
+        let geojson = current.geojson.clone();
+        *current = Arc::new(CurrentStyle::new(
+            generation,
+            style,
+            &self.config.sources,
+            geojson,
+        ));
+        generation
+    }
+
+    /// Cut tiles of GeoJSON source `source` requested from now on from `index`. Returns
+    /// the new generation, which [`TileMessage::Loaded`] carries.
+    pub fn set_geojson(&self, source: usize, index: Arc<GeoJsonIndex>) -> u64 {
+        let mut current = self.current.write().unwrap();
+        let generation = current.generation + 1;
+        let mut geojson = current.geojson.clone();
+        geojson[source] = Some(index);
+        *current = Arc::new(CurrentStyle::new(
+            generation,
+            current.style.clone(),
+            &self.config.sources,
+            geojson,
+        ));
         generation
     }
 
@@ -292,6 +326,8 @@ struct Worker<'a> {
     config: &'a LoaderConfig,
     style: &'a Style,
     source: &'a SourceConfig,
+    /// The index of a GeoJSON source.
+    geojson: Option<&'a Arc<GeoJsonIndex>>,
     used_layers: &'a HashSet<String>,
     glyphs: &'a FontLibrary,
 }
@@ -310,7 +346,7 @@ impl Worker<'_> {
             images: self.config.images.as_deref(),
             glyphs: Some(self.glyphs),
         };
-        if let Some(index) = &self.source.geojson {
+        if let Some(index) = self.geojson {
             let tile = processor.process_geojson_at(
                 self.style,
                 &self.source.id,

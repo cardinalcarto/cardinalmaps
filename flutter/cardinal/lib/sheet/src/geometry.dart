@@ -18,18 +18,26 @@ class SheetGeometry {
     required this.size,
     required this.padding,
     required this.placement,
+    this.keyboard = 0,
     this.handleHeight = 24,
     this.cornerRadius = 28,
     this.dockedWidth = 400,
     this.margin = 16,
   });
 
-  /// Lays the sheet out for a window of [size] with system UI over [padding], docking
-  /// it from [dockedBreakpoint] wide (Material 3's medium window class).
-  factory SheetGeometry.forWindow(Size size, EdgeInsets padding, {double dockedBreakpoint = 600}) {
+  /// Lays the sheet out for a window of [size] with system UI over [padding] and the
+  /// [keyboard] that tall, docking it from [dockedBreakpoint] wide (Material 3's medium
+  /// window class).
+  factory SheetGeometry.forWindow(
+    Size size,
+    EdgeInsets padding, {
+    double keyboard = 0,
+    double dockedBreakpoint = 600,
+  }) {
     return SheetGeometry(
       size: size,
       padding: padding,
+      keyboard: keyboard,
       placement: size.width >= dockedBreakpoint ? SheetPlacement.docked : SheetPlacement.bottom,
     );
   }
@@ -42,6 +50,14 @@ class SheetGeometry {
   final EdgeInsets padding;
 
   final SheetPlacement placement;
+
+  /// How tall the keyboard is over the bottom of [size], 0 while it's hidden. Anchors
+  /// rest above it, and the sheet can't be pulled down behind it.
+  final double keyboard;
+
+  /// What covers the bottom of the window: the keyboard, or else the navigation bar.
+  /// The content's anchors are measured from its top.
+  double get bottomInset => math.max(padding.bottom, keyboard);
 
   /// The drag handle's strip at the top of the sheet.
   final double handleHeight;
@@ -103,7 +119,7 @@ class SheetGeometry {
   /// The extent at which the content down to [y] (measured from its top) shows above
   /// the bottom inset.
   double extentShowing(double y) {
-    final target = y + padding.bottom;
+    final target = y + bottomInset;
     // Below the morph the content sits a handle's height below the top edge...
     final below = target + handleHeight;
     final morphStart = maxExtent - morphDistance;
@@ -115,7 +131,14 @@ class SheetGeometry {
 
   /// How much of [y] (measured from the content's top) shows above the bottom inset at
   /// [extent]; the inverse of [extentShowing].
-  double contentShown(double extent) => extent - padding.bottom - contentOffset(extent);
+  double contentShown(double extent) => extent - bottomInset - contentOffset(extent);
+
+  /// The extent [fraction] of the way from the keyboard's top (the bottom, while it's
+  /// hidden) to [maxExtent].
+  double extentAtFraction(double fraction) {
+    final floor = math.min(keyboard, maxExtent);
+    return floor + (maxExtent - floor) * fraction.clamp(0.0, 1.0);
+  }
 
   /// The part of the window the sheet covers at [extent], for the body to keep its
   /// focus clear of.
@@ -132,12 +155,21 @@ class SheetGeometry {
       other.size == size &&
       other.padding == padding &&
       other.placement == placement &&
+      other.keyboard == keyboard &&
       other.handleHeight == handleHeight &&
       other.cornerRadius == cornerRadius &&
       other.dockedWidth == dockedWidth &&
       other.margin == margin;
 
   @override
-  int get hashCode =>
-      Object.hash(size, padding, placement, handleHeight, cornerRadius, dockedWidth, margin);
+  int get hashCode => Object.hash(
+    size,
+    padding,
+    placement,
+    keyboard,
+    handleHeight,
+    cornerRadius,
+    dockedWidth,
+    margin,
+  );
 }

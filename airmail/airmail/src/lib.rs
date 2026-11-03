@@ -4,12 +4,19 @@
 #[macro_use]
 extern crate lazy_static;
 
+pub mod address_format;
 pub mod categories;
+pub mod countries;
 pub mod cuisine;
 pub mod error;
+pub mod gazetteer;
 pub mod geometry;
 pub mod importance;
 pub mod index;
+pub mod interpret;
 pub mod poi;
 pub mod query;
+pub mod spelling;
 pub mod substitutions;
+pub mod tagger_data;
+pub mod text;

@@ -6,6 +6,7 @@ pub mod multipolygon;
 pub mod osm;
 pub mod osm_pbf;
 pub mod pip_tree;
+pub mod postcodes;
 pub mod qrank;
 pub mod query_pip;
 pub mod wof;

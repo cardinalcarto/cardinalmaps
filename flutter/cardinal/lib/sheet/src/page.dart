@@ -4,7 +4,8 @@ part of '../sheet.dart';
 ///
 /// Pages swap within the one sheet: the content slides across from one page to the
 /// next while the sheet moves between their anchors, and an Android back gesture scrubs
-/// both back towards the page below.
+/// both back towards the page below. A page restored on top of others opens the same
+/// way. Give pages a [restorationId] (go_router's `state.pageKey.value`) to restore them.
 class SheetPage<T> extends Page<T> {
   const SheetPage({
     required this.child,
@@ -43,6 +44,26 @@ class _SheetPageRoute<T> extends PageRoute<T> {
   @override
   bool canTransitionTo(TransitionRoute<dynamic> nextRoute) => nextRoute is _SheetPageRoute;
 
+  /// A page added without being pushed (restored, or under a deep link) opens as if it
+  /// had been, if it's on top: the sheet moves up from the page below as the content
+  /// slides in, and whatever follows the route's arrival (or departure) sees the same
+  /// as after a push. The bottom page just shows.
+  @override
+  void didAdd() {
+    super.didAdd();
+    if (isCurrent && !isFirst) controller!.forward(from: 0);
+  }
+
+  /// Whether this route has been popped. Until the navigator catches up it may still be
+  /// current, but a back gesture must leave its transition alone from then on.
+  bool _popped = false;
+
+  @override
+  bool didPop(T? result) {
+    _popped = true;
+    return super.didPop(result);
+  }
+
   @override
   bool canTransitionFrom(TransitionRoute<dynamic> previousRoute) =>
       previousRoute is _SheetPageRoute;
@@ -80,17 +101,22 @@ class _SheetPageRoute<T> extends PageRoute<T> {
   }
 
   void _updateBackGesture(double progress) {
-    if (isCurrent) controller!.value = progress;
+    if (isCurrent && !_popped) controller!.value = progress;
   }
 
   /// Finishes a back gesture from wherever it was let go, popping if [pop].
   ///
   /// The route's own handling of predictive back starts the pop over from the top,
   /// which jumps the content and the sheet back before they leave.
+  ///
+  /// If the route was popped some other way during the gesture (by a close button, say),
+  /// its pop carries on as it is.
   void _endBackGesture({required bool pop}) {
     final navigator = this.navigator!;
     final controller = this.controller!;
-    if (pop) {
+    if (_popped) {
+      // Popped already: neither again nor back into view.
+    } else if (pop) {
       navigator.pop();
       if (controller.isAnimating) {
         controller.animateBack(
@@ -186,7 +212,7 @@ class _SheetBackGestureState extends State<_SheetBackGesture> with WidgetsBindin
 
   bool get _enabled {
     final route = widget.route;
-    if (!route.isCurrent || !route.popGestureEnabled) return false;
+    if (!route.isCurrent || route._popped || !route.popGestureEnabled) return false;
     final scope = context.getInheritedWidgetOfExactType<_SheetScope>();
     return scope?.state._isRouteCurrent ?? true;
   }

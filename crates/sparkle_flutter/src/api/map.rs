@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use flutter_rust_bridge::frb;
 
+use sparkle_view::camera::Padding;
+
 use crate::app::{Button, MapView, Wake};
 use crate::frb_generated::StreamSink;
 use crate::gpu::{GpuInfo, Stream};
@@ -43,6 +45,42 @@ pub struct FrameOutput {
     pub zoom: f64,
     pub bearing: f64,
     pub pitch: f64,
+}
+
+/// Where the camera is.
+pub struct CameraState {
+    pub lng: f64,
+    pub lat: f64,
+    pub zoom: f64,
+    /// Degrees clockwise from north.
+    pub bearing: f64,
+    /// Degrees from looking straight down.
+    pub pitch: f64,
+}
+
+pub struct LngLat {
+    pub lng: f64,
+    pub lat: f64,
+}
+
+/// Space at the edges of the view to keep clear, such as under a sheet, in logical
+/// pixels.
+pub struct MapPadding {
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub left: f64,
+}
+
+impl From<MapPadding> for Padding {
+    fn from(p: MapPadding) -> Self {
+        Padding {
+            top: p.top,
+            right: p.right,
+            bottom: p.bottom,
+            left: p.left,
+        }
+    }
 }
 
 /// Where an array is in Rust's memory, and how many elements it has.
@@ -206,6 +244,80 @@ impl SparkleMap {
     #[frb(sync)]
     pub fn quick_zoom(&self, x: f64, y: f64, dy: f64) {
         self.view().quick_zoom([x, y], dy);
+    }
+
+    /// Replace the data of the style's GeoJSON source `source` with `geojson`, a GeoJSON
+    /// object as text. Draw a frame after.
+    #[frb(sync)]
+    pub fn set_geojson(&self, source: String, geojson: String) -> anyhow::Result<()> {
+        self.view().set_geojson(&source, &geojson)
+    }
+
+    /// Where the camera is: its center is the middle of the view less the padding.
+    #[frb(sync)]
+    pub fn camera(&self) -> CameraState {
+        let [lng, lat, zoom, bearing, pitch] = self.view().camera();
+        CameraState {
+            lng,
+            lat,
+            zoom,
+            bearing,
+            pitch,
+        }
+    }
+
+    /// The ground at `x, y` (logical pixels), if the view shows the ground there.
+    #[frb(sync)]
+    pub fn screen_to_lng_lat(&self, x: f64, y: f64) -> Option<LngLat> {
+        let [lng, lat] = self.view().screen_to_lng_lat([x, y])?;
+        Some(LngLat { lng, lat })
+    }
+
+    /// Cover `padding` at the edges of the view, as a sheet over the map does. The map
+    /// is still drawn behind it, but the camera centers things in the rest: it keeps the
+    /// subject in view, or else keeps the middle of the rest where it is on the map, as
+    /// well as the zoom. Returns whether a frame should be drawn.
+    #[frb(sync)]
+    pub fn set_padding(&self, padding: MapPadding) -> bool {
+        self.view().set_padding(padding.into())
+    }
+
+    /// Fly to the bounds (`west > east` crosses the antimeridian), zoomed in no closer
+    /// than `max_zoom`, with `margin` logical pixels clear around them, and keep them in
+    /// view as the padding changes until input moves the map or [`Self::clear_subject`].
+    /// Point-like bounds show at `max_zoom`. Draw a frame after.
+    #[frb(sync)]
+    pub fn set_subject(
+        &self,
+        west: f64,
+        south: f64,
+        east: f64,
+        north: f64,
+        max_zoom: f64,
+        margin: f64,
+    ) {
+        self.view().set_subject([west, south, east, north], max_zoom, margin);
+    }
+
+    /// Stop keeping the subject in view, leaving the camera where it is.
+    #[frb(sync)]
+    pub fn clear_subject(&self) {
+        self.view().clear_subject();
+    }
+
+    /// Whether the camera is keeping a subject in view: one was set, and neither input
+    /// that moves the map nor [`Self::clear_subject`] has let go of it since.
+    #[frb(sync)]
+    pub fn has_subject(&self) -> bool {
+        self.view().has_subject()
+    }
+
+    /// Fly to show `lng, lat` at `zoom` in the middle of the view less the padding,
+    /// zooming out on the way if it's far, and dropping any subject. Input that moves
+    /// the map stops it. Draw a frame after.
+    #[frb(sync)]
+    pub fn fly_to(&self, lng: f64, lat: f64, zoom: f64) {
+        self.view().fly_to(lng, lat, zoom);
     }
 
     /// `key`: a character, or a named key such as `ArrowLeft`.

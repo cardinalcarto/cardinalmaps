@@ -9,6 +9,7 @@ hits@5 and mean reciprocal rank over the top 10 results.
 """
 
 import argparse
+import concurrent.futures
 import json
 import math
 import sys
@@ -129,11 +130,14 @@ def main():
     parser.add_argument("--region", help="only cases for this region, e.g. wa")
     parser.add_argument("--cases", default=Path(__file__).with_name("search.tsv"))
     parser.add_argument("--verbose", action="store_true", help="print each case's rank and top results")
+    parser.add_argument("--jobs", type=int, default=16, help="requests in flight at once")
     args = parser.parse_args()
 
+    cases = list(load_cases(args.cases, args.region))
+    with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
+        responses = pool.map(lambda case: search(args.base.rstrip("/"), case[1], case[2]), cases)
     totals = {}
-    for region, query, params, conditions in load_cases(args.cases, args.region):
-        results = search(args.base.rstrip("/"), query, params)
+    for (region, query, params, conditions), results in zip(cases, responses):
         rank = next((i + 1 for i, r in enumerate(results[:10]) if matches(r, conditions)), None)
         hits1, hits5, rr, n = totals.get(region, (0, 0, 0.0, 0))
         totals[region] = (

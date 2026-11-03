@@ -127,6 +127,27 @@ impl WhosOnFirst {
         Ok(rows)
     }
 
+    /// A country's ISO 3166-1 alpha-2 code: `alpha2` in SpatiaLite
+    /// databases, else `wof:country`.
+    pub async fn country_code(&self, id: u64) -> Result<Option<String>> {
+        let id: i64 = id.try_into()?;
+        let row: Option<(String,)> = sqlx::query_as(
+            r"
+                SELECT property.value
+                FROM main.property
+                WHERE property.source = 'wof'
+                AND property.id = ?1
+                AND property.key IN ('alpha2', 'wof:country')
+                ORDER BY property.key = 'alpha2' DESC
+                LIMIT 1
+            ",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|(code,)| airmail::poi::iso_country_code(&code)))
+    }
+
     /// Every name of a place, in every language and with every tag
     /// (`default`, `preferred`, `variant`, `colloquial`).
     pub async fn names(&self, id: u64) -> Result<Vec<WofName>> {

@@ -62,6 +62,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DeviceInfo dco_decode_box_autoadd_device_info(dynamic raw);
 
   @protected
+  LngLat dco_decode_box_autoadd_lng_lat(dynamic raw);
+
+  @protected
+  MapPadding dco_decode_box_autoadd_map_padding(dynamic raw);
+
+  @protected
+  CameraState dco_decode_camera_state(dynamic raw);
+
+  @protected
   DeviceInfo dco_decode_device_info(dynamic raw);
 
   @protected
@@ -83,7 +92,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  LngLat dco_decode_lng_lat(dynamic raw);
+
+  @protected
+  MapPadding dco_decode_map_padding(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  LngLat? dco_decode_opt_box_autoadd_lng_lat(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
@@ -136,6 +154,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DeviceInfo sse_decode_box_autoadd_device_info(SseDeserializer deserializer);
 
   @protected
+  LngLat sse_decode_box_autoadd_lng_lat(SseDeserializer deserializer);
+
+  @protected
+  MapPadding sse_decode_box_autoadd_map_padding(SseDeserializer deserializer);
+
+  @protected
+  CameraState sse_decode_camera_state(SseDeserializer deserializer);
+
+  @protected
   DeviceInfo sse_decode_device_info(SseDeserializer deserializer);
 
   @protected
@@ -157,7 +184,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  LngLat sse_decode_lng_lat(SseDeserializer deserializer);
+
+  @protected
+  MapPadding sse_decode_map_padding(SseDeserializer deserializer);
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  LngLat? sse_decode_opt_box_autoadd_lng_lat(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -220,6 +256,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_lng_lat(LngLat self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_map_padding(
+    MapPadding self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_camera_state(CameraState self, SseSerializer serializer);
+
+  @protected
   void sse_encode_device_info(DeviceInfo self, SseSerializer serializer);
 
   @protected
@@ -244,7 +292,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_lng_lat(LngLat self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_map_padding(MapPadding self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_lng_lat(
+    LngLat? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);

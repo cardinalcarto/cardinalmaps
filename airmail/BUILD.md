@@ -30,9 +30,12 @@ cargo run --release --bin indexer -- \
 ```
 
 `load-osm-pbf` indexes the extract's named features and addresses, with their
-shapes: nodes, ways, and multipolygon relations. OSM's administrative places
-(`place=city`, `boundary=*` and so on) are skipped; `load-wof` indexes every
-administrative area in the Who's On First database instead, so use one
+shapes: nodes, ways, and multipolygon relations. Named roads and paths become
+streets, their ways merged where they're near each other, and addresses' postcodes
+become postcodes, shaped by where their addresses are. Houses in
+`associatedStreet` relations get the relation's street. OSM's administrative
+places (`place=city`, `boundary=*` and so on) are skipped; `load-wof` indexes
+every administrative area in the Who's On First database instead, so use one
 covering the area you want to search.
 
 - `--admin-cache` is a redb file caching point-in-polygon lookups and OSM node locations. It's optional, but keeping it between runs speeds imports up a lot.
@@ -51,15 +54,32 @@ version change.
 cargo run --release --bin airmail_service -- --index ./data/index
 ```
 
-Then query `http://127.0.0.1:3000/v1/search?q=...`. [airmail_service/openapi.yaml](airmail_service/openapi.yaml) describes the API, which the service also serves at `/openapi.yaml`; `/health` reports whether it's ready. The bind address and CORS origins are set with `--bind`/`AIRMAIL_BIND` and `--cors`/`AIRMAIL_CORS`.
+Then query `http://127.0.0.1:3000/v1/search?q=...`, adding `focus=lon,lat` to rank places near a point higher, and look results up again by ID with `/v1/place?id=...`. [airmail_service/openapi.yaml](airmail_service/openapi.yaml) describes the API, which the service also serves at `/openapi.yaml`; `/health` reports whether it's ready. The bind address and CORS origins are set with `--bind`/`AIRMAIL_BIND` and `--cors`/`AIRMAIL_CORS`.
 
 For categorical search ("vegan food", "Apotheke"), pass `--categories` a directory of per-language models (see [categorical/README.md](categorical/README.md)) and add `lang` to requests, e.g. `lang=de-CH`. Without `lang`, or for a language with no model, search matches words only.
+
+With `--tagger`, a query tagger model (see below) reads which words of a query are what: what's sought, a road, a house number, a postcode, or areas by band (neighbourhood, locality, county, region, country). Search then also looks for each likely interpretation that puts what's sought in areas, and the category model reads only the words of what's sought. Without it, search finds area names at the end of queries itself.
+
+## The query tagger
+
+`airmail_tagger` is a linear-chain CRF after libpostal's address parser, with features from the index's gazetteer of areas (by band, matched exactly, as the beginning of a word being typed, or with typos, how well known and how far from the focus). It's trained on queries made from an index's places:
+
+```bash
+cargo run --release --bin tagger -- train --index ./data/index-wa --index ./data/index-ch --out tagger.model
+cargo run --release --bin tagger -- eval --index ./data/index-wa --model tagger.model eval/tagger.tsv
+cargo run --release --bin tagger -- tag --index ./data/index-wa --model tagger.model "vegan pizza near capitol hill"
+```
+
+Training holds a tenth of the places out and reports accuracy on (up to 100,000 of) their queries by tag; `eval` scores a model on the hand-labelled queries in `eval/tagger.tsv`. A model works with any index of the same schema, whose gazetteer it uses.
+
+Training uses every `--stride`th document (20 by default; 1 for all), and needs about 4 GB of memory per million examples. More data helps more than more `--epochs`: past about five, the model learns the generator's habits rather than queries'. A model stores its features in an FST, with 16-bit weights, so it can be read without unpacking; `tagger convert <model> <out>` rewrites an older model in the current format.
 
 ## Other tools
 
 - `cargo run --release --bin query -- --index ./data/index [--bbox lng1,lat1,lng2,lat2] [--categories models/ --lang de]` opens an interactive query prompt. With only `--categories`, it shows what the model understands without searching.
 - `cargo run --release --bin merge -- --index ./data/index --merge` merges all index segments into one.
-- `python3 -I eval/search_eval.py http://127.0.0.1:3000 [--region wa]` scores a running service against the ranking cases in `eval/search.tsv`. It understands the legacy `/search` API too, so a change can be compared against the version before it.
+- `python3 -I eval/search_eval.py http://127.0.0.1:3000 [--region wa] [--jobs N]` scores a running service against the ranking cases in `eval/search.tsv`. It understands the legacy `/search` API too, so a change can be compared against the version before it.
+- `python3 -I eval/pelias_acceptance.py http://127.0.0.1:3000 path/to/acceptance-tests [--failures] [--jobs N]` runs [Pelias's acceptance tests](https://github.com/pelias/acceptance-tests) (clone them first) against `/v1/search`, translating their inputs and expectations; its docstring lists the approximations. They're worldwide, so they mean most against a planet index.
 
 ## Containers
 

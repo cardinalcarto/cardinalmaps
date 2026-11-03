@@ -1,11 +1,12 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::{LazyLock, Mutex};
 
 use anyhow::Result;
 use crossbeam::channel::Sender;
 use futures_util::future::join_all;
 use serde::Deserialize;
 
-use airmail::poi::is_containing_admin;
+use airmail::poi::{AdminBand, is_containing_admin};
 
 use crate::{
     COUNTRIES,
@@ -17,8 +18,23 @@ use crate::{
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PipResponse {
     pub admin_ids: Vec<u64>,
-    pub admin_names: Vec<String>,
+    /// With the band of each area's placetype.
+    pub admin_names: Vec<(AdminBand, String)>,
     pub admin_langs: Vec<String>,
+    /// The ISO 3166-1 alpha-2 code of the country.
+    pub country_code: Option<String>,
+}
+
+/// Countries' ISO codes by Who's On First ID, as they're looked up.
+static COUNTRY_CODES: LazyLock<Mutex<HashMap<u64, Option<String>>>> = LazyLock::new(Mutex::default);
+
+async fn country_code(country_id: u64, wof_db: &WhosOnFirst) -> Option<String> {
+    if let Some(code) = COUNTRY_CODES.lock().expect("country codes").get(&country_id) {
+        return code.clone();
+    }
+    let code = wof_db.country_code(country_id).await.ok().flatten();
+    COUNTRY_CODES.lock().expect("country codes").insert(country_id, code.clone());
+    code
 }
 
 struct AdminIds {
@@ -159,6 +175,7 @@ pub(crate) async fn query_pip(
 
     let mut response = PipResponse::default();
     if let Some(country_id) = country {
+        response.country_code = country_code(country_id, wof_db).await;
         if let Ok(Some(langs)) = indexer_cache.query_languages_cache(country_id) {
             response.admin_langs = langs;
         } else if let Some((_, langs)) = query_langs(country_id, wof_db).await {
@@ -175,11 +192,12 @@ pub(crate) async fn query_pip(
             continue;
         }
         response.admin_ids.push(*id);
+        let Some(band) = AdminBand::of(&info.placetype) else { continue };
         for name in info.names {
             if name.is_searchable()
                 && (name.lang == "und" || name.lang == "eng" || response.admin_langs.contains(&name.lang))
             {
-                admin_names.insert(name.name);
+                admin_names.insert((band, name.name));
             }
         }
     }

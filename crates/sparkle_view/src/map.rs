@@ -1,7 +1,7 @@
 //! Which tiles to draw: per source, the tiles covering the view, with loaded ancestors or
 //! children standing in for tiles that are still loading. Also what the map changes at
 //! runtime: the style (tiles are processed again or repainted as the change requires),
-//! feature state, and queries of what is under a point.
+//! the data of GeoJSON sources, feature state, and queries of what is under a point.
 //!
 //! The map keeps whatever a renderer made of each tile, through [`TileUploader`], so the
 //! same logic serves every frontend.
@@ -9,10 +9,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use anyhow::{Context, Result, bail};
 use maplibre_expr::Value;
+use sparkle::geojson::GeoJsonIndex;
 use sparkle::query::{FeatureIndex, PointQuery, QueriedFeature};
 use sparkle::state::FeatureStates;
-use sparkle::style::StyleDiff;
+use sparkle::style::{Source, StyleDiff};
 use sparkle::terrain::TerrainTiles;
 use sparkle::{ProcessedTile, Style, TileId};
 
@@ -442,17 +444,45 @@ impl<T> MapState<T> {
             }
         }
         for s in reprocess {
-            self.min_generation[s] = generation;
-            let cache = &mut self.caches[s];
-            cache.retain(|_, e| matches!(e, CacheEntry::Ready { .. }));
-            for entry in cache.values_mut() {
-                if let CacheEntry::Ready {
-                    stale, requested, ..
-                } = entry
-                {
-                    *stale = true;
-                    *requested = false;
-                }
+            self.reprocess(s, generation);
+        }
+    }
+
+    /// Replace the data of the style's GeoJSON source `id` with `data`, a GeoJSON object.
+    /// Its tiles are cut again. Unlike after a style change, the old ones aren't drawn
+    /// meanwhile, even standing in for others: what they show is gone, and the new ones
+    /// are cut from memory, so they don't keep the source blank for long.
+    pub fn set_geojson(&mut self, id: &str, data: &serde_json::Value) -> Result<()> {
+        let Some(Source::GeoJson(source)) = self.style.source(id) else {
+            bail!("the style has no GeoJSON source {id:?}");
+        };
+        let s = self
+            .sources
+            .iter()
+            .position(|m| m.id == id)
+            .with_context(|| format!("GeoJSON source {id:?} isn't loaded"))?;
+        let index = GeoJsonIndex::new(source, data)
+            .with_context(|| format!("GeoJSON source {id:?}"))?;
+        self.sources[s].max_zoom = index.max_zoom();
+        let generation = self.loader.set_geojson(s, Arc::new(index));
+        self.min_generation[s] = generation;
+        self.caches[s].clear();
+        Ok(())
+    }
+
+    /// Have the tiles of source `s` processed again, as of `generation`: loaded ones are
+    /// drawn until then.
+    fn reprocess(&mut self, s: usize, generation: u64) {
+        self.min_generation[s] = generation;
+        let cache = &mut self.caches[s];
+        cache.retain(|_, e| matches!(e, CacheEntry::Ready { .. }));
+        for entry in cache.values_mut() {
+            if let CacheEntry::Ready {
+                stale, requested, ..
+            } = entry
+            {
+                *stale = true;
+                *requested = false;
             }
         }
     }

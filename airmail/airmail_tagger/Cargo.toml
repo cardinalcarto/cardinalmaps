@@ -1,0 +1,16 @@
+[package]
+name = "airmail_tagger"
+version = "0.1.0"
+description = "A linear-chain CRF for labelling the words of geocoding queries, after libpostal's"
+license = "MIT"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+deunicode.workspace = true
+fst = "0.4.7"
+unicode-normalization = "0.1.26"
+unicode-script = "0.5.8"
+unicode-segmentation = "1.13.3"
+
+[dev-dependencies]

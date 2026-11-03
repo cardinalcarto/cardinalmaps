@@ -1,8 +1,9 @@
 use std::{
     collections::{HashMap, HashSet},
+    hash::{BuildHasher, RandomState},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -16,7 +17,71 @@ use crossbeam::channel::Sender;
 use log::{info, warn};
 use osmpbf::{Element, ElementReader, RelMemberType};
 
-use crate::osm::OsmPoi;
+use crate::osm::{OsmPoi, Street, StreetWay};
+
+/// Streets' ways as they're read, merged by name and place.
+struct Streets {
+    shards: Vec<Mutex<HashMap<(String, u64), Street>>>,
+    hasher: RandomState,
+}
+
+impl Streets {
+    const SHARDS: usize = 64;
+
+    fn new() -> Self {
+        Self { shards: (0..Self::SHARDS).map(|_| Mutex::default()).collect(), hasher: RandomState::new() }
+    }
+
+    fn add(&self, way: StreetWay) {
+        let shard = self.hasher.hash_one(&way.key) as usize % Self::SHARDS;
+        let mut streets = self.shards[shard].lock().expect("streets");
+        match streets.get_mut(&way.key) {
+            Some(street) => street.add(way),
+            None => {
+                streets.insert(way.key.clone(), Street::from(way));
+            }
+        }
+    }
+
+    fn into_streets(self) -> impl Iterator<Item = Street> {
+        self.shards.into_iter().flat_map(|shard| shard.into_inner().expect("streets").into_values())
+    }
+}
+
+/// What the first pass finds: the ways multipolygons need, and the street
+/// names of houses in associated street relations.
+#[derive(Default)]
+struct Scan {
+    needed_ways: HashSet<i64>,
+    /// By member type (0 for nodes, 1 for ways) and ID.
+    house_streets: HashMap<(u8, i64), Arc<str>>,
+}
+
+impl Scan {
+    fn merge(mut self, other: Scan) -> Scan {
+        self.needed_ways.extend(other.needed_ways);
+        self.house_streets.extend(other.house_streets);
+        self
+    }
+
+    /// Tags with the street from an associated street relation, if the
+    /// element is a house in one and has no `addr:street`.
+    fn with_street<'a>(&'a self, mut tags: HashMap<&'a str, &'a str>, member: (u8, i64)) -> HashMap<&'a str, &'a str> {
+        if tags.contains_key("addr:housenumber")
+            && !tags.contains_key("addr:street")
+            && let Some(street) = self.house_streets.get(&member)
+        {
+            tags.insert("addr:street", street);
+        }
+        tags
+    }
+}
+
+/// Whether a relation groups a street's houses, as in France: its `house`
+/// (or `address`) members have house numbers but not `addr:street`.
+fn is_associated_street(tags: &HashMap<&str, &str>) -> bool {
+    matches!(tags.get("type"), Some(&("associatedStreet" | "street"))) && tags.contains_key("name")
+}
 
 /// An OpenStreetMap PBF file loader.
 ///
@@ -73,8 +138,14 @@ impl OsmPbf {
         } else {
             info!("Generating OSM node map from: {}", self.pbf_path.display());
         }
-        let needed_ways = self.scan(!self.nodes_already_cached, relations)?;
-        info!("Multipolygon relations need {} ways", needed_ways.len());
+        let scan = self.scan(!self.nodes_already_cached, relations)?;
+        let needed_ways = &scan.needed_ways;
+        info!(
+            "Multipolygon relations need {} ways; associated streets have {} houses",
+            needed_ways.len(),
+            scan.house_streets.len()
+        );
+        let streets = Streets::new();
 
         let count_ways = AtomicUsize::new(0);
         let count_nodes = AtomicUsize::new(0);
@@ -88,7 +159,7 @@ impl OsmPbf {
                         return 0;
                     }
                     let osm = OsmRef { osm_type: OsmType::Node, id: dn.id(), version: version(dn.info().map(|i| i.version())) };
-                    let tags = dn.tags().collect::<HashMap<_, _>>();
+                    let tags = scan.with_street(dn.tags().collect::<HashMap<_, _>>(), (0, dn.id()));
                     self.send(OsmPoi::new_from_node(tags, (dn.lat(), dn.lon()), osm), &count_nodes)
                 }
                 Element::Node(node) => {
@@ -96,7 +167,7 @@ impl OsmPbf {
                         return 0;
                     }
                     let osm = OsmRef { osm_type: OsmType::Node, id: node.id(), version: version(node.info().version()) };
-                    let tags = node.tags().collect::<HashMap<_, _>>();
+                    let tags = scan.with_street(node.tags().collect::<HashMap<_, _>>(), (0, node.id()));
                     self.send(OsmPoi::new_from_node(tags, (node.lat(), node.lon()), osm), &count_nodes)
                 }
                 Element::Way(way) => {
@@ -126,7 +197,11 @@ impl OsmPbf {
                         return 0;
                     }
                     let osm = OsmRef { osm_type: OsmType::Way, id: way.id(), version: version(way.info().version()) };
-                    let tags = way.tags().collect::<HashMap<_, _>>();
+                    let tags = scan.with_street(way.tags().collect::<HashMap<_, _>>(), (1, way.id()));
+                    if let Some(street) = StreetWay::new(&tags, &points, osm) {
+                        streets.add(street);
+                        return 0;
+                    }
                     self.send(OsmPoi::new_from_way(tags, &points, osm), &count_ways)
                 }
                 Element::Relation(_) => 0,
@@ -135,6 +210,15 @@ impl OsmPbf {
             |a, b| a + b,
         )?;
         self.indexer_cache.flush()?;
+
+        let count_streets = AtomicUsize::new(0);
+        for street in streets.into_streets() {
+            if let Some(poi) = street.index_poi() {
+                count_streets.fetch_add(1, Ordering::Relaxed);
+                self.sender.send(poi).expect("sender failed");
+            }
+        }
+        info!("Merged named roads into {} streets", count_streets.load(Ordering::Relaxed));
 
         let pois = if relations {
             info!("Assembling multipolygons");
@@ -190,11 +274,12 @@ impl OsmPbf {
         Ok(())
     }
 
-    /// Caches node locations if `cache_nodes`, and returns the IDs of ways
-    /// that interesting multipolygon relations have as members.
-    fn scan(&self, cache_nodes: bool, relations: bool) -> Result<HashSet<i64>> {
+    /// Caches node locations if `cache_nodes`, and finds the IDs of ways
+    /// that interesting multipolygon relations have as members and the
+    /// houses of associated street relations.
+    fn scan(&self, cache_nodes: bool, relations: bool) -> Result<Scan> {
         if !cache_nodes && !relations {
-            return Ok(HashSet::new());
+            return Ok(Scan::default());
         }
         // Increase buffer to reduce writes to disk
         self.indexer_cache.buffer_size(10_000_000)?;
@@ -208,28 +293,39 @@ impl OsmPbf {
         };
         let needed = ElementReader::from_path(&self.pbf_path)?.par_map_reduce(
             |element| {
+                let mut scan = Scan::default();
                 match element {
                     Element::Node(node) => cache(node.id(), (node.lat(), node.lon())),
                     Element::DenseNode(node) => cache(node.id(), (node.lat(), node.lon())),
-                    Element::Relation(relation) if relations => {
+                    Element::Relation(relation) => {
                         let tags = relation.tags().collect::<HashMap<_, _>>();
-                        if wants_relation(&tags) {
-                            return relation
+                        if relations && wants_relation(&tags) {
+                            scan.needed_ways = relation
                                 .members()
                                 .filter(|m| m.member_type == RelMemberType::Way)
                                 .map(|m| m.member_id)
                                 .collect();
+                        } else if is_associated_street(&tags) {
+                            let street: Arc<str> = Arc::from(tags["name"]);
+                            for member in relation.members() {
+                                let house = matches!(member.role(), Ok("house" | "address"));
+                                let member_type = match member.member_type {
+                                    RelMemberType::Node => 0,
+                                    RelMemberType::Way => 1,
+                                    RelMemberType::Relation => continue,
+                                };
+                                if house {
+                                    scan.house_streets.insert((member_type, member.member_id), street.clone());
+                                }
+                            }
                         }
                     }
                     _ => {}
                 }
-                HashSet::new()
+                scan
             },
-            HashSet::new,
-            |mut a, b| {
-                a.extend(b);
-                a
-            },
+            Scan::default,
+            Scan::merge,
         )?;
         // Revert buffer size to default
         self.indexer_cache.buffer_size_default()?;

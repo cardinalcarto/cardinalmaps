@@ -46,6 +46,16 @@ pub struct Camera {
     pub center_elevation: f64,
 }
 
+/// Space at the edges of the viewport to keep clear, such as under a sheet, in logical
+/// pixels.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Padding {
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub left: f64,
+}
+
 /// The lowest and highest elevation in a tile, in logical pixels at the camera's zoom.
 pub type ElevationRange<'a> = &'a dyn Fn(TileId) -> Option<(f64, f64)>;
 
@@ -117,6 +127,56 @@ impl Camera {
         let [lw, lh] = self.logical_size();
         let span = ((b[0] - a[0]) / lw).max((b[1] - a[1]) / lh);
         self.zoom = (1.0 / (span * TILE_SIZE)).log2().clamp(0.0, MAX_ZOOM);
+    }
+
+    /// The zoom that fits `[west, south, east, north]` in the viewport less `padding`,
+    /// looking straight down, and the bounds' center in world coordinates. Bounds with
+    /// `west > east` cross the antimeridian.
+    pub fn camera_for_bounds(&self, bounds: [f64; 4], padding: Padding) -> ([f64; 2], f64) {
+        let [w, s, e, n] = bounds;
+        let (a, mut b) = (lng_lat_to_world(w, n), lng_lat_to_world(e, s));
+        if b[0] < a[0] {
+            b[0] += 1.0;
+        }
+        let center = [((a[0] + b[0]) / 2.0).rem_euclid(1.0), (a[1] + b[1]) / 2.0];
+        let [lw, lh] = self.logical_size();
+        let width = (lw - padding.left - padding.right).max(1.0);
+        let height = (lh - padding.top - padding.bottom).max(1.0);
+        let span = ((b[0] - a[0]) / width).max((b[1] - a[1]) / height);
+        let zoom = if span > 0.0 {
+            (1.0 / (span * TILE_SIZE)).log2().clamp(0.0, MAX_ZOOM)
+        } else {
+            MAX_ZOOM
+        };
+        (center, zoom)
+    }
+
+    /// Where the center must be for `target` (world coordinates) to show in the middle of
+    /// the viewport less `padding` at `zoom`, with the current bearing and looking
+    /// straight down.
+    pub fn center_for(&self, target: [f64; 2], zoom: f64, padding: Padding) -> [f64; 2] {
+        // From the padded area's middle to the viewport's, in logical pixels.
+        let dx = (padding.right - padding.left) / 2.0;
+        let dy = (padding.bottom - padding.top) / 2.0;
+        let (sin, cos) = self.bearing.to_radians().sin_cos();
+        let size = TILE_SIZE * zoom.exp2();
+        [
+            target[0] + (dx * cos - dy * sin) / size,
+            (target[1] + (dx * sin + dy * cos) / size).clamp(0.0, 1.0),
+        ]
+    }
+
+    /// The world point shown in the middle of the viewport less `padding`, looking
+    /// straight down: the inverse of [`Camera::center_for`] at the camera's zoom.
+    pub fn padded_center(&self, padding: Padding) -> [f64; 2] {
+        let dx = (padding.right - padding.left) / 2.0;
+        let dy = (padding.bottom - padding.top) / 2.0;
+        let (sin, cos) = self.bearing.to_radians().sin_cos();
+        let size = self.world_size();
+        [
+            self.center[0] - (dx * cos - dy * sin) / size,
+            (self.center[1] - (dx * sin + dy * cos) / size).clamp(0.0, 1.0),
+        ]
     }
 
     /// The viewport in logical pixels.
@@ -727,6 +787,56 @@ mod tests {
 
     fn close(a: [f64; 2], b: [f64; 2]) -> bool {
         (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9
+    }
+
+    #[test]
+    fn bounds_fit_inside_the_padding() {
+        let c = camera();
+        let bounds = [-122.44, 47.50, -122.24, 47.73];
+        let (_, open) = c.camera_for_bounds(bounds, Padding::default());
+        let padding = Padding {
+            bottom: 300.0,
+            ..Padding::default()
+        };
+        let (center, zoom) = c.camera_for_bounds(bounds, padding);
+        // Half the height left: the taller-than-wide bounds need a level less.
+        assert!((open - zoom - 1.0).abs() < 1e-9, "{open} {zoom}");
+        let mid = lng_lat_to_world(-122.34, 0.0)[0];
+        assert!((center[0] - mid).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_target_shows_in_the_middle_of_the_padding() {
+        let mut c = camera();
+        let target = lng_lat_to_world(-122.33, 47.6);
+        let padding = Padding {
+            bottom: 300.0,
+            ..Padding::default()
+        };
+        c.center = c.center_for(target, c.zoom, padding);
+        // The padded area is the top 300 of 600 pixels: its middle is at y = 150.
+        let world = c.screen_to_world([400.0, 150.0]).unwrap();
+        assert!(close(world, target), "{world:?} {target:?}");
+
+        c.set_bearing(90.0);
+        c.center = c.center_for(target, c.zoom, padding);
+        let world = c.screen_to_world([400.0, 150.0]).unwrap();
+        assert!(close(world, target), "{world:?} {target:?}");
+    }
+
+    #[test]
+    fn the_padded_center_is_where_center_for_put_it() {
+        let mut c = camera();
+        c.set_bearing(30.0);
+        let target = lng_lat_to_world(-122.3, 47.65);
+        let padding = Padding {
+            top: 40.0,
+            bottom: 250.0,
+            left: 10.0,
+            right: 0.0,
+        };
+        c.center = c.center_for(target, c.zoom, padding);
+        assert!(close(c.padded_center(padding), target));
     }
 
     #[test]

@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+airmail_tagger = { path = "../airmail_tagger" }
 airmail.workspace = true
 anyhow.workspace = true
 axum = "0.8.9"
@@ -25,6 +26,7 @@ invasive_logging = ["airmail/invasive_logging"]
 
 [dev-dependencies]
 airmail = { path = "../airmail" }
+airmail_tagger = { path = "../airmail_tagger" }
 geo.workspace = true
 jsonschema = "0.60.2"
 serde_yaml = "0.9.34"

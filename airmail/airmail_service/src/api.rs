@@ -6,7 +6,7 @@ use std::sync::Arc;
 use airmail::{
     categories::{CategoryModels, QueryCategories},
     index::{AirmailIndex, SearchHit, SearchRequest},
-    poi::{Kind, WofPlace, osm_display_name, placetype_rank},
+    poi::{Kind, PlaceId, WofPlace, osm_display_name, placetype_rank, postcode_key},
 };
 use axum::{
     Json,
@@ -55,6 +55,64 @@ pub struct SearchParams {
     pub limit: usize,
     pub geometry: GeometryMode,
     pub category_include_threshold: Option<f32>,
+    /// `[lon, lat]`.
+    pub focus: Option<[f64; 2]>,
+}
+
+/// Collects a query string's parameters, and the reasons any are invalid.
+struct RawParams {
+    values: HashMap<String, String>,
+    invalid: Vec<(String, String)>,
+}
+
+impl RawParams {
+    fn new(raw: &str) -> Self {
+        let mut values: HashMap<String, String> = HashMap::new();
+        let mut invalid: Vec<(String, String)> = Vec::new();
+        for (name, value) in form_urlencoded::parse(raw.as_bytes()) {
+            if values.insert(name.to_string(), value.to_string()).is_some() {
+                invalid.push((name.to_string(), "given more than once".into()));
+            }
+        }
+        Self { values, invalid }
+    }
+
+    fn get(&mut self, name: &str) -> Option<String> {
+        self.values.remove(name)
+    }
+
+    fn fail(&mut self, name: &str, reason: &str) {
+        self.invalid.push((name.to_string(), reason.to_string()));
+    }
+
+    fn lang(&mut self) -> Option<String> {
+        let lang = self.get("lang");
+        if let Some(lang) = &lang {
+            let valid = lang.split('-').enumerate().all(|(i, part)| {
+                let len_ok = if i == 0 { (2..=8).contains(&part.len()) } else { (1..=8).contains(&part.len()) };
+                len_ok && part.chars().all(|c| c.is_ascii_alphanumeric()) && (i > 0 || part.chars().all(|c| c.is_ascii_alphabetic()))
+            });
+            if !valid {
+                self.fail("lang", "not a BCP 47 language tag");
+            }
+        }
+        lang
+    }
+
+    fn geometry(&mut self) -> GeometryMode {
+        match self.get("geometry").as_deref() {
+            None | Some("shape") => GeometryMode::Shape,
+            Some("point") => GeometryMode::Point,
+            Some(_) => {
+                self.fail("geometry", "must be shape or point");
+                GeometryMode::Shape
+            }
+        }
+    }
+
+    fn finish(self) -> Result<(), Problem> {
+        if self.invalid.is_empty() { Ok(()) } else { Err(Problem::invalid_params(self.invalid)) }
+    }
 }
 
 impl SearchParams {
@@ -63,115 +121,154 @@ impl SearchParams {
     /// # Errors
     /// A 400 problem naming each missing or invalid parameter.
     pub fn parse(raw: &str) -> Result<Self, Problem> {
-        let mut values: HashMap<String, String> = HashMap::new();
-        let mut invalid: Vec<(String, String)> = Vec::new();
-        for (name, value) in form_urlencoded::parse(raw.as_bytes()) {
-            if values.insert(name.to_string(), value.to_string()).is_some() {
-                invalid.push((name.to_string(), "given more than once".into()));
-            }
-        }
-        let mut get = |name: &str| values.remove(name);
-        let mut fail = |name: &str, reason: &str| invalid.push((name.to_string(), reason.to_string()));
+        let mut params = RawParams::new(raw);
 
-        let q = get("q").unwrap_or_default();
+        let q = params.get("q").unwrap_or_default();
         if q.trim().is_empty() {
-            fail("q", "required, and not just whitespace");
+            params.fail("q", "required, and not just whitespace");
         } else if q.chars().count() > 500 {
-            fail("q", "longer than 500 characters");
+            params.fail("q", "longer than 500 characters");
         }
 
-        let lang = get("lang");
-        if let Some(lang) = &lang {
-            let valid = lang.split('-').enumerate().all(|(i, part)| {
-                let len_ok = if i == 0 { (2..=8).contains(&part.len()) } else { (1..=8).contains(&part.len()) };
-                len_ok && part.chars().all(|c| c.is_ascii_alphanumeric()) && (i > 0 || part.chars().all(|c| c.is_ascii_alphabetic()))
-            });
-            if !valid {
-                fail("lang", "not a BCP 47 language tag");
-            }
-        }
+        let lang = params.lang();
 
-        let mut boolean = |name: &str| match get(name).as_deref() {
+        let mut boolean = |name: &str| match params.get(name).as_deref() {
             None | Some("false") => false,
             Some("true") => true,
             Some(_) => {
-                fail(name, "must be true or false");
+                params.fail(name, "must be true or false");
                 false
             }
         };
         let prefix = boolean("prefix");
         let typos = boolean("typos");
 
-        let bbox = get("bbox").and_then(|value| match parse_bbox(&value) {
+        let bbox = params.get("bbox").and_then(|value| match parse_bbox(&value) {
             Ok(bbox) => Some(bbox),
             Err(reason) => {
-                fail("bbox", reason);
+                params.fail("bbox", reason);
                 None
             }
         });
 
-        let within = get("within").and_then(|value| {
+        let focus = params.get("focus").and_then(|value| match parse_focus(&value) {
+            Ok(focus) => Some(focus),
+            Err(reason) => {
+                params.fail("focus", reason);
+                None
+            }
+        });
+
+        let within = params.get("within").and_then(|value| {
             let id = value.strip_prefix("wof:").and_then(|id| id.parse::<u64>().ok());
             if id.is_none() {
-                fail("within", "must be wof:<id>");
+                params.fail("within", "must be wof:<id>");
             }
             id
         });
 
         let mut kinds = Vec::new();
-        if let Some(value) = get("kind") {
+        if let Some(value) = params.get("kind") {
             for part in value.split(',') {
                 match Kind::parse(part) {
                     Some(kind) if !kinds.contains(&kind) => kinds.push(kind),
-                    Some(_) => fail("kind", "lists a kind more than once"),
-                    None => fail("kind", "must list poi, address or admin"),
+                    Some(_) => params.fail("kind", "lists a kind more than once"),
+                    None => params.fail("kind", "must list poi, address, admin, street or postcode"),
                 }
             }
         }
 
         let mut tags = Vec::new();
-        if let Some(value) = get("tags") {
+        if let Some(value) = params.get("tags") {
             for tag in value.split(',') {
                 match tag.split_once('=') {
                     Some((k, v)) if !k.is_empty() && !v.is_empty() && !v.contains('=') => tags.push(tag.to_string()),
-                    _ => fail("tags", "must list key=value tags"),
+                    _ => params.fail("tags", "must list key=value tags"),
                 }
             }
         }
 
-        let limit = match get("limit") {
+        let limit = match params.get("limit") {
             None => DEFAULT_LIMIT,
             Some(value) => match value.parse::<usize>() {
                 Ok(limit) if (1..=MAX_LIMIT).contains(&limit) => limit,
                 _ => {
-                    fail("limit", "must be an integer from 1 to 50");
+                    params.fail("limit", "must be an integer from 1 to 50");
                     DEFAULT_LIMIT
                 }
             },
         };
 
-        let geometry = match get("geometry").as_deref() {
-            None | Some("shape") => GeometryMode::Shape,
-            Some("point") => GeometryMode::Point,
-            Some(_) => {
-                fail("geometry", "must be shape or point");
-                GeometryMode::Shape
-            }
-        };
+        let geometry = params.geometry();
 
-        let category_include_threshold = get("category_include_threshold").and_then(|value| match value.parse::<f32>() {
+        let category_include_threshold = params.get("category_include_threshold").and_then(|value| match value.parse::<f32>() {
             Ok(t) if (0.0..=1.0).contains(&t) => Some(t),
             _ => {
-                fail("category_include_threshold", "must be a number from 0 to 1");
+                params.fail("category_include_threshold", "must be a number from 0 to 1");
                 None
             }
         });
 
-        if !invalid.is_empty() {
-            return Err(Problem::invalid_params(invalid));
-        }
-        Ok(Self { q, lang, prefix, typos, bbox, within, kinds, tags, limit, geometry, category_include_threshold })
+        params.finish()?;
+        Ok(Self { q, lang, prefix, typos, bbox, within, kinds, tags, limit, geometry, category_include_threshold, focus })
     }
+}
+
+/// `/v1/place` parameters, validated.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaceParams {
+    pub id: PlaceId,
+    pub lang: Option<String>,
+    pub geometry: GeometryMode,
+}
+
+impl PlaceParams {
+    /// Parses a query string, reporting every invalid parameter.
+    ///
+    /// # Errors
+    /// A 400 problem naming each missing or invalid parameter.
+    pub fn parse(raw: &str) -> Result<Self, Problem> {
+        let mut params = RawParams::new(raw);
+        let id = match params.get("id") {
+            None => {
+                params.fail("id", "required");
+                None
+            }
+            Some(id) => {
+                let parsed = PlaceId::parse(&id).ok();
+                if parsed.is_none() {
+                    params.fail("id", "must be poi:<id>, wof:<id>, osm:<node|way|relation>/<id> or postcode:<country>/<postcode>");
+                }
+                parsed
+            }
+        };
+        let lang = params.lang();
+        let geometry = params.geometry();
+        params.finish()?;
+        // Reported above if missing.
+        let id = id.ok_or_else(|| Problem::invalid_params(vec![("id".into(), "required".into())]))?;
+        Ok(Self { id, lang, geometry })
+    }
+}
+
+fn parse_focus(value: &str) -> Result<[f64; 2], &'static str> {
+    let numbers: Vec<f64> = value
+        .split(',')
+        .map(|n| n.trim().parse::<f64>().map_err(|_| "must be two numbers: lon,lat"))
+        .collect::<Result<_, _>>()?;
+    let [lon, lat] = numbers[..] else {
+        return Err("must be two numbers: lon,lat");
+    };
+    if !lon.is_finite() || !lat.is_finite() {
+        return Err("must be two numbers: lon,lat");
+    }
+    if !(-180.0..=180.0).contains(&lon) {
+        return Err("longitude must be from -180 to 180");
+    }
+    if !(-90.0..=90.0).contains(&lat) {
+        return Err("latitude must be from -90 to 90");
+    }
+    Ok([lon, lat])
 }
 
 fn parse_bbox(value: &str) -> Result<[f64; 4], &'static str> {
@@ -210,9 +307,21 @@ pub async fn search(RawQuery(raw): RawQuery, State(state): State<Arc<AppState>>)
 
 async fn run_search(params: &SearchParams, state: &AppState) -> anyhow::Result<Value> {
     let lang = params.lang.as_deref();
-    // The model normalizes on its own and keeps accents, so it gets the raw query.
+    // With a tagger, the category model reads only the words of what's
+    // sought, so `vegan pizza` in `vegan pizza near downtown seattle`, and
+    // nothing when nothing is (`daly ci`, typing Daly City). Without, the raw
+    // query: the model normalizes on its own and keeps accents.
+    let started = std::time::Instant::now();
+    let interpreted = state.index.interpret(params.q.trim(), params.prefix, params.focus);
+    let interpreting = started.elapsed();
+    let category_text = match &interpreted {
+        Some((words, interpretations)) => interpretations.first().map(|best| {
+            words.iter().zip(&best.tags).filter(|(_, t)| **t == airmail_tagger::labels::Tag::Venue).map(|(w, _)| w.as_str()).collect::<Vec<_>>().join(" ")
+        }),
+        None => Some(params.q.clone()),
+    };
     let model = lang.and_then(|lang| state.categories.get(lang));
-    let categories = model.map(|model| model.understand(&params.q));
+    let categories = model.zip(category_text.filter(|t| !t.is_empty())).map(|(model, text)| model.understand(&text));
     let threshold = params.category_include_threshold.unwrap_or(state.category_include_threshold);
     let request = SearchRequest {
         text: params.q.trim(),
@@ -220,12 +329,15 @@ async fn run_search(params: &SearchParams, state: &AppState) -> anyhow::Result<V
         typos: params.typos,
         tags: params.tags.clone(),
         categories: categories.as_ref().map(|c| (c, c.mode(threshold))),
+        interpretations: interpreted.as_ref().map(|(_, i)| i.as_slice()),
         bbox: params.bbox,
         within: params.within,
         kinds: params.kinds.clone(),
         limit: params.limit,
+        focus: params.focus,
     };
     let results = state.index.search(&request).await?;
+    log::debug!("{:?}: interpreted in {interpreting:?}, searched in {:?}", params.q, started.elapsed() - interpreting);
 
     let kinds = if params.kinds.is_empty() { Kind::ALL.to_vec() } else { params.kinds.clone() };
     let query = json!({
@@ -234,6 +346,7 @@ async fn run_search(params: &SearchParams, state: &AppState) -> anyhow::Result<V
         "prefix": params.prefix,
         "typos": params.typos,
         "bbox": params.bbox,
+        "focus": params.focus,
         "within": params.within.map(|id| format!("wof:{id}")),
         "kind": kinds,
         "tags": params.tags,
@@ -245,6 +358,23 @@ async fn run_search(params: &SearchParams, state: &AppState) -> anyhow::Result<V
     let results: Vec<Value> =
         results.hits.iter().map(|hit| result_json(hit, &results.admins, lang, params.geometry)).collect();
     Ok(json!({ "query": query, "results": results }))
+}
+
+pub async fn place(RawQuery(raw): RawQuery, State(state): State<Arc<AppState>>) -> Response {
+    let params = match PlaceParams::parse(raw.as_deref().unwrap_or_default()) {
+        Ok(params) => params,
+        Err(problem) => return problem.into_response(),
+    };
+    let results = match state.index.lookup(params.id.clone()).await {
+        Ok(results) => results,
+        Err(e) => return Problem::internal(&e).into_response(),
+    };
+    match results.hits.first() {
+        Some(hit) => {
+            Json(json!({ "result": result_json(hit, &results.admins, params.lang.as_deref(), params.geometry) })).into_response()
+        }
+        None => Problem::new(StatusCode::NOT_FOUND, "Not Found", Some(format!("There's no place {}.", params.id))).into_response(),
+    }
 }
 
 fn categories_json(categories: &QueryCategories) -> Value {
@@ -281,6 +411,9 @@ fn geometry_json(geometry: &Geometry<f64>) -> Value {
     match geometry {
         Geometry::Point(p) => json!({ "type": "Point", "coordinates": position(p.0) }),
         Geometry::LineString(l) => json!({ "type": "LineString", "coordinates": ring(l) }),
+        Geometry::MultiLineString(m) => {
+            json!({ "type": "MultiLineString", "coordinates": m.0.iter().map(ring).collect::<Vec<_>>() })
+        }
         Geometry::Polygon(p) => json!({ "type": "Polygon", "coordinates": polygon(p) }),
         Geometry::MultiPolygon(m) => {
             json!({ "type": "MultiPolygon", "coordinates": m.0.iter().map(polygon).collect::<Vec<_>>() })
@@ -295,18 +428,10 @@ fn geometry_json(geometry: &Geometry<f64>) -> Value {
 const FALLBACK_NAME_KEYS: [&str; 4] = ["official_name", "alt_name", "short_name", "loc_name"];
 
 fn result_json(hit: &SearchHit, admins: &HashMap<u64, WofPlace>, lang: Option<&str>, mode: GeometryMode) -> Value {
-    let id = if let Some((poi, _)) = hit.poi {
-        format!("poi:{poi}")
-    } else if let Some(wof) = &hit.wof {
-        format!("wof:{}", wof.id)
-    } else if let Some(osm) = &hit.osm {
-        format!("osm:{}/{}", osm.osm_type.as_str(), osm.id)
-    } else {
-        String::new()
-    };
     let name = match hit.kind {
         Kind::Admin => hit.wof.as_ref().map(|w| w.display_name(lang).to_string()),
-        Kind::Poi => osm_display_name(&hit.tags, lang)
+        Kind::Postcode => hit.tag("postal_code").map(str::to_string),
+        Kind::Poi | Kind::Street => osm_display_name(&hit.tags, lang)
             .or_else(|| FALLBACK_NAME_KEYS.iter().find_map(|key| hit.tag(key)))
             .or_else(|| hit.tags.iter().find(|(k, _)| k.contains("name")).map(|(_, v)| v.as_str()))
             .map(str::to_string),
@@ -321,6 +446,24 @@ fn result_json(hit: &SearchHit, admins: &HashMap<u64, WofPlace>, lang: Option<&s
     let mut containing: Vec<&WofPlace> = hit.admin_ids.iter().filter_map(|id| admins.get(id)).collect();
     containing.sort_by_key(|place| (placetype_rank(&place.placetype), place.id));
     containing.dedup_by_key(|place| place.id);
+    // Its own if it's an administrative area, else the most specific
+    // containing area's, so places in Puerto Rico are in PR rather than US.
+    let country_code = hit
+        .wof
+        .as_ref()
+        .and_then(|wof| wof.country.clone())
+        .or_else(|| containing.iter().find_map(|place| place.country.clone()));
+    let id = if let Some((poi, _)) = hit.poi {
+        format!("poi:{poi}")
+    } else if let Some(wof) = &hit.wof {
+        format!("wof:{}", wof.id)
+    } else if let Some(osm) = &hit.osm {
+        format!("osm:{}/{}", osm.osm_type.as_str(), osm.id)
+    } else if let (Kind::Postcode, Some(country), Some(code)) = (hit.kind, &country_code, hit.tag("postal_code")) {
+        PlaceId::Postcode(postcode_key(country, code)).to_string()
+    } else {
+        String::new()
+    };
     let admins: Vec<Value> = containing
         .into_iter()
         .map(|place| {
@@ -351,6 +494,7 @@ fn result_json(hit: &SearchHit, admins: &HashMap<u64, WofPlace>, lang: Option<&s
         "center": center,
         "address": address,
         "admins": admins,
+        "country_code": country_code,
         "importance": hit.importance.clamp(0.0, 1.0),
         "score": hit.score.max(0.0),
         "poi": hit.poi.map(|(id, version)| json!({ "id": id, "version": version })),
@@ -364,6 +508,7 @@ fn result_json(hit: &SearchHit, admins: &HashMap<u64, WofPlace>, lang: Option<&s
             "id": wof.id,
             "placetype": wof.placetype,
             "population": wof.population,
+            "abbreviation": wof.abbreviation,
         })),
         "feature": {
             "type": "Feature",
@@ -425,6 +570,27 @@ mod test {
         let problem = SearchParams::parse("q=&limit=0&bbox=1,2,3&within=4&prefix=yes&kind=place").unwrap_err();
         let names: Vec<&str> = problem.invalid_params.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, vec!["q", "prefix", "bbox", "within", "kind", "limit"]);
+    }
+
+    #[test]
+    fn parses_focus() {
+        assert_eq!(SearchParams::parse("q=x&focus=8.54,47.37").unwrap().focus, Some([8.54, 47.37]));
+        assert_eq!(SearchParams::parse("q=x").unwrap().focus, None);
+        for bad in ["8.54", "8.54,47.37,1", "181,0", "0,-91", "a,b", "NaN,0", ""] {
+            let problem = SearchParams::parse(&format!("q=x&focus={bad}")).unwrap_err();
+            assert_eq!(problem.invalid_params[0].name, "focus", "{bad}");
+        }
+    }
+
+    #[test]
+    fn parses_place_ids() {
+        let params = PlaceParams::parse("id=osm:way/12&lang=de&geometry=point").unwrap();
+        assert_eq!(params.id, PlaceId::Osm(airmail::poi::OsmType::Way, 12));
+        assert_eq!(params.geometry, GeometryMode::Point);
+        let problem = PlaceParams::parse("lang=1").unwrap_err();
+        let names: Vec<&str> = problem.invalid_params.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["id", "lang"]);
+        assert!(PlaceParams::parse("id=poi:abc").is_err());
     }
 
     #[test]

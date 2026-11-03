@@ -21,10 +21,14 @@ pub enum Kind {
     Address,
     /// A Who's On First administrative area.
     Admin,
+    /// A named OSM road: the ways with its name near each other.
+    Street,
+    /// A postcode, where the OSM addresses with it are.
+    Postcode,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 3] = [Kind::Poi, Kind::Address, Kind::Admin];
+    pub const ALL: [Kind; 5] = [Kind::Poi, Kind::Address, Kind::Admin, Kind::Street, Kind::Postcode];
 
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -32,6 +36,8 @@ impl Kind {
             Kind::Poi => "poi",
             Kind::Address => "address",
             Kind::Admin => "admin",
+            Kind::Street => "street",
+            Kind::Postcode => "postcode",
         }
     }
 
@@ -107,6 +113,10 @@ pub struct WofPlace {
     /// The preferred name in each language, by ISO 639-3 code.
     pub names: BTreeMap<String, String>,
     pub abbreviation: Option<String>,
+    /// The ISO 3166-1 alpha-2 code of the country it's in, or its own code
+    /// if it's a country.
+    #[serde(default)]
+    pub country: Option<String>,
 }
 
 impl WofPlace {
@@ -116,6 +126,88 @@ impl WofPlace {
         lang.and_then(iso_639_3)
             .and_then(|code| self.names.get(code))
             .unwrap_or(&self.default_name)
+    }
+}
+
+/// An ISO 3166-1 alpha-2 country code from Who's On First's `wof:country`
+/// (`alpha2` in SpatiaLite databases), uppercased, or `None` for its codes
+/// for unknown and disputed places (`XX`, `XY`, `XZ` and the other
+/// user-assigned codes). Kosovo's `XK` is kept, since it's in common use.
+#[must_use]
+pub fn iso_country_code(code: &str) -> Option<String> {
+    let code = code.trim().to_ascii_uppercase();
+    let [first, second] = *code.as_bytes() else {
+        return None;
+    };
+    if !first.is_ascii_uppercase() || !second.is_ascii_uppercase() {
+        return None;
+    }
+    let user_assigned = matches!(code.as_str(), "AA" | "ZZ") || (first == b'Q' && second >= b'M') || first == b'X';
+    (!user_assigned || code == "XK").then_some(code)
+}
+
+/// A result's ID, as the API gives it: `poi:<id>`, `wof:<id>`,
+/// `osm:<type>/<id>` or `postcode:<country>/<postcode>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaceId {
+    Poi(u64),
+    Wof(u64),
+    Osm(OsmType, i64),
+    /// A postcode, as `<ISO country code>/<postcode without spaces>`, both
+    /// uppercase: `CA/M2M1C8`.
+    Postcode(String),
+}
+
+/// A postcode's key: `<country>/<postcode>`, uppercase, without spaces.
+#[must_use]
+pub fn postcode_key(country: &str, postcode: &str) -> String {
+    let code: String = postcode.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_uppercase();
+    format!("{}/{code}", country.to_uppercase())
+}
+
+impl PlaceId {
+    /// # Errors
+    /// If `s` isn't a result ID.
+    pub fn parse(s: &str) -> Result<Self> {
+        let number = |n: &str| -> Option<u64> {
+            (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then(|| n.parse().ok()).flatten()
+        };
+        let parsed = if let Some(id) = s.strip_prefix("poi:") {
+            number(id).map(PlaceId::Poi)
+        } else if let Some(id) = s.strip_prefix("wof:") {
+            number(id).map(PlaceId::Wof)
+        } else if let Some((osm_type, id)) = s.strip_prefix("osm:").and_then(|rest| rest.split_once('/')) {
+            let osm_type = match osm_type {
+                "node" => Some(OsmType::Node),
+                "way" => Some(OsmType::Way),
+                "relation" => Some(OsmType::Relation),
+                _ => None,
+            };
+            osm_type.zip(number(id).and_then(|id| i64::try_from(id).ok())).map(|(t, id)| PlaceId::Osm(t, id))
+        } else if let Some((country, code)) = s.strip_prefix("postcode:").and_then(|rest| rest.split_once('/')) {
+            let valid = country.len() == 2
+                && country.bytes().all(|b| b.is_ascii_uppercase())
+                && !code.is_empty()
+                && code.chars().all(|c| c.is_alphanumeric() || c == '-');
+            valid.then(|| PlaceId::Postcode(postcode_key(country, code)))
+        } else {
+            None
+        };
+        match parsed {
+            Some(id) => Ok(id),
+            None => bail!("invalid result ID {s:?}"),
+        }
+    }
+}
+
+impl std::fmt::Display for PlaceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlaceId::Poi(id) => write!(f, "poi:{id}"),
+            PlaceId::Wof(id) => write!(f, "wof:{id}"),
+            PlaceId::Osm(osm_type, id) => write!(f, "osm:{}/{id}", osm_type.as_str()),
+            PlaceId::Postcode(key) => write!(f, "postcode:{key}"),
+        }
     }
 }
 
@@ -161,13 +253,17 @@ pub struct ToIndexPoi {
     pub kind: Kind,
     /// Every name it may be searched by.
     pub names: Vec<String>,
+    /// Other names it may be found by that aren't its name, such as a place's
+    /// historical names: matching one isn't matching its name exactly, so
+    /// Seattle's Alki, once called New York, doesn't rival the city.
+    pub variant_names: Vec<String>,
     pub house_number: Option<String>,
     pub road: Option<String>,
     pub unit: Option<String>,
     pub postcode: Option<String>,
-    /// Names of the administrative areas containing it, filled in by the
-    /// indexer.
-    pub admin_names: Vec<String>,
+    /// Names of the administrative areas containing it, with the band of
+    /// each one's placetype, filled in by the indexer.
+    pub admin_names: Vec<(AdminBand, String)>,
     /// Who's On First IDs of those areas.
     pub admin_ids: Vec<u64>,
     /// Its shape, already simplified.
@@ -177,6 +273,9 @@ pub struct ToIndexPoi {
     pub tags: Vec<(String, String)>,
     /// Languages spoken where it is, for street name variants.
     pub languages: Vec<Language>,
+    /// The ISO 3166-1 alpha-2 code of the country it's in, filled in by the
+    /// indexer.
+    pub country_code: Option<String>,
     pub osm: Option<OsmRef>,
     pub wof: Option<WofPlace>,
     /// How prominent it is regardless of any query, from 0 to 1.
@@ -193,6 +292,7 @@ impl ToIndexPoi {
         Some(Self {
             kind,
             names,
+            variant_names: Vec::new(),
             house_number: None,
             road: None,
             unit: None,
@@ -203,6 +303,7 @@ impl ToIndexPoi {
             center,
             tags,
             languages: Vec::new(),
+            country_code: None,
             osm: None,
             wof: None,
             importance: 0.0,
@@ -216,30 +317,76 @@ impl ToIndexPoi {
     }
 }
 
-/// A document's searchable text, by field.
+/// A document's searchable text, by field: its names, and the forms of its
+/// road's name (`West 26th Street`, `W 26th St`, ...). Its house number,
+/// unit, postcode and admins' names are in `poi`.
 pub struct SchemafiedPoi {
     pub names: Vec<String>,
-    pub address: Vec<String>,
-    pub admin_names: Vec<String>,
+    pub roads: Vec<String>,
     pub poi: ToIndexPoi,
 }
 
 impl From<ToIndexPoi> for SchemafiedPoi {
     fn from(poi: ToIndexPoi) -> Self {
-        let mut address = Vec::new();
-        address.extend(poi.house_number.clone());
+        let mut roads = Vec::new();
         if let Some(road) = &poi.road {
-            if poi.languages.is_empty() {
-                address.push(road.clone());
-            }
+            // As written, whatever its permutations (which are transliterated).
+            roads.push(road.clone());
             for lang in &poi.languages {
-                address.extend(permute_road(road, lang).unwrap_or_else(|_| vec![road.clone()]));
+                roads.extend(permute_road(road, lang).unwrap_or_else(|_| vec![road.clone()]));
             }
         }
-        address.extend(poi.unit.clone());
-        address.extend(poi.postcode.clone());
-        address.dedup();
-        Self { names: poi.names.clone(), address, admin_names: poi.admin_names.clone(), poi }
+        roads.sort();
+        roads.dedup();
+        Self { names: poi.names.clone(), roads, poi }
+    }
+}
+
+/// The placetypes of administrative areas, grouped the way queries name
+/// them: `capitol hill, seattle, wa` is a neighbourhood, a locality and a
+/// region, whether Who's On First calls the last a region or a macroregion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AdminBand {
+    /// Microhoods, neighbourhoods, macrohoods and boroughs.
+    Neighbourhood,
+    /// Localities and local admins.
+    Locality,
+    /// Counties and macrocounties.
+    County,
+    /// Regions and macroregions.
+    Region,
+    /// Countries and dependencies.
+    Country,
+}
+
+impl AdminBand {
+    pub const ALL: [AdminBand; 5] =
+        [AdminBand::Neighbourhood, AdminBand::Locality, AdminBand::County, AdminBand::Region, AdminBand::Country];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AdminBand::Neighbourhood => "neighbourhood",
+            AdminBand::Locality => "locality",
+            AdminBand::County => "county",
+            AdminBand::Region => "region",
+            AdminBand::Country => "country",
+        }
+    }
+
+    /// The band of a Who's On First placetype, or `None` for placetypes no
+    /// query names a place by, like campuses and time zones.
+    #[must_use]
+    pub fn of(placetype: &str) -> Option<Self> {
+        match placetype {
+            "microhood" | "neighbourhood" | "macrohood" | "borough" => Some(AdminBand::Neighbourhood),
+            "locality" | "localadmin" => Some(AdminBand::Locality),
+            "county" | "macrocounty" => Some(AdminBand::County),
+            "region" | "macroregion" => Some(AdminBand::Region),
+            "country" | "dependency" | "disputed" => Some(AdminBand::Country),
+            _ => None,
+        }
     }
 }
 
@@ -299,9 +446,30 @@ mod test {
             default_name: "Zürich".into(),
             names: [("eng".to_string(), "Zurich".to_string())].into(),
             abbreviation: None,
+            country: Some("CH".into()),
         };
         assert_eq!(place.display_name(Some("en-US")), "Zurich");
         assert_eq!(place.display_name(Some("ja")), "Zürich");
         assert_eq!(place.display_name(None), "Zürich");
+    }
+
+    #[test]
+    fn country_codes_are_iso_or_none() {
+        assert_eq!(iso_country_code("ch").as_deref(), Some("CH"));
+        assert_eq!(iso_country_code("US").as_deref(), Some("US"));
+        assert_eq!(iso_country_code("XK").as_deref(), Some("XK"));
+        for unknown in ["XX", "XY", "XZ", "QO", "", "USA", "-1", "1A"] {
+            assert_eq!(iso_country_code(unknown), None, "{unknown}");
+        }
+    }
+
+    #[test]
+    fn place_ids_round_trip() {
+        for id in ["poi:51234", "wof:101730401", "osm:node/2470190871", "osm:way/1", "osm:relation/5843919", "postcode:CA/M2M1C8", "postcode:US/10010"] {
+            assert_eq!(PlaceId::parse(id).unwrap().to_string(), id);
+        }
+        for bad in ["", "poi:", "poi:-1", "poi:1x", "wof:+5", "osm:node", "osm:area/1", "osm:node/", "node/1", "POI:1", "postcode:", "postcode:CA/", "postcode:ca/M2M", "postcode:CAN/M2M", "postcode:US/1 2"] {
+            assert!(PlaceId::parse(bad).is_err(), "{bad}");
+        }
     }
 }

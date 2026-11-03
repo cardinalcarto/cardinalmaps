@@ -35,6 +35,8 @@ dependencies = [
 name = "airmail"
 version = "0.1.0"
 dependencies = [
+ "airmail_parser",
+ "airmail_tagger",
  "anyhow",
  "deunicode",
  "geo",
@@ -42,15 +44,21 @@ dependencies = [
  "isolang",
  "itertools 0.15.0",
  "lazy_static",
+ "levenshtein_automata",
  "lingua",
  "log",
+ "rand 0.9.5",
  "regex",
  "s2",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tantivy",
+ "tantivy-fst",
  "thiserror 2.0.21",
  "tokio",
+ "unicode-normalization",
+ "unicode-script",
  "unicode-segmentation",
 ]
 
@@ -59,6 +67,7 @@ name = "airmail_indexer"
 version = "0.1.0"
 dependencies = [
  "airmail",
+ "airmail_tagger",
  "anyhow",
  "clap",
  "crossbeam",
@@ -74,6 +83,7 @@ dependencies = [
  "num_cpus",
  "osmpbf",
  "postcard",
+ "rand 0.9.5",
  "redb",
  "rstar 0.12.2",
  "rustyline",
@@ -85,10 +95,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "airmail_parser"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "airmail_service"
 version = "0.1.0"
 dependencies = [
  "airmail",
+ "airmail_tagger",
  "anyhow",
  "axum",
  "clap",
@@ -106,6 +126,17 @@ dependencies = [
  "tokio",
  "tower",
  "tower-http 0.7.1",
+]
+
+[[package]]
+name = "airmail_tagger"
+version = "0.1.0"
+dependencies = [
+ "deunicode",
+ "fst",
+ "unicode-normalization",
+ "unicode-script",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -4376,6 +4407,12 @@ name = "unicode-properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993ad287eb20e8ba755312801cfe1413e0f25d604075863acaddca10b04c1833"
+
+[[package]]
+name = "unicode-script"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa04c955db05429d464c74d495c1ee677e1866e783a4c3747f9c0cef7756cabf"
 
 [[package]]
 name = "unicode-segmentation"

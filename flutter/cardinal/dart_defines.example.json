@@ -1,0 +1,5 @@
+{
+  "CARDINAL_TILES_URL": "https://tiles.example.org/openmaptiles",
+  "CARDINAL_GEOCODER_URL": "http://localhost:3000",
+  "CARDINAL_VIEW": "-122.335,47.608,13"
+}

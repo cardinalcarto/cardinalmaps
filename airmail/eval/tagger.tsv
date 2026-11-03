@@ -1,0 +1,134 @@
+# Hand-labelled queries for the query tagger, independent of its training
+# data generator. Columns: query, flags (typing: the last word is unfinished;
+# - for none), and one tag per word as the tagger splits words, from: venue
+# near house_number road unit postcode neighbourhood locality county region
+# country other.
+starbucks	-	venue
+starbucks seattle	-	venue locality
+starbucks in seattle	-	venue near locality
+pizza near capitol hill	-	venue near neighbourhood neighbourhood
+vegan pizza capitol hill seattle	-	venue venue neighbourhood neighbourhood locality
+coffee	-	venue
+bakery fremont	-	venue neighbourhood
+seattle	-	locality
+seattle wa	-	locality region
+seattle, washington	-	locality region
+portland oregon	-	locality region
+new york	-	locality locality
+pizza new york	-	venue locality locality
+chelsea, new york	-	neighbourhood locality locality
+london england	-	locality region
+toronto, ca	-	locality country
+yakima us	-	locality country
+paris france	-	locality country
+1530 post alley	-	house_number road road
+1530 post alley seattle wa	-	house_number road road locality region
+1530 post alley, seattle, wa 98101	-	house_number road road locality region postcode
+90 vermilyea avenue	-	house_number road road
+424 clay ave rochester	-	house_number road road locality
+3122 16th st san francisco ca 94103	-	house_number road road locality locality region postcode
+101 saint marks pl 10009	-	house_number road road road postcode
+1 water st manhattan ny	-	house_number road road neighbourhood region
+1600 pennsylvania ave nw washington dc	-	house_number road road road locality region
+grolmanstrasse 1 berlin	-	road house_number locality
+clayallee 170 14191 berlin	-	road house_number postcode locality
+bahnhofstrasse 1, zurich	-	road house_number locality
+rue de rivoli paris	-	road road road locality
+20 boulevard saint germain paris	-	house_number road road road locality
+calle de serrano 75 madrid	-	road road road house_number locality
+via vittorio veneto 121 roma	-	road road road house_number locality
+pike st	-	road road
+pike place market	-	venue venue venue
+broadway seattle	-	road locality
+w 26th st new york	-	road road road locality locality
+98101	-	postcode
+10010	-	postcode
+m2m 1c8	-	postcode postcode
+sw1a 1aa	-	postcode postcode
+berlin 10119	-	locality postcode
+university of washington	-	venue venue venue
+statue of liberty	-	venue venue venue
+space needle	-	venue venue
+eiffel tower	-	venue venue
+moscone west	-	venue venue
+burke gilman trail	-	road road road
+ballard	-	neighbourhood
+fremont seattle	-	neighbourhood locality
+daly ci	typing	locality locality
+seatt	typing	locality
+starbucks seat	typing	venue locality
+1530 post al	typing	house_number road road
+coffee near me	-	venue near near
+cafe malmo	-	venue locality
+bäckerei müller berlin	-	venue venue locality
+кафе пушкин москва	-	venue venue locality
+café de flore	-	venue venue venue
+starbukcs seattle	-	venue locality
+seatle	-	locality
+mt rainier	-	venue venue
+st marks place	-	road road road
+mcdonalds near me	-	venue near near
+thai food seattle	-	venue venue locality
+sushi in ballard	-	venue near neighbourhood
+gas station	-	venue venue
+pharmacy zurich	-	venue locality
+apotheke zürich	-	venue locality
+ikea	-	venue
+ikea renton	-	venue locality
+whole foods capitol hill	-	venue venue neighbourhood neighbourhood
+target eureka ca	-	venue locality region
+seattle aquarium	-	venue venue
+seattle center	-	venue venue
+museum of pop culture	-	venue venue venue venue
+pizza 98101	-	venue postcode
+350 5th ave new york ny 10118	-	house_number road road locality locality region postcode
+10 downing street london	-	house_number road road locality
+221b baker street	-	house_number road road
+1 infinite loop cupertino ca	-	house_number road road locality region
+unter den linden 77 berlin	-	road road road house_number locality
+5 rue de la paix paris	-	house_number road road road road locality
+carrer de mallorca 401 barcelona	-	road road road house_number locality
+nieuwezijds voorburgwal 147 amsterdam	-	road road house_number locality
+1600 amphitheatre pkwy mountain view	-	house_number road road locality locality
+123 main st apt 4	-	house_number road road unit unit
+500 pine st unit 2b seattle	-	house_number road road unit unit locality
+main street	-	road road
+aurora ave n	-	road road road
+45th st	-	road road
+e pike st seattle	-	road road road locality
+tokyo	-	locality
+tokyo japan	-	locality country
+bavaria	-	region
+munich germany	-	locality country
+brooklyn	-	neighbourhood
+brooklyn ny	-	neighbourhood region
+queens new york	-	neighbourhood locality locality
+king county	-	county county
+kitsap county wa	-	county county region
+british columbia	-	region region
+vancouver bc	-	locality region
+vancouver wa	-	locality region
+mexico city	-	locality locality
+united states	-	country country
+germany	-	country
+98109	-	postcode
+8001 zürich	-	postcode locality
+75008 paris	-	postcode locality
+ec1a 1bb london	-	postcode postcode locality
+starbuc	typing	venue
+capitol hi	typing	neighbourhood neighbourhood
+pizza capitol h	typing	venue neighbourhood neighbourhood
+seattle w	typing	locality region
+zuri	typing	locality
+bahnhofstr	typing	road
+東京タワー	-	venue venue venue venue venue
+москва	-	locality
+αθήνα	-	locality
+pizze seattle	-	venue locality
+zurch	-	locality
+capital hill seattle	-	neighbourhood neighbourhood locality
+ballard fred meyer	-	neighbourhood venue venue
+fremont pcc	-	neighbourhood venue
+capitol hill safeway	-	neighbourhood neighbourhood venue
+ballard starbucks	-	neighbourhood venue
+fred meyer ballard	-	venue venue neighbourhood
