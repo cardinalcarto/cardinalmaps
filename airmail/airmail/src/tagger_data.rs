@@ -39,8 +39,11 @@ mod odds {
     pub const COUNTRY: f64 = 0.12;
     /// A region or country by its abbreviation or code.
     pub const ABBREVIATION: f64 = 0.4;
-    /// English rather than local names for areas.
-    pub const ENGLISH: f64 = 0.4;
+    /// Areas by their name in a language of their country, where it has
+    /// its own (see `local_languages`): `москва`, `roma`, `東京`.
+    pub const LOCAL: f64 = 0.5;
+    /// English rather than default names for areas, otherwise.
+    pub const ENGLISH: f64 = 0.6;
     pub const COMMAS: f64 = 0.35;
     pub const CONNECTOR: f64 = 0.15;
     /// Of POIs without an address, a postcode for where: `pizza 98101`.
@@ -74,6 +77,72 @@ mod odds {
 /// Countries whose addresses put the house number after the street.
 /// A country's main language, as libpostal's dictionaries name it, for
 /// connector words.
+/// The languages, as Who's On First's ISO 639-3 codes, that a country's
+/// places are named in locally, where that isn't English (whose names are
+/// `odds::ENGLISH`'s): the countries of most of the world's people and
+/// places, not all.
+fn local_languages(country: &str) -> &'static [&'static str] {
+    match country.to_ascii_uppercase().as_str() {
+        "RU" | "BY" | "KZ" | "KG" => &["rus"],
+        "UA" => &["ukr"],
+        "DE" | "AT" | "LI" => &["deu"],
+        "CH" => &["deu", "fra", "ita"],
+        "FR" | "LU" | "MC" | "SN" | "CI" | "ML" | "BF" | "NE" | "GN" | "CD" | "CG" | "CM" | "MG" | "HT" => &["fra"],
+        "BE" => &["nld", "fra"],
+        "NL" => &["nld"],
+        "ES" | "MX" | "AR" | "CL" | "CO" | "PE" | "VE" | "UY" | "EC" | "BO" | "PY" | "CR" | "GT" | "CU" | "DO" | "HN" | "NI" | "SV"
+        | "PA" => &["spa"],
+        "IT" | "SM" | "VA" => &["ita"],
+        "PT" | "BR" | "AO" | "MZ" => &["por"],
+        "PL" => &["pol"],
+        "SE" => &["swe"],
+        "DK" => &["dan"],
+        "NO" => &["nob", "nor"],
+        "FI" => &["fin"],
+        "IS" => &["isl"],
+        "CZ" => &["ces"],
+        "SK" => &["slk"],
+        "HU" => &["hun"],
+        "RO" | "MD" => &["ron"],
+        "BG" => &["bul"],
+        "GR" | "CY" => &["ell"],
+        "TR" => &["tur"],
+        "RS" => &["srp"],
+        "HR" => &["hrv"],
+        "SI" => &["slv"],
+        "BA" => &["bos", "srp", "hrv"],
+        "MK" => &["mkd"],
+        "AL" => &["sqi"],
+        "LT" => &["lit"],
+        "LV" => &["lav"],
+        "EE" => &["est"],
+        "GE" => &["kat"],
+        "AM" => &["hye"],
+        "AZ" => &["aze"],
+        "JP" => &["jpn"],
+        "CN" | "TW" | "HK" | "MO" => &["zho"],
+        "KR" => &["kor"],
+        "TH" => &["tha"],
+        "VN" => &["vie"],
+        "ID" => &["ind"],
+        "MY" => &["msa"],
+        "KH" => &["khm"],
+        "LA" => &["lao"],
+        "MM" => &["mya"],
+        "MN" => &["mon"],
+        "IL" => &["heb"],
+        "SA" | "AE" | "EG" | "MA" | "DZ" | "TN" | "LY" | "IQ" | "SY" | "JO" | "LB" | "YE" | "OM" | "KW" | "QA" | "BH" | "SD" | "PS" => &["ara"],
+        "IR" | "AF" => &["fas"],
+        "IN" => &["hin"],
+        "PK" => &["urd"],
+        "BD" => &["ben"],
+        "NP" => &["nep"],
+        "LK" => &["sin"],
+        "ET" => &["amh"],
+        _ => &[],
+    }
+}
+
 fn language(country: Option<&str>) -> &'static str {
     match country.unwrap_or("") {
         "DE" | "AT" | "LI" => "de",
@@ -229,6 +298,11 @@ impl Generator {
         }
     }
 
+    /// Starts its random choices again from `seed`.
+    pub fn reseed(&mut self, seed: u64) {
+        self.rng = StdRng::seed_from_u64(seed);
+    }
+
     /// An area's name as a query might write it.
     fn area_name(&mut self, area: &WofPlace) -> Option<String> {
         let band = AdminBand::of(&area.placetype)?;
@@ -248,6 +322,12 @@ impl Generator {
             if let Some(abbreviation) = &area.abbreviation {
                 return Some(abbreviation.clone());
             }
+        }
+        // As libpostal trains on places' local, romanized and English names.
+        let local: Vec<&String> =
+            area.country.as_deref().map(local_languages).unwrap_or_default().iter().filter_map(|lang| area.names.get(*lang)).collect();
+        if !local.is_empty() && self.rng.random_bool(odds::LOCAL) {
+            return local.choose(&mut self.rng).map(|name| (*name).clone());
         }
         if self.rng.random_bool(odds::ENGLISH)
             && let Some(english) = area.names.get("eng")
@@ -661,35 +741,29 @@ fn is_transit_stop(hit: &SearchHit) -> bool {
 const AREA_SHARE: f64 = 0.25;
 
 /// Every `stride`th document of the index but its areas, from `offset`, more
-/// sparsely for some kinds (see `sparsity`); areas evenly through them, a
+/// sparsely for some kinds (see `sparsity`); areas by importance (see `area_weight`), a
 /// share of the rest (see `AREA_SHARE`); and the admins of them all, by ID:
 /// one table, as most documents share their admins.
 ///
 /// # Errors
 /// If the index can't be read.
 pub fn sample(index: &AirmailIndex, stride: u32, offset: u32) -> anyhow::Result<(Vec<SearchHit>, HashMap<u64, WofPlace>)> {
-    let mut seen: HashMap<(Kind, usize), usize> = HashMap::new();
-    let searcher = index.tantivy_index.reader()?.searcher();
-    let (mut sampled, mut admins) = (Vec::new(), HashMap::new());
-    let add = |hit: SearchHit, sampled: &mut Vec<SearchHit>, admins: &mut HashMap<u64, WofPlace>| -> anyhow::Result<()> {
-        let mut hit = hit;
-        // Queries don't need shapes, which would take most of the memory.
-        hit.geometry = geo::Geometry::Point(hit.center);
-        let new: BTreeSet<u64> = hit.admin_ids.iter().copied().filter(|id| !admins.contains_key(id)).collect();
-        admins.extend(index.admins(&searcher, &new)?);
-        sampled.push(hit);
-        Ok(())
-    };
-    let mut areas = Vec::new();
-    for (ord, segment) in searcher.segment_readers().iter().enumerate() {
+    let searcher = index.searcher()?;
+    let segments = searcher.segment_readers();
+    // Per segment, in parallel: its sampled non-admins and its admins.
+    let per_segment = in_parallel(segments.len(), |ord| -> anyhow::Result<(Vec<SearchHit>, Vec<(DocAddress, f64)>)> {
+        let segment = &segments[ord];
+        let mut seen: HashMap<(Kind, usize), usize> = HashMap::new();
+        let (mut sampled, mut areas) = (Vec::new(), Vec::new());
         let alive = segment.alive_bitset();
         let is_admin = segment.fast_fields().u64(crate::index::FIELD_IS_ADMIN)?;
+        let importance = segment.fast_fields().f64(crate::index::FIELD_IMPORTANCE)?;
         for doc in 0..segment.max_doc() {
             if !alive.is_none_or(|bits| bits.is_alive(doc)) {
                 continue;
             }
             if is_admin.first(doc) == Some(1) {
-                areas.push(DocAddress::new(ord as u32, doc));
+                areas.push((DocAddress::new(ord as u32, doc), area_weight(importance.first(doc).unwrap_or(0.0))));
                 continue;
             }
             if doc % stride != offset % stride {
@@ -700,17 +774,97 @@ pub fn sample(index: &AirmailIndex, stride: u32, offset: u32) -> anyhow::Result<
             let count = seen.entry((hit.kind, every)).or_default();
             *count += 1;
             if *count % every == 0 {
-                add(hit, &mut sampled, &mut admins)?;
+                sampled.push(without_shape(hit));
             }
         }
+        Ok((sampled, areas))
+    });
+    let (mut sampled, mut areas) = (Vec::new(), Vec::new());
+    for part in per_segment {
+        let (hits, admins) = part?;
+        sampled.extend(hits);
+        areas.extend(admins);
     }
+    // Systematic sampling by weight: an area is chosen each time the running
+    // total of weights passes a multiple of the step, so a big city can be
+    // chosen several times, each making different queries.
     let wanted = ((sampled.len() as f64 * AREA_SHARE) as usize).max(1);
-    let every = (areas.len() / wanted).max(1);
-    for address in areas.into_iter().skip(offset as usize % every).step_by(every) {
-        let hit = index.hit(&searcher, address, 0.0)?;
-        add(hit, &mut sampled, &mut admins)?;
+    let weight = areas.iter().map(|(_, w)| w).sum::<f64>();
+    let big = areas.iter().map(|(_, w)| w).filter(|w| **w >= 100.0).sum::<f64>();
+    eprintln!("{} areas, {:.0}% of their samples of places of 100,000 or more", areas.len(), 100.0 * big / weight.max(1.0));
+    let step = weight / wanted as f64;
+    let mut next = step * ((f64::from(offset) * 0.618_034) % 1.0);
+    let (mut total, mut chosen) = (0.0, Vec::new());
+    for (address, weight) in areas {
+        total += weight;
+        while next < total {
+            chosen.push(address);
+            next += step;
+        }
+    }
+    const PER_JOB: usize = 10_000;
+    for hits in in_parallel(chosen.len().div_ceil(PER_JOB), |job| {
+        chosen[job * PER_JOB..((job + 1) * PER_JOB).min(chosen.len())]
+            .iter()
+            .map(|address| index.hit(&searcher, *address, 0.0))
+            .map(|hit| hit.map(without_shape))
+            .collect::<anyhow::Result<Vec<_>>>()
+    }) {
+        sampled.extend(hits?);
+    }
+    // Their admins, looked up in parallel.
+    let ids: Vec<u64> = sampled.iter().flat_map(|h| h.admin_ids.iter().copied()).collect::<BTreeSet<_>>().into_iter().collect();
+    let mut admins = HashMap::new();
+    for found in in_parallel(ids.len().div_ceil(PER_JOB), |job| {
+        let ids: BTreeSet<u64> = ids[job * PER_JOB..((job + 1) * PER_JOB).min(ids.len())].iter().copied().collect();
+        index.admins(&searcher, &ids)
+    }) {
+        admins.extend(found?);
     }
     Ok((sampled, admins))
+}
+
+/// How much an area is sampled, from its importance (see
+/// `importance::admin_importance`, a log of its population): in proportion
+/// to its population in thousands, as libpostal samples places, so a name's
+/// examples mostly label it as its biggest place. At least 1, so every area
+/// is seen, and at most 1000 (a city of about a million), so the biggest
+/// don't crowd out the rest.
+fn area_weight(importance: f64) -> f64 {
+    let thousands_decades = (importance - 0.1) / 0.14;
+    10f64.powf(thousands_decades).clamp(1.0, 1000.0)
+}
+
+/// Queries don't need shapes, which would take most of the memory.
+fn without_shape(mut hit: SearchHit) -> SearchHit {
+    hit.geometry = geo::Geometry::Point(hit.center);
+    hit
+}
+
+/// `run(job)` for each of `jobs` jobs, on as many threads as there are
+/// cores, with the results in job order.
+pub fn in_parallel<R: Send>(jobs: usize, run: impl Fn(usize) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get).min(jobs.max(1));
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut done: Vec<(usize, R)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let job = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if job >= jobs {
+                            return done;
+                        }
+                        done.push((job, run(job)));
+                    }
+                })
+            })
+            .collect();
+        handles.into_iter().flat_map(|h| h.join().expect("a job panicked")).collect()
+    });
+    done.sort_by_key(|(job, _)| *job);
+    done.into_iter().map(|(_, r)| r).collect()
 }
 
 #[cfg(test)]

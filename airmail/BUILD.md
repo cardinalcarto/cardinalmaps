@@ -72,7 +72,9 @@ cargo run --release --bin tagger -- tag --index ./data/index-wa --model tagger.m
 
 Training holds a tenth of the places out and reports accuracy on (up to 100,000 of) their queries by tag; `eval` scores a model on the hand-labelled queries in `eval/tagger.tsv`. A model works with any index of the same schema, whose gazetteer it uses.
 
-Training uses every `--stride`th document (20 by default; 1 for all), and needs about 4 GB of memory per million examples. More data helps more than more `--epochs`: past about five, the model learns the generator's habits rather than queries'. A model stores its features in an FST, with 16-bit weights, so it can be read without unpacking; `tagger convert <model> <out>` rewrites an older model in the current format.
+Training uses every `--stride`th document (20 by default; 1 for all), with areas sampled apart in proportion to their population. Examples are featurized on every core and streamed to temporary files beside `--out`, read back a shuffled bucket at a time, so memory goes to the sampled documents and the feature table rather than the examples: on a 250-million-document planet index, stride 20 makes about 14 million examples and takes about an hour on 32 cores. More data helps more than more `--epochs`: past about five, the model learns the generator's habits rather than queries'.
+
+A model stores its features in an FST, with 16-bit weights, so it can be read without unpacking; `tagger convert <model> <out>` rewrites an older model in the current format, and with `--min-weight` drops its smaller weights. Most of a model's size buys little accuracy: a 105 MB planet model pruned at 2.0 is 71 MB (42 MB compressed) and loses about 0.1 points of held-out accuracy. Pruning changes how confident a model is, so run `tagger calibrate` on the result with the arguments it was trained with.
 
 ## Other tools
 

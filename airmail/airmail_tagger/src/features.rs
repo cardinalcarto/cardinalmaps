@@ -18,11 +18,19 @@
 //!   last.
 //! - **Dictionary phrase positions**, begin, inside, end or single, where
 //!   libpostal gives every word of a phrase the same features.
+//!
+//! Also as libpostal has them: an exact match of an area's name is one unit,
+//! its words having the whole name as their value (`phrase|new york`) in
+//! place of their own word and n-gram features, with neighbours outside it;
+//! a name in more than one band has the band it's `commonly` (its best-known
+//! area's, where libpostal counts its training labels); and an unknown first
+//! word has what's to its right: whether a number and a street type follow,
+//! and in which order.
 
 use std::collections::HashMap;
 
 use crate::crf::TokenFeatures;
-use crate::lexicon::{Lexicon, Phrase};
+use crate::lexicon::{Kind, Lexicon, Phrase};
 
 /// How words matched an area's name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,6 +68,10 @@ pub struct AreaMatch {
     pub importance: f32,
     /// To the nearest such area from the focus, if there's a focus.
     pub distance_km: Option<f32>,
+    /// The areas named (exactly) around it that one of its areas is in, by
+    /// their words' span and band: `chelsea` in `chelsea new york` is in
+    /// the locality at words 1..3.
+    pub inside: Vec<(usize, usize, &'static str)>,
 }
 
 /// Finds a query's words in a gazetteer of administrative areas.
@@ -119,11 +131,75 @@ impl Vocabulary {
         self.counts.iter().filter(|(_, c)| **c >= MIN_WORD_COUNT).map(|(w, c)| (w.as_str(), *c))
     }
 
+    /// Adds another's counts to its own.
+    pub fn merge(&mut self, other: Vocabulary) {
+        for (word, count) in other.counts {
+            *self.counts.entry(word).or_default() += count;
+        }
+    }
+
     #[must_use]
     pub fn from_counts(counts: HashMap<String, u32>) -> Self {
         Self { counts }
     }
 }
+
+/// What every word's features are computed from.
+struct Context<'q> {
+    query: &'q Query,
+    areas: &'q [AreaMatch],
+    /// The place name each word is in, if any (see `units`).
+    units: &'q [Option<(usize, usize)>],
+    /// The band each matching span of words is most commonly, where it's in
+    /// more than one (see `commonly`).
+    commonly: &'q [((usize, usize), &'static str)],
+}
+
+/// The place name each of `n` words is in: the longest exact match of an
+/// area's name covering it, the first of the longest. Its words are one unit
+/// to the features, as libpostal has its known place names.
+fn units(areas: &[AreaMatch], n: usize) -> Vec<Option<(usize, usize)>> {
+    let mut units: Vec<Option<(usize, usize)>> = vec![None; n];
+    for area in areas.iter().filter(|a| a.quality == Quality::Exact && a.band != NAME_BAND && a.band != POSTCODE_BAND) {
+        for unit in &mut units[area.start..area.end] {
+            let longer = unit.is_none_or(|(start, end)| area.end - area.start > end - start || (area.end - area.start == end - start && area.start < start));
+            if longer {
+                *unit = Some((area.start, area.end));
+            }
+        }
+    }
+    units
+}
+
+/// For each span of words matching areas' names in more than one band, the
+/// band of its best-known match.
+fn commonly(areas: &[AreaMatch]) -> Vec<((usize, usize), &'static str)> {
+    let mut best: HashMap<(usize, usize), (f32, &'static str, usize)> = HashMap::new();
+    for area in areas.iter().filter(|a| a.band != NAME_BAND && a.band != POSTCODE_BAND) {
+        let entry = best.entry((area.start, area.end)).or_insert((area.importance, area.band, 0));
+        entry.2 += 1;
+        if area.importance > entry.0 {
+            (entry.0, entry.1) = (area.importance, area.band);
+        }
+    }
+    let mut commonly: Vec<_> = best.into_iter().filter(|(_, (_, _, bands))| *bands > 1).map(|(span, (_, band, _))| (span, band)).collect();
+    commonly.sort();
+    commonly
+}
+
+/// The band of an index's exact-name matches (see the gazetteer), which says
+/// how many places of any kind have the name rather than naming an area.
+pub const NAME_BAND: &str = "name";
+
+/// The band of postcode matches, their importance one of the three below.
+pub const POSTCODE_BAND: &str = "postcode";
+/// An area named next to the postcode has a postcode of that code.
+pub const POSTCODE_IN_AREA_BESIDE: f32 = 1.0;
+/// No area is named next to it.
+pub const POSTCODE_ALONE: f32 = 0.5;
+/// Areas are named next to it, none with a postcode of that code: likely a
+/// house number.
+pub const POSTCODE_NOT_IN_AREA_BESIDE: f32 = 0.0;
 
 /// What features are computed from.
 pub struct Extractor<'a> {
@@ -211,26 +287,48 @@ impl Extractor<'_> {
         let phrases = self.lexicon.phrases(&query.words);
         let phrase_at = |t: usize| phrases.iter().find(|p| p.start <= t && t < p.end);
         let sections_after = |t: usize| query.section_starts.iter().skip(t + 1).filter(|s| **s).count();
-        (0..n).map(|t| self.token(query, t, areas, phrase_at(t), phrase_at, &sections_after)).collect()
+        let units = units(areas, n);
+        let commonly = commonly(areas);
+        let context = Context { query, areas, units: &units, commonly: &commonly };
+        (0..n).map(|t| self.token(&context, t, phrase_at(t), phrase_at, &sections_after)).collect()
+    }
+
+    /// A word's value as a neighbour: its place name if it's in one, else
+    /// its dictionary phrase's kinds, else itself or `unk`.
+    fn neighbour<'p>(&self, context: &Context, i: usize, phrase_at: &impl Fn(usize) -> Option<&'p Phrase>) -> String {
+        if let Some((start, end)) = context.units[i] {
+            return context.query.words[start..end].join(" ");
+        }
+        match phrase_at(i) {
+            Some(phrase) => format!("<{}>", phrase.kinds.iter().map(|k| k.as_str()).collect::<Vec<_>>().join("+")),
+            None => self.word(&context.query.words[i]).to_string(),
+        }
     }
 
     fn token<'p>(
         &self,
-        query: &Query,
+        context: &Context,
         t: usize,
-        areas: &[AreaMatch],
         phrase: Option<&'p Phrase>,
         phrase_at: impl Fn(usize) -> Option<&'p Phrase>,
         sections_after: &impl Fn(usize) -> usize,
     ) -> TokenFeatures {
+        let (query, areas) = (context.query, context.areas);
         let n = query.words.len();
         let word = query.words[t].as_str();
-        let value = self.word(word);
-        let mut state = vec!["bias".to_string(), format!("word|{value}"), format!("shape|{}", shape(word))];
+        // In a place's name, as libpostal has its known phrases: the name is
+        // the word's value, in place of the word's own features.
+        let unit = context.units[t];
+        let value = match unit {
+            Some((start, end)) => query.words[start..end].join(" "),
+            None => self.word(word).to_string(),
+        };
+        let mut state = vec!["bias".to_string(), format!("shape|{}", shape(word))];
+        state.push(if unit.is_some() { format!("phrase|{value}") } else { format!("word|{value}") });
         let mut transition = vec![format!("word|{value}")];
 
-        // Rare words by their letters.
-        if self.vocabulary.count(word) <= RARE_WORD_COUNT && word.chars().any(char::is_alphabetic) {
+        // Rare words by their letters, outside place names.
+        if unit.is_none() && self.vocabulary.count(word) <= RARE_WORD_COUNT && word.chars().any(char::is_alphabetic) {
             for n in 3..=6 {
                 state.extend(ngrams(word, n).into_iter().map(|g| format!("ngram|{n}|{g}")));
             }
@@ -259,6 +357,21 @@ impl Extractor<'_> {
         for area in areas.iter().filter(|a| a.start <= t && t < a.end) {
             let (band, quality) = (area.band, area.quality.as_str());
             let pos = position(t, area.start, area.end);
+            if band == POSTCODE_BAND {
+                // libpostal's "postcode have context" and "no context", the latter
+                // split by whether any area is named beside it.
+                #[allow(clippy::float_cmp)]
+                let context = if area.importance == POSTCODE_IN_AREA_BESIDE {
+                    "context"
+                } else if area.importance == POSTCODE_ALONE {
+                    "alone"
+                } else {
+                    "unsupported"
+                };
+                state.push(format!("postcode|{context}"));
+                state.push(format!("postcode|{context}|{pos}"));
+                continue;
+            }
             state.push(format!("gaz|{band}"));
             state.push(format!("gaz|{band}|{pos}"));
             state.push(format!("gaz|{band}|{pos}|{quality}"));
@@ -275,6 +388,26 @@ impl Extractor<'_> {
                 transition.push(format!("gaz|{band}|B"));
             }
         }
+        // Whether its area is in the area named after it, or the area
+        // before it is in its: which readings of the pair are real places.
+        for area in areas.iter().filter(|a| a.start <= t && t < a.end) {
+            for (_, _, parent) in &area.inside {
+                state.push(format!("inside|{}|{parent}", area.band));
+            }
+        }
+        for child in areas {
+            for (_, _, parent) in child.inside.iter().filter(|(start, end, _)| *start <= t && t < *end) {
+                state.push(format!("contains|{parent}|{}", child.band));
+            }
+        }
+        // The band a name is most commonly, of the bands it's in: its
+        // best-known area's, where libpostal counts its training labels.
+        for ((start, end), band) in context.commonly {
+            if *start <= t && t < *end {
+                state.push(format!("commonly|{band}"));
+                state.push(format!("commonly|{band}|{}", position(t, *start, *end)));
+            }
+        }
         // The areas next to it, which areas follow and subjects precede.
         let next_areas = areas.iter().filter(|a| a.start == t + 1);
         for area in next_areas {
@@ -283,7 +416,9 @@ impl Extractor<'_> {
 
         // Where it is in the query.
         if t == 0 {
-            state.push(format!("first|{value}"));
+            if unit.is_none() {
+                state.push(format!("first|{value}"));
+            }
             state.push("first".to_string());
         }
         if t + 1 == n {
@@ -302,23 +437,50 @@ impl Extractor<'_> {
             transition.push("section_start".to_string());
         }
 
-        // Its neighbours, as libpostal has them.
-        let lex_or_word = |i: usize| -> String {
-            match phrase_at(i) {
-                Some(phrase) => format!("<{}>", phrase.kinds.iter().map(|k| k.as_str()).collect::<Vec<_>>().join("+")),
-                None => self.word(&query.words[i]).to_string(),
-            }
-        };
-        if t > 0 {
-            let prev = lex_or_word(t - 1);
+        // Its neighbours, as libpostal has them: outside its place name, and
+        // a neighbouring place name as a whole.
+        let before = unit.map_or(t, |(start, _)| start);
+        let after = unit.map_or(t + 1, |(_, end)| end);
+        if before > 0 {
+            let prev = self.neighbour(context, before - 1, &phrase_at);
             state.push(format!("prev|{prev}"));
             state.push(format!("prev+word|{prev}|{value}"));
-            transition.push(format!("prev|{prev}"));
+            if before == t {
+                transition.push(format!("prev|{prev}"));
+            }
         }
-        if t + 1 < n {
-            let next = lex_or_word(t + 1);
+        if after < n {
+            let next = self.neighbour(context, after, &phrase_at);
             state.push(format!("next|{next}"));
             state.push(format!("word+next|{value}|{next}"));
+        }
+
+        // An unknown first word, by what's to its right, as libpostal has it:
+        // a venue's name before a number then a street type ("barboncino 781
+        // franklin ave"), a street's before its number ("calle x 12"), or a
+        // street's with its type after.
+        if t == 0 && unit.is_none() && value.starts_with("unk") {
+            let number = (1..n).find(|&i| query.words[i].chars().any(char::is_numeric));
+            let street = (1..n).find(|&i| {
+                phrase_at(i).is_some_and(|p| p.kinds.contains(Kind::StreetType)) || self.lexicon.street_suffix(&query.words[i]).is_some()
+            });
+            let building = (1..n).find(|&i| phrase_at(i).is_some_and(|p| p.kinds.contains(Kind::Building)));
+            match (number, street) {
+                (Some(number), Some(street)) => {
+                    let order = if street < number { "street_before_number" } else { "street_after_number" };
+                    state.push(format!("first_unk|{order}"));
+                    state.push(format!("first_unk|{order}|{}", self.neighbour(context, street, &phrase_at)));
+                }
+                (Some(_), None) => state.push("first_unk|number_right".to_string()),
+                (None, Some(street)) => {
+                    state.push("first_unk|street_right".to_string());
+                    state.push(format!("first_unk|street_right|{}", self.neighbour(context, street, &phrase_at)));
+                }
+                (None, None) => {}
+            }
+            if building.is_some() {
+                state.push("first_unk|building_right".to_string());
+            }
         }
         TokenFeatures { state, transition }
     }
@@ -346,6 +508,80 @@ mod test {
     }
 
     #[test]
+    fn place_names_are_units_with_the_band_they_commonly_are() {
+        let lexicon = Lexicon::new();
+        let vocabulary = Vocabulary::default();
+        let extractor = Extractor { lexicon: &lexicon, vocabulary: &vocabulary };
+        let q = query("chelsea new york");
+        let area = |start, end, band, importance| AreaMatch { start, end, band, quality: Quality::Exact, importance, distance_km: None, inside: Vec::new() };
+        let areas = vec![
+            area(0, 1, "neighbourhood", 0.2),
+            area(1, 3, "locality", 0.6),
+            area(1, 3, "region", 0.55),
+            area(2, 3, "locality", 0.1),
+        ];
+        let features = extractor.features(&q, &areas);
+        // Both words of the longest name are it, not themselves.
+        for t in [1, 2] {
+            assert!(features[t].state.contains(&"phrase|new york".to_string()), "{:?}", features[t].state);
+            assert!(!features[t].state.iter().any(|f| f.starts_with("word|") || f.starts_with("ngram|")));
+            assert!(features[t].transition.contains(&"word|new york".to_string()));
+            assert!(features[t].state.contains(&"prev|chelsea".to_string()));
+            assert!(features[t].state.contains(&"commonly|locality".to_string()));
+        }
+        assert!(features[1].state.contains(&"commonly|locality|B".to_string()));
+        // The neighbour is the whole name; one band is no commonly.
+        assert!(features[0].state.contains(&"next|new york".to_string()));
+        assert!(!features[0].state.iter().any(|f| f.starts_with("commonly|")));
+    }
+
+    #[test]
+    fn postcodes_say_whether_an_area_next_to_them_has_them() {
+        let lexicon = Lexicon::new();
+        let vocabulary = Vocabulary::default();
+        let extractor = Extractor { lexicon: &lexicon, vocabulary: &vocabulary };
+        let area = |start, end, band, importance| AreaMatch { start, end, band, quality: Quality::Exact, importance, distance_km: None, inside: Vec::new() };
+        let q = query("new york 10001");
+        let features = extractor.features(&q, &[area(0, 2, "locality", 0.6), area(2, 3, POSTCODE_BAND, 1.0)]);
+        assert!(features[2].state.contains(&"postcode|context|S".to_string()), "{:?}", features[2].state);
+        assert!(!features[2].state.iter().any(|f| f.starts_with("gaz|postcode")));
+        let q = query("10001 main st");
+        let features = extractor.features(&q, &[area(0, 1, POSTCODE_BAND, POSTCODE_NOT_IN_AREA_BESIDE)]);
+        assert!(features[0].state.contains(&"postcode|unsupported".to_string()));
+        let features = extractor.features(&q, &[area(0, 1, POSTCODE_BAND, POSTCODE_ALONE)]);
+        assert!(features[0].state.contains(&"postcode|alone".to_string()));
+        // A postcode isn't a place name.
+        assert!(features[0].state.iter().any(|f| f.starts_with("word|")));
+    }
+
+    #[test]
+    fn areas_in_the_areas_named_after_them_say_so() {
+        let lexicon = Lexicon::new();
+        let vocabulary = Vocabulary::default();
+        let extractor = Extractor { lexicon: &lexicon, vocabulary: &vocabulary };
+        let area = |start, end, band, inside| AreaMatch { start, end, band, quality: Quality::Exact, importance: 0.5, distance_km: None, inside };
+        let q = query("toronto ca");
+        let areas = vec![area(0, 1, "locality", vec![(1, 2, "country")]), area(1, 2, "region", vec![]), area(1, 2, "country", vec![])];
+        let features = extractor.features(&q, &areas);
+        assert!(features[0].state.contains(&"inside|locality|country".to_string()), "{:?}", features[0].state);
+        assert!(features[1].state.contains(&"contains|country|locality".to_string()));
+        assert!(!features[1].state.contains(&"contains|region|locality".to_string()));
+    }
+
+    #[test]
+    fn an_unknown_first_word_knows_whats_to_its_right() {
+        let lexicon = Lexicon::new();
+        let vocabulary = Vocabulary::default();
+        let extractor = Extractor { lexicon: &lexicon, vocabulary: &vocabulary };
+        let venue = extractor.features(&query("barboncino 781 franklin ave"), &[]);
+        assert!(venue[0].state.contains(&"first_unk|street_after_number".to_string()), "{:?}", venue[0].state);
+        let street = extractor.features(&query("calle mayor 12"), &[]);
+        assert!(street[0].state.contains(&"first_unk|street_before_number".to_string()) || street[0].state.iter().any(|f| f.starts_with("lex|")), "{:?}", street[0].state);
+        let bare = extractor.features(&query("barboncino 781"), &[]);
+        assert!(bare[0].state.contains(&"first_unk|number_right".to_string()));
+    }
+
+    #[test]
     fn areas_give_their_words_bands_positions_and_quality() {
         let lexicon = Lexicon::new();
         let vocabulary = Vocabulary::default();
@@ -358,6 +594,7 @@ mod test {
             quality: Quality::Exact,
             importance: 0.6,
             distance_km: Some(4000.0),
+            inside: Vec::new(),
         }];
         let features = extractor.features(&q, &areas);
         assert!(features[1].state.contains(&"gaz|locality|B|exact".to_string()));

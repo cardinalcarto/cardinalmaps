@@ -321,6 +321,9 @@ pub struct SearchResults {
 #[derive(Clone)]
 pub struct AirmailIndex {
     pub(crate) tantivy_index: Arc<tantivy::Index>,
+    /// One reader for the index's life, made when first needed: making one
+    /// opens every segment, far too slow to do for each search.
+    reader: Arc<std::sync::OnceLock<tantivy::IndexReader>>,
     /// Reads queries, if a model was given.
     tagger: Option<Arc<airmail_tagger::Tagger>>,
 }
@@ -405,7 +408,7 @@ impl AirmailIndex {
         }
         let tantivy_index = tantivy::Index::open_or_create(MmapDirectory::open(index_dir)?, Self::schema())?;
         register_tokenizers(&tantivy_index);
-        Ok(Self { tantivy_index: Arc::new(tantivy_index), tagger: None })
+        Ok(Self { tantivy_index: Arc::new(tantivy_index), reader: Arc::default(), tagger: None })
     }
 
     /// Opens an existing index.
@@ -416,7 +419,7 @@ impl AirmailIndex {
         check_version(Path::new(index_dir))?;
         let tantivy_index = tantivy::Index::open_in_dir(index_dir)?;
         register_tokenizers(&tantivy_index);
-        Ok(Self { tantivy_index: Arc::new(tantivy_index), tagger: None })
+        Ok(Self { tantivy_index: Arc::new(tantivy_index), reader: Arc::default(), tagger: None })
     }
 
     /// Opens an index for searching only, which works on a read-only
@@ -429,12 +432,24 @@ impl AirmailIndex {
         let directory = ReadOnlyDirectory(MmapDirectory::open(index_dir)?);
         let tantivy_index = tantivy::Index::open(directory)?;
         register_tokenizers(&tantivy_index);
-        Ok(Self { tantivy_index: Arc::new(tantivy_index), tagger: None })
+        Ok(Self { tantivy_index: Arc::new(tantivy_index), reader: Arc::default(), tagger: None })
     }
 
     /// Reads queries with a tagger's interpretations of them, rather than by
     /// finding area names at their ends.
     #[must_use]
+    /// A searcher of the index as it is now, from its one reader.
+    ///
+    /// # Errors
+    /// If the index can't be read.
+    pub fn searcher(&self) -> tantivy::Result<tantivy::Searcher> {
+        if let Some(reader) = self.reader.get() {
+            return Ok(reader.searcher());
+        }
+        let reader = self.tantivy_index.reader()?;
+        Ok(self.reader.get_or_init(|| reader).searcher())
+    }
+
     pub fn with_tagger(mut self, tagger: airmail_tagger::Tagger) -> Self {
         self.tagger = Some(Arc::new(tagger));
         self
@@ -1084,7 +1099,7 @@ impl AirmailIndex {
         // the areas a result is named after among the candidates.
         let candidates = if bbox_rects.is_some() { (limit * 4).min(200) } else { (limit * 2).max(limit + RERANK_CANDIDATES) };
 
-        let searcher = self.tantivy_index.reader()?.searcher();
+        let searcher = self.searcher()?;
         let words = self.query_words(request.text);
         let (hints, readings) = self.readings(&searcher, &words, request.text, Self::prefix(request));
         trace!("Readings of {:?}: {readings:?}, {hints:?}", request.text);
@@ -1165,7 +1180,7 @@ impl AirmailIndex {
         trace!("Looking up {id} by {field}");
         let index = self.clone();
         spawn_blocking(move || -> Result<SearchResults> {
-            let searcher = index.tantivy_index.reader()?.searcher();
+            let searcher = index.searcher()?;
             let query = TermQuery::new(term, IndexRecordOption::Basic);
             // An element is indexed once, but a POI ID could in principle be
             // on more than one; the first is as good as any.

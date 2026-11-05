@@ -6,6 +6,7 @@
 
 use std::io::{self, Read, Write};
 
+use fst::Streamer;
 use fst::{Map, MapBuilder};
 
 use crate::crf::{Label, Lattice, TokenFeatures, Weights};
@@ -109,6 +110,31 @@ impl Rows {
         self.keys.len()
     }
 
+    /// The rows, each feature with its weights whose magnitude is at least
+    /// `min_weight`, without the rows left with none.
+    fn pruned(&self, min_weight: f32) -> Vec<(String, Vec<(u32, f32)>)> {
+        let mut rows = Vec::with_capacity(self.len());
+        let mut stream = self.keys.stream();
+        while let Some((key, row)) = stream.next() {
+            let (start, end) = (self.starts[row as usize] as usize, self.starts[row as usize + 1] as usize);
+            let weights: Vec<(u32, f32)> = self.columns[start..end]
+                .iter()
+                .zip(&self.values[start..end])
+                .map(|(c, v)| (u32::from(*c), from_bf16(*v)))
+                .filter(|(_, w)| w.abs() >= min_weight)
+                .collect();
+            if !weights.is_empty() {
+                rows.push((String::from_utf8_lossy(key).into_owned(), weights));
+            }
+        }
+        rows
+    }
+
+    /// How many weights there are of at least each magnitude.
+    fn magnitudes(&self) -> Vec<f32> {
+        self.values.iter().map(|v| from_bf16(*v).abs()).collect()
+    }
+
     fn add(&self, feature: &str, scale: f64, scores: &mut [f64]) {
         if let Some(row) = self.keys.get(feature) {
             let (start, end) = (self.starts[row as usize] as usize, self.starts[row as usize + 1] as usize);
@@ -143,6 +169,28 @@ impl Model {
         trans: Vec<f32>,
     ) -> Self {
         Self { labels, state: Rows::new(state), state_trans: Rows::new(state_trans), trans, scale: 1.0 }
+    }
+
+    /// The model without its weights smaller in magnitude than
+    /// `min_weight`, nor the features left without weights: smaller, as
+    /// nearly as accurate as the weights dropped are small.
+    #[must_use]
+    pub fn pruned(&self, min_weight: f32) -> Self {
+        Self {
+            labels: self.labels.clone(),
+            state: Rows::new(self.state.pruned(min_weight)),
+            state_trans: Rows::new(self.state_trans.pruned(min_weight)),
+            trans: self.trans.clone(),
+            scale: self.scale,
+        }
+    }
+
+    /// The magnitude of every state and state-transition weight, unsorted.
+    #[must_use]
+    pub fn weight_magnitudes(&self) -> Vec<f32> {
+        let mut all = self.state.magnitudes();
+        all.extend(self.state_trans.magnitudes());
+        all
     }
 
     /// What every score is multiplied by.
