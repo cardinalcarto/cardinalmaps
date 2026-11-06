@@ -40,11 +40,21 @@ impl WhosOnFirst {
         // The sqlx pool isn't the most efficient, so keep it busy.
         let connections = num_cpus::get().try_into()?;
 
+        // Never close these connections. Closing one makes mod_spatialite call
+        // xmlCleanupParser, which isn't thread-safe: with libxml2 2.9.14
+        // (Debian trixie), connections closing at once abort the process with
+        // a double free. With the default limits, a long stretch without
+        // queries expires the whole pool, so they would all close together
+        // on the next use.
         let pool = SqlitePoolOptions::new()
             .min_connections(connections)
             .max_connections(connections)
+            .idle_timeout(None)
+            .max_lifetime(None)
             .connect_with(opts)
             .await?;
+        // Likewise when the pool would otherwise be dropped at exit.
+        std::mem::forget(pool.clone());
 
         Ok(Self { pool })
     }
