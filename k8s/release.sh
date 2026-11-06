@@ -4,7 +4,7 @@
 #
 #   k8s/release.sh init
 #   k8s/release.sh bootstrap-pois PLANET.osm.pbf [REPLICATION_URL]
-#   k8s/release.sh build EXTRACT.osm.pbf [--id ID] [--wof-db FILE] [--qrank FILE] [--sources DIR] [--contours CONFIG]
+#   k8s/release.sh build EXTRACT.osm.pbf [--id ID] [--wof-db FILE] [--qrank FILE] [--sources DIR] [--contours CONFIG [--dem DIR]]
 #   k8s/release.sh promote ID [--query Q]
 #   k8s/release.sh list
 #   k8s/release.sh prune [--keep N] [--yes]
@@ -137,6 +137,8 @@ cmd_build() {
       --sources) extra_args+=(--sources="$(realpath "$2")"); shift 2 ;;
       # Reads AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY if its DEMs are in a bucket.
       --contours) contours=$2; shift 2 ;;
+      # DEM rasters, mounted at /dem for a --contours configuration that reads them from there.
+      --dem) extra_args+=(--dem="$(realpath "$2")"); shift 2 ;;
       -*) usage ;;
       *) [[ -z $extract ]] || usage; extract=$1; shift ;;
     esac

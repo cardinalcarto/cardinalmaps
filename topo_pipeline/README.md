@@ -16,9 +16,11 @@ then run planetiler with `--osm-path=planet-topo.osm.pbf`. The Dagger module wra
 ## DEMs
 
 `topo.example.toml` lists sources from lowest to highest priority. A source's rasters are
-found by walking `dir` for files ending in `suffix`, so downloaded archives can stay as they
-unpack. JAXA's AW3D30 `*_DSM.tif` files work directly; their `*_MSK.tif` and `*_STK.tif` files
-aren't read.
+found by walking `dir` for files ending in `suffix`. The global base is
+[GEDTM](https://zenodo.org/records/14900180), a bare earth model at 1 arc second, which comes as
+one file; `scripts/tile_gedtm.sh` cuts it into tiles that this can read. A bare earth model
+matters here: surface models like AW3D30 and Copernicus GLO-30 draw contours around trees and
+buildings.
 
 A raster must be a single-band GeoTIFF in geographic coordinates, on a lattice of 1 arc
 second divided by an odd integer (1, 1/3, 1/9), with its pixel centers on that lattice.
@@ -29,18 +31,18 @@ gdalwarp -t_srs EPSG:4326 -tr 0.0000925925925 0.0000925925925 -tap -r bilinear -
 ```
 
 A source can instead read zip archives of rasters from an S3-compatible bucket, so that none
-of it has to fit on disk; see `topo.example.toml`. `scripts/mirror_aw3d30.py` puts JAXA's data
-in one. Each raster is fetched by itself with a range request, and chunks are worked through
+of it has to fit on disk; see `topo.example.toml`. An archive counts once `<archive>.sha256` is
+beside it, so it should be uploaded last. Each raster is fetched by itself with a range request, and chunks are worked through
 5 degree block by block, which keeps `cache_gb` of decoded rasters useful. Set `cache_gb` to at
 least 8. The output is the same as from a directory of the same files, and chunks finished one
-way are valid the other way too. JAXA requires that anything published from AW3D30 credit JAXA.
+way are valid the other way too.
 
 The datum isn't converted. NAD83 and WGS84 are treated alike (about a meter apart in the
 contiguous US), as are the sources' vertical datums. `feather` hides such differences at a
-source's edge, by blending over that many cells inside it. Where a high resolution source
-meets JAXA's it also hides this: **AW3D30 is a surface model, so its elevations include the
-forest canopy**, while most high resolution DEMs are bare earth. In tall forest, expect JAXA
-contours to run high by up to the height of the trees.
+source's edge, by blending over that many cells inside it.
+
+GEDTM is a smoothed, machine-learned model, so sharp summits can read low (Everest by about
+135 m), which can lose a peak's top rings.
 
 `median` removes speckle and `sigma` smooths, in cells of the source's own lattice. Keep
 `sigma` modest. At 2 on AW3D30 it merged separate knobs and flattened small saddles.
@@ -89,7 +91,5 @@ relations. Blocks are copied without being decoded, and it needs a file marked
 
 ## Data credit
 
-[JAXA's AW3D30 page](https://www.eorc.jaxa.jp/ALOS/en/dataset/aw3d30/aw3d30_e.htm) allows
-commercial and non-commercial use at no charge, under its
-[terms](https://earth.jaxa.jp/policy/en.html). Maps need to credit JAXA; check those terms for
-the wording to use. Other DEM sources have their own terms.
+[GEDTM](https://zenodo.org/records/14900180) is under CC BY 4.0, so maps need to credit it. Its
+record also says "use for testing purposes only". Other DEM sources have their own terms.

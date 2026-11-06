@@ -11,19 +11,19 @@ simplify_m = 8.0
 round_corners = true
 
 [[source]]
-name = "jaxa-aw3d30"
-dir = "/mnt/maps"
-suffix = "_DSM.tif"
+name = "gedtm"
+dir = "/dem"
+suffix = ".tif"
 arcsec = 1.0
 median = true
 sigma = 1.2
 
-# The same rasters, read from zip archives in a bucket instead of a directory, as uploaded by
-# scripts/mirror_aw3d30.py. Credentials come from AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
+# Rasters from zip archives in a bucket instead of a directory, with file names that include
+# corners like N047W123. Credentials come from AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
 # [[source]]
-# name = "jaxa-aw3d30"
-# s3 = { endpoint = "s3.REGION.example.com", bucket = "BUCKET", prefix = "aw3d30/release_v2404/" }
-# suffix = "_DSM.tif"
+# name = "dem"
+# s3 = { endpoint = "s3.REGION.example.com", bucket = "BUCKET", prefix = "dem/release_v2404/" }
+# suffix = ".tif"
 # arcsec = 1.0
 # median = true
 # sigma = 1.2

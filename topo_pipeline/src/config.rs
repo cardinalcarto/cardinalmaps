@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-/// Base lattice points per degree: 1 arc second, the JAXA grid.
+/// Base lattice points per degree: 1 arc second.
 pub const BASE_PER_DEGREE: i64 = 3600;
 
 #[derive(Debug, Deserialize, Clone)]

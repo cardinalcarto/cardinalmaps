@@ -1,5 +1,5 @@
 //! Rasters read from zip archives in an S3-compatible bucket, for sources too large to keep
-//! on disk, like JAXA's AW3D30 as mirrored by `scripts/mirror_aw3d30.py`.
+//! on disk.
 //!
 //! A raster is one deflated entry of a zip, so a range request gets it alone. GeoTIFF headers
 //! can be at the end of a file, which a deflated stream can't skip to, so reading each of them
@@ -9,7 +9,7 @@
 //! decoded (see `dem::read_values`), as is its CRC, so a wrong guess stops the run.
 //!
 //! What's learned is kept in `<work>/remote-<source>.tsv`, so it's only done once per archive.
-//! An archive is only used once its `.sha256` is in the bucket, which the mirror writes last.
+//! An archive is only used once its `.sha256` is in the bucket, which should be uploaded last.
 //!
 //! Credentials come from `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
 
