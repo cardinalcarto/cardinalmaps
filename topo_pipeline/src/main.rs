@@ -6,6 +6,7 @@ mod config;
 mod contour;
 mod dem;
 mod pbf;
+mod remote;
 mod seams;
 #[cfg(test)]
 mod tests;
@@ -79,7 +80,7 @@ fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Contours { config, work, out, bbox, node_id_start, way_id_start } => {
             let config = config::Config::load(&config)?;
-            let mosaic = chunks::Mosaic::open(&config)?;
+            let mosaic = chunks::Mosaic::open(&config, &work)?;
             for source in &mosaic.sources {
                 eprintln!("source {}: {} rasters", source.config.name, source.rasters.len());
             }
@@ -101,7 +102,7 @@ fn main() -> Result<()> {
         }
         Command::Seams { config, work, bbox } => {
             let config = config::Config::load(&config)?;
-            let mosaic = chunks::Mosaic::open(&config)?;
+            let mosaic = chunks::Mosaic::open(&config, &work)?;
             let ids = mosaic.chunks(parse_bbox(bbox.as_deref())?);
             let files = mosaic.ensure(&work, &ids)?;
             let report = seams::check(&files)?;

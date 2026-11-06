@@ -13,9 +13,11 @@ clap = { version = "4", features = ["derive"] }
 flate2 = "1"
 prost = "0.14"
 rayon = "1"
+rusty-s3 = "0.11.0"
 serde = { version = "1", features = ["derive"] }
 tiff = "0.10"
 toml = "0.8"
+ureq = "3.5.1"
 
 [profile.release]
 debug = 1

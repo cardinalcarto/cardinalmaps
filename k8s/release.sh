@@ -4,7 +4,7 @@
 #
 #   k8s/release.sh init
 #   k8s/release.sh bootstrap-pois PLANET.osm.pbf [REPLICATION_URL]
-#   k8s/release.sh build EXTRACT.osm.pbf [--id ID] [--wof-db FILE] [--qrank FILE]
+#   k8s/release.sh build EXTRACT.osm.pbf [--id ID] [--wof-db FILE] [--qrank FILE] [--sources DIR] [--contours CONFIG]
 #   k8s/release.sh promote ID [--query Q]
 #   k8s/release.sh list
 #   k8s/release.sh prune [--keep N] [--yes]
@@ -128,17 +128,27 @@ cmd_bootstrap_pois() {
 
 cmd_build() {
   local extract='' id='' wof=$root/wof/whosonfirst-data-admin-latest.spatial.db qrank=$root/qrank/qrank.csv.gz
+  local contours='' extra_args=()
   while [[ $# -gt 0 ]]; do
     case $1 in
       --id) id=$2; shift 2 ;;
       --wof-db) wof=$2; shift 2 ;;
       --qrank) qrank=$2; shift 2 ;;
+      --sources) extra_args+=(--sources="$(realpath "$2")"); shift 2 ;;
+      # Reads AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY if its DEMs are in a bucket.
+      --contours) contours=$2; shift 2 ;;
       -*) usage ;;
       *) [[ -z $extract ]] || usage; extract=$1; shift ;;
     esac
   done
   [[ -n $extract ]] || usage
   [[ -f $extract ]] || die "not a file: $extract"
+  if [[ -n $contours ]]; then
+    [[ -f $contours ]] || die "not a file: $contours"
+    extra_args+=(--contour-config="$(realpath "$contours")")
+    [[ -z ${AWS_ACCESS_KEY_ID:-} ]] ||
+      extra_args+=(--s3-access-key-id=env://AWS_ACCESS_KEY_ID --s3-secret-access-key=env://AWS_SECRET_ACCESS_KEY)
+  fi
   [[ -f $wof ]] || die "no Who's On First database at $wof; pass --wof-db"
   extract=$(realpath "$extract")
   wof=$(realpath "$wof")
@@ -175,7 +185,7 @@ cmd_build() {
   (cd "$repo" && DATABASE_URL=$(database_url "database:$db_port") dagger -m data_pipeline api call build \
     --osm="$extract" --wof-db="$wof" \
     --database-url=env://DATABASE_URL --database="tcp://localhost:$db_port" \
-    "${qrank_args[@]}" -o "$partial")
+    "${qrank_args[@]}" "${extra_args[@]}" -o "$partial")
   [[ -s $partial/tiles.mbtiles ]] || die "the build has no tiles.mbtiles; left in $partial"
   [[ -f $partial/index/meta.json ]] || die "the build has no geocoder index; left in $partial"
   local schema_version

@@ -52,6 +52,9 @@ dagger -m data_pipeline api call topo-tiles --osm=./region.osm.pbf \
   --dem=./dem --config=./topo.toml --bbox=-125,45,-120,50 -o topo.mbtiles
 ```
 
+`build` takes `--contour-config` to include the contours in its tiles, and `--s3-access-key-id`
+and `--s3-secret-access-key` if its DEMs are in a bucket.
+
 The steps are also available alone as `contours` and `append-contours`. Finished contour
 chunks stay in the `topo-chunks` cache volume, which the engine's garbage collection can
 reclaim; a rerun recomputes what's missing or changed.

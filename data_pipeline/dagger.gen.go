@@ -300,7 +300,42 @@ func invoke(ctx context.Context, parentJSON []byte, parentName string, fnName st
 					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg qrank", err))
 				}
 			}
-			return (*DataPipeline).Build(&parent, ctx, osm, wofDb, databaseUrl, database, args, maxRamPercentage, pipTree, qrank)
+			var sources *dagger.Directory
+			if inputArgs["sources"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["sources"]), &sources)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg sources", err))
+				}
+			}
+			var contourConfig *dagger.File
+			if inputArgs["contourConfig"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["contourConfig"]), &contourConfig)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg contourConfig", err))
+				}
+			}
+			var dem *dagger.Directory
+			if inputArgs["dem"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["dem"]), &dem)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg dem", err))
+				}
+			}
+			var s3AccessKeyId *dagger.Secret
+			if inputArgs["s3AccessKeyId"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["s3AccessKeyId"]), &s3AccessKeyId)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg s3AccessKeyId", err))
+				}
+			}
+			var s3SecretAccessKey *dagger.Secret
+			if inputArgs["s3SecretAccessKey"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["s3SecretAccessKey"]), &s3SecretAccessKey)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg s3SecretAccessKey", err))
+				}
+			}
+			return (*DataPipeline).Build(&parent, ctx, osm, wofDb, databaseUrl, database, args, maxRamPercentage, pipTree, qrank, sources, contourConfig, dem, s3AccessKeyId, s3SecretAccessKey)
 		case "CategoricalModels":
 			var parent DataPipeline
 			err = json.Unmarshal(parentJSON, &parent)
@@ -370,7 +405,21 @@ func invoke(ctx context.Context, parentJSON []byte, parentName string, fnName st
 					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg bbox", err))
 				}
 			}
-			return (*DataPipeline).Contours(&parent, ctx, dem, config, bbox)
+			var s3AccessKeyId *dagger.Secret
+			if inputArgs["s3AccessKeyId"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["s3AccessKeyId"]), &s3AccessKeyId)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg s3AccessKeyId", err))
+				}
+			}
+			var s3SecretAccessKey *dagger.Secret
+			if inputArgs["s3SecretAccessKey"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["s3SecretAccessKey"]), &s3SecretAccessKey)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg s3SecretAccessKey", err))
+				}
+			}
+			return (*DataPipeline).Contours(&parent, ctx, dem, config, bbox, s3AccessKeyId, s3SecretAccessKey)
 		case "Index":
 			var parent DataPipeline
 			err = json.Unmarshal(parentJSON, &parent)
@@ -517,7 +566,14 @@ func invoke(ctx context.Context, parentJSON []byte, parentName string, fnName st
 					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg maxRamPercentage", err))
 				}
 			}
-			return (*DataPipeline).Tiles(&parent, ctx, osm, databaseUrl, database, args, maxRamPercentage)
+			var sources *dagger.Directory
+			if inputArgs["sources"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["sources"]), &sources)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg sources", err))
+				}
+			}
+			return (*DataPipeline).Tiles(&parent, ctx, osm, databaseUrl, database, args, maxRamPercentage, sources)
 		case "Topo":
 			var parent DataPipeline
 			err = json.Unmarshal(parentJSON, &parent)
@@ -573,7 +629,28 @@ func invoke(ctx context.Context, parentJSON []byte, parentName string, fnName st
 					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg maxRamPercentage", err))
 				}
 			}
-			return (*DataPipeline).TopoTiles(&parent, ctx, osm, dem, config, bbox, args, maxRamPercentage)
+			var sources *dagger.Directory
+			if inputArgs["sources"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["sources"]), &sources)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg sources", err))
+				}
+			}
+			var s3AccessKeyId *dagger.Secret
+			if inputArgs["s3AccessKeyId"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["s3AccessKeyId"]), &s3AccessKeyId)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg s3AccessKeyId", err))
+				}
+			}
+			var s3SecretAccessKey *dagger.Secret
+			if inputArgs["s3SecretAccessKey"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["s3SecretAccessKey"]), &s3SecretAccessKey)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg s3SecretAccessKey", err))
+				}
+			}
+			return (*DataPipeline).TopoTiles(&parent, ctx, osm, dem, config, bbox, args, maxRamPercentage, sources, s3AccessKeyId, s3SecretAccessKey)
 		case "":
 			var parent DataPipeline
 			err = json.Unmarshal(parentJSON, &parent)
@@ -600,15 +677,15 @@ func invoke(ctx context.Context, parentJSON []byte, parentName string, fnName st
 						dag.Function("AirmailIndexer",
 							dag.TypeDef().WithObject("Container")).
 							WithDescription("A container with airmail's indexer and categories_export executables.").
-							WithSourceMap(dag.SourceMap("main.go", 369, 1))).
+							WithSourceMap(dag.SourceMap("main.go", 440, 1))).
 					WithFunction(
 						dag.Function("AppendContours",
 							dag.TypeDef().WithObject("File")).
 							WithDescription("Copies an OSM extract with contours spliced in, in the order planetiler\nneeds: nodes, then ways, then relations, each ascending by ID.").
 							WithCachePolicy(dagger.FunctionCachePolicyNever).
-							WithSourceMap(dag.SourceMap("main.go", 316, 1)).
-							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf), sorted.", SourceMap: dag.SourceMap("main.go", 319, 2)}).
-							WithArg("contours", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "Contours from Contours.", SourceMap: dag.SourceMap("main.go", 321, 2)})).
+							WithSourceMap(dag.SourceMap("main.go", 371, 1)).
+							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf), sorted.", SourceMap: dag.SourceMap("main.go", 374, 2)}).
+							WithArg("contours", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "Contours from Contours.", SourceMap: dag.SourceMap("main.go", 376, 2)})).
 					WithFunction(
 						dag.Function("Build",
 							dag.TypeDef().WithObject("Directory")).
@@ -622,91 +699,102 @@ func invoke(ctx context.Context, parentJSON []byte, parentName string, fnName st
 							WithArg("args", dag.TypeDef().WithListOf(dag.TypeDef().WithKind(dagger.TypeDefKindStringKind)).WithOptional(true), dagger.FunctionWithArgOpts{Description: "Extra planetiler arguments, e.g. --exclude-layers=poi or --mlt-advanced.", SourceMap: dag.SourceMap("main.go", 83, 2)}).
 							WithArg("maxRamPercentage", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{SourceMap: dag.SourceMap("main.go", 85, 2), DefaultValue: dagger.JSON("50")}).
 							WithArg("pipTree", dag.TypeDef().WithKind(dagger.TypeDefKindBooleanKind), dagger.FunctionWithArgOpts{Description: "Use an in-memory tree of Who's On First polygons for point-in-polygon\nlookups; see PipTree on Index.", SourceMap: dag.SourceMap("main.go", 89, 2), DefaultValue: dagger.JSON("true")}).
-							WithArg("qrank", dag.TypeDef().WithObject("File").WithOptional(true), dagger.FunctionWithArgOpts{Description: "QRank (qrank.csv.gz from https://qrank.wmcloud.org), which ranks POIs\nwith Wikidata entities by their articles' page views. Without it,\nhaving an entity counts the same for every POI.", SourceMap: dag.SourceMap("main.go", 94, 2)})).
+							WithArg("qrank", dag.TypeDef().WithObject("File").WithOptional(true), dagger.FunctionWithArgOpts{Description: "QRank (qrank.csv.gz from https://qrank.wmcloud.org), which ranks POIs\nwith Wikidata entities by their articles' page views. Without it,\nhaving an entity counts the same for every POI.", SourceMap: dag.SourceMap("main.go", 94, 2)}).
+							WithArg("sources", dag.TypeDef().WithObject("Directory").WithOptional(true), dagger.FunctionWithArgOpts{Description: "A directory holding planetiler's auxiliary sources under their usual\nnames (water-polygons-split-3857.zip, natural_earth_vector.sqlite.zip,\nlake_centerline.shp.zip), to use instead of downloading them.", SourceMap: dag.SourceMap("main.go", 99, 2)}).
+							WithArg("contourConfig", dag.TypeDef().WithObject("File").WithOptional(true), dagger.FunctionWithArgOpts{Description: "A configuration for contour lines, like topo_pipeline/topo.example.toml,\nto include them in the tiles. Only the tiles get them.", SourceMap: dag.SourceMap("main.go", 103, 2)}).
+							WithArg("dem", dag.TypeDef().WithObject("Directory").WithOptional(true), dagger.FunctionWithArgOpts{Description: "DEM rasters, for a configuration that reads them from /dem; see Contours.", SourceMap: dag.SourceMap("main.go", 106, 2)}).
+							WithArg("s3AccessKeyId", dag.TypeDef().WithObject("Secret").WithOptional(true), dagger.FunctionWithArgOpts{Description: "Credentials, for a configuration that reads DEMs from a bucket.", SourceMap: dag.SourceMap("main.go", 109, 2)}).
+							WithArg("s3SecretAccessKey", dag.TypeDef().WithObject("Secret").WithOptional(true), dagger.FunctionWithArgOpts{SourceMap: dag.SourceMap("main.go", 111, 2)})).
 					WithFunction(
 						dag.Function("CategoricalModels",
 							dag.TypeDef().WithObject("Directory")).
 							WithDescription("Trains airmail's categorical search models from an OSM extract, into a\ndirectory of <language>.amcats files. See airmail/categorical/README.md.\nLanguages are trained one after another, each cached separately.").
-							WithSourceMap(dag.SourceMap("main.go", 473, 1)).
-							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf).", SourceMap: dag.SourceMap("main.go", 476, 2)}).
-							WithArg("wofDb", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "Who's On First SpatiaLite database covering the extract, for the\nlanguages spoken where each POI is.", SourceMap: dag.SourceMap("main.go", 479, 2)}).
-							WithArg("pipTree", dag.TypeDef().WithKind(dagger.TypeDefKindBooleanKind), dagger.FunctionWithArgOpts{Description: "See Index.", SourceMap: dag.SourceMap("main.go", 482, 2), DefaultValue: dagger.JSON("true")}).
-							WithArg("minPois", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{Description: "The fewest POIs a language needs for a model.", SourceMap: dag.SourceMap("main.go", 485, 2), DefaultValue: dagger.JSON("50000")}).
-							WithArg("minCuisine", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{Description: "The fewest cuisine-tagged POIs a language needs for a model.", SourceMap: dag.SourceMap("main.go", 488, 2), DefaultValue: dagger.JSON("1000")})).
+							WithSourceMap(dag.SourceMap("main.go", 544, 1)).
+							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf).", SourceMap: dag.SourceMap("main.go", 547, 2)}).
+							WithArg("wofDb", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "Who's On First SpatiaLite database covering the extract, for the\nlanguages spoken where each POI is.", SourceMap: dag.SourceMap("main.go", 550, 2)}).
+							WithArg("pipTree", dag.TypeDef().WithKind(dagger.TypeDefKindBooleanKind), dagger.FunctionWithArgOpts{Description: "See Index.", SourceMap: dag.SourceMap("main.go", 553, 2), DefaultValue: dagger.JSON("true")}).
+							WithArg("minPois", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{Description: "The fewest POIs a language needs for a model.", SourceMap: dag.SourceMap("main.go", 556, 2), DefaultValue: dagger.JSON("50000")}).
+							WithArg("minCuisine", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{Description: "The fewest cuisine-tagged POIs a language needs for a model.", SourceMap: dag.SourceMap("main.go", 559, 2), DefaultValue: dagger.JSON("1000")})).
 					WithFunction(
 						dag.Function("Contours",
 							dag.TypeDef().WithObject("File")).
 							WithDescription("Generates contour lines in both metric and imperial as a sorted .osm.pbf.\nFinished chunks are kept in a cache volume, so adding a higher resolution\nDEM to the configuration recomputes only the chunks it touches.").
 							WithCachePolicy(dagger.FunctionCachePolicyNever).
-							WithSourceMap(dag.SourceMap("main.go", 283, 1)).
-							WithArg("dem", dag.TypeDef().WithObject("Directory"), dagger.FunctionWithArgOpts{Description: "DEM rasters, mounted at /dem; see topo_pipeline/README.md for what they\nmust be. The configuration's source directories start with /dem.", SourceMap: dag.SourceMap("main.go", 287, 2)}).
-							WithArg("config", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "The configuration, like topo_pipeline/topo.example.toml.", SourceMap: dag.SourceMap("main.go", 289, 2)}).
-							WithArg("bbox", dag.TypeDef().WithKind(dagger.TypeDefKindStringKind).WithOptional(true), dagger.FunctionWithArgOpts{Description: "west,south,east,north, to limit the region.", SourceMap: dag.SourceMap("main.go", 292, 2)})).
+							WithSourceMap(dag.SourceMap("main.go", 324, 1)).
+							WithArg("dem", dag.TypeDef().WithObject("Directory").WithOptional(true), dagger.FunctionWithArgOpts{Description: "DEM rasters, mounted at /dem; see topo_pipeline/README.md for what they\nmust be. The configuration's source directories start with /dem. Not\nneeded for sources read from a bucket.", SourceMap: dag.SourceMap("main.go", 330, 2)}).
+							WithArg("config", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "The configuration, like topo_pipeline/topo.example.toml.", SourceMap: dag.SourceMap("main.go", 332, 2)}).
+							WithArg("bbox", dag.TypeDef().WithKind(dagger.TypeDefKindStringKind).WithOptional(true), dagger.FunctionWithArgOpts{Description: "west,south,east,north, to limit the region.", SourceMap: dag.SourceMap("main.go", 335, 2)}).
+							WithArg("s3AccessKeyId", dag.TypeDef().WithObject("Secret").WithOptional(true), dagger.FunctionWithArgOpts{Description: "Credentials, for sources read from a bucket.", SourceMap: dag.SourceMap("main.go", 338, 2)}).
+							WithArg("s3SecretAccessKey", dag.TypeDef().WithObject("Secret").WithOptional(true), dagger.FunctionWithArgOpts{SourceMap: dag.SourceMap("main.go", 340, 2)})).
 					WithFunction(
 						dag.Function("Index",
 							dag.TypeDef().WithObject("Directory")).
 							WithDescription("Builds an airmail geocoder index from an OSM extract.").
 							WithCachePolicy(dagger.FunctionCachePolicyNever).
-							WithSourceMap(dag.SourceMap("main.go", 413, 1)).
-							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf).", SourceMap: dag.SourceMap("main.go", 416, 2)}).
-							WithArg("wofDb", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "Who's On First SpatiaLite database covering the extract.", SourceMap: dag.SourceMap("main.go", 418, 2)}).
-							WithArg("databaseUrl", dag.TypeDef().WithObject("Secret").WithOptional(true), dagger.FunctionWithArgOpts{Description: "PostgreSQL URL of the poi_service database that gives POIs their\nidentifiers. Without it, POIs have none.", SourceMap: dag.SourceMap("main.go", 422, 2)}).
-							WithArg("database", dag.TypeDef().WithObject("Service").WithOptional(true), dagger.FunctionWithArgOpts{Description: "The database, if it isn't otherwise reachable; see Patch.", SourceMap: dag.SourceMap("main.go", 425, 2)}).
-							WithArg("pipTree", dag.TypeDef().WithKind(dagger.TypeDefKindBooleanKind), dagger.FunctionWithArgOpts{Description: "Use an in-memory tree of Who's On First polygons for point-in-polygon\nlookups instead of SpatiaLite. It's much faster for the planet, but\nuses around 10GB of memory and takes minutes to build the first time.", SourceMap: dag.SourceMap("main.go", 430, 2), DefaultValue: dagger.JSON("true")}).
-							WithArg("qrank", dag.TypeDef().WithObject("File").WithOptional(true), dagger.FunctionWithArgOpts{Description: "QRank (qrank.csv.gz from https://qrank.wmcloud.org), which ranks POIs\nwith Wikidata entities by their articles' page views. Without it,\nhaving an entity counts the same for every POI.", SourceMap: dag.SourceMap("main.go", 435, 2)})).
+							WithSourceMap(dag.SourceMap("main.go", 484, 1)).
+							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf).", SourceMap: dag.SourceMap("main.go", 487, 2)}).
+							WithArg("wofDb", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "Who's On First SpatiaLite database covering the extract.", SourceMap: dag.SourceMap("main.go", 489, 2)}).
+							WithArg("databaseUrl", dag.TypeDef().WithObject("Secret").WithOptional(true), dagger.FunctionWithArgOpts{Description: "PostgreSQL URL of the poi_service database that gives POIs their\nidentifiers. Without it, POIs have none.", SourceMap: dag.SourceMap("main.go", 493, 2)}).
+							WithArg("database", dag.TypeDef().WithObject("Service").WithOptional(true), dagger.FunctionWithArgOpts{Description: "The database, if it isn't otherwise reachable; see Patch.", SourceMap: dag.SourceMap("main.go", 496, 2)}).
+							WithArg("pipTree", dag.TypeDef().WithKind(dagger.TypeDefKindBooleanKind), dagger.FunctionWithArgOpts{Description: "Use an in-memory tree of Who's On First polygons for point-in-polygon\nlookups instead of SpatiaLite. It's much faster for the planet, but\nuses around 10GB of memory and takes minutes to build the first time.", SourceMap: dag.SourceMap("main.go", 501, 2), DefaultValue: dagger.JSON("true")}).
+							WithArg("qrank", dag.TypeDef().WithObject("File").WithOptional(true), dagger.FunctionWithArgOpts{Description: "QRank (qrank.csv.gz from https://qrank.wmcloud.org), which ranks POIs\nwith Wikidata entities by their articles' page views. Without it,\nhaving an entity counts the same for every POI.", SourceMap: dag.SourceMap("main.go", 506, 2)})).
 					WithFunction(
 						dag.Function("Jar",
 							dag.TypeDef().WithObject("File")).
 							WithDescription("The planetiler-openmaptiles fork's executable jar with dependencies.").
-							WithSourceMap(dag.SourceMap("main.go", 182, 1))).
+							WithSourceMap(dag.SourceMap("main.go", 210, 1))).
 					WithFunction(
 						dag.Function("Patch",
 							dag.TypeDef().WithObject("File")).
 							WithDescription("Copies an OSM extract, tagging every POI version that the poi_service\ndatabase knows with its stable identifier (cardinal:poi_id) and OSM\nversion (cardinal:version).").
 							WithCachePolicy(dagger.FunctionCachePolicyNever).
-							WithSourceMap(dag.SourceMap("main.go", 140, 1)).
-							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf) with element metadata.", SourceMap: dag.SourceMap("main.go", 143, 2)}).
-							WithArg("databaseUrl", dag.TypeDef().WithObject("Secret"), dagger.FunctionWithArgOpts{Description: "PostgreSQL URL of the poi_service database.", SourceMap: dag.SourceMap("main.go", 145, 2)}).
-							WithArg("database", dag.TypeDef().WithObject("Service").WithOptional(true), dagger.FunctionWithArgOpts{Description: "The database, if it isn't otherwise reachable from the build, e.g.\ntcp://localhost:5432 for one on this machine. It's reachable at host\n\"database\", so use that in --database-url.", SourceMap: dag.SourceMap("main.go", 150, 2)})).
+							WithSourceMap(dag.SourceMap("main.go", 168, 1)).
+							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf) with element metadata.", SourceMap: dag.SourceMap("main.go", 171, 2)}).
+							WithArg("databaseUrl", dag.TypeDef().WithObject("Secret"), dagger.FunctionWithArgOpts{Description: "PostgreSQL URL of the poi_service database.", SourceMap: dag.SourceMap("main.go", 173, 2)}).
+							WithArg("database", dag.TypeDef().WithObject("Service").WithOptional(true), dagger.FunctionWithArgOpts{Description: "The database, if it isn't otherwise reachable from the build, e.g.\ntcp://localhost:5432 for one on this machine. It's reachable at host\n\"database\", so use that in --database-url.", SourceMap: dag.SourceMap("main.go", 178, 2)})).
 					WithFunction(
 						dag.Function("Planetiler",
 							dag.TypeDef().WithObject("Container")).
 							WithDescription("A container ready to run the fork, with the auxiliary sources (Natural\nEarth, water polygons, lake centerlines) kept in a cache volume.").
-							WithSourceMap(dag.SourceMap("main.go", 195, 1)).
-							WithArg("maxRamPercentage", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{Description: "Share of the engine's memory given to the JVM heap. Rootless podman\nusually puts no cgroup limit on the engine, so this is the host's RAM.", SourceMap: dag.SourceMap("main.go", 199, 2), DefaultValue: dagger.JSON("50")})).
+							WithSourceMap(dag.SourceMap("main.go", 223, 1)).
+							WithArg("maxRamPercentage", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{Description: "Share of the engine's memory given to the JVM heap. Rootless podman\nusually puts no cgroup limit on the engine, so this is the host's RAM.", SourceMap: dag.SourceMap("main.go", 227, 2), DefaultValue: dagger.JSON("50")})).
 					WithFunction(
 						dag.Function("PoiService",
 							dag.TypeDef().WithObject("File")).
 							WithDescription("The poi_service executable.").
-							WithSourceMap(dag.SourceMap("main.go", 124, 1))).
+							WithSourceMap(dag.SourceMap("main.go", 152, 1))).
 					WithFunction(
 						dag.Function("Tiles",
 							dag.TypeDef().WithObject("File")).
 							WithDescription("Builds an MLT mbtiles tileset from a local OSM extract.").
 							WithCachePolicy(dagger.FunctionCachePolicyNever).
-							WithSourceMap(dag.SourceMap("main.go", 217, 1)).
-							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf).", SourceMap: dag.SourceMap("main.go", 220, 2)}).
-							WithArg("databaseUrl", dag.TypeDef().WithObject("Secret").WithOptional(true), dagger.FunctionWithArgOpts{Description: "PostgreSQL URL of the poi_service database that gives POIs their\nidentifiers. Without it, POIs have no feature IDs.", SourceMap: dag.SourceMap("main.go", 224, 2)}).
-							WithArg("database", dag.TypeDef().WithObject("Service").WithOptional(true), dagger.FunctionWithArgOpts{Description: "The database, if it isn't otherwise reachable; see Patch.", SourceMap: dag.SourceMap("main.go", 227, 2)}).
-							WithArg("args", dag.TypeDef().WithListOf(dag.TypeDef().WithKind(dagger.TypeDefKindStringKind)).WithOptional(true), dagger.FunctionWithArgOpts{Description: "Extra planetiler arguments, e.g. --exclude-layers=poi or --mlt-advanced.", SourceMap: dag.SourceMap("main.go", 230, 2)}).
-							WithArg("maxRamPercentage", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{SourceMap: dag.SourceMap("main.go", 232, 2), DefaultValue: dagger.JSON("50")})).
+							WithSourceMap(dag.SourceMap("main.go", 245, 1)).
+							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf).", SourceMap: dag.SourceMap("main.go", 248, 2)}).
+							WithArg("databaseUrl", dag.TypeDef().WithObject("Secret").WithOptional(true), dagger.FunctionWithArgOpts{Description: "PostgreSQL URL of the poi_service database that gives POIs their\nidentifiers. Without it, POIs have no feature IDs.", SourceMap: dag.SourceMap("main.go", 252, 2)}).
+							WithArg("database", dag.TypeDef().WithObject("Service").WithOptional(true), dagger.FunctionWithArgOpts{Description: "The database, if it isn't otherwise reachable; see Patch.", SourceMap: dag.SourceMap("main.go", 255, 2)}).
+							WithArg("args", dag.TypeDef().WithListOf(dag.TypeDef().WithKind(dagger.TypeDefKindStringKind)).WithOptional(true), dagger.FunctionWithArgOpts{Description: "Extra planetiler arguments, e.g. --exclude-layers=poi or --mlt-advanced.", SourceMap: dag.SourceMap("main.go", 258, 2)}).
+							WithArg("maxRamPercentage", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{SourceMap: dag.SourceMap("main.go", 260, 2), DefaultValue: dagger.JSON("50")}).
+							WithArg("sources", dag.TypeDef().WithObject("Directory").WithOptional(true), dagger.FunctionWithArgOpts{Description: "A directory holding planetiler's auxiliary sources under their usual\nnames (water-polygons-split-3857.zip, natural_earth_vector.sqlite.zip,\nlake_centerline.shp.zip), to use instead of downloading them.", SourceMap: dag.SourceMap("main.go", 265, 2)})).
 					WithFunction(
 						dag.Function("Topo",
 							dag.TypeDef().WithObject("File")).
 							WithDescription("The topo_pipeline executable.").
-							WithSourceMap(dag.SourceMap("main.go", 267, 1))).
+							WithSourceMap(dag.SourceMap("main.go", 308, 1))).
 					WithFunction(
 						dag.Function("TopoTiles",
 							dag.TypeDef().WithObject("File")).
 							WithDescription("Builds the Cardinal Topo tileset: the OpenMapTiles layers, plus contour_m\nand contour_ft, from an OSM extract and DEMs.").
 							WithCachePolicy(dagger.FunctionCachePolicyNever).
-							WithSourceMap(dag.SourceMap("main.go", 340, 1)).
-							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf).", SourceMap: dag.SourceMap("main.go", 343, 2)}).
-							WithArg("dem", dag.TypeDef().WithObject("Directory"), dagger.FunctionWithArgOpts{Description: "DEM rasters; see Contours.", SourceMap: dag.SourceMap("main.go", 345, 2)}).
-							WithArg("config", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "The configuration; see Contours.", SourceMap: dag.SourceMap("main.go", 347, 2)}).
-							WithArg("bbox", dag.TypeDef().WithKind(dagger.TypeDefKindStringKind).WithOptional(true), dagger.FunctionWithArgOpts{Description: "west,south,east,north, to limit the contours' region.", SourceMap: dag.SourceMap("main.go", 350, 2)}).
-							WithArg("args", dag.TypeDef().WithListOf(dag.TypeDef().WithKind(dagger.TypeDefKindStringKind)).WithOptional(true), dagger.FunctionWithArgOpts{Description: "Extra planetiler arguments.", SourceMap: dag.SourceMap("main.go", 353, 2)}).
-							WithArg("maxRamPercentage", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{SourceMap: dag.SourceMap("main.go", 355, 2), DefaultValue: dagger.JSON("50")})).
+							WithSourceMap(dag.SourceMap("main.go", 395, 1)).
+							WithArg("osm", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "OSM extract (.osm.pbf).", SourceMap: dag.SourceMap("main.go", 398, 2)}).
+							WithArg("dem", dag.TypeDef().WithObject("Directory").WithOptional(true), dagger.FunctionWithArgOpts{Description: "DEM rasters; see Contours.", SourceMap: dag.SourceMap("main.go", 401, 2)}).
+							WithArg("config", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "The configuration; see Contours.", SourceMap: dag.SourceMap("main.go", 403, 2)}).
+							WithArg("bbox", dag.TypeDef().WithKind(dagger.TypeDefKindStringKind).WithOptional(true), dagger.FunctionWithArgOpts{Description: "west,south,east,north, to limit the contours' region.", SourceMap: dag.SourceMap("main.go", 406, 2)}).
+							WithArg("args", dag.TypeDef().WithListOf(dag.TypeDef().WithKind(dagger.TypeDefKindStringKind)).WithOptional(true), dagger.FunctionWithArgOpts{Description: "Extra planetiler arguments.", SourceMap: dag.SourceMap("main.go", 409, 2)}).
+							WithArg("maxRamPercentage", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{SourceMap: dag.SourceMap("main.go", 411, 2), DefaultValue: dagger.JSON("50")}).
+							WithArg("sources", dag.TypeDef().WithObject("Directory").WithOptional(true), dagger.FunctionWithArgOpts{Description: "A directory holding planetiler's auxiliary sources under their usual\nnames (water-polygons-split-3857.zip, natural_earth_vector.sqlite.zip,\nlake_centerline.shp.zip), to use instead of downloading them.", SourceMap: dag.SourceMap("main.go", 416, 2)}).
+							WithArg("s3AccessKeyId", dag.TypeDef().WithObject("Secret").WithOptional(true), dagger.FunctionWithArgOpts{Description: "Credentials, for sources read from a bucket; see Contours.", SourceMap: dag.SourceMap("main.go", 419, 2)}).
+							WithArg("s3SecretAccessKey", dag.TypeDef().WithObject("Secret").WithOptional(true), dagger.FunctionWithArgOpts{SourceMap: dag.SourceMap("main.go", 421, 2)})).
 					WithConstructor(
 						dag.Function("New",
 							dag.TypeDef().WithObject("DataPipeline")).

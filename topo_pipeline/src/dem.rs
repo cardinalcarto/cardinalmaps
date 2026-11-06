@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -20,6 +20,7 @@ use tiff::decoder::{Decoder, DecodingResult, Limits};
 use tiff::tags::Tag;
 
 use crate::config::{BASE_PER_DEGREE, SourceConfig};
+use crate::remote::{self, RemoteEntry};
 
 /// A half-open rectangle of lattice points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -82,6 +83,8 @@ pub struct Raster {
     pub dy: f64,
     pub nodata: Option<f64>,
     pub bytes: u64,
+    /// Where it is in a bucket, if `path` isn't on disk.
+    pub remote: Option<RemoteEntry>,
 }
 
 impl Raster {
@@ -101,8 +104,12 @@ fn doubles(value: tiff::decoder::ifd::Value) -> Result<Vec<f64>> {
 pub fn read_header(path: &Path) -> Result<Raster> {
     let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let bytes = file.metadata()?.len();
-    let mut decoder = Decoder::new(BufReader::new(file))
-        .with_context(|| format!("reading {}", path.display()))?;
+    parse_header(path, bytes, BufReader::new(file))
+}
+
+/// Reads a raster's georeferencing from its file, of `bytes` bytes, named `path`.
+pub fn parse_header<R: Read + Seek>(path: &Path, bytes: u64, reader: R) -> Result<Raster> {
+    let mut decoder = Decoder::new(reader).with_context(|| format!("reading {}", path.display()))?;
     let (width, height) = decoder.dimensions()?;
     let scale = decoder
         .find_tag(Tag::ModelPixelScaleTag)?
@@ -156,13 +163,34 @@ pub fn read_header(path: &Path) -> Result<Raster> {
         dy,
         nodata,
         bytes,
+        remote: None,
     })
 }
 
 /// Reads a raster's elevations as f32 with NaN for no data, north to south.
 pub fn read_values(raster: &Raster) -> Result<Vec<f32>> {
-    let file = File::open(&raster.path)?;
-    let mut decoder = Decoder::new(BufReader::new(file))?.with_limits(Limits::unlimited());
+    let Some(remote) = &raster.remote else {
+        return decode_values(raster, BufReader::new(File::open(&raster.path)?));
+    };
+    let file = remote.fetch()?;
+    // Georeferencing of a remote raster is inferred, so this is where it's checked.
+    let real = parse_header(&raster.path, file.len() as u64, Cursor::new(&file))?;
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    if real.width != raster.width
+        || real.height != raster.height
+        || !close(real.west, raster.west)
+        || !close(real.north, raster.north)
+        || !close(real.dx, raster.dx)
+        || !close(real.dy, raster.dy)
+        || real.nodata != raster.nodata
+    {
+        bail!("{}: its header doesn't match what was inferred: {real:?} vs {raster:?}", raster.path.display());
+    }
+    decode_values(raster, Cursor::new(&file))
+}
+
+fn decode_values<R: Read + Seek>(raster: &Raster, reader: R) -> Result<Vec<f32>> {
+    let mut decoder = Decoder::new(reader)?.with_limits(Limits::unlimited());
     let image = decoder
         .read_image()
         .with_context(|| format!("decoding {}", raster.path.display()))?;
@@ -195,6 +223,8 @@ pub fn read_values(raster: &Raster) -> Result<Vec<f32>> {
 pub struct RasterCache {
     limit: u64,
     inner: Mutex<CacheInner>,
+    /// A lock for each raster being read, so that it's only read once.
+    loading: Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
 }
 
 #[derive(Default)]
@@ -206,20 +236,28 @@ struct CacheInner {
 
 impl RasterCache {
     pub fn new(limit: u64) -> RasterCache {
-        RasterCache { limit, inner: Mutex::default() }
+        RasterCache { limit, inner: Mutex::default(), loading: Mutex::default() }
+    }
+
+    fn cached(&self, raster: &Raster) -> Option<Arc<Vec<f32>>> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.clock += 1;
+        let clock = inner.clock;
+        let (values, used) = inner.entries.get_mut(&raster.path)?;
+        *used = clock;
+        Some(values.clone())
     }
 
     pub fn get(&self, raster: &Raster) -> Result<Arc<Vec<f32>>> {
-        {
-            let mut inner = self.inner.lock().unwrap();
-            inner.clock += 1;
-            let clock = inner.clock;
-            if let Some((values, used)) = inner.entries.get_mut(&raster.path) {
-                *used = clock;
-                return Ok(values.clone());
-            }
+        if let Some(values) = self.cached(raster) {
+            return Ok(values);
         }
-        // Decoded outside the lock; two threads may race to decode a file, which only wastes time.
+        let lock = self.loading.lock().unwrap().entry(raster.path.clone()).or_default().clone();
+        let _reading = lock.lock().unwrap();
+        // Another thread may have just finished.
+        if let Some(values) = self.cached(raster) {
+            return Ok(values);
+        }
         let values = Arc::new(read_values(raster)?);
         let size = (values.len() * 4) as u64;
         let mut inner = self.inner.lock().unwrap();
@@ -236,6 +274,8 @@ impl RasterCache {
                 }
             }
         }
+        drop(inner);
+        self.loading.lock().unwrap().remove(&raster.path);
         Ok(values)
     }
 }
@@ -271,7 +311,10 @@ fn find_files(dir: &Path, suffix: &str, out: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 impl Source {
-    pub fn open(config: &SourceConfig) -> Result<Source> {
+    pub fn open(config: &SourceConfig, work: &Path) -> Result<Source> {
+        if let Some(s3) = &config.s3 {
+            return Source::new(config.clone(), remote::open_source(config, s3, work)?);
+        }
         let mut paths = Vec::new();
         find_files(&config.dir, &config.suffix, &mut paths)?;
         paths.sort();

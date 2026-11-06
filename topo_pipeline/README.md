@@ -28,6 +28,13 @@ Others are refused, or, for those in a projection, need reprojecting first:
 gdalwarp -t_srs EPSG:4326 -tr 0.0000925925925 0.0000925925925 -tap -r bilinear -of COG in.tif out.tif
 ```
 
+A source can instead read zip archives of rasters from an S3-compatible bucket, so that none
+of it has to fit on disk; see `topo.example.toml`. `scripts/mirror_aw3d30.py` puts JAXA's data
+in one. Each raster is fetched by itself with a range request, and chunks are worked through
+5 degree block by block, which keeps `cache_gb` of decoded rasters useful. Set `cache_gb` to at
+least 8. The output is the same as from a directory of the same files, and chunks finished one
+way are valid the other way too. JAXA requires that anything published from AW3D30 credit JAXA.
+
 The datum isn't converted. NAD83 and WGS84 are treated alike (about a meter apart in the
 contiguous US), as are the sources' vertical datums. `feather` hides such differences at a
 source's edge, by blending over that many cells inside it. Where a high resolution source

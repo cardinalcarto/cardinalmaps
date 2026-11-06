@@ -92,6 +92,23 @@ func (m *DataPipeline) Build(
 	// having an entity counts the same for every POI.
 	// +optional
 	qrank *dagger.File,
+	// A directory holding planetiler's auxiliary sources under their usual
+	// names (water-polygons-split-3857.zip, natural_earth_vector.sqlite.zip,
+	// lake_centerline.shp.zip), to use instead of downloading them.
+	// +optional
+	sources *dagger.Directory,
+	// A configuration for contour lines, like topo_pipeline/topo.example.toml,
+	// to include them in the tiles. Only the tiles get them.
+	// +optional
+	contourConfig *dagger.File,
+	// DEM rasters, for a configuration that reads them from /dem; see Contours.
+	// +optional
+	dem *dagger.Directory,
+	// Credentials, for a configuration that reads DEMs from a bucket.
+	// +optional
+	s3AccessKeyId *dagger.Secret,
+	// +optional
+	s3SecretAccessKey *dagger.Secret,
 ) (*dagger.Directory, error) {
 	patched := osm
 	if databaseUrl != nil {
@@ -100,7 +117,18 @@ func (m *DataPipeline) Build(
 			return nil, err
 		}
 	}
-	tiles, err := m.tiles(ctx, patched, args, maxRamPercentage)
+	forTiles := patched
+	if contourConfig != nil {
+		contours, err := m.Contours(ctx, dem, contourConfig, "", s3AccessKeyId, s3SecretAccessKey)
+		if err != nil {
+			return nil, err
+		}
+		if forTiles, err = m.AppendContours(ctx, patched, contours); err != nil {
+			return nil, err
+		}
+		args = append(topoTileArgs(), args...)
+	}
+	tiles, err := m.tiles(ctx, forTiles, args, maxRamPercentage, sources)
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +258,11 @@ func (m *DataPipeline) Tiles(
 	args []string,
 	// +default=50
 	maxRamPercentage int,
+	// A directory holding planetiler's auxiliary sources under their usual
+	// names (water-polygons-split-3857.zip, natural_earth_vector.sqlite.zip,
+	// lake_centerline.shp.zip), to use instead of downloading them.
+	// +optional
+	sources *dagger.Directory,
 ) (*dagger.File, error) {
 	if databaseUrl != nil {
 		var err error
@@ -237,10 +270,10 @@ func (m *DataPipeline) Tiles(
 			return nil, err
 		}
 	}
-	return m.tiles(ctx, osm, args, maxRamPercentage)
+	return m.tiles(ctx, osm, args, maxRamPercentage, sources)
 }
 
-func (m *DataPipeline) tiles(ctx context.Context, osm *dagger.File, args []string, maxRamPercentage int) (*dagger.File, error) {
+func (m *DataPipeline) tiles(ctx context.Context, osm *dagger.File, args []string, maxRamPercentage int, sources *dagger.Directory) (*dagger.File, error) {
 	cmd := []string{
 		"java", "-jar", "/app/planetiler-openmaptiles.jar",
 		"--osm-path=/input/input.osm.pbf",
@@ -250,8 +283,16 @@ func (m *DataPipeline) tiles(ctx context.Context, osm *dagger.File, args []strin
 		"--tile-format=mlt",
 		"--output=/out/output.mbtiles",
 	}
+	planetiler := m.Planetiler(maxRamPercentage)
+	if sources != nil {
+		planetiler = planetiler.WithMountedDirectory("/input/sources", sources)
+		cmd = append(cmd, "--download=false",
+			"--water_polygons_path=/input/sources/water-polygons-split-3857.zip",
+			"--natural_earth_path=/input/sources/natural_earth_vector.sqlite.zip",
+			"--lake_centerlines_path=/input/sources/lake_centerline.shp.zip")
+	}
 	cmd = append(cmd, args...)
-	ctr, err := m.Planetiler(maxRamPercentage).
+	ctr, err := planetiler.
 		WithMountedFile("/input/input.osm.pbf", osm).
 		// Clear temp files left by an interrupted run.
 		WithExec([]string{"sh", "-c", "rm -rf /data/tmp/* && mkdir -p /out"}).
@@ -283,22 +324,36 @@ func (m *DataPipeline) Topo() *dagger.File {
 func (m *DataPipeline) Contours(
 	ctx context.Context,
 	// DEM rasters, mounted at /dem; see topo_pipeline/README.md for what they
-	// must be. The configuration's source directories start with /dem.
+	// must be. The configuration's source directories start with /dem. Not
+	// needed for sources read from a bucket.
+	// +optional
 	dem *dagger.Directory,
 	// The configuration, like topo_pipeline/topo.example.toml.
 	config *dagger.File,
 	// west,south,east,north, to limit the region.
 	// +optional
 	bbox string,
+	// Credentials, for sources read from a bucket.
+	// +optional
+	s3AccessKeyId *dagger.Secret,
+	// +optional
+	s3SecretAccessKey *dagger.Secret,
 ) (*dagger.File, error) {
 	cmd := []string{"/usr/local/bin/topo", "contours", "--config=/input/topo.toml", "--work=/work", "--out=/out/contours.osm.pbf"}
 	if bbox != "" {
 		cmd = append(cmd, "--bbox="+bbox)
 	}
-	ctr, err := dag.Container().
-		From(poiServiceRuntime).
+	base := dag.Container().From(poiServiceRuntime)
+	if dem != nil {
+		base = base.WithMountedDirectory("/dem", dem)
+	}
+	if s3AccessKeyId != nil && s3SecretAccessKey != nil {
+		base = base.
+			WithSecretVariable("AWS_ACCESS_KEY_ID", s3AccessKeyId).
+			WithSecretVariable("AWS_SECRET_ACCESS_KEY", s3SecretAccessKey)
+	}
+	ctr, err := base.
 		WithFile("/usr/local/bin/topo", m.Topo()).
-		WithMountedDirectory("/dem", dem).
 		WithMountedFile("/input/topo.toml", config).
 		WithMountedCache("/work", dag.CacheVolume("topo-chunks")).
 		WithExec([]string{"mkdir", "-p", "/out"}).
@@ -342,6 +397,7 @@ func (m *DataPipeline) TopoTiles(
 	// OSM extract (.osm.pbf).
 	osm *dagger.File,
 	// DEM rasters; see Contours.
+	// +optional
 	dem *dagger.Directory,
 	// The configuration; see Contours.
 	config *dagger.File,
@@ -353,8 +409,18 @@ func (m *DataPipeline) TopoTiles(
 	args []string,
 	// +default=50
 	maxRamPercentage int,
+	// A directory holding planetiler's auxiliary sources under their usual
+	// names (water-polygons-split-3857.zip, natural_earth_vector.sqlite.zip,
+	// lake_centerline.shp.zip), to use instead of downloading them.
+	// +optional
+	sources *dagger.Directory,
+	// Credentials, for sources read from a bucket; see Contours.
+	// +optional
+	s3AccessKeyId *dagger.Secret,
+	// +optional
+	s3SecretAccessKey *dagger.Secret,
 ) (*dagger.File, error) {
-	contours, err := m.Contours(ctx, dem, config, bbox)
+	contours, err := m.Contours(ctx, dem, config, bbox, s3AccessKeyId, s3SecretAccessKey)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +428,12 @@ func (m *DataPipeline) TopoTiles(
 	if err != nil {
 		return nil, err
 	}
-	return m.tiles(ctx, combined, append([]string{"--transportation_z13_paths=true", "--waterway_z12_streams=true"}, args...), maxRamPercentage)
+	return m.tiles(ctx, combined, append(topoTileArgs(), args...), maxRamPercentage, sources)
+}
+
+// What the Cardinal Topo tileset needs from planetiler beyond the defaults.
+func topoTileArgs() []string {
+	return []string{"--transportation_z13_paths=true", "--waterway_z12_streams=true"}
 }
 
 // A container with airmail's indexer and categories_export executables.

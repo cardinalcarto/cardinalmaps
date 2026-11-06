@@ -43,8 +43,12 @@ impl Default for ContourConfig {
 #[serde(deny_unknown_fields)]
 pub struct SourceConfig {
     pub name: String,
-    /// Searched recursively.
+    /// Searched recursively. Either this or `s3`.
+    #[serde(default)]
     pub dir: PathBuf,
+    /// Read zip archives of rasters from a bucket, instead of a directory; see `remote`.
+    #[serde(default)]
+    pub s3: Option<S3Config>,
     /// Which files in `dir` are this source's elevation rasters.
     pub suffix: String,
     /// The source's lattice spacing. Must be 1 arc second divided by an odd integer
@@ -60,6 +64,20 @@ pub struct SourceConfig {
     /// below it, in lattice cells of this source. Ignored for the lowest source.
     #[serde(default)]
     pub feather: u32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct S3Config {
+    /// The S3 endpoint's host.
+    pub endpoint: String,
+    pub bucket: String,
+    /// Where the archives are.
+    #[serde(default)]
+    pub prefix: String,
+    /// The signing region; by default, the endpoint's second label.
+    #[serde(default)]
+    pub region: Option<String>,
 }
 
 impl SourceConfig {
@@ -95,6 +113,9 @@ impl Config {
         }
         for source in &config.sources {
             source.refine()?;
+            if source.s3.is_some() == !source.dir.as_os_str().is_empty() {
+                bail!("source {}: needs either dir or s3", source.name);
+            }
         }
         if config.contours.interval_m == 0 || config.contours.interval_ft == 0 {
             bail!("contour intervals must be positive");

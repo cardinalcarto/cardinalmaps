@@ -74,6 +74,19 @@ type DataPipelineBuildOpts struct {
 	// with Wikidata entities by their articles' page views. Without it,
 	// having an entity counts the same for every POI.
 	Qrank *File
+	// A directory holding planetiler's auxiliary sources under their usual
+	// names (water-polygons-split-3857.zip, natural_earth_vector.sqlite.zip,
+	// lake_centerline.shp.zip), to use instead of downloading them.
+	Sources *Directory
+	// A configuration for contour lines, like topo_pipeline/topo.example.toml,
+	// to include them in the tiles. Only the tiles get them.
+	ContourConfig *File
+	// DEM rasters, for a configuration that reads them from /dem; see Contours.
+	Dem *Directory
+	// Credentials, for a configuration that reads DEMs from a bucket.
+	S3AccessKeyID *Secret
+
+	S3SecretAccessKey *Secret
 }
 
 // Builds tiles, the geocoder index and the categorical search models from
@@ -108,6 +121,26 @@ func (r *DataPipeline) Build(osm *File, wofDb *File, opts ...DataPipelineBuildOp
 		// `qrank` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Qrank) {
 			q = q.Arg("qrank", opts[i].Qrank)
+		}
+		// `sources` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Sources) {
+			q = q.Arg("sources", opts[i].Sources)
+		}
+		// `contourConfig` optional argument
+		if !querybuilder.IsZeroValue(opts[i].ContourConfig) {
+			q = q.Arg("contourConfig", opts[i].ContourConfig)
+		}
+		// `dem` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Dem) {
+			q = q.Arg("dem", opts[i].Dem)
+		}
+		// `s3AccessKeyId` optional argument
+		if !querybuilder.IsZeroValue(opts[i].S3AccessKeyID) {
+			q = q.Arg("s3AccessKeyId", opts[i].S3AccessKeyID)
+		}
+		// `s3SecretAccessKey` optional argument
+		if !querybuilder.IsZeroValue(opts[i].S3SecretAccessKey) {
+			q = q.Arg("s3SecretAccessKey", opts[i].S3SecretAccessKey)
 		}
 	}
 	q = q.Arg("osm", osm)
@@ -167,24 +200,42 @@ func (r *DataPipeline) CategoricalModels(osm *File, wofDb *File, opts ...DataPip
 
 // DataPipelineContoursOpts contains options for DataPipeline.Contours
 type DataPipelineContoursOpts struct {
+	// DEM rasters, mounted at /dem; see topo_pipeline/README.md for what they
+	// must be. The configuration's source directories start with /dem. Not
+	// needed for sources read from a bucket.
+	Dem *Directory
 	// west,south,east,north, to limit the region.
 	Bbox string
+	// Credentials, for sources read from a bucket.
+	S3AccessKeyID *Secret
+
+	S3SecretAccessKey *Secret
 }
 
 // Generates contour lines in both metric and imperial as a sorted .osm.pbf.
 // Finished chunks are kept in a cache volume, so adding a higher resolution
 // DEM to the configuration recomputes only the chunks it touches.
-func (r *DataPipeline) Contours(dem *Directory, config *File, opts ...DataPipelineContoursOpts) *File {
-	assertNotNil("dem", dem)
+func (r *DataPipeline) Contours(config *File, opts ...DataPipelineContoursOpts) *File {
 	assertNotNil("config", config)
 	q := r.query.Select("contours")
 	for i := len(opts) - 1; i >= 0; i-- {
+		// `dem` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Dem) {
+			q = q.Arg("dem", opts[i].Dem)
+		}
 		// `bbox` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Bbox) {
 			q = q.Arg("bbox", opts[i].Bbox)
 		}
+		// `s3AccessKeyId` optional argument
+		if !querybuilder.IsZeroValue(opts[i].S3AccessKeyID) {
+			q = q.Arg("s3AccessKeyId", opts[i].S3AccessKeyID)
+		}
+		// `s3SecretAccessKey` optional argument
+		if !querybuilder.IsZeroValue(opts[i].S3SecretAccessKey) {
+			q = q.Arg("s3SecretAccessKey", opts[i].S3SecretAccessKey)
+		}
 	}
-	q = q.Arg("dem", dem)
 	q = q.Arg("config", config)
 
 	return &File{
@@ -387,6 +438,10 @@ type DataPipelineTilesOpts struct {
 
 	// Default: 50
 	MaxRAMPercentage int
+	// A directory holding planetiler's auxiliary sources under their usual
+	// names (water-polygons-split-3857.zip, natural_earth_vector.sqlite.zip,
+	// lake_centerline.shp.zip), to use instead of downloading them.
+	Sources *Directory
 }
 
 // Builds an MLT mbtiles tileset from a local OSM extract.
@@ -410,6 +465,10 @@ func (r *DataPipeline) Tiles(osm *File, opts ...DataPipelineTilesOpts) *File {
 		if !querybuilder.IsZeroValue(opts[i].MaxRAMPercentage) {
 			q = q.Arg("maxRamPercentage", opts[i].MaxRAMPercentage)
 		}
+		// `sources` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Sources) {
+			q = q.Arg("sources", opts[i].Sources)
+		}
 	}
 	q = q.Arg("osm", osm)
 
@@ -431,6 +490,8 @@ func (r *DataPipeline) Topo() *File {
 
 // DataPipelineTopoTilesOpts contains options for DataPipeline.TopoTiles
 type DataPipelineTopoTilesOpts struct {
+	// DEM rasters; see Contours.
+	Dem *Directory
 	// west,south,east,north, to limit the contours' region.
 	Bbox string
 	// Extra planetiler arguments.
@@ -438,16 +499,27 @@ type DataPipelineTopoTilesOpts struct {
 
 	// Default: 50
 	MaxRAMPercentage int
+	// A directory holding planetiler's auxiliary sources under their usual
+	// names (water-polygons-split-3857.zip, natural_earth_vector.sqlite.zip,
+	// lake_centerline.shp.zip), to use instead of downloading them.
+	Sources *Directory
+	// Credentials, for sources read from a bucket; see Contours.
+	S3AccessKeyID *Secret
+
+	S3SecretAccessKey *Secret
 }
 
 // Builds the Cardinal Topo tileset: the OpenMapTiles layers, plus contour_m
 // and contour_ft, from an OSM extract and DEMs.
-func (r *DataPipeline) TopoTiles(osm *File, dem *Directory, config *File, opts ...DataPipelineTopoTilesOpts) *File {
+func (r *DataPipeline) TopoTiles(osm *File, config *File, opts ...DataPipelineTopoTilesOpts) *File {
 	assertNotNil("osm", osm)
-	assertNotNil("dem", dem)
 	assertNotNil("config", config)
 	q := r.query.Select("topoTiles")
 	for i := len(opts) - 1; i >= 0; i-- {
+		// `dem` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Dem) {
+			q = q.Arg("dem", opts[i].Dem)
+		}
 		// `bbox` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Bbox) {
 			q = q.Arg("bbox", opts[i].Bbox)
@@ -460,9 +532,20 @@ func (r *DataPipeline) TopoTiles(osm *File, dem *Directory, config *File, opts .
 		if !querybuilder.IsZeroValue(opts[i].MaxRAMPercentage) {
 			q = q.Arg("maxRamPercentage", opts[i].MaxRAMPercentage)
 		}
+		// `sources` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Sources) {
+			q = q.Arg("sources", opts[i].Sources)
+		}
+		// `s3AccessKeyId` optional argument
+		if !querybuilder.IsZeroValue(opts[i].S3AccessKeyID) {
+			q = q.Arg("s3AccessKeyId", opts[i].S3AccessKeyID)
+		}
+		// `s3SecretAccessKey` optional argument
+		if !querybuilder.IsZeroValue(opts[i].S3SecretAccessKey) {
+			q = q.Arg("s3SecretAccessKey", opts[i].S3SecretAccessKey)
+		}
 	}
 	q = q.Arg("osm", osm)
-	q = q.Arg("dem", dem)
 	q = q.Arg("config", config)
 
 	return &File{

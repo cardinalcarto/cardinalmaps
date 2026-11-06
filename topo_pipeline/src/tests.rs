@@ -245,6 +245,7 @@ fn chunks_across_a_file_seam_meet() {
         sources: vec![SourceConfig {
             name: "test".into(),
             dir: dir.clone(),
+            s3: None,
             suffix: "_DSM.tif".into(),
             arcsec: 1.0,
             median: true,
@@ -252,7 +253,7 @@ fn chunks_across_a_file_seam_meet() {
             feather: 0,
         }],
     };
-    let mosaic = Mosaic::open(&config).unwrap();
+    let mosaic = Mosaic::open(&config, &dir).unwrap();
     let work = dir.join("work");
     // Straddles the file seam at lon 11 and the chunk boundaries around it.
     let ids = mosaic.chunks(Some((10.76, 1.26, 11.24, 1.74)));
@@ -314,6 +315,7 @@ fn a_finer_source_meets_the_coarse_one() {
             SourceConfig {
                 name: "coarse".into(),
                 dir: dir.join("coarse"),
+                s3: None,
                 suffix: "_DSM.tif".into(),
                 arcsec: 1.0,
                 median: false,
@@ -323,6 +325,7 @@ fn a_finer_source_meets_the_coarse_one() {
             SourceConfig {
                 name: "fine".into(),
                 dir: dir.join("fine"),
+                s3: None,
                 suffix: "_DEM.tif".into(),
                 arcsec: 1.0 / 3.0,
                 median: false,
@@ -331,7 +334,7 @@ fn a_finer_source_meets_the_coarse_one() {
             },
         ],
     };
-    let mosaic = Mosaic::open(&config).unwrap();
+    let mosaic = Mosaic::open(&config, &dir).unwrap();
     assert_eq!(mosaic.sources[1].refine, 3);
     let ids = mosaic.chunks(Some((11.1, 1.35, 11.6, 1.9)));
     let files = mosaic.ensure(&dir.join("work"), &ids).unwrap();

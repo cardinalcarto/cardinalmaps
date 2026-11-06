@@ -83,8 +83,8 @@ fn fnv(hash: &mut u64, bytes: &[u8]) {
 }
 
 impl Mosaic {
-    pub fn open(config: &Config) -> Result<Mosaic> {
-        let sources = config.sources.iter().map(Source::open).collect::<Result<Vec<_>>>()?;
+    pub fn open(config: &Config, work: &Path) -> Result<Mosaic> {
+        let sources = config.sources.iter().map(|s| Source::open(s, work)).collect::<Result<Vec<_>>>()?;
         let c = &config.contours;
         let mut hash = 0xcbf29ce484222325;
         fnv(&mut hash, &ALGORITHM.to_le_bytes());
@@ -130,7 +130,8 @@ impl Mosaic {
                 }
             }
         }
-        chunks.sort_unstable();
+        // By block, then within it south to north, since `ensure` works through them in order.
+        chunks.sort_unstable_by_key(|id| (block_of(*id), *id));
         chunks.dedup();
         chunks
     }
@@ -193,23 +194,38 @@ impl Mosaic {
         fs::create_dir_all(work.join("chunks"))?;
         let done = AtomicU64::new(0);
         let total = ids.len() as u64;
-        ids.par_iter()
-            .map(|&id| {
-                let path = self.path(work, id);
-                if !path.exists() {
-                    let lines = self.compute(id).with_context(|| format!("chunk {id:?}"))?;
-                    let tmp = path.with_extension(format!("tmp{:?}", std::thread::current().id()));
-                    fs::write(&tmp, encode(&lines)?)?;
-                    fs::rename(&tmp, &path)?;
-                }
-                let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
-                if finished % 1000 == 0 || finished == total {
-                    eprintln!("contours: {finished}/{total} chunks");
-                }
-                Ok((id, path))
-            })
-            .collect()
+        // A block at a time, keeping threads near each other, so that they share rasters in
+        // the cache. Scattered across a planet, they'd have to keep rereading them, which for
+        // a remote source means downloading them again.
+        let mut files = Vec::with_capacity(ids.len());
+        for block in ids.chunk_by(|a, b| block_of(*a) == block_of(*b)) {
+            let finished: Vec<(ChunkId, PathBuf)> = block
+                .par_iter()
+                .map(|&id| {
+                    let path = self.path(work, id);
+                    if !path.exists() {
+                        let lines = self.compute(id).with_context(|| format!("chunk {id:?}"))?;
+                        let tmp = path.with_extension(format!("tmp{:?}", std::thread::current().id()));
+                        fs::write(&tmp, encode(&lines)?)?;
+                        fs::rename(&tmp, &path)?;
+                    }
+                    let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    if finished % 1000 == 0 || finished == total {
+                        eprintln!("contours: {finished}/{total} chunks");
+                    }
+                    Ok((id, path))
+                })
+                .collect::<Result<_>>()?;
+            files.extend(finished);
+        }
+        files.sort_unstable_by_key(|(id, _)| *id);
+        Ok(files)
     }
+}
+
+/// The 5 degree square a chunk is in, as an archive of a remote source might be.
+fn block_of(id: ChunkId) -> (i32, i32) {
+    (id.y.div_euclid(20), id.x.div_euclid(20))
 }
 
 /// Lays a source over the grid, where it has data.
