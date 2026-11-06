@@ -2,7 +2,8 @@
 // tilesets in MLT format with the local planetiler-openmaptiles fork, the
 // airmail geocoder index, and airmail's per-language categorical search
 // models. POIs in the tiles and the index are tagged with stable identifiers
-// from a poi_service database first.
+// from a poi_service database first. Separately, Cardinal Topo's tileset adds
+// contour lines from DEMs; see TopoTiles.
 //
 // The engine runs in rootless podman, so select it explicitly:
 //
@@ -38,6 +39,8 @@ type DataPipeline struct {
 	PoiServiceSource *dagger.Directory
 	// +private
 	AirmailSource *dagger.Directory
+	// +private
+	TopoSource *dagger.Directory
 }
 
 func New(ws *dagger.Workspace) *DataPipeline {
@@ -50,6 +53,9 @@ func New(ws *dagger.Workspace) *DataPipeline {
 		}),
 		AirmailSource: ws.Directory("/airmail", dagger.WorkspaceDirectoryOpts{
 			Exclude: []string{"target", "data", "categorical/data", "categorical/.venv", "**/__pycache__"},
+		}),
+		TopoSource: ws.Directory("/topo_pipeline", dagger.WorkspaceDirectoryOpts{
+			Exclude: []string{"target"},
 		}),
 	}
 }
@@ -255,6 +261,108 @@ func (m *DataPipeline) tiles(ctx context.Context, osm *dagger.File, args []strin
 		return nil, err
 	}
 	return ctr.File("/out/output.mbtiles"), nil
+}
+
+// The topo_pipeline executable.
+func (m *DataPipeline) Topo() *dagger.File {
+	return dag.Container().
+		From(rustImage).
+		WithDirectory("/src", m.TopoSource).
+		WithMountedCache("/usr/local/cargo/registry", dag.CacheVolume("topo-cargo-registry")).
+		WithMountedCache("/src/target", dag.CacheVolume("topo-target")).
+		WithWorkdir("/src").
+		WithExec([]string{"cargo", "build", "--release", "--locked"}).
+		WithExec([]string{"cp", "target/release/topo", "/topo"}).
+		File("/topo")
+}
+
+// Generates contour lines in both metric and imperial as a sorted .osm.pbf.
+// Finished chunks are kept in a cache volume, so adding a higher resolution
+// DEM to the configuration recomputes only the chunks it touches.
+// +cache="never"
+func (m *DataPipeline) Contours(
+	ctx context.Context,
+	// DEM rasters, mounted at /dem; see topo_pipeline/README.md for what they
+	// must be. The configuration's source directories start with /dem.
+	dem *dagger.Directory,
+	// The configuration, like topo_pipeline/topo.example.toml.
+	config *dagger.File,
+	// west,south,east,north, to limit the region.
+	// +optional
+	bbox string,
+) (*dagger.File, error) {
+	cmd := []string{"/usr/local/bin/topo", "contours", "--config=/input/topo.toml", "--work=/work", "--out=/out/contours.osm.pbf"}
+	if bbox != "" {
+		cmd = append(cmd, "--bbox="+bbox)
+	}
+	ctr, err := dag.Container().
+		From(poiServiceRuntime).
+		WithFile("/usr/local/bin/topo", m.Topo()).
+		WithMountedDirectory("/dem", dem).
+		WithMountedFile("/input/topo.toml", config).
+		WithMountedCache("/work", dag.CacheVolume("topo-chunks")).
+		WithExec([]string{"mkdir", "-p", "/out"}).
+		WithExec(cmd).
+		Sync(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ctr.File("/out/contours.osm.pbf"), nil
+}
+
+// Copies an OSM extract with contours spliced in, in the order planetiler
+// needs: nodes, then ways, then relations, each ascending by ID.
+// +cache="never"
+func (m *DataPipeline) AppendContours(
+	ctx context.Context,
+	// OSM extract (.osm.pbf), sorted.
+	osm *dagger.File,
+	// Contours from Contours.
+	contours *dagger.File,
+) (*dagger.File, error) {
+	ctr, err := dag.Container().
+		From(poiServiceRuntime).
+		WithFile("/usr/local/bin/topo", m.Topo()).
+		WithMountedFile("/input/input.osm.pbf", osm).
+		WithMountedFile("/input/contours.osm.pbf", contours).
+		WithExec([]string{"mkdir", "-p", "/out"}).
+		WithExec([]string{"/usr/local/bin/topo", "append", "--planet=/input/input.osm.pbf", "--contours=/input/contours.osm.pbf", "--out=/out/output.osm.pbf"}).
+		Sync(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ctr.File("/out/output.osm.pbf"), nil
+}
+
+// Builds the Cardinal Topo tileset: the OpenMapTiles layers, plus contour_m
+// and contour_ft, from an OSM extract and DEMs.
+// +cache="never"
+func (m *DataPipeline) TopoTiles(
+	ctx context.Context,
+	// OSM extract (.osm.pbf).
+	osm *dagger.File,
+	// DEM rasters; see Contours.
+	dem *dagger.Directory,
+	// The configuration; see Contours.
+	config *dagger.File,
+	// west,south,east,north, to limit the contours' region.
+	// +optional
+	bbox string,
+	// Extra planetiler arguments.
+	// +optional
+	args []string,
+	// +default=50
+	maxRamPercentage int,
+) (*dagger.File, error) {
+	contours, err := m.Contours(ctx, dem, config, bbox)
+	if err != nil {
+		return nil, err
+	}
+	combined, err := m.AppendContours(ctx, osm, contours)
+	if err != nil {
+		return nil, err
+	}
+	return m.tiles(ctx, combined, append([]string{"--transportation_z13_paths=true", "--waterway_z12_streams=true"}, args...), maxRamPercentage)
 }
 
 // A container with airmail's indexer and categories_export executables.

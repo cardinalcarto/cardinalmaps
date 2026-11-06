@@ -62,6 +62,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import com.onthegomap.planetiler.reader.SourceFeature;
 import org.openmaptiles.OpenMapTilesProfile;
 import org.openmaptiles.generated.OpenMapTilesSchema;
 import org.openmaptiles.generated.Tables;
@@ -76,6 +77,7 @@ import org.openmaptiles.util.OmtLanguageUtils;
  * transportation_name sql files</a>.
  */
 public class TransportationName implements
+  OpenMapTilesProfile.OsmAllProcessor,
   OpenMapTilesSchema.TransportationName,
   Tables.OsmHighwayPoint.Handler,
   Tables.OsmHighwayLinestring.Handler,
@@ -261,10 +263,13 @@ public class TransportationName implements
       .setAttr(Fields.REF, ref)
       .setAttr(Fields.REF_LENGTH, ref != null ? ref.length() : null)
       .setAttr(Fields.NETWORK,
-        firstRelationWithNetwork != null ? firstRelationWithNetwork.networkType().name : !nullOrEmpty(ref) ? "road" :
-          null)
+        firstRelationWithNetwork != null ? firstRelationWithNetwork.networkType().name :
+          // a ref on a trail doesn't make it a road
+          !nullOrEmpty(ref) && !isPathOrTrack(baseClass) ? "road" : null)
       .setAttr(Fields.CLASS, highwayClass)
       .setAttr(Fields.SUBCLASS, highwaySubclass(highwayClass, null, highway))
+      // lets a style avoid labelling trails that aren't official as if they were; left out on the rest, for merging
+      .setAttr(Transportation.TRAIL, unofficialTrail(element, relations))
       .setMinPixelSize(0)
       .setSortKey(element.zOrder())
       .setMinZoom(minzoom);
@@ -370,6 +375,35 @@ public class TransportationName implements
     Object name = coalesce(attrs.get(Fields.NAME), ref);
     return (sizeForShield && ref instanceof String) ? 6 :
       name instanceof String str ? str.length() * 6 : Double.MAX_VALUE;
+  }
+
+  /** Names what {@link Transportation#processAllOsm} adds to the transportation layer. */
+  @Override
+  public void processAllOsm(SourceFeature source, FeatureCollector features) {
+    if (source.canBeLine() && source.hasTag("highway", "via_ferrata", "ladder") &&
+      nullIfEmpty(source.getString("name")) != null) {
+      features.line(LAYER_NAME)
+        .setBufferPixels(BUFFER_SIZE)
+        .setBufferPixelOverrides(MIN_LENGTH)
+        .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+        .setAttr(Fields.CLASS, FieldValues.CLASS_PATH)
+        .setAttr(Fields.SUBCLASS, source.getString("highway"))
+        .setMinPixelSize(0)
+        .setMinZoom(12);
+    }
+  }
+
+  private static boolean isPathOrTrack(String clazz) {
+    return FieldValues.CLASS_PATH.equals(clazz) || FieldValues.CLASS_TRACK.equals(clazz);
+  }
+
+  private String unofficialTrail(Tables.OsmHighwayLinestring element, List<Transportation.RouteRelation> relations) {
+    if (!Transportation.isTrail(element.highway(), element.source().getString("footway"))) {
+      return null;
+    }
+    String trail = Transportation.trailClass(element.access(), element.foot(), element.informal(),
+      !element.source().relationInfo(Transportation.HikingRelation.class).isEmpty());
+    return Transportation.TRAIL_OFFICIAL.equals(trail) ? null : trail;
   }
 
   private enum HighwayClass {

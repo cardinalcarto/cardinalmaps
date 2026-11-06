@@ -1,0 +1,28 @@
+# Sources are listed lowest priority first. Each later source overrides the earlier ones
+# where it has data, blending over `feather` cells inside its edge.
+#
+# Rasters must be GeoTIFFs in geographic coordinates (NAD83 and WGS84 are treated alike) on a
+# lattice of 1 arc second divided by an odd integer.
+
+[contours]
+interval_m = 10
+interval_ft = 40
+simplify_m = 8.0
+round_corners = true
+
+[[source]]
+name = "jaxa-aw3d30"
+dir = "/mnt/maps"
+suffix = "_DSM.tif"
+arcsec = 1.0
+median = true
+sigma = 1.2
+
+# Bare-earth 10 m data for the United States.
+# [[source]]
+# name = "usgs-3dep-13"
+# dir = "/mnt/maps/3dep13"
+# suffix = ".tif"
+# arcsec = 0.33333333333
+# sigma = 1.0
+# feather = 90

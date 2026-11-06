@@ -85,6 +85,7 @@ import org.slf4j.LoggerFactory;
  */
 public class Poi implements
   OpenMapTilesSchema.Poi,
+  OpenMapTilesProfile.OsmAllProcessor,
   Tables.OsmPoiPoint.Handler,
   Tables.OsmPoiPolygon.Handler,
   ForwardingProfile.LayerPostProcessor,
@@ -279,6 +280,42 @@ public class Poi implements
     }
   }
 
+  /** Adds what {@link Backcountry} has beyond the mappings of {@link Tables.OsmPoiPoint} and its polygon equivalent. */
+  @Override
+  public void processAllOsm(SourceFeature source, FeatureCollector features) {
+    if (source.tags().isEmpty()) {
+      return;
+    }
+    Backcountry.Kind kind = Backcountry.kindOf(source);
+    if (kind == null || Tables.OsmPoiPoint.MAPPING.evaluate(source) || Tables.OsmPoiPolygon.MAPPING.evaluate(source)) {
+      return;
+    }
+    FeatureCollector.Feature feature;
+    if (source.isPoint()) {
+      feature = features.point(LAYER_NAME);
+    } else if (source.canBePolygon()) {
+      feature = features.centroidIfConvex(LAYER_NAME);
+    } else {
+      feature = features.centroid(LAYER_NAME);
+    }
+    String name = nullIfEmpty(source.getString("name"));
+    feature.setBufferPixels(BUFFER_SIZE)
+      .setAttr(Fields.CLASS, kind.clazz())
+      .setAttr(Fields.SUBCLASS, kind.subclass())
+      .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+      .setPointLabelGridPixelSize(14, 64)
+      .setSortKey(Backcountry.priority(kind.subclass()) + (name == null ? 2000 : 0))
+      .setMinZoom(kind.minZoom());
+    Backcountry.limitWhenThin(feature, kind.minZoom());
+    long poiId = poiId(source);
+    feature.setId(poiId);
+    if (poiId != VectorTile.NO_FEATURE_ID) {
+      feature.setAttr(CARDINAL_VERSION, Parse.parseIntOrNull(source.getTag(CARDINAL_VERSION)));
+    }
+    addIncludedTags(feature, source);
+    Backcountry.addDetails(feature, source);
+  }
+
   @Override
   public void process(Tables.OsmPoiPolygon element, FeatureCollector features) {
     setupPoiFeature(element, features.centroidIfConvex(LAYER_NAME), null);
@@ -337,9 +374,13 @@ public class Poi implements
     };
     String poiClass = poiClass(rawSubclass, element.mappingKey());
     int poiClassRank = poiClassRank(poiClass);
+    Integer backcountryMinZoom = Backcountry.minZoomOfMapped(rawSubclass, element.information(), element.source());
+    if (backcountryMinZoom != null) {
+      poiClassRank = Math.min(poiClassRank, Backcountry.priority(rawSubclass));
+    }
     int rankOrder = poiClassRank + ((nullOrEmpty(name)) ? 2000 : 0);
 
-    int minzoom = minzoom(element.subclass(), element.mappingKey());
+    int minzoom = backcountryMinZoom != null ? backcountryMinZoom : minzoom(element.subclass(), element.mappingKey());
     if (UNIVERSITY_POI_SUBCLASSES.contains(rawSubclass)) {
       // universities that are at least 10% of a tile may appear from Z10
       output.setMinPixelSizeBelowZoom(13, 80); // 80x80px is ~10% of a 256x256px tile
@@ -347,7 +388,6 @@ public class Poi implements
     }
 
     final String streetTag = "addr:street";
-    final String addressPrefix = "addr:";
     FeatureCollector.Feature feature = output.setBufferPixels(BUFFER_SIZE)
       .setAttr(Fields.CLASS, poiClass)
       .setAttr(Fields.SUBCLASS, subclass)
@@ -360,6 +400,12 @@ public class Poi implements
       .setPointLabelGridPixelSize(14, 64)
       .setSortKey(rankOrder)
       .setMinZoom(minzoom);
+    if (backcountryMinZoom != null) {
+      Backcountry.limitWhenThin(feature, minzoom);
+    }
+    if (Backcountry.hasDetails(subclass == null ? rawSubclass : subclass)) {
+      Backcountry.addDetails(feature, element.source());
+    }
     long poiId = poiId(element.source());
     feature.setId(poiId);
     if (poiId != VectorTile.NO_FEATURE_ID) {
@@ -368,21 +414,27 @@ public class Poi implements
       feature.setAttr(CARDINAL_VERSION, Parse.parseIntOrNull(element.source().getTag(CARDINAL_VERSION)));
     }
 
-    for (String key : element.source().tags().keySet()) {
+    addIncludedTags(feature, element.source());
+  }
+
+  private static void addIncludedTags(FeatureCollector.Feature feature, SourceFeature source) {
+    final String streetTag = "addr:street";
+    final String addressPrefix = "addr:";
+    for (String key : source.tags().keySet()) {
       if (key.startsWith(addressPrefix) && !key.equals(streetTag)) {
-        feature.setAttr(key, element.source().getTag(key));
+        feature.setAttr(key, source.getTag(key));
       }
     }
 
     final List<String> includedTags = List.of("amenity", "shop", "emergency", "craft", "healthcare", "office", "tourism", "natural", "cuisine", "phone", "website", "wikidata", "brand", "building", "wheelchair", "elevator", "opening_hours", "access");
     final List<String> includedTagPrefixes = List.of("diet:", "brand:", "toilets:");
     for (String key : includedTags) {
-      feature.setAttr(key, element.source().getTag(key));
+      feature.setAttr(key, source.getTag(key));
     }
-    for (String key : element.source().tags().keySet()) {
+    for (String key : source.tags().keySet()) {
       for (String keyPrefix : includedTagPrefixes) {
         if (key.startsWith(keyPrefix)) {
-          feature.setAttr(key, element.source().getTag(key));
+          feature.setAttr(key, source.getTag(key));
           break;
         }
       }

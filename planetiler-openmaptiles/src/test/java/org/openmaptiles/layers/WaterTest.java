@@ -1,5 +1,6 @@
 package org.openmaptiles.layers;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static com.onthegomap.planetiler.TestUtils.rectangle;
 
 import com.onthegomap.planetiler.FeatureCollector;
@@ -515,14 +516,10 @@ class WaterTest extends AbstractLayerTest {
   }
 
   @Test
-  void testSpring() {
-    assertFeatures(11, List.of(Map.of(
-      "class", "lake",
-      "_layer", "water",
-      "_type", "polygon"
-    )), process(polygonFeature(Map.of(
-      "natural", "spring"
-    ))));
+  void springsArentLakes() {
+    for (var feature : process(polygonFeature(Map.of("natural", "spring")))) {
+      assertEquals("poi", feature.getLayer());
+    }
   }
 
   @Test

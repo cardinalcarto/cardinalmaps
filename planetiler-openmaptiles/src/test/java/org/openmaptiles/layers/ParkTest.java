@@ -171,7 +171,7 @@ class ParkTest extends AbstractLayerTest {
           "boundary", "aboriginal_lands",
           "leisure", "some_other_leisure_value"
         ),
-        "nature_reserve"
+        "aboriginal_lands"
       ),
       org.junit.jupiter.params.provider.Arguments.of(
         Map.of(
@@ -183,7 +183,7 @@ class ParkTest extends AbstractLayerTest {
         Map.of(
           "boundary", "aboriginal_lands"
         ),
-        "nature_reserve"
+        "aboriginal_lands"
       ),
       org.junit.jupiter.params.provider.Arguments.of(
         Map.of(
@@ -211,7 +211,7 @@ class ParkTest extends AbstractLayerTest {
           "boundary", "protected_area",
           "protection_title", "National Forest"
         ),
-        "National Forest"
+        "protected_area"
       ),
       org.junit.jupiter.params.provider.Arguments.of(
         Map.of(

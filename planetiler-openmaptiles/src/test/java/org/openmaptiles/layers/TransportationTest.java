@@ -4,6 +4,7 @@ import static com.onthegomap.planetiler.TestUtils.newLineString;
 import static com.onthegomap.planetiler.TestUtils.newPoint;
 import static com.onthegomap.planetiler.TestUtils.rectangle;
 import static java.util.Map.entry;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import com.onthegomap.planetiler.FeatureCollector;
@@ -13,6 +14,7 @@ import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.reader.SimpleFeature;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
+import com.onthegomap.planetiler.reader.osm.OsmReader;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 import com.onthegomap.planetiler.stats.Stats;
 import java.util.ArrayList;
@@ -110,6 +112,10 @@ class TransportationTest extends AbstractLayerTest {
         "surface", "ground"
       )));
     assertFeatures(12, List.of(Map.of(
+      "_layer", "route",
+      "route", "hiking",
+      "name", "Appalachian Trail - 11 MA"
+    ), Map.of(
       "_layer", "transportation",
       "_type", "line",
       "class", "path",
@@ -2311,5 +2317,182 @@ class TransportationTest extends AbstractLayerTest {
         "network", "us-interstate"
       )
     ), features);
+  }
+
+  @ParameterizedTest
+  @CsvSource(value = {
+    "null,null,null,false,official",
+    "yes,null,null,false,official",
+    "permissive,null,null,false,official",
+    "no,null,null,false,closed",
+    "private,null,null,false,private",
+    "null,no,null,false,closed",
+    "null,private,null,false,private",
+    "no,designated,null,false,official",
+    "private,yes,null,false,official",
+    "yes,no,null,false,closed",
+    "null,null,yes,false,social",
+    "discouraged,null,yes,false,social",
+    "discouraged,null,null,false,social",
+    "no,null,yes,false,closed",
+    "private,null,yes,false,private",
+    "null,null,yes,true,official",
+    "null,null,null,true,official",
+    "no,null,null,true,closed",
+    "private,null,null,true,private"
+  }, nullValues = "null")
+  void trailClassFollowsTheTrailsStewardshipInitiative(String access, String foot, String informal,
+    boolean inHikingRoute, String expected) {
+    assertEquals(expected, Transportation.trailClass(access, foot, informal, inHikingRoute));
+  }
+
+  @Test
+  void hikingRouteWithoutNetworkMakesATrailOfficialAndVisibleEarlier() throws GeometryException {
+    var relation = new OsmElement.Relation(1);
+    relation.setTag("type", "route");
+    relation.setTag("route", "hiking");
+    var infos = profile.preprocessOsmRelation(relation);
+    FeatureCollector features = process(SimpleFeature.createFakeOsmFeature(
+      newLineString(0, 0, 1, 1),
+      Map.of("highway", "path", "informal", "yes"),
+      OpenMapTilesProfile.OSM_SOURCE, null, 0,
+      infos.stream().map(r -> new OsmReader.RelationMember<OsmRelationInfo>("", r)).toList()
+    ));
+    var feature = inTransportation(features);
+    assertEquals(12, feature.getMinZoom());
+    assertEquals("official", feature.getAttrsAtZoom(14).get("trail"));
+  }
+
+  @Test
+  void hikingNetworkKeepsTheMostImportant() throws GeometryException {
+    var local = new OsmElement.Relation(1);
+    local.setTag("route", "hiking");
+    local.setTag("network", "lwn");
+    var national = new OsmElement.Relation(2);
+    national.setTag("route", "hiking");
+    national.setTag("network", "nwn");
+    var members = new ArrayList<OsmReader.RelationMember<OsmRelationInfo>>();
+    for (var relation : List.of(local, national)) {
+      for (var info : profile.preprocessOsmRelation(relation)) {
+        members.add(new OsmReader.RelationMember<>("", info));
+      }
+    }
+    FeatureCollector features = process(SimpleFeature.createFakeOsmFeature(
+      newLineString(0, 0, 1, 1), Map.of("highway", "path"), OpenMapTilesProfile.OSM_SOURCE, null, 0, members));
+    assertEquals("nwn", inTransportation(features).getAttrsAtZoom(14).get("trail_network"));
+  }
+
+  @Test
+  void trailClassOnlyOnPathsAndTracks() throws GeometryException {
+    FeatureCollector road = process(lineFeature(Map.of("highway", "residential", "access", "private")));
+    assertEquals(null, road.iterator().next().getAttrsAtZoom(14).get("trail"));
+    FeatureCollector track = process(lineFeature(Map.of("highway", "track", "access", "private")));
+    assertEquals("private", track.iterator().next().getAttrsAtZoom(14).get("trail"));
+  }
+
+  @Test
+  void sidewalksArentTrails() throws GeometryException {
+    FeatureCollector sidewalk = process(lineFeature(Map.of("highway", "footway", "footway", "sidewalk")));
+    assertEquals(null, sidewalk.iterator().next().getAttrsAtZoom(14).get("trail"));
+    FeatureCollector crossing = process(lineFeature(Map.of("highway", "footway", "footway", "crossing")));
+    assertEquals(null, crossing.iterator().next().getAttrsAtZoom(14).get("trail"));
+    FeatureCollector footway = process(lineFeature(Map.of("highway", "footway")));
+    assertEquals("official", footway.iterator().next().getAttrsAtZoom(14).get("trail"));
+    FeatureCollector cycleway = process(lineFeature(Map.of("highway", "cycleway")));
+    assertEquals(null, cycleway.iterator().next().getAttrsAtZoom(14).get("trail"));
+  }
+
+  @Test
+  void trailsCarryTheirMetadataAtTheRightZooms() throws GeometryException {
+    var feature = process(lineFeature(Map.ofEntries(
+      entry("highway", "path"),
+      entry("sac_scale", "demanding_mountain_hiking"),
+      entry("trail_visibility", "bad"),
+      entry("surface", "dirt"),
+      entry("smoothness", "very_bad"),
+      entry("width", "0.5"),
+      entry("access", "permit"),
+      entry("motor_vehicle", "no"),
+      entry("trailblazed", "symbols"),
+      entry("dog", "leashed"),
+      entry("wheelchair", "no"),
+      entry("snowmobile", "designated"),
+      entry("motorcycle", "no"),
+      entry("flood_prone", "yes"),
+      entry("hazard", "rockfall"),
+      entry("operator", "US Forest Service")
+    ))).iterator().next();
+    var z14 = feature.getAttrsAtZoom(14);
+    assertEquals("demanding_mountain_hiking", z14.get("sac_scale"));
+    assertEquals("bad", z14.get("trail_visibility"));
+    assertEquals("ground", z14.get("trail_surface"));
+    assertEquals("very_bad", z14.get("smoothness"));
+    assertEquals("narrow", z14.get("trail_width"));
+    assertEquals("permit", z14.get("trail_access"));
+    assertEquals("no", z14.get("motor_vehicle"));
+    assertEquals("yes", z14.get("trailblazed"));
+    assertEquals("leashed", z14.get("dog"));
+    assertEquals("no", z14.get("wheelchair"));
+    assertEquals("designated", z14.get("snowmobile"));
+    assertEquals("no", z14.get("ohv"));
+    assertEquals(1, z14.get("flood_prone"));
+    assertEquals("rockfall", z14.get("hazard"));
+    assertEquals("US Forest Service", z14.get("operator"));
+
+    var z13 = feature.getAttrsAtZoom(13);
+    assertEquals("ground", z13.get("trail_surface"));
+    assertEquals(null, z13.get("trail_width"));
+    assertEquals(null, z13.get("operator"));
+    var z12 = feature.getAttrsAtZoom(12);
+    assertEquals("demanding_mountain_hiking", z12.get("sac_scale"));
+    assertEquals(null, z12.get("trail_surface"));
+  }
+
+  @Test
+  void unrecognizedTrailValuesAreDropped() throws GeometryException {
+    var z14 = process(lineFeature(Map.of(
+      "highway", "path", "sac_scale", "T3", "trail_visibility", "ok", "smoothness", "?", "surface", "xyz",
+      "tracktype", "grade9", "width", "wide-ish"
+    ))).iterator().next().getAttrsAtZoom(14);
+    assertEquals(null, z14.get("sac_scale"));
+    assertEquals(null, z14.get("trail_visibility"));
+    assertEquals(null, z14.get("smoothness"));
+    assertEquals(null, z14.get("trail_surface"));
+    assertEquals(null, z14.get("tracktype"));
+    assertEquals(null, z14.get("trail_width"));
+  }
+
+  @Test
+  void tracksSayTheirGradeAndGetASurfaceFromIt() throws GeometryException {
+    var z14 = process(lineFeature(Map.of("highway", "track", "tracktype", "grade3"))).iterator().next()
+      .getAttrsAtZoom(14);
+    assertEquals("grade3", z14.get("tracktype"));
+    assertEquals("unpaved", z14.get("surface"));
+  }
+
+  @Test
+  void onlyUnofficialTrailsSaySoInTheirNames() throws GeometryException {
+    var closed = process(lineFeature(Map.of("highway", "path", "name", "Old Trail", "access", "no")));
+    assertEquals("closed", nameFeature(closed).getAttrsAtZoom(14).get("trail"));
+    var official = process(lineFeature(Map.of("highway", "path", "name", "New Trail")));
+    assertEquals(null, nameFeature(official).getAttrsAtZoom(14).get("trail"));
+  }
+
+  private FeatureCollector.Feature inTransportation(FeatureCollector features) {
+    for (var feature : features) {
+      if ("transportation".equals(feature.getLayer())) {
+        return feature;
+      }
+    }
+    throw new AssertionError("no transportation feature");
+  }
+
+  private FeatureCollector.Feature nameFeature(FeatureCollector features) {
+    for (var feature : features) {
+      if ("transportation_name".equals(feature.getLayer())) {
+        return feature;
+      }
+    }
+    throw new AssertionError("no name feature");
   }
 }

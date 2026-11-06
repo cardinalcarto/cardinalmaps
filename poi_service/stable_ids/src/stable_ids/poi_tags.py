@@ -45,7 +45,13 @@ POI_KEYS = tuple(key for key in TOP_LEVEL_KEYS if key not in NON_POI_TOP_LEVEL_K
 # Tags that make a named element a POI though their key doesn't, such as bus
 # stops mapped only as `highway=bus_stop`. Must match `POI_TAGS` in
 # `poi_service/src/rules.rs`.
-POI_TAGS = frozenset({("highway", "bus_stop"), ("railway", "subway_entrance")})
+POI_TAGS = frozenset({
+    ("highway", "bus_stop"),
+    ("highway", "emergency_access_point"),
+    ("highway", "rest_area"),
+    ("highway", "trailhead"),
+    ("railway", "subway_entrance"),
+})
 
 # POIs that, without a name or brand, are named by their operator (or the
 # other keys listed), as the planetiler fork labels them. Must match

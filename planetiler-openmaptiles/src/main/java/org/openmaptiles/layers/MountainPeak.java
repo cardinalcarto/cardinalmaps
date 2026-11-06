@@ -72,6 +72,7 @@ import org.slf4j.LoggerFactory;
  * sql files</a>.
  */
 public class MountainPeak implements
+  OpenMapTilesProfile.OsmAllProcessor,
   OpenMapTilesProfile.NaturalEarthProcessor,
   OpenMapTilesSchema.MountainPeak,
   Tables.OsmPeakPoint.Handler,
@@ -115,6 +116,10 @@ public class MountainPeak implements
 
   @Override
   public void process(Tables.OsmPeakPoint element, FeatureCollector features) {
+    if (element.source().hasTag("natural", "saddle")) {
+      passOrSaddle(features.point(LAYER_NAME), "saddle", element.source());
+      return;
+    }
     Double meters = Parse.meters(element.ele());
     if ((meters != null && Math.abs(meters) < 10_000) || nullIfEmpty(element.name()) != null) {
       var feature = features.point(LAYER_NAME)
@@ -131,12 +136,101 @@ public class MountainPeak implements
         // any label grid squares which could lead to inconsistent label ranks for a feature
         // in adjacent tiles. postProcess() will remove anything outside the desired buffer.
         .setBufferPixels(100)
-        .setPointLabelGridSizeAndLimit(13, 100, 5);
+        .setPointLabelGridSizeAndLimit(13, 100, 5)
+        .setAttr("prominence", Parse.parseIntOrNull(element.source().getTag("prominence")))
+        .setAttr("summit_cross", element.source().hasTag("summit:cross", "yes") ? 1 : null);
 
       if (peakInAreaUsingFeet(element)) {
         feature.setAttr(Fields.CUSTOMARY_FT, 1);
       }
     }
+  }
+
+  /**
+   * Adds terrain OpenMapTiles' mappings don't have: passes not also mapped as saddles, hills, and the names of valleys,
+   * ranges and glaciers that say where you are.
+   */
+  @Override
+  public void processAllOsm(SourceFeature source, FeatureCollector features) {
+    String name = nullIfEmpty(source.getString("name"));
+    if (source.isPoint()) {
+      if (source.hasTag("mountain_pass", "yes") && !source.hasTag("natural", "peak", "volcano", "saddle")) {
+        passOrSaddle(features.point(LAYER_NAME), "pass", source);
+      } else if (source.hasTag("natural", "hill") && !source.hasTag("place", "locality") && name != null) {
+        labelPoint(features, source, "hill", 11);
+      } else if (name != null && source.hasTag("natural", "ridge")) {
+        labelPoint(features, source, "ridge", 12);
+      }
+    }
+    if (name == null) {
+      // a crevasse needs no name to be something to avoid
+      if (source.canBeLine() && source.hasTag("natural", "crevasse")) {
+        terrainLine(features, source, "crevasse", 14);
+      }
+      return;
+    }
+    String natural = source.getString("natural");
+    Integer minZoom = natural == null ? null : switch (natural) {
+      case "mountain_range" -> 8;
+      case "plateau" -> 10;
+      case "valley", "gorge" -> 11;
+      case "couloir" -> 13;
+      case "crevasse" -> 14;
+      default -> null;
+    };
+    if (minZoom != null) {
+      if (source.isPoint()) {
+        labelPoint(features, source, natural, minZoom);
+      } else if (source.canBeLine()) {
+        terrainLine(features, source, natural, minZoom);
+      }
+    }
+    if (source.hasTag("natural", "glacier") && source.canBePolygon()) {
+      features.pointOnSurface(LAYER_NAME)
+        .setAttr(Fields.CLASS, "glacier")
+        .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+        .setMinZoom(10)
+        .setBufferPixels(100)
+        .setPointLabelGridSizeAndLimit(13, 100, 5);
+    }
+  }
+
+  private void labelPoint(FeatureCollector features, SourceFeature source, String clazz, int minZoom) {
+    Double meters = Parse.meters(source.getString("ele"));
+    features.point(LAYER_NAME)
+      .setAttr(Fields.CLASS, clazz)
+      .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+      .putAttrs(meters != null && Math.abs(meters) < 10_000 ? elevationTags(meters) : Map.of())
+      .setMinZoom(minZoom)
+      .setBufferPixels(100)
+      .setPointLabelGridSizeAndLimit(13, 100, 5);
+  }
+
+  private void terrainLine(FeatureCollector features, SourceFeature source, String clazz, int minZoom) {
+    features.line(LAYER_NAME)
+      .setAttr(Fields.CLASS, clazz)
+      .setAttr(Fields.RANK, nullIfEmpty(source.getString("name")) != null ? 2 : 3)
+      .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+      .setMinZoom(minZoom)
+      .setBufferPixels(100);
+  }
+
+  /** Gives passes a grid of their own, so that a range's peaks can't crowd out the way over it. */
+  private void passOrSaddle(FeatureCollector.Feature feature, String clazz, SourceFeature source) {
+    Double meters = Parse.meters(source.getString("ele"));
+    if (meters == null && nullIfEmpty(source.getString("name")) == null) {
+      return;
+    }
+    feature
+      .setAttr(Fields.CLASS, clazz)
+      .setAttr("mountain_pass", source.hasTag("mountain_pass", "yes") ? 1 : null)
+      .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+      .putAttrs(meters != null && Math.abs(meters) < 10_000 ? elevationTags(meters) : Map.of())
+      .setSortKeyDescending((meters != null ? meters.intValue() : 0) +
+        (nullIfEmpty(source.getString("name")) != null ? 10_000 : 0))
+      .setMinZoom(7)
+      .setBufferPixels(100)
+      .setPointLabelGridSizeAndLimit(13, 64, 5);
   }
 
   @Override
@@ -148,9 +242,11 @@ public class MountainPeak implements
     features.line(LAYER_NAME)
       .setAttr(Fields.CLASS, element.source().getTag("natural"))
       .setAttr(Fields.RANK, rank)
+      .setAttr("height", nullIfEmpty(element.source().getString("height")))
       .putAttrs(OmtLanguageUtils.getNames(element.source().tags(), translations))
       .setSortKey(rank)
-      .setMinZoom(13)
+      // ridges and cliffs are how you read a mountain, and a named ridge is how you talk about one
+      .setMinZoom(element.source().hasTag("natural", "ridge") && nullIfEmpty(element.name()) != null ? 10 : 12)
       .setBufferPixels(100);
   }
 

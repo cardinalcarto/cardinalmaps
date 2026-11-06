@@ -153,7 +153,7 @@ class MountainPeakTest extends AbstractLayerTest {
 
       "_layer", "mountain_peak",
       "_type", "line",
-      "_minzoom", 13,
+      "_minzoom", 10,
       "_maxzoom", 14,
       "_buffer", 100d
     )), process(lineFeature(Map.of(

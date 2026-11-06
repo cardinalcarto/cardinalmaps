@@ -87,6 +87,7 @@ import org.slf4j.LoggerFactory;
  * sql files</a>.
  */
 public class Transportation implements
+  OpenMapTilesProfile.OsmAllProcessor,
   OpenMapTilesSchema.Transportation,
   Tables.OsmAerialwayLinestring.Handler,
   Tables.OsmHighwayLinestring.Handler,
@@ -130,6 +131,8 @@ public class Transportation implements
     FieldValues.SERVICE_PARKING_AISLE
   );
   private static final Set<String> SURFACE_UNPAVED_VALUES = Set.of(
+    // when only tracktype says, as grade1 does for paved
+    "grade2", "grade3", "grade4", "grade5",
     "unpaved", "compacted", "dirt", "earth", "fine_gravel", "grass", "grass_paver", "gravel", "gravel_turf", "ground",
     "ice", "mud", "pebblestone", "salt", "sand", "snow", "woodchips", "rock", "clay", "laterite"
   );
@@ -137,6 +140,28 @@ public class Transportation implements
     "paved", "asphalt", "cobblestone", "concrete", "concrete:lanes", "concrete:plates", "metal",
     "paving_stones", "sett", "unhewn_cobblestone", "wood", "grade1"
   );
+  private static final Set<String> SAC_SCALES = Set.of("strolling", "hiking", "mountain_hiking",
+    "demanding_mountain_hiking", "alpine_hiking", "demanding_alpine_hiking", "difficult_alpine_hiking");
+  private static final Set<String> TRACKTYPES = Set.of("grade1", "grade2", "grade3", "grade4", "grade5");
+  private static final Set<String> VISIBILITIES = Set.of("excellent", "good", "intermediate", "bad", "horrible", "no");
+  private static final Set<String> SMOOTHNESSES = Set.of("excellent", "good", "intermediate", "bad", "very_bad",
+    "horrible", "very_horrible", "impassable");
+  private static final Set<String> MOTOR_VEHICLE_VALUES = Set.of("yes", "designated", "permissive", "no", "private",
+    "permit", "destination", "forestry", "agricultural");
+  private static final Set<String> TRAIL_ACCESS_VALUES = Set.of("no", "private", "permit", "permissive",
+    "discouraged", "destination", "customers");
+  private static final Set<String> WHEELCHAIR_VALUES = Set.of("yes", "limited", "no", "designated");
+  private static final Set<String> DOG_VALUES = Set.of("yes", "leashed", "unleashed", "no");
+  private static final Set<String> SNOWMOBILE_VALUES = Set.of("yes", "designated", "permissive", "no", "private");
+  private static final Set<String> ALLOWED_VALUES = Set.of("yes", "designated", "permissive");
+  static final String TRAIL = "trail";
+  static final String TRAIL_NETWORK = "trail_network";
+  static final String TRAIL_OFFICIAL = "official";
+  static final String TRAIL_SOCIAL = "social";
+  static final String TRAIL_CLOSED = "closed";
+  static final String TRAIL_PRIVATE = "private";
+  /** Most important first. */
+  private static final List<String> HIKING_NETWORKS = List.of("iwn", "nwn", "rwn", "lwn");
   private static final Set<String> ACCESS_NO_VALUES = Set.of(
     "private", "no"
   );
@@ -242,6 +267,129 @@ public class Transportation implements
       return 1;
     }
     return null;
+  }
+
+  /**
+   * Returns how the <a href="https://wiki.openstreetmap.org/wiki/United_States/Trails_Stewardship_Initiative">Trails
+   * Stewardship Initiative</a> classifies a way: {@code official}, {@code social}, {@code closed} or {@code private}.
+   * <p>
+   * The initiative counts a way as official if it's in a hiking route relation, or lacks {@code access=private|no} and
+   * {@code informal=yes}. What this adds: {@code foot=*} takes precedence over {@code access=*} since these are foot
+   * trails, {@code discouraged} counts as social, and an explicit closure beats route membership, as a stale relation
+   * should never present a closed or private trail as official.
+   */
+  static String trailClass(String access, String foot, String informal, boolean inHikingRoute) {
+    String effective = nullOrEmpty(foot) ? access : foot;
+    if ("no".equals(effective)) {
+      return TRAIL_CLOSED;
+    }
+    if ("private".equals(effective)) {
+      return TRAIL_PRIVATE;
+    }
+    if (inHikingRoute) {
+      return TRAIL_OFFICIAL;
+    }
+    if ("yes".equals(informal) || "discouraged".equals(effective)) {
+      return TRAIL_SOCIAL;
+    }
+    return TRAIL_OFFICIAL;
+  }
+
+  /**
+   * Adds {@code highway=via_ferrata} and {@code highway=ladder}, which OpenMapTiles' mappings don't have: the sort of
+   * thing a hiker shouldn't find themselves on by accident.
+   */
+  @Override
+  public void processAllOsm(SourceFeature source, FeatureCollector features) {
+    if (source.canBeLine() && source.hasTag("highway", "via_ferrata", "ladder")) {
+      features.line(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
+        .setAttr(Fields.CLASS, FieldValues.CLASS_PATH)
+        .setAttr(Fields.SUBCLASS, source.getString("highway"))
+        .setAttrWithMinzoom(TRAIL, trailClass(source.getString("access"), source.getString("foot"),
+          source.getString("informal"), !source.relationInfo(HikingRelation.class).isEmpty()), 9)
+        .setAttrWithMinzoom("sac_scale", whitelisted(source.getString("sac_scale"), SAC_SCALES), 12)
+        .setAttrWithMinzoom("via_ferrata_scale", nullIfEmpty(source.getString("via_ferrata_scale")), 12)
+        .setAttrWithMinzoom("operator", nullIfEmpty(source.getString("operator")), 14)
+        .setMinPixelSize(0)
+        .setMinZoom(source.hasTag("highway", "via_ferrata") ? 12 : 13);
+    }
+  }
+
+  /** Whether a way is something one hikes on, as opposed to, say, a sidewalk, which class {@code path} also has. */
+  static boolean isTrail(String highway, String footway) {
+    return switch (coalesce(highway, "")) {
+      case "path", "track", "bridleway", "steps" -> true;
+      case "footway" -> !"sidewalk".equals(footway) && !"crossing".equals(footway);
+      default -> false;
+    };
+  }
+
+  /** {@code yes} or {@code no}; the other values of {@code trailblazed} say how it's blazed. */
+  static String trailblazed(String value) {
+    return value == null ? null : "no".equals(value) ? "no" : "yes";
+  }
+
+  private static String whitelisted(String value, Set<String> allowed) {
+    return value != null && allowed.contains(value) ? value : null;
+  }
+
+  /** Groups the many {@code surface} values by what they're like to walk on. */
+  static String trailSurface(String surface) {
+    if (surface == null) {
+      return null;
+    }
+    return switch (surface) {
+      case "ground", "earth", "dirt", "mud", "soil", "clay" -> "ground";
+      case "gravel", "fine_gravel", "compacted", "pebblestone", "shells", "unpaved" -> "gravel";
+      case "rock", "stone", "bare_rock", "scree" -> "rock";
+      case "sand" -> "sand";
+      case "grass", "grass_paver", "woodchips" -> "grass";
+      case "wood", "boardwalk" -> "wood";
+      case "snow", "ice" -> "snow";
+      default -> SURFACE_PAVED_VALUES.contains(surface) ? "paved" : null;
+    };
+  }
+
+  /** Groups {@code width=*} in meters; widths are too varied to keep as they are. */
+  static String trailWidth(String width) {
+    Double meters = Parse.meters(width);
+    return meters == null ? null : meters < 1 ? "narrow" : meters <= 2 ? "medium" : "wide";
+  }
+
+  /** {@code yes}, {@code no} or {@code null}, from whichever of the motorized access tags are present. */
+  static String offHighwayVehicles(String... values) {
+    String result = null;
+    for (String value : values) {
+      if (value == null) {
+        continue;
+      }
+      if (ALLOWED_VALUES.contains(value)) {
+        return "yes";
+      }
+      if ("no".equals(value) || "private".equals(value)) {
+        result = "no";
+      }
+    }
+    return result;
+  }
+
+  /** The most important network of the hiking routes a way is in, or {@code null}. */
+  private static String hikingNetwork(List<HikingRelation> relations) {
+    String best = null;
+    int bestRank = Integer.MAX_VALUE;
+    for (var relation : relations) {
+      int rank = relation.network() == null ? Integer.MAX_VALUE - 1 : HIKING_NETWORKS.indexOf(relation.network());
+      if (rank >= 0 && rank < bestRank) {
+        bestRank = rank;
+        best = relation.network();
+      }
+    }
+    return best;
+  }
+
+  private static List<HikingRelation> hikingRelations(Tables.OsmHighwayLinestring element) {
+    return element.source().relationInfo(HikingRelation.class).stream().map(OsmReader.RelationMember::relation)
+      .toList();
   }
 
   private static String railwayClass(String value) {
@@ -351,6 +499,19 @@ public class Transportation implements
 
   @Override
   public List<OsmRelationInfo> preprocessOsmRelation(OsmElement.Relation relation) {
+    List<OsmRelationInfo> found = new ArrayList<>(2);
+    if (relation.hasTag("route", "hiking", "foot")) {
+      // kept for all hiking routes: unlike RouteRelation, it matters that they exist even without a network
+      found.add(new HikingRelation(nullIfEmpty(relation.getString("network")), relation.id()));
+    }
+    List<OsmRelationInfo> route = preprocessRouteRelation(relation);
+    if (route != null) {
+      found.addAll(route);
+    }
+    return found.isEmpty() ? null : found;
+  }
+
+  private List<OsmRelationInfo> preprocessRouteRelation(OsmElement.Relation relation) {
     if (relation.hasTag("route", "road", "hiking")) {
       RouteNetwork networkType = null;
       String network = relation.getString("network");
@@ -539,6 +700,41 @@ public class Transportation implements
         .setSortKey(element.zOrder())
         .setMinZoom(minzoom);
 
+      SourceFeature source = element.source();
+      if (isTrail(highway, source.getString("footway"))) {
+        var hiking = hikingRelations(element);
+        feature
+          .setAttrWithMinzoom(TRAIL,
+            trailClass(element.access(), element.foot(), element.informal(), !hiking.isEmpty()),
+            9)
+          .setAttrWithMinzoom(TRAIL_NETWORK, hikingNetwork(hiking), 9)
+          // what most decides whether a trail is for you, from the zoom trails start at
+          .setAttrWithMinzoom("sac_scale", whitelisted(element.sacScale(), SAC_SCALES), 12)
+          .setAttrWithMinzoom("tracktype", whitelisted(element.tracktype(), TRACKTYPES), 12)
+          .setAttrWithMinzoom("motor_vehicle", whitelisted(source.getString("motor_vehicle"), MOTOR_VEHICLE_VALUES), 12)
+          .setAttrWithMinzoom("trail_access", whitelisted(element.access(), TRAIL_ACCESS_VALUES), 12)
+          // condition: since each attribute can split a line in two when merging, from z13 and bucketed
+          .setAttrWithMinzoom("trail_surface", trailSurface(element.surface()), 13)
+          .setAttrWithMinzoom("trail_visibility", whitelisted(source.getString("trail_visibility"), VISIBILITIES), 13)
+          .setAttrWithMinzoom("smoothness", whitelisted(source.getString("smoothness"), SMOOTHNESSES), 13)
+          // rarer details at the highest zoom, where merging matters the least
+          .setAttrWithMinzoom("trail_width", trailWidth(source.getString("width")), 14)
+          .setAttrWithMinzoom("trailblazed", trailblazed(source.getString("trailblazed")), 14)
+          .setAttrWithMinzoom("wheelchair", whitelisted(source.getString("wheelchair"), WHEELCHAIR_VALUES), 14)
+          .setAttrWithMinzoom("dog", whitelisted(source.getString("dog"), DOG_VALUES), 14)
+          .setAttrWithMinzoom("snowmobile", whitelisted(source.getString("snowmobile"), SNOWMOBILE_VALUES), 14)
+          .setAttrWithMinzoom("ohv", offHighwayVehicles(source.getString("ohv"), source.getString("atv"),
+            source.getString("motorcycle")), 14)
+          .setAttrWithMinzoom("flood_prone", "yes".equals(source.getString("flood_prone")) ? 1 : null, 14)
+          .setAttrWithMinzoom("bridge_structure", nullIfEmpty(source.getString("bridge:structure")), 14)
+          .setAttrWithMinzoom("ford_type", "stepping_stones".equals(source.getString("ford")) ? "stepping_stones" : null,
+            14)
+          .setAttrWithMinzoom("portage", source.hasTag("portage", "yes") || source.hasTag("canoe", "portage") ? 1 : null,
+            14)
+          .setAttrWithMinzoom("hazard", nullIfEmpty(source.getString("hazard")), 14)
+          .setAttrWithMinzoom("operator", nullIfEmpty(element.operator()), 14);
+      }
+
       if (isFootwayOrSteps(highway)) {
         feature
           .setAttr(Fields.LEVEL, Parse.parseLongOrNull(element.source().getTag("level")))
@@ -582,7 +778,8 @@ public class Transportation implements
       String baseClass = highwayClass.replace("_construction", "");
       minzoom = switch (baseClass) {
         case FieldValues.CLASS_SERVICE -> isDrivewayOrParkingAisle(service(element.service())) ? 14 : 13;
-        case FieldValues.CLASS_TRACK, FieldValues.CLASS_PATH -> routeRank == 1 ? 12 :
+        case FieldValues.CLASS_TRACK, FieldValues.CLASS_PATH -> routeRank == 1 || !hikingRelations(element).isEmpty() ?
+          12 :
           (z13Paths || !nullOrEmpty(element.name()) || routeRank <= 2 || !nullOrEmpty(element.sacScale())) ? 13 : 14;
         case FieldValues.CLASS_TRUNK -> {
           boolean z5trunk = isTrunkForZ5(highway, routeRelations);
@@ -758,6 +955,15 @@ public class Transportation implements
     RouteNetwork(String name, String network) {
       this.name = name;
       this.network = network;
+    }
+  }
+
+  /** A hiking route relation, which under the Trails Stewardship Initiative marks its ways as official. */
+  record HikingRelation(String network, @Override long id) implements OsmRelationInfo {
+
+    @Override
+    public long estimateMemoryUsageBytes() {
+      return CLASS_HEADER_BYTES + POINTER_BYTES + estimateSize(network) + MemoryEstimator.estimateSizeLong(id);
     }
   }
 

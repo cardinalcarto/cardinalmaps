@@ -2,11 +2,26 @@ package org.openmaptiles.util;
 
 import com.onthegomap.planetiler.util.Parse;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Common utilities for working with data and the OpenMapTiles schema in {@code layers} implementations.
  */
 public class Utils {
+
+  private static final Set<String> SEASONS =
+    Set.of("yes", "spring", "summer", "autumn", "winter", "wet_season", "dry_season");
+
+  /** A {@code seasonal=*} value: a known one, or {@code yes} for a list of them, or {@code null}. */
+  public static String seasonal(String value) {
+    if (value == null || value.isEmpty() || "no".equals(value)) {
+      return null;
+    }
+    if (value.contains(";")) {
+      return "yes";
+    }
+    return SEASONS.contains(value) ? value : null;
+  }
 
   public static <T> T coalesce(T a, T b) {
     return a != null ? a : b;

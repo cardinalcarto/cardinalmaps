@@ -38,6 +38,21 @@ func (r *DataPipeline) AirmailIndexer() *Container {
 	}
 }
 
+// Copies an OSM extract with contours spliced in, in the order planetiler
+// needs: nodes, then ways, then relations, each ascending by ID.
+func (r *DataPipeline) AppendContours(osm *File, contours *File) *File {
+	assertNotNil("osm", osm)
+	assertNotNil("contours", contours)
+	q := r.query.Select("appendContours")
+	q = q.Arg("osm", osm)
+	q = q.Arg("contours", contours)
+
+	return &File{
+		query:     q,
+		refetchID: r.refetchID,
+	}
+}
+
 // DataPipelineBuildOpts contains options for DataPipeline.Build
 type DataPipelineBuildOpts struct {
 	// PostgreSQL URL of the poi_service database that gives POIs their
@@ -145,6 +160,34 @@ func (r *DataPipeline) CategoricalModels(osm *File, wofDb *File, opts ...DataPip
 	q = q.Arg("wofDb", wofDb)
 
 	return &Directory{
+		query:     q,
+		refetchID: r.refetchID,
+	}
+}
+
+// DataPipelineContoursOpts contains options for DataPipeline.Contours
+type DataPipelineContoursOpts struct {
+	// west,south,east,north, to limit the region.
+	Bbox string
+}
+
+// Generates contour lines in both metric and imperial as a sorted .osm.pbf.
+// Finished chunks are kept in a cache volume, so adding a higher resolution
+// DEM to the configuration recomputes only the chunks it touches.
+func (r *DataPipeline) Contours(dem *Directory, config *File, opts ...DataPipelineContoursOpts) *File {
+	assertNotNil("dem", dem)
+	assertNotNil("config", config)
+	q := r.query.Select("contours")
+	for i := len(opts) - 1; i >= 0; i-- {
+		// `bbox` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Bbox) {
+			q = q.Arg("bbox", opts[i].Bbox)
+		}
+	}
+	q = q.Arg("dem", dem)
+	q = q.Arg("config", config)
+
+	return &File{
 		query:     q,
 		refetchID: r.refetchID,
 	}
@@ -369,6 +412,58 @@ func (r *DataPipeline) Tiles(osm *File, opts ...DataPipelineTilesOpts) *File {
 		}
 	}
 	q = q.Arg("osm", osm)
+
+	return &File{
+		query:     q,
+		refetchID: r.refetchID,
+	}
+}
+
+// The topo_pipeline executable.
+func (r *DataPipeline) Topo() *File {
+	q := r.query.Select("topo")
+
+	return &File{
+		query:     q,
+		refetchID: r.refetchID,
+	}
+}
+
+// DataPipelineTopoTilesOpts contains options for DataPipeline.TopoTiles
+type DataPipelineTopoTilesOpts struct {
+	// west,south,east,north, to limit the contours' region.
+	Bbox string
+	// Extra planetiler arguments.
+	Args []string
+
+	// Default: 50
+	MaxRAMPercentage int
+}
+
+// Builds the Cardinal Topo tileset: the OpenMapTiles layers, plus contour_m
+// and contour_ft, from an OSM extract and DEMs.
+func (r *DataPipeline) TopoTiles(osm *File, dem *Directory, config *File, opts ...DataPipelineTopoTilesOpts) *File {
+	assertNotNil("osm", osm)
+	assertNotNil("dem", dem)
+	assertNotNil("config", config)
+	q := r.query.Select("topoTiles")
+	for i := len(opts) - 1; i >= 0; i-- {
+		// `bbox` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Bbox) {
+			q = q.Arg("bbox", opts[i].Bbox)
+		}
+		// `args` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Args) {
+			q = q.Arg("args", opts[i].Args)
+		}
+		// `maxRamPercentage` optional argument
+		if !querybuilder.IsZeroValue(opts[i].MaxRAMPercentage) {
+			q = q.Arg("maxRamPercentage", opts[i].MaxRAMPercentage)
+		}
+	}
+	q = q.Arg("osm", osm)
+	q = q.Arg("dem", dem)
+	q = q.Arg("config", config)
 
 	return &File{
 		query:     q,

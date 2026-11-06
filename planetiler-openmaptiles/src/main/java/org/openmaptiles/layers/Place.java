@@ -81,6 +81,7 @@ import org.openmaptiles.util.OmtLanguageUtils;
  * <a href="https://github.com/openmaptiles/openmaptiles/tree/master/layers/place">OpenMapTiles place sql files</a>.
  */
 public class Place implements
+  OpenMapTilesProfile.OsmAllProcessor,
   OpenMapTilesSchema.Place,
   OpenMapTilesProfile.NaturalEarthProcessor,
   Tables.OsmContinentPoint.Handler,
@@ -197,6 +198,17 @@ public class Place implements
     } catch (GeometryException e) {
       e.log(stats, "omt_place_ne",
         "Error getting geometry for natural earth feature " + table + " " + feature.getTag("ogc_fid"));
+    }
+  }
+
+  /** Adds {@code place=locality}: named places nobody lives, often the only names in the backcountry. */
+  @Override
+  public void processAllOsm(SourceFeature source, FeatureCollector features) {
+    if (source.isPoint() && source.hasTag("place", "locality") && source.hasTag("name")) {
+      features.point(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
+        .setAttr(Fields.CLASS, "locality")
+        .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+        .setMinZoom(13);
     }
   }
 

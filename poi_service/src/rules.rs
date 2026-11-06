@@ -16,7 +16,7 @@ use icu_properties::CodePointMapData;
 
 /// Identifies the rules below. Deployments with different rulesets assign
 /// different identifiers, so the database records which one it was built with.
-pub const RULESET_VERSION: i32 = 1;
+pub const RULESET_VERSION: i32 = 2;
 
 pub type Tags = BTreeMap<String, String>;
 
@@ -48,9 +48,16 @@ const ALTERNATIVE_NAME_KEYS: [&str; 5] = ["short_name", "official_name", "alt_na
 const NAME_CHAR_SIMILARITY: f64 = 0.8;
 
 /// Tags that make a named element a POI though their key doesn't, such as bus
-/// stops mapped only as `highway=bus_stop`. Must match `POI_TAGS` in
+/// stops mapped only as `highway=bus_stop` and trailheads. `ford` isn't here:
+/// it's also a tag on ways, which would make any road with a ford a POI. Must match `POI_TAGS` in
 /// `stable_ids/poi_tags.py`.
-const POI_TAGS: [(&str, &str); 2] = [("highway", "bus_stop"), ("railway", "subway_entrance")];
+const POI_TAGS: [(&str, &str); 5] = [
+    ("highway", "bus_stop"),
+    ("highway", "emergency_access_point"),
+    ("highway", "rest_area"),
+    ("highway", "trailhead"),
+    ("railway", "subway_entrance"),
+];
 
 /// POIs that, without a name or brand, are named by their operator (or the
 /// other keys listed), as the planetiler fork labels them. Must match
@@ -367,6 +374,10 @@ mod tests {
         assert!(named("natural", "peak"));
         assert!(named("public_transport", "platform"));
         assert!(named("highway", "bus_stop"));
+        assert!(named("highway", "trailhead"));
+        assert!(named("highway", "emergency_access_point"));
+        assert!(named("highway", "rest_area"));
+        assert!(!named("ford", "yes"));
         assert!(!named("highway", "residential"));
         assert!(!named("disused:shop", "bakery"));
         assert!(!named("addr:interpolation", "even"));

@@ -14,6 +14,12 @@ public class ExtraLayers {
   public static List<Layer> create(Translations translations, PlanetilerConfig config, Stats stats) {
     return List.of(
       // Create classes that extend Layer interface in the addons package, then instantiate them here
+      Contour.metric(config),
+      Contour.imperial(config),
+      new Route(config),
+      new Piste(config),
+      LandmarkLine.landmarks(config),
+      LandmarkLine.barriers(config)
     );
   }
 }

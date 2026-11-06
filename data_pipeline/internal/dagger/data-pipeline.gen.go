@@ -14,6 +14,9 @@ type DataPipelineBuildOpts = core.DataPipelineBuildOpts
 // DataPipelineCategoricalModelsOpts contains options for DataPipeline.CategoricalModels
 type DataPipelineCategoricalModelsOpts = core.DataPipelineCategoricalModelsOpts
 
+// DataPipelineContoursOpts contains options for DataPipeline.Contours
+type DataPipelineContoursOpts = core.DataPipelineContoursOpts
+
 // DataPipelineIndexOpts contains options for DataPipeline.Index
 type DataPipelineIndexOpts = core.DataPipelineIndexOpts
 
@@ -25,3 +28,6 @@ type DataPipelinePlanetilerOpts = core.DataPipelinePlanetilerOpts
 
 // DataPipelineTilesOpts contains options for DataPipeline.Tiles
 type DataPipelineTilesOpts = core.DataPipelineTilesOpts
+
+// DataPipelineTopoTilesOpts contains options for DataPipeline.TopoTiles
+type DataPipelineTopoTilesOpts = core.DataPipelineTopoTilesOpts

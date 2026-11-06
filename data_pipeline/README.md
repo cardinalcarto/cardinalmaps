@@ -41,3 +41,17 @@ Each output can also be built alone with `tiles`, `index` or
 `categorical-models`, which take the same arguments where they apply. The
 categorical models are trained from the unpatched extract, so they aren't
 retrained when only the database changes.
+
+## Cardinal Topo
+
+`topo-tiles` builds the topographic tileset: everything in `tiles`, plus contour lines in
+both metric and imperial (see `topo_pipeline/README.md`).
+
+```
+dagger -m data_pipeline api call topo-tiles --osm=./region.osm.pbf \
+  --dem=./dem --config=./topo.toml --bbox=-125,45,-120,50 -o topo.mbtiles
+```
+
+The steps are also available alone as `contours` and `append-contours`. Finished contour
+chunks stay in the `topo-chunks` cache volume, which the engine's garbage collection can
+reclaim; a rerun recomputes what's missing or changed.

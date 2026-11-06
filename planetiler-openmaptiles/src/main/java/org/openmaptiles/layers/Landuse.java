@@ -66,6 +66,7 @@ import org.openmaptiles.generated.Tables;
  * <a href="https://github.com/openmaptiles/openmaptiles/tree/master/layers/landuse">OpenMapTiles landuse sql files</a>.
  */
 public class Landuse implements
+  OpenMapTilesProfile.OsmAllProcessor,
   OpenMapTilesSchema.Landuse,
   OpenMapTilesProfile.NaturalEarthProcessor,
   ForwardingProfile.LayerPostProcessor,
@@ -104,6 +105,32 @@ public class Landuse implements
     }
   }
 
+  /** Land that's dangerous, restricted or for winter sports, which OpenMapTiles' mappings don't have. */
+  @Override
+  public void processAllOsm(SourceFeature source, FeatureCollector features) {
+    if (!source.canBePolygon()) {
+      return;
+    }
+    String clazz = null;
+    if (source.hasTag("military", "danger_area")) {
+      clazz = "danger_area";
+    } else if (source.hasTag("boundary", "hazard")) {
+      clazz = "hazard";
+    } else if (source.hasTag("landuse", "winter_sports")) {
+      clazz = "winter_sports";
+    } else if (source.hasTag("landuse", "logging")) {
+      clazz = "logging";
+    }
+    if (clazz != null) {
+      features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
+        .setAttr(Fields.CLASS, clazz)
+        .setAttr("hazard", source.getString("hazard"))
+        .setAttr("name", source.getString("name"))
+        .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
+        .setMinZoom(9);
+    }
+  }
+
   @Override
   public void process(Tables.OsmLandusePolygon element, FeatureCollector features) {
     String clazz = coalesce(
@@ -120,6 +147,7 @@ public class Landuse implements
       }
       var feature = features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
         .setAttr(Fields.CLASS, clazz)
+        .setAttr("name", "military".equals(clazz) ? element.source().getString("name") : null)
         .setMinZoom(Z6_CLASSES.contains(clazz) ? 6 : 9);
       if (FieldValues.CLASS_RESIDENTIAL.equals(clazz)) {
         feature

@@ -97,12 +97,18 @@ public class Waterway implements
   );
   private static final String TEMP_REL_ID_ADDR = "_relid";
 
+  private final boolean z12Streams;
   private final Translations translations;
   private final PlanetilerConfig config;
   private final Stats stats;
   private final LongObjectHashMap<AtomicDouble> riverRelationLengths = Hppc.newLongObjectHashMap();
 
   public Waterway(Translations translations, PlanetilerConfig config, Stats stats) {
+    this.z12Streams = config.arguments().getBoolean(
+      "waterway_z12_streams",
+      "waterway layer: show all streams on z12, for a topographic map",
+      false
+    );
     this.config = config;
     this.translations = translations;
     this.stats = stats;
@@ -156,6 +162,7 @@ public class Waterway implements
 
   @Override
   public void processAllOsm(SourceFeature feature, FeatureCollector features) {
+    crossingsAndObstacles(feature, features);
     List<OsmReader.RelationMember<WaterwayRelation>> waterways = feature.relationInfo(WaterwayRelation.class);
     if (waterways != null && !waterways.isEmpty() && feature.canBeLine()) {
       for (var waterway : waterways) {
@@ -184,12 +191,24 @@ public class Waterway implements
 
   // zoom-level 9+ come from OSM river ways
 
+  /** Adds lines OpenMapTiles' mappings don't have, which matter to anyone following or crossing a river. */
+  private void crossingsAndObstacles(SourceFeature source, FeatureCollector features) {
+    if (source.canBeLine() && !source.canBePolygon() && source.hasTag("waterway", "dam", "weir", "rapids")) {
+      features.line(LAYER_NAME)
+        .setBufferPixels(BUFFER_SIZE)
+        .setAttr(Fields.CLASS, source.getString("waterway"))
+        .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+        .setMinZoom(13);
+    }
+  }
+
   @Override
   public void process(Tables.OsmWaterwayLinestring element, FeatureCollector features) {
     String waterway = element.waterway();
     String name = nullIfEmpty(element.name());
     boolean important = "river".equals(waterway) && name != null;
-    int minzoom = important ? 9 : CLASS_MINZOOM.getOrDefault(element.waterway(), 14);
+    int minzoom = important ? 9 : "stream".equals(waterway) && z12Streams ? 12 :
+      CLASS_MINZOOM.getOrDefault(element.waterway(), 14);
     features.line(LAYER_NAME)
       .setBufferPixels(BUFFER_SIZE)
       .setAttr(Fields.CLASS, element.waterway())
@@ -198,6 +217,7 @@ public class Waterway implements
       // details only at higher zoom levels so that named rivers can be merged more aggressively
       .setAttrWithMinzoom(Fields.BRUNNEL, Utils.brunnel(element.isBridge(), element.isTunnel()), 12)
       .setAttrWithMinzoom(Fields.INTERMITTENT, element.isIntermittent() ? 1 : 0, 12)
+      .setAttrWithMinzoom("seasonal", Utils.seasonal(element.source().getString("seasonal")), 12)
       // at lower zoom levels, we'll merge linestrings and limit length/clip afterwards
       .setBufferPixelOverrides(MIN_PIXEL_LENGTHS).setMinPixelSizeBelowZoom(11, 0);
   }

@@ -63,6 +63,7 @@ import org.openmaptiles.generated.Tables;
  * files</a>.
  */
 public class Landcover implements
+  OpenMapTilesProfile.OsmAllProcessor,
   OpenMapTilesSchema.Landcover,
   OpenMapTilesProfile.NaturalEarthProcessor,
   Tables.OsmLandcoverPolygon.Handler,
@@ -122,16 +123,42 @@ public class Landcover implements
   @Override
   public void process(Tables.OsmLandcoverPolygon element, FeatureCollector features) {
     String subclass = element.subclass();
+    // natural=wetland usually says which kind in wetland=*, and a bog isn't a marsh to walk through
+    if (FieldValues.SUBCLASS_WETLAND.equals(subclass)) {
+      String kind = element.source().getString("wetland");
+      if (kind != null && FieldValues.CLASS_WETLAND.equals(getClassFromSubclass(kind))) {
+        subclass = kind;
+      }
+    }
     String clazz = getClassFromSubclass(subclass);
     if (clazz != null) {
-      features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
-        .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
-        // default is 0.1, this helps reduce size of some heavy z7-10 tiles
-        .setPixelToleranceBelowZoom(10, 0.25)
-        .setAttr(Fields.CLASS, clazz)
-        .setAttr(Fields.SUBCLASS, subclass)
-        .setNumPointsAttr(TEMP_NUM_POINTS_ATTR)
-        .setMinZoom(7);
+      polygon(features, clazz, subclass);
+    }
+  }
+
+  private void polygon(FeatureCollector features, String clazz, String subclass) {
+    features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
+      .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
+      // default is 0.1, this helps reduce size of some heavy z7-10 tiles
+      .setPixelToleranceBelowZoom(10, 0.25)
+      .setAttr(Fields.CLASS, clazz)
+      .setAttr(Fields.SUBCLASS, subclass)
+      .setNumPointsAttr(TEMP_NUM_POINTS_ATTR)
+      .setMinZoom(7);
+  }
+
+  /** Adds ground that OpenMapTiles' mappings don't have. */
+  @Override
+  public void processAllOsm(SourceFeature source, FeatureCollector features) {
+    if (!source.canBePolygon() || Tables.OsmLandcoverPolygon.MAPPING.evaluate(source)) {
+      return;
+    }
+    if (source.hasTag("natural", "shingle")) {
+      polygon(features, FieldValues.CLASS_ROCK, "shingle");
+    } else if (source.hasTag("natural", "mud")) {
+      polygon(features, FieldValues.CLASS_WETLAND, "mud");
+    } else if (source.hasTag("landcover", "trees")) {
+      polygon(features, FieldValues.CLASS_WOOD, "trees");
     }
   }
 

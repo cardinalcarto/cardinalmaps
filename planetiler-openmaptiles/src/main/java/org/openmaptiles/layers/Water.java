@@ -171,7 +171,8 @@ public class Water implements
 
   @Override
   public void process(Tables.OsmWaterPolygon element, FeatureCollector features) {
-    if (!"bay".equals(element.natural())) {
+    // a spring mapped as an area is in the poi layer, as the water source it is rather than a lake
+    if (!"bay".equals(element.natural()) && !"spring".equals(element.natural())) {
       String clazz = classMapping.getOrElse(element.source(), FieldValues.CLASS_LAKE);
       features.polygon(LAYER_NAME)
         .setBufferPixels(BUFFER_SIZE)
@@ -179,6 +180,7 @@ public class Water implements
         .setMinZoom(6)
         .setAttr(Fields.ID, element.source().id())
         .setAttr(Fields.INTERMITTENT, element.isIntermittent() ? 1 : 0)
+        .setAttrWithMinzoom("seasonal", Utils.seasonal(element.source().getString("seasonal")), 11)
         .setAttrWithMinzoom(Fields.BRUNNEL, Utils.brunnel(element.isBridge(), element.isTunnel()), 12)
         .setAttr(Fields.CLASS, clazz);
 

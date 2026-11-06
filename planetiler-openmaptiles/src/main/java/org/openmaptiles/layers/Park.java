@@ -55,6 +55,9 @@ import com.onthegomap.planetiler.util.SortKey;
 import com.onthegomap.planetiler.util.Translations;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import com.onthegomap.planetiler.reader.SourceFeature;
+import org.openmaptiles.OpenMapTilesProfile;
 import org.openmaptiles.generated.OpenMapTilesSchema;
 import org.openmaptiles.generated.Tables;
 import org.openmaptiles.util.OmtLanguageUtils;
@@ -67,6 +70,7 @@ import org.openmaptiles.util.OmtLanguageUtils;
  * <a href="https://github.com/openmaptiles/openmaptiles/tree/master/layers/park">OpenMapTiles park sql files</a>.
  */
 public class Park implements
+  OpenMapTilesProfile.OsmAllProcessor,
   OpenMapTilesSchema.Park,
   Tables.OsmParkPolygon.Handler,
   ForwardingProfile.LayerPostProcessor {
@@ -77,6 +81,7 @@ public class Park implements
   private static final double LOG2 = Math.log(2);
   private static final double SMALLEST_PARK_WORLD_AREA = Math.pow(4, -26); // 2^14 tiles, 2^12 pixels per tile
   private static final Map<String, String> PROTECT_CLASS_MAP = Map.ofEntries(
+    entry("1", "conservation"),
     entry("1a", "conservation"),
     entry("1b", "wilderness_preserve"),
     entry("2", "national_park"),
@@ -85,6 +90,30 @@ public class Park implements
     entry("5", "conservation"),
     entry("6", "sustainable")
   );
+
+  /** Values of {@code protected_area=*} that say what class a park is, and that class. */
+  private static final Map<String, String> PROTECTED_AREA_CLASSES = Map.ofEntries(
+    entry("national_park", "national_park"),
+    entry("nature_reserve", "nature_reserve"),
+    entry("wilderness", "wilderness_preserve"),
+    entry("wilderness_preserve", "wilderness_preserve"),
+    entry("conservation", "conservation"),
+    entry("conservation_easement", "conservation_easement"),
+    entry("wildlife_refuge", "wildlife_refuge"),
+    entry("game_land", "game_land"),
+    entry("forest_reserve", "forest_reserve"),
+    entry("watershed_reserve", "watershed_reserve"),
+    entry("sustainable", "sustainable"),
+    entry("recreation", "recreation"),
+    entry("historic_site", "historic_site"),
+    entry("historic_district", "historic_district"),
+    entry("habitat", "habitat"),
+    entry("protected_area", "protected_area")
+  );
+  private static final Set<String> OWNERSHIPS =
+    Set.of("national", "state", "county", "municipal", "private", "public", "tribal");
+  private static final Set<String> ACCESS_VALUES =
+    Set.of("yes", "no", "private", "permit", "permissive", "customers", "destination");
 
   private final Translations translations;
   private final Stats stats;
@@ -100,16 +129,19 @@ public class Park implements
     } else if ("national_park".equals(element.boundary())) {
       return "national_park";
     } else if ("protected_area".equals(element.boundary())) {
+      // protect_class and protection_title are their own attributes, so this stays a small set for a style to use
       return coalesce(
-        nullIfEmpty(element.protectedArea()),
+        nullIfEmpty(element.protectedArea()) == null ? null : PROTECTED_AREA_CLASSES.get(element.protectedArea()),
         nullIfEmpty(element.protectClass()) == null ? null : PROTECT_CLASS_MAP.get(element.protectClass()),
-        nullIfEmpty(element.protectionTitle()),
         "protected_area"
       );
     } else if ("nature_reserve".equals(element.leisure())) {
       return "nature_reserve";
     } else if ("recreation_ground".equals(element.leisure())) {
       return "recreation_ground";
+    } else if ("aboriginal_lands".equals(element.boundary())) {
+      // not a nature reserve: often not public land at all, whatever it looks like on a map
+      return "aboriginal_lands";
     } else if (element.historic() != null && !element.historic().isEmpty()) {
       return "historic";
     } else {
@@ -117,41 +149,65 @@ public class Park implements
     }
   }
 
+  /** Adds land OpenMapTiles' mappings don't have: {@code boundary=forest} and {@code landuse=conservation}. */
+  @Override
+  public void processAllOsm(SourceFeature source, FeatureCollector features) {
+    if (!source.canBePolygon() || Tables.OsmParkPolygon.MAPPING.evaluate(source)) {
+      return;
+    }
+    if (source.hasTag("boundary", "forest")) {
+      park(source, "forest", nullIfEmpty(source.getString("name")), features);
+    } else if (source.hasTag("landuse", "conservation")) {
+      park(source, "conservation", nullIfEmpty(source.getString("name")), features);
+    }
+  }
+
   @Override
   public void process(Tables.OsmParkPolygon element, FeatureCollector features) {
-    String clazz = parkClass(element);
+    park(element.source(), parkClass(element), element.name(), features);
+  }
 
+  private void park(SourceFeature source, String clazz, String name, FeatureCollector features) {
     // park shape
     var outline = features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
       .setAttrWithMinzoom(Fields.CLASS, clazz, 5)
+      .setAttrWithMinzoom("protect_class", nullIfEmpty(source.getString("protect_class")), 8)
+      .setAttrWithMinzoom("protection_title", nullIfEmpty(source.getString("protection_title")), 8)
+      .setAttrWithMinzoom("operator", nullIfEmpty(source.getString("operator")), 8)
+      .setAttrWithMinzoom("ownership", whitelisted(source.getString("ownership"), OWNERSHIPS), 8)
+      .setAttrWithMinzoom("access", whitelisted(source.getString("access"), ACCESS_VALUES), 8)
       .setMinPixelSize(2)
       .setMinZoom(4);
 
     // park name label point (if it has one)
-    if (element.name() != null) {
+    if (name != null) {
       try {
-        double area = element.source().area();
+        double area = source.area();
         int minzoom = getMinZoomForArea(area);
 
-        var names = OmtLanguageUtils.getNamesWithoutTranslations(element.source().tags());
+        var names = OmtLanguageUtils.getNamesWithoutTranslations(source.tags());
 
         outline.putAttrsWithMinzoom(names, 5);
 
         features.pointOnSurface(LAYER_NAME).setBufferPixels(256)
           .setAttr(Fields.CLASS, clazz)
           .putAttrs(names)
-          .putAttrs(OmtLanguageUtils.getNames(element.source().tags(), translations))
+          .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
           .setPointLabelGridPixelSize(14, 100)
           .setSortKey(SortKey
             .orderByTruesFirst("national_park".equals(clazz))
-            .thenByTruesFirst(element.source().hasTag("wikipedia") || element.source().hasTag("wikidata"))
+            .thenByTruesFirst(source.hasTag("wikipedia") || source.hasTag("wikidata"))
             .thenByLog(area, 1d, SMALLEST_PARK_WORLD_AREA, 1 << (SORT_KEY_BITS - 2) - 1)
             .get()
           ).setMinZoom(minzoom);
       } catch (GeometryException e) {
-        e.log(stats, "omt_park_area", "Unable to get park area for " + element.source().id());
+        e.log(stats, "omt_park_area", "Unable to get park area for " + source.id());
       }
     }
+  }
+
+  private static String whitelisted(String value, Set<String> allowed) {
+    return value != null && allowed.contains(value) ? value : null;
   }
 
   private int getMinZoomForArea(double area) {
