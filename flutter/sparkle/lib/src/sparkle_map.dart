@@ -90,6 +90,16 @@ class SparkleMapController {
   /// Whether the map is set up, so the camera can be queried and moved.
   bool get isReady => _map != null;
 
+  final _firstComplete = Completer<void>();
+
+  /// Completes once the map has drawn a frame with every visible tile loaded, so it
+  /// shows the whole view rather than stand-ins: say, before covering it with a dialog.
+  Future<void> get firstComplete => _firstComplete.future;
+
+  void _drewComplete() {
+    if (!_firstComplete.isCompleted) _firstComplete.complete();
+  }
+
   /// Where the camera is.
   rust.CameraState? get camera => _map?.camera();
 
@@ -498,6 +508,7 @@ class _SparkleMapState extends State<SparkleMap> {
       final gap = _sinceFrame.elapsedMicroseconds; // PERF-TEMP
       _sinceFrame.reset(); // PERF-TEMP
       out = map.frame();
+      if (out.complete) widget.controller?._drewComplete();
       if (_bench && _benchFrame == -2 && out.complete) {
         _benchFrame = -1;
         Timer(const Duration(seconds: 3), () {
