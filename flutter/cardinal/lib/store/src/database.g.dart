@@ -26,7 +26,9 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _versionMeta = const VerificationMeta('version');
+  static const VerificationMeta _versionMeta = const VerificationMeta(
+    'version',
+  );
   @override
   late final GeneratedColumn<int> version = GeneratedColumn<int>(
     'version',
@@ -44,7 +46,9 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _countryCodeMeta = const VerificationMeta('countryCode');
+  static const VerificationMeta _countryCodeMeta = const VerificationMeta(
+    'countryCode',
+  );
   @override
   late final GeneratedColumn<String> countryCode = GeneratedColumn<String>(
     'country_code',
@@ -53,7 +57,9 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _centerLonMeta = const VerificationMeta('centerLon');
+  static const VerificationMeta _centerLonMeta = const VerificationMeta(
+    'centerLon',
+  );
   @override
   late final GeneratedColumn<double> centerLon = GeneratedColumn<double>(
     'center_lon',
@@ -62,7 +68,9 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
     type: DriftSqlType.double,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _centerLatMeta = const VerificationMeta('centerLat');
+  static const VerificationMeta _centerLatMeta = const VerificationMeta(
+    'centerLat',
+  );
   @override
   late final GeneratedColumn<double> centerLat = GeneratedColumn<double>(
     'center_lat',
@@ -71,7 +79,9 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
     type: DriftSqlType.double,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _bboxWestMeta = const VerificationMeta('bboxWest');
+  static const VerificationMeta _bboxWestMeta = const VerificationMeta(
+    'bboxWest',
+  );
   @override
   late final GeneratedColumn<double> bboxWest = GeneratedColumn<double>(
     'bbox_west',
@@ -80,7 +90,9 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
     type: DriftSqlType.double,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _bboxSouthMeta = const VerificationMeta('bboxSouth');
+  static const VerificationMeta _bboxSouthMeta = const VerificationMeta(
+    'bboxSouth',
+  );
   @override
   late final GeneratedColumn<double> bboxSouth = GeneratedColumn<double>(
     'bbox_south',
@@ -89,7 +101,9 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
     type: DriftSqlType.double,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _bboxEastMeta = const VerificationMeta('bboxEast');
+  static const VerificationMeta _bboxEastMeta = const VerificationMeta(
+    'bboxEast',
+  );
   @override
   late final GeneratedColumn<double> bboxEast = GeneratedColumn<double>(
     'bbox_east',
@@ -98,7 +112,9 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
     type: DriftSqlType.double,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _bboxNorthMeta = const VerificationMeta('bboxNorth');
+  static const VerificationMeta _bboxNorthMeta = const VerificationMeta(
+    'bboxNorth',
+  );
   @override
   late final GeneratedColumn<double> bboxNorth = GeneratedColumn<double>(
     'bbox_north',
@@ -116,7 +132,9 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _addressMeta = const VerificationMeta('address');
+  static const VerificationMeta _addressMeta = const VerificationMeta(
+    'address',
+  );
   @override
   late final GeneratedColumn<String> address = GeneratedColumn<String>(
     'address',
@@ -143,7 +161,9 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta('updatedAt');
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
   @override
   late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
     'updated_at',
@@ -152,7 +172,9 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
     type: DriftSqlType.dateTime,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _accessedAtMeta = const VerificationMeta('accessedAt');
+  static const VerificationMeta _accessedAtMeta = const VerificationMeta(
+    'accessedAt',
+  );
   @override
   late final GeneratedColumn<DateTime> accessedAt = GeneratedColumn<DateTime>(
     'accessed_at',
@@ -187,7 +209,10 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
   String get actualTableName => $name;
   static const String $name = 'places';
   @override
-  VerificationContext validateIntegrity(Insertable<PlaceRow> instance, {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<PlaceRow> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -196,20 +221,32 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
       context.missing(_idMeta);
     }
     if (data.containsKey('kind')) {
-      context.handle(_kindMeta, kind.isAcceptableOrUnknown(data['kind']!, _kindMeta));
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
     } else if (isInserting) {
       context.missing(_kindMeta);
     }
     if (data.containsKey('version')) {
-      context.handle(_versionMeta, version.isAcceptableOrUnknown(data['version']!, _versionMeta));
+      context.handle(
+        _versionMeta,
+        version.isAcceptableOrUnknown(data['version']!, _versionMeta),
+      );
     }
     if (data.containsKey('name')) {
-      context.handle(_nameMeta, name.isAcceptableOrUnknown(data['name']!, _nameMeta));
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
     }
     if (data.containsKey('country_code')) {
       context.handle(
         _countryCodeMeta,
-        countryCode.isAcceptableOrUnknown(data['country_code']!, _countryCodeMeta),
+        countryCode.isAcceptableOrUnknown(
+          data['country_code']!,
+          _countryCodeMeta,
+        ),
       );
     }
     if (data.containsKey('center_lon')) {
@@ -253,16 +290,28 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
       );
     }
     if (data.containsKey('shape')) {
-      context.handle(_shapeMeta, shape.isAcceptableOrUnknown(data['shape']!, _shapeMeta));
+      context.handle(
+        _shapeMeta,
+        shape.isAcceptableOrUnknown(data['shape']!, _shapeMeta),
+      );
     }
     if (data.containsKey('address')) {
-      context.handle(_addressMeta, address.isAcceptableOrUnknown(data['address']!, _addressMeta));
+      context.handle(
+        _addressMeta,
+        address.isAcceptableOrUnknown(data['address']!, _addressMeta),
+      );
     }
     if (data.containsKey('admins')) {
-      context.handle(_adminsMeta, admins.isAcceptableOrUnknown(data['admins']!, _adminsMeta));
+      context.handle(
+        _adminsMeta,
+        admins.isAcceptableOrUnknown(data['admins']!, _adminsMeta),
+      );
     }
     if (data.containsKey('tags')) {
-      context.handle(_tagsMeta, tags.isAcceptableOrUnknown(data['tags']!, _tagsMeta));
+      context.handle(
+        _tagsMeta,
+        tags.isAcceptableOrUnknown(data['tags']!, _tagsMeta),
+      );
     } else if (isInserting) {
       context.missing(_tagsMeta);
     }
@@ -291,13 +340,22 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
   PlaceRow map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return PlaceRow(
-      id: attachedDatabase.typeMapping.read(DriftSqlType.string, data['${effectivePrefix}id'])!,
-      kind: attachedDatabase.typeMapping.read(DriftSqlType.string, data['${effectivePrefix}kind'])!,
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
       version: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}version'],
       ),
-      name: attachedDatabase.typeMapping.read(DriftSqlType.string, data['${effectivePrefix}name']),
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      ),
       countryCode: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}country_code'],
@@ -338,7 +396,10 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
         DriftSqlType.string,
         data['${effectivePrefix}admins'],
       ),
-      tags: attachedDatabase.typeMapping.read(DriftSqlType.string, data['${effectivePrefix}tags'])!,
+      tags: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}tags'],
+      )!,
       updatedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
@@ -447,25 +508,46 @@ class PlaceRow extends DataClass implements Insertable<PlaceRow> {
     return PlacesCompanion(
       id: Value(id),
       kind: Value(kind),
-      version: version == null && nullToAbsent ? const Value.absent() : Value(version),
+      version: version == null && nullToAbsent
+          ? const Value.absent()
+          : Value(version),
       name: name == null && nullToAbsent ? const Value.absent() : Value(name),
-      countryCode: countryCode == null && nullToAbsent ? const Value.absent() : Value(countryCode),
+      countryCode: countryCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(countryCode),
       centerLon: Value(centerLon),
       centerLat: Value(centerLat),
-      bboxWest: bboxWest == null && nullToAbsent ? const Value.absent() : Value(bboxWest),
-      bboxSouth: bboxSouth == null && nullToAbsent ? const Value.absent() : Value(bboxSouth),
-      bboxEast: bboxEast == null && nullToAbsent ? const Value.absent() : Value(bboxEast),
-      bboxNorth: bboxNorth == null && nullToAbsent ? const Value.absent() : Value(bboxNorth),
-      shape: shape == null && nullToAbsent ? const Value.absent() : Value(shape),
-      address: address == null && nullToAbsent ? const Value.absent() : Value(address),
-      admins: admins == null && nullToAbsent ? const Value.absent() : Value(admins),
+      bboxWest: bboxWest == null && nullToAbsent
+          ? const Value.absent()
+          : Value(bboxWest),
+      bboxSouth: bboxSouth == null && nullToAbsent
+          ? const Value.absent()
+          : Value(bboxSouth),
+      bboxEast: bboxEast == null && nullToAbsent
+          ? const Value.absent()
+          : Value(bboxEast),
+      bboxNorth: bboxNorth == null && nullToAbsent
+          ? const Value.absent()
+          : Value(bboxNorth),
+      shape: shape == null && nullToAbsent
+          ? const Value.absent()
+          : Value(shape),
+      address: address == null && nullToAbsent
+          ? const Value.absent()
+          : Value(address),
+      admins: admins == null && nullToAbsent
+          ? const Value.absent()
+          : Value(admins),
       tags: Value(tags),
       updatedAt: Value(updatedAt),
       accessedAt: Value(accessedAt),
     );
   }
 
-  factory PlaceRow.fromJson(Map<String, dynamic> json, {ValueSerializer? serializer}) {
+  factory PlaceRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return PlaceRow(
       id: serializer.fromJson<String>(json['id']),
@@ -554,7 +636,9 @@ class PlaceRow extends DataClass implements Insertable<PlaceRow> {
       kind: data.kind.present ? data.kind.value : this.kind,
       version: data.version.present ? data.version.value : this.version,
       name: data.name.present ? data.name.value : this.name,
-      countryCode: data.countryCode.present ? data.countryCode.value : this.countryCode,
+      countryCode: data.countryCode.present
+          ? data.countryCode.value
+          : this.countryCode,
       centerLon: data.centerLon.present ? data.centerLon.value : this.centerLon,
       centerLat: data.centerLat.present ? data.centerLat.value : this.centerLat,
       bboxWest: data.bboxWest.present ? data.bboxWest.value : this.bboxWest,
@@ -566,7 +650,9 @@ class PlaceRow extends DataClass implements Insertable<PlaceRow> {
       admins: data.admins.present ? data.admins.value : this.admins,
       tags: data.tags.present ? data.tags.value : this.tags,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-      accessedAt: data.accessedAt.present ? data.accessedAt.value : this.accessedAt,
+      accessedAt: data.accessedAt.present
+          ? data.accessedAt.value
+          : this.accessedAt,
     );
   }
 
@@ -872,15 +958,226 @@ class PlacesCompanion extends UpdateCompanion<PlaceRow> {
   }
 }
 
+class $SettingsTable extends Settings
+    with TableInfo<$SettingsTable, SettingRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SettingsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _keyMeta = const VerificationMeta('key');
+  @override
+  late final GeneratedColumn<String> key = GeneratedColumn<String>(
+    'key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _valueMeta = const VerificationMeta('value');
+  @override
+  late final GeneratedColumn<String> value = GeneratedColumn<String>(
+    'value',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [key, value];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'settings';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<SettingRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('key')) {
+      context.handle(
+        _keyMeta,
+        key.isAcceptableOrUnknown(data['key']!, _keyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_keyMeta);
+    }
+    if (data.containsKey('value')) {
+      context.handle(
+        _valueMeta,
+        value.isAcceptableOrUnknown(data['value']!, _valueMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_valueMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {key};
+  @override
+  SettingRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SettingRow(
+      key: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}key'],
+      )!,
+      value: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}value'],
+      )!,
+    );
+  }
+
+  @override
+  $SettingsTable createAlias(String alias) {
+    return $SettingsTable(attachedDatabase, alias);
+  }
+}
+
+class SettingRow extends DataClass implements Insertable<SettingRow> {
+  final String key;
+
+  /// The value as JSON.
+  final String value;
+  const SettingRow({required this.key, required this.value});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['key'] = Variable<String>(key);
+    map['value'] = Variable<String>(value);
+    return map;
+  }
+
+  SettingsCompanion toCompanion(bool nullToAbsent) {
+    return SettingsCompanion(key: Value(key), value: Value(value));
+  }
+
+  factory SettingRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SettingRow(
+      key: serializer.fromJson<String>(json['key']),
+      value: serializer.fromJson<String>(json['value']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'key': serializer.toJson<String>(key),
+      'value': serializer.toJson<String>(value),
+    };
+  }
+
+  SettingRow copyWith({String? key, String? value}) =>
+      SettingRow(key: key ?? this.key, value: value ?? this.value);
+  SettingRow copyWithCompanion(SettingsCompanion data) {
+    return SettingRow(
+      key: data.key.present ? data.key.value : this.key,
+      value: data.value.present ? data.value.value : this.value,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SettingRow(')
+          ..write('key: $key, ')
+          ..write('value: $value')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(key, value);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SettingRow &&
+          other.key == this.key &&
+          other.value == this.value);
+}
+
+class SettingsCompanion extends UpdateCompanion<SettingRow> {
+  final Value<String> key;
+  final Value<String> value;
+  final Value<int> rowid;
+  const SettingsCompanion({
+    this.key = const Value.absent(),
+    this.value = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  SettingsCompanion.insert({
+    required String key,
+    required String value,
+    this.rowid = const Value.absent(),
+  }) : key = Value(key),
+       value = Value(value);
+  static Insertable<SettingRow> custom({
+    Expression<String>? key,
+    Expression<String>? value,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (key != null) 'key': key,
+      if (value != null) 'value': value,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  SettingsCompanion copyWith({
+    Value<String>? key,
+    Value<String>? value,
+    Value<int>? rowid,
+  }) {
+    return SettingsCompanion(
+      key: key ?? this.key,
+      value: value ?? this.value,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (key.present) {
+      map['key'] = Variable<String>(key.value);
+    }
+    if (value.present) {
+      map['value'] = Variable<String>(value.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SettingsCompanion(')
+          ..write('key: $key, ')
+          ..write('value: $value, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$CardinalDatabase extends GeneratedDatabase {
   _$CardinalDatabase(QueryExecutor e) : super(e);
   $CardinalDatabaseManager get managers => $CardinalDatabaseManager(this);
   late final $PlacesTable places = $PlacesTable(this);
+  late final $SettingsTable settings = $SettingsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
-  List<DatabaseSchemaEntity> get allSchemaEntities => [places];
+  List<DatabaseSchemaEntity> get allSchemaEntities => [places, settings];
 }
 
 typedef $$PlacesTableCreateCompanionBuilder = PlacesCompanion Function({
@@ -924,7 +1221,8 @@ typedef $$PlacesTableUpdateCompanionBuilder = PlacesCompanion Function({
   Value<int> rowid,
 });
 
-class $$PlacesTableFilterComposer extends Composer<_$CardinalDatabase, $PlacesTable> {
+class $$PlacesTableFilterComposer
+    extends Composer<_$CardinalDatabase, $PlacesTable> {
   $$PlacesTableFilterComposer({
     required super.$db,
     required super.$table,
@@ -932,59 +1230,94 @@ class $$PlacesTableFilterComposer extends Composer<_$CardinalDatabase, $PlacesTa
     super.$addJoinBuilderToRootComposer,
     super.$removeJoinBuilderFromRootComposer,
   });
-  ColumnFilters<String> get id =>
-      $composableBuilder(column: $table.id, builder: (column) => ColumnFilters(column));
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<String> get kind =>
-      $composableBuilder(column: $table.kind, builder: (column) => ColumnFilters(column));
+  ColumnFilters<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<int> get version =>
-      $composableBuilder(column: $table.version, builder: (column) => ColumnFilters(column));
+  ColumnFilters<int> get version => $composableBuilder(
+    column: $table.version,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<String> get name =>
-      $composableBuilder(column: $table.name, builder: (column) => ColumnFilters(column));
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<String> get countryCode =>
-      $composableBuilder(column: $table.countryCode, builder: (column) => ColumnFilters(column));
+  ColumnFilters<String> get countryCode => $composableBuilder(
+    column: $table.countryCode,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<double> get centerLon =>
-      $composableBuilder(column: $table.centerLon, builder: (column) => ColumnFilters(column));
+  ColumnFilters<double> get centerLon => $composableBuilder(
+    column: $table.centerLon,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<double> get centerLat =>
-      $composableBuilder(column: $table.centerLat, builder: (column) => ColumnFilters(column));
+  ColumnFilters<double> get centerLat => $composableBuilder(
+    column: $table.centerLat,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<double> get bboxWest =>
-      $composableBuilder(column: $table.bboxWest, builder: (column) => ColumnFilters(column));
+  ColumnFilters<double> get bboxWest => $composableBuilder(
+    column: $table.bboxWest,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<double> get bboxSouth =>
-      $composableBuilder(column: $table.bboxSouth, builder: (column) => ColumnFilters(column));
+  ColumnFilters<double> get bboxSouth => $composableBuilder(
+    column: $table.bboxSouth,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<double> get bboxEast =>
-      $composableBuilder(column: $table.bboxEast, builder: (column) => ColumnFilters(column));
+  ColumnFilters<double> get bboxEast => $composableBuilder(
+    column: $table.bboxEast,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<double> get bboxNorth =>
-      $composableBuilder(column: $table.bboxNorth, builder: (column) => ColumnFilters(column));
+  ColumnFilters<double> get bboxNorth => $composableBuilder(
+    column: $table.bboxNorth,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<String> get shape =>
-      $composableBuilder(column: $table.shape, builder: (column) => ColumnFilters(column));
+  ColumnFilters<String> get shape => $composableBuilder(
+    column: $table.shape,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<String> get address =>
-      $composableBuilder(column: $table.address, builder: (column) => ColumnFilters(column));
+  ColumnFilters<String> get address => $composableBuilder(
+    column: $table.address,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<String> get admins =>
-      $composableBuilder(column: $table.admins, builder: (column) => ColumnFilters(column));
+  ColumnFilters<String> get admins => $composableBuilder(
+    column: $table.admins,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<String> get tags =>
-      $composableBuilder(column: $table.tags, builder: (column) => ColumnFilters(column));
+  ColumnFilters<String> get tags => $composableBuilder(
+    column: $table.tags,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<DateTime> get updatedAt =>
-      $composableBuilder(column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
-  ColumnFilters<DateTime> get accessedAt =>
-      $composableBuilder(column: $table.accessedAt, builder: (column) => ColumnFilters(column));
+  ColumnFilters<DateTime> get accessedAt => $composableBuilder(
+    column: $table.accessedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 }
 
-class $$PlacesTableOrderingComposer extends Composer<_$CardinalDatabase, $PlacesTable> {
+class $$PlacesTableOrderingComposer
+    extends Composer<_$CardinalDatabase, $PlacesTable> {
   $$PlacesTableOrderingComposer({
     required super.$db,
     required super.$table,
@@ -992,59 +1325,94 @@ class $$PlacesTableOrderingComposer extends Composer<_$CardinalDatabase, $Places
     super.$addJoinBuilderToRootComposer,
     super.$removeJoinBuilderFromRootComposer,
   });
-  ColumnOrderings<String> get id =>
-      $composableBuilder(column: $table.id, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<String> get kind =>
-      $composableBuilder(column: $table.kind, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<int> get version =>
-      $composableBuilder(column: $table.version, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<int> get version => $composableBuilder(
+    column: $table.version,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<String> get name =>
-      $composableBuilder(column: $table.name, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<String> get countryCode =>
-      $composableBuilder(column: $table.countryCode, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<String> get countryCode => $composableBuilder(
+    column: $table.countryCode,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<double> get centerLon =>
-      $composableBuilder(column: $table.centerLon, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<double> get centerLon => $composableBuilder(
+    column: $table.centerLon,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<double> get centerLat =>
-      $composableBuilder(column: $table.centerLat, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<double> get centerLat => $composableBuilder(
+    column: $table.centerLat,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<double> get bboxWest =>
-      $composableBuilder(column: $table.bboxWest, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<double> get bboxWest => $composableBuilder(
+    column: $table.bboxWest,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<double> get bboxSouth =>
-      $composableBuilder(column: $table.bboxSouth, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<double> get bboxSouth => $composableBuilder(
+    column: $table.bboxSouth,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<double> get bboxEast =>
-      $composableBuilder(column: $table.bboxEast, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<double> get bboxEast => $composableBuilder(
+    column: $table.bboxEast,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<double> get bboxNorth =>
-      $composableBuilder(column: $table.bboxNorth, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<double> get bboxNorth => $composableBuilder(
+    column: $table.bboxNorth,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<String> get shape =>
-      $composableBuilder(column: $table.shape, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<String> get shape => $composableBuilder(
+    column: $table.shape,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<String> get address =>
-      $composableBuilder(column: $table.address, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<String> get address => $composableBuilder(
+    column: $table.address,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<String> get admins =>
-      $composableBuilder(column: $table.admins, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<String> get admins => $composableBuilder(
+    column: $table.admins,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<String> get tags =>
-      $composableBuilder(column: $table.tags, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<String> get tags => $composableBuilder(
+    column: $table.tags,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<DateTime> get updatedAt =>
-      $composableBuilder(column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
-  ColumnOrderings<DateTime> get accessedAt =>
-      $composableBuilder(column: $table.accessedAt, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<DateTime> get accessedAt => $composableBuilder(
+    column: $table.accessedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
-class $$PlacesTableAnnotationComposer extends Composer<_$CardinalDatabase, $PlacesTable> {
+class $$PlacesTableAnnotationComposer
+    extends Composer<_$CardinalDatabase, $PlacesTable> {
   $$PlacesTableAnnotationComposer({
     required super.$db,
     required super.$table,
@@ -1064,8 +1432,10 @@ class $$PlacesTableAnnotationComposer extends Composer<_$CardinalDatabase, $Plac
   GeneratedColumn<String> get name =>
       $composableBuilder(column: $table.name, builder: (column) => column);
 
-  GeneratedColumn<String> get countryCode =>
-      $composableBuilder(column: $table.countryCode, builder: (column) => column);
+  GeneratedColumn<String> get countryCode => $composableBuilder(
+    column: $table.countryCode,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<double> get centerLon =>
       $composableBuilder(column: $table.centerLon, builder: (column) => column);
@@ -1100,8 +1470,10 @@ class $$PlacesTableAnnotationComposer extends Composer<_$CardinalDatabase, $Plac
   GeneratedColumn<DateTime> get updatedAt =>
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
 
-  GeneratedColumn<DateTime> get accessedAt =>
-      $composableBuilder(column: $table.accessedAt, builder: (column) => column);
+  GeneratedColumn<DateTime> get accessedAt => $composableBuilder(
+    column: $table.accessedAt,
+    builder: (column) => column,
+  );
 }
 
 class $$PlacesTableTableManager
@@ -1115,7 +1487,10 @@ class $$PlacesTableTableManager
           $$PlacesTableAnnotationComposer,
           $$PlacesTableCreateCompanionBuilder,
           $$PlacesTableUpdateCompanionBuilder,
-          (PlaceRow, BaseReferences<_$CardinalDatabase, $PlacesTable, PlaceRow>),
+          (
+            PlaceRow,
+            BaseReferences<_$CardinalDatabase, $PlacesTable, PlaceRow>,
+          ),
           PlaceRow,
           PrefetchHooks Function()
         > {
@@ -1124,8 +1499,10 @@ class $$PlacesTableTableManager
         TableManagerState(
           db: db,
           table: table,
-          createFilteringComposer: () => $$PlacesTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () => $$PlacesTableOrderingComposer($db: db, $table: table),
+          createFilteringComposer: () =>
+              $$PlacesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$PlacesTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
               $$PlacesTableAnnotationComposer($db: db, $table: table),
           updateCompanionCallback:
@@ -1212,7 +1589,11 @@ class $$PlacesTableTableManager
               .map(
                 (e) => (
                   e.readTable<$PlacesTable, PlaceRow>(table),
-                  BaseReferences<_$CardinalDatabase, $PlacesTable, PlaceRow>(db, table, e),
+                  BaseReferences<_$CardinalDatabase, $PlacesTable, PlaceRow>(
+                    db,
+                    table,
+                    e,
+                  ),
                 ),
               )
               .toList(),
@@ -1235,9 +1616,152 @@ typedef $$PlacesTableProcessedTableManager =
       PlaceRow,
       PrefetchHooks Function()
     >;
+typedef $$SettingsTableCreateCompanionBuilder = SettingsCompanion Function({
+  required String key,
+  required String value,
+  Value<int> rowid,
+});
+typedef $$SettingsTableUpdateCompanionBuilder = SettingsCompanion Function({
+  Value<String> key,
+  Value<String> value,
+  Value<int> rowid,
+});
+
+class $$SettingsTableFilterComposer
+    extends Composer<_$CardinalDatabase, $SettingsTable> {
+  $$SettingsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get key => $composableBuilder(
+    column: $table.key,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get value => $composableBuilder(
+    column: $table.value,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$SettingsTableOrderingComposer
+    extends Composer<_$CardinalDatabase, $SettingsTable> {
+  $$SettingsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get key => $composableBuilder(
+    column: $table.key,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get value => $composableBuilder(
+    column: $table.value,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$SettingsTableAnnotationComposer
+    extends Composer<_$CardinalDatabase, $SettingsTable> {
+  $$SettingsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get key =>
+      $composableBuilder(column: $table.key, builder: (column) => column);
+
+  GeneratedColumn<String> get value =>
+      $composableBuilder(column: $table.value, builder: (column) => column);
+}
+
+class $$SettingsTableTableManager
+    extends
+        RootTableManager<
+          _$CardinalDatabase,
+          $SettingsTable,
+          SettingRow,
+          $$SettingsTableFilterComposer,
+          $$SettingsTableOrderingComposer,
+          $$SettingsTableAnnotationComposer,
+          $$SettingsTableCreateCompanionBuilder,
+          $$SettingsTableUpdateCompanionBuilder,
+          (
+            SettingRow,
+            BaseReferences<_$CardinalDatabase, $SettingsTable, SettingRow>,
+          ),
+          SettingRow,
+          PrefetchHooks Function()
+        > {
+  $$SettingsTableTableManager(_$CardinalDatabase db, $SettingsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SettingsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SettingsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SettingsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> key = const Value.absent(),
+            Value<String> value = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) => SettingsCompanion(key: key, value: value, rowid: rowid),
+          createCompanionCallback: ({
+            required String key,
+            required String value,
+            Value<int> rowid = const Value.absent(),
+          }) => SettingsCompanion.insert(key: key, value: value, rowid: rowid),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$SettingsTable, SettingRow>(table),
+                  BaseReferences<
+                    _$CardinalDatabase,
+                    $SettingsTable,
+                    SettingRow
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$SettingsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$CardinalDatabase,
+      $SettingsTable,
+      SettingRow,
+      $$SettingsTableFilterComposer,
+      $$SettingsTableOrderingComposer,
+      $$SettingsTableAnnotationComposer,
+      $$SettingsTableCreateCompanionBuilder,
+      $$SettingsTableUpdateCompanionBuilder,
+      (
+        SettingRow,
+        BaseReferences<_$CardinalDatabase, $SettingsTable, SettingRow>,
+      ),
+      SettingRow,
+      PrefetchHooks Function()
+    >;
 
 class $CardinalDatabaseManager {
   final _$CardinalDatabase _db;
   $CardinalDatabaseManager(this._db);
-  $$PlacesTableTableManager get places => $$PlacesTableTableManager(_db, _db.places);
+  $$PlacesTableTableManager get places =>
+      $$PlacesTableTableManager(_db, _db.places);
+  $$SettingsTableTableManager get settings =>
+      $$SettingsTableTableManager(_db, _db.settings);
 }

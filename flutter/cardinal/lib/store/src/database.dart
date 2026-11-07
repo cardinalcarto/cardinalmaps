@@ -40,7 +40,19 @@ class Places extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-@DriftDatabase(tables: [Places])
+/// The app's settings, one row each: see `SettingsStore`.
+@DataClassName('SettingRow')
+class Settings extends Table {
+  TextColumn get key => text()();
+
+  /// The value as JSON.
+  TextColumn get value => text()();
+
+  @override
+  Set<Column> get primaryKey => {key};
+}
+
+@DriftDatabase(tables: [Places, Settings])
 class CardinalDatabase extends _$CardinalDatabase {
   CardinalDatabase(super.executor);
 
@@ -54,12 +66,13 @@ class CardinalDatabase extends _$CardinalDatabase {
       );
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onUpgrade: stepByStep(
       from1To2: (m, schema) => m.addColumn(schema.places, schema.places.countryCode),
+      from2To3: (m, schema) => m.createTable(schema.settings),
     ),
   );
 }
