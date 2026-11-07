@@ -1,8 +1,8 @@
 # Geocoder query design
 
-Status: agreed plan. Nothing here is built. Numbers marked *illustrative* are starting points to calibrate, not measurements. Story numbers refer to [user-stories.md](user-stories.md).
+Status: built, in `airmail/src/plan.rs`. Numbers marked *illustrative* are starting points to calibrate, not measurements. Story numbers refer to [user-stories.md](user-stories.md).
 
-## Why start over
+## Why it was rebuilt
 
 Today's ranking adds up scores that can't be compared. A place's text score (BM25) is unbounded and depends on word rarity, while a category match is a small number: near Fremont, a Goodwill 3 km away scores 15 and a shop 8.7 km away with "Thrift Store" in its name scores 332. Every patch since has worked around that gap, which is how we reached a generic-search classifier, a second scoring path and 44 constants in `index.rs`, plus 14 in `interpret.rs`.
 
@@ -228,23 +228,18 @@ The new costs are two arms for every Venue reading, and finding candidates for e
 
 **Targets to confirm on the planet:** p50 under 30 ms and p99 under 150 ms with app parameters.
 
-**Unknowns to measure in a spike, before committing:**
+**Unknowns to measure on the planet:**
 - Whether S2 ring queries are as cheap as assumed when combined with a tag.
 - The cost of finding candidates, especially reading the geometry of up to 3 large areas for their bounding boxes. If it's slow, bounding boxes could get their own stored field, which needs a reindex.
 - Tagger and gazetteer time per query, on the planet. Not measured yet.
 - Whether reading fast fields per match is acceptable for the largest name postings.
 - Whether "enough good results" stops early often enough to skip typos during typing.
 
-## Part 4: Rollout
+## Part 4: What's left
 
-1. **Turn the stories into evals.** Extend `eval/search.tsv` with viewports, about 80 cases across stories, plus Pelias acceptance tests, and report by story group. Many stories need the planet: B1, B8, E4 and F1 can't pass on the Puget index, which has no POIs outside Washington.
-2. **Spike** retrieval and ranking behind a request parameter, next to the old path, reading stored names for `coverage`. Answer the performance unknowns.
-3. **`viewport`, `location` and submit** in the API and app.
-4. **Add `name_words`** to the index, in the planet build.
-5. **Calibrate** on the planet, on the whole eval, once.
-6. **Delete the old path.**
-
-Today's uncommitted ranking work wouldn't carry over, except the trailing-space fix.
+1. **Calibrate** on the planet, on the whole eval, once. Rarity in particular can't be calibrated on a regional index.
+2. **Add `name_words`** to the index, so `coverage` needn't read stored names.
+3. **Turn the stories into evals** once the expected results are settled.
 
 ## Decisions made
 

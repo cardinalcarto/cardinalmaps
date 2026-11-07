@@ -350,47 +350,6 @@ impl QueryCategories {
         self.categories.is_empty() && self.cuisines.is_empty() && self.diets.is_empty()
     }
 
-    /// Confidence in the signal search matches on: cuisines if any, else
-    /// categories, else diets (see `AirmailIndex::category_query`).
-    #[must_use]
-    pub fn primary_confidence(&self) -> f32 {
-        let max = |signal: &[(String, f32)]| signal.iter().map(|(_, p)| *p).fold(0.0, f32::max);
-        if !self.cuisines.is_empty() {
-            max(&self.cuisines)
-        } else if !self.categories.is_empty() {
-            self.categories.iter().map(|(_, p)| *p).sum::<f32>().min(1.0)
-        } else {
-            max(&self.diets)
-        }
-    }
-
-    /// Whether search should also return POIs matching only by category, or
-    /// just rerank POIs the query's words match. Including is right for
-    /// category queries ("pizza", "vegan food") and costs name queries little,
-    /// since name matches still rank first, so it only switches to boosting
-    /// when the model is unsure.
-    #[must_use]
-    pub fn mode(&self, include_threshold: f32) -> CategoryMode {
-        if self.primary_confidence() >= include_threshold {
-            CategoryMode::Include
-        } else {
-            CategoryMode::Boost
-        }
-    }
-}
-
-/// Default for [`QueryCategories::mode`], chosen from a small set of name and
-/// category searches in Zürich: every category query there had a primary
-/// confidence of at least 0.46.
-pub const DEFAULT_INCLUDE_THRESHOLD: f32 = 0.4;
-
-/// How a query's categories affect results.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CategoryMode {
-    /// Also return POIs that match only by category.
-    Include,
-    /// Only rerank POIs the query's words match.
-    Boost,
 }
 
 pub struct CategoryModel {
@@ -591,20 +550,6 @@ mod test {
         assert!(is_category_tag("highway", "bus_stop"));
         assert!(!is_category_tag("highway", "residential"));
         assert!(!is_category_tag("building", "yes"));
-    }
-
-    #[test]
-    fn test_mode_uses_most_specific_signal() {
-        let understood = QueryCategories {
-            categories: vec![("amenity=restaurant".into(), 0.9)],
-            food: 1.0,
-            cuisines: vec![("asian".into(), 0.5)],
-            diets: vec![("vegan".into(), 1.0)],
-        };
-        assert!((understood.primary_confidence() - 0.5).abs() < f32::EPSILON);
-        assert_eq!(understood.mode(0.4), CategoryMode::Include);
-        assert_eq!(understood.mode(0.6), CategoryMode::Boost);
-        assert_eq!(QueryCategories::default().mode(0.4), CategoryMode::Boost);
     }
 
     #[test]

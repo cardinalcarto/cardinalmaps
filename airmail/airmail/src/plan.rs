@@ -1,4 +1,4 @@
-//! Search as `docs/query-design.md` describes it. The tagger's readings say
+//! Search, as `docs/query-design.md` describes it. The tagger's readings say
 //! what's sought and where; each reading is searched by fixed rules; and one
 //! formula with bounded terms ranks what they retrieve:
 //!
@@ -26,11 +26,11 @@ use tantivy::{
     schema::IndexRecordOption,
 };
 
-use crate::categories::{self, CategoryModel, QueryCategories};
+use crate::categories::{self, QueryCategories};
 use crate::geometry;
 use crate::index::{
     AirmailIndex, EARTH_RADIUS_KM, FIELD_ADMIN_IDS, FIELD_AREA_NAME, FIELD_CENTER, FIELD_HOUSENUMBER, FIELD_IMPORTANCE, FIELD_INDEXED_TAG,
-    FIELD_KIND, FIELD_NAME, FIELD_POSTCODE, FIELD_STREET, SearchHit, SearchRequest, SearchResults, admin_field, area_key,
+    FIELD_KIND, FIELD_NAME, FIELD_POSTCODE, FIELD_STREET, FIELD_UNIT, SearchHit, SearchRequest, SearchResults, admin_field, area_key,
 };
 use crate::poi::{AdminBand, Kind};
 
@@ -76,31 +76,13 @@ const ANY_FIELD_DISCOUNT: f64 = 0.25;
 /// it misread the query.
 const TRUSTED_READING: f64 = 0.9;
 
-/// What a planned search has beyond a request.
-#[derive(Clone, Copy, Default)]
-pub struct Context<'a> {
-    /// `[west, south, east, north]`: what the map shows.
-    pub viewport: Option<[f64; 4]>,
-    /// `[lon, lat]`: where the user is.
-    pub location: Option<[f64; 2]>,
-    /// Reads what kind of place words suggest.
-    pub model: Option<&'a CategoryModel>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct PlannedResults {
-    pub results: SearchResults,
-    /// What the likeliest reading's words suggest.
-    pub categories: Option<QueryCategories>,
-}
-
 impl AirmailIndex {
-    /// Searches as the module says.
+    /// Searches, most relevant first, as the module says.
     ///
     /// # Errors
     /// If the search fails or a stored document can't be decoded.
-    pub fn search_planned(&self, request: &SearchRequest, context: Context) -> Result<PlannedResults> {
-        Run::new(self, request, context)?.search()
+    pub fn search(&self, request: &SearchRequest) -> Result<SearchResults> {
+        Run::new(self, request)?.search()
     }
 }
 
@@ -342,9 +324,10 @@ struct Run<'a> {
     index: &'a AirmailIndex,
     searcher: Searcher,
     request: &'a SearchRequest<'a>,
-    context: Context<'a>,
     words: Vec<String>,
     readings: Vec<(Vec<Tag>, f64)>,
+    /// Whether the tagger is sure enough of its best reading to take its word.
+    trusted: bool,
     typing: bool,
     view: Option<Anchor>,
     located: Option<Anchor>,
@@ -355,24 +338,27 @@ struct Run<'a> {
 }
 
 impl<'a> Run<'a> {
-    fn new(index: &'a AirmailIndex, request: &'a SearchRequest<'a>, context: Context<'a>) -> Result<Self> {
-        let view = context.viewport.map(Anchor::of_box).or_else(|| request.focus.map(|focus| Anchor::new(focus, MIN_SCALE_KM)));
+    fn new(index: &'a AirmailIndex, request: &'a SearchRequest<'a>) -> Result<Self> {
+        let view = request.viewport.map(Anchor::of_box).or_else(|| request.focus.map(|focus| Anchor::new(focus, MIN_SCALE_KM)));
         let (words, readings) = index.tagged(request.text, request.prefix, view.map(|v| v.lon_lat), MAX_READINGS, READING_COVERAGE);
-        let readings = match readings {
-            Some(readings) if !readings.is_empty() => readings.into_iter().map(|r| (r.tags, r.probability)).collect(),
-            // Without a tagger, all of it is what's sought.
-            _ => vec![(vec![Tag::Venue; words.len()], 1.0)],
+        let (readings, trusted): (Vec<(Vec<Tag>, f64)>, bool) = match readings {
+            Some(readings) if !readings.is_empty() => {
+                let trusted = readings.iter().any(|r| r.probability >= TRUSTED_READING);
+                (readings.into_iter().map(|r| (r.tags, r.probability)).collect(), trusted)
+            }
+            // Without a tagger, all of it is what's sought, for all we know.
+            _ => (vec![(vec![Tag::Venue; words.len()], 1.0)], false),
         };
         let mut run = Self {
             index,
             searcher: index.searcher()?,
             request,
-            context,
             words,
             readings,
+            trusted,
             typing: request.prefix && !request.text.ends_with(char::is_whitespace),
             view,
-            located: context.location.map(|location| Anchor::new(location, MIN_SCALE_KM)),
+            located: request.location.map(|location| Anchor::new(location, MIN_SCALE_KM)),
             filters: Vec::new(),
             limit: request.limit.max(1),
             retrieved: Vec::new(),
@@ -382,7 +368,7 @@ impl<'a> Run<'a> {
         Ok(run)
     }
 
-    fn search(mut self) -> Result<PlannedResults> {
+    fn search(mut self) -> Result<SearchResults> {
         let groups = groups(&self.readings);
         // Readings that find nothing don't count: `bookshop fremont` isn't two
         // neighbourhoods, as there's no such area.
@@ -404,8 +390,7 @@ impl<'a> Run<'a> {
         {
             self.search_group(group, Pass::Typos)?;
         }
-        let trusted = self.readings.iter().any(|(_, probability)| *probability >= TRUSTED_READING);
-        if self.retrieved.is_empty() && !self.words.is_empty() && !trusted {
+        if self.retrieved.is_empty() && !self.words.is_empty() && !self.trusted {
             self.search_any_field()?;
         }
         self.ranked_results()
@@ -444,7 +429,7 @@ impl<'a> Run<'a> {
             None
         } else {
             let text = group.venue.iter().map(|&i| self.words[i].as_str()).collect::<Vec<_>>().join(" ");
-            self.context.model.map(|model| model.understand(&text))
+            self.request.model.map(|model| model.understand(&text))
         };
         if self.categories.is_none() {
             self.categories.clone_from(&categories);
@@ -511,7 +496,13 @@ impl<'a> Run<'a> {
 
     /// Every word in any field, for a misread query.
     fn search_any_field(&mut self) -> Result<()> {
-        let matching = self.index.any_field_query(&self.words, self.typing, self.request.typos);
+        let last = self.words.len() - 1;
+        let every_word = self.words.iter().enumerate().map(|(i, word)| -> Box<dyn Query> {
+            let fields = [FIELD_NAME, FIELD_STREET, FIELD_HOUSENUMBER, FIELD_UNIT, FIELD_POSTCODE].into_iter().chain(AdminBand::ALL.map(admin_field));
+            let unfinished = self.typing && i == last;
+            Box::new(BooleanQuery::union(fields.map(|field| self.index.word_query(field, word, unfinished, self.request.typos)).collect()))
+        });
+        let matching: Box<dyn Query> = Box::new(BooleanQuery::intersection(every_word.collect()));
         let query = require(vec![(Occur::Must, constant(matching, 1.0))], self.filters.iter().map(|f| f.box_clone()));
         let found = ranked(&self.searcher, &query, self.view.or(self.located), ANY_FIELD_DISCOUNT, self.limit + EXTRA_RESULTS)?;
         let none = Rc::new(Vec::new());
@@ -710,7 +701,7 @@ impl<'a> Run<'a> {
     }
 
     /// What was retrieved, scored in full and ranked.
-    fn ranked_results(self) -> Result<PlannedResults> {
+    fn ranked_results(self) -> Result<SearchResults> {
         let bbox = self.request.bbox.map(geometry::bbox_rects);
         let mut hits: HashMap<DocAddress, SearchHit> = HashMap::new();
         let mut best: HashMap<DocAddress, (f32, bool)> = HashMap::new();
@@ -755,7 +746,7 @@ impl<'a> Run<'a> {
         sorted.truncate(self.limit);
         let admin_ids: BTreeSet<u64> = sorted.iter().flat_map(|hit| hit.admin_ids.iter().copied()).collect();
         let admins = self.index.admins(&self.searcher, &admin_ids)?;
-        Ok(PlannedResults { results: SearchResults { hits: sorted, admins }, categories: self.categories })
+        Ok(SearchResults { hits: sorted, admins, categories: self.categories })
     }
 }
 

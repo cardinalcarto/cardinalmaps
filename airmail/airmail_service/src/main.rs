@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use std::path::PathBuf;
 
-use airmail::categories::{CategoryModels, DEFAULT_INCLUDE_THRESHOLD};
+use airmail::categories::CategoryModels;
 use airmail::index::{self, AirmailIndex};
 use airmail_service::api::AppState;
 use anyhow::Result;
@@ -37,15 +37,6 @@ struct Args {
     /// query are what, rather than finding area names at its end.
     #[arg(long, env = "AIRMAIL_TAGGER")]
     tagger: Option<PathBuf>,
-
-    /// Minimum model confidence for search to also return places that match a
-    /// query only by category; below it, categories only rerank word matches
-    #[arg(long, env = "AIRMAIL_CATEGORY_INCLUDE_THRESHOLD", default_value_t = DEFAULT_INCLUDE_THRESHOLD)]
-    category_include_threshold: f32,
-
-    /// Search with `airmail::plan` unless a request says otherwise.
-    #[arg(long, env = "AIRMAIL_PLANNED_SEARCH")]
-    planned_search: bool,
 
     /// Cors origins to allow
     #[arg(
@@ -85,8 +76,6 @@ async fn main() -> Result<()> {
     let state = Arc::new(AppState {
         index,
         categories,
-        category_include_threshold: args.category_include_threshold,
-        planned_search: args.planned_search,
         schema_version: index::schema_version(std::path::Path::new(&args.index))?,
         documents,
     });

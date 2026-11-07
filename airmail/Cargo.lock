@@ -35,7 +35,6 @@ dependencies = [
 name = "airmail"
 version = "0.1.0"
 dependencies = [
- "airmail_parser",
  "airmail_tagger",
  "anyhow",
  "deunicode",
@@ -92,15 +91,6 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
-]
-
-[[package]]
-name = "airmail_parser"
-version = "0.1.0"
-dependencies = [
- "regex",
- "serde",
- "serde_json",
 ]
 
 [[package]]

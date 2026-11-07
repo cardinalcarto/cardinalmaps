@@ -3,7 +3,7 @@
 //! without searching.
 
 use airmail::{
-    categories::{self, CategoryModels, DEFAULT_INCLUDE_THRESHOLD, QueryCategories},
+    categories::{self, CategoryModels, QueryCategories},
     index::{AirmailIndex, SearchHit, SearchRequest},
     poi::{Kind, osm_display_name},
 };
@@ -26,9 +26,6 @@ struct Args {
     /// only one model is loaded.
     #[clap(long)]
     lang: Option<String>,
-    /// Minimum model confidence to also return places matching only by category
-    #[clap(long, default_value_t = DEFAULT_INCLUDE_THRESHOLD)]
-    category_include_threshold: f32,
     /// Match the last word as a prefix
     #[clap(long)]
     prefix: bool,
@@ -60,18 +57,13 @@ fn format_scored(values: &[(String, f32)]) -> String {
         .join(", ")
 }
 
-fn print_understood(understood: &QueryCategories, threshold: f32) {
+fn print_understood(understood: &QueryCategories) {
     println!("  categories: {}", format_scored(&understood.categories));
     println!(
         "  food {:.2}   cuisines: {}   diets: {}",
         understood.food,
         format_scored(&understood.cuisines),
         format_scored(&understood.diets)
-    );
-    println!(
-        "  mode: {:?} (primary confidence {:.2}, threshold {threshold:.2})",
-        understood.mode(threshold),
-        understood.primary_confidence()
     );
 }
 
@@ -149,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The model gets the raw query, as in the service.
         let understood = model.map(|m| m.understand(&line));
         if let Some(understood) = &understood {
-            print_understood(understood, args.category_include_threshold);
+            print_understood(understood);
             println!("  understood in {:?}", start.elapsed());
         }
         let Some(index) = &index else { continue };
@@ -159,13 +151,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             text: line.trim(),
             prefix: args.prefix,
             typos: args.typos,
-            categories: understood.as_ref().map(|c| (c, c.mode(args.category_include_threshold))),
+            model,
             bbox,
             kinds: Kind::ALL.to_vec(),
             limit: 10,
             ..Default::default()
         };
-        let results = index.search(&request).await?;
+        let results = index.search(&request)?;
         for hit in &results.hits {
             println!("{}", format_hit(hit));
         }

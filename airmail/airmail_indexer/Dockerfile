@@ -6,7 +6,6 @@ WORKDIR /usr/src/airmail
 COPY ./airmail ./airmail
 COPY ./airmail_indexer ./airmail_indexer
 COPY ./airmail_service ./airmail_service
-COPY ./airmail_parser ./airmail_parser
 COPY ./airmail_tagger ./airmail_tagger
 COPY ./Cargo.toml ./Cargo.toml
 COPY ./Cargo.lock ./Cargo.lock

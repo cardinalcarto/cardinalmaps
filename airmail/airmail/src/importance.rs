@@ -1,10 +1,6 @@
-//! How prominent a place is regardless of any query, from 0 to 1. Search
-//! multiplies text relevance by `1 + IMPORTANCE_WEIGHT * importance`, so
-//! importance reorders matches but can't make a poor match outrank a good one
-//! by much.
-
-/// How much importance can raise a result's score.
-pub const IMPORTANCE_WEIGHT: f32 = 2.0;
+//! How prominent a place is regardless of any query, from 0 to 1. Search counts
+//! it in a result's score and in how far away it's still worth showing (see
+//! `plan`).
 
 /// Whether a placetype is a settlement, where people live and go, rather
 /// than an area that groups them. A settlement's population says how much

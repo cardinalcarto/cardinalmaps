@@ -29,9 +29,6 @@ pub const MAX_LIMIT: usize = 50;
 pub struct AppState {
     pub index: AirmailIndex,
     pub categories: CategoryModels,
-    pub category_include_threshold: f32,
-    /// Whether search is `airmail::plan`'s unless a request says otherwise.
-    pub planned_search: bool,
     pub schema_version: u32,
     pub documents: u64,
 }
@@ -56,16 +53,12 @@ pub struct SearchParams {
     pub tags: Vec<String>,
     pub limit: usize,
     pub geometry: GeometryMode,
-    pub category_include_threshold: Option<f32>,
     /// `[lon, lat]`.
     pub focus: Option<[f64; 2]>,
     /// `[west, south, east, north]`: what the map shows.
     pub viewport: Option<[f64; 4]>,
     /// `[lon, lat]`: where the user is.
     pub location: Option<[f64; 2]>,
-    /// Whether to search with `airmail::plan`; the service's default if not
-    /// given.
-    pub planned: Option<bool>,
 }
 
 /// Collects a query string's parameters, and the reasons any are invalid.
@@ -184,16 +177,6 @@ impl SearchParams {
             }
         });
 
-        let planned = match params.get("engine").as_deref() {
-            None => None,
-            Some("planned") => Some(true),
-            Some("legacy") => Some(false),
-            Some(_) => {
-                params.fail("engine", "must be planned or legacy");
-                None
-            }
-        };
-
         let within = params.get("within").and_then(|value| {
             let id = value.strip_prefix("wof:").and_then(|id| id.parse::<u64>().ok());
             if id.is_none() {
@@ -236,16 +219,8 @@ impl SearchParams {
 
         let geometry = params.geometry();
 
-        let category_include_threshold = params.get("category_include_threshold").and_then(|value| match value.parse::<f32>() {
-            Ok(t) if (0.0..=1.0).contains(&t) => Some(t),
-            _ => {
-                params.fail("category_include_threshold", "must be a number from 0 to 1");
-                None
-            }
-        });
-
         params.finish()?;
-        Ok(Self { q, lang, prefix, typos, bbox, within, kinds, tags, limit, geometry, category_include_threshold, focus, viewport, location, planned })
+        Ok(Self { q, lang, prefix, typos, bbox, within, kinds, tags, limit, geometry, focus, viewport, location })
     }
 }
 
@@ -334,83 +309,39 @@ pub async fn search(RawQuery(raw): RawQuery, State(state): State<Arc<AppState>>)
         Ok(params) => params,
         Err(problem) => return problem.into_response(),
     };
-    let result = if params.planned.unwrap_or(state.planned_search) {
-        let state = state.clone();
-        tokio::task::spawn_blocking(move || run_planned(&params, &state)).await.map_err(anyhow::Error::from).and_then(|result| result)
-    } else {
-        run_search(&params, &state).await
-    };
+    let state = state.clone();
+    let result = tokio::task::spawn_blocking(move || run_search(&params, &state)).await.map_err(anyhow::Error::from).and_then(|result| result);
     match result {
         Ok(body) => Json(body).into_response(),
         Err(e) => Problem::internal(&e).into_response(),
     }
 }
 
-/// Searches with `airmail::plan`.
-fn run_planned(params: &SearchParams, state: &AppState) -> anyhow::Result<Value> {
-    let lang = params.lang.as_deref();
-    let model = lang.and_then(|lang| state.categories.get(lang));
+fn run_search(params: &SearchParams, state: &AppState) -> anyhow::Result<Value> {
+    let model = params.lang.as_deref().and_then(|lang| state.categories.get(lang));
     let request = SearchRequest {
+        // A space at the end says the last word is finished.
         text: params.q.trim_start(),
         prefix: params.prefix,
         typos: params.typos,
         tags: params.tags.clone(),
-        categories: None,
-        interpretations: None,
         bbox: params.bbox,
         within: params.within,
         kinds: params.kinds.clone(),
         limit: params.limit,
+        viewport: params.viewport,
         focus: params.focus,
+        location: params.location,
+        model,
     };
-    let context = airmail::plan::Context { viewport: params.viewport, location: params.location, model };
-    let planned = state.index.search_planned(&request, context)?;
-    Ok(search_response(params, &planned.results, model, planned.categories.as_ref()))
-}
-
-async fn run_search(params: &SearchParams, state: &AppState) -> anyhow::Result<Value> {
-    let lang = params.lang.as_deref();
-    // With a tagger, the category model reads only the words of what's
-    // sought, so `vegan pizza` in `vegan pizza near downtown seattle`, and
-    // nothing when nothing is (`daly ci`, typing Daly City). Without, the raw
-    // query: the model normalizes on its own and keeps accents.
-    let started = std::time::Instant::now();
-    // A space at the end says the last word is finished.
-    let text = params.q.trim_start();
-    let interpreted = state.index.interpret(text, params.prefix, params.focus);
-    let interpreting = started.elapsed();
-    let category_text = match &interpreted {
-        Some((words, interpretations)) => interpretations.first().map(|best| {
-            words.iter().zip(&best.tags).filter(|(_, t)| **t == airmail_tagger::labels::Tag::Venue).map(|(w, _)| w.as_str()).collect::<Vec<_>>().join(" ")
-        }),
-        None => Some(params.q.clone()),
-    };
-    let model = lang.and_then(|lang| state.categories.get(lang));
-    let categories = model.zip(category_text.filter(|t| !t.is_empty())).map(|(model, text)| model.understand(&text));
-    let threshold = params.category_include_threshold.unwrap_or(state.category_include_threshold);
-    let request = SearchRequest {
-        text,
-        prefix: params.prefix,
-        typos: params.typos,
-        tags: params.tags.clone(),
-        categories: categories.as_ref().map(|c| (c, c.mode(threshold))),
-        interpretations: interpreted.as_ref().map(|(_, i)| i.as_slice()),
-        bbox: params.bbox,
-        within: params.within,
-        kinds: params.kinds.clone(),
-        limit: params.limit,
-        focus: params.focus,
-    };
-    let results = state.index.search(&request).await?;
-    log::debug!("{:?}: interpreted in {interpreting:?}, searched in {:?}", params.q, started.elapsed() - interpreting);
-    Ok(search_response(params, &results, model, categories.as_ref()))
+    let results = state.index.search(&request)?;
+    Ok(search_response(params, &results, model))
 }
 
 fn search_response(
     params: &SearchParams,
     results: &airmail::index::SearchResults,
     model: Option<&airmail::categories::CategoryModel>,
-    categories: Option<&QueryCategories>,
 ) -> Value {
     let lang = params.lang.as_deref();
     let kinds = if params.kinds.is_empty() { Kind::ALL.to_vec() } else { params.kinds.clone() };
@@ -421,13 +352,14 @@ fn search_response(
         "typos": params.typos,
         "bbox": params.bbox,
         "focus": params.focus,
+        "viewport": params.viewport,
         "within": params.within.map(|id| format!("wof:{id}")),
         "kind": kinds,
         "tags": params.tags,
         "limit": params.limit,
         "geometry": params.geometry,
         "category_language": model.map(|m| m.language()),
-        "categories": categories.map(categories_json),
+        "categories": results.categories.as_ref().map(categories_json),
     });
     let results: Vec<Value> =
         results.hits.iter().map(|hit| result_json(hit, &results.admins, lang, params.geometry)).collect();

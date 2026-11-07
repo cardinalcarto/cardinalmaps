@@ -5,7 +5,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-airmail_parser = { path = "../airmail_parser" }
 airmail_tagger = { path = "../airmail_tagger" }
 rand = "0.9"
 anyhow.workspace = true

@@ -23,8 +23,8 @@ paths:
         Every word of `q` must match the result's name, address or the names of
         the administrative areas containing it, so `starbucks bellevue` finds
         Starbucks in Bellevue. Results are ranked by how well they match,
-        weighted by importance and, with `focus`, by nearness, most relevant
-        first.
+        weighted by importance and, with `viewport` or `focus`, by nearness,
+        most relevant first.
       parameters:
         - name: q
           in: query
@@ -76,41 +76,45 @@ paths:
           examples:
             seattle:
               value: [-122.46, 47.48, -122.22, 47.74]
-        - name: focus
+        - name: viewport
           in: query
           description: |
-            Rank results nearer this point higher, as `lon,lat` in WGS 84
-            degrees, such as the center of the map the user is looking at.
-            Unlike `bbox`, it doesn't exclude anything. Nearness counts most
-            within a few kilometers and fades with distance; for
-            administrative areas it also counts across hundreds of
-            kilometers, so of two towns with one name the one in the user's
-            part of the world comes first unless the other is far better
-            known. It reorders similar matches rather than overriding
-            relevance: with `focus` in Seattle, `starbucks` finds the nearest
-            Starbucks first and `leavenworth` the town in Washington, but
-            `zurich` still finds Zürich rather than a nearby place that only
-            has the word in its name. Distance is measured to each result's
-            `center`, or for an administrative area containing the point, is
-            taken as zero.
+            What the map shows, as `west,south,east,north` in WGS 84 degrees.
+            Boxes crossing the antimeridian have `west > east`. Unlike `bbox`, it
+            doesn't exclude anything. Results nearer its center rank higher, and
+            the closer it's zoomed in the more that counts: nearby Starbucks
+            order by distance, while zoomed out to a continent, importance
+            decides. Important places reach further: `eiffel tower` finds the
+            one in Paris from a map of Seattle. When the query names a
+            neighbourhood or locality, nearness is measured from there instead.
           style: form
           explode: false
           schema:
-            type: array
-            minItems: 2
-            maxItems: 2
-            items:
-              type: number
-            prefixItems:
-              - type: number
-                minimum: -180
-                maximum: 180
-              - type: number
-                minimum: -90
-                maximum: 90
+            $ref: '#/components/schemas/BBox'
           examples:
             seattle:
-              value: [-122.3321, 47.6062]
+              value: [-122.46, 47.48, -122.22, 47.74]
+        - name: focus
+          in: query
+          description: |
+            A point to rank results nearer, as `lon,lat` in WGS 84 degrees, for
+            when there's no map. It acts as a small viewport centered there.
+            `viewport` takes precedence.
+          style: form
+          explode: false
+          schema:
+            $ref: '#/components/schemas/Position'
+        - name: location
+          in: query
+          description: |
+            Where the user is, as `lon,lat` in WGS 84 degrees. It's used for
+            queries that ask for it, such as `coffee near me`, and for nearness
+            when there's no `viewport` or `focus`. It isn't echoed in the
+            response.
+          style: form
+          explode: false
+          schema:
+            $ref: '#/components/schemas/Position'
         - name: within
           in: query
           description: |
@@ -163,16 +167,6 @@ paths:
             type: string
             enum: [shape, point]
             default: shape
-        - name: category_include_threshold
-          in: query
-          description: |
-            Overrides the service's minimum model confidence for returning
-            places that match the query only by category. For tuning; may be
-            removed without a new API version.
-          schema:
-            type: number
-            minimum: 0
-            maximum: 1
       responses:
         '200':
           description: Results, most relevant first. There may be none.
@@ -296,7 +290,7 @@ components:
     QueryEcho:
       description: The request as the service understood it, with defaults filled in.
       type: object
-      required: [text, lang, prefix, typos, bbox, focus, within, kind, tags, limit, geometry, category_language, categories]
+      required: [text, lang, prefix, typos, bbox, focus, viewport, within, kind, tags, limit, geometry, category_language, categories]
       properties:
         text:
           type: string
@@ -315,6 +309,11 @@ components:
           description: '`focus` as `[lon, lat]`, or null if it wasn''t given.'
           oneOf:
             - $ref: '#/components/schemas/Position'
+            - type: 'null'
+        viewport:
+          description: '`viewport`, or null if it wasn''t given.'
+          oneOf:
+            - $ref: '#/components/schemas/BBox'
             - type: 'null'
         within:
           type: [string, 'null']
@@ -448,8 +447,8 @@ components:
           maximum: 1
         score:
           description: |
-            Relevance to this query, including importance and nearness to
-            `focus`. Only comparable between results of one response. Always 0
+            Relevance to this query, including importance and nearness. Only
+            comparable between results of one response. Always 0
             from `/v1/place`.
           type: number
           minimum: 0
