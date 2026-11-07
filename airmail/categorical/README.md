@@ -38,7 +38,7 @@ requirement Romansh would get a model trained on Swiss German names.)
 ```bash
 cargo build --release -p airmail_indexer
 ../target/release/categories_export --wof-db ../data/wof-ch.spatial.db \
-  --admin-cache ../data/admin-cache-ch data/switzerland.osm.pbf data/switzerland.export.jsonl
+  --admin-cache ../data/admin-cache-ch data/switzerland-low.osm.pbf data/switzerland.export.jsonl
 
 uv sync
 uv run categories-augment data/augment.jsonl

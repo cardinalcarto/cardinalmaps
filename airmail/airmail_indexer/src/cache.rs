@@ -11,15 +11,13 @@ use anyhow::Result;
 use log::{trace, warn};
 use redb::{Database, ReadableDatabase, TableDefinition};
 
-const TABLE_NODE_LOCATION: TableDefinition<i64, (f64, f64)> =
-    TableDefinition::new("admin_node_location");
 /// Coordinates of ways that multipolygon relations need, as packed
 /// little-endian (lon, lat) f64 pairs.
 const TABLE_WAY_COORDS: TableDefinition<i64, &[u8]> = TableDefinition::new("way_coords_v1");
 pub const BUFFER_SIZE: usize = 25000;
 
-/// OSM coordinates that parsing needs later: node locations, for files without locations
-/// on ways, and the ways multipolygon relations are made of.
+/// The coordinates of the ways multipolygon relations are made of, kept while parsing until
+/// the relations are assembled.
 pub struct IndexerCache {
     database: Database,
     buffer_size: AtomicUsize,
@@ -32,7 +30,6 @@ impl IndexerCache {
         trace!("Opening cache database at {:?}", redb_path);
         let database = Database::create(redb_path)?;
         let txn = database.begin_write()?;
-        txn.open_table(TABLE_NODE_LOCATION)?;
         txn.open_table(TABLE_WAY_COORDS)?;
         txn.commit()?;
 
@@ -41,16 +38,6 @@ impl IndexerCache {
             buffer_size: AtomicUsize::new(BUFFER_SIZE),
             buffer: Arc::new(RwLock::new(VecDeque::new())),
         })
-    }
-
-    /// Lookup a node id in the cache and return the location
-    pub fn query_node_location(&self, node_id: i64) -> Result<Option<(f64, f64)>> {
-        let txn = self.database.begin_read()?;
-        let table = txn.open_table(TABLE_NODE_LOCATION)?;
-        if let Some(location) = table.get(node_id)? {
-            return Ok(Some(location.value()));
-        }
-        Ok(None)
     }
 
     /// The (lon, lat) coordinates of a way, if cached.
@@ -92,14 +79,10 @@ impl IndexerCache {
 
         let write = self.database.begin_write()?;
         {
-            let mut locations_table = write.open_table(TABLE_NODE_LOCATION)?;
             let mut way_coords_table = write.open_table(TABLE_WAY_COORDS)?;
 
             for item in buffer.drain(..) {
                 match item {
-                    WofCacheItem::NodeLocation(node_id, location) => {
-                        locations_table.insert(node_id, location)?;
-                    }
                     WofCacheItem::WayCoords(way, coords) => {
                         let packed = coords
                             .iter()
@@ -143,6 +126,5 @@ impl Drop for IndexerCache {
     }
 }
 pub enum WofCacheItem {
-    NodeLocation(i64, (f64, f64)),
     WayCoords(i64, Vec<(f64, f64)>),
 }

@@ -12,7 +12,7 @@ The [README](README.md) has a quickstart. This page covers the pieces in more de
 
 Put data files in `./data`.
 
-- An OSM extract in PBF format, from [Geofabrik](https://download.geofabrik.de) or [BBBike](https://download.bbbike.org/osm/planet/). Try an extract before building the planet.
+- An OSM extract in PBF format, from [Geofabrik](https://download.geofabrik.de) or [BBBike](https://download.bbbike.org/osm/planet/). Try an extract before building the planet. Its ways need their nodes' locations, which [osmium](https://osmcode.org/osmium-tool/) adds: `osmium add-locations-to-ways --keep-member-nodes -o extract-low.osm.pbf extract.osm.pbf`. For the planet, keep the index on disk with `-i dense_file_array,nodes.idx`, since in memory it needs about 110GB. The indexer refuses a file without them.
 - A Who's On First SpatiaLite database covering the same area. Use the planet download if your extract covers more than one country.
 
 ## Indexing
@@ -22,7 +22,7 @@ cargo run --release --bin indexer -- \
   --wof-db ./data/whosonfirst-data-admin-latest.spatial.db \
   --index ./data/index \
   --admin-cache ./data/admin-cache \
-  load-osm-pbf ./data/australia-oceania-latest.osm.pbf
+  load-osm-pbf ./data/australia-oceania-latest-low.osm.pbf
 cargo run --release --bin indexer -- \
   --wof-db ./data/whosonfirst-data-admin-latest.spatial.db \
   --index ./data/index \
@@ -38,9 +38,8 @@ places (`place=city`, `boundary=*` and so on) are skipped; `load-wof` indexes
 every administrative area in the Who's On First database instead, so use one
 covering the area you want to search.
 
-- `--admin-cache` is a redb file holding OSM coordinates while parsing: node locations, for files without locations on ways, and the ways multipolygons are made of. It's optional, and in a temporary directory without it.
+- `--admin-cache` is a redb file holding the coordinates of the ways multipolygons are made of while parsing. It's optional, and in a temporary directory without it.
 - `--pip-tree` builds an in-memory R-tree of Who's On First polygons and caches it at the given path. It's faster than SpatiaLite lookups for planet-scale or repeated imports, but uses around 10GB of memory and takes a few minutes to build the first time.
-- `load-osm-pbf --nodes-already-cached` skips the node-location pass when the admin cache already has it from a previous run of the same file.
 - `load-osm-pbf --ignore <ways|nodes|dense-nodes|relations>` skips element types.
 - `--qrank qrank.csv.gz` ([QRank](https://qrank.wmcloud.org)) ranks POIs with Wikidata entities by their Wikipedia articles' page views. Without it, having an entity counts the same for every POI.
 

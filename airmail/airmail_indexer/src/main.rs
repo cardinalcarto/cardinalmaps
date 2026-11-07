@@ -28,9 +28,8 @@ struct Args {
     #[clap(long, short)]
     index: PathBuf,
 
-    /// Path where OSM coordinates are kept while parsing, a redb file: node locations, for
-    /// files without locations on ways, and the ways multipolygons are made of. Without this,
-    /// it's in a temporary directory.
+    /// Path where the coordinates of the ways multipolygons are made of are kept while
+    /// parsing, a redb file. Without this, it's in a temporary directory.
     #[clap(long, short)]
     admin_cache: Option<PathBuf>,
 
@@ -57,12 +56,9 @@ struct Args {
 enum Loader {
     /// Path to an OSM PBF file to import.
     LoadOsmPbf {
-        /// Path to an OSM PBF file to import.
+        /// Path to an OSM PBF file to import, with node locations on its ways
+        /// (`osmium add-locations-to-ways --keep-member-nodes`).
         path: PathBuf,
-
-        /// If the nodes are known to be present in the cache (after first run), don't re-add nor check.
-        #[clap(long, short)]
-        nodes_already_cached: bool,
 
         /// Types to ignore during parsing.
         #[clap(long)]
@@ -89,6 +85,11 @@ async fn main() -> Result<()> {
         return writer.commit();
     }
 
+    // Before the slow setup, so a file without locations on its ways fails at once.
+    if let Loader::LoadOsmPbf { path, .. } = &args.loader {
+        airmail_indexer::osm_pbf::require_locations_on_ways(path)?;
+    }
+
     // Setup the import pipeline
     let sink = IndexSink::new(&args.index, "osm")?;
     let mut import_builder = ImporterBuilder::new(&args.wof_db)?;
@@ -109,18 +110,8 @@ async fn main() -> Result<()> {
     // Spawn the OSM parser
     let indexer_cache = importer.indexer_cache();
     handles.push(spawn_blocking(move || match args.loader {
-        Loader::LoadOsmPbf {
-            path,
-            nodes_already_cached,
-            ignore,
-        } => {
-            let osm = OsmPbf::new(
-                &path,
-                nodes_already_cached,
-                ignore,
-                poi_sender,
-                indexer_cache,
-            );
+        Loader::LoadOsmPbf { path, ignore } => {
+            let osm = OsmPbf::new(&path, ignore, poi_sender, indexer_cache);
             osm.parse_osm().map_err(|e| {
                 warn!("Error parsing OSM: {e}");
                 e

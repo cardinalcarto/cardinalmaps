@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use airmail_indexer::{
     ImporterBuilder,
     categories_export::CategoriesExportSink,
-    osm_pbf::{OsmPbf, ParseOsmTypes},
+    osm_pbf::{self, OsmPbf, ParseOsmTypes},
 };
 use anyhow::Result;
 use clap::Parser;
@@ -23,7 +23,8 @@ struct Args {
     #[clap(long, short)]
     wof_db: PathBuf,
 
-    /// Indexing cache, shared with `indexer`; speeds up repeated runs a lot
+    /// Where the coordinates of the ways multipolygons are made of are kept while parsing, as
+    /// for `indexer`
     #[clap(long, short)]
     admin_cache: Option<PathBuf>,
 
@@ -31,11 +32,8 @@ struct Args {
     #[clap(long, short)]
     pip_tree: Option<PathBuf>,
 
-    /// Skip the node-location pass when the cache already has this file's nodes
-    #[clap(long, short)]
-    nodes_already_cached: bool,
-
-    /// OSM PBF file to read
+    /// OSM PBF file to read, with node locations on its ways
+    /// (`osmium add-locations-to-ways --keep-member-nodes`)
     pbf: PathBuf,
 
     /// JSON lines output
@@ -47,6 +45,7 @@ async fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     let args = Args::parse();
 
+    osm_pbf::require_locations_on_ways(&args.pbf)?;
     let sink = CategoriesExportSink::new(&args.out)?;
     let mut builder = ImporterBuilder::new(&args.wof_db)?;
     if let Some(admin_cache) = &args.admin_cache {
@@ -60,14 +59,8 @@ async fn main() -> Result<()> {
     let (poi_sender, poi_receiver) = crossbeam::channel::bounded(16384);
     let indexer_cache = importer.indexer_cache();
     let parse = spawn_blocking(move || {
-        OsmPbf::new(
-            &args.pbf,
-            args.nodes_already_cached,
-            Vec::<ParseOsmTypes>::new(),
-            poi_sender,
-            indexer_cache,
-        )
-        .parse_osm()
+        OsmPbf::new(&args.pbf, Vec::<ParseOsmTypes>::new(), poi_sender, indexer_cache)
+            .parse_osm()
         .inspect_err(|e| warn!("Error parsing OSM: {e}"))
     });
     let import = spawn(async move { importer.run_import(poi_receiver, sink).await });

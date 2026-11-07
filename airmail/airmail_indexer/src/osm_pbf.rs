@@ -11,11 +11,11 @@ use std::{
 use crate::cache::{IndexerCache, WofCacheItem};
 use crate::multipolygon::{self, Role};
 use airmail::poi::{OsmRef, OsmType, ToIndexPoi};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::ValueEnum;
 use crossbeam::channel::Sender;
 use log::{info, warn};
-use osmpbf::{Element, ElementReader, RelMemberType};
+use osmpbf::{BlobDecode, BlobReader, Element, ElementReader, RelMemberType};
 
 use crate::osm::{OsmPoi, Street, StreetWay};
 
@@ -83,16 +83,40 @@ fn is_associated_street(tags: &HashMap<&str, &str>) -> bool {
     matches!(tags.get("type"), Some(&("associatedStreet" | "street"))) && tags.contains_key("name")
 }
 
-/// An OpenStreetMap PBF file loader.
+/// What `osmium add-locations-to-ways` marks a file with: each way carries
+/// its nodes' locations.
+const LOCATIONS_ON_WAYS: &str = "LocationsOnWays";
+
+/// Fails unless the file has node locations on its ways, which the loader
+/// needs, saying how to add them.
+pub fn require_locations_on_ways(path: &Path) -> Result<()> {
+    let has = match BlobReader::from_path(path)?.next().transpose()? {
+        Some(blob) => match blob.decode()? {
+            BlobDecode::OsmHeader(header) => {
+                header.optional_features().iter().chain(header.required_features()).any(|f| f == LOCATIONS_ON_WAYS)
+            }
+            _ => false,
+        },
+        None => false,
+    };
+    if !has {
+        bail!(
+            "{} has no node locations on its ways; add them with `osmium add-locations-to-ways --keep-member-nodes`",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// An OpenStreetMap PBF file loader, for a file with node locations on its
+/// ways (see `require_locations_on_ways`).
 ///
 /// Extracts points of interest from nodes, ways and multipolygon relations.
-/// Way and relation shapes are built from node locations, which the first
-/// pass caches; it also notes the ways that interesting relations need, whose
-/// coordinates the second pass caches, so the third can assemble relations
-/// without holding every way in memory.
+/// The first pass notes the ways that interesting relations need, whose
+/// coordinates the second pass caches, so relations can be assembled without
+/// holding every way in memory.
 pub struct OsmPbf {
     pbf_path: PathBuf,
-    nodes_already_cached: bool,
     ignore: Vec<ParseOsmTypes>,
     sender: Sender<ToIndexPoi>,
     indexer_cache: Arc<IndexerCache>,
@@ -112,12 +136,11 @@ fn wants_relation(tags: &HashMap<&str, &str>) -> bool {
 impl OsmPbf {
     pub fn new(
         osm_pbf_path: &Path,
-        nodes_already_cached: bool,
         ignore: Vec<ParseOsmTypes>,
         sender: Sender<ToIndexPoi>,
         indexer_cache: Arc<IndexerCache>,
     ) -> Self {
-        Self { pbf_path: osm_pbf_path.to_path_buf(), nodes_already_cached, ignore, sender, indexer_cache }
+        Self { pbf_path: osm_pbf_path.to_path_buf(), ignore, sender, indexer_cache }
     }
 
     fn send(&self, poi: Option<OsmPoi>, counter: &AtomicUsize) -> u64 {
@@ -132,13 +155,10 @@ impl OsmPbf {
     }
 
     pub fn parse_osm(self) -> Result<()> {
+        require_locations_on_ways(&self.pbf_path)?;
         let relations = !self.ignore.contains(&ParseOsmTypes::Relations);
-        if self.nodes_already_cached {
-            info!("Finding the ways multipolygons need in {}", self.pbf_path.display());
-        } else {
-            info!("Generating OSM node map from: {}", self.pbf_path.display());
-        }
-        let scan = self.scan(!self.nodes_already_cached, relations)?;
+        info!("Finding the ways multipolygons need in {}", self.pbf_path.display());
+        let scan = self.scan(relations)?;
         let needed_ways = &scan.needed_ways;
         info!(
             "Multipolygon relations need {} ways; associated streets have {} houses",
@@ -175,15 +195,7 @@ impl OsmPbf {
                     if self.ignore.contains(&ParseOsmTypes::Ways) && !needed {
                         return 0;
                     }
-                    // Locations are in the way if the file was written with
-                    // LocationsOnWays, else in the node cache.
-                    let mut points: Vec<(f64, f64)> = way.node_locations().map(|n| (n.lat(), n.lon())).collect();
-                    if points.is_empty() {
-                        points = way
-                            .refs()
-                            .filter_map(|node_id| self.indexer_cache.query_node_location(node_id).ok().flatten())
-                            .collect();
-                    }
+                    let points: Vec<(f64, f64)> = way.node_locations().map(|n| (n.lat(), n.lon())).collect();
                     if points.is_empty() {
                         return 0;
                     }
@@ -274,29 +286,13 @@ impl OsmPbf {
         Ok(())
     }
 
-    /// Caches node locations if `cache_nodes`, and finds the IDs of ways
-    /// that interesting multipolygon relations have as members and the
-    /// houses of associated street relations.
-    fn scan(&self, cache_nodes: bool, relations: bool) -> Result<Scan> {
-        if !cache_nodes && !relations {
-            return Ok(Scan::default());
-        }
-        // Increase buffer to reduce writes to disk
-        self.indexer_cache.buffer_size(10_000_000)?;
-        let cache = |id: i64, location: (f64, f64)| {
-            if cache_nodes {
-                let _ = self
-                    .indexer_cache
-                    .buffered_write_item(WofCacheItem::NodeLocation(id, location))
-                    .map_err(|e| warn!("Error writing node location to cache: {e}"));
-            }
-        };
+    /// Finds the IDs of ways that interesting multipolygon relations have as
+    /// members, and the houses of associated street relations.
+    fn scan(&self, relations: bool) -> Result<Scan> {
         let needed = ElementReader::from_path(&self.pbf_path)?.par_map_reduce(
             |element| {
                 let mut scan = Scan::default();
                 match element {
-                    Element::Node(node) => cache(node.id(), (node.lat(), node.lon())),
-                    Element::DenseNode(node) => cache(node.id(), (node.lat(), node.lon())),
                     Element::Relation(relation) => {
                         let tags = relation.tags().collect::<HashMap<_, _>>();
                         if relations && wants_relation(&tags) {
@@ -327,8 +323,6 @@ impl OsmPbf {
             Scan::default,
             Scan::merge,
         )?;
-        // Revert buffer size to default
-        self.indexer_cache.buffer_size_default()?;
         Ok(needed)
     }
 }
