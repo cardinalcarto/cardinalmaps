@@ -76,7 +76,7 @@ for value in json.load(open(sys.argv[1])).values():
         print(url.port)
 PY
 
-package=com.example.cardinal
+package=com.cardinalcarto.cardinal
 adb shell am force-stop "$package"
 adb logcat -c
 adb shell am start -n "$package/.MainActivity" >/dev/null

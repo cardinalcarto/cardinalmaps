@@ -1,4 +1,4 @@
-package com.example.cardinal
+package com.cardinalcarto.cardinal
 
 import io.flutter.embedding.android.FlutterActivity
 
