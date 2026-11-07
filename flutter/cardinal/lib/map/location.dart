@@ -9,6 +9,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
 
+import '../store/store.dart';
 import 'map.dart';
 
 /// The style's GeoJSON source for where you are.
@@ -161,6 +162,10 @@ class GeolocatorSource implements LocationSource {
   Future<void> openLocationSettings() => Geolocator.openLocationSettings();
 }
 
+/// Whether the app has offered, on its first launch, to show where you are, and you
+/// answered.
+final locationOffered = Setting.flag('location.offered', false);
+
 bool _allowed(LocationPermission p) => p == LocationPermission.always || p == LocationPermission.whileInUse;
 
 /// Follows where you are once you've allowed it, and shows it on [map].
@@ -192,6 +197,16 @@ class LocationTracker {
   void _show(Fix fix) {
     _fix = fix;
     map.setGeoJson(locationSource, locationGeoJson(fix));
+  }
+
+  /// Whether you've allowed the app your location, or null if the platform has no
+  /// location service.
+  Future<bool?> allowed() async {
+    try {
+      return _allowed(await source.checkPermission());
+    } on Object {
+      return null;
+    }
   }
 
   /// Moves the map to where you are, asking for permission first if it hasn't been given.
@@ -244,7 +259,47 @@ class _MyLocationButtonState extends State<MyLocationButton> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _tracker ??= LocationTracker(MapScope.of(context), source: widget.source)..startIfAllowed();
+    if (_tracker != null) return;
+    _tracker = LocationTracker(MapScope.of(context), source: widget.source)..startIfAllowed();
+    final settings = StoreScope.of(context).settings;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _offer(settings));
+  }
+
+  /// How long the offer waits for the map to finish drawing, at most: offline, it may
+  /// never.
+  static const _mapWait = Duration(seconds: 10);
+
+  /// On first launch, offers to show where you are, unless you already allowed it. Yes
+  /// goes to you as the button does; either answer means it's never offered again, but
+  /// dismissing it leaves it for next time. It waits for the map, so the map shows
+  /// behind it.
+  Future<void> _offer(SettingsStore settings) async {
+    if (await settings.get(locationOffered)) return;
+    final allowed = await _tracker!.allowed();
+    if (allowed != false) {
+      // Allowed already, or there's no location service to ask about.
+      if (allowed == true) await settings.set(locationOffered, true);
+      return;
+    }
+    await _tracker!.map.firstComplete.timeout(_mapWait, onTimeout: () {});
+    if (!mounted) return;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enable location?'),
+        content: const Text(
+          'Allow Cardinal Maps to access your location to show you where you are on the map '
+          'and provide a better experience.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('No')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Yes')),
+        ],
+      ),
+    );
+    if (yes == null) return;
+    await settings.set(locationOffered, true);
+    if (yes && mounted) await _locate();
   }
 
   @override

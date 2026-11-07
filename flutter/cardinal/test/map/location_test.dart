@@ -3,10 +3,14 @@ import 'dart:math' as math;
 
 import 'package:cardinal/map/layers.dart';
 import 'package:cardinal/map/location.dart';
+import 'package:cardinal/map/map.dart';
+import 'package:cardinal/store/store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../fakes/fake_map.dart';
+import '../fakes/fake_place_store.dart';
 
 /// A location service that answers as told, and counts what it's asked.
 class FakeLocation implements LocationSource {
@@ -133,6 +137,108 @@ void main() {
     expect(map.geoJson, isEmpty);
   });
 
+  group('the first launch', () {
+    const title = 'Enable location?';
+    const text =
+        'Allow Cardinal Maps to access your location to show you where you are on the map and provide a better experience.';
+
+    Future<void> launch(WidgetTester tester, {required FakeMap map, required SettingsStore settings, required FakeLocation source}) async {
+      await tester.pumpWidget(
+        MapScope(
+          controller: map,
+          child: StoreScope(
+            store: Store.withoutDatabase(places: FakePlaceStore(), settings: settings),
+            child: MaterialApp(
+              // A new key each launch, so the button starts afresh.
+              home: Scaffold(body: Center(child: MyLocationButton(key: UniqueKey(), source: source))),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('offers your location, and No means never again', (tester) async {
+      final settings = SettingsStore.inMemory();
+      final source = FakeLocation(permission: LocationPermission.denied, now: seattle);
+      final map = FakeMap();
+      await launch(tester, map: map, settings: settings, source: source);
+      expect(find.text(title), findsOneWidget);
+      expect(find.text(text), findsOneWidget);
+
+      await tester.tap(find.text('No'));
+      await tester.pumpAndSettle();
+      expect(find.text(title), findsNothing);
+      expect(source.asked, 0);
+      expect(map.flownTo, isNull);
+
+      await launch(tester, map: map, settings: settings, source: source);
+      expect(find.text(title), findsNothing);
+    });
+
+    testWidgets('Yes asks for permission and goes to you, and is never offered again', (tester) async {
+      final settings = SettingsStore.inMemory();
+      final source = FakeLocation(
+        permission: LocationPermission.denied,
+        granted: LocationPermission.whileInUse,
+        now: seattle,
+      );
+      final map = FakeMap();
+      await launch(tester, map: map, settings: settings, source: source);
+      await tester.tap(find.text('Yes'));
+      await tester.pumpAndSettle();
+      expect(source.asked, 1);
+      expect(map.flownTo, (lng: seattle.lng, lat: seattle.lat, zoom: locationZoom));
+
+      source.permission = LocationPermission.denied;
+      await launch(tester, map: map, settings: settings, source: source);
+      expect(find.text(title), findsNothing);
+    });
+
+    testWidgets("isn't offered if you've already allowed it", (tester) async {
+      final settings = SettingsStore.inMemory();
+      await launch(tester, map: FakeMap(), settings: settings, source: FakeLocation(now: seattle));
+      expect(find.text(title), findsNothing);
+      expect(await settings.get(locationOffered), isTrue);
+    });
+
+    testWidgets('dismissing it leaves it for next time', (tester) async {
+      final settings = SettingsStore.inMemory();
+      final source = FakeLocation(permission: LocationPermission.denied);
+      await launch(tester, map: FakeMap(), settings: settings, source: source);
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+      expect(find.text(title), findsNothing);
+      expect(await settings.get(locationOffered), isFalse);
+
+      await launch(tester, map: FakeMap(), settings: settings, source: source);
+      expect(find.text(title), findsOneWidget);
+    });
+
+    testWidgets('waits for the map to finish drawing, so the map shows behind it', (tester) async {
+      final map = _SlowMap();
+      await launch(tester, map: map, settings: SettingsStore.inMemory(), source: FakeLocation(permission: LocationPermission.denied));
+      expect(find.text(title), findsNothing);
+      map.drawn.complete();
+      await tester.pumpAndSettle();
+      expect(find.text(title), findsOneWidget);
+    });
+
+    testWidgets("doesn't wait forever for a map that never finishes", (tester) async {
+      await launch(tester, map: _SlowMap(), settings: SettingsStore.inMemory(), source: FakeLocation(permission: LocationPermission.denied));
+      expect(find.text(title), findsNothing);
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pumpAndSettle();
+      expect(find.text(title), findsOneWidget);
+    });
+
+    testWidgets("isn't offered without a location service", (tester) async {
+      final settings = SettingsStore.inMemory();
+      await launch(tester, map: FakeMap(), settings: settings, source: _Broken());
+      expect(find.text(title), findsNothing);
+    });
+  });
+
   group('following', () {
     test('starts at once if you allowed it before, without asking', () async {
       final map = FakeMap();
@@ -160,4 +266,12 @@ class _Broken extends FakeLocation {
 
   @override
   Future<LocationPermission> checkPermission() => Future.error(UnsupportedError('no location service'));
+}
+
+/// A map that finishes drawing when the test says.
+class _SlowMap extends FakeMap {
+  final drawn = Completer<void>();
+
+  @override
+  Future<void> get firstComplete => drawn.future;
 }

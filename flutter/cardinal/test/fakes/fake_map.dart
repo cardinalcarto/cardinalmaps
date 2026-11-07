@@ -37,6 +37,10 @@ class FakeMap extends SparkleMapController {
   @override
   void setGeoJson(String source, Object geojson) => geoJson[source] = geojson;
 
+  /// Without a map to draw, as if it had drawn everything at once.
+  @override
+  Future<void> get firstComplete async {}
+
   /// Where [flyTo] last sent the camera.
   ({double lng, double lat, double zoom})? flownTo;
 
