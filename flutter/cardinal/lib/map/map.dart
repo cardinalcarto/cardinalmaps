@@ -13,8 +13,8 @@ import '../config.dart';
 import '../routes.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
+import 'layers.dart';
 import 'poi.dart';
-import 'selection.dart';
 
 /// Provides the map's controller to the widgets below it.
 class MapScope extends InheritedWidget {
@@ -29,9 +29,9 @@ class MapScope extends InheritedWidget {
   bool updateShouldNotify(MapScope oldWidget) => controller != oldWidget.controller;
 }
 
-/// The map: [tilesUrl]'s tiles in the Headway style, with the selected place on top
-/// (see `selection.dart`). The body of a [SheetScaffold]: the camera keeps what it shows
-/// clear of the sheet.
+/// The map: [tilesUrl]'s tiles in the style the layer picker chose (see `layers.dart`),
+/// with the selected place on top (see `selection.dart`). The body of a [SheetScaffold]:
+/// the camera keeps what it shows clear of the sheet.
 class CardinalMap extends StatefulWidget {
   const CardinalMap({super.key, required this.controller});
 
@@ -42,10 +42,43 @@ class CardinalMap extends StatefulWidget {
 }
 
 class _CardinalMapState extends State<CardinalMap> {
-  late final Future<List<String>> _args = _mapArgs();
+  late final Future<List<String>> _args = _start(StoreScope.of(context).settings);
   late final Future<Map<int, WofArea>> _wofAreas = _loadWofAreas();
   Object? _error;
   SheetController? _sheet;
+
+  /// What the style file was last written for.
+  MapLayers? _layers;
+  final _watching = <StreamSubscription<void>>[];
+
+  /// The style file's writes, one after another.
+  Future<void> _writing = Future.value();
+
+  /// Starts the map in the stored layers, then follows the layer picker's choices.
+  Future<List<String>> _start(SettingsStore settings) async {
+    final layers = await MapLayers.read(settings);
+    final args = await _mapArgs(layers);
+    _layers = layers;
+    _watching.addAll([
+      settings.watch(mapStyleChoice).listen((v) => _change((l) => l.copyWith(style: v))),
+      settings.watch(contourUnits).listen((v) => _change((l) => l.copyWith(units: v))),
+      settings.watch(winterMode).listen((v) => _change((l) => l.copyWith(winter: v))),
+    ]);
+    return args;
+  }
+
+  /// Writes the style for a changed choice; sparkle reloads the file when it changes,
+  /// keeping what it can.
+  void _change(MapLayers Function(MapLayers) update) {
+    final current = _layers;
+    if (current == null) return;
+    final next = update(current);
+    if (next == current) return;
+    _layers = next;
+    _writing = _writing.then((_) => _writeStyle(next)).catchError((Object e) {
+      if (mounted) setState(() => _error = e);
+    });
+  }
 
   @override
   void didChangeDependencies() {
@@ -62,6 +95,9 @@ class _CardinalMapState extends State<CardinalMap> {
   @override
   void dispose() {
     _sheet?.removeListener(_updatePadding);
+    for (final watching in _watching) {
+      watching.cancel();
+    }
     super.dispose();
   }
 
@@ -146,24 +182,33 @@ Map<int, WofArea> _decodeWofAreas(Uint8List compressed) {
 /// The bundled map assets, which sparkle reads from files.
 const _assets = ['sprites@2x.json', 'sprites@2x.png'];
 
-/// Arguments for sparkle (as `sparkle_harness` takes them): the bundled style and
-/// sprites, copied out to files, and [tilesUrl]'s tiles.
-Future<List<String>> _mapArgs() async {
+/// Where sparkle reads the map's files from.
+Future<Directory> _mapDir() async =>
+    Directory('${(await getApplicationSupportDirectory()).path}/map');
+
+/// Writes the style for [layers] where sparkle reads it. Written aside and renamed into
+/// place, so sparkle never reads half a file.
+Future<void> _writeStyle(MapLayers layers) async {
+  final dir = await _mapDir();
+  final partial = File('${dir.path}/style.json.partial');
+  await partial.writeAsString(jsonEncode(await styleFor(layers)), flush: true);
+  await partial.rename('${dir.path}/style.json');
+}
+
+/// Arguments for sparkle (as `sparkle_harness` takes them): the style for [layers] and
+/// the bundled sprites, copied out to files, and [tilesUrl]'s tiles.
+Future<List<String>> _mapArgs(MapLayers layers) async {
   if (tilesUrl.isEmpty) {
     throw StateError('no tiles: build with --dart-define=CARDINAL_TILES_URL=<TileJSON URL>');
   }
-  final support = await getApplicationSupportDirectory();
-  final dir = Directory('${support.path}/map');
+  final dir = await _mapDir();
   await dir.create(recursive: true);
   for (final name in _assets) {
     final data = await rootBundle.load('assets/map/$name');
     await File('${dir.path}/$name')
         .writeAsBytes(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
   }
-  final style =
-      jsonDecode(await rootBundle.loadString('assets/map/$mapStyle')) as Map<String, Object?>;
-  addSelectionLayers(style);
-  await File('${dir.path}/style.json').writeAsString(jsonEncode(style), flush: true);
+  await _writeStyle(layers);
   final cache = await getApplicationCacheDirectory();
   final d = dir.path;
   return [

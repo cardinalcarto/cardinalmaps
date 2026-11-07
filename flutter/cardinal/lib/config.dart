@@ -10,5 +10,8 @@ const geocoderUrl = String.fromEnvironment('CARDINAL_GEOCODER_URL');
 /// The bundled map style, a file in `assets/map`.
 const mapStyle = String.fromEnvironment('CARDINAL_STYLE', defaultValue: 'headway.json');
 
+/// The bundled Cardinal Topo style, a file in `assets/map`.
+const topoStyle = 'cardinal-topo.json';
+
 /// Where the map starts, as `lng,lat,zoom`; the tileset's center if empty.
 const initialView = String.fromEnvironment('CARDINAL_VIEW');

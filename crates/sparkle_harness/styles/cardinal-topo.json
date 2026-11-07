@@ -13,7 +13,7 @@
   "openmaptiles": {
    "type": "vector",
    "url": "mbtiles://{default}",
-   "attribution": "© OpenStreetMap contributors © OpenMapTiles, elevation © JAXA"
+   "attribution": "© OpenStreetMap contributors © OpenMapTiles, elevation © OpenGeoHub GEDTM (CC BY 4.0)"
   }
  },
  "sprite": "sprite",

@@ -2,6 +2,7 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
 
+import 'map/layers.dart';
 import 'map/map.dart';
 import 'place/place_page.dart';
 import 'search/search_sheet.dart';
@@ -40,6 +41,7 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
         resizeToAvoidBottomInset: false,
         body: SheetScaffold(
           body: CardinalMap(controller: map),
+          floating: const LayerButton(),
           sheet: child,
         ),
       ),
