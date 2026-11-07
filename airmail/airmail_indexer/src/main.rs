@@ -28,10 +28,9 @@ struct Args {
     #[clap(long, short)]
     index: PathBuf,
 
-    /// Path where an indexing cache will be stored. This is a redb file that
-    /// contains a cache of expensive operations. It is technically optional but we'll just create one in a
-    /// temporary directory if you don't specify it. Keeping a cache around can
-    /// speed up imports by like 5-10x+ so it's worth it.
+    /// Path where OSM coordinates are kept while parsing, a redb file: node locations, for
+    /// files without locations on ways, and the ways multipolygons are made of. Without this,
+    /// it's in a temporary directory.
     #[clap(long, short)]
     admin_cache: Option<PathBuf>,
 

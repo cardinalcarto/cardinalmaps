@@ -38,7 +38,7 @@ places (`place=city`, `boundary=*` and so on) are skipped; `load-wof` indexes
 every administrative area in the Who's On First database instead, so use one
 covering the area you want to search.
 
-- `--admin-cache` is a redb file caching point-in-polygon lookups and OSM node locations. It's optional, but keeping it between runs speeds imports up a lot.
+- `--admin-cache` is a redb file holding OSM coordinates while parsing: node locations, for files without locations on ways, and the ways multipolygons are made of. It's optional, and in a temporary directory without it.
 - `--pip-tree` builds an in-memory R-tree of Who's On First polygons and caches it at the given path. It's faster than SpatiaLite lookups for planet-scale or repeated imports, but uses around 10GB of memory and takes a few minutes to build the first time.
 - `load-osm-pbf --nodes-already-cached` skips the node-location pass when the admin cache already has it from a previous run of the same file.
 - `load-osm-pbf --ignore <ways|nodes|dense-nodes|relations>` skips element types.

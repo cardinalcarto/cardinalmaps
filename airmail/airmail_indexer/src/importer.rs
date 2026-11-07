@@ -3,7 +3,6 @@ use airmail::{
     index::{AirmailIndex, AirmailIndexWriter},
     poi::{Kind, SchemafiedPoi, ToIndexPoi},
 };
-use s2::{cellid::CellID, latlng::LatLng};
 use anyhow::Result;
 use crossbeam::channel::{Receiver, Sender};
 use futures_util::future::join_all;
@@ -20,7 +19,7 @@ use tokio::{
 };
 
 use crate::{
-    cache::{IndexerCache, WofCacheItem},
+    cache::IndexerCache,
     postcodes::Postcodes,
     pip_tree::PipTree,
     qrank::QRank,
@@ -163,20 +162,9 @@ impl Importer {
         receiver: Receiver<ToIndexPoi>,
         mut sink: impl PoiSink,
     ) -> Result<()> {
-        let (to_cache_sender, to_cache_receiver): (Sender<WofCacheItem>, Receiver<WofCacheItem>) =
-            crossbeam::channel::bounded(1024);
         let (to_index_sender, to_index_receiver): (Sender<WithLanguages>, Receiver<WithLanguages>) =
             crossbeam::channel::bounded(1024);
         let mut handles: Vec<JoinHandle<Result<()>>> = vec![];
-
-        // Listen for items to cache
-        let admin_cache = self.indexer_cache.clone();
-        handles.push(spawn_blocking(move || {
-            while let Ok(cache_item) = to_cache_receiver.recv() {
-                admin_cache.buffered_write_item(cache_item)?;
-            }
-            Ok(())
-        }));
 
         // Listen for items to write
         handles.push(spawn_blocking(move || {
@@ -212,33 +200,13 @@ impl Importer {
         for _ in 0..num_cpus::get() {
             let no_admin_receiver = receiver.clone();
             let to_index_sender = to_index_sender.clone();
-            let to_cache_sender = to_cache_sender.clone();
-            let indexer_cache = self.indexer_cache.clone();
             let wof_db = self.wof_db.clone();
             let pip_tree = self.pip_tree.clone();
             let qrank = self.qrank.clone();
 
             handles.push(spawn(async move {
-                let mut counter = 0;
                 while let Ok(poi) = no_admin_receiver.recv() {
-                    counter += 1;
-                    if counter % 1000 == 0 {
-                        trace!(
-                            "Cache queue, index queue: {}, {}",
-                            to_cache_sender.len(),
-                            to_index_sender.len()
-                        );
-                    }
-
-                    match Self::populate_admin_areas(
-                        poi,
-                        &indexer_cache,
-                        to_cache_sender.clone(),
-                        &wof_db,
-                        &pip_tree,
-                        qrank.as_deref(),
-                    )
-                    .await
+                    match Self::populate_admin_areas(poi, &wof_db, &pip_tree, qrank.as_deref()).await
                     {
                         Ok(poi_and_languages) => {
                             to_index_sender.send(poi_and_languages).unwrap();
@@ -253,7 +221,6 @@ impl Importer {
             }));
         }
         drop(to_index_sender);
-        drop(to_cache_sender);
 
         trace!("Waiting for indexing to finish");
         join_all(handles).await;
@@ -268,16 +235,11 @@ impl Importer {
 
     async fn populate_admin_areas(
         mut poi: ToIndexPoi,
-        indexer_cache: &IndexerCache,
-        to_cache_sender: Sender<WofCacheItem>,
         wof_db: &WhosOnFirst,
         pip_tree: &Option<PipTree<ConcisePipResponse>>,
         qrank: Option<&QRank>,
     ) -> Result<WithLanguages> {
-        let center = CellID::from(LatLng::from_degrees(poi.center.y(), poi.center.x()));
-        let pip_response =
-            query_pip::query_pip(indexer_cache, to_cache_sender, center.0, wof_db, pip_tree)
-                .await?;
+        let pip_response = query_pip::query_pip(poi.center.x(), poi.center.y(), wof_db, pip_tree).await?;
         poi.admin_ids = pip_response.admin_ids;
         poi.admin_names = pip_response.admin_names;
         poi.country_code = pip_response.country_code;

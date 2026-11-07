@@ -11,27 +11,15 @@ use anyhow::Result;
 use log::{trace, warn};
 use redb::{Database, ReadableDatabase, TableDefinition};
 
-use serde::{Deserialize, Serialize};
-
-use crate::wof::WofName;
-
-const TABLE_AREAS: TableDefinition<u64, &[u8]> = TableDefinition::new("admin_areas");
-const TABLE_NAMES: TableDefinition<u64, &str> = TableDefinition::new("admin_names");
-const TABLE_LANGS: TableDefinition<u64, &str> = TableDefinition::new("admin_langs");
 const TABLE_NODE_LOCATION: TableDefinition<i64, (f64, f64)> =
     TableDefinition::new("admin_node_location");
-// Tables added later have versioned names, so a cache written by an older
-// indexer keeps its still-valid tables and fills these in.
-/// An admin's placetype and every name, as a JSON `AdminInfo`.
-const TABLE_ADMIN_NAMES: TableDefinition<u64, &str> = TableDefinition::new("admin_info_v1");
-/// The ancestors of an admin, as packed little-endian u64s.
-const TABLE_ANCESTORS: TableDefinition<u64, &[u8]> = TableDefinition::new("admin_ancestors_v1");
 /// Coordinates of ways that multipolygon relations need, as packed
 /// little-endian (lon, lat) f64 pairs.
 const TABLE_WAY_COORDS: TableDefinition<i64, &[u8]> = TableDefinition::new("way_coords_v1");
 pub const BUFFER_SIZE: usize = 25000;
 
-/// A cache for storing administrative area information.
+/// OSM coordinates that parsing needs later: node locations, for files without locations
+/// on ways, and the ways multipolygon relations are made of.
 pub struct IndexerCache {
     database: Database,
     buffer_size: AtomicUsize,
@@ -44,12 +32,7 @@ impl IndexerCache {
         trace!("Opening cache database at {:?}", redb_path);
         let database = Database::create(redb_path)?;
         let txn = database.begin_write()?;
-        txn.open_table(TABLE_AREAS)?;
-        txn.open_table(TABLE_NAMES)?;
-        txn.open_table(TABLE_LANGS)?;
         txn.open_table(TABLE_NODE_LOCATION)?;
-        txn.open_table(TABLE_ADMIN_NAMES)?;
-        txn.open_table(TABLE_ANCESTORS)?;
         txn.open_table(TABLE_WAY_COORDS)?;
         txn.commit()?;
 
@@ -60,58 +43,6 @@ impl IndexerCache {
         })
     }
 
-    /// Lookup a cell id in the cache and return the admin ids
-    pub fn query_area(&self, cell_id: u64) -> Result<Vec<u64>> {
-        let mut ids: Vec<u64> = Vec::new();
-        let txn = self.database.begin_read()?;
-        let table = txn.open_table(TABLE_AREAS)?;
-        if let Some(admin_ids) = table.get(&cell_id)? {
-            for admin_id in admin_ids.value().chunks(8) {
-                ids.push(u64::from_le_bytes([
-                    admin_id[0],
-                    admin_id[1],
-                    admin_id[2],
-                    admin_id[3],
-                    admin_id[4],
-                    admin_id[5],
-                    admin_id[6],
-                    admin_id[7],
-                ]));
-            }
-        }
-        Ok(ids)
-    }
-
-    /// Lookup an admin id in the cache and return the names
-    pub fn query_names_cache(&self, admin: u64) -> Result<Option<Vec<String>>> {
-        let txn = self.database.begin_read()?;
-        let table = txn.open_table(TABLE_NAMES)?;
-        if let Some(names_ref) = table.get(admin)? {
-            let names = names_ref.value().to_string();
-            let names = names
-                .split('\0')
-                .map(|s| s.to_string())
-                .collect::<Vec<String>>();
-            return Ok(Some(names));
-        }
-        Ok(None)
-    }
-
-    /// Lookup an admin id in the cache and return the languages
-    pub fn query_languages_cache(&self, admin: u64) -> Result<Option<Vec<String>>> {
-        let txn = self.database.begin_read()?;
-        let table = txn.open_table(TABLE_LANGS)?;
-        if let Some(langs_ref) = table.get(admin)? {
-            let langs = langs_ref.value().to_string();
-            let langs = langs
-                .split('\0')
-                .map(|s| s.to_string())
-                .collect::<Vec<String>>();
-            return Ok(Some(langs));
-        }
-        Ok(None)
-    }
-
     /// Lookup a node id in the cache and return the location
     pub fn query_node_location(&self, node_id: i64) -> Result<Option<(f64, f64)>> {
         let txn = self.database.begin_read()?;
@@ -120,23 +51,6 @@ impl IndexerCache {
             return Ok(Some(location.value()));
         }
         Ok(None)
-    }
-
-    /// An admin's placetype and names, if cached.
-    pub fn query_admin_info(&self, admin: u64) -> Result<Option<AdminInfo>> {
-        let txn = self.database.begin_read()?;
-        let table = txn.open_table(TABLE_ADMIN_NAMES)?;
-        match table.get(admin)? {
-            Some(names) => Ok(Some(serde_json::from_str(names.value())?)),
-            None => Ok(None),
-        }
-    }
-
-    /// The ancestors of an admin, if cached.
-    pub fn query_ancestors(&self, admin: u64) -> Result<Option<Vec<u64>>> {
-        let txn = self.database.begin_read()?;
-        let table = txn.open_table(TABLE_ANCESTORS)?;
-        Ok(table.get(admin)?.map(|ids| unpack_u64s(ids.value())))
     }
 
     /// The (lon, lat) coordinates of a way, if cached.
@@ -178,40 +92,13 @@ impl IndexerCache {
 
         let write = self.database.begin_write()?;
         {
-            let mut names_table = write.open_table(TABLE_NAMES)?;
-            let mut langs_table = write.open_table(TABLE_LANGS)?;
-            let mut areas_table = write.open_table(TABLE_AREAS)?;
-            let mut locations_tabls = write.open_table(TABLE_NODE_LOCATION)?;
-            let mut admin_names_table = write.open_table(TABLE_ADMIN_NAMES)?;
-            let mut ancestors_table = write.open_table(TABLE_ANCESTORS)?;
+            let mut locations_table = write.open_table(TABLE_NODE_LOCATION)?;
             let mut way_coords_table = write.open_table(TABLE_WAY_COORDS)?;
 
             for item in buffer.drain(..) {
                 match item {
-                    WofCacheItem::Names(admin, names) => {
-                        let packed = names.join("\0");
-                        names_table.insert(admin, packed.as_str())?;
-                    }
-                    WofCacheItem::Langs(admin, langs) => {
-                        let packed = langs.join("\0");
-                        langs_table.insert(admin, packed.as_str())?;
-                    }
-                    WofCacheItem::Admins(s2cell, admins) => {
-                        let packed = admins
-                            .iter()
-                            .flat_map(|id| id.to_le_bytes())
-                            .collect::<Vec<_>>();
-                        areas_table.insert(s2cell, packed.as_slice())?;
-                    }
                     WofCacheItem::NodeLocation(node_id, location) => {
-                        locations_tabls.insert(node_id, location)?;
-                    }
-                    WofCacheItem::AdminInfo(admin, info) => {
-                        admin_names_table.insert(admin, serde_json::to_string(&info)?.as_str())?;
-                    }
-                    WofCacheItem::Ancestors(admin, ancestors) => {
-                        let packed = ancestors.iter().flat_map(|id| id.to_le_bytes()).collect::<Vec<_>>();
-                        ancestors_table.insert(admin, packed.as_slice())?;
+                        locations_table.insert(node_id, location)?;
                     }
                     WofCacheItem::WayCoords(way, coords) => {
                         let packed = coords
@@ -256,22 +143,6 @@ impl Drop for IndexerCache {
     }
 }
 pub enum WofCacheItem {
-    Names(u64, Vec<String>),
-    Langs(u64, Vec<String>),
-    Admins(u64, Vec<u64>),
     NodeLocation(i64, (f64, f64)),
-    AdminInfo(u64, AdminInfo),
-    Ancestors(u64, Vec<u64>),
     WayCoords(i64, Vec<(f64, f64)>),
-}
-
-/// What indexing needs of an admin that contains places.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdminInfo {
-    pub placetype: String,
-    pub names: Vec<WofName>,
-}
-
-fn unpack_u64s(bytes: &[u8]) -> Vec<u64> {
-    bytes.chunks_exact(8).map(|id| u64::from_le_bytes(id.try_into().unwrap())).collect()
 }
