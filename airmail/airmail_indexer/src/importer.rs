@@ -1,6 +1,6 @@
 use airmail::{
     geometry, importance,
-    index::{AirmailIndex, AirmailIndexWriter},
+    index::{AirmailIndex, AirmailIndexWriter, Document},
     poi::{Kind, SchemafiedPoi, ToIndexPoi},
 };
 use anyhow::Result;
@@ -32,9 +32,16 @@ type WithLanguages = (ToIndexPoi, Vec<String>);
 
 /// Where imported POIs go, once their admin areas and languages are known.
 pub trait PoiSink: Send + 'static {
+    /// What the sink adds for a POI.
+    type Prepared: Send + 'static;
+
+    /// Makes what `add` takes from a POI. The importer's workers call it on
+    /// every core at once, so the work that can be done apart is done here.
     /// `languages` are the ISO 639-3 codes Who's On First lists as spoken
     /// where the POI is.
-    fn add(&mut self, poi: ToIndexPoi, languages: &[String]) -> Result<()>;
+    fn preparer(&self) -> impl Fn(ToIndexPoi, &[String]) -> Result<Self::Prepared> + Clone + Send + Sync + 'static;
+
+    fn add(&mut self, prepared: Self::Prepared) -> Result<()>;
 
     fn finish(self) -> Result<()>;
 }
@@ -61,9 +68,23 @@ impl IndexSink {
 }
 
 impl PoiSink for IndexSink {
-    fn add(&mut self, poi: ToIndexPoi, _languages: &[String]) -> Result<()> {
-        self.postcodes.add(&poi);
-        self.writer.add_poi(SchemafiedPoi::from(poi), &self.source)
+    /// The document, and the POI if it has a postcode, for `Postcodes`.
+    type Prepared = (Document, Option<ToIndexPoi>);
+
+    fn preparer(&self) -> impl Fn(ToIndexPoi, &[String]) -> Result<Self::Prepared> + Clone + Send + Sync + 'static {
+        let builder = self.writer.document_builder();
+        let source = self.source.clone();
+        move |poi, _languages| {
+            let for_postcodes = (poi.postcode.is_some() && poi.country_code.is_some()).then(|| poi.clone());
+            Ok((builder.document(SchemafiedPoi::from(poi), &source)?, for_postcodes))
+        }
+    }
+
+    fn add(&mut self, (doc, for_postcodes): Self::Prepared) -> Result<()> {
+        if let Some(poi) = for_postcodes {
+            self.postcodes.add(&poi);
+        }
+        self.writer.add_document(doc)
     }
 
     fn finish(mut self) -> Result<()> {
@@ -157,12 +178,9 @@ impl Importer {
         &self.wof_db
     }
 
-    pub async fn run_import(
-        self,
-        receiver: Receiver<ToIndexPoi>,
-        mut sink: impl PoiSink,
-    ) -> Result<()> {
-        let (to_index_sender, to_index_receiver): (Sender<WithLanguages>, Receiver<WithLanguages>) =
+    pub async fn run_import<S: PoiSink>(self, receiver: Receiver<ToIndexPoi>, mut sink: S) -> Result<()> {
+        let prepare = sink.preparer();
+        let (to_index_sender, to_index_receiver): (Sender<S::Prepared>, Receiver<S::Prepared>) =
             crossbeam::channel::bounded(1024);
         let mut handles: Vec<JoinHandle<Result<()>>> = vec![];
 
@@ -183,8 +201,8 @@ impl Importer {
                     }
                 }
 
-                if let Ok((poi, languages)) = to_index_receiver.recv() {
-                    if let Err(err) = sink.add(poi, &languages) {
+                if let Ok(prepared) = to_index_receiver.recv() {
+                    if let Err(err) = sink.add(prepared) {
                         warn!("Failed to write POI. {}", err);
                     }
                 } else {
@@ -203,14 +221,16 @@ impl Importer {
             let wof_db = self.wof_db.clone();
             let pip_tree = self.pip_tree.clone();
             let qrank = self.qrank.clone();
+            let prepare = prepare.clone();
 
             handles.push(spawn(async move {
                 while let Ok(poi) = no_admin_receiver.recv() {
                     match Self::populate_admin_areas(poi, &wof_db, &pip_tree, qrank.as_deref()).await
                     {
-                        Ok(poi_and_languages) => {
-                            to_index_sender.send(poi_and_languages).unwrap();
-                        }
+                        Ok((poi, languages)) => match prepare(poi, &languages) {
+                            Ok(prepared) => to_index_sender.send(prepared).unwrap(),
+                            Err(err) => warn!("Failed to prepare POI. {}", err),
+                        },
                         Err(err) => {
                             warn!("Failed to populate admin areas, {}", err);
                         }

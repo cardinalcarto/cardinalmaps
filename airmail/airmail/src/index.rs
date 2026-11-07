@@ -763,12 +763,17 @@ fn indexed_tags(tags: &[(String, String)]) -> BTreeSet<String> {
     terms
 }
 
-pub struct AirmailIndexWriter {
-    tantivy_writer: tantivy::IndexWriter,
+/// A document of the index, as `DocumentBuilder` makes it.
+pub type Document = TantivyDocument;
+
+/// Builds an index's documents. Building one is most of the work of adding
+/// it, and this can do it on any thread, while the writer adds them from one.
+#[derive(Clone)]
+pub struct DocumentBuilder {
     schema: Schema,
 }
 
-impl AirmailIndexWriter {
+impl DocumentBuilder {
     fn field(&self, name: &str) -> tantivy::schema::Field {
         self.schema.get_field(name).expect("schema field")
     }
@@ -778,7 +783,8 @@ impl AirmailIndexWriter {
         name_key(name)
     }
 
-    pub fn add_poi(&mut self, schemafied: SchemafiedPoi, source: &str) -> Result<()> {
+    /// The document for a POI.
+    pub fn document(&self, schemafied: SchemafiedPoi, source: &str) -> Result<TantivyDocument> {
         let poi = &schemafied.poi;
         let mut doc = TantivyDocument::default();
         let mut exact = BTreeSet::new();
@@ -910,8 +916,35 @@ impl AirmailIndexWriter {
             doc.add_u64(self.field(FIELD_S2_COVER_ANCESTORS), cell);
         }
         doc.add_f64(self.field(FIELD_IMPORTANCE), poi.importance);
+        Ok(doc)
+    }
+}
+
+pub struct AirmailIndexWriter {
+    tantivy_writer: tantivy::IndexWriter,
+    schema: Schema,
+}
+
+impl AirmailIndexWriter {
+    fn field(&self, name: &str) -> tantivy::schema::Field {
+        self.schema.get_field(name).expect("schema field")
+    }
+
+    /// Builds documents for this writer, on any thread.
+    #[must_use]
+    pub fn document_builder(&self) -> DocumentBuilder {
+        DocumentBuilder { schema: self.schema.clone() }
+    }
+
+    /// Adds a document from `document_builder`.
+    pub fn add_document(&self, doc: TantivyDocument) -> Result<()> {
         self.tantivy_writer.add_document(doc)?;
         Ok(())
+    }
+
+    pub fn add_poi(&mut self, schemafied: SchemafiedPoi, source: &str) -> Result<()> {
+        let doc = self.document_builder().document(schemafied, source)?;
+        self.add_document(doc)
     }
 
     /// Deletes every document from `source`, so loading it again replaces
@@ -920,8 +953,11 @@ impl AirmailIndexWriter {
         self.tantivy_writer.delete_term(Term::from_field_text(self.field(FIELD_SOURCE), source));
     }
 
+    /// Commits, then waits for the merges the commit set off. Dropping the
+    /// writer would cancel them, leaving the index in many small segments.
     pub fn commit(mut self) -> Result<()> {
         self.tantivy_writer.commit()?;
+        self.tantivy_writer.wait_merging_threads()?;
         Ok(())
     }
 }

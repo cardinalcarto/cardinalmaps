@@ -116,8 +116,14 @@ impl CategoriesExportSink {
 }
 
 impl PoiSink for CategoriesExportSink {
-    fn add(&mut self, poi: ToIndexPoi, languages: &[String]) -> Result<()> {
-        if let Some(record) = TrainingPoi::new(&poi.tags, languages) {
+    type Prepared = Option<TrainingPoi>;
+
+    fn preparer(&self) -> impl Fn(ToIndexPoi, &[String]) -> Result<Self::Prepared> + Clone + Send + Sync + 'static {
+        |poi, languages| Ok(TrainingPoi::new(&poi.tags, languages))
+    }
+
+    fn add(&mut self, prepared: Self::Prepared) -> Result<()> {
+        if let Some(record) = prepared {
             serde_json::to_writer(&mut self.out, &record)?;
             self.out.write_all(b"\n")?;
             self.written += 1;
