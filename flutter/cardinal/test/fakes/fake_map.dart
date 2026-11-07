@@ -8,6 +8,7 @@ class FakeMap extends SparkleMapController {
   /// moved by hand.
   bool subject = false;
   int subjectsSet = 0;
+  double? subjectMaxZoom;
   final geoJson = <String, Object>{};
 
   @override
@@ -24,6 +25,7 @@ class FakeMap extends SparkleMapController {
   }) {
     subject = true;
     subjectsSet++;
+    subjectMaxZoom = maxZoom;
   }
 
   @override

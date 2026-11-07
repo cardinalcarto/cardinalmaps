@@ -47,10 +47,18 @@ class _PlacePageState extends State<PlacePage> {
   /// keep it in view again if the page stays after all.
   bool _hadSubject = false;
 
+  /// Whether the app is in dark mode, which has a pin of its own.
+  bool _dark = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _map = MapScope.of(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    if (dark != _dark) {
+      _dark = dark;
+      if (_place != null) showSelection(_map, _place, dark: dark);
+    }
     if (_watch == null) {
       final places = StoreScope.of(context).places;
       _place = places.cached(widget.id);
@@ -108,7 +116,7 @@ class _PlacePageState extends State<PlacePage> {
   /// moves, until it's moved by hand.
   void _show() {
     final place = _place;
-    showSelection(_map, place);
+    showSelection(_map, place, dark: _dark);
     if (place == null || _focused) return;
     _focused = true;
     focusPlace(_map, place);

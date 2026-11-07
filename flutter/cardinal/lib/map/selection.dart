@@ -44,18 +44,25 @@ void addSelectionLayers(Map<String, Object?> style) {
   ]);
   layers.add({
     'id': 'selection-pin',
-    'type': 'circle',
+    'type': 'symbol',
     'source': selectionSource,
     'filter': [
       '==',
       ['get', 'role'],
       'pin',
     ],
-    'paint': {
-      'circle-radius': 9,
-      'circle-color': '#d93025',
-      'circle-stroke-width': 3,
-      'circle-stroke-color': '#ffffff',
+    // Drawn by `tool/pin_sprite.py`. Its point is on the place, and it never gives way to
+    // labels or hides them.
+    'layout': {
+      'icon-image': [
+        'case',
+        ['get', 'dark'],
+        'selection_pin_dark',
+        'selection_pin',
+      ],
+      'icon-anchor': 'bottom',
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
     },
   });
 }
@@ -63,8 +70,9 @@ void addSelectionLayers(Map<String, Object?> style) {
 /// The place [showSelection] last showed.
 String? _shown;
 
-/// Shows [place]'s pin, and its boundary if it has a shape, or nothing for null.
-void showSelection(SparkleMapController map, Place? place) {
+/// Shows [place]'s pin, and its boundary if it has a shape, or nothing for null. [dark]
+/// is whether the app is in dark mode, which has a pin of its own.
+void showSelection(SparkleMapController map, Place? place, {bool dark = false}) {
   _shown = place?.id;
   if (place == null) {
     map.setGeoJson(selectionSource, _empty);
@@ -81,7 +89,7 @@ void showSelection(SparkleMapController map, Place? place) {
         },
       {
         'type': 'Feature',
-        'properties': {'role': 'pin'},
+        'properties': {'role': 'pin', 'dark': dark},
         'geometry': {
           'type': 'Point',
           'coordinates': [place.center.lon, place.center.lat],
@@ -105,9 +113,9 @@ const placeZoom = 14.0;
 /// Space kept around a place's bounds, in logical pixels.
 const _margin = 48.0;
 
-/// Makes [place] the map's subject: it flies to show its pin at [placeZoom], or all of
-/// its bounds (with the pin) if they need a wider view, and keeps it in view in what
-/// the sheet leaves uncovered as the sheet moves.
+/// Makes [place] the map's subject: it flies to show its pin at [placeZoom], or closer if
+/// the map is already closer, or all of its bounds (with the pin) if they need a wider
+/// view, and keeps it in view in what the sheet leaves uncovered as the sheet moves.
 void focusPlace(SparkleMapController map, Place place) {
   final c = place.center;
   final bbox = place.bbox ?? Bounds(west: c.lon, south: c.lat, east: c.lon, north: c.lat);
@@ -117,7 +125,7 @@ void focusPlace(SparkleMapController map, Place place) {
     south: math.min(bbox.south, c.lat),
     east: crosses ? bbox.east : math.max(bbox.east, c.lon),
     north: math.max(bbox.north, c.lat),
-    maxZoom: placeZoom,
+    maxZoom: math.max(placeZoom, map.camera?.zoom ?? placeZoom),
     margin: _margin,
   );
 }
