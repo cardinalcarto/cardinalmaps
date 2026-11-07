@@ -38,7 +38,10 @@ class _SheetContentState extends State<SheetContent> {
       _scaffold?._unregister(_entry);
       _scroll?.dispose();
       final scaffold = _scaffold = scope.state;
-      _scroll = _SheetScrollController(scope.controller, () => scaffold._active == _entry);
+      _scroll = _SheetScrollController(
+        scope.controller,
+        () => scaffold._active == _entry,
+      );
       scaffold._register(_entry);
     }
     _entry
@@ -118,11 +121,13 @@ class _SheetEntry extends ChangeNotifier {
   bool _relayingOut = false;
   bool _disposed = false;
 
-  SheetAnchor? get initial =>
-      anchors.isEmpty ? null : anchors[initialAnchor.clamp(0, anchors.length - 1)];
+  SheetAnchor? get initial => anchors.isEmpty
+      ? null
+      : anchors[initialAnchor.clamp(0, anchors.length - 1)];
 
-  ResolvedAnchor? resolvedFor(SheetAnchor? anchor) =>
-      anchor == null ? null : resolved.firstWhereOrNull((a) => a.anchor == anchor);
+  ResolvedAnchor? resolvedFor(SheetAnchor? anchor) => anchor == null
+      ? null
+      : resolved.firstWhereOrNull((a) => a.anchor == anchor);
 
   /// Where the sheet rests on this page: where it was left, or the initial anchor.
   ResolvedAnchor? get resting => resolvedFor(memory ?? initial);
@@ -150,7 +155,10 @@ class _SheetEntry extends ChangeNotifier {
   void measure(RenderAbstractViewport viewport) {
     final measured = <Object, _Span>{};
     for (final section in sections) {
-      if (!section.hasSize || RenderAbstractViewport.maybeOf(section) != viewport) continue;
+      if (!section.hasSize ||
+          RenderAbstractViewport.maybeOf(section) != viewport) {
+        continue;
+      }
       final top = viewport.getOffsetToReveal(section, 0).offset;
       measured[section.id] = _Span(top, top + section.size.height);
     }
@@ -163,7 +171,8 @@ class _SheetEntry extends ChangeNotifier {
     // The viewport's height follows the highest anchor, which may have moved.
     final content = this.content;
     if (content != null && !content.layingOut && !_relayingOut) {
-      if ((viewportHeight(content.fullHeight) - content.childHeight).abs() > _epsilon) {
+      if ((viewportHeight(content.fullHeight) - content.childHeight).abs() >
+          _epsilon) {
         _relayingOut = true;
         SchedulerBinding.instance.addPostFrameCallback((_) {
           _relayingOut = false;
@@ -201,12 +210,16 @@ class _SheetContentScope extends InheritedWidget {
 
   static _SheetEntry of(BuildContext context) {
     final entry = maybeOf(context);
-    assert(entry != null, 'SheetSection is only for use within a SheetContent.');
+    assert(
+      entry != null,
+      'SheetSection is only for use within a SheetContent.',
+    );
     return entry!;
   }
 
   @override
-  bool updateShouldNotify(_SheetContentScope oldWidget) => entry != oldWidget.entry;
+  bool updateShouldNotify(_SheetContentScope oldWidget) =>
+      entry != oldWidget.entry;
 }
 
 /// Sizes the content's viewport to what it shows at its highest anchor.
@@ -229,7 +242,10 @@ class _SheetContentLayout extends SingleChildRenderObjectWidget {
       _RenderSheetContent(entry)..config = (geometry, anchors, physics);
 
   @override
-  void updateRenderObject(BuildContext context, _RenderSheetContent renderObject) {
+  void updateRenderObject(
+    BuildContext context,
+    _RenderSheetContent renderObject,
+  ) {
     renderObject
       ..entry = entry
       ..config = (geometry, anchors, physics);
@@ -252,7 +268,10 @@ class _RenderSheetContent extends RenderProxyBox {
   (SheetGeometry?, List<SheetAnchor>, SheetPhysics)? _config;
   set config((SheetGeometry?, List<SheetAnchor>, SheetPhysics) value) {
     final old = _config;
-    if (old != null && old.$1 == value.$1 && listEquals(old.$2, value.$2) && old.$3 == value.$3) {
+    if (old != null &&
+        old.$1 == value.$1 &&
+        listEquals(old.$2, value.$2) &&
+        old.$3 == value.$3) {
       return;
     }
     _config = value;
@@ -276,11 +295,15 @@ class _RenderSheetContent extends RenderProxyBox {
     // Laying the viewport out measures the sections, which may move the highest anchor
     // and so the viewport's height.
     var height = entry.viewportHeight(fullHeight);
-    child.layout(BoxConstraints.tightFor(width: constraints.maxWidth, height: height));
+    child.layout(
+      BoxConstraints.tightFor(width: constraints.maxWidth, height: height),
+    );
     final measured = entry.viewportHeight(fullHeight);
     if ((measured - height).abs() > _epsilon) {
       height = measured;
-      child.layout(BoxConstraints.tightFor(width: constraints.maxWidth, height: height));
+      child.layout(
+        BoxConstraints.tightFor(width: constraints.maxWidth, height: height),
+      );
     }
     childHeight = height;
     size = constraints.biggest;
@@ -290,7 +313,11 @@ class _RenderSheetContent extends RenderProxyBox {
 
 /// A viewport that measures the content's sections each time it's laid out.
 class _SheetViewport extends Viewport {
-  _SheetViewport({required this.entry, required super.offset, required super.slivers});
+  _SheetViewport({
+    required this.entry,
+    required super.offset,
+    required super.slivers,
+  });
 
   final _SheetEntry entry;
 
@@ -300,7 +327,8 @@ class _SheetViewport extends Viewport {
       entry: entry,
       axisDirection: axisDirection,
       crossAxisDirection:
-          crossAxisDirection ?? Viewport.getDefaultCrossAxisDirection(context, axisDirection),
+          crossAxisDirection ??
+          Viewport.getDefaultCrossAxisDirection(context, axisDirection),
       offset: offset,
       scrollCacheExtent: scrollCacheExtent,
       clipBehavior: clipBehavior,
@@ -349,8 +377,11 @@ class SheetSection extends SingleChildRenderObjectWidget {
       _RenderSheetSection(id, _SheetContentScope.of(context));
 
   @override
-  // ignore: library_private_types_in_public_api
-  void updateRenderObject(BuildContext context, _RenderSheetSection renderObject) {
+  void updateRenderObject(
+    BuildContext context,
+    // ignore: library_private_types_in_public_api
+    _RenderSheetSection renderObject,
+  ) {
     renderObject
       ..id = id
       ..entry = _SheetContentScope.of(context);
@@ -440,7 +471,8 @@ class SheetView {
 class SheetBuilder extends StatelessWidget {
   const SheetBuilder({super.key, required this.builder, this.child});
 
-  final Widget Function(BuildContext context, SheetView sheet, Widget? child) builder;
+  final Widget Function(BuildContext context, SheetView sheet, Widget? child)
+  builder;
   final Widget? child;
 
   @override
@@ -448,9 +480,14 @@ class SheetBuilder extends StatelessWidget {
     final scope = _SheetScope.of(context);
     final entry = _SheetContentScope.maybeOf(context);
     return ListenableBuilder(
-      listenable: entry == null ? scope.controller : Listenable.merge([scope.controller, entry]),
-      builder: (context, child) =>
-          builder(context, SheetView._(scope.controller, scope.geometry, entry), child),
+      listenable: entry == null
+          ? scope.controller
+          : Listenable.merge([scope.controller, entry]),
+      builder: (context, child) => builder(
+        context,
+        SheetView._(scope.controller, scope.geometry, entry),
+        child,
+      ),
       child: child,
     );
   }

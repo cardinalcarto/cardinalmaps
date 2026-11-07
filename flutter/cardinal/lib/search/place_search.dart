@@ -11,7 +11,11 @@ import '../store/store.dart';
 /// Requests in flight keep going when the text changes, so results can be a few
 /// characters behind while typing; an answer never replaces a newer one's.
 class PlaceSearch extends ChangeNotifier {
-  PlaceSearch(this._geocoder, {this.lang, this.debounce = const Duration(milliseconds: 300)});
+  PlaceSearch(
+    this._geocoder, {
+    this.lang,
+    this.debounce = const Duration(milliseconds: 300),
+  });
 
   final Geocoder _geocoder;
 

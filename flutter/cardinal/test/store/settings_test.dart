@@ -16,7 +16,10 @@ void main() {
 
   // The same behavior from both kinds of store.
   for (final (name, open) in [
-    ('database', () => SettingsStore(CardinalDatabase(NativeDatabase.memory()))),
+    (
+      'database',
+      () => SettingsStore(CardinalDatabase(NativeDatabase.memory())),
+    ),
     ('memory', SettingsStore.inMemory),
   ]) {
     group('$name settings', () {
@@ -51,8 +54,16 @@ void main() {
       test('read a value of the wrong kind as the default', () async {
         final settings = open();
         // As if a choice had been removed since it was stored.
-        await settings.set(Setting.choice('test.shade', [Shade.dark], Shade.dark), Shade.dark);
-        expect(await settings.get(Setting.choice('test.shade', [Shade.light], Shade.light)), Shade.light);
+        await settings.set(
+          Setting.choice('test.shade', [Shade.dark], Shade.dark),
+          Shade.dark,
+        );
+        expect(
+          await settings.get(
+            Setting.choice('test.shade', [Shade.light], Shade.light),
+          ),
+          Shade.light,
+        );
         await settings.set(Setting.flag('test.shade', true), true);
         expect(await settings.get(shade), Shade.light);
       });

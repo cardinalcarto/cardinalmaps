@@ -20,7 +20,8 @@ const _components = {
 /// one line per element, without the country. Empty if it has no street address.
 List<String> addressLines(Place place) {
   final address = place.address;
-  if (address == null || (address.street == null && address.housenumber == null)) {
+  if (address == null ||
+      (address.street == null && address.housenumber == null)) {
     return const [];
   }
   final formatted = formatAddress(

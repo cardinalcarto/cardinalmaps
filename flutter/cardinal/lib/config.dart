@@ -8,7 +8,10 @@ const tilesUrl = String.fromEnvironment('CARDINAL_TILES_URL');
 const geocoderUrl = String.fromEnvironment('CARDINAL_GEOCODER_URL');
 
 /// The bundled map style, a file in `assets/map`.
-const mapStyle = String.fromEnvironment('CARDINAL_STYLE', defaultValue: 'headway.json');
+const mapStyle = String.fromEnvironment(
+  'CARDINAL_STYLE',
+  defaultValue: 'headway.json',
+);
 
 /// The bundled Cardinal Topo style, a file in `assets/map`.
 const topoStyle = 'cardinal-topo.json';

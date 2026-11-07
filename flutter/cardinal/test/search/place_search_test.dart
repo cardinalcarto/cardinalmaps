@@ -58,27 +58,30 @@ void main() {
     });
   });
 
-  test('keeps earlier requests going, showing their answers until newer ones come', () {
-    fakeAsync((async) {
-      final server = _Server();
-      final search = PlaceSearch(server.geocoder);
-      search.update('star');
-      async.elapse(const Duration(milliseconds: 300));
-      search.update('starbucks');
-      async.elapse(const Duration(milliseconds: 300));
-      expect(server.asked, ['star', 'starbucks']);
-      // The first answer arrives while the second is on its way: a little behind, but
-      // better than nothing.
-      server.respond('star', 'Starbuck');
-      async.flushMicrotasks();
-      expect(search.results.single.name, 'Starbuck');
-      expect(search.loading, isTrue);
-      server.respond('starbucks', 'Starbucks');
-      async.flushMicrotasks();
-      expect(search.results.single.name, 'Starbucks');
-      expect(search.loading, isFalse);
-    });
-  });
+  test(
+    'keeps earlier requests going, showing their answers until newer ones come',
+    () {
+      fakeAsync((async) {
+        final server = _Server();
+        final search = PlaceSearch(server.geocoder);
+        search.update('star');
+        async.elapse(const Duration(milliseconds: 300));
+        search.update('starbucks');
+        async.elapse(const Duration(milliseconds: 300));
+        expect(server.asked, ['star', 'starbucks']);
+        // The first answer arrives while the second is on its way: a little behind, but
+        // better than nothing.
+        server.respond('star', 'Starbuck');
+        async.flushMicrotasks();
+        expect(search.results.single.name, 'Starbuck');
+        expect(search.loading, isTrue);
+        server.respond('starbucks', 'Starbucks');
+        async.flushMicrotasks();
+        expect(search.results.single.name, 'Starbucks');
+        expect(search.loading, isFalse);
+      });
+    },
+  );
 
   test('an older answer never replaces a newer one', () {
     fakeAsync((async) {

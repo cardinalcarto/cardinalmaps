@@ -11,7 +11,10 @@ import 'settings.dart';
 /// reads it back by ID. Routes then carry only IDs, so they can be deep-linked and
 /// restored, and nothing is passed to a screen any other way.
 class Store {
-  Store(CardinalDatabase db) : _db = db, places = PlaceStore(db), settings = SettingsStore(db);
+  Store(CardinalDatabase db)
+    : _db = db,
+      places = PlaceStore(db),
+      settings = SettingsStore(db);
 
   /// The store in the app's database.
   Store.open() : this(CardinalDatabase.open());

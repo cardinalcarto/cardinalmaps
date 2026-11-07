@@ -21,10 +21,18 @@ enum MapStyle {
 enum ContourUnits { imperial, metric }
 
 /// The map's style.
-final mapStyleChoice = Setting.choice('map.style', MapStyle.values, MapStyle.streets);
+final mapStyleChoice = Setting.choice(
+  'map.style',
+  MapStyle.values,
+  MapStyle.streets,
+);
 
 /// Cardinal Topo's contour units, its `units` global state.
-final contourUnits = Setting.choice('map.contour_units', ContourUnits.values, ContourUnits.imperial);
+final contourUnits = Setting.choice(
+  'map.contour_units',
+  ContourUnits.values,
+  ContourUnits.imperial,
+);
 
 /// Cardinal Topo's winter mode, its `winter` global state.
 final winterMode = Setting.flag('map.winter', false);
@@ -32,7 +40,11 @@ final winterMode = Setting.flag('map.winter', false);
 /// What the layer picker chooses: the map's style, and Cardinal Topo's settings.
 @immutable
 class MapLayers {
-  const MapLayers({this.style = MapStyle.streets, this.units = ContourUnits.imperial, this.winter = false});
+  const MapLayers({
+    this.style = MapStyle.streets,
+    this.units = ContourUnits.imperial,
+    this.winter = false,
+  });
 
   /// The stored choice.
   static Future<MapLayers> read(SettingsStore settings) async => MapLayers(
@@ -46,11 +58,18 @@ class MapLayers {
   final bool winter;
 
   MapLayers copyWith({MapStyle? style, ContourUnits? units, bool? winter}) =>
-      MapLayers(style: style ?? this.style, units: units ?? this.units, winter: winter ?? this.winter);
+      MapLayers(
+        style: style ?? this.style,
+        units: units ?? this.units,
+        winter: winter ?? this.winter,
+      );
 
   @override
   bool operator ==(Object other) =>
-      other is MapLayers && other.style == style && other.units == units && other.winter == winter;
+      other is MapLayers &&
+      other.style == style &&
+      other.units == units &&
+      other.winter == winter;
 
   @override
   int get hashCode => Object.hash(style, units, winter);
@@ -63,8 +82,13 @@ Future<Map<String, Object?>> styleFor(MapLayers layers) async {
     MapStyle.streets => mapStyle,
     MapStyle.topo => topoStyle,
   };
-  final style = jsonDecode(await rootBundle.loadString('assets/map/$file')) as Map<String, Object?>;
-  setGlobalStateDefaults(style, {'units': layers.units.name, 'winter': layers.winter});
+  final style = jsonDecode(
+    await rootBundle.loadString('assets/map/$file'),
+  ) as Map<String, Object?>;
+  setGlobalStateDefaults(style, {
+    'units': layers.units.name,
+    'winter': layers.winter,
+  });
   addSelectionLayers(style);
   addLocationLayers(style);
   return style;
@@ -72,7 +96,10 @@ Future<Map<String, Object?>> styleFor(MapLayers layers) async {
 
 /// Sets the defaults of the `["global-state", name]` values [style] declares, leaving
 /// alone any it doesn't.
-void setGlobalStateDefaults(Map<String, Object?> style, Map<String, Object?> values) {
+void setGlobalStateDefaults(
+  Map<String, Object?> style,
+  Map<String, Object?> values,
+) {
   final state = style['state'];
   if (state is! Map<String, Object?>) return;
   for (final MapEntry(:key, :value) in values.entries) {
@@ -133,7 +160,8 @@ class _LayerPickerState extends State<LayerPicker> {
     setState(() => _layers = layers);
     final settings = widget.settings;
     await Future.wait([
-      if (old?.style != layers.style) settings.set(mapStyleChoice, layers.style),
+      if (old?.style != layers.style)
+        settings.set(mapStyleChoice, layers.style),
       if (old?.units != layers.units) settings.set(contourUnits, layers.units),
       if (old?.winter != layers.winter) settings.set(winterMode, layers.winter),
     ]);
@@ -159,7 +187,10 @@ class _LayerPickerState extends State<LayerPicker> {
                       padding: const EdgeInsetsDirectional.only(start: 8),
                       child: Align(
                         alignment: AlignmentDirectional.topStart,
-                        child: Text('Map style', style: Theme.of(context).textTheme.titleMedium),
+                        child: Text(
+                          'Map style',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
                       ),
                     ),
                   ),
@@ -167,7 +198,8 @@ class _LayerPickerState extends State<LayerPicker> {
                     icon: Icons.map_outlined,
                     label: 'Streets',
                     selected: layers.style == MapStyle.streets,
-                    onTap: () => _choose(layers.copyWith(style: MapStyle.streets)),
+                    onTap: () =>
+                        _choose(layers.copyWith(style: MapStyle.streets)),
                   ),
                   const SizedBox(height: 8),
                   _StyleRow(
@@ -178,14 +210,28 @@ class _LayerPickerState extends State<LayerPicker> {
                     settings: [
                       SegmentedButton<ContourUnits>(
                         showSelectedIcon: false,
-                        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                        style: const ButtonStyle(
+                          visualDensity: VisualDensity.compact,
+                        ),
                         segments: const [
-                          ButtonSegment(value: ContourUnits.imperial, label: Text('ft'), tooltip: 'Contours in feet'),
-                          ButtonSegment(value: ContourUnits.metric, label: Text('m'), tooltip: 'Contours in meters'),
+                          ButtonSegment(
+                            value: ContourUnits.imperial,
+                            label: Text('ft'),
+                            tooltip: 'Contours in feet',
+                          ),
+                          ButtonSegment(
+                            value: ContourUnits.metric,
+                            label: Text('m'),
+                            tooltip: 'Contours in meters',
+                          ),
                         ],
                         selected: {layers.units},
-                        onSelectionChanged: (chosen) =>
-                            _choose(layers.copyWith(style: MapStyle.topo, units: chosen.single)),
+                        onSelectionChanged: (chosen) => _choose(
+                          layers.copyWith(
+                            style: MapStyle.topo,
+                            units: chosen.single,
+                          ),
+                        ),
                       ),
                       const SizedBox(width: 4),
                       IconButton(
@@ -193,9 +239,16 @@ class _LayerPickerState extends State<LayerPicker> {
                         tooltip: 'Winter',
                         icon: const Icon(Icons.ac_unit),
                         style: IconButton.styleFrom(
-                          backgroundColor: layers.winter ? scheme.secondaryContainer : null,
+                          backgroundColor: layers.winter
+                              ? scheme.secondaryContainer
+                              : null,
                         ),
-                        onPressed: () => _choose(layers.copyWith(style: MapStyle.topo, winter: !layers.winter)),
+                        onPressed: () => _choose(
+                          layers.copyWith(
+                            style: MapStyle.topo,
+                            winter: !layers.winter,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -235,10 +288,15 @@ class _StyleRow extends StatelessWidget {
       selected: selected,
       button: true,
       child: Material(
-        color: selected ? scheme.primaryContainer.withValues(alpha: 0.4) : Colors.transparent,
+        color: selected
+            ? scheme.primaryContainer.withValues(alpha: 0.4)
+            : Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: selected ? scheme.primary : scheme.outlineVariant, width: selected ? 2 : 1),
+          side: BorderSide(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -249,9 +307,17 @@ class _StyleRow extends StatelessWidget {
               padding: const EdgeInsetsDirectional.only(start: 16, end: 8),
               child: Row(
                 children: [
-                  Icon(icon, color: selected ? scheme.primary : scheme.onSurfaceVariant),
+                  Icon(
+                    icon,
+                    color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                  ),
                   const SizedBox(width: 16),
-                  Expanded(child: Text(label, style: Theme.of(context).textTheme.titleSmall)),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
                   ...settings,
                 ],
               ),

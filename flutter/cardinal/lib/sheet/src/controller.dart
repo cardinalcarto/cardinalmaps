@@ -18,9 +18,12 @@ enum _Phase {
 ///
 /// Its value is the sheet's extent: how far it's pulled up, in logical pixels from the
 /// bottom of the screen. Listeners hear about every change, every frame the sheet moves.
-class SheetController extends ChangeNotifier implements ValueListenable<double> {
-  SheetController({required TickerProvider vsync, this._physics = const SheetPhysics()})
-    : _spring = AnimationController.unbounded(vsync: vsync) {
+class SheetController extends ChangeNotifier
+    implements ValueListenable<double> {
+  SheetController({
+    required TickerProvider vsync,
+    this._physics = const SheetPhysics(),
+  }) : _spring = AnimationController.unbounded(vsync: vsync) {
     _spring.addListener(_handleSpringTick);
   }
 
@@ -130,7 +133,9 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
       final step = math.max(rest, -free);
       extent += step;
       rest -= step;
-      if (rest < 0) extent = math.max(math.min(_floor, extent), extent + rest * resistance);
+      if (rest < 0) {
+        extent = math.max(math.min(_floor, extent), extent + rest * resistance);
+      }
       rest = 0;
     } else {
       if (extent < _min) {
@@ -196,7 +201,9 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
     _spring.animateWith(simulation).then((_) {
       _settlingTo = null;
       // Where the anchor is now, should it have moved on the last frame.
-      _rest(_anchors.firstWhereOrNull((a) => a.anchor == target.anchor) ?? target);
+      _rest(
+        _anchors.firstWhereOrNull((a) => a.anchor == target.anchor) ?? target,
+      );
     });
   }
 
@@ -218,7 +225,11 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
   }
 
   /// Takes the current page's [anchors], following the one the sheet rests at if it moved.
-  void _setAnchors(List<ResolvedAnchor> anchors, double maxExtent, {double floor = 0}) {
+  void _setAnchors(
+    List<ResolvedAnchor> anchors,
+    double maxExtent, {
+    double floor = 0,
+  }) {
     _anchors = anchors;
     _maxExtent = maxExtent;
     _floor = floor;
@@ -232,11 +243,18 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
       // Springing to an anchor that moved (as when the keyboard hides): spring on to
       // where it is now, from where the sheet is and at its speed.
       final target = _settlingTo;
-      final moved = _anchors.firstWhereOrNull((a) => a.anchor == target?.anchor);
+      final moved = _anchors.firstWhereOrNull(
+        (a) => a.anchor == target?.anchor,
+      );
       if (target != null && moved == null && _anchors.isNotEmpty) {
         // It's gone: spring to the nearest instead.
-        _settleOn(_anchors[_physics.target(_anchors, extent, 0)], _spring.velocity);
-      } else if (target != null && moved != null && (moved.extent - target.extent).abs() > _epsilon) {
+        _settleOn(
+          _anchors[_physics.target(_anchors, extent, 0)],
+          _spring.velocity,
+        );
+      } else if (target != null &&
+          moved != null &&
+          (moved.extent - target.extent).abs() > _epsilon) {
         _settleOn(moved, _spring.velocity);
       }
       return;
@@ -287,13 +305,16 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
   }
 
   /// Which of a page's [anchors] the sheet is nearest, for a page it's already leaving.
-  SheetAnchor? _nearestOf(List<ResolvedAnchor> anchors) =>
-      anchors.isEmpty ? null : anchors[_physics.target(anchors, extent, 0)].anchor;
+  SheetAnchor? _nearestOf(List<ResolvedAnchor> anchors) => anchors.isEmpty
+      ? null
+      : anchors[_physics.target(anchors, extent, 0)].anchor;
 
   /// The anchor nearest the sheet, for remembering where a page was left.
   SheetAnchor? get _nearestAnchor =>
       _restingAt ??
-      (_anchors.isEmpty ? null : _anchors[_physics.target(_anchors, extent, 0)].anchor);
+      (_anchors.isEmpty
+          ? null
+          : _anchors[_physics.target(_anchors, extent, 0)].anchor);
 
   @override
   void dispose() {

@@ -3,13 +3,20 @@ import 'package:cardinal/store/store.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Map<String, Object?> _state(Map<String, Object?> style) => style['state']! as Map<String, Object?>;
+Map<String, Object?> _state(Map<String, Object?> style) =>
+    style['state']! as Map<String, Object?>;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('the topo style carries the chosen units and winter mode', () async {
-    final style = await styleFor(const MapLayers(style: MapStyle.topo, units: ContourUnits.metric, winter: true));
+    final style = await styleFor(
+      const MapLayers(
+        style: MapStyle.topo,
+        units: ContourUnits.metric,
+        winter: true,
+      ),
+    );
     expect(style['name'], 'Cardinal Topo');
     expect(_state(style)['units'], {'default': 'metric'});
     expect(_state(style)['winter'], {'default': true});
@@ -18,7 +25,9 @@ void main() {
   test('both styles have the selected place on top', () async {
     for (final s in MapStyle.values) {
       final style = await styleFor(MapLayers(style: s));
-      final ids = [for (final layer in style['layers']! as List) (layer as Map)['id']];
+      final ids = [
+        for (final layer in style['layers']! as List) (layer as Map)['id'],
+      ];
       expect(ids.last, 'selection-pin', reason: '$s');
     }
   });
@@ -38,12 +47,18 @@ void main() {
     expect(stateless, isEmpty);
   });
 
-  Future<SettingsStore> pumpPicker(WidgetTester tester, [SettingsStore? stored]) async {
+  Future<SettingsStore> pumpPicker(
+    WidgetTester tester, [
+    SettingsStore? stored,
+  ]) async {
     final settings = stored ?? SettingsStore.inMemory();
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: Align(alignment: Alignment.bottomCenter, child: LayerPicker(settings: settings)),
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: LayerPicker(settings: settings),
+          ),
         ),
       ),
     );
@@ -83,13 +98,23 @@ void main() {
     expect(await settings.get(contourUnits), ContourUnits.metric);
   });
 
-  testWidgets('nothing in the picker moves when the style changes', (tester) async {
+  testWidgets('nothing in the picker moves when the style changes', (
+    tester,
+  ) async {
     await pumpPicker(tester);
     Rect where(Finder finder) => tester.getRect(finder);
-    final before = [where(find.byType(LayerPicker)), where(find.text('m')), where(find.byTooltip('Winter'))];
+    final before = [
+      where(find.byType(LayerPicker)),
+      where(find.text('m')),
+      where(find.byTooltip('Winter')),
+    ];
     await tester.tap(find.text('Topo'));
     await tester.pumpAndSettle();
-    expect([where(find.byType(LayerPicker)), where(find.text('m')), where(find.byTooltip('Winter'))], before);
+    expect([
+      where(find.byType(LayerPicker)),
+      where(find.text('m')),
+      where(find.byTooltip('Winter')),
+    ], before);
   });
 
   testWidgets('the picker opens on what was stored', (tester) async {
@@ -97,8 +122,17 @@ void main() {
     await stored.set(mapStyleChoice, MapStyle.topo);
     await stored.set(winterMode, true);
     await pumpPicker(tester, stored);
-    final topo = tester.getSemantics(find.ancestor(of: find.text('Topo'), matching: find.byType(Semantics)).first);
+    final topo = tester.getSemantics(
+      find
+          .ancestor(of: find.text('Topo'), matching: find.byType(Semantics))
+          .first,
+    );
     expect(topo, isSemantics(isSelected: true));
-    expect(tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.ac_unit)).isSelected, true);
+    expect(
+      tester
+          .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.ac_unit))
+          .isSelected,
+      true,
+    );
   });
 }

@@ -21,7 +21,8 @@ class GeocoderException implements Exception {
 typedef Viewport = ({double west, double south, double east, double north});
 
 class Geocoder {
-  Geocoder(this.base, {http.Client? client}) : _client = client ?? http.Client();
+  Geocoder(this.base, {http.Client? client})
+    : _client = client ?? http.Client();
 
   /// Where the API is: requests go to `<base>/v1/...`.
   final Uri base;
@@ -49,10 +50,14 @@ class Geocoder {
       if (typos) 'typos': 'true',
       if (focus != null) 'focus': '${focus.lon},${focus.lat}',
       if (viewport != null)
-        'viewport': '${viewport.west},${viewport.south},${viewport.east},${viewport.north}',
+        'viewport':
+            '${viewport.west},${viewport.south},${viewport.east},${viewport.north}',
       if (limit != null) 'limit': '$limit',
     }, abort);
-    return [for (final r in json['results'] as List<Object?>) placeFromResult(r as _Json)];
+    return [
+      for (final r in json['results'] as List<Object?>)
+        placeFromResult(r as _Json),
+    ];
   }
 
   /// The place with [id], a result ID such as `poi:97175`, or null if there's none.
@@ -65,18 +70,26 @@ class Geocoder {
     }
   }
 
-  Future<_Json> _get(String path, Map<String, String> query, Future<void>? abort) async {
+  Future<_Json> _get(
+    String path,
+    Map<String, String> query,
+    Future<void>? abort,
+  ) async {
     final basePath = base.path.endsWith('/')
         ? base.path.substring(0, base.path.length - 1)
         : base.path;
     final uri = base.replace(path: '$basePath$path', queryParameters: query);
     final request = http.AbortableRequest('GET', uri, abortTrigger: abort);
-    final response = await http.Response.fromStream(await _client.send(request));
+    final response = await http.Response.fromStream(
+      await _client.send(request),
+    );
     if (response.statusCode == 404) {
       throw _NotFound();
     }
     if (response.statusCode != 200) {
-      throw GeocoderException('${response.statusCode} from $uri: ${_problem(response)}');
+      throw GeocoderException(
+        '${response.statusCode} from $uri: ${_problem(response)}',
+      );
     }
     return jsonDecode(utf8.decode(response.bodyBytes)) as _Json;
   }
@@ -127,7 +140,8 @@ Place placeFromResult(Map<String, Object?> result) {
     shape: geometry == null || geometry['type'] == 'Point' ? null : geometry,
     address: address == null ? null : Address.fromJson(address),
     admins: [
-      for (final a in result['admins'] as List<Object?>? ?? const []) AdminRef.fromJson(a as _Json),
+      for (final a in result['admins'] as List<Object?>? ?? const [])
+        AdminRef.fromJson(a as _Json),
     ],
     tags: {
       for (final MapEntry(:key, :value) in (tags ?? const {}).entries)
@@ -140,7 +154,11 @@ double _double(Object? n) => (n as num).toDouble();
 
 /// Provides the [Geocoder] to the widgets below it.
 class GeocoderScope extends InheritedWidget {
-  const GeocoderScope({super.key, required this.geocoder, required super.child});
+  const GeocoderScope({
+    super.key,
+    required this.geocoder,
+    required super.child,
+  });
 
   final Geocoder geocoder;
 
@@ -148,5 +166,6 @@ class GeocoderScope extends InheritedWidget {
       context.getInheritedWidgetOfExactType<GeocoderScope>()!.geocoder;
 
   @override
-  bool updateShouldNotify(GeocoderScope oldWidget) => geocoder != oldWidget.geocoder;
+  bool updateShouldNotify(GeocoderScope oldWidget) =>
+      geocoder != oldWidget.geocoder;
 }

@@ -8,7 +8,11 @@ class SheetPhysics {
     this.gravity = 1200,
     this.minFlingVelocity = 250,
     this.overdragResistance = 0.35,
-    this.spring = const SpringDescription(mass: 1, stiffness: 700, damping: 47.6),
+    this.spring = const SpringDescription(
+      mass: 1,
+      stiffness: 700,
+      damping: 47.6,
+    ),
   });
 
   /// How fast a fling slows, in logical pixels per second squared: how far a fling
@@ -39,7 +43,8 @@ class SheetPhysics {
     int nearestTo(double position) {
       var best = 0;
       for (var i = 1; i < anchors.length; i++) {
-        if ((anchors[i].extent - position).abs() < (anchors[best].extent - position).abs()) {
+        if ((anchors[i].extent - position).abs() <
+            (anchors[best].extent - position).abs()) {
           best = i;
         }
       }
@@ -69,7 +74,8 @@ class SheetPhysics {
         // and otherwise stops at whichever side of where it runs out is nearer.
         if (i == 0) return ahead[0];
         final previous = anchors[ahead[i - 1]];
-        return (previous.extent - landing).abs() <= (anchor.extent - landing).abs()
+        return (previous.extent - landing).abs() <=
+                (anchor.extent - landing).abs()
             ? ahead[i - 1]
             : ahead[i];
       }

@@ -8,7 +8,8 @@ class LngLat {
   final double lat;
 
   @override
-  bool operator ==(Object other) => other is LngLat && other.lon == lon && other.lat == lat;
+  bool operator ==(Object other) =>
+      other is LngLat && other.lon == lon && other.lat == lat;
 
   @override
   int get hashCode => Object.hash(lon, lat);
@@ -19,7 +20,12 @@ class LngLat {
 
 /// A bounding box, in degrees.
 class Bounds {
-  const Bounds({required this.west, required this.south, required this.east, required this.north});
+  const Bounds({
+    required this.west,
+    required this.south,
+    required this.east,
+    required this.north,
+  });
 
   final double west;
   final double south;
@@ -183,7 +189,9 @@ class Place {
   /// tags are combined.
   Place merge(Place incoming) {
     assert(incoming.id == id);
-    if (version != null && incoming.version != null && version != incoming.version) {
+    if (version != null &&
+        incoming.version != null &&
+        version != incoming.version) {
       return incoming.version! > version! ? incoming : this;
     }
     return Place(

@@ -59,15 +59,18 @@ class PlaceStore {
   /// Deletes places that haven't been put or read in [age].
   Future<int> prune({Duration age = const Duration(days: 30)}) {
     final cutoff = _now().subtract(age);
-    return (_db.delete(_db.places)..where((p) => p.accessedAt.isSmallerThanValue(cutoff))).go();
+    return (_db.delete(
+      _db.places,
+    )..where((p) => p.accessedAt.isSmallerThanValue(cutoff))).go();
   }
 
   SimpleSelectStatement<$PlacesTable, PlaceRow> _select(String id) =>
       _db.select(_db.places)..where((p) => p.id.equals(id));
 
-  Future<void> _touch(String id) => (_db.update(
-    _db.places,
-  )..where((p) => p.id.equals(id))).write(PlacesCompanion(accessedAt: Value(_now())));
+  Future<void> _touch(String id) =>
+      (_db.update(_db.places)..where((p) => p.id.equals(id))).write(
+        PlacesCompanion(accessedAt: Value(_now())),
+      );
 
   Place _remember(Place place) {
     _cache.remove(place.id);
@@ -92,9 +95,13 @@ PlacesCompanion _toRow(Place place, DateTime now) {
     bboxEast: Value(bbox?.east),
     bboxNorth: Value(bbox?.north),
     shape: Value(place.shape == null ? null : jsonEncode(place.shape)),
-    address: Value(place.address == null ? null : jsonEncode(place.address!.toJson())),
+    address: Value(
+      place.address == null ? null : jsonEncode(place.address!.toJson()),
+    ),
     admins: Value(
-      place.admins == null ? null : jsonEncode([for (final a in place.admins!) a.toJson()]),
+      place.admins == null
+          ? null
+          : jsonEncode([for (final a in place.admins!) a.toJson()]),
     ),
     tags: jsonEncode(place.tags),
     updatedAt: now,
@@ -103,7 +110,12 @@ PlacesCompanion _toRow(Place place, DateTime now) {
 }
 
 Place _fromRow(PlaceRow row) {
-  final (west, south, east, north) = (row.bboxWest, row.bboxSouth, row.bboxEast, row.bboxNorth);
+  final (west, south, east, north) = (
+    row.bboxWest,
+    row.bboxSouth,
+    row.bboxEast,
+    row.bboxNorth,
+  );
   return Place(
     id: row.id,
     kind: row.kind,
@@ -114,7 +126,9 @@ Place _fromRow(PlaceRow row) {
     bbox: west != null && south != null && east != null && north != null
         ? Bounds(west: west, south: south, east: east, north: north)
         : null,
-    shape: row.shape == null ? null : jsonDecode(row.shape!) as Map<String, Object?>,
+    shape: row.shape == null
+        ? null
+        : jsonDecode(row.shape!) as Map<String, Object?>,
     address: row.address == null
         ? null
         : Address.fromJson(jsonDecode(row.address!) as Map<String, Object?>),

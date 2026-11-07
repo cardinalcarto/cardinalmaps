@@ -26,7 +26,10 @@ class MapButtons extends StatelessWidget {
         final height = sheet.geometry.size.height;
         final opacity = docked
             ? 1.0
-            : (1 - (sheet.extent - height * 0.45) / (height * 0.1)).clamp(0.0, 1.0);
+            : (1 - (sheet.extent - height * 0.45) / (height * 0.1)).clamp(
+                0.0,
+                1.0,
+              );
         return Stack(
           children: [
             PositionedDirectional(

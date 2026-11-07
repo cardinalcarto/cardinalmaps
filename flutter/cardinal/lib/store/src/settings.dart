@@ -12,16 +12,25 @@ import 'database.dart';
 /// that no longer reads as the setting's type, say a choice that's since been removed,
 /// reads as the default.
 class Setting<T> {
-  const Setting(this.key, this.defaultValue, {required this.encode, required this.decode});
+  const Setting(
+    this.key,
+    this.defaultValue, {
+    required this.encode,
+    required this.decode,
+  });
 
   /// One of [values], stored by name.
-  static Setting<E> choice<E extends Enum>(String key, List<E> values, E defaultValue) =>
-      Setting(
-        key,
-        defaultValue,
-        encode: (value) => value.name,
-        decode: (json) => values.firstWhere((v) => v.name == json, orElse: () => defaultValue),
-      );
+  static Setting<E> choice<E extends Enum>(
+    String key,
+    List<E> values,
+    E defaultValue,
+  ) => Setting(
+    key,
+    defaultValue,
+    encode: (value) => value.name,
+    decode: (json) =>
+        values.firstWhere((v) => v.name == json, orElse: () => defaultValue),
+  );
 
   /// On or off.
   static Setting<bool> flag(String key, bool defaultValue) => Setting(
@@ -78,12 +87,17 @@ class _DatabaseSettings implements SettingsStore {
 
   @override
   Stream<T> watch<T>(Setting<T> setting) =>
-      _select(setting.key).watchSingleOrNull().map((row) => setting._read(row?.value)).distinct();
+      _select(setting.key)
+          .watchSingleOrNull()
+          .map((row) => setting._read(row?.value))
+          .distinct();
 
   @override
   Future<void> set<T>(Setting<T> setting, T value) => _db
       .into(_db.settings)
-      .insertOnConflictUpdate(SettingRow(key: setting.key, value: jsonEncode(setting.encode(value))));
+      .insertOnConflictUpdate(
+        SettingRow(key: setting.key, value: jsonEncode(setting.encode(value))),
+      );
 }
 
 class _MemorySettings implements SettingsStore {
@@ -91,7 +105,8 @@ class _MemorySettings implements SettingsStore {
   final _changes = StreamController<String>.broadcast(sync: true);
 
   @override
-  Future<T> get<T>(Setting<T> setting) async => setting._read(_values[setting.key]);
+  Future<T> get<T>(Setting<T> setting) async =>
+      setting._read(_values[setting.key]);
 
   @override
   Stream<T> watch<T>(Setting<T> setting) async* {

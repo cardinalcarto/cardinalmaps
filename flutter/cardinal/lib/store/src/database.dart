@@ -61,7 +61,9 @@ class CardinalDatabase extends _$CardinalDatabase {
     : super(
         driftDatabase(
           name: 'cardinal',
-          native: const DriftNativeOptions(databaseDirectory: getApplicationSupportDirectory),
+          native: const DriftNativeOptions(
+            databaseDirectory: getApplicationSupportDirectory,
+          ),
         ),
       );
 
@@ -71,7 +73,8 @@ class CardinalDatabase extends _$CardinalDatabase {
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onUpgrade: stepByStep(
-      from1To2: (m, schema) => m.addColumn(schema.places, schema.places.countryCode),
+      from1To2: (m, schema) =>
+          m.addColumn(schema.places, schema.places.countryCode),
       from2To3: (m, schema) => m.createTable(schema.settings),
     ),
   );

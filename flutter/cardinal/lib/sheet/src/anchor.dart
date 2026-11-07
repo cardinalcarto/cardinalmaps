@@ -12,11 +12,13 @@ sealed class SheetAnchor {
   const SheetAnchor({this.gravity});
 
   /// Rests with the section [id] (see [SheetSection]) and everything above it showing.
-  const factory SheetAnchor.section(Object id, {double? gravity}) = _SectionAnchor;
+  const factory SheetAnchor.section(Object id, {double? gravity}) =
+      _SectionAnchor;
 
   /// Rests at [fraction] of the furthest the sheet can be pulled up, measured from the
   /// keyboard's top while it shows.
-  const factory SheetAnchor.fraction(double fraction, {double? gravity}) = _FractionAnchor;
+  const factory SheetAnchor.fraction(double fraction, {double? gravity}) =
+      _FractionAnchor;
 
   /// Rests as far up as the sheet goes: the full screen, or the top of a docked column.
   const factory SheetAnchor.full({double? gravity}) = _FullAnchor;
@@ -63,7 +65,9 @@ final class _FractionAnchor extends SheetAnchor {
 
   @override
   bool operator ==(Object other) =>
-      other is _FractionAnchor && other.fraction == fraction && other.gravity == gravity;
+      other is _FractionAnchor &&
+      other.fraction == fraction &&
+      other.gravity == gravity;
 
   @override
   int get hashCode => Object.hash(_FractionAnchor, fraction, gravity);
@@ -76,10 +80,12 @@ final class _FullAnchor extends SheetAnchor {
   const _FullAnchor({super.gravity});
 
   @override
-  double _resolve(SheetGeometry geometry, Map<Object, _Span> sections) => geometry.maxExtent;
+  double _resolve(SheetGeometry geometry, Map<Object, _Span> sections) =>
+      geometry.maxExtent;
 
   @override
-  bool operator ==(Object other) => other is _FullAnchor && other.gravity == gravity;
+  bool operator ==(Object other) =>
+      other is _FullAnchor && other.gravity == gravity;
 
   @override
   int get hashCode => Object.hash(_FullAnchor, gravity);
@@ -108,7 +114,8 @@ class ResolvedAnchor {
   int get hashCode => Object.hash(anchor, extent, gravity);
 
   @override
-  String toString() => 'ResolvedAnchor($anchor at ${extent.toStringAsFixed(1)})';
+  String toString() =>
+      'ResolvedAnchor($anchor at ${extent.toStringAsFixed(1)})';
 }
 
 /// Where a section sits in its content, from the content's top.
@@ -120,7 +127,8 @@ class _Span {
   final double end;
 
   @override
-  bool operator ==(Object other) => other is _Span && other.start == start && other.end == end;
+  bool operator ==(Object other) =>
+      other is _Span && other.start == start && other.end == end;
 
   @override
   int get hashCode => Object.hash(start, end);

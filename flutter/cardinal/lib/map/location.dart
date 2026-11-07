@@ -21,7 +21,10 @@ const _color = '#1a73e8';
 /// Adds the location source and the layers that draw it to [style], a MapLibre style:
 /// under the selected place's pin, if it has one, and over everything else.
 void addLocationLayers(Map<String, Object?> style) {
-  (style['sources'] as Map<String, Object?>)[locationSource] = {'type': 'geojson', 'data': _empty};
+  (style['sources'] as Map<String, Object?>)[locationSource] = {
+    'type': 'geojson',
+    'data': _empty,
+  };
   final layers = style['layers'] as List<Object?>;
   final pin = layers.indexWhere((l) => (l as Map)['id'] == 'selection-pin');
   layers.insertAll(pin < 0 ? layers.length : pin, [
@@ -103,7 +106,10 @@ List<List<double>> _circle(double lng, double lat, double radius) {
   final dLng = dLat / math.max(math.cos(lat * math.pi / 180), 1e-6);
   return [
     for (var i = 0; i <= steps; i++)
-      [lng + dLng * math.cos(2 * math.pi * i / steps), lat + dLat * math.sin(2 * math.pi * i / steps)],
+      [
+        lng + dLng * math.cos(2 * math.pi * i / steps),
+        lat + dLat * math.sin(2 * math.pi * i / steps),
+      ],
   ];
 }
 
@@ -129,7 +135,8 @@ abstract class LocationSource {
 class GeolocatorSource implements LocationSource {
   const GeolocatorSource();
 
-  static Fix _fix(Position p) => Fix(lng: p.longitude, lat: p.latitude, accuracy: p.accuracy);
+  static Fix _fix(Position p) =>
+      Fix(lng: p.longitude, lat: p.latitude, accuracy: p.accuracy);
 
   @override
   Future<bool> serviceEnabled() => Geolocator.isLocationServiceEnabled();
@@ -138,7 +145,8 @@ class GeolocatorSource implements LocationSource {
   Future<LocationPermission> checkPermission() => Geolocator.checkPermission();
 
   @override
-  Future<LocationPermission> requestPermission() => Geolocator.requestPermission();
+  Future<LocationPermission> requestPermission() =>
+      Geolocator.requestPermission();
 
   @override
   Stream<Fix> positions() => Geolocator.getPositionStream(
@@ -166,7 +174,8 @@ class GeolocatorSource implements LocationSource {
 /// answered.
 final locationOffered = Setting.flag('location.offered', false);
 
-bool _allowed(LocationPermission p) => p == LocationPermission.always || p == LocationPermission.whileInUse;
+bool _allowed(LocationPermission p) =>
+    p == LocationPermission.always || p == LocationPermission.whileInUse;
 
 /// Follows where you are once you've allowed it, and shows it on [map].
 class LocationTracker {
@@ -184,7 +193,10 @@ class LocationTracker {
   /// platform without a location service shows nothing.
   Future<void> startIfAllowed() async {
     try {
-      if (_allowed(await source.checkPermission()) && await source.serviceEnabled()) _follow();
+      if (_allowed(await source.checkPermission()) &&
+          await source.serviceEnabled()) {
+        _follow();
+      }
     } on Object {
       return;
     }
@@ -222,15 +234,23 @@ class LocationTracker {
   Future<LocateResult> _locate() async {
     if (!await source.serviceEnabled()) return LocateResult.serviceOff;
     var permission = await source.checkPermission();
-    if (permission == LocationPermission.denied) permission = await source.requestPermission();
-    if (permission == LocationPermission.deniedForever) return LocateResult.deniedForever;
+    if (permission == LocationPermission.denied) {
+      permission = await source.requestPermission();
+    }
+    if (permission == LocationPermission.deniedForever) {
+      return LocateResult.deniedForever;
+    }
     if (!_allowed(permission)) return LocateResult.denied;
     _follow();
     final fix = _fix ?? await source.current();
     if (fix == null) return LocateResult.unavailable;
     _show(fix);
     map.clearSubject();
-    map.flyTo(lng: fix.lng, lat: fix.lat, zoom: math.max(locationZoom, map.camera?.zoom ?? 0));
+    map.flyTo(
+      lng: fix.lng,
+      lat: fix.lat,
+      zoom: math.max(locationZoom, map.camera?.zoom ?? 0),
+    );
     return LocateResult.located;
   }
 
@@ -260,7 +280,8 @@ class _MyLocationButtonState extends State<MyLocationButton> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_tracker != null) return;
-    _tracker = LocationTracker(MapScope.of(context), source: widget.source)..startIfAllowed();
+    _tracker = LocationTracker(MapScope.of(context), source: widget.source)
+      ..startIfAllowed();
     final settings = StoreScope.of(context).settings;
     WidgetsBinding.instance.addPostFrameCallback((_) => _offer(settings));
   }
@@ -292,8 +313,14 @@ class _MyLocationButtonState extends State<MyLocationButton> {
           'and provide a better experience.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('No')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Yes')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('No'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Yes'),
+          ),
         ],
       ),
     );
@@ -316,14 +343,26 @@ class _MyLocationButtonState extends State<MyLocationButton> {
       LocateResult.located => ('', null),
       LocateResult.serviceOff => (
         'Location is off',
-        SnackBarAction(label: 'Settings', onPressed: tracker.source.openLocationSettings),
+        SnackBarAction(
+          label: 'Settings',
+          onPressed: tracker.source.openLocationSettings,
+        ),
       ),
-      LocateResult.denied => ('Cardinal needs your location to show where you are', null),
+      LocateResult.denied => (
+        'Cardinal needs your location to show where you are',
+        null,
+      ),
       LocateResult.deniedForever => (
         'Location is turned off for Cardinal',
-        SnackBarAction(label: 'Settings', onPressed: tracker.source.openAppSettings),
+        SnackBarAction(
+          label: 'Settings',
+          onPressed: tracker.source.openAppSettings,
+        ),
       ),
-      LocateResult.unavailable => ("Your location isn't available right now", null),
+      LocateResult.unavailable => (
+        "Your location isn't available right now",
+        null,
+      ),
     };
     if (message.isEmpty) return;
     ScaffoldMessenger.of(context)

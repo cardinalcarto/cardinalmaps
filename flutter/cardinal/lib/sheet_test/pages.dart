@@ -42,7 +42,10 @@ final sheetTestRouter = GoRouter(
         ),
       ],
     ),
-    GoRoute(path: '/full', builder: (context, state) => const FullScreenTestPage()),
+    GoRoute(
+      path: '/full',
+      builder: (context, state) => const FullScreenTestPage(),
+    ),
   ],
 );
 
@@ -118,7 +121,10 @@ class SectionsTestPage extends StatelessWidget {
                     ])
                       Padding(
                         padding: const EdgeInsets.only(right: 8),
-                        child: ActionChip(label: Text(label), onPressed: () => context.push(path)),
+                        child: ActionChip(
+                          label: Text(label),
+                          onPressed: () => context.push(path),
+                        ),
                       ),
                   ],
                 ),
@@ -150,14 +156,21 @@ class ShortTestPage extends StatelessWidget {
         SliverToBoxAdapter(
           child: SheetSection(
             id: _header,
-            child: const _Header(title: 'Short page', subtitle: 'Anchors at its header and end'),
+            child: const _Header(
+              title: 'Short page',
+              subtitle: 'Anchors at its header and end',
+            ),
           ),
         ),
         const SliverToBoxAdapter(child: _Readout(sections: [_header, _end])),
         SliverToBoxAdapter(
           child: SheetSection(
             id: _end,
-            child: Column(children: [for (var i = 1; i <= 4; i++) ListTile(title: Text('Row $i'))]),
+            child: Column(
+              children: [
+                for (var i = 1; i <= 4; i++) ListTile(title: Text('Row $i')),
+              ],
+            ),
           ),
         ),
       ],
@@ -346,7 +359,8 @@ class _Readout extends StatelessWidget {
                 '  ${sheet.geometry.placement.name}',
             'anchors ${controller.anchors.map((a) => a.extent.toStringAsFixed(0)).join(', ')}'
                 '  resting ${controller.restingAt ?? '-'}',
-            for (final id in sections) 'reveal $id ${sheet.reveal(id).toStringAsFixed(2)}',
+            for (final id in sections)
+              'reveal $id ${sheet.reveal(id).toStringAsFixed(2)}',
           ];
           return Text(lines.join('\n'), style: style);
         },
@@ -388,14 +402,22 @@ class _TestBody extends StatelessWidget {
           final size = constraints.biggest;
           return Stack(
             children: [
-              Positioned.fill(child: CustomPaint(painter: _GridPainter(scheme.outlineVariant))),
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _GridPainter(scheme.outlineVariant),
+                ),
+              ),
               SheetBuilder(
                 child: Icon(Icons.add, color: scheme.primary),
                 builder: (context, sheet, child) {
                   final top = MediaQuery.paddingOf(context).top;
                   final clear = EdgeInsets.only(top: top) + sheet.obscured;
                   final center = clear.deflateRect(Offset.zero & size).center;
-                  return Positioned(left: center.dx - 12, top: center.dy - 12, child: child!);
+                  return Positioned(
+                    left: center.dx - 12,
+                    top: center.dy - 12,
+                    child: child!,
+                  );
                 },
               ),
             ],
@@ -444,7 +466,10 @@ class _FloatingProbe extends StatelessWidget {
         final height = sheet.geometry.size.height;
         final opacity = docked
             ? 1.0
-            : (1 - (sheet.extent - height * 0.45) / (height * 0.1)).clamp(0.0, 1.0);
+            : (1 - (sheet.extent - height * 0.45) / (height * 0.1)).clamp(
+                0.0,
+                1.0,
+              );
         return Stack(
           children: [
             Positioned(

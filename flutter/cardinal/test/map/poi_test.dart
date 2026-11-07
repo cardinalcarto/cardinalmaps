@@ -17,15 +17,14 @@ ClickedFeature _feature(Map<String, String> properties) => ClickedFeature(
 
 const _seattle = WofArea({'name': 'Seattle', 'jpn': 'シアトル'});
 const _washington = WofArea({'name': 'Washington', 'abbr': 'WA'});
-const _us = WofArea({'name': 'United States', 'fra': 'États-Unis', 'country': 'US'});
+const _us = WofArea({
+  'name': 'United States',
+  'fra': 'États-Unis',
+  'country': 'US',
+});
 const _puertoRico = WofArea({'name': 'Puerto Rico', 'country': 'PR'});
 
-const _areas = {
-  1: _seattle,
-  2: _washington,
-  3: _us,
-  4: _puertoRico,
-};
+const _areas = {1: _seattle, 2: _washington, 3: _us, 4: _puertoRico};
 
 WofArea? _area(String placetype, int id) => _areas[id];
 
@@ -56,7 +55,11 @@ void main() {
     expect(place.center, const LngLat(-122.3, 47.6));
     expect(
       place.address,
-      const Address(housenumber: '1521', street: '10th Avenue', postcode: '98122'),
+      const Address(
+        housenumber: '1521',
+        street: '10th Avenue',
+        postcode: '98122',
+      ),
     );
     expect(place.tags, {
       'name': 'Elliott Bay Book Company',
@@ -70,7 +73,10 @@ void main() {
   });
 
   test('its name in the language asked for, when it has one', () {
-    final place = placeFromPoi(_feature({'name': 'Book Company', 'name:es': 'Librería'}), lang: 'es');
+    final place = placeFromPoi(
+      _feature({'name': 'Book Company', 'name:es': 'Librería'}),
+      lang: 'es',
+    );
     expect(place.name, 'Librería');
   });
 
@@ -88,15 +94,23 @@ void main() {
       'cardinal:admin:locality': '1',
     };
 
-    test('come smallest first, with their abbreviations and the country code', () {
-      final place = placeFromPoi(_feature(properties), area: _area);
-      expect(place.admins, const [
-        AdminRef(id: 'wof:1', placetype: 'locality', name: 'Seattle'),
-        AdminRef(id: 'wof:2', placetype: 'region', name: 'Washington', abbreviation: 'WA'),
-        AdminRef(id: 'wof:3', placetype: 'country', name: 'United States'),
-      ]);
-      expect(place.countryCode, 'US');
-    });
+    test(
+      'come smallest first, with their abbreviations and the country code',
+      () {
+        final place = placeFromPoi(_feature(properties), area: _area);
+        expect(place.admins, const [
+          AdminRef(id: 'wof:1', placetype: 'locality', name: 'Seattle'),
+          AdminRef(
+            id: 'wof:2',
+            placetype: 'region',
+            name: 'Washington',
+            abbreviation: 'WA',
+          ),
+          AdminRef(id: 'wof:3', placetype: 'country', name: 'United States'),
+        ]);
+        expect(place.countryCode, 'US');
+      },
+    );
 
     test('are named in the language asked for, or by default', () {
       List<String?> names(String lang) => placeFromPoi(
@@ -111,7 +125,10 @@ void main() {
 
     test('a dependency gives the country code over its country', () {
       final place = placeFromPoi(
-        _feature({'cardinal:admin:dependency': '4', 'cardinal:admin:country': '3'}),
+        _feature({
+          'cardinal:admin:dependency': '4',
+          'cardinal:admin:country': '3',
+        }),
         area: _area,
       );
       expect(place.countryCode, 'PR');
@@ -119,7 +136,10 @@ void main() {
 
     test('are left out if unknown', () {
       final place = placeFromPoi(
-        _feature({'cardinal:admin:locality': '99', 'cardinal:admin:country': '3'}),
+        _feature({
+          'cardinal:admin:locality': '99',
+          'cardinal:admin:country': '3',
+        }),
         area: _area,
       );
       expect(place.admins!.map((a) => a.id), ['wof:3']);
@@ -142,7 +162,11 @@ void main() {
     );
     final merged = stored.merge(
       placeFromPoi(
-        _feature({'cardinal:version': '7', 'name': 'A', 'cardinal:admin:locality': '1'}),
+        _feature({
+          'cardinal:version': '7',
+          'name': 'A',
+          'cardinal:admin:locality': '1',
+        }),
         area: _area,
       ),
     );
@@ -153,7 +177,11 @@ void main() {
 
   test('poiAdmins finds IDs by placetype, smallest first', () {
     expect(
-      poiAdmins({'cardinal:admin:country': '3', 'name': 'x', 'cardinal:admin:locality': '1'}),
+      poiAdmins({
+        'cardinal:admin:country': '3',
+        'name': 'x',
+        'cardinal:admin:locality': '1',
+      }),
       {'locality': 1, 'country': 3},
     );
   });

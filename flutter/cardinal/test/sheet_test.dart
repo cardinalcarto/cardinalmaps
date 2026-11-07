@@ -22,7 +22,9 @@ Future<SheetController> _pumpPhone(WidgetTester tester) async {
   sheetTestRouter.go('/');
   await tester.pumpWidget(MainApp(router: sheetTestRouter));
   await tester.pumpAndSettle();
-  return SheetScaffold.controllerOf(tester.element(find.byType(SectionsTestPage)));
+  return SheetScaffold.controllerOf(
+    tester.element(find.byType(SectionsTestPage)),
+  );
 }
 
 void main() {
@@ -70,7 +72,10 @@ void main() {
     test('extentShowing inverts contentShown', () {
       for (final y in [0.0, 100.0, 500.0, 700.0, 720.0]) {
         final extent = geometry.extentShowing(y);
-        expect(geometry.contentShown(extent), moreOrLessEquals(y, epsilon: 1e-6));
+        expect(
+          geometry.contentShown(extent),
+          moreOrLessEquals(y, epsilon: 1e-6),
+        );
       }
     });
 
@@ -81,15 +86,20 @@ void main() {
     });
   });
 
-  testWidgets('rests at the first section, with it clear of the navigation bar', (tester) async {
-    final sheet = await _pumpPhone(tester);
-    expect(sheet.restingAt, const SheetAnchor.section(#a));
-    final bar = tester.getRect(find.text(_barLabel));
-    expect(bar.bottom, lessThanOrEqualTo(_phone.height - 48));
-    expect(bar.top, greaterThan(_phone.height - 200));
-  });
+  testWidgets(
+    'rests at the first section, with it clear of the navigation bar',
+    (tester) async {
+      final sheet = await _pumpPhone(tester);
+      expect(sheet.restingAt, const SheetAnchor.section(#a));
+      final bar = tester.getRect(find.text(_barLabel));
+      expect(bar.bottom, lessThanOrEqualTo(_phone.height - 48));
+      expect(bar.top, greaterThan(_phone.height - 200));
+    },
+  );
 
-  testWidgets('drags up through the anchors and scrolls once full', (tester) async {
+  testWidgets('drags up through the anchors and scrolls once full', (
+    tester,
+  ) async {
     final sheet = await _pumpPhone(tester);
     final start = sheet.extent;
     await tester.drag(find.text(_barLabel), const Offset(0, -100));
@@ -143,7 +153,9 @@ void main() {
     expect(bar.right, lessThan(500));
   });
 
-  testWidgets('rests above the keyboard, and never goes behind it', (tester) async {
+  testWidgets('rests above the keyboard, and never goes behind it', (
+    tester,
+  ) async {
     final sheet = await _pumpPhone(tester);
     final peek = sheet.extent;
     // A 300 logical pixel keyboard, over the 48 pixel navigation bar.
@@ -153,7 +165,9 @@ void main() {
     final bar = tester.getRect(find.text(_barLabel));
     expect(bar.bottom, lessThanOrEqualTo(_phone.height - 300));
 
-    final gesture = await tester.startGesture(Offset(200, _phone.height - sheet.extent + 12));
+    final gesture = await tester.startGesture(
+      Offset(200, _phone.height - sheet.extent + 12),
+    );
     for (var i = 0; i < 20; i++) {
       await gesture.moveBy(const Offset(0, 40));
       await tester.pump(const Duration(milliseconds: 16));
@@ -173,7 +187,9 @@ void main() {
     expect(sheet.extent, closeTo(_phone.height / 2, 0.5));
   });
 
-  testWidgets('follows an anchor that moves while it springs there', (tester) async {
+  testWidgets('follows an anchor that moves while it springs there', (
+    tester,
+  ) async {
     final sheet = await _pumpPhone(tester);
     final peek = sheet.extent;
     tester.view.viewInsets = const FakeViewPadding(bottom: 600);
@@ -205,7 +221,11 @@ void main() {
         await gesture.moveBy(const Offset(0, -2));
         await tester.pump(const Duration(milliseconds: 16));
       }
-      expect(sheet.isHeld, isTrue, reason: 'still held by the handle once past the slop');
+      expect(
+        sheet.isHeld,
+        isTrue,
+        reason: 'still held by the handle once past the slop',
+      );
       // 60 pixels, less the touch slop.
       expect(sheet.extent, greaterThan(before + 30));
       await gesture.up();
@@ -213,57 +233,75 @@ void main() {
     }
   });
 
-  testWidgets('a back gesture scrubs the sheet back, and carries on from where it was let go', (
-    tester,
-  ) async {
-    final sheet = await _pumpPhone(tester);
-    final below = sheet.extent;
-    await tester.tap(find.text('Long page'));
-    await tester.pumpAndSettle();
-    final above = sheet.extent;
-    expect(above, greaterThan(below));
+  testWidgets(
+    'a back gesture scrubs the sheet back, and carries on from where it was let go',
+    (tester) async {
+      final sheet = await _pumpPhone(tester);
+      final below = sheet.extent;
+      await tester.tap(find.text('Long page'));
+      await tester.pumpAndSettle();
+      final above = sheet.extent;
+      expect(above, greaterThan(below));
 
-    Future<void> send(String method, [double? progress]) async {
-      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
-        'flutter/backgesture',
-        const StandardMethodCodec().encodeMethodCall(
-          MethodCall(method, {
-            if (progress != null) ...{
-              'touchOffset': [5.0, 300.0],
-              'progress': progress,
-              'swipeEdge': 0,
-            },
-          }),
-        ),
-        (_) {},
+      Future<void> send(String method, [double? progress]) async {
+        await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+          'flutter/backgesture',
+          const StandardMethodCodec().encodeMethodCall(
+            MethodCall(method, {
+              if (progress != null) ...{
+                'touchOffset': [5.0, 300.0],
+                'progress': progress,
+                'swipeEdge': 0,
+              },
+            }),
+          ),
+          (_) {},
+        );
+        await tester.pump();
+      }
+
+      await send('startBackGesture', 0);
+      await send('updateBackGestureProgress', 0.5);
+      final halfway = sheet.extent;
+      expect(halfway, moreOrLessEquals((above + below) / 2, epsilon: 1));
+      final fade = tester.widget<Opacity>(
+        find
+            .ancestor(
+              of: find.textContaining('Gravity:'),
+              matching: find.byType(Opacity),
+            )
+            .first,
       );
-      await tester.pump();
-    }
+      expect(
+        fade.opacity,
+        inExclusiveRange(0, 1),
+        reason: 'the content fades with the gesture',
+      );
 
-    await send('startBackGesture', 0);
-    await send('updateBackGestureProgress', 0.5);
-    final halfway = sheet.extent;
-    expect(halfway, moreOrLessEquals((above + below) / 2, epsilon: 1));
-    final fade = tester.widget<Opacity>(
-      find.ancestor(of: find.textContaining('Gravity:'), matching: find.byType(Opacity)).first,
-    );
-    expect(fade.opacity, inExclusiveRange(0, 1), reason: 'the content fades with the gesture');
-
-    await send('commitBackGesture');
-    var last = halfway;
-    for (var i = 0; i < 30; i++) {
-      await tester.pump(const Duration(milliseconds: 16));
-      expect(sheet.extent, lessThanOrEqualTo(last + 0.01), reason: 'no jump back up');
-      last = sheet.extent;
-    }
-    await tester.pumpAndSettle();
-    expect(find.byType(LongTestPage), findsNothing);
-    expect(sheet.extent, moreOrLessEquals(below));
-  });
+      await send('commitBackGesture');
+      var last = halfway;
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(
+          sheet.extent,
+          lessThanOrEqualTo(last + 0.01),
+          reason: 'no jump back up',
+        );
+        last = sheet.extent;
+      }
+      await tester.pumpAndSettle();
+      expect(find.byType(LongTestPage), findsNothing);
+      expect(sheet.extent, moreOrLessEquals(below));
+    },
+  );
 }
 
 /// Sends a predictive back event, as Android's engine does.
-Future<void> _sendBack(WidgetTester tester, String method, [double? progress]) async {
+Future<void> _sendBack(
+  WidgetTester tester,
+  String method, [
+  double? progress,
+]) async {
   await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
     'flutter/backgesture',
     const StandardMethodCodec().encodeMethodCall(
@@ -293,7 +331,11 @@ void cancelledBackGestures() {
     return (sheet, resting);
   }
 
-  Future<void> expectRecovered(WidgetTester tester, SheetController sheet, double resting) async {
+  Future<void> expectRecovered(
+    WidgetTester tester,
+    SheetController sheet,
+    double resting,
+  ) async {
     await tester.pumpAndSettle();
     expect(find.byType(ShortTestPage), findsOneWidget);
     // At rest on one of the page's anchors (its readout grows a line once it rests, so
@@ -326,7 +368,9 @@ void cancelledBackGestures() {
     await expectRecovered(tester, sheet, resting);
   });
 
-  testWidgets('a second back gesture cancelled while the first settles', (tester) async {
+  testWidgets('a second back gesture cancelled while the first settles', (
+    tester,
+  ) async {
     final (sheet, resting) = await pushLower(tester);
     await _sendBack(tester, 'startBackGesture', 0);
     await _sendBack(tester, 'updateBackGestureProgress', 0.4);
@@ -338,7 +382,9 @@ void cancelledBackGestures() {
     await expectRecovered(tester, sheet, resting);
   });
 
-  testWidgets('back gestures with no progress, one after another', (tester) async {
+  testWidgets('back gestures with no progress, one after another', (
+    tester,
+  ) async {
     final (sheet, resting) = await pushLower(tester);
     for (var i = 0; i < 2; i++) {
       await _sendBack(tester, 'startBackGesture', 0);
@@ -348,7 +394,9 @@ void cancelledBackGestures() {
     await expectRecovered(tester, sheet, resting);
   });
 
-  testWidgets('a back gesture cancelled while the page is still coming in', (tester) async {
+  testWidgets('a back gesture cancelled while the page is still coming in', (
+    tester,
+  ) async {
     final sheet = await _pumpPhone(tester);
     sheet.animateTo(const SheetAnchor.full());
     await tester.pumpAndSettle();
@@ -365,9 +413,13 @@ void cancelledBackGestures() {
   });
 
   for (final end in ['cancelBackGesture', 'commitBackGesture']) {
-    testWidgets('a page closed during a back gesture closes ($end)', (tester) async {
+    testWidgets('a page closed during a back gesture closes ($end)', (
+      tester,
+    ) async {
       final (sheet, _) = await pushLower(tester);
-      final below = SheetScaffold.controllerOf(tester.element(find.byType(ShortTestPage)));
+      final below = SheetScaffold.controllerOf(
+        tester.element(find.byType(ShortTestPage)),
+      );
       await _sendBack(tester, 'startBackGesture', 0);
       // Closed some other way, as by a button, while the gesture is under way.
       sheetTestRouter.pop();
@@ -376,8 +428,14 @@ void cancelledBackGestures() {
       await _sendBack(tester, end);
       await tester.pumpAndSettle();
       expect(find.byType(ShortTestPage), findsNothing);
-      expect(find.byType(SectionsTestPage), findsOneWidget, reason: 'popped only once');
-      final navigator = Navigator.of(tester.element(find.byType(SectionsTestPage)));
+      expect(
+        find.byType(SectionsTestPage),
+        findsOneWidget,
+        reason: 'popped only once',
+      );
+      final navigator = Navigator.of(
+        tester.element(find.byType(SectionsTestPage)),
+      );
       expect(navigator.userGestureInProgress, isFalse);
       expect(below.isTransitioning, isFalse);
       expect(sheet.extent, moreOrLessEquals(_phone.height));
@@ -395,8 +453,11 @@ class _RestorableApp extends StatefulWidget {
 }
 
 class _RestorableAppState extends State<_RestorableApp> {
-  static SheetPage<void> page(GoRouterState state, Widget child) =>
-      SheetPage(key: state.pageKey, restorationId: state.pageKey.value, child: child);
+  static SheetPage<void> page(GoRouterState state, Widget child) => SheetPage(
+    key: state.pageKey,
+    restorationId: state.pageKey.value,
+    child: child,
+  );
 
   late final router = GoRouter(
     restorationScopeId: 'router',
@@ -409,11 +470,13 @@ class _RestorableAppState extends State<_RestorableApp> {
         routes: [
           GoRoute(
             path: '/',
-            pageBuilder: (context, state) => page(state, const SectionsTestPage()),
+            pageBuilder: (context, state) =>
+                page(state, const SectionsTestPage()),
             routes: [
               GoRoute(
                 path: 'short',
-                pageBuilder: (context, state) => page(state, const ShortTestPage()),
+                pageBuilder: (context, state) =>
+                    page(state, const ShortTestPage()),
               ),
             ],
           ),
@@ -476,7 +539,10 @@ void restoration() {
     GoRouter.of(tester.element(find.byType(ShortTestPage))).pop();
     await tester.pumpAndSettle();
     expect(find.byType(ShortTestPage), findsNothing);
-    expect(sheetOf(tester, SectionsTestPage).extent, moreOrLessEquals(below, epsilon: 40));
+    expect(
+      sheetOf(tester, SectionsTestPage).extent,
+      moreOrLessEquals(below, epsilon: 40),
+    );
   });
 
   testWidgets('the bottom page restores without opening', (tester) async {

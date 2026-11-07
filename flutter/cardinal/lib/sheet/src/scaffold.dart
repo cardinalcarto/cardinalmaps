@@ -50,19 +50,25 @@ class SheetScaffold extends StatefulWidget {
   final SystemUiOverlayStyle? bodyOverlayStyle;
 
   /// The controller of the nearest sheet.
-  static SheetController controllerOf(BuildContext context) => _SheetScope.of(context).controller;
+  static SheetController controllerOf(BuildContext context) =>
+      _SheetScope.of(context).controller;
 
   /// Where the nearest sheet is, without listening for it to move.
   static SheetView viewOf(BuildContext context) {
     final scope = _SheetScope.of(context);
-    return SheetView._(scope.controller, scope.geometry, _SheetContentScope.maybeOf(context));
+    return SheetView._(
+      scope.controller,
+      scope.geometry,
+      _SheetContentScope.maybeOf(context),
+    );
   }
 
   @override
   State<SheetScaffold> createState() => _SheetScaffoldState();
 }
 
-class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateMixin {
+class _SheetScaffoldState extends State<SheetScaffold>
+    with TickerProviderStateMixin {
   SheetController? _ownController;
   SheetController get _controller => widget.controller ?? _ownController!;
 
@@ -123,9 +129,13 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
 
   void _unregister(_SheetEntry entry) {
     _entries.remove(entry);
-    if (_animations.remove(entry) case final animation?) _unlisten(entry, animation);
+    if (_animations.remove(entry) case final animation?) {
+      _unlisten(entry, animation);
+    }
     if (_active == entry) _active = null;
-    if (_transition?.top == entry || _transition?.under == entry) _transition = null;
+    if (_transition?.top == entry || _transition?.under == entry) {
+      _transition = null;
+    }
     _scheduleUpdate();
   }
 
@@ -140,7 +150,8 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
 
   /// Updates now, unless the framework is building or laying out.
   void _requestUpdate() {
-    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
       _scheduleUpdate();
     } else {
       _update();
@@ -177,7 +188,9 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
   void _update() {
     _listen();
     final controller = _controller;
-    final current = _entries.lastWhereOrNull((e) => e.route?.isCurrent ?? false);
+    final current = _entries.lastWhereOrNull(
+      (e) => e.route?.isCurrent ?? false,
+    );
     final top = _entries.lastWhereOrNull((e) => e.isAnimating);
 
     if (top == null) {
@@ -221,8 +234,12 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
     final to = top.resting?.extent;
     final from = under?.resting?.extent;
     final route = top.route!;
-    final t = route is _SheetPageRoute ? route._arrival : route.animation!.value;
-    final extent = from == null ? to : (to == null ? from : lerpDouble(from, to, t));
+    final t = route is _SheetPageRoute
+        ? route._arrival
+        : route.animation!.value;
+    final extent = from == null
+        ? to
+        : (to == null ? from : lerpDouble(from, to, t));
     if (extent != null) controller._follow(extent);
   }
 
@@ -230,14 +247,22 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
     _active = entry;
     final geometry = _geometry;
     if (entry == null || geometry == null) return;
-    _controller._setAnchors(entry.resolved, geometry.maxExtent, floor: geometry.keyboard);
-    if (!_controller.hasExtent && entry.resting != null) _controller._place(entry.resting!);
+    _controller._setAnchors(
+      entry.resolved,
+      geometry.maxExtent,
+      floor: geometry.keyboard,
+    );
+    if (!_controller.hasExtent && entry.resting != null) {
+      _controller._place(entry.resting!);
+    }
   }
 
   /// Where to paint the sheet: before it's placed, where the current page will place it.
   double _paintExtent() {
     if (_controller.hasExtent) return _controller.extent;
-    final current = _entries.lastWhereOrNull((e) => e.route?.isCurrent ?? false);
+    final current = _entries.lastWhereOrNull(
+      (e) => e.route?.isCurrent ?? false,
+    );
     return current?.resting?.extent ?? 0;
   }
 
@@ -278,8 +303,10 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
                 RepaintBoundary(
                   child: GestureDetector(
                     onVerticalDragStart: (_) => controller.hold(),
-                    onVerticalDragUpdate: (details) => controller.dragBy(-details.primaryDelta!),
-                    onVerticalDragEnd: (details) => controller.release(-details.primaryVelocity!),
+                    onVerticalDragUpdate: (details) =>
+                        controller.dragBy(-details.primaryDelta!),
+                    onVerticalDragEnd: (details) =>
+                        controller.release(-details.primaryVelocity!),
                     onVerticalDragCancel: () => controller.release(0),
                     child: _SheetSurface(
                       controller: controller,
@@ -300,10 +327,12 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
                             removeRight: true,
                             child: ScrollConfiguration(
                               // Drag with a mouse too, as with a finger.
-                              behavior: ScrollConfiguration.of(context).copyWith(
-                                dragDevices: PointerDeviceKind.values.toSet(),
-                                scrollbars: false,
-                              ),
+                              behavior: ScrollConfiguration.of(context)
+                                  .copyWith(
+                                    dragDevices: PointerDeviceKind.values
+                                        .toSet(),
+                                    scrollbars: false,
+                                  ),
                               child: widget.sheet,
                             ),
                           ),
@@ -375,7 +404,8 @@ class _SystemBarsStyle extends StatefulWidget {
 class _SystemBarsStyleState extends State<_SystemBarsStyle> {
   bool _covered = false;
 
-  bool get _isCovered => widget.geometry.expansion(widget.controller.extent) > 0.5;
+  bool get _isCovered =>
+      widget.geometry.expansion(widget.controller.extent) > 0.5;
 
   @override
   void initState() {
@@ -418,13 +448,19 @@ class _SystemBarsStyleState extends State<_SystemBarsStyle> {
 
   @override
   Widget build(BuildContext context) {
-    final sheet = _over(ThemeData.estimateBrightnessForColor(widget.sheetColor));
+    final sheet = _over(
+      ThemeData.estimateBrightnessForColor(widget.sheetColor),
+    );
     final body = widget.bodyStyle ?? _over(Theme.of(context).brightness);
     // The navigation bar is over the sheet whenever it shows.
     final style = (_covered ? sheet : body).copyWith(
-      systemNavigationBarIconBrightness: sheet.systemNavigationBarIconBrightness,
+      systemNavigationBarIconBrightness:
+          sheet.systemNavigationBarIconBrightness,
     );
-    return AnnotatedRegion<SystemUiOverlayStyle>(value: style, child: widget.child);
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: style,
+      child: widget.child,
+    );
   }
 }
 
@@ -435,7 +471,8 @@ class _DragHandle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4);
+    final color = Theme.of(context).colorScheme.onSurfaceVariant
+        .withValues(alpha: 0.4);
     return Semantics(
       button: true,
       label: 'Resize sheet',
@@ -447,7 +484,10 @@ class _DragHandle extends StatelessWidget {
           child: Container(
             width: 32,
             height: 4,
-            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
         ),
       ),
@@ -462,7 +502,8 @@ enum _SurfaceSlot { handle, content }
 ///
 /// Moving the sheet only repaints it: the content keeps its layout, and is clipped to
 /// the surface where it extends below the screen.
-class _SheetSurface extends SlottedMultiChildRenderObjectWidget<_SurfaceSlot, RenderBox> {
+class _SheetSurface
+    extends SlottedMultiChildRenderObjectWidget<_SurfaceSlot, RenderBox> {
   const _SheetSurface({
     required this.controller,
     required this.geometry,
@@ -493,17 +534,21 @@ class _SheetSurface extends SlottedMultiChildRenderObjectWidget<_SurfaceSlot, Re
   };
 
   @override
-  _RenderSheetSurface createRenderObject(BuildContext context) => _RenderSheetSurface(
-    controller: controller,
-    geometry: geometry,
-    extent: extent,
-    color: color,
-    shadowColor: shadowColor,
-    elevation: elevation,
-  );
+  _RenderSheetSurface createRenderObject(BuildContext context) =>
+      _RenderSheetSurface(
+        controller: controller,
+        geometry: geometry,
+        extent: extent,
+        color: color,
+        shadowColor: shadowColor,
+        elevation: elevation,
+      );
 
   @override
-  void updateRenderObject(BuildContext context, _RenderSheetSurface renderObject) {
+  void updateRenderObject(
+    BuildContext context,
+    _RenderSheetSurface renderObject,
+  ) {
     renderObject
       ..controller = controller
       ..geometry = geometry
@@ -598,7 +643,8 @@ class _RenderSheetSurface extends RenderBox
 
   double get _extent => extent().clamp(0.0, size.height);
 
-  Offset _handleOffset(double extent) => Offset(geometry.left, size.height - extent);
+  Offset _handleOffset(double extent) =>
+      Offset(geometry.left, size.height - extent);
 
   Offset _contentOffset(double extent) => Offset(
     geometry.left + geometry.contentPadding.left,
@@ -625,8 +671,14 @@ class _RenderSheetSurface extends RenderBox
 
   @override
   void performLayout() {
-    _handle?.layout(BoxConstraints.tight(Size(geometry.width, geometry.handleHeight)));
-    _content?.layout(BoxConstraints.tight(Size(geometry.contentWidth, geometry.fullContentHeight)));
+    _handle?.layout(
+      BoxConstraints.tight(Size(geometry.width, geometry.handleHeight)),
+    );
+    _content?.layout(
+      BoxConstraints.tight(
+        Size(geometry.contentWidth, geometry.fullContentHeight),
+      ),
+    );
   }
 
   @override
@@ -640,28 +692,37 @@ class _RenderSheetSurface extends RenderBox
     final surface = _surface(extent);
     final canvas = context.canvas;
     if (elevation > 0) {
-      canvas.drawShadow(Path()..addRRect(surface.shift(offset)), shadowColor, elevation, false);
+      canvas.drawShadow(
+        Path()..addRRect(surface.shift(offset)),
+        shadowColor,
+        elevation,
+        false,
+      );
     }
     canvas.drawRRect(surface.shift(offset), Paint()..color = color);
-    _clip.layer = context.pushClipRRect(needsCompositing, offset, surface.outerRect, surface, (
-      context,
+    _clip.layer = context.pushClipRRect(
+      needsCompositing,
       offset,
-    ) {
-      if (_content case final content?) {
-        context.paintChild(content, offset + _contentOffset(extent));
-      }
-      final alpha = (255 * (1 - geometry.expansion(extent))).round();
-      if (_handle case final handle? when alpha > 0) {
-        _opacity.layer = context.pushOpacity(
-          offset + _handleOffset(extent),
-          alpha,
-          (context, offset) => context.paintChild(handle, offset),
-          oldLayer: _opacity.layer,
-        );
-      } else {
-        _opacity.layer = null;
-      }
-    }, oldLayer: _clip.layer);
+      surface.outerRect,
+      surface,
+      (context, offset) {
+        if (_content case final content?) {
+          context.paintChild(content, offset + _contentOffset(extent));
+        }
+        final alpha = (255 * (1 - geometry.expansion(extent))).round();
+        if (_handle case final handle? when alpha > 0) {
+          _opacity.layer = context.pushOpacity(
+            offset + _handleOffset(extent),
+            alpha,
+            (context, offset) => context.paintChild(handle, offset),
+            oldLayer: _opacity.layer,
+          );
+        } else {
+          _opacity.layer = null;
+        }
+      },
+      oldLayer: _clip.layer,
+    );
   }
 
   @override
@@ -681,18 +742,23 @@ class _RenderSheetSurface extends RenderBox
         result.addWithPaintOffset(
           offset: offset,
           position: position,
-          hitTest: (result, position) => child.hitTest(result, position: position),
+          hitTest: (result, position) =>
+              child.hitTest(result, position: position),
         );
     // The handle fades out over the content as the sheet expands.
     return geometry.expansion(extent) < 0.5
-        ? hit(_handle, _handleOffset(extent)) || hit(_content, _contentOffset(extent))
-        : hit(_content, _contentOffset(extent)) || hit(_handle, _handleOffset(extent));
+        ? hit(_handle, _handleOffset(extent)) ||
+              hit(_content, _contentOffset(extent))
+        : hit(_content, _contentOffset(extent)) ||
+              hit(_handle, _handleOffset(extent));
   }
 
   @override
   void applyPaintTransform(RenderBox child, Matrix4 transform) {
     final extent = _extent;
-    final offset = child == _handle ? _handleOffset(extent) : _contentOffset(extent);
+    final offset = child == _handle
+        ? _handleOffset(extent)
+        : _contentOffset(extent);
     transform.translateByDouble(offset.dx, offset.dy, 0, 1);
   }
 }

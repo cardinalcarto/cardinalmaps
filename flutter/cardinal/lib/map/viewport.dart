@@ -12,18 +12,37 @@ import '../store/store.dart';
 /// Where the camera looks from: as sparkle's `--view` takes it.
 @immutable
 class MapViewport {
-  const MapViewport({required this.lng, required this.lat, required this.zoom, this.bearing = 0, this.pitch = 0});
+  const MapViewport({
+    required this.lng,
+    required this.lat,
+    required this.zoom,
+    this.bearing = 0,
+    this.pitch = 0,
+  });
 
   /// Where [map]'s camera is, if it has one yet.
   static MapViewport? of(SparkleMapController map) {
     final c = map.camera;
-    return c == null ? null : MapViewport(lng: c.lng, lat: c.lat, zoom: c.zoom, bearing: c.bearing, pitch: c.pitch);
+    return c == null
+        ? null
+        : MapViewport(
+            lng: c.lng,
+            lat: c.lat,
+            zoom: c.zoom,
+            bearing: c.bearing,
+            pitch: c.pitch,
+          );
   }
 
   /// Parses `lng,lat,zoom[,bearing,pitch]`, or null if [text] isn't one.
   static MapViewport? parse(String text) {
-    final parts = text.split(',').map((p) => double.tryParse(p.trim())).toList();
-    if (parts.contains(null) || (parts.length != 3 && parts.length != 5)) return null;
+    final parts = text
+        .split(',')
+        .map((p) => double.tryParse(p.trim()))
+        .toList();
+    if (parts.contains(null) || (parts.length != 3 && parts.length != 5)) {
+      return null;
+    }
     final [lng!, lat!, zoom!, ...rest] = parts;
     return MapViewport(
       lng: lng,
@@ -48,8 +67,13 @@ class MapViewport {
   String get arg => '$lng,$lat,$zoom,$bearing,$pitch';
 
   /// The same view, no closer than [maxZoom].
-  MapViewport zoomedOutTo(double maxZoom) =>
-      MapViewport(lng: lng, lat: lat, zoom: math.min(zoom, maxZoom), bearing: bearing, pitch: pitch);
+  MapViewport zoomedOutTo(double maxZoom) => MapViewport(
+    lng: lng,
+    lat: lat,
+    zoom: math.min(zoom, maxZoom),
+    bearing: bearing,
+    pitch: pitch,
+  );
 
   @override
   bool operator ==(Object other) =>
@@ -73,9 +97,19 @@ final savedViewport = Setting<MapViewport?>(
   null,
   encode: (v) => v == null ? null : [v.lng, v.lat, v.zoom, v.bearing, v.pitch],
   decode: (json) {
-    if (json is! List || json.length != 5 || json.any((n) => n is! num)) return null;
-    final [lng, lat, zoom, bearing, pitch] = [for (final n in json) (n as num).toDouble()];
-    return MapViewport(lng: lng, lat: lat, zoom: zoom, bearing: bearing, pitch: pitch);
+    if (json is! List || json.length != 5 || json.any((n) => n is! num)) {
+      return null;
+    }
+    final [lng, lat, zoom, bearing, pitch] = [
+      for (final n in json) (n as num).toDouble(),
+    ];
+    return MapViewport(
+      lng: lng,
+      lat: lat,
+      zoom: zoom,
+      bearing: bearing,
+      pitch: pitch,
+    );
   },
 );
 

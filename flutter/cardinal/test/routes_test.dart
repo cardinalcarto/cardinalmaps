@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
-  testWidgets('tapping places on the map keeps one card, and back goes home', (tester) async {
+  testWidgets('tapping places on the map keeps one card, and back goes home', (
+    tester,
+  ) async {
     final shown = <String>[];
     final router = GoRouter(
       routes: [

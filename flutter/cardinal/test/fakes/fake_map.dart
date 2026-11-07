@@ -45,6 +45,9 @@ class FakeMap extends SparkleMapController {
   ({double lng, double lat, double zoom})? flownTo;
 
   @override
-  void flyTo({required double lng, required double lat, required double zoom}) =>
-      flownTo = (lng: lng, lat: lat, zoom: zoom);
+  void flyTo({
+    required double lng,
+    required double lat,
+    required double zoom,
+  }) => flownTo = (lng: lng, lat: lat, zoom: zoom);
 }

@@ -51,7 +51,8 @@ class WofArea {
   String? get countryCode => names['country'] as String?;
 
   /// Its name in the ISO 639-1 language [lang], falling back to its default name.
-  String? nameIn(String? lang) => names[iso639_3[lang]] as String? ?? defaultName;
+  String? nameIn(String? lang) =>
+      names[iso639_3[lang]] as String? ?? defaultName;
 }
 
 /// The IDs of the areas a POI's properties say it's in, by placetype.
@@ -83,7 +84,12 @@ Place placeFromPoi(
     final name = found?.nameIn(lang);
     if (found == null || name == null) continue;
     admins.add(
-      AdminRef(id: 'wof:$id', placetype: placetype, name: name, abbreviation: found.abbreviation),
+      AdminRef(
+        id: 'wof:$id',
+        placetype: placetype,
+        name: name,
+        abbreviation: found.abbreviation,
+      ),
     );
     // The smallest's, so places in Puerto Rico are in PR rather than US.
     country ??= found.countryCode;
@@ -93,15 +99,27 @@ Place placeFromPoi(
     kind: 'poi',
     version: int.tryParse(p['cardinal:version'] ?? ''),
     name: p['name:$lang'] ?? p['name'],
-    countryCode: country ?? (tagged?.length == 2 ? tagged!.toUpperCase() : null),
+    countryCode:
+        country ?? (tagged?.length == 2 ? tagged!.toUpperCase() : null),
     center: LngLat(feature.lng, feature.lat),
-    address: street == null && housenumber == null && unit == null && postcode == null
+    address:
+        street == null &&
+            housenumber == null &&
+            unit == null &&
+            postcode == null
         ? null
-        : Address(housenumber: housenumber, street: street, unit: unit, postcode: postcode),
+        : Address(
+            housenumber: housenumber,
+            street: street,
+            unit: unit,
+            postcode: postcode,
+          ),
     admins: admins,
     tags: {
       for (final MapEntry(:key, :value) in p.entries)
-        if (!_notTags.contains(key) && !key.startsWith('name_') && !key.startsWith('cardinal:'))
+        if (!_notTags.contains(key) &&
+            !key.startsWith('name_') &&
+            !key.startsWith('cardinal:'))
           key: value,
     },
   );

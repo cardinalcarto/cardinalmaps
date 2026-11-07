@@ -38,7 +38,9 @@ class SheetGeometry {
       size: size,
       padding: padding,
       keyboard: keyboard,
-      placement: size.width >= dockedBreakpoint ? SheetPlacement.docked : SheetPlacement.bottom,
+      placement: size.width >= dockedBreakpoint
+          ? SheetPlacement.docked
+          : SheetPlacement.bottom,
     );
   }
 
@@ -78,40 +80,52 @@ class SheetGeometry {
 
   /// The sheet's width.
   double get width => _docked
-      ? math.max(0, math.min(dockedWidth, size.width - left - margin - padding.right))
+      ? math.max(
+          0,
+          math.min(dockedWidth, size.width - left - margin - padding.right),
+        )
       : size.width;
 
   /// The space either side of the content, keeping it clear of side insets.
-  EdgeInsets get contentPadding =>
-      _docked ? EdgeInsets.zero : EdgeInsets.only(left: padding.left, right: padding.right);
+  EdgeInsets get contentPadding => _docked
+      ? EdgeInsets.zero
+      : EdgeInsets.only(left: padding.left, right: padding.right);
 
   /// The content's width.
   double get contentWidth => math.max(0, width - contentPadding.horizontal);
 
   /// The furthest the sheet can be pulled up.
-  double get maxExtent => _docked ? math.max(0, size.height - padding.top - margin) : size.height;
+  double get maxExtent =>
+      _docked ? math.max(0, size.height - padding.top - margin) : size.height;
 
   /// How far below [maxExtent] the sheet starts squaring its corners and making room
   /// for the status bar. Wide enough that the content never moves faster than half
   /// again the sheet's speed.
-  double get morphDistance => math.max(48, 2 * (padding.top - handleHeight).abs());
+  double get morphDistance =>
+      math.max(48, 2 * (padding.top - handleHeight).abs());
 
   /// How far the sheet has turned into a full screen, from 0 below the morph to 1 at
   /// [maxExtent]. Always 0 when docked.
   double expansion(double extent) {
     if (_docked) return 0;
-    return ((extent - (maxExtent - morphDistance)) / morphDistance).clamp(0.0, 1.0);
+    return ((extent - (maxExtent - morphDistance)) / morphDistance).clamp(
+      0.0,
+      1.0,
+    );
   }
 
   /// The corner radius at [extent].
-  double cornerRadiusAt(double extent) => cornerRadius * (1 - expansion(extent));
+  double cornerRadiusAt(double extent) =>
+      cornerRadius * (1 - expansion(extent));
 
   /// How far the content starts below the sheet's top edge at [extent]: below the drag
   /// handle, or below the status bar once expanded.
-  double contentOffset(double extent) => lerpDouble(handleHeight, padding.top, expansion(extent))!;
+  double contentOffset(double extent) =>
+      lerpDouble(handleHeight, padding.top, expansion(extent))!;
 
   /// The content's height on screen at [extent], from its top to the bottom of the screen.
-  double contentHeight(double extent) => math.max(0, extent - contentOffset(extent));
+  double contentHeight(double extent) =>
+      math.max(0, extent - contentOffset(extent));
 
   /// The content's height on screen at [maxExtent], the most any content can show.
   double get fullContentHeight => contentHeight(maxExtent);
@@ -126,12 +140,16 @@ class SheetGeometry {
     if (_docked || below <= morphStart) return math.min(below, maxExtent);
     // ...and within it, its offset moves linearly with the extent.
     final k = (padding.top - handleHeight) / morphDistance;
-    return math.min((target + handleHeight - k * morphStart) / (1 - k), maxExtent);
+    return math.min(
+      (target + handleHeight - k * morphStart) / (1 - k),
+      maxExtent,
+    );
   }
 
   /// How much of [y] (measured from the content's top) shows above the bottom inset at
   /// [extent]; the inverse of [extentShowing].
-  double contentShown(double extent) => extent - bottomInset - contentOffset(extent);
+  double contentShown(double extent) =>
+      extent - bottomInset - contentOffset(extent);
 
   /// The extent [fraction] of the way from the keyboard's top (the bottom, while it's
   /// hidden) to [maxExtent].

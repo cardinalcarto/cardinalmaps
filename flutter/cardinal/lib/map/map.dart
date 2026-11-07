@@ -27,7 +27,8 @@ class MapScope extends InheritedWidget {
       context.getInheritedWidgetOfExactType<MapScope>()!.controller;
 
   @override
-  bool updateShouldNotify(MapScope oldWidget) => controller != oldWidget.controller;
+  bool updateShouldNotify(MapScope oldWidget) =>
+      controller != oldWidget.controller;
 }
 
 /// The map: [tilesUrl]'s tiles in the style the layer picker chose (see `layers.dart`),
@@ -43,7 +44,9 @@ class CardinalMap extends StatefulWidget {
 }
 
 class _CardinalMapState extends State<CardinalMap> {
-  late final Future<List<String>> _args = _start(StoreScope.of(context).settings);
+  late final Future<List<String>> _args = _start(
+    StoreScope.of(context).settings,
+  );
   late final Future<Map<int, WofArea>> _wofAreas = _loadWofAreas();
   Object? _error;
   SheetController? _sheet;
@@ -68,7 +71,11 @@ class _CardinalMapState extends State<CardinalMap> {
   void initState() {
     super.initState();
     // As the app goes away too, whichever comes first: it may not come back from any.
-    _lifecycle = AppLifecycleListener(onHide: _saveView, onPause: _saveView, onDetach: _saveView);
+    _lifecycle = AppLifecycleListener(
+      onHide: _saveView,
+      onPause: _saveView,
+      onDetach: _saveView,
+    );
     _viewSaver = Timer.periodic(_viewSaveInterval, (_) => _saveView());
   }
 
@@ -85,12 +92,21 @@ class _CardinalMapState extends State<CardinalMap> {
   Future<List<String>> _start(SettingsStore settings) async {
     _settings = settings;
     final layers = await MapLayers.read(settings);
-    final args = await _mapArgs(layers, openingView(await settings.get(savedViewport)));
+    final args = await _mapArgs(
+      layers,
+      openingView(await settings.get(savedViewport)),
+    );
     _layers = layers;
     _watching.addAll([
-      settings.watch(mapStyleChoice).listen((v) => _change((l) => l.copyWith(style: v))),
-      settings.watch(contourUnits).listen((v) => _change((l) => l.copyWith(units: v))),
-      settings.watch(winterMode).listen((v) => _change((l) => l.copyWith(winter: v))),
+      settings
+          .watch(mapStyleChoice)
+          .listen((v) => _change((l) => l.copyWith(style: v))),
+      settings
+          .watch(contourUnits)
+          .listen((v) => _change((l) => l.copyWith(units: v))),
+      settings
+          .watch(winterMode)
+          .listen((v) => _change((l) => l.copyWith(winter: v))),
     ]);
     return args;
   }
@@ -137,7 +153,9 @@ class _CardinalMapState extends State<CardinalMap> {
   void _updatePadding() {
     if (!mounted) return;
     final covered = SheetScaffold.viewOf(context).obscured;
-    widget.controller.setPadding(EdgeInsets.only(top: MediaQuery.paddingOf(context).top) + covered);
+    widget.controller.setPadding(
+      EdgeInsets.only(top: MediaQuery.paddingOf(context).top) + covered,
+    );
   }
 
   /// Opens the card of the POI [features] has first, as a search result does: stores
@@ -147,17 +165,26 @@ class _CardinalMapState extends State<CardinalMap> {
     if (poi == null) return;
     // Now, while the tile is sure to be loaded: it names the smaller areas.
     final inTile = <int, WofArea>{};
-    for (final MapEntry(key: placetype, value: id) in poiAdmins(poi.properties).entries) {
+    for (final MapEntry(key: placetype, value: id) in poiAdmins(
+      poi.properties,
+    ).entries) {
       if (namedInApp.contains(placetype)) continue;
-      final names = widget.controller.featureBeside(poi, adminsLayer, id)?[adminNames];
-      if (names != null) inTile[id] = WofArea(jsonDecode(names) as Map<String, Object?>);
+      final names = widget.controller.featureBeside(
+        poi,
+        adminsLayer,
+        id,
+      )?[adminNames];
+      if (names != null) {
+        inTile[id] = WofArea(jsonDecode(names) as Map<String, Object?>);
+      }
     }
     final inApp = await _wofAreas;
     if (!mounted) return;
     final place = placeFromPoi(
       poi,
       lang: PlatformDispatcher.instance.locale.languageCode,
-      area: (placetype, id) => namedInApp.contains(placetype) ? inApp[id] : inTile[id],
+      area: (placetype, id) =>
+          namedInApp.contains(placetype) ? inApp[id] : inTile[id],
     );
     await StoreScope.of(context).places.put(place);
     if (!mounted) return;
@@ -177,7 +204,10 @@ class _CardinalMapState extends State<CardinalMap> {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
-                child: Text('The map could not be shown: $error', textAlign: TextAlign.center),
+                child: Text(
+                  'The map could not be shown: $error',
+                  textAlign: TextAlign.center,
+                ),
               ),
             );
           }
@@ -199,11 +229,15 @@ class _CardinalMapState extends State<CardinalMap> {
 Future<Map<int, WofArea>> _loadWofAreas() async {
   // Gzipped, but not named `.gz`: Android's packaging would take that off its name.
   final data = await rootBundle.load('assets/map/wof_areas.jsongz');
-  return compute(_decodeWofAreas, data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+  return compute(
+    _decodeWofAreas,
+    data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+  );
 }
 
 Map<int, WofArea> _decodeWofAreas(Uint8List compressed) {
-  final areas = jsonDecode(utf8.decode(gzip.decode(compressed))) as Map<String, Object?>;
+  final areas =
+      jsonDecode(utf8.decode(gzip.decode(compressed))) as Map<String, Object?>;
   return {
     for (final MapEntry(:key, :value) in areas.entries)
       int.parse(key): WofArea(value as Map<String, Object?>),
@@ -230,14 +264,18 @@ Future<void> _writeStyle(MapLayers layers) async {
 /// the bundled sprites, copied out to files, [tilesUrl]'s tiles, and the [view] to open.
 Future<List<String>> _mapArgs(MapLayers layers, MapViewport view) async {
   if (tilesUrl.isEmpty) {
-    throw StateError('no tiles: build with --dart-define=CARDINAL_TILES_URL=<TileJSON URL>');
+    throw StateError(
+      'no tiles: build with --dart-define=CARDINAL_TILES_URL=<TileJSON URL>',
+    );
   }
   final dir = await _mapDir();
   await dir.create(recursive: true);
   for (final name in _assets) {
     final data = await rootBundle.load('assets/map/$name');
-    await File('${dir.path}/$name')
-        .writeAsBytes(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
+    await File('${dir.path}/$name').writeAsBytes(
+      data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      flush: true,
+    );
   }
   await _writeStyle(layers);
   final cache = await getApplicationCacheDirectory();

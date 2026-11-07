@@ -26,7 +26,9 @@ class FakePlaceStore implements PlaceStore {
   @override
   Stream<Place?> watch(String id) async* {
     yield _places[id];
-    yield* _changes.stream.where((changed) => changed == id).map((_) => _places[id]);
+    yield* _changes.stream
+        .where((changed) => changed == id)
+        .map((_) => _places[id]);
   }
 
   @override

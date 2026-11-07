@@ -14,12 +14,37 @@ Map<String, Object?> spaceNeedle() => {
   'name': 'Space Needle',
   'country_code': 'US',
   'center': [-122.3493, 47.6205],
-  'address': {'housenumber': '400', 'street': 'Broad Street', 'unit': null, 'postcode': '98109'},
+  'address': {
+    'housenumber': '400',
+    'street': 'Broad Street',
+    'unit': null,
+    'postcode': '98109',
+  },
   'admins': [
-    {'id': 'wof:101730401', 'placetype': 'locality', 'name': 'Seattle', 'abbreviation': null},
-    {'id': 'wof:102086191', 'placetype': 'county', 'name': 'King', 'abbreviation': 'KN'},
-    {'id': 'wof:85688623', 'placetype': 'region', 'name': 'Washington', 'abbreviation': 'WA'},
-    {'id': 'wof:85633793', 'placetype': 'country', 'name': 'United States', 'abbreviation': 'U.S.'},
+    {
+      'id': 'wof:101730401',
+      'placetype': 'locality',
+      'name': 'Seattle',
+      'abbreviation': null,
+    },
+    {
+      'id': 'wof:102086191',
+      'placetype': 'county',
+      'name': 'King',
+      'abbreviation': 'KN',
+    },
+    {
+      'id': 'wof:85688623',
+      'placetype': 'region',
+      'name': 'Washington',
+      'abbreviation': 'WA',
+    },
+    {
+      'id': 'wof:85633793',
+      'placetype': 'country',
+      'name': 'United States',
+      'abbreviation': 'U.S.',
+    },
   ],
   'importance': 0.5,
   'score': 12.0,
@@ -51,7 +76,12 @@ Map<String, Object?> spaceNeedle() => {
 
 const _seattle = [
   AdminRef(id: 'wof:101730401', placetype: 'locality', name: 'Seattle'),
-  AdminRef(id: 'wof:85688623', placetype: 'region', name: 'Washington', abbreviation: 'WA'),
+  AdminRef(
+    id: 'wof:85688623',
+    placetype: 'region',
+    name: 'Washington',
+    abbreviation: 'WA',
+  ),
   AdminRef(id: 'wof:85633793', placetype: 'country', name: 'United States'),
 ];
 
@@ -91,7 +121,11 @@ void main() {
         kind: 'address',
         countryCode: 'CH',
         center: LngLat(8.54, 47.37),
-        address: Address(housenumber: '4', street: 'Bahnhofstrasse', postcode: '8001'),
+        address: Address(
+          housenumber: '4',
+          street: 'Bahnhofstrasse',
+          postcode: '8001',
+        ),
         admins: [
           AdminRef(id: 'wof:1', placetype: 'locality', name: 'Zürich'),
           AdminRef(id: 'wof:2', placetype: 'region', name: 'Zürich'),
@@ -124,14 +158,23 @@ void main() {
         admins: [
           AdminRef(id: 'wof:102086191', placetype: 'county', name: 'King'),
           AdminRef(id: 'wof:85688623', placetype: 'region', name: 'Washington'),
-          AdminRef(id: 'wof:85633793', placetype: 'country', name: 'United States'),
+          AdminRef(
+            id: 'wof:85633793',
+            placetype: 'country',
+            name: 'United States',
+          ),
         ],
       );
       expect(placeSubtitle(place), 'King, Washington, United States');
     });
 
     test('nothing known: no subtitle', () {
-      const place = Place(id: 'poi:2', kind: 'poi', name: 'Somewhere', center: LngLat(0, 0));
+      const place = Place(
+        id: 'poi:2',
+        kind: 'poi',
+        name: 'Somewhere',
+        center: LngLat(0, 0),
+      );
       expect(placeSubtitle(place), isNull);
     });
   });
@@ -176,7 +219,10 @@ void main() {
         client: MockClient((request) async {
           expect(request.url.path, '/v1/place');
           return switch (request.url.queryParameters['id']) {
-            'poi:97175' => http.Response(jsonEncode({'result': spaceNeedle()}), 200),
+            'poi:97175' => http.Response(
+              jsonEncode({'result': spaceNeedle()}),
+              200,
+            ),
             _ => http.Response('{"title": "Not Found"}', 404),
           };
         }),
@@ -188,12 +234,18 @@ void main() {
     test('reports problems', () {
       final geocoder = Geocoder(
         Uri.parse('http://localhost:3000'),
-        client: MockClient((_) async => http.Response('{"detail": "q is empty"}', 400)),
+        client: MockClient(
+          (_) async => http.Response('{"detail": "q is empty"}', 400),
+        ),
       );
       expect(
         geocoder.search('x'),
         throwsA(
-          isA<GeocoderException>().having((e) => e.message, 'message', contains('q is empty')),
+          isA<GeocoderException>().having(
+            (e) => e.message,
+            'message',
+            contains('q is empty'),
+          ),
         ),
       );
     });

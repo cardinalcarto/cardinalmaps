@@ -88,7 +88,8 @@ class _SheetScrollPosition extends ScrollPositionWithSingleContext {
   void pointerScroll(double delta) {
     // A positive delta scrolls the content down, as raising the sheet would.
     if (isActive() && !sheet.isTransitioning) {
-      if (delta > 0 && !sheet.isAtMax || delta < 0 && _atTop && sheet.extent > sheet._min) {
+      if (delta > 0 && !sheet.isAtMax ||
+          delta < 0 && _atTop && sheet.extent > sheet._min) {
         sheet._nudge(delta);
         return;
       }

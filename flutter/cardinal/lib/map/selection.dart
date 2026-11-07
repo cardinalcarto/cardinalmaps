@@ -17,7 +17,10 @@ const _empty = {'type': 'FeatureCollection', 'features': <Object>[]};
 /// the boundary under the first symbol layer, so labels stay on top, and the pin above
 /// everything.
 void addSelectionLayers(Map<String, Object?> style) {
-  (style['sources'] as Map<String, Object?>)[selectionSource] = {'type': 'geojson', 'data': _empty};
+  (style['sources'] as Map<String, Object?>)[selectionSource] = {
+    'type': 'geojson',
+    'data': _empty,
+  };
   const boundary = [
     '==',
     ['get', 'role'],
@@ -75,11 +78,21 @@ const areaMinSize = 40.0;
 /// city, say, rather than a building, whose boundary is a speck.
 bool showsAsArea(Place place) {
   final shape = place.shape;
-  if (shape == null || (shape['type'] != 'Polygon' && shape['type'] != 'MultiPolygon')) return false;
-  var west = double.infinity, east = -double.infinity, south = double.infinity, north = -double.infinity;
+  if (shape == null ||
+      (shape['type'] != 'Polygon' && shape['type'] != 'MultiPolygon')) {
+    return false;
+  }
+  var west = double.infinity,
+      east = -double.infinity,
+      south = double.infinity,
+      north = -double.infinity;
   void visit(Object? coords) {
-    if (coords is List && coords.length >= 2 && coords[0] is num && coords[1] is num) {
-      final lng = (coords[0] as num).toDouble(), lat = (coords[1] as num).toDouble();
+    if (coords is List &&
+        coords.length >= 2 &&
+        coords[0] is num &&
+        coords[1] is num) {
+      final lng = (coords[0] as num).toDouble(),
+          lat = (coords[1] as num).toDouble();
       west = math.min(west, lng);
       east = math.max(east, lng);
       south = math.min(south, lat);
@@ -96,7 +109,8 @@ bool showsAsArea(Place place) {
   final lat = (south + north) / 2 * math.pi / 180;
   final pixelsPerDegree = 512 * math.pow(2, placeZoom) / 360;
   final wide = (east - west) * pixelsPerDegree;
-  final tall = (north - south) * pixelsPerDegree / math.max(math.cos(lat), 1e-6);
+  final tall =
+      (north - south) * pixelsPerDegree / math.max(math.cos(lat), 1e-6);
   return math.max(wide, tall) >= areaMinSize;
 }
 
@@ -106,7 +120,11 @@ String? _shown;
 /// Shows [place]'s boundary if it has a shape, and its pin unless it's an area big enough
 /// for its boundary to show where it is (see [showsAsArea]); or nothing for null. [dark]
 /// is whether the app is in dark mode, which has a pin of its own.
-void showSelection(SparkleMapController map, Place? place, {bool dark = false}) {
+void showSelection(
+  SparkleMapController map,
+  Place? place, {
+  bool dark = false,
+}) {
   _shown = place?.id;
   if (place == null) {
     map.setGeoJson(selectionSource, _empty);
@@ -154,7 +172,9 @@ const _margin = 48.0;
 /// view, and keeps it in view in what the sheet leaves uncovered as the sheet moves.
 void focusPlace(SparkleMapController map, Place place) {
   final c = place.center;
-  final bbox = place.bbox ?? Bounds(west: c.lon, south: c.lat, east: c.lon, north: c.lat);
+  final bbox =
+      place.bbox ??
+      Bounds(west: c.lon, south: c.lat, east: c.lon, north: c.lat);
   final crosses = bbox.west > bbox.east;
   map.setSubject(
     west: crosses ? bbox.west : math.min(bbox.west, c.lon),

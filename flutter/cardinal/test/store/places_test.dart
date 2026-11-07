@@ -22,7 +22,12 @@ const searched = Place(
   name: 'Space Needle',
   countryCode: 'US',
   center: LngLat(-122.3493, 47.6205),
-  bbox: Bounds(west: -122.3496, south: 47.6203, east: -122.3491, north: 47.6207),
+  bbox: Bounds(
+    west: -122.3496,
+    south: 47.6203,
+    east: -122.3491,
+    north: 47.6207,
+  ),
   shape: {
     'type': 'Polygon',
     'coordinates': [
@@ -34,10 +39,19 @@ const searched = Place(
       ],
     ],
   },
-  address: Address(housenumber: '400', street: 'Broad Street', postcode: '98109'),
+  address: Address(
+    housenumber: '400',
+    street: 'Broad Street',
+    postcode: '98109',
+  ),
   admins: [
     AdminRef(id: 'wof:101730401', placetype: 'locality', name: 'Seattle'),
-    AdminRef(id: 'wof:85688623', placetype: 'region', name: 'Washington', abbreviation: 'WA'),
+    AdminRef(
+      id: 'wof:85688623',
+      placetype: 'region',
+      name: 'Washington',
+      abbreviation: 'WA',
+    ),
   ],
   tags: {'tourism': 'attraction', 'height': '184', 'wikidata': 'Q8475'},
 );
@@ -47,18 +61,33 @@ const seattle = Place(
   kind: 'admin',
   name: 'Seattle',
   center: LngLat(-122.331537, 47.673455),
-  bbox: Bounds(west: -122.435937, south: 47.495514, east: -122.236044, north: 47.734165),
+  bbox: Bounds(
+    west: -122.435937,
+    south: 47.495514,
+    east: -122.236044,
+    north: 47.734165,
+  ),
 );
 
 void main() {
   group('Place.merge', () {
     test('a newer version replaces the place whole', () {
-      const newer = Place(id: 'poi:97175', kind: 'poi', version: 45, center: LngLat(0, 0));
+      const newer = Place(
+        id: 'poi:97175',
+        kind: 'poi',
+        version: 45,
+        center: LngLat(0, 0),
+      );
       expect(searched.merge(newer), newer);
     });
 
     test('an older version is ignored', () {
-      const older = Place(id: 'poi:97175', kind: 'poi', version: 43, center: LngLat(0, 0));
+      const older = Place(
+        id: 'poi:97175',
+        kind: 'poi',
+        version: 43,
+        center: LngLat(0, 0),
+      );
       expect(searched.merge(older), searched);
     });
 
