@@ -6,7 +6,7 @@ use std::sync::Arc;
 use airmail::{
     categories::{CategoryModels, QueryCategories},
     index::{AirmailIndex, SearchHit, SearchRequest},
-    poi::{Kind, PlaceId, WofPlace, osm_display_name, placetype_rank, postcode_key},
+    poi::{Kind, PlaceId, WofPlace, osm_display_name, one_per_placetype, postcode_key},
 };
 use axum::{
     Json,
@@ -449,9 +449,7 @@ fn result_json(hit: &SearchHit, admins: &HashMap<u64, WofPlace>, lang: Option<&s
     } else {
         Value::Null
     };
-    let mut containing: Vec<&WofPlace> = hit.admin_ids.iter().filter_map(|id| admins.get(id)).collect();
-    containing.sort_by_key(|place| (placetype_rank(&place.placetype), place.id));
-    containing.dedup_by_key(|place| place.id);
+    let containing = one_per_placetype(hit.admin_ids.iter().filter_map(|id| admins.get(id)).collect());
     // Its own if it's an administrative area, else the most specific
     // containing area's, so places in Puerto Rico are in PR rather than US.
     let country_code = hit

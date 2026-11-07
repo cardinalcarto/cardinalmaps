@@ -156,6 +156,7 @@ async fn admin(wof: &WhosOnFirst, memo: &Memo, id: u64, placetype: String) -> Re
         // A place known only by variants is known by them.
         own.extend(variants.drain(..));
     }
+    let size = airmail::geometry::bbox(&shape).map_or(0.0, |[west, south, east, north]| (east - west) * (north - south));
     let Some(mut doc) = ToIndexPoi::new(Kind::Admin, own.into_iter().collect(), shape, Vec::new()) else {
         return Ok(None);
     };
@@ -172,7 +173,7 @@ async fn admin(wof: &WhosOnFirst, memo: &Memo, id: u64, placetype: String) -> Re
     let population = population(&properties);
     let country = properties.get("alpha2").or_else(|| properties.get("wof:country")).and_then(|c| iso_country_code(c));
     doc.country_code = country.clone();
-    doc.wof = place(id, &placetype, &names, population, country);
+    doc.wof = place(id, &placetype, &names, population, country).map(|place| WofPlace { size, ..place });
     Ok(Some(doc))
 }
 
@@ -215,6 +216,7 @@ fn place(id: u64, placetype: &str, names: &[WofName], population: Option<u64>, c
         names: preferred,
         abbreviation,
         country,
+        size: 0.0,
     })
 }
 

@@ -20,11 +20,15 @@ const KING_COUNTY: u64 = 102_086_191;
 const WASHINGTON: u64 = 85_688_623;
 const ZURICH: u64 = 101_748_463;
 const SWITZERLAND: u64 = 85_633_051;
+const DENNY_REGRADE: u64 = 1_000;
+const BELLTOWN: u64 = 1_001;
+const DOWNTOWN_CORE: u64 = 1_002;
 
 /// The band of each fixture area.
 fn band(id: u64) -> AdminBand {
     match id {
-        SEATTLE | ZURICH => AdminBand::Locality,
+        SEATTLE | ZURICH | DENNY_REGRADE => AdminBand::Locality,
+        BELLTOWN | DOWNTOWN_CORE => AdminBand::Neighbourhood,
         KING_COUNTY => AdminBand::County,
         WASHINGTON => AdminBand::Region,
         _ => AdminBand::Country,
@@ -42,6 +46,7 @@ fn tags(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
 fn admin(id: u64, placetype: &str, name: &str, abbreviation: Option<&str>, shape: Geometry<f64>, ancestors: &[(u64, &str)], population: u64) -> ToIndexPoi {
     let mut names = vec![name.to_string()];
     names.extend(abbreviation.map(str::to_string));
+    let size = airmail::geometry::bbox(&shape).map_or(0.0, |[w, s, e, n]| (e - w) * (n - s));
     let mut doc = ToIndexPoi::new(Kind::Admin, names, shape, Vec::new()).unwrap();
     doc.wof = Some(WofPlace {
         id,
@@ -51,6 +56,7 @@ fn admin(id: u64, placetype: &str, name: &str, abbreviation: Option<&str>, shape
         names: [("eng".to_string(), name.to_string())].into(),
         abbreviation: abbreviation.map(str::to_string),
         country: Some("US".into()),
+        size,
     });
     doc.admin_ids = ancestors.iter().map(|(id, _)| *id).collect();
     doc.admin_names = ancestors.iter().map(|(id, name)| (band(*id), name.to_string())).collect();
@@ -100,6 +106,23 @@ fn build_index(dir: &std::path::Path) -> AirmailIndex {
         admin(WASHINGTON, "region", "Washington", Some("WA"), rect(-124.8, 45.5, -116.9, 49.0), &[], 7_700_000),
         admin(KING_COUNTY, "county", "King County", None, rect(-122.5, 47.1, -121.0, 47.8), &[washington], 2_300_000),
         admin(SEATTLE, "locality", "Seattle", None, rect(-122.44, 47.49, -122.24, 47.73), &[king, washington, (WASHINGTON, "WA")], 737_015),
+        // Who's On First calls this a locality too. Its ID is lower than Seattle's, so only
+        // its size says which is the city.
+        admin(DENNY_REGRADE, "locality", "Denny Regrade", None, rect(-122.35, 47.61, -122.33, 47.62), &[(SEATTLE, "Seattle")], 10_000),
+        admin(BELLTOWN, "neighbourhood", "Belltown", None, rect(-122.35, 47.61, -122.34, 47.62), &[(SEATTLE, "Seattle")], 0),
+        admin(DOWNTOWN_CORE, "neighbourhood", "Downtown Core", None, rect(-122.35, 47.60, -122.32, 47.62), &[(SEATTLE, "Seattle")], 0),
+        {
+            let mut hotel = osm(
+                Kind::Poi,
+                &["Grand Regrade Hotel"],
+                Geometry::Point(Point::new(-122.345, 47.615)),
+                &[("tourism", "hotel"), ("name", "Grand Regrade Hotel")],
+                node(40),
+            );
+            hotel.admin_ids.extend([DENNY_REGRADE, BELLTOWN, DOWNTOWN_CORE]);
+            hotel.admin_names.push((band(DENNY_REGRADE), "Denny Regrade".to_string()));
+            hotel
+        },
         osm(
             Kind::Poi,
             &["Seattle Coffee Works"],
@@ -296,6 +319,17 @@ async fn a_city_outranks_the_places_in_it() {
     assert_eq!(admins, vec!["county", "region"]);
     assert_eq!(seattle["admins"][1]["abbreviation"], "WA");
     assert_eq!(seattle["feature"]["geometry"]["type"], "Polygon");
+}
+
+#[tokio::test]
+async fn one_area_of_each_placetype_is_shown_but_all_find_the_place() {
+    let results = search("q=grand%20regrade%20hotel").await;
+    let names: Vec<&str> = results[0]["admins"].as_array().unwrap().iter().map(|a| a["name"].as_str().unwrap()).collect();
+    // The largest locality and the smallest neighbourhood.
+    assert_eq!(names, vec!["Belltown", "Seattle", "King County", "Washington"]);
+    assert_matches_schema(&results[0], "Result");
+    // Though it isn't shown, the other locality still finds it.
+    assert_eq!(ids(&search("q=grand%20regrade%20hotel%20denny%20regrade").await)[0], ids(&results)[0]);
 }
 
 #[tokio::test]

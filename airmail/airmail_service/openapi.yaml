@@ -423,8 +423,14 @@ components:
             - type: 'null'
         admins:
           description: |
-            The administrative areas containing the result, smallest first.
-            For an administrative area, its ancestors.
+            The administrative areas containing the result, smallest first, at
+            most one of each placetype. For an administrative area, its
+            ancestors. A place can be in several areas of a placetype, as Who's
+            On First's localities include what are really neighbourhoods, so
+            this is the largest `locality` and `localadmin`, since that's the
+            city in an address, and the smallest of any other placetype, as the
+            most specific. Map tiles choose the same way. Searches still find
+            the place by the names of all of them.
           type: array
           items:
             $ref: '#/components/schemas/AdminRef'

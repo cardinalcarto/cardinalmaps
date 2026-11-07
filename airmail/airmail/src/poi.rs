@@ -117,9 +117,25 @@ pub struct WofPlace {
     /// if it's a country.
     #[serde(default)]
     pub country: Option<String>,
+    /// The area of its bounding box in square degrees, zero if it has no shape.
+    #[serde(default)]
+    pub size: f64,
 }
 
 impl WofPlace {
+    /// Whether this is the one to show over `other`, of the same placetype: see
+    /// [`one_per_placetype`]. An area of no known size never beats a known one.
+    fn beats(&self, other: &WofPlace) -> bool {
+        if self.size == other.size || self.size == 0.0 {
+            return false;
+        }
+        other.size == 0.0
+            || match self.placetype.as_str() {
+                "locality" | "localadmin" => self.size > other.size,
+                _ => self.size < other.size,
+            }
+    }
+
     /// The name in `lang` (a BCP 47 tag) if there is one, else the default.
     #[must_use]
     pub fn display_name(&self, lang: Option<&str>) -> &str {
@@ -245,6 +261,31 @@ pub fn placetype_rank(placetype: &str) -> u8 {
         "continent" => 16,
         _ => 17,
     }
+}
+
+/// The areas to show for a place, smallest placetype first, from all those containing it.
+///
+/// A place can be in several areas of one placetype, as Who's On First's localities
+/// include what are really neighbourhoods. Each placetype shows one: the largest for
+/// localities and local admins, since that's the city in an address, and otherwise the
+/// smallest, as the most specific. Ties go to the lower ID. Tiles choose by the same rule,
+/// in `planetiler-openmaptiles`'s `WofAdmins`.
+#[must_use]
+pub fn one_per_placetype(mut places: Vec<&WofPlace>) -> Vec<&WofPlace> {
+    places.sort_by_key(|place| (placetype_rank(&place.placetype), place.id));
+    places.dedup_by_key(|place| place.id);
+    let mut chosen: Vec<&WofPlace> = Vec::with_capacity(places.len());
+    for place in places {
+        match chosen.last_mut() {
+            Some(last) if last.placetype == place.placetype => {
+                if place.beats(last) {
+                    *last = place;
+                }
+            }
+            _ => chosen.push(place),
+        }
+    }
+    chosen
 }
 
 /// A document to index.
@@ -438,6 +479,43 @@ mod test {
     }
 
     #[test]
+    fn one_area_of_each_placetype_by_its_rule() {
+        let area = |id, placetype: &str, size| WofPlace {
+            id,
+            placetype: placetype.into(),
+            population: None,
+            default_name: format!("{id}"),
+            names: BTreeMap::new(),
+            abbreviation: None,
+            country: None,
+            size,
+        };
+        let places = [
+            area(1, "country", 100.0),
+            // The city, and what Who's On First also calls a locality in it, whose ID is
+            // lower in one case and higher in the other.
+            area(2, "locality", 1.0),
+            area(3, "locality", 0.01),
+            area(4, "neighbourhood", 0.05),
+            area(5, "neighbourhood", 0.001),
+            area(6, "localadmin", 2.0),
+            area(7, "localadmin", 3.0),
+            area(8, "county", 5.0),
+            area(9, "county", 5.0),
+            // No shape, so not chosen over one with.
+            area(10, "microhood", 0.0),
+            area(11, "microhood", 0.1),
+        ];
+        let ids = |places: Vec<&WofPlace>| -> Vec<u64> {
+            one_per_placetype(places).into_iter().map(|place| place.id).collect()
+        };
+        assert_eq!(ids(places.iter().collect()), [11, 5, 2, 7, 8, 1]);
+        assert_eq!(ids(places.iter().rev().collect()), [11, 5, 2, 7, 8, 1]);
+        assert_eq!(ids(vec![&places[1], &places[1]]), [2]);
+        assert!(ids(Vec::new()).is_empty());
+    }
+
+    #[test]
     fn wof_display_name_falls_back_to_the_default() {
         let place = WofPlace {
             id: 101748463,
@@ -447,6 +525,7 @@ mod test {
             names: [("eng".to_string(), "Zurich".to_string())].into(),
             abbreviation: None,
             country: Some("CH".into()),
+            size: 0.0,
         };
         assert_eq!(place.display_name(Some("en-US")), "Zurich");
         assert_eq!(place.display_name(Some("ja")), "Zürich");

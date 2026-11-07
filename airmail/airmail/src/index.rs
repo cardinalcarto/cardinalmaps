@@ -980,6 +980,7 @@ mod test {
                 names: BTreeMap::new(),
                 abbreviation: None,
                 country: None,
+                size: 0.0,
             }),
             admin_ids: ancestors.to_vec(),
             center: Point::new(at.0, at.1),
