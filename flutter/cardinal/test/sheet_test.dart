@@ -244,8 +244,10 @@ void main() {
     await send('updateBackGestureProgress', 0.5);
     final halfway = sheet.extent;
     expect(halfway, moreOrLessEquals((above + below) / 2, epsilon: 1));
-    final content = tester.getTopLeft(find.textContaining('Gravity:'));
-    expect(content.dx, greaterThan(100), reason: 'the content slides with the gesture');
+    final fade = tester.widget<Opacity>(
+      find.ancestor(of: find.textContaining('Gravity:'), matching: find.byType(Opacity)).first,
+    );
+    expect(fade.opacity, inExclusiveRange(0, 1), reason: 'the content fades with the gesture');
 
     await send('commitBackGesture');
     var last = halfway;

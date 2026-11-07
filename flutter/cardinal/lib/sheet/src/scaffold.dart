@@ -203,7 +203,13 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
       // pushed may already be active (an update can come before its transition starts),
       // but the sheet is still where the page below left it.
       final arriving = _active == top && top.memory == null;
-      if (!controller.isTransitioning && !arriving) _active?.memory = controller._nearestAnchor;
+      if (!controller.isTransitioning) {
+        if (!arriving) {
+          _active?.memory = controller._nearestAnchor;
+        } else if (under != null) {
+          under.memory = controller._nearestOf(under.resolved) ?? under.memory;
+        }
+      }
       top.memory ??= top.initial;
       under?.memory ??= under.initial;
       _transition = (top: top, under: under);
@@ -215,7 +221,7 @@ class _SheetScaffoldState extends State<SheetScaffold> with TickerProviderStateM
     final to = top.resting?.extent;
     final from = under?.resting?.extent;
     final route = top.route!;
-    final t = _transitionProgress(route.animation!.value, route.navigator);
+    final t = route is _SheetPageRoute ? route._arrival : route.animation!.value;
     final extent = from == null ? to : (to == null ? from : lerpDouble(from, to, t));
     if (extent != null) controller._follow(extent);
   }

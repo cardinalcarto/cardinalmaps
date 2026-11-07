@@ -8,7 +8,7 @@ class SheetPhysics {
     this.gravity = 1200,
     this.minFlingVelocity = 250,
     this.overdragResistance = 0.35,
-    this.spring = const SpringDescription(mass: 1, stiffness: 350, damping: 37.4),
+    this.spring = const SpringDescription(mass: 1, stiffness: 700, damping: 47.6),
   });
 
   /// How fast a fling slows, in logical pixels per second squared: how far a fling
@@ -26,8 +26,9 @@ class SheetPhysics {
   /// fraction of the finger's travel.
   final double overdragResistance;
 
-  /// The spring the sheet settles on, starting at the speed it was let go at. Critically
-  /// damped by default, so it doesn't overshoot.
+  /// The spring the sheet settles on, starting at the speed it was let go at. By default
+  /// Material 3's standard spatial spring, with a damping ratio of 0.9: quick to arrive,
+  /// with no long drift at the end and next to no overshoot.
   final SpringDescription spring;
 
   /// The anchor the sheet comes to rest at when let go at [extent] moving at

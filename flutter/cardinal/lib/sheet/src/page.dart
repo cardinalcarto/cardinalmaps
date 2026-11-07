@@ -2,8 +2,8 @@ part of '../sheet.dart';
 
 /// A page of the sheet's navigator, usually showing a [SheetContent].
 ///
-/// Pages swap within the one sheet: the content slides across from one page to the
-/// next while the sheet moves between their anchors, and an Android back gesture scrubs
+/// Pages swap within the one sheet: the content fades from one page to the next while
+/// the sheet moves between their anchors, and an Android back gesture scrubs
 /// both back towards the page below. A page restored on top of others opens the same
 /// way. Give pages a [restorationId] (go_router's `state.pageKey.value`) to restore them.
 class SheetPage<T> extends Page<T> {
@@ -27,10 +27,44 @@ class _SheetPageRoute<T> extends PageRoute<T> {
   SheetPage<T> get _page => settings as SheetPage<T>;
 
   @override
-  Duration get transitionDuration => Durations.medium4;
+  Duration get transitionDuration => Durations.medium2;
 
   @override
-  Duration get reverseTransitionDuration => Durations.medium4;
+  Duration get reverseTransitionDuration => Durations.medium2;
+
+  /// Starts at once whichever way it's going, and slows into place.
+  static const Curve _curve = Curves.easeOutCubic;
+
+  late final CurvedAnimation _arriving;
+  late final CurvedAnimation _covered;
+
+  @override
+  void install() {
+    super.install();
+    _arriving = CurvedAnimation(parent: animation!, curve: _curve, reverseCurve: _curve.flipped);
+    _covered = CurvedAnimation(parent: secondaryAnimation!, curve: _curve, reverseCurve: _curve.flipped);
+  }
+
+  @override
+  void dispose() {
+    _arriving.dispose();
+    _covered.dispose();
+    super.dispose();
+  }
+
+  /// How far [curved] has got: eased, unless a gesture is driving it, in which case it
+  /// follows the gesture. Only ever switches between the two at either end of a transition,
+  /// where both agree.
+  double _progress(CurvedAnimation curved) {
+    if (navigator?.userGestureInProgress ?? false) return curved.parent.value.clamp(0.0, 1.0);
+    return curved.value;
+  }
+
+  /// How far this page has come in over the page below.
+  double get _arrival => _progress(_arriving);
+
+  /// How far a page has come in over this one.
+  double get _cover => _progress(_covered);
 
   @override
   Color? get barrierColor => null;
@@ -46,7 +80,7 @@ class _SheetPageRoute<T> extends PageRoute<T> {
 
   /// A page added without being pushed (restored, or under a deep link) opens as if it
   /// had been, if it's on top: the sheet moves up from the page below as the content
-  /// slides in, and whatever follows the route's arrival (or departure) sees the same
+  /// fades in, and whatever follows the route's arrival (or departure) sees the same
   /// as after a push. The bottom page just shows.
   @override
   void didAdd() {
@@ -84,10 +118,8 @@ class _SheetPageRoute<T> extends PageRoute<T> {
   ) {
     return _SheetBackGesture(
       route: this,
-      child: _SheetSlide(
-        animation: animation,
-        secondaryAnimation: secondaryAnimation,
-        navigator: navigator,
+      child: _SheetFade(
+        route: this,
         child: child,
       ),
     );
@@ -147,48 +179,29 @@ class _SheetPageRoute<T> extends PageRoute<T> {
   }
 }
 
-/// How far a transition at [value] has got: eased, unless a gesture is driving it, in
-/// which case it follows the gesture. Only ever switches between the two at either end
-/// of a transition, where both agree.
-double _transitionProgress(double value, NavigatorState? navigator) {
-  final t = value.clamp(0.0, 1.0);
-  if (navigator?.userGestureInProgress ?? false) return t;
-  return Curves.easeInOutCubicEmphasized.transform(t);
-}
+/// Fades a page's content out as one is pushed over it, then the new page's in, so the
+/// two are never both legible; popping runs the same in reverse.
+class _SheetFade extends StatelessWidget {
+  const _SheetFade({required this.route, required this.child});
 
-/// Slides a page's content in from the end edge as it's pushed, over the page below,
-/// which slides a little way towards the start edge; popping runs the same in reverse.
-class _SheetSlide extends StatelessWidget {
-  const _SheetSlide({
-    required this.animation,
-    required this.secondaryAnimation,
-    required this.navigator,
-    required this.child,
-  });
-
-  final Animation<double> animation;
-  final Animation<double> secondaryAnimation;
-  final NavigatorState? navigator;
+  final _SheetPageRoute<dynamic> route;
   final Widget child;
 
-  /// How far, as a fraction of its width, the page below slides as one is pushed over it.
-  static const double _parallax = 1 / 3;
+  /// How far through a transition the page below has gone and the new page starts.
+  static const double _handover = 0.35;
 
   @override
   Widget build(BuildContext context) {
-    final direction = Directionality.of(context) == TextDirection.rtl ? -1.0 : 1.0;
     final color = _SheetScope.of(context).color;
     return AnimatedBuilder(
-      animation: Listenable.merge([animation, secondaryAnimation]),
-      // Opaque, to cover the page below as it slides over it, and a Material of its
-      // own for ink to show on.
+      animation: Listenable.merge([route.animation, route.secondaryAnimation]),
+      // Opaque, to cover the page below once it's in, and a Material of its own for ink
+      // to show on.
       child: Material(color: color, child: child),
       builder: (context, child) {
-        final incoming = 1 - _transitionProgress(animation.value, navigator);
-        final outgoing = _transitionProgress(secondaryAnimation.value, navigator);
-        final dx = (incoming - _parallax * outgoing) * direction;
-        if (dx == 0) return child!;
-        return FractionalTranslation(translation: Offset(dx, 0), child: child);
+        final fadedIn = ((route._arrival - _handover) / (1 - _handover)).clamp(0.0, 1.0);
+        final fadedOut = (route._cover / _handover).clamp(0.0, 1.0);
+        return Opacity(opacity: fadedIn * (1 - fadedOut), child: child);
       },
     );
   }

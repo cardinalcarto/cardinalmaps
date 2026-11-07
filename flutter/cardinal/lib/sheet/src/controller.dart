@@ -265,6 +265,10 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
     _rest(anchor);
   }
 
+  /// Which of a page's [anchors] the sheet is nearest, for a page it's already leaving.
+  SheetAnchor? _nearestOf(List<ResolvedAnchor> anchors) =>
+      anchors.isEmpty ? null : anchors[_physics.target(anchors, extent, 0)].anchor;
+
   /// The anchor nearest the sheet, for remembering where a page was left.
   SheetAnchor? get _nearestAnchor =>
       _restingAt ??
