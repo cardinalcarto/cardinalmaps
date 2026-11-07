@@ -20,6 +20,10 @@ fi
 source=$1 out=$2 west=${3:--180} south=${4:--65} east=${5:-180} north=${6:-85} jobs=${7:-8}
 mkdir -p "$out"
 
+# Each job reads only the blocks it needs, and doesn't need them again: GDAL's default block cache,
+# 5% of RAM per process, would add up across jobs.
+export GDAL_CACHEMAX=512
+
 # The pixel at column 4, row 4 of v1.2 is centered on (-180, 85). Refuse any other layout.
 geo=$(gdalinfo -nomd "$source" | grep -E '^(Origin|Pixel Size|Size is)')
 expected='Size is 1296009, 540009
@@ -42,7 +46,7 @@ cut_tile() {
   local column=$(((lon + 180) * 3600 + 4)) row=$(((85 - lat - 1) * 3600 + 4))
   local tmp=$out/$name.partial
   gdal_translate -q -of GTiff -srcwin $column $row 3601 3601 -a_scale 1 -a_offset 0 \
-    -co COMPRESS=DEFLATE -co PREDICTOR=3 -co TILED=NO "$source" "$tmp"
+    -co COMPRESS=ZSTD -co ZSTD_LEVEL=1 -co PREDICTOR=3 -co TILED=NO "$source" "$tmp"
   # No min and max means every pixel is no data, like open ocean.
   if gdalinfo -mm "$tmp" 2>/dev/null | grep -q 'Computed Min/Max'; then
     mv "$tmp" "$out/$name.tif"

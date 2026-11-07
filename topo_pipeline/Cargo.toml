@@ -15,7 +15,7 @@ prost = "0.14"
 rayon = "1"
 rusty-s3 = "0.11.0"
 serde = { version = "1", features = ["derive"] }
-tiff = "0.10"
+tiff = { version = "0.10", features = ["zstd"] }
 toml = "0.8"
 ureq = "3.5.1"
 
