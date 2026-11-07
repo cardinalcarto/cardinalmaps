@@ -2,7 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
 
 /// A map controller without a map, for widget tests (the map needs Flutter GPU): it
-/// records the subject and GeoJSON it's given.
+/// records the subject and GeoJSON it's given, and where it's flown.
 class FakeMap extends SparkleMapController {
   /// Whether a subject is being kept in view; tests clear it to stand for the map being
   /// moved by hand.
@@ -36,4 +36,11 @@ class FakeMap extends SparkleMapController {
 
   @override
   void setGeoJson(String source, Object geojson) => geoJson[source] = geojson;
+
+  /// Where [flyTo] last sent the camera.
+  ({double lng, double lat, double zoom})? flownTo;
+
+  @override
+  void flyTo({required double lng, required double lat, required double zoom}) =>
+      flownTo = (lng: lng, lat: lat, zoom: zoom);
 }

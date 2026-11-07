@@ -4,8 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../config.dart';
-import '../sheet/sheet.dart';
 import '../store/store.dart';
+import 'location.dart';
 import 'selection.dart';
 
 /// The map's style.
@@ -56,8 +56,8 @@ class MapLayers {
   int get hashCode => Object.hash(style, units, winter);
 }
 
-/// The style JSON for [layers], from the bundled styles, with the selected place's
-/// layers on top.
+/// The style JSON for [layers], from the bundled styles, with where you are and the
+/// selected place on top.
 Future<Map<String, Object?>> styleFor(MapLayers layers) async {
   final file = switch (layers.style) {
     MapStyle.streets => mapStyle,
@@ -66,6 +66,7 @@ Future<Map<String, Object?>> styleFor(MapLayers layers) async {
   final style = jsonDecode(await rootBundle.loadString('assets/map/$file')) as Map<String, Object?>;
   setGlobalStateDefaults(style, {'units': layers.units.name, 'winter': layers.winter});
   addSelectionLayers(style);
+  addLocationLayers(style);
   return style;
 }
 
@@ -80,42 +81,17 @@ void setGlobalStateDefaults(Map<String, Object?> style, Map<String, Object?> val
   }
 }
 
-/// The button that opens the layer picker, riding the top of the sheet at the end of
-/// the screen. It fades out as the sheet rises past halfway, as the map does under it.
+/// The button that opens the layer picker; see `MapButtons`.
 class LayerButton extends StatelessWidget {
   const LayerButton({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final padding = MediaQuery.paddingOf(context);
-    return SheetBuilder(
-      child: FloatingActionButton.small(
-        heroTag: null,
-        tooltip: 'Map layers',
-        onPressed: () => showLayerPicker(context),
-        child: const Icon(Icons.layers_outlined),
-      ),
-      builder: (context, sheet, child) {
-        final docked = sheet.geometry.placement == SheetPlacement.docked;
-        final height = sheet.geometry.size.height;
-        final opacity = docked
-            ? 1.0
-            : (1 - (sheet.extent - height * 0.45) / (height * 0.1)).clamp(0.0, 1.0);
-        return Stack(
-          children: [
-            PositionedDirectional(
-              end: 16 + padding.right,
-              bottom: 16 + (docked ? padding.bottom : sheet.extent),
-              child: IgnorePointer(
-                ignoring: opacity == 0,
-                child: Opacity(opacity: opacity, child: child),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
+  Widget build(BuildContext context) => FloatingActionButton(
+    heroTag: null,
+    tooltip: 'Map layers',
+    onPressed: () => showLayerPicker(context),
+    child: const Icon(Icons.layers_outlined),
+  );
 }
 
 /// Shows the layer picker, which stores each choice as it's made.

@@ -1,6 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Tiles and search results come from servers. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- The my location button and the dot that shows where you are. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <application
         android:label="cardinal"
         android:name="${applicationName}"
