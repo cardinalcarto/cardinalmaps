@@ -59,9 +59,21 @@ pub fn simplify(geometry: Geometry<f64>, max_vertices: usize) -> Geometry<f64> {
     let Some(bounds) = geometry.bounding_rect() else {
         return geometry;
     };
+    // A polygon keeps at least four vertices, so a shape with more parts than
+    // a quarter of the limit can't get under it by simplifying its rings, and
+    // each try on a shape that large is slow.
+    if let Geometry::MultiPolygon(multi) = &geometry
+        && multi.0.len() * 4 > max_vertices
+    {
+        let Geometry::MultiPolygon(multi) = geometry else { unreachable!() };
+        return largest_parts(multi, max_vertices);
+    }
     let size = bounds.width().max(bounds.height());
     // Visvalingam-Whyatt tolerances are areas.
     let mut epsilon = (size * 1e-4).powi(2);
+    // Each try starts from the last, so the later, coarser tries are cheap.
+    let mut geometry = geometry;
+    let mut fewest = geometry.coords_count();
     for _ in 0..64 {
         let simplified = match &geometry {
             Geometry::LineString(line) => Geometry::LineString(line.simplify_vw_preserve(epsilon)),
@@ -70,9 +82,17 @@ pub fn simplify(geometry: Geometry<f64>, max_vertices: usize) -> Geometry<f64> {
             Geometry::MultiPolygon(multi) => Geometry::MultiPolygon(drop_degenerate(multi.simplify_vw_preserve(epsilon))),
             _ => return geometry,
         };
-        if simplified.coords_count() <= max_vertices {
+        let count = simplified.coords_count();
+        if count <= max_vertices {
             return simplified;
         }
+        // Keeping the topology can stop simplification short; a larger
+        // tolerance won't get further.
+        if count >= fewest {
+            break;
+        }
+        fewest = count;
+        geometry = simplified;
         epsilon *= 4.0;
     }
     // A shape with very many parts can't get under the limit by simplifying
