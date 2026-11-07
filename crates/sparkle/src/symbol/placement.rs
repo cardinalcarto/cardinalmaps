@@ -554,7 +554,7 @@ fn line_circles(
 }
 
 /// How one label came out of the last placement.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct LabelState {
     text: bool,
     icon: bool,
@@ -562,6 +562,20 @@ struct LabelState {
     anchor: u8,
     /// The same label is placed from another tile.
     duplicate: bool,
+    /// The space the parts of it that were placed take on screen, in logical pixels:
+    /// `[left, top, right, bottom]`.
+    bounds: Option<[f32; 4]>,
+}
+
+/// A label on screen near a point, from [`SymbolPlacer::labels_at`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LabelAt {
+    /// The symbol bucket it's in.
+    pub key: BucketKey,
+    pub feature_id: Option<u64>,
+    /// Its anchor in world coordinates, `0..1` across the world. Copies of the world go
+    /// outside that.
+    pub world: [f64; 2],
 }
 
 /// A label's opacity, moving towards whether it's placed.
@@ -711,6 +725,37 @@ impl SymbolPlacer {
     /// The vertex values of a bucket from the last [`Self::update`].
     pub fn bucket(&self, key: &BucketKey) -> Option<&PlacedBucket> {
         self.buckets.get(key).map(|s| &s.out)
+    }
+
+    /// The labels the last placement showed within `tolerance` of `point` (logical
+    /// pixels), nearest first, and among those the topmost layer first.
+    pub fn labels_at(&self, point: [f32; 2], tolerance: f32) -> Vec<LabelAt> {
+        let mut found = Vec::new();
+        for (key, state) in &self.buckets {
+            let extent = state.labels.extent as f32;
+            for (instance, placed) in state.labels.instances.iter().zip(&state.placed) {
+                let Some([left, top, right, bottom]) = placed.bounds else {
+                    continue;
+                };
+                let dx = (left - point[0]).max(point[0] - right).max(0.0);
+                let dy = (top - point[1]).max(point[1] - bottom).max(0.0);
+                let distance = dx.hypot(dy);
+                if distance <= tolerance {
+                    let label = LabelAt {
+                        key: *key,
+                        feature_id: instance.feature_id,
+                        world: key.world(instance.anchor, extent),
+                    };
+                    found.push((distance, label));
+                }
+            }
+        }
+        found.sort_by(|(a, x), (b, y)| {
+            a.total_cmp(b)
+                .then(y.key.layer.cmp(&x.key.layer))
+                .then(x.key.cmp(&y.key))
+        });
+        found.into_iter().map(|(_, label)| label).collect()
     }
 
     /// Place labels for a frame at `now` (seconds, from any fixed point) with every visible
@@ -1213,6 +1258,11 @@ fn place_label(
             grid.insert(s, ip.overlap);
         }
     }
+    let text = shapes[..text_shapes].iter().filter(|_| result.text);
+    let icon = shapes[text_shapes..].iter().filter(|_| result.icon);
+    result.bounds = text.chain(icon).map(Shape::bounds).reduce(|a, b| {
+        [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]
+    });
     result
 }
 

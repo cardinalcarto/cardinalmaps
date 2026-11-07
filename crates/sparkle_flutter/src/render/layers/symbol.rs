@@ -14,7 +14,7 @@ use bytemuck::{Pod, Zeroable};
 use sparkle::style::{LayerKind, StyleLayer, SymbolLayer};
 use sparkle::symbol::Labels;
 use sparkle::symbol::placement::{
-    BucketKey, DEFAULT_FADE_DURATION, DrawMode, PartAlignment, PlacementBucket, PlacementView,
+    BucketKey, DEFAULT_FADE_DURATION, DrawMode, LabelAt, PartAlignment, PlacementBucket, PlacementView,
     SymbolPlacer,
 };
 use sparkle::tile::{SymbolQuads, SymbolVertex};
@@ -317,6 +317,12 @@ impl LayerRenderer for SymbolRenderer {
 
     fn animating(&self) -> bool {
         self.animating
+    }
+
+    fn labels_at(&self, point: [f32; 2], tolerance: f32) -> Vec<LabelAt> {
+        self.placer
+            .as_ref()
+            .map_or_else(Vec::new, |p| p.labels_at(point, tolerance))
     }
 
     fn draw(&mut self, cx: &mut DrawContext<'_, '_>, layer: &LayerDraw<'_>) {

@@ -212,6 +212,36 @@ fn overlapping_labels_collide() {
 }
 
 #[test]
+fn labels_are_found_where_they_show() {
+    // The second collides with the first, so it isn't shown.
+    let tile = points(&[(2000, 2000, "abc"), (2040, 2010, "abd"), (3000, 3000, "x")]);
+    let style = style(json!({"text-size": 24}));
+    let bucket = build(&style, 14, &tile);
+    let mut placer = SymbolPlacer::new(0.0);
+    placer.update(0.0, &view(0.0), &[input(&style, &bucket, 14, false)]);
+
+    // The tile fills the view.
+    let shown = [2000.0, 3000.0].map(|c: f32| [c / EXTENT * VIEWPORT; 2]);
+    let ids = |p: [f32; 2], tolerance| -> Vec<Option<u64>> {
+        placer
+            .labels_at(p, tolerance)
+            .iter()
+            .map(|l| l.feature_id)
+            .collect()
+    };
+    assert_eq!(ids(shown[0], 0.0), [Some(1)]);
+    assert_eq!(ids(shown[1], 0.0), [Some(3)]);
+    // Only the tolerance reaches past what a label covers, nearest first.
+    let beyond = [shown[1][0] + 100.0, shown[1][1]];
+    assert!(ids(beyond, 0.0).is_empty());
+    assert_eq!(ids(beyond, 200.0), [Some(3)]);
+    // Its anchor, as a place in the world.
+    let label = placer.labels_at(shown[1], 0.0)[0];
+    let scale = 14f64.exp2();
+    assert!((label.world[0] * scale - label.key.x as f64 - 3000.0 / 4096.0).abs() < 1e-6);
+}
+
+#[test]
 fn rarer_icons_win_collisions() {
     let prefix =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sprite/sprite");

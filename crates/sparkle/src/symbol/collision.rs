@@ -19,7 +19,7 @@ pub enum Shape {
 }
 
 impl Shape {
-    fn bounds(&self) -> [f32; 4] {
+    pub(crate) fn bounds(&self) -> [f32; 4] {
         match *self {
             Shape::Box(b) => b,
             Shape::Circle([x, y, r]) => [x - r, y - r, x + r, y + r],

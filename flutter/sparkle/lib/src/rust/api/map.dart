@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `of`, `to_button`, `view`
+// These functions are ignored because they are not marked as `pub`: `of`, `properties_text`, `property_text`, `to_button`, `view`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<SparkleMap>>
@@ -134,6 +134,22 @@ abstract class SparkleMap implements RustOpaqueInterface {
     required double margin,
   });
 
+  /// The features of the labels the last click landed on, nearest first. Later calls
+  /// return nothing until the next click.
+  List<ClickedFeature> takeClicked();
+
+  /// The properties of the feature with `id` in `source_layer` of a tile, as for
+  /// [`ClickedFeature::properties`], if the tile is still loaded and has one. Read it
+  /// right after the click, as tiles come and go.
+  Map<String, String>? tileFeature({
+    required String source,
+    required String sourceLayer,
+    required int tileZ,
+    required PlatformInt64 tileX,
+    required int tileY,
+    required BigInt id,
+  });
+
   /// Two fingers dragged up or down together by `dy` logical pixels: up tilts further.
   void tilt({required double dy});
 
@@ -198,6 +214,68 @@ class CameraState {
           zoom == other.zoom &&
           bearing == other.bearing &&
           pitch == other.pitch;
+}
+
+/// A feature of a label that was clicked or tapped.
+class ClickedFeature {
+  /// The style's source it's from.
+  final String source;
+
+  /// The layer of its source's tiles it's in.
+  final String? sourceLayer;
+
+  /// The tile it's in, for looking up what else is there; see
+  /// [`SparkleMap::tile_feature`].
+  final int tileZ;
+  final PlatformInt64 tileX;
+  final int tileY;
+  final BigInt id;
+
+  /// Where the label is anchored.
+  final double lng;
+  final double lat;
+
+  /// Its properties that are strings, numbers or booleans, as text.
+  final Map<String, String> properties;
+
+  const ClickedFeature({
+    required this.source,
+    this.sourceLayer,
+    required this.tileZ,
+    required this.tileX,
+    required this.tileY,
+    required this.id,
+    required this.lng,
+    required this.lat,
+    required this.properties,
+  });
+
+  @override
+  int get hashCode =>
+      source.hashCode ^
+      sourceLayer.hashCode ^
+      tileZ.hashCode ^
+      tileX.hashCode ^
+      tileY.hashCode ^
+      id.hashCode ^
+      lng.hashCode ^
+      lat.hashCode ^
+      properties.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ClickedFeature &&
+          runtimeType == other.runtimeType &&
+          source == other.source &&
+          sourceLayer == other.sourceLayer &&
+          tileZ == other.tileZ &&
+          tileX == other.tileX &&
+          tileY == other.tileY &&
+          id == other.id &&
+          lng == other.lng &&
+          lat == other.lat &&
+          properties == other.properties;
 }
 
 /// What the device can do, as Flutter GPU reports it.

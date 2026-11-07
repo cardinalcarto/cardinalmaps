@@ -28,6 +28,7 @@ use std::sync::Arc;
 use sparkle::sprite::ImageAtlas;
 use sparkle::state::FeatureStates;
 use sparkle::style::StyleLayer;
+use sparkle::symbol::placement::LabelAt;
 use sparkle::terrain::TerrainTiles;
 use sparkle::{Bucket, ProcessedTile, Style, TileId};
 use sparkle_view::camera::{Camera, Placement};
@@ -220,6 +221,14 @@ impl Renderer {
     /// changes.
     pub fn animating(&self) -> bool {
         self.layers.iter().any(|l| l.animating())
+    }
+
+    /// The labels shown within `tolerance` of `point` (logical pixels), nearest first.
+    pub fn labels_at(&self, point: [f32; 2], tolerance: f32) -> Vec<LabelAt> {
+        self.layers
+            .iter()
+            .flat_map(|l| l.labels_at(point, tolerance))
+            .collect()
     }
 
     /// Upload a processed tile, with the current feature state applied to buckets whose

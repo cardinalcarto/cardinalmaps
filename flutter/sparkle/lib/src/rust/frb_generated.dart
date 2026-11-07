@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 1655232017;
+  int get rustContentHash => 1200526660;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -206,6 +206,20 @@ abstract class RustLibApi extends BaseApi {
     required double north,
     required double maxZoom,
     required double margin,
+  });
+
+  List<ClickedFeature> crateApiMapSparkleMapTakeClicked({
+    required SparkleMap that,
+  });
+
+  Map<String, String>? crateApiMapSparkleMapTileFeature({
+    required SparkleMap that,
+    required String source,
+    required String sourceLayer,
+    required int tileZ,
+    required PlatformInt64 tileX,
+    required int tileY,
+    required BigInt id,
   });
 
   void crateApiMapSparkleMapTilt({
@@ -1028,6 +1042,88 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  List<ClickedFeature> crateApiMapSparkleMapTakeClicked({
+    required SparkleMap that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_clicked_feature,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiMapSparkleMapTakeClickedConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMapSparkleMapTakeClickedConstMeta =>
+      const TaskConstMeta(
+        debugName: "SparkleMap_take_clicked",
+        argNames: ["that"],
+      );
+
+  @override
+  Map<String, String>? crateApiMapSparkleMapTileFeature({
+    required SparkleMap that,
+    required String source,
+    required String sourceLayer,
+    required int tileZ,
+    required PlatformInt64 tileX,
+    required int tileY,
+    required BigInt id,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+            that,
+            serializer,
+          );
+          sse_encode_String(source, serializer);
+          sse_encode_String(sourceLayer, serializer);
+          sse_encode_u_8(tileZ, serializer);
+          sse_encode_i_64(tileX, serializer);
+          sse_encode_u_32(tileY, serializer);
+          sse_encode_u_64(id, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_Map_String_String_None,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiMapSparkleMapTileFeatureConstMeta,
+        argValues: [that, source, sourceLayer, tileZ, tileX, tileY, id],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMapSparkleMapTileFeatureConstMeta =>
+      const TaskConstMeta(
+        debugName: "SparkleMap_tile_feature",
+        argNames: [
+          "that",
+          "source",
+          "sourceLayer",
+          "tileZ",
+          "tileX",
+          "tileY",
+          "id",
+        ],
+      );
+
+  @override
   void crateApiMapSparkleMapTilt({
     required SparkleMap that,
     required double dy,
@@ -1041,7 +1137,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_f_64(dy, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1075,7 +1171,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 25,
+              funcId: 27,
               port: port_,
             );
           },
@@ -1107,7 +1203,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 28,
             port: port_,
           );
         },
@@ -1155,6 +1251,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return SparkleMapImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  Map<String, String> dco_decode_Map_String_String_None(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Map.fromEntries(
+      dco_decode_list_record_string_string(raw)
+          .map((e) => MapEntry(e.$1, e.$2)),
+    );
   }
 
   @protected
@@ -1230,6 +1335,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ClickedFeature dco_decode_clicked_feature(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
+    return ClickedFeature(
+      source: dco_decode_String(arr[0]),
+      sourceLayer: dco_decode_opt_String(arr[1]),
+      tileZ: dco_decode_u_8(arr[2]),
+      tileX: dco_decode_i_64(arr[3]),
+      tileY: dco_decode_u_32(arr[4]),
+      id: dco_decode_u_64(arr[5]),
+      lng: dco_decode_f_64(arr[6]),
+      lat: dco_decode_f_64(arr[7]),
+      properties: dco_decode_Map_String_String_None(arr[8]),
+    );
+  }
+
+  @protected
   DeviceInfo dco_decode_device_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -1288,9 +1412,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ClickedFeature> dco_decode_list_clicked_feature(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_clicked_feature).toList();
+  }
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
+  }
+
+  @protected
+  List<(String, String)> dco_decode_list_record_string_string(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_record_string_string).toList();
   }
 
   @protected
@@ -1317,6 +1453,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Map<String, String>? dco_decode_opt_Map_String_String_None(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_Map_String_String_None(raw);
+  }
+
+  @protected
   String? dco_decode_opt_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_String(raw);
@@ -1329,9 +1471,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  (String, String) dco_decode_record_string_string(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2) {
+      throw Exception('Expected 2 elements, got ${arr.length}');
+    }
+    return (dco_decode_String(arr[0]), dco_decode_String(arr[1]));
+  }
+
+  @protected
   int dco_decode_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
+  }
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeU64(raw);
   }
 
   @protected
@@ -1381,6 +1539,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
+  }
+
+  @protected
+  Map<String, String> sse_decode_Map_String_String_None(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_list_record_string_string(deserializer);
+    return Map.fromEntries(inner.map((e) => MapEntry(e.$1, e.$2)));
   }
 
   @protected
@@ -1460,6 +1627,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ClickedFeature sse_decode_clicked_feature(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_source = sse_decode_String(deserializer);
+    var var_sourceLayer = sse_decode_opt_String(deserializer);
+    var var_tileZ = sse_decode_u_8(deserializer);
+    var var_tileX = sse_decode_i_64(deserializer);
+    var var_tileY = sse_decode_u_32(deserializer);
+    var var_id = sse_decode_u_64(deserializer);
+    var var_lng = sse_decode_f_64(deserializer);
+    var var_lat = sse_decode_f_64(deserializer);
+    var var_properties = sse_decode_Map_String_String_None(deserializer);
+    return ClickedFeature(
+      source: var_source,
+      sourceLayer: var_sourceLayer,
+      tileZ: var_tileZ,
+      tileX: var_tileX,
+      tileY: var_tileY,
+      id: var_id,
+      lng: var_lng,
+      lat: var_lat,
+      properties: var_properties,
+    );
+  }
+
+  @protected
   DeviceInfo sse_decode_device_info(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_uniformAlignment = sse_decode_u_32(deserializer);
@@ -1532,10 +1724,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ClickedFeature> sse_decode_list_clicked_feature(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ClickedFeature>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_clicked_feature(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  List<(String, String)> sse_decode_list_record_string_string(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <(String, String)>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_record_string_string(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -1562,6 +1782,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Map<String, String>? sse_decode_opt_Map_String_String_None(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_Map_String_String_None(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -1584,9 +1817,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  (String, String) sse_decode_record_string_string(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_field0 = sse_decode_String(deserializer);
+    var var_field1 = sse_decode_String(deserializer);
+    return (var_field0, var_field1);
+  }
+
+  @protected
   int sse_decode_u_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint32();
+  }
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getBigUint64();
   }
 
   @protected
@@ -1637,6 +1886,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as SparkleMapImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void sse_encode_Map_String_String_None(
+    Map<String, String> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_record_string_string(
+      self.entries.map((e) => (e.key, e.value)).toList(),
       serializer,
     );
   }
@@ -1725,6 +1986,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_clicked_feature(
+    ClickedFeature self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.source, serializer);
+    sse_encode_opt_String(self.sourceLayer, serializer);
+    sse_encode_u_8(self.tileZ, serializer);
+    sse_encode_i_64(self.tileX, serializer);
+    sse_encode_u_32(self.tileY, serializer);
+    sse_encode_u_64(self.id, serializer);
+    sse_encode_f_64(self.lng, serializer);
+    sse_encode_f_64(self.lat, serializer);
+    sse_encode_Map_String_String_None(self.properties, serializer);
+  }
+
+  @protected
   void sse_encode_device_info(DeviceInfo self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_32(self.uniformAlignment, serializer);
@@ -1776,6 +2054,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_clicked_feature(
+    List<ClickedFeature> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_clicked_feature(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
     SseSerializer serializer,
@@ -1783,6 +2073,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
+  }
+
+  @protected
+  void sse_encode_list_record_string_string(
+    List<(String, String)> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_record_string_string(item, serializer);
+    }
   }
 
   @protected
@@ -1799,6 +2101,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_f_64(self.right, serializer);
     sse_encode_f_64(self.bottom, serializer);
     sse_encode_f_64(self.left, serializer);
+  }
+
+  @protected
+  void sse_encode_opt_Map_String_String_None(
+    Map<String, String>? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_Map_String_String_None(self, serializer);
+    }
   }
 
   @protected
@@ -1825,9 +2140,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_record_string_string(
+    (String, String) self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.$1, serializer);
+    sse_encode_String(self.$2, serializer);
+  }
+
+  @protected
   void sse_encode_u_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint32(self);
+  }
+
+  @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putBigUint64(self);
   }
 
   @protected
@@ -2049,6 +2380,31 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
     north: north,
     maxZoom: maxZoom,
     margin: margin,
+  );
+
+  /// The features of the labels the last click landed on, nearest first. Later calls
+  /// return nothing until the next click.
+  List<ClickedFeature> takeClicked() =>
+      RustLib.instance.api.crateApiMapSparkleMapTakeClicked(that: this);
+
+  /// The properties of the feature with `id` in `source_layer` of a tile, as for
+  /// [`ClickedFeature::properties`], if the tile is still loaded and has one. Read it
+  /// right after the click, as tiles come and go.
+  Map<String, String>? tileFeature({
+    required String source,
+    required String sourceLayer,
+    required int tileZ,
+    required PlatformInt64 tileX,
+    required int tileY,
+    required BigInt id,
+  }) => RustLib.instance.api.crateApiMapSparkleMapTileFeature(
+    that: this,
+    source: source,
+    sourceLayer: sourceLayer,
+    tileZ: tileZ,
+    tileX: tileX,
+    tileY: tileY,
+    id: id,
   );
 
   /// Two fingers dragged up or down together by `dy` logical pixels: up tilts further.

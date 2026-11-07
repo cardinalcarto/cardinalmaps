@@ -2,6 +2,7 @@
 //! it reacts to. All but [`SparkleMap::wake_stream`] run synchronously on the calling
 //! isolate's thread.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use flutter_rust_bridge::frb;
@@ -45,6 +46,44 @@ pub struct FrameOutput {
     pub zoom: f64,
     pub bearing: f64,
     pub pitch: f64,
+}
+
+fn properties_text(
+    properties: &std::collections::BTreeMap<String, maplibre_expr::Value>,
+) -> HashMap<String, String> {
+    properties
+        .iter()
+        .filter_map(|(k, v)| Some((k.clone(), property_text(v)?)))
+        .collect()
+}
+
+fn property_text(value: &maplibre_expr::Value) -> Option<String> {
+    use maplibre_expr::Value;
+    match value {
+        Value::String(s) => Some(s.to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// A feature of a label that was clicked or tapped.
+pub struct ClickedFeature {
+    /// The style's source it's from.
+    pub source: String,
+    /// The layer of its source's tiles it's in.
+    pub source_layer: Option<String>,
+    /// The tile it's in, for looking up what else is there; see
+    /// [`SparkleMap::tile_feature`].
+    pub tile_z: u8,
+    pub tile_x: i64,
+    pub tile_y: u32,
+    pub id: u64,
+    /// Where the label is anchored.
+    pub lng: f64,
+    pub lat: f64,
+    /// Its properties that are strings, numbers or booleans, as text.
+    pub properties: HashMap<String, String>,
 }
 
 /// Where the camera is.
@@ -212,6 +251,49 @@ impl SparkleMap {
     #[frb(sync)]
     pub fn click(&self, x: f64, y: f64) -> bool {
         self.view().click([x, y])
+    }
+
+    /// The features of the labels the last click landed on, nearest first. Later calls
+    /// return nothing until the next click.
+    #[frb(sync)]
+    pub fn take_clicked(&self) -> Vec<ClickedFeature> {
+        self.view()
+            .take_clicked()
+            .into_iter()
+            .map(|f| ClickedFeature {
+                source: f.source,
+                source_layer: f.source_layer,
+                tile_z: f.tile.z,
+                tile_x: f.tile.x,
+                tile_y: f.tile.y,
+                id: f.id,
+                lng: f.lng,
+                lat: f.lat,
+                properties: properties_text(&f.properties),
+            })
+            .collect()
+    }
+
+    /// The properties of the feature with `id` in `source_layer` of a tile, as for
+    /// [`ClickedFeature::properties`], if the tile is still loaded and has one. Read it
+    /// right after the click, as tiles come and go.
+    #[frb(sync)]
+    pub fn tile_feature(
+        &self,
+        source: String,
+        source_layer: String,
+        tile_z: u8,
+        tile_x: i64,
+        tile_y: u32,
+        id: u64,
+    ) -> Option<HashMap<String, String>> {
+        let tile = sparkle_view::camera::Placement {
+            z: tile_z,
+            x: tile_x,
+            y: tile_y,
+        };
+        let properties = self.view().tile_feature(&source, tile, Some(&source_layer), id)?;
+        Some(properties_text(&properties))
     }
 
     /// A mouse wheel turned by `delta` logical pixels (positive scrolls down).

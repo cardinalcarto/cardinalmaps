@@ -4,16 +4,18 @@
 //! Positions come in logical pixels, as Flutter has them, and are turned into the physical
 //! pixels the camera works in.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Instant, SystemTime};
 
 use anyhow::{Result, bail};
+use maplibre_expr::Value;
 use sparkle::Style;
 use sparkle::style::StyleDiff;
 use sparkle::transition::Transitions;
 use sparkle_view::args::Args;
-use sparkle_view::camera::{Camera, Padding, lng_lat_to_world};
+use sparkle_view::camera::{Camera, Padding, Placement, lng_lat_to_world};
 use sparkle_view::loader::{LoaderConfig, TileLoader, TileMessage};
 use sparkle_view::map::MapState;
 use sparkle_view::motion::Motion;
@@ -28,6 +30,23 @@ use crate::render::{GpuTile, Renderer};
 /// tiles that arrive beyond it wait for the next frames, so that a burst of them is spread
 /// over several frames instead of stalling one.
 const UPLOAD_BUDGET: usize = 2 << 20;
+
+/// How far from a label a click still lands on it, in logical pixels, on top of what
+/// the label covers: icons are smaller than a finger.
+const LABEL_TOUCH_TOLERANCE: f32 = 12.0;
+
+/// A feature of a label that was clicked.
+pub struct ClickedFeature {
+    pub source: String,
+    pub source_layer: Option<String>,
+    /// The tile it's in.
+    pub tile: Placement,
+    pub id: u64,
+    /// Where the label is anchored.
+    pub lng: f64,
+    pub lat: f64,
+    pub properties: BTreeMap<String, Value>,
+}
 
 /// Called from loader threads whenever a tile is ready, to have a frame drawn.
 pub type Wake = Arc<Mutex<Option<Box<dyn Fn() + Send>>>>;
@@ -102,6 +121,8 @@ pub struct MapView {
     drag: Option<Drag>,
     /// Where the primary button went down, to tell clicks from drags.
     press: Option<[f64; 2]>,
+    /// The labels the last click landed on, until they're taken.
+    clicked: Vec<ClickedFeature>,
     hovered: Option<Marked>,
     selected: Option<Marked>,
 }
@@ -171,6 +192,7 @@ impl MapView {
             cursor: [0.0; 2],
             drag: None,
             press: None,
+            clicked: Vec::new(),
             hovered: None,
             selected: None,
         })
@@ -276,9 +298,64 @@ impl MapView {
         true
     }
 
+    /// The features of the labels shown under the pointer, nearest first. Labels without
+    /// a feature ID aren't included: the ID is how the feature is found.
+    fn features_at_cursor(&self) -> Vec<ClickedFeature> {
+        let ratio = self.camera.pixel_ratio;
+        let point = self.cursor.map(|c| (c / ratio) as f32);
+        self.renderer
+            .labels_at(point, LABEL_TOUCH_TOLERANCE)
+            .into_iter()
+            .filter_map(|label| {
+                // Tiles use zero for features without an ID.
+                let id = label.feature_id.filter(|&id| id != 0)?;
+                let key = label.key;
+                let placement = Placement {
+                    z: key.z,
+                    x: key.x,
+                    y: key.y,
+                };
+                let (source, source_layer) = self.map.layer_source(key.layer)?;
+                let properties = self.map.tile_feature(source, placement, source_layer, id)?;
+                let [x, y] = label.world;
+                let [lng, lat] = sparkle::projection::world_to_lng_lat([x.rem_euclid(1.0), y])
+                    .map(f64::to_degrees);
+                Some(ClickedFeature {
+                    source: source.to_owned(),
+                    source_layer: source_layer.map(str::to_owned),
+                    tile: placement,
+                    id,
+                    lng,
+                    lat,
+                    properties,
+                })
+            })
+            .collect()
+    }
+
+    /// The properties of the feature with `id` in `source_layer` of `source`'s tile at
+    /// `tile`, as of now.
+    pub fn tile_feature(
+        &self,
+        source: &str,
+        tile: Placement,
+        source_layer: Option<&str>,
+        id: u64,
+    ) -> Option<BTreeMap<String, Value>> {
+        self.map.tile_feature(source, tile, source_layer, id)
+    }
+
+    /// The features of the labels the last click landed on, nearest first, once.
+    pub fn take_clicked(&mut self) -> Vec<ClickedFeature> {
+        std::mem::take(&mut self.clicked)
+    }
+
     /// Hover the feature under the pointer, or with `click`, toggle its selection.
     /// Returns whether anything changed on screen.
     fn mark(&mut self, click: bool) -> bool {
+        if click {
+            self.clicked = self.features_at_cursor();
+        }
         let (key, slot) = if click {
             ("selected", &mut self.selected)
         } else {

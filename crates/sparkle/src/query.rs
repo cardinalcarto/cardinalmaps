@@ -102,6 +102,58 @@ impl FeatureIndex {
         self.tile
     }
 
+    /// The properties of the feature with `id` in this tile, in `source_layer` for a
+    /// vector source.
+    pub fn properties(
+        &self,
+        style: &Style,
+        source: &str,
+        source_layer: Option<&str>,
+        id: u64,
+    ) -> Result<Option<BTreeMap<String, Value>>, Error> {
+        match &self.data {
+            IndexData::Mlt(data) => {
+                let mut decoder = Decoder::default();
+                for layer in Parser::default().parse_layers(data)? {
+                    let Layer::Tag01(layer) = layer else { continue };
+                    if Some(layer.name()) != source_layer {
+                        continue;
+                    }
+                    let name = layer.name().to_owned();
+                    let layer = layer.decode_all(&mut decoder)?;
+                    let promote = style.source(source).and_then(|s| s.promote_id(&name));
+                    let all = Dependencies {
+                        properties: PropertyDeps::All,
+                        ..Dependencies::default()
+                    };
+                    let zoom = f64::from(self.tile.z);
+                    let mut ctx = FeatureContext::new(&layer, &all, self.tile, zoom);
+                    let mut features = layer.iter_features();
+                    while let Some(feature) = features.next() {
+                        let feature = feature?;
+                        let found = match promote {
+                            Some(key) => {
+                                ctx.load(&feature);
+                                ctx.promote_id(key) == Some(id)
+                            }
+                            None => feature.id() == Some(id),
+                        };
+                        if found {
+                            ctx.load(&feature);
+                            return Ok(Some(ctx.context().feature.properties.clone()));
+                        }
+                    }
+                }
+                Ok(None)
+            }
+            IndexData::GeoJson(index) => Ok(index
+                .tile(self.tile)
+                .into_iter()
+                .find(|f| f.id == Some(id))
+                .map(|f| (*f.properties).clone())),
+        }
+    }
+
     /// The features of `source` drawn at a point of this tile, topmost first: by layer
     /// from the top of the style, then within a layer the last drawn first.
     pub fn query_point(

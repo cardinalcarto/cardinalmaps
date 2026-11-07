@@ -6,7 +6,7 @@
 //! The map keeps whatever a renderer made of each tile, through [`TileUploader`], so the
 //! same logic serves every frontend.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
@@ -540,6 +540,38 @@ impl<T> MapState<T> {
             }
         }
         changed
+    }
+
+    /// The source and source layer style layer `layer` draws from.
+    pub fn layer_source(&self, layer: usize) -> Option<(&str, Option<&str>)> {
+        let layer = self.style.layers.get(layer)?;
+        Some((layer.source.as_deref()?, layer.source_layer.as_deref()))
+    }
+
+    /// The properties of the feature with `id` in `source_layer` of `source`'s tile at
+    /// `placement`, if that tile is still loaded and has one.
+    pub fn tile_feature(
+        &self,
+        source: &str,
+        placement: Placement,
+        source_layer: Option<&str>,
+        id: u64,
+    ) -> Option<BTreeMap<String, Value>> {
+        let s = self.sources.iter().position(|m| m.id == source)?;
+        let Some(CacheEntry::Ready {
+            features: Some(index),
+            ..
+        }) = self.caches[s].get(&placement.id())
+        else {
+            return None;
+        };
+        match index.properties(&self.style, source, source_layer, id) {
+            Ok(properties) => properties,
+            Err(err) => {
+                log::warn!("query: {err}");
+                None
+            }
+        }
     }
 
     /// The features drawn at a screen point (physical pixels), topmost first, as in the

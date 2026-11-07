@@ -169,6 +169,19 @@ class SparkleMapController {
     _state!._requestFrame();
   }
 
+  /// The properties of the feature with [id] in [sourceLayer] of the tile [feature] was
+  /// clicked in, if the tile is still loaded and has one. Read it right after the click, as
+  /// tiles come and go.
+  Map<String, String>? featureBeside(rust.ClickedFeature feature, String sourceLayer, int id) =>
+      _map?.tileFeature(
+        source: feature.source,
+        sourceLayer: sourceLayer,
+        tileZ: feature.tileZ,
+        tileX: feature.tileX,
+        tileY: feature.tileY,
+        id: BigInt.from(id),
+      );
+
   /// Replace the data of the style's GeoJSON source [source] with [geojson], a GeoJSON
   /// object (as decoded JSON).
   ///
@@ -222,6 +235,7 @@ class SparkleMap extends StatefulWidget {
     this.onStatus,
     this.onScreenshot,
     this.onError,
+    this.onFeaturesClicked,
   });
 
   final List<String> args;
@@ -240,6 +254,9 @@ class SparkleMap extends StatefulWidget {
 
   /// Called when the map can't be set up or drawn.
   final void Function(Object error)? onError;
+
+  /// A click or tap landed on labels with feature IDs: their features, nearest first.
+  final void Function(List<rust.ClickedFeature> features)? onFeaturesClicked;
 
   @override
   State<SparkleMap> createState() => _SparkleMapState();
@@ -821,6 +838,7 @@ class _SparkleMapState extends State<SparkleMap> {
           _tapClick = null;
           _lastTap = null;
           _redrawIf(_map?.click(x: position.dx, y: position.dy) ?? false);
+          _reportClicked();
         });
       }
     }
@@ -837,6 +855,7 @@ class _SparkleMapState extends State<SparkleMap> {
           ) ??
           false,
     );
+    _reportClicked();
   }
 
   /// Click a tap still waiting to see whether it's a double tap.
@@ -848,6 +867,14 @@ class _SparkleMapState extends State<SparkleMap> {
     timer.cancel();
     _tapClick = null;
     _redrawIf(_map?.click(x: position.dx, y: position.dy) ?? false);
+    _reportClicked();
+  }
+
+  void _reportClicked() {
+    final features = _map?.takeClicked() ?? const [];
+    if (features.isNotEmpty) {
+      widget.onFeaturesClicked?.call(features);
+    }
   }
 
   void _onPointerHover(PointerHoverEvent e) {

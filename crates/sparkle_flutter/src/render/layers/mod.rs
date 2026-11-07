@@ -22,6 +22,7 @@ use std::any::Any;
 
 use sparkle::Bucket;
 use sparkle::style::StyleLayer;
+use sparkle::symbol::placement::LabelAt;
 use sparkle_view::camera::Placement;
 
 use super::Gpu;
@@ -108,6 +109,11 @@ pub trait LayerRenderer: Send {
     /// once (bottom to top, possibly none), before any `prepare`: for work across layers,
     /// such as symbol collision detection.
     fn prepare_frame(&mut self, _cx: &mut PrepareContext<'_>, _layers: &[&LayerDraw<'_>]) {}
+
+    /// The labels shown within `tolerance` of `point` (logical pixels), nearest first.
+    fn labels_at(&self, _point: [f32; 2], _tolerance: f32) -> Vec<LabelAt> {
+        Vec::new()
+    }
 
     /// Draw one layer into the main pass.
     fn draw(&mut self, cx: &mut DrawContext<'_, '_>, layer: &LayerDraw<'_>);
