@@ -174,6 +174,9 @@ type DataPipelineCategoricalModelsOpts struct {
 	//
 	// Default: 1000
 	MinCuisine int
+	// The extract has node locations on its ways (osmium add-locations-to-ways),
+	// so no node map is needed. Without that, a planet's map takes hours.
+	LocationsOnWays bool
 }
 
 // Trains airmail's categorical search models from an OSM extract, into a
@@ -195,6 +198,10 @@ func (r *DataPipeline) CategoricalModels(osm *File, wofDb *File, opts ...DataPip
 		// `minCuisine` optional argument
 		if !querybuilder.IsZeroValue(opts[i].MinCuisine) {
 			q = q.Arg("minCuisine", opts[i].MinCuisine)
+		}
+		// `locationsOnWays` optional argument
+		if !querybuilder.IsZeroValue(opts[i].LocationsOnWays) {
+			q = q.Arg("locationsOnWays", opts[i].LocationsOnWays)
 		}
 	}
 	q = q.Arg("osm", osm)

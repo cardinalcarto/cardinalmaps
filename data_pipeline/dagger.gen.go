@@ -384,7 +384,14 @@ func invoke(ctx context.Context, parentJSON []byte, parentName string, fnName st
 					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg minCuisine", err))
 				}
 			}
-			return (*DataPipeline).CategoricalModels(&parent, ctx, osm, wofDb, pipTree, minPois, minCuisine)
+			var locationsOnWays bool
+			if inputArgs["locationsOnWays"] != nil {
+				err = json.Unmarshal([]byte(inputArgs["locationsOnWays"]), &locationsOnWays)
+				if err != nil {
+					panic(fmt.Errorf("%s: %w", "failed to unmarshal input arg locationsOnWays", err))
+				}
+			}
+			return (*DataPipeline).CategoricalModels(&parent, ctx, osm, wofDb, pipTree, minPois, minCuisine, locationsOnWays)
 		case "Contours":
 			var parent DataPipeline
 			err = json.Unmarshal(parentJSON, &parent)
@@ -729,7 +736,8 @@ func invoke(ctx context.Context, parentJSON []byte, parentName string, fnName st
 							WithArg("wofDb", dag.TypeDef().WithObject("File"), dagger.FunctionWithArgOpts{Description: "Who's On First SpatiaLite database covering the extract, for the\nlanguages spoken where each POI is.", SourceMap: dag.SourceMap("main.go", 570, 2)}).
 							WithArg("pipTree", dag.TypeDef().WithKind(dagger.TypeDefKindBooleanKind), dagger.FunctionWithArgOpts{Description: "See Index.", SourceMap: dag.SourceMap("main.go", 573, 2), DefaultValue: dagger.JSON("true")}).
 							WithArg("minPois", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{Description: "The fewest POIs a language needs for a model.", SourceMap: dag.SourceMap("main.go", 576, 2), DefaultValue: dagger.JSON("50000")}).
-							WithArg("minCuisine", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{Description: "The fewest cuisine-tagged POIs a language needs for a model.", SourceMap: dag.SourceMap("main.go", 579, 2), DefaultValue: dagger.JSON("1000")})).
+							WithArg("minCuisine", dag.TypeDef().WithKind(dagger.TypeDefKindIntegerKind), dagger.FunctionWithArgOpts{Description: "The fewest cuisine-tagged POIs a language needs for a model.", SourceMap: dag.SourceMap("main.go", 579, 2), DefaultValue: dagger.JSON("1000")}).
+							WithArg("locationsOnWays", dag.TypeDef().WithKind(dagger.TypeDefKindBooleanKind).WithOptional(true), dagger.FunctionWithArgOpts{Description: "The extract has node locations on its ways (osmium add-locations-to-ways),\nso no node map is needed. Without that, a planet's map takes hours.", SourceMap: dag.SourceMap("main.go", 583, 2)})).
 					WithFunction(
 						dag.Function("Contours",
 							dag.TypeDef().WithObject("File")).

@@ -149,7 +149,7 @@ func (m *DataPipeline) Build(
 	}
 	// The models don't use identifiers, so they're trained from the
 	// unpatched extract and don't need retraining when the database changes.
-	categories, err := m.CategoricalModels(ctx, osm, wofDb, pipTree, 50_000, 1_000)
+	categories, err := m.CategoricalModels(ctx, osm, wofDb, pipTree, 50_000, 1_000, false)
 	if err != nil {
 		return nil, err
 	}
@@ -577,12 +577,19 @@ func (m *DataPipeline) CategoricalModels(
 	// The fewest cuisine-tagged POIs a language needs for a model.
 	// +default=1000
 	minCuisine int,
+	// The extract has node locations on its ways (osmium add-locations-to-ways),
+	// so no node map is needed. Without that, a planet's map takes hours.
+	// +optional
+	locationsOnWays bool,
 ) (*dagger.Directory, error) {
 	ctr, flags, err := m.withWof(ctx, m.AirmailIndexer(), wofDb, pipTree)
 	if err != nil {
 		return nil, err
 	}
 	cmd := append([]string{"categories_export"}, flags...)
+	if locationsOnWays {
+		cmd = append(cmd, "--nodes-already-cached")
+	}
 	cmd = append(cmd, "/input/input.osm.pbf", "/out/export.jsonl")
 	ctr, err = ctr.
 		WithMountedFile("/input/input.osm.pbf", osm).
