@@ -55,7 +55,8 @@ dagger -m data_pipeline api call topo-tiles --osm=./region.osm.pbf \
 ```
 
 `build` takes `--contour-config` to include the contours in its tiles, and `--s3-access-key-id`
-and `--s3-secret-access-key` if its DEMs are in a bucket.
+and `--s3-secret-access-key` if its DEMs are in a bucket. Or it takes `--contours`, a file made
+earlier by `contours`, so a planet's DEMs needn't stay in the engine for the whole build.
 
 The steps are also available alone as `contours` and `append-contours`. Finished contour
 chunks stay in the `topo-chunks` cache volume, which the engine's garbage collection can

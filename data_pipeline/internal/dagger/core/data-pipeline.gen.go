@@ -87,6 +87,10 @@ type DataPipelineBuildOpts struct {
 	S3AccessKeyID *Secret
 
 	S3SecretAccessKey *Secret
+	// Contours already made with Contours, instead of making them from
+	// contourConfig and dem. A planet's DEMs are hundreds of gigabytes, which
+	// needn't stay in the engine for the rest of the build.
+	Contours *File
 }
 
 // Builds tiles, the geocoder index and the categorical search models from
@@ -141,6 +145,10 @@ func (r *DataPipeline) Build(osm *File, wofDb *File, opts ...DataPipelineBuildOp
 		// `s3SecretAccessKey` optional argument
 		if !querybuilder.IsZeroValue(opts[i].S3SecretAccessKey) {
 			q = q.Arg("s3SecretAccessKey", opts[i].S3SecretAccessKey)
+		}
+		// `contours` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Contours) {
+			q = q.Arg("contours", opts[i].Contours)
 		}
 	}
 	q = q.Arg("osm", osm)

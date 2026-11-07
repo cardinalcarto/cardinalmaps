@@ -109,6 +109,11 @@ func (m *DataPipeline) Build(
 	s3AccessKeyId *dagger.Secret,
 	// +optional
 	s3SecretAccessKey *dagger.Secret,
+	// Contours already made with Contours, instead of making them from
+	// contourConfig and dem. A planet's DEMs are hundreds of gigabytes, which
+	// needn't stay in the engine for the rest of the build.
+	// +optional
+	contours *dagger.File,
 ) (*dagger.Directory, error) {
 	patched := osm
 	if databaseUrl != nil {
@@ -118,11 +123,17 @@ func (m *DataPipeline) Build(
 		}
 	}
 	forTiles := patched
+	if contours != nil && contourConfig != nil {
+		return nil, fmt.Errorf("pass contours or contourConfig, not both")
+	}
 	if contourConfig != nil {
-		contours, err := m.Contours(ctx, dem, contourConfig, "", s3AccessKeyId, s3SecretAccessKey)
-		if err != nil {
+		var err error
+		if contours, err = m.Contours(ctx, dem, contourConfig, "", s3AccessKeyId, s3SecretAccessKey); err != nil {
 			return nil, err
 		}
+	}
+	if contours != nil {
+		var err error
 		if forTiles, err = m.AppendContours(ctx, patched, contours); err != nil {
 			return nil, err
 		}
