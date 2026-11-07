@@ -93,13 +93,15 @@ type DataPipelineBuildOpts struct {
 	Contours *File
 }
 
-// Builds tiles, the geocoder index and the categorical search models from
-// one OSM extract, into a directory holding tiles.mbtiles, index/ and
-// categories/. The steps run one after another, since each can use most of
-// a planet build machine's memory.
-func (r *DataPipeline) Build(osm *File, wofDb *File, opts ...DataPipelineBuildOpts) *Directory {
+// Builds tiles and the geocoder index from one OSM extract, into a release:
+// a directory holding tiles.mbtiles, index/, and the categorical models and
+// query tagger it's given, as categories/ and tagger.model. The steps run one
+// after another, since each can use most of a planet build machine's memory.
+func (r *DataPipeline) Build(osm *File, wofDb *File, categories *Directory, tagger *File, opts ...DataPipelineBuildOpts) *Directory {
 	assertNotNil("osm", osm)
 	assertNotNil("wofDb", wofDb)
+	assertNotNil("categories", categories)
+	assertNotNil("tagger", tagger)
 	q := r.query.Select("build")
 	for i := len(opts) - 1; i >= 0; i-- {
 		// `databaseUrl` optional argument
@@ -153,6 +155,8 @@ func (r *DataPipeline) Build(osm *File, wofDb *File, opts ...DataPipelineBuildOp
 	}
 	q = q.Arg("osm", osm)
 	q = q.Arg("wofDb", wofDb)
+	q = q.Arg("categories", categories)
+	q = q.Arg("tagger", tagger)
 
 	return &Directory{
 		query:     q,
@@ -174,14 +178,12 @@ type DataPipelineCategoricalModelsOpts struct {
 	//
 	// Default: 1000
 	MinCuisine int
-	// The extract has node locations on its ways (osmium add-locations-to-ways),
-	// so no node map is needed. Without that, a planet's map takes hours.
-	LocationsOnWays bool
 }
 
 // Trains airmail's categorical search models from an OSM extract, into a
 // directory of <language>.amcats files. See airmail/categorical/README.md.
-// Languages are trained one after another, each cached separately.
+// Languages are trained one after another, each cached separately. This is
+// run by hand, now and then; Build takes the models it makes.
 func (r *DataPipeline) CategoricalModels(osm *File, wofDb *File, opts ...DataPipelineCategoricalModelsOpts) *Directory {
 	assertNotNil("osm", osm)
 	assertNotNil("wofDb", wofDb)
@@ -198,10 +200,6 @@ func (r *DataPipeline) CategoricalModels(osm *File, wofDb *File, opts ...DataPip
 		// `minCuisine` optional argument
 		if !querybuilder.IsZeroValue(opts[i].MinCuisine) {
 			q = q.Arg("minCuisine", opts[i].MinCuisine)
-		}
-		// `locationsOnWays` optional argument
-		if !querybuilder.IsZeroValue(opts[i].LocationsOnWays) {
-			q = q.Arg("locationsOnWays", opts[i].LocationsOnWays)
 		}
 	}
 	q = q.Arg("osm", osm)
@@ -368,6 +366,21 @@ func (r *DataPipeline) Index(osm *File, wofDb *File, opts ...DataPipelineIndexOp
 // The planetiler-openmaptiles fork's executable jar with dependencies.
 func (r *DataPipeline) Jar() *File {
 	q := r.query.Select("jar")
+
+	return &File{
+		query:     q,
+		refetchID: r.refetchID,
+	}
+}
+
+// Copies an OSM extract with each way carrying its nodes' locations (osmium
+// add-locations-to-ways), as airmail's indexer and categories_export read it.
+// Untagged nodes other than relation members are dropped, so it's not for
+// tiles: planetiler reads every node.
+func (r *DataPipeline) LocationsOnWays(osm *File) *File {
+	assertNotNil("osm", osm)
+	q := r.query.Select("locationsOnWays")
+	q = q.Arg("osm", osm)
 
 	return &File{
 		query:     q,

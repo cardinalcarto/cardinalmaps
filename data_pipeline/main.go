@@ -1,15 +1,17 @@
 // Builds Cardinal's data from an OSM extract: OpenMapTiles-schema vector
-// tilesets in MLT format with the local planetiler-openmaptiles fork, the
-// airmail geocoder index, and airmail's per-language categorical search
-// models. POIs in the tiles and the index are tagged with stable identifiers
-// from a poi_service database first. Separately, Cardinal Topo's tileset adds
-// contour lines from DEMs; see TopoTiles.
+// tilesets in MLT format with the local planetiler-openmaptiles fork, and the
+// airmail geocoder index. POIs in the tiles and the index are tagged with
+// stable identifiers from a poi_service database first. A release also holds
+// airmail's per-language categorical search models and its query tagger,
+// which are trained by hand, rarely; see CategoricalModels. Separately,
+// Cardinal Topo's tileset adds contour lines from DEMs; see TopoTiles.
 //
 // The engine runs in rootless podman, so select it explicitly:
 //
 //	DAGGER_ENGINE=image+podman://registry.dagger.io/engine:v1.0.0-beta.21 \
 //	  dagger -m data_pipeline api call build --osm=./monaco.osm.pbf \
 //	  --wof-db=./whosonfirst-data-admin-latest.spatial.db \
+//	  --categories=./categories --tagger=./tagger.model \
 //	  --database-url=env://DATABASE_URL -o out
 package main
 
@@ -60,10 +62,10 @@ func New(ws *dagger.Workspace) *DataPipeline {
 	}
 }
 
-// Builds tiles, the geocoder index and the categorical search models from
-// one OSM extract, into a directory holding tiles.mbtiles, index/ and
-// categories/. The steps run one after another, since each can use most of
-// a planet build machine's memory.
+// Builds tiles and the geocoder index from one OSM extract, into a release:
+// a directory holding tiles.mbtiles, index/, and the categorical models and
+// query tagger it's given, as categories/ and tagger.model. The steps run one
+// after another, since each can use most of a planet build machine's memory.
 // +cache="never"
 func (m *DataPipeline) Build(
 	ctx context.Context,
@@ -71,6 +73,13 @@ func (m *DataPipeline) Build(
 	osm *dagger.File,
 	// Who's On First SpatiaLite database covering the extract.
 	wofDb *dagger.File,
+	// Categorical search models from CategoricalModels, usually the last
+	// release's: how people describe POIs changes slowly, so they're retrained
+	// by hand.
+	categories *dagger.Directory,
+	// A query tagger model (airmail's `tagger train`), usually the last
+	// release's, for the same reason.
+	tagger *dagger.File,
 	// PostgreSQL URL of the poi_service database that gives POIs their
 	// identifiers. Without it, POIs have none.
 	// +optional
@@ -147,16 +156,11 @@ func (m *DataPipeline) Build(
 	if err != nil {
 		return nil, err
 	}
-	// The models don't use identifiers, so they're trained from the
-	// unpatched extract and don't need retraining when the database changes.
-	categories, err := m.CategoricalModels(ctx, osm, wofDb, pipTree, 50_000, 1_000, false)
-	if err != nil {
-		return nil, err
-	}
 	return dag.Directory().
 		WithFile("tiles.mbtiles", tiles).
 		WithDirectory("index", index).
-		WithDirectory("categories", categories), nil
+		WithDirectory("categories", categories).
+		WithFile("tagger.model", tagger), nil
 }
 
 // The poi_service executable.
@@ -409,6 +413,44 @@ func (m *DataPipeline) AppendContours(
 	return ctr.File("/out/output.osm.pbf"), nil
 }
 
+// Copies an OSM extract with each way carrying its nodes' locations (osmium
+// add-locations-to-ways), as airmail's indexer and categories_export read it.
+// Untagged nodes other than relation members are dropped, so it's not for
+// tiles: planetiler reads every node.
+func (m *DataPipeline) LocationsOnWays(
+	ctx context.Context,
+	// OSM extract (.osm.pbf).
+	osm *dagger.File,
+) (*dagger.File, error) {
+	size, err := osm.Size(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// osmium's default index keeps every location in memory, which suits an
+	// extract. The planet's is about 110GB, so it goes on disk instead, where
+	// it's read through the page cache.
+	index := "flex_mem"
+	if size > 20<<30 {
+		index = "dense_file_array,/work/nodes.idx"
+	}
+	ctr, err := dag.Container().
+		From(poiServiceRuntime).
+		WithExec([]string{"sh", "-c", "apt-get update && apt-get install -y --no-install-recommends osmium-tool && rm -rf /var/lib/apt/lists/*"}).
+		WithMountedFile("/input/input.osm.pbf", osm).
+		WithMountedCache("/work", dag.CacheVolume("osmium-node-index"), dagger.ContainerWithMountedCacheOpts{
+			Sharing: dagger.CacheSharingModePrivate,
+		}).
+		WithExec([]string{"sh", "-c", "rm -f /work/nodes.idx && mkdir -p /out"}).
+		WithExec([]string{"osmium", "add-locations-to-ways", "--keep-member-nodes", "-i", index,
+			"-o", "/out/output.osm.pbf", "/input/input.osm.pbf"}).
+		WithExec([]string{"rm", "-f", "/work/nodes.idx"}).
+		Sync(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ctr.File("/out/output.osm.pbf"), nil
+}
+
 // Builds the Cardinal Topo tileset: the OpenMapTiles layers, plus contour_m
 // and contour_ft, from an OSM extract and DEMs.
 // +cache="never"
@@ -546,6 +588,10 @@ func (m *DataPipeline) index(ctx context.Context, osm *dagger.File, wofDb *dagge
 		flags = append(flags, "--qrank=/input/qrank.csv.gz")
 	}
 	indexer := append([]string{"indexer", "--index=/out/index"}, flags...)
+	osm, err = m.LocationsOnWays(ctx, osm)
+	if err != nil {
+		return nil, err
+	}
 	ctr, err = ctr.
 		WithMountedFile("/input/input.osm.pbf", osm).
 		WithExec([]string{"mkdir", "-p", "/out/index"}).
@@ -560,7 +606,8 @@ func (m *DataPipeline) index(ctx context.Context, osm *dagger.File, wofDb *dagge
 
 // Trains airmail's categorical search models from an OSM extract, into a
 // directory of <language>.amcats files. See airmail/categorical/README.md.
-// Languages are trained one after another, each cached separately.
+// Languages are trained one after another, each cached separately. This is
+// run by hand, now and then; Build takes the models it makes.
 func (m *DataPipeline) CategoricalModels(
 	ctx context.Context,
 	// OSM extract (.osm.pbf).
@@ -577,20 +624,16 @@ func (m *DataPipeline) CategoricalModels(
 	// The fewest cuisine-tagged POIs a language needs for a model.
 	// +default=1000
 	minCuisine int,
-	// The extract has node locations on its ways (osmium add-locations-to-ways),
-	// so no node map is needed. Without that, a planet's map takes hours.
-	// +optional
-	locationsOnWays bool,
 ) (*dagger.Directory, error) {
 	ctr, flags, err := m.withWof(ctx, m.AirmailIndexer(), wofDb, pipTree)
 	if err != nil {
 		return nil, err
 	}
 	cmd := append([]string{"categories_export"}, flags...)
-	if locationsOnWays {
-		cmd = append(cmd, "--nodes-already-cached")
-	}
 	cmd = append(cmd, "/input/input.osm.pbf", "/out/export.jsonl")
+	if osm, err = m.LocationsOnWays(ctx, osm); err != nil {
+		return nil, err
+	}
 	ctr, err = ctr.
 		WithMountedFile("/input/input.osm.pbf", osm).
 		WithExec([]string{"mkdir", "-p", "/out"}).

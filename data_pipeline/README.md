@@ -4,8 +4,9 @@ Builds Cardinal's data from an OSM extract:
 
 - an MLT vector tileset from the `planetiler-openmaptiles` fork,
 - the airmail geocoder index,
-- airmail's per-language categorical search models (see
-  `airmail/categorical/README.md`).
+- and, run by hand now and then, airmail's per-language categorical search
+  models (see `airmail/categorical/README.md`), which a release carries
+  along with the query tagger.
 
 POIs in the tiles and the index are first tagged with stable identifiers from a
 `poi_service` database (see `poi_service/README.md`).
@@ -14,12 +15,19 @@ POIs in the tiles and the index are first tagged with stable identifiers from a
 export DAGGER_ENGINE=image+podman://registry.dagger.io/engine:v1.0.0-beta.21
 dagger -m data_pipeline api call build --osm=./region.osm.pbf \
   --wof-db=./whosonfirst-data-admin-latest.spatial.db \
+  --categories=./categories --tagger=./tagger.model \
   --database-url=env://DATABASE_URL -o out
 ```
 
-writes `out/tiles.mbtiles`, `out/index/` and `out/categories/`. The steps run
-one after another, since each can use most of a planet build machine's memory.
-Omit the first line if you're using docker instead of podman.
+writes a release: `out/tiles.mbtiles`, `out/index/`, and the models it's given
+as `out/categories/` and `out/tagger.model`. The steps run one after another,
+since each can use most of a planet build machine's memory. Omit the first
+line if you're using docker instead of podman.
+
+- `--categories` and `--tagger` are the categorical search models and the
+  query tagger, usually the last release's. How people describe POIs changes
+  slowly, so they're retrained by hand: the models with `categorical-models`,
+  the tagger with airmail's `tagger train` (see `airmail/BUILD.md`).
 
 - `--database-url` gives POIs their identifiers; without it, POIs have none.
   For a database on this machine, add `--database=tcp://localhost:5432` and
@@ -40,9 +48,13 @@ Omit the first line if you're using docker instead of podman.
   tree, which is slower for the planet but avoids the tree's ~10GB of memory.
 
 Each output can also be built alone with `tiles`, `index` or
-`categorical-models`, which take the same arguments where they apply. The
-categorical models are trained from the unpatched extract, so they aren't
-retrained when only the database changes.
+`categorical-models`, which take the same arguments where they apply.
+
+The index and the models read the extract with node locations on its ways,
+which `locations-on-ways` writes with `osmium add-locations-to-ways`. For an
+extract over 20GB, osmium's index of node locations goes on disk, in the
+`osmium-node-index` cache volume, rather than in memory. The tiles read the
+extract itself, since planetiler needs every node.
 
 ## Cardinal Topo
 

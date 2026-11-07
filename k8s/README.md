@@ -95,18 +95,21 @@ k8s/release.sh promote planet-20261102
 2. runs the pipeline's `build` against the database, through a port-forward
    on `localhost:5433` (`CARDINAL_DB_PORT`), into `releases/.<id>.partial`;
 3. checks the outputs, writes `manifest.json` (extract, POI checkpoint, the
-   index's schema version, git commit), and renames the directory to
-   `releases/<id>`.
+   index's schema version, where the models came from, git commit), and
+   renames the directory to `releases/<id>`.
 
 The ID defaults to the extract's name and date (`planet-20261102`,
 `washington-20261101`); pass `--id` to choose another. `--wof-db` defaults to
 `wof/whosonfirst-data-admin-latest.spatial.db` in the data directory, whose
 administrative areas are all indexed, and `--qrank` to `qrank/qrank.csv.gz`,
-which is used if it's there. Set
+which is used if it's there. `--categories` and `--tagger` are the categorical
+search models and the query tagger, which are trained by hand; they default to
+the live release's `categories/` and `tagger.model`. Set
 `DAGGER_ENGINE` if the pipeline's README says you need to. Only one build or
 prune runs at a time.
 
-`promote` only accepts finished releases (with a `manifest.json`). It writes the
+`promote` only accepts finished releases (with a `manifest.json`, models in
+`categories/` and a `tagger.model`, without which the geocoder won't start). It writes the
 overlay's `releases.env`, applies the overlay, waits for the rollout, and
 checks that `/tiles/catalog` lists `basemap` and that `/geocoder/v1/search`
 finds something for `--query` (default `park`). To roll back, promote the

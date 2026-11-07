@@ -4,7 +4,7 @@
 #
 #   k8s/release.sh init
 #   k8s/release.sh bootstrap-pois PLANET.osm.pbf [REPLICATION_URL]
-#   k8s/release.sh build EXTRACT.osm.pbf [--id ID] [--wof-db FILE] [--qrank FILE] [--sources DIR] [--contours CONFIG [--dem DIR]]
+#   k8s/release.sh build EXTRACT.osm.pbf [--id ID] [--wof-db FILE] [--qrank FILE] [--sources DIR] [--contours CONFIG [--dem DIR]] [--categories DIR] [--tagger FILE]
 #   k8s/release.sh promote ID [--query Q]
 #   k8s/release.sh list
 #   k8s/release.sh prune [--keep N] [--yes]
@@ -128,7 +128,7 @@ cmd_bootstrap_pois() {
 
 cmd_build() {
   local extract='' id='' wof=$root/wof/whosonfirst-data-admin-latest.spatial.db qrank=$root/qrank/qrank.csv.gz
-  local contours='' extra_args=()
+  local contours='' extra_args=() categories='' tagger=''
   while [[ $# -gt 0 ]]; do
     case $1 in
       --id) id=$2; shift 2 ;;
@@ -139,6 +139,10 @@ cmd_build() {
       --contours) contours=$2; shift 2 ;;
       # DEM rasters, mounted at /dem for a --contours configuration that reads them from there.
       --dem) extra_args+=(--dem="$(realpath "$2")"); shift 2 ;;
+      # Categorical search models and the query tagger, trained by hand; by
+      # default the live release's.
+      --categories) categories=$2; shift 2 ;;
+      --tagger) tagger=$2; shift 2 ;;
       -*) usage ;;
       *) [[ -z $extract ]] || usage; extract=$1; shift ;;
     esac
@@ -152,6 +156,18 @@ cmd_build() {
       extra_args+=(--s3-access-key-id=env://AWS_ACCESS_KEY_ID --s3-secret-access-key=env://AWS_SECRET_ACCESS_KEY)
   fi
   [[ -f $wof ]] || die "no Who's On First database at $wof; pass --wof-db"
+  if [[ -z $categories || -z $tagger ]]; then
+    local live
+    live=$(live_release)
+    [[ -n $live && $live != none ]] || die "no live release to take models from; pass --categories and --tagger"
+    categories=${categories:-$root/releases/$live/categories}
+    tagger=${tagger:-$root/releases/$live/tagger.model}
+  fi
+  compgen -G "$categories/*.amcats" >/dev/null || die "no categorical models (*.amcats) in $categories"
+  [[ -f $tagger ]] || die "no query tagger at $tagger"
+  categories=$(realpath "$categories")
+  tagger=$(realpath "$tagger")
+  extra_args+=(--categories="$categories" --tagger="$tagger")
   extract=$(realpath "$extract")
   wof=$(realpath "$wof")
   local qrank_args=()
@@ -190,11 +206,10 @@ cmd_build() {
     "${qrank_args[@]}" "${extra_args[@]}" -o "$partial")
   [[ -s $partial/tiles.mbtiles ]] || die "the build has no tiles.mbtiles; left in $partial"
   [[ -f $partial/index/meta.json ]] || die "the build has no geocoder index; left in $partial"
+  [[ -f $partial/tagger.model ]] || die "the build has no query tagger; left in $partial"
   local schema_version
   schema_version=$(jq -er .schema_version "$partial/index/airmail-index.json") ||
     die "the geocoder index has no schema version; left in $partial"
-  # Small extracts may have no language with enough POIs for a model.
-  mkdir -p "$partial/categories"
   # Pods run as nobody.
   chmod -R a+rX "$partial"
 
@@ -213,10 +228,13 @@ cmd_build() {
     --argjson dirty "$dirty" \
     --argjson schema_version "$schema_version" \
     --argjson qrank "$([[ ${#qrank_args[@]} -gt 0 ]] && echo true || echo false)" \
+    --arg categories "$categories" \
+    --arg tagger "$tagger" \
     '{id: $id, built_at: $built_at,
       extract: {path: $path, size: $size, replication_timestamp: $extract_ts},
       poi_checkpoint: {sequence: $sequence, timestamp: $checkpoint_ts},
       index: {schema_version: $schema_version, qrank: $qrank},
+      models: {categories: $categories, tagger: $tagger},
       git: {commit: $commit, dirty: $dirty}}' >"$partial/manifest.json"
   chmod a+r "$partial/manifest.json"
   mv "$partial" "$dest"
@@ -236,6 +254,9 @@ cmd_promote() {
   [[ -n $id ]] || usage
   valid_id "$id" || die "invalid release ID: $id"
   [[ -f $root/releases/$id/manifest.json ]] || die "$id isn't a finished release in $root/releases"
+  # The geocoder won't start without them.
+  [[ -f $root/releases/$id/tagger.model ]] || die "$id has no tagger.model"
+  compgen -G "$root/releases/$id/categories/*.amcats" >/dev/null || die "$id has no categorical models in categories/"
 
   local previous
   previous=$(live_release)
