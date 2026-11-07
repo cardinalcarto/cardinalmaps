@@ -323,23 +323,28 @@ impl MapView {
     }
 
     /// A button went down at `position`; `rotate` turns a primary drag into rotating (as
-    /// with ctrl held). Returns whether a frame should be drawn.
+    /// with ctrl held). Returns whether it stopped the camera moving, in which case it's
+    /// part of panning and can't be a click, and a frame should be drawn.
     pub fn pointer_down(&mut self, position: [f64; 2], button: Button, rotate: bool) -> bool {
         self.subject = None;
         self.cursor = self.physical(position);
         if button == Button::Primary {
             self.press = Some(self.cursor);
         }
+        let mut stopped = false;
         self.drag = match button {
             Button::Secondary => Some(Drag::Rotate),
             Button::Primary if rotate => Some(Drag::Rotate),
             Button::Primary => {
-                self.motion.grab(self.cursor, Instant::now());
+                stopped = self.motion.grab(self.cursor, Instant::now());
+                if stopped {
+                    self.press = None;
+                }
                 Some(Drag::Pan)
             }
             Button::Other => self.drag,
         };
-        false
+        stopped
     }
 
     /// A button went up at `position`; with `click`, a release where it went down is a

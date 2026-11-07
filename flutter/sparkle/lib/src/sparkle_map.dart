@@ -57,6 +57,10 @@ enum _TwoFingers {
 /// zooming doesn't also turn the map a little.
 const double _rotateThreshold = 20;
 
+/// How far a finger can stray, in logical pixels, and still be a tap. The map doesn't pan
+/// until it goes further.
+const double _tapSlop = kTouchSlop;
+
 /// The finger held down on the second tap of a double tap.
 class _QuickZoom {
   _QuickZoom(this.pointer, this.anchor);
@@ -275,8 +279,12 @@ class _SparkleMapState extends State<SparkleMap> {
   /// How far a pinch has turned, in degrees, until it passes [_rotateThreshold].
   double? _turned;
 
-  /// When and where a lone finger went down, while it might be a tap.
-  (Duration, Offset)? _tapDown;
+  /// Where a lone finger went down, until it leaves [_tapSlop] and starts panning.
+  Offset? _tapDown;
+
+  /// Whether the last press stopped the camera moving. If it's a tap, that's all it does,
+  /// though it can still start a double tap.
+  bool _stoppedCamera = false;
 
   /// When and where the last tap lifted, while a second could make it a double tap.
   (Duration, Offset)? _lastTap;
@@ -284,6 +292,13 @@ class _SparkleMapState extends State<SparkleMap> {
   /// Clicks where the last tap lifted once it can no longer be a double tap.
   Timer? _tapClick;
   _QuickZoom? _quickZoom;
+
+  /// A lone finger that went down where the system might take it for a back gesture. The
+  /// map sees it once it's a tap or goes more up or down than sideways. If it's the back
+  /// gesture, the system cancels it, by then without having moved the map.
+  PointerDownEvent? _heldTouch;
+  EdgeInsets _gestureInsets = EdgeInsets.zero;
+  double _windowWidth = 0;
 
   double _lastPanZoomScale = 1;
   double _lastPanZoomRotation = 0;
@@ -559,8 +574,30 @@ class _SparkleMapState extends State<SparkleMap> {
     }
   }
 
+  bool _inBackGestureZone(Offset position) =>
+      position.dx < _gestureInsets.left ||
+      position.dx > _windowWidth - _gestureInsets.right;
+
   void _onPointerDown(PointerDownEvent e) {
     _focus.requestFocus();
+    if (_map == null) {
+      return;
+    }
+    if (_heldTouch case final held?) {
+      // A second finger: this isn't a back gesture.
+      _heldTouch = null;
+      _pointerDown(held);
+    } else if (e.kind == PointerDeviceKind.touch &&
+        _touches.isEmpty &&
+        _pointer == null &&
+        _inBackGestureZone(e.position)) {
+      _heldTouch = e;
+      return;
+    }
+    _pointerDown(e);
+  }
+
+  void _pointerDown(PointerDownEvent e) {
     final map = _map;
     if (map == null) {
       return;
@@ -582,7 +619,7 @@ class _SparkleMapState extends State<SparkleMap> {
         if (last != null) {
           _clickTapNow(last.$2);
         }
-        _tapDown = (e.timeStamp, e.localPosition);
+        _tapDown = e.localPosition;
       } else {
         if (_touches.length == 2) {
           // Two fingers: stop dragging with the first.
@@ -610,14 +647,13 @@ class _SparkleMapState extends State<SparkleMap> {
         : e.buttons & kPrimaryButton != 0
         ? 0
         : 2;
-    _redrawIf(
-      map.pointerDown(
-        x: e.localPosition.dx,
-        y: e.localPosition.dy,
-        button: _button,
-        rotate: HardwareKeyboard.instance.isControlPressed,
-      ),
+    _stoppedCamera = map.pointerDown(
+      x: e.localPosition.dx,
+      y: e.localPosition.dy,
+      button: _button,
+      rotate: HardwareKeyboard.instance.isControlPressed,
     );
+    _redrawIf(_stoppedCamera);
   }
 
   /// The two fingers a two finger gesture follows.
@@ -630,6 +666,14 @@ class _SparkleMapState extends State<SparkleMap> {
     final map = _map;
     if (map == null) {
       return;
+    }
+    if (_heldTouch case final held? when held.pointer == e.pointer) {
+      final moved = e.position - held.position;
+      if (moved.distance < _tapSlop || moved.dx.abs() > moved.dy.abs()) {
+        return;
+      }
+      _heldTouch = null;
+      _pointerDown(held);
     }
     if (_quickZoom case final quick? when quick.pointer == e.pointer) {
       _touches[e.pointer] = e.localPosition;
@@ -661,6 +705,20 @@ class _SparkleMapState extends State<SparkleMap> {
       _touches[e.pointer] = e.localPosition;
     }
     if (e.pointer == _pointer) {
+      if (_tapDown case final down?) {
+        if ((e.localPosition - down).distance < _tapSlop) {
+          return;
+        }
+        // Out of the deadzone: pan from here, so the map doesn't jump to catch up.
+        _tapDown = null;
+        map.pointerDown(
+          x: e.localPosition.dx,
+          y: e.localPosition.dy,
+          button: _button,
+          rotate: HardwareKeyboard.instance.isControlPressed,
+        );
+        return;
+      }
       _redrawIf(map.pointerMove(x: e.localPosition.dx, y: e.localPosition.dy));
     }
   }
@@ -727,6 +785,16 @@ class _SparkleMapState extends State<SparkleMap> {
   }
 
   void _onPointerUp(PointerEvent e) {
+    if (_heldTouch case final held? when held.pointer == e.pointer) {
+      _heldTouch = null;
+      final tap =
+          e is PointerUpEvent &&
+          (e.position - held.position).distance < _tapSlop;
+      if (!tap) {
+        return;
+      }
+      _pointerDown(held);
+    }
     _touches.remove(e.pointer);
     if (_touches.length < 2) {
       _twoFingers = null;
@@ -740,22 +808,21 @@ class _SparkleMapState extends State<SparkleMap> {
       return;
     }
     var tap = false;
-    if (_tapDown case (final time, final position)
-        when e is PointerUpEvent && e.kind == PointerDeviceKind.touch) {
-      tap =
-          e.timeStamp - time < kLongPressTimeout &&
-          (e.localPosition - position).distance < kTouchSlop;
+    if (_tapDown case final down? when e is PointerUpEvent) {
+      tap = (e.localPosition - down).distance < _tapSlop;
     }
     _tapDown = null;
     if (tap) {
       // Click once it's clear this isn't the first of a double tap.
       final position = e.localPosition;
       _lastTap = (e.timeStamp, position);
-      _tapClick = Timer(kDoubleTapTimeout, () {
-        _tapClick = null;
-        _lastTap = null;
-        _redrawIf(_map?.click(x: position.dx, y: position.dy) ?? false);
-      });
+      if (!_stoppedCamera) {
+        _tapClick = Timer(kDoubleTapTimeout, () {
+          _tapClick = null;
+          _lastTap = null;
+          _redrawIf(_map?.click(x: position.dx, y: position.dy) ?? false);
+        });
+      }
     }
     if (e.pointer != _pointer) {
       return;
@@ -766,7 +833,7 @@ class _SparkleMapState extends State<SparkleMap> {
             x: e.localPosition.dx,
             y: e.localPosition.dy,
             button: _button,
-            click: !tap,
+            click: e.kind != PointerDeviceKind.touch,
           ) ??
           false,
     );
@@ -856,6 +923,8 @@ class _SparkleMapState extends State<SparkleMap> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final ratio = MediaQuery.devicePixelRatioOf(context);
+        _gestureInsets = MediaQuery.systemGestureInsetsOf(context);
+        _windowWidth = MediaQuery.sizeOf(context).width;
         final width = (constraints.maxWidth * ratio).round();
         final height = (constraints.maxHeight * ratio).round();
         if (width > 0 && height > 0) {

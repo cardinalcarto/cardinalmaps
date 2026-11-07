@@ -214,12 +214,14 @@ impl Motion {
         true
     }
 
-    /// A pan starts at `p`: stop any fling or flight.
-    pub fn grab(&mut self, p: [f64; 2], now: Instant) {
+    /// A pan starts at `p`: stop any fling or flight. Returns whether there was one.
+    pub fn grab(&mut self, p: [f64; 2], now: Instant) -> bool {
+        let stopped = self.velocity != [0.0; 2] || self.flight.is_some();
         self.velocity = [0.0; 2];
         self.flight = None;
         self.samples.clear();
         self.samples.push_back((now, p));
+        stopped
     }
 
     /// The pan moved to `p`.
@@ -377,6 +379,19 @@ mod tests {
         settle(&mut m, &mut c, end);
         assert!(c.center[0] < before[0]);
         assert!((c.center[1] - before[1]).abs() < 1e-9);
+    }
+
+    #[test]
+    fn grabbing_says_whether_it_stopped_a_fling() {
+        let c = camera();
+        let mut m = Motion::default();
+        let t = Instant::now();
+        assert!(!m.grab([400.0, 300.0], t));
+        m.track([500.0, 300.0], t + Duration::from_millis(50));
+        m.release(&c, t + Duration::from_millis(50));
+        assert!(m.active());
+        assert!(m.grab([400.0, 300.0], t + Duration::from_millis(60)));
+        assert!(!m.active());
     }
 
     #[test]
