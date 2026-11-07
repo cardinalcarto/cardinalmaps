@@ -57,19 +57,28 @@ class _CardinalMapState extends State<CardinalMap> {
 
   SettingsStore? _settings;
   late final AppLifecycleListener _lifecycle;
+  Timer? _viewSaver;
+  MapViewport? _savedView;
+
+  /// How often where the map is looking is kept, if it's moved: leaving with the back
+  /// button can end the app before a save on the way out finishes.
+  static const _viewSaveInterval = Duration(seconds: 2);
 
   @override
   void initState() {
     super.initState();
-    // Whichever comes first as the app goes away: it may not come back from any of them.
+    // As the app goes away too, whichever comes first: it may not come back from any.
     _lifecycle = AppLifecycleListener(onHide: _saveView, onPause: _saveView, onDetach: _saveView);
+    _viewSaver = Timer.periodic(_viewSaveInterval, (_) => _saveView());
   }
 
-  /// Keeps where the map is looking, to open there next time.
+  /// Keeps where the map is looking, to open there next time, if it's moved.
   void _saveView() {
     final settings = _settings;
     final view = MapViewport.of(widget.controller);
-    if (settings != null && view != null) settings.set(savedViewport, view);
+    if (settings == null || view == null || view == _savedView) return;
+    _savedView = view;
+    settings.set(savedViewport, view);
   }
 
   /// Starts the map in the stored layers, then follows the layer picker's choices.
@@ -114,6 +123,7 @@ class _CardinalMapState extends State<CardinalMap> {
   @override
   void dispose() {
     _saveView();
+    _viewSaver?.cancel();
     _lifecycle.dispose();
     _sheet?.removeListener(_updatePadding);
     for (final watching in _watching) {
