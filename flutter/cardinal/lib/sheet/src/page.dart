@@ -9,6 +9,7 @@ part of '../sheet.dart';
 class SheetPage<T> extends Page<T> {
   const SheetPage({
     required this.child,
+    this.requestFocus,
     super.key,
     super.name,
     super.arguments,
@@ -17,12 +18,18 @@ class SheetPage<T> extends Page<T> {
 
   final Widget child;
 
+  /// Whether the page takes focus when it's shown, and again when a page over it
+  /// closes, giving it to what last had it; the navigator's choice if null. False for a
+  /// page that decides its focus itself.
+  final bool? requestFocus;
+
   @override
   Route<T> createRoute(BuildContext context) => _SheetPageRoute<T>(this);
 }
 
 class _SheetPageRoute<T> extends PageRoute<T> {
-  _SheetPageRoute(SheetPage<T> page) : super(settings: page);
+  _SheetPageRoute(SheetPage<T> page)
+    : super(settings: page, requestFocus: page.requestFocus);
 
   SheetPage<T> get _page => settings as SheetPage<T>;
 
@@ -41,8 +48,16 @@ class _SheetPageRoute<T> extends PageRoute<T> {
   @override
   void install() {
     super.install();
-    _arriving = CurvedAnimation(parent: animation!, curve: _curve, reverseCurve: _curve.flipped);
-    _covered = CurvedAnimation(parent: secondaryAnimation!, curve: _curve, reverseCurve: _curve.flipped);
+    _arriving = CurvedAnimation(
+      parent: animation!,
+      curve: _curve,
+      reverseCurve: _curve.flipped,
+    );
+    _covered = CurvedAnimation(
+      parent: secondaryAnimation!,
+      curve: _curve,
+      reverseCurve: _curve.flipped,
+    );
   }
 
   @override
@@ -56,7 +71,9 @@ class _SheetPageRoute<T> extends PageRoute<T> {
   /// follows the gesture. Only ever switches between the two at either end of a transition,
   /// where both agree.
   double _progress(CurvedAnimation curved) {
-    if (navigator?.userGestureInProgress ?? false) return curved.parent.value.clamp(0.0, 1.0);
+    if (navigator?.userGestureInProgress ?? false) {
+      return curved.parent.value.clamp(0.0, 1.0);
+    }
     return curved.value;
   }
 
@@ -76,7 +93,8 @@ class _SheetPageRoute<T> extends PageRoute<T> {
   bool get maintainState => true;
 
   @override
-  bool canTransitionTo(TransitionRoute<dynamic> nextRoute) => nextRoute is _SheetPageRoute;
+  bool canTransitionTo(TransitionRoute<dynamic> nextRoute) =>
+      nextRoute is _SheetPageRoute;
 
   /// A page added without being pushed (restored, or under a deep link) opens as if it
   /// had been, if it's on top: the sheet moves up from the page below as the content
@@ -118,10 +136,7 @@ class _SheetPageRoute<T> extends PageRoute<T> {
   ) {
     return _SheetBackGesture(
       route: this,
-      child: _SheetFade(
-        route: this,
-        child: child,
-      ),
+      child: _SheetFade(route: this, child: child),
     );
   }
 
@@ -199,7 +214,10 @@ class _SheetFade extends StatelessWidget {
       // to show on.
       child: Material(color: color, child: child),
       builder: (context, child) {
-        final fadedIn = ((route._arrival - _handover) / (1 - _handover)).clamp(0.0, 1.0);
+        final fadedIn = ((route._arrival - _handover) / (1 - _handover)).clamp(
+          0.0,
+          1.0,
+        );
         final fadedOut = (route._cover / _handover).clamp(0.0, 1.0);
         return Opacity(opacity: fadedIn * (1 - fadedOut), child: child);
       },
@@ -220,12 +238,15 @@ class _SheetBackGesture extends StatefulWidget {
   State<_SheetBackGesture> createState() => _SheetBackGestureState();
 }
 
-class _SheetBackGestureState extends State<_SheetBackGesture> with WidgetsBindingObserver {
+class _SheetBackGestureState extends State<_SheetBackGesture>
+    with WidgetsBindingObserver {
   bool _gesturing = false;
 
   bool get _enabled {
     final route = widget.route;
-    if (!route.isCurrent || route._popped || !route.popGestureEnabled) return false;
+    if (!route.isCurrent || route._popped || !route.popGestureEnabled) {
+      return false;
+    }
     final scope = context.getInheritedWidgetOfExactType<_SheetScope>();
     return scope?.state._isRouteCurrent ?? true;
   }

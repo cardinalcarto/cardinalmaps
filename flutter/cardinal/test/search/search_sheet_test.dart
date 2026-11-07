@@ -19,7 +19,12 @@ import '../fakes/fake_place_store.dart';
 import '../geocoder/geocoder_test.dart' show spaceNeedle;
 
 /// The app's sheet pages over a blank body instead of the map, which needs Flutter GPU.
-Future<Store> _pumpApp(WidgetTester tester, {List<Uri>? asked, FakeMap? map, Widget? body}) async {
+Future<Store> _pumpApp(
+  WidgetTester tester, {
+  List<Uri>? asked,
+  FakeMap? map,
+  Widget? body,
+}) async {
   tester.view
     ..physicalSize = const Size(400, 800) * 2
     ..devicePixelRatio = 2;
@@ -41,15 +46,22 @@ Future<Store> _pumpApp(WidgetTester tester, {List<Uri>? asked, FakeMap? map, Wid
   final router = GoRouter(
     routes: [
       ShellRoute(
+        observers: [sheetPages],
         builder: (context, state, child) => Scaffold(
           resizeToAvoidBottomInset: false,
-          body: SheetScaffold(body: body ?? const SizedBox.expand(), sheet: child),
+          body: SheetScaffold(
+            body: body ?? const SizedBox.expand(),
+            sheet: child,
+          ),
         ),
         routes: [
           GoRoute(
             path: '/',
-            pageBuilder: (context, state) =>
-                SheetPage(key: state.pageKey, child: const SearchSheet()),
+            pageBuilder: (context, state) => SheetPage(
+              key: state.pageKey,
+              requestFocus: false,
+              child: const SearchSheet(),
+            ),
             routes: [
               GoRoute(
                 path: 'place/:id',
@@ -94,7 +106,9 @@ void main() {
     expect(_sheet(tester).isAtMax, isTrue);
   });
 
-  testWidgets('typing searches as you type, once typing pauses', (tester) async {
+  testWidgets('typing searches as you type, once typing pauses', (
+    tester,
+  ) async {
     final asked = <Uri>[];
     await _pumpApp(tester, asked: asked);
     await tester.tap(find.byType(SearchBar));
@@ -110,7 +124,9 @@ void main() {
     expect(find.text('400 Broad Street, Seattle, WA 98109'), findsOneWidget);
   });
 
-  testWidgets('a result opens its place, stored, and closing it comes back', (tester) async {
+  testWidgets('a result opens its place, stored, and closing it comes back', (
+    tester,
+  ) async {
     final store = await _pumpApp(tester);
     await tester.tap(find.byType(SearchBar));
     await tester.enterText(find.byType(TextField), 'space ne');
@@ -133,100 +149,236 @@ void main() {
     expect(_sheet(tester).isAtMax, isTrue);
   });
 
-  testWidgets('closing a place tapped on the map goes back to the sheet as it was', (tester) async {
-    final store = await _pumpApp(tester);
-    final peek = _sheet(tester).extent;
-    await store.places.put(spacePlace);
-    openPlaceFromMap(GoRouter.of(tester.element(find.byType(SearchSheet))), spacePlace.id);
-    await tester.pumpAndSettle();
-    expect(find.byType(PlacePage), findsOneWidget);
-
-    await tester.tap(find.byTooltip('Close'));
-    await tester.pumpAndSettle();
-    await tester.pumpAndSettle();
-    expect(find.byType(PlacePage), findsNothing);
-    expect(_sheet(tester).extent, peek);
-    expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
-  });
-
-  testWidgets('closing a place tapped on the map after searching goes back to the sheet as it was', (tester) async {
-    final store = await _pumpApp(tester);
-    final peek = _sheet(tester).extent;
+  testWidgets('a result closed with back comes back to searching too', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
     await tester.tap(find.byType(SearchBar));
+    await tester.enterText(find.byType(TextField), 'space ne');
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.pumpAndSettle();
-    // Done with the search: down to the peek again, keyboard away.
-    tester.testTextInput.hide();
-    _sheet(tester).animateTo(const SheetAnchor.section(#searchBar));
-    await tester.pumpAndSettle();
-
-    await store.places.put(spacePlace);
-    openPlaceFromMap(GoRouter.of(tester.element(find.byType(SearchSheet))), spacePlace.id);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Close'));
-    await tester.pumpAndSettle();
-    await tester.pumpAndSettle();
-    expect(_sheet(tester).extent, peek);
-  });
-
-  for (final close in ['X', 'back']) {
-    testWidgets('closing a place tapped on the map with $close, after searching, leaves the sheet as it was', (tester) async {
-      // The map takes focus when it's pressed, as SparkleMap does.
-      final mapFocus = FocusNode(debugLabel: 'map');
-      addTearDown(mapFocus.dispose);
-      final store = await _pumpApp(tester, body: Focus(focusNode: mapFocus, child: const SizedBox.expand()));
-      final peek = _sheet(tester).extent;
-      await tester.tap(find.byType(SearchBar));
-      await tester.pumpAndSettle();
-      tester.testTextInput.hide();
-      _sheet(tester).animateTo(const SheetAnchor.section(#searchBar));
-      await tester.pumpAndSettle();
-
-      final router = GoRouter.of(tester.element(find.byType(SearchSheet)));
-      await store.places.put(spacePlace);
-      await store.places.put(
-        const Place(id: 'poi:2', kind: 'poi', name: 'Other', center: LngLat(-122.34, 47.61), tags: {}),
-      );
-      for (final id in [spacePlace.id, 'poi:2']) {
-        mapFocus.requestFocus();
-        openPlaceFromMap(router, id);
-        await tester.pumpAndSettle();
-      }
-      if (close == 'X') {
-        await tester.tap(find.byTooltip('Close'));
-      } else {
-        await tester.binding.handlePopRoute();
-      }
-      await tester.pumpAndSettle();
-      await tester.pumpAndSettle();
-      expect(find.byType(PlacePage), findsNothing);
-      expect(_sheet(tester).extent, peek);
-      expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
-    });
-  }
-
-  testWidgets('a page closing over the sheet never refocuses search by itself', (tester) async {
-    final mapFocus = FocusNode(debugLabel: 'map');
-    addTearDown(mapFocus.dispose);
-    final store = await _pumpApp(tester, body: Focus(focusNode: mapFocus, autofocus: true, child: const SizedBox.expand()));
-    final peek = _sheet(tester).extent;
-    await tester.tap(find.byType(SearchBar));
-    await tester.pumpAndSettle();
-    tester.testTextInput.hide();
-    _sheet(tester).animateTo(const SheetAnchor.section(#searchBar));
-    await tester.pumpAndSettle();
-    // Focus moves to the map without the bar giving it up, so the sheet's page remembers it.
-    mapFocus.requestFocus();
-    await tester.pumpAndSettle();
-
-    await store.places.put(spacePlace);
-    GoRouter.of(tester.element(find.byType(SearchSheet))).push(placeLocation(spacePlace.id));
+    await tester.tap(find.text('Space Needle'));
     await tester.pumpAndSettle();
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
     await tester.pumpAndSettle();
-    expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
-    expect(_sheet(tester).extent, peek);
+    expect(find.byType(PlacePage), findsNothing);
+    expect(find.text('Space Needle'), findsOneWidget);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'search');
+    expect(_sheet(tester).isAtMax, isTrue);
   });
+
+  testWidgets('back stops searching, keeping the query for next time', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+    final peek = _sheet(tester).extent;
+    await tester.tap(find.byType(SearchBar));
+    await tester.enterText(find.byType(TextField), 'space ne');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(_sheet(tester).extent, moreOrLessEquals(peek));
+    expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
+    expect(find.text('space ne'), findsOneWidget);
+
+    await tester.tap(find.byType(SearchBar));
+    await tester.pumpAndSettle();
+    expect(_sheet(tester).isAtMax, isTrue);
+    expect(find.text('Space Needle'), findsOneWidget);
+  });
+
+  for (final close in ['X', 'back']) {
+    for (final collapse in ['dragging down', 'back']) {
+      testWidgets(
+        'a place tapped on the map after searching, then $collapse, closes with $close to the sheet as it was',
+        (tester) async {
+          // The map takes focus when it's pressed, as SparkleMap does.
+          final mapFocus = FocusNode(debugLabel: 'map');
+          addTearDown(mapFocus.dispose);
+          final store = await _pumpApp(
+            tester,
+            body: Focus(
+              focusNode: mapFocus,
+              autofocus: true,
+              child: const SizedBox.expand(),
+            ),
+          );
+          final peek = _sheet(tester).extent;
+          await tester.tap(find.byType(SearchBar));
+          await tester.pumpAndSettle();
+          if (collapse == 'back') {
+            await tester.binding.handlePopRoute();
+          } else {
+            final gesture = await tester.startGesture(
+              Offset(200, 800 - _sheet(tester).extent + 12),
+            );
+            for (var i = 0; i < 20; i++) {
+              await gesture.moveBy(const Offset(0, 40));
+              await tester.pump(const Duration(milliseconds: 16));
+            }
+            await gesture.up();
+          }
+          await tester.pumpAndSettle();
+          expect(_sheet(tester).extent, moreOrLessEquals(peek));
+          // Dragged down, it's still searching, keyboard and all; back stops.
+          final searching = collapse == 'dragging down';
+          expect(
+            FocusManager.instance.primaryFocus?.debugLabel == 'search',
+            searching,
+          );
+
+          final router = GoRouter.of(tester.element(find.byType(SearchSheet)));
+          await store.places.put(spacePlace);
+          await store.places.put(
+            const Place(
+              id: 'poi:2',
+              kind: 'poi',
+              name: 'Other',
+              center: LngLat(-122.34, 47.61),
+              tags: {},
+            ),
+          );
+          for (final id in [spacePlace.id, 'poi:2']) {
+            mapFocus.requestFocus();
+            openPlaceFromMap(router, id);
+            await tester.pumpAndSettle();
+          }
+          if (close == 'X') {
+            await tester.tap(find.byTooltip('Close'));
+          } else {
+            await tester.binding.handlePopRoute();
+          }
+          // Every frame of the way back, the sheet never rises above the bar.
+          for (var i = 0; i < 60; i++) {
+            await tester.pump(const Duration(milliseconds: 16));
+            expect(
+              _sheet(tester).extent,
+              lessThanOrEqualTo(800 * 0.6),
+              reason: 'frame $i',
+            );
+          }
+          await tester.pumpAndSettle();
+          expect(find.byType(PlacePage), findsNothing);
+          expect(_sheet(tester).extent, moreOrLessEquals(peek));
+          // As it was when the card opened: the map had taken focus, so no keyboard,
+          // still searching if it was.
+          expect(
+            FocusManager.instance.primaryFocus?.debugLabel,
+            isNot('search'),
+          );
+          await tester.tap(find.byType(SearchBar));
+          await tester.pumpAndSettle();
+          expect(_sheet(tester).isAtMax, isTrue);
+        },
+      );
+    }
+  }
+
+  testWidgets('clearing a query kept from before only clears it', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+    final peek = _sheet(tester).extent;
+    await tester.tap(find.byType(SearchBar));
+    await tester.enterText(find.byType(TextField), 'space ne');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Clear'));
+    await tester.pumpAndSettle();
+    expect(find.text('space ne'), findsNothing);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
+    expect(_sheet(tester).extent, moreOrLessEquals(peek));
+  });
+
+  testWidgets('dragged down while searching, the keyboard stays', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+    final peek = _sheet(tester).extent;
+    await tester.tap(find.byType(SearchBar));
+    await tester.pumpAndSettle();
+    await _dragDown(tester);
+    expect(_sheet(tester).extent, moreOrLessEquals(peek));
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'search');
+  });
+
+  testWidgets(
+    'a page over the sheet collapsed with the keyboard up closes back to just that',
+    (tester) async {
+      final store = await _pumpApp(tester);
+      final peek = _sheet(tester).extent;
+      await tester.tap(find.byType(SearchBar));
+      await tester.pumpAndSettle();
+      await _dragDown(tester);
+      // Opened without anything taking focus first.
+      await store.places.put(spacePlace);
+      GoRouter.of(tester.element(find.byType(SearchSheet)))
+          .push(placeLocation(spacePlace.id));
+      await tester.pumpAndSettle();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
+      await tester.binding.handlePopRoute();
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(
+          _sheet(tester).extent,
+          lessThanOrEqualTo(800 * 0.6),
+          reason: 'frame $i',
+        );
+      }
+      await tester.pumpAndSettle();
+      expect(_sheet(tester).extent, moreOrLessEquals(peek));
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'search');
+    },
+  );
+
+  testWidgets('a page over the sheet while browsing closes back to browsing', (
+    tester,
+  ) async {
+    final store = await _pumpApp(tester);
+    final peek = _sheet(tester).extent;
+    await store.places.put(spacePlace);
+    openPlaceFromMap(
+      GoRouter.of(tester.element(find.byType(SearchSheet))),
+      spacePlace.id,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pumpAndSettle();
+    expect(_sheet(tester).extent, moreOrLessEquals(peek));
+    expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
+  });
+
+  testWidgets(
+    'a result closed with a back gesture comes back with the keyboard up',
+    (tester) async {
+      await _pumpApp(tester);
+      await tester.tap(find.byType(SearchBar));
+      await tester.enterText(find.byType(TextField), 'space ne');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Space Needle'));
+      await tester.pumpAndSettle();
+      expect(tester.testTextInput.isVisible, isFalse);
+
+      await _sendBack(tester, 'startBackGesture', 0);
+      await _sendBack(tester, 'updateBackGestureProgress', 0.5);
+      await _sendBack(tester, 'commitBackGesture');
+      await tester.pumpAndSettle();
+      expect(find.byType(PlacePage), findsNothing);
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'search');
+      expect(
+        tester.testTextInput.isVisible,
+        isTrue,
+        reason: 'the keyboard is asked for',
+      );
+      expect(_sheet(tester).isAtMax, isTrue);
+    },
+  );
 
   testWidgets('clearing the search keeps it ready to type', (tester) async {
     await _pumpApp(tester);
@@ -245,7 +397,7 @@ void main() {
     expect(_sheet(tester).isAtMax, isTrue);
   });
 
-  testWidgets('the sheet only peeks without focus or results, and never rests between', (
+  testWidgets('the sheet only peeks until searching, and never rests between', (
     tester,
   ) async {
     await _pumpApp(tester);
@@ -261,15 +413,25 @@ void main() {
     expect(sheet.isAtMax, isTrue);
 
     // Pulled partway down, it settles at one end or the other.
-    final gesture = await tester.startGesture(Offset(200, 800 - sheet.extent + 12));
+    final gesture = await tester.startGesture(
+      Offset(200, 800 - sheet.extent + 12),
+    );
     await gesture.moveBy(const Offset(0, 300));
     await tester.pump(const Duration(milliseconds: 16));
     await gesture.up();
     await tester.pumpAndSettle();
-    expect(sheet.isAtMax || (sheet.extent - peek).abs() < 1, isTrue, reason: '${sheet.extent}');
+    expect(
+      sheet.isAtMax || (sheet.extent - peek).abs() < 1,
+      isTrue,
+      reason: '${sheet.extent}',
+    );
 
-    // With nothing to show, it goes back to peeking.
-    FocusManager.instance.primaryFocus?.unfocus();
+    // Back stops searching, and it goes back to peeking.
+    if (!sheet.isAtMax) {
+      await tester.tap(find.byType(SearchBar));
+      await tester.pumpAndSettle();
+    }
+    await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
     expect(sheet.extent, moreOrLessEquals(peek));
   });
@@ -294,7 +456,8 @@ void main() {
 
     testWidgets('while it springs to an anchor', (tester) async {
       await openPlace(tester);
-      final handle = tester.getTopLeft(find.byType(PlacePage)) + const Offset(200, -12);
+      final handle =
+          tester.getTopLeft(find.byType(PlacePage)) + const Offset(200, -12);
       final gesture = await tester.startGesture(handle);
       for (var i = 0; i < 10; i++) {
         await gesture.moveBy(const Offset(0, -15));
@@ -307,29 +470,36 @@ void main() {
     });
   });
 
-  testWidgets('a place opened with the keyboard up rests at its header once it hides', (
-    tester,
-  ) async {
-    await _pumpApp(tester);
-    await tester.tap(find.byType(SearchBar));
-    tester.view.viewInsets = const FakeViewPadding(bottom: 600);
-    await tester.enterText(find.byType(TextField), 'space ne');
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Space Needle'));
-    // The keyboard slides away over the first frames of the transition.
-    for (final inset in [500.0, 350.0, 200.0, 80.0, 0.0]) {
-      tester.view.viewInsets = FakeViewPadding(bottom: inset);
-      await tester.pump(const Duration(milliseconds: 40));
-    }
-    final sheet = SheetScaffold.controllerOf(tester.element(find.byType(PlacePage)));
-    await tester.pumpAndSettle();
-    expect(sheet.restingAt, sheet.anchors.first.anchor);
-    expect(sheet.extent, moreOrLessEquals(sheet.anchors.first.extent));
-  });
+  testWidgets(
+    'a place opened with the keyboard up rests at its header once it hides',
+    (tester) async {
+      await _pumpApp(tester);
+      await tester.tap(find.byType(SearchBar));
+      tester.view.viewInsets = const FakeViewPadding(bottom: 600);
+      await tester.enterText(find.byType(TextField), 'space ne');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Space Needle'));
+      // The keyboard slides away over the first frames of the transition.
+      for (final inset in [500.0, 350.0, 200.0, 80.0, 0.0]) {
+        tester.view.viewInsets = FakeViewPadding(bottom: inset);
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      final sheet = SheetScaffold.controllerOf(
+        tester.element(find.byType(PlacePage)),
+      );
+      await tester.pumpAndSettle();
+      expect(sheet.restingAt, sheet.anchors.first.anchor);
+      expect(sheet.extent, moreOrLessEquals(sheet.anchors.first.extent));
+    },
+  );
 
   group('the map lets go of a place as its page leaves', () {
-    Future<void> sendBack(WidgetTester tester, String method, [double? progress]) async {
+    Future<void> sendBack(
+      WidgetTester tester,
+      String method, [
+      double? progress,
+    ]) async {
       await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
         'flutter/backgesture',
         const StandardMethodCodec().encodeMethodCall(
@@ -355,12 +525,18 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Space Needle'));
       await tester.pumpAndSettle();
-      expect(map.subject, isTrue, reason: 'the place is the subject once it opens');
+      expect(
+        map.subject,
+        isTrue,
+        reason: 'the place is the subject once it opens',
+      );
       expect(map.subjectsSet, 1, reason: 'once');
       return map;
     }
 
-    testWidgets('and keeps it again if a back gesture is let go of', (tester) async {
+    testWidgets('and keeps it again if a back gesture is let go of', (
+      tester,
+    ) async {
       final map = await openPlace(tester);
       await sendBack(tester, 'startBackGesture', 0);
       await sendBack(tester, 'updateBackGestureProgress', 0.3);
@@ -393,7 +569,9 @@ void main() {
       expect(map.subjectsSet, 1);
     });
 
-    testWidgets('and not again if the map had been moved by hand', (tester) async {
+    testWidgets('and not again if the map had been moved by hand', (
+      tester,
+    ) async {
       final map = await openPlace(tester);
       map.subject = false;
       await sendBack(tester, 'startBackGesture', 0);
@@ -414,3 +592,38 @@ const spacePlace = Place(
   center: LngLat(-122.3493, 47.6205),
   tags: {'tourism': 'attraction'},
 );
+
+/// Drags the sheet down to the bar.
+Future<void> _dragDown(WidgetTester tester) async {
+  final gesture = await tester.startGesture(
+    Offset(200, 800 - _sheet(tester).extent + 12),
+  );
+  for (var i = 0; i < 20; i++) {
+    await gesture.moveBy(const Offset(0, 40));
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  await gesture.up();
+  await tester.pumpAndSettle();
+}
+
+/// Sends a predictive back event, as Android's engine does.
+Future<void> _sendBack(
+  WidgetTester tester,
+  String method, [
+  double? progress,
+]) async {
+  await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+    'flutter/backgesture',
+    const StandardMethodCodec().encodeMethodCall(
+      MethodCall(method, {
+        if (progress != null) ...{
+          'touchOffset': [5.0, 300.0],
+          'progress': progress,
+          'swipeEdge': 0,
+        },
+      }),
+    ),
+    (_) {},
+  );
+  await tester.pump();
+}

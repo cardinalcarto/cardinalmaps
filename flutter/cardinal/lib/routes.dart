@@ -8,6 +8,10 @@ import 'place/place_page.dart';
 import 'search/search_sheet.dart';
 import 'sheet/sheet.dart';
 
+/// Tells the sheet's pages when a page covers them and when it closes again, so the
+/// page under it can be as it was: see `SearchSheet`.
+final sheetPages = RouteObserver<PageRoute<Object?>>();
+
 /// The location of a place's screen, `/place/<id>`, for a [Place](store/store.dart) ID.
 ///
 /// IDs such as `osm:way/123` contain a slash, so the ID is escaped; the route's `id`
@@ -16,12 +20,8 @@ String placeLocation(String id) => '/place/${Uri.encodeComponent(id)}';
 
 /// Shows the place with [id], tapped on the map. It takes the place of a place card
 /// already open, so that going back leaves the map's places all at once.
-///
-/// The search bar gives up its focus first: closing the card would give it back, and
-/// focusing search pulls the sheet up, when it should come back as it was.
 void openPlaceFromMap(GoRouter router, String id) {
   final location = placeLocation(id);
-  FocusManager.instance.primaryFocus?.unfocus();
   // Of the page on top: a pushed page isn't in the router's configuration's URI.
   final current = router.state.uri.toString();
   if (current == location) return;
@@ -41,6 +41,7 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
   routes: [
     ShellRoute(
       restorationScopeId: 'sheet',
+      observers: [sheetPages],
       builder: (context, state, child) => Scaffold(
         resizeToAvoidBottomInset: false,
         body: SheetScaffold(
@@ -52,7 +53,9 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
       routes: [
         GoRoute(
           path: '/',
-          pageBuilder: (context, state) => _page(state, const SearchSheet()),
+          // The search sheet decides its own focus: see `SearchSheet`.
+          pageBuilder: (context, state) =>
+              _page(state, const SearchSheet(), requestFocus: false),
           routes: [
             GoRoute(
               path: 'place/:id',
@@ -67,5 +70,13 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
 );
 
 /// A sheet page for [state]'s route, restorable.
-SheetPage<void> _page(GoRouterState state, Widget child) =>
-    SheetPage(key: state.pageKey, restorationId: state.pageKey.value, child: child);
+SheetPage<void> _page(
+  GoRouterState state,
+  Widget child, {
+  bool? requestFocus,
+}) => SheetPage(
+  key: state.pageKey,
+  restorationId: state.pageKey.value,
+  requestFocus: requestFocus,
+  child: child,
+);

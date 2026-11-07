@@ -15,8 +15,23 @@ import 'place_search.dart';
 
 /// The home sheet: a search bar, peeking over the map, with results below it as you type.
 ///
-/// Focusing the search bar pulls the sheet up to full height; the bar stays pinned at
-/// the top while the results scroll under it. Tapping a result opens its place.
+/// It's browsing or searching, a mode it keeps itself rather than reading it off the
+/// bar's focus, which moves of its own accord (the map takes it when it's pressed):
+///
+/// | In | When | Then |
+/// |---|---|---|
+/// | browsing: at the bar, no keyboard | the bar's tapped | searching: full, keyboard up |
+/// | searching | dragged down | searching, at the bar, keyboard as it was |
+/// | searching | the bar's tapped | searching: full, keyboard up |
+/// | searching | back | browsing; the query and results wait for the next tap |
+/// | browsing | back | the app's left |
+/// | either | a page covers it | it notes its mode, anchor and keyboard, and lets go of focus |
+/// | either | that page closes, however | as it noted; the keyboard as soon as the page can take focus |
+///
+/// The bar pins to the top of the sheet, with the results scrolling under it; tapping one
+/// opens its place. Its page doesn't take focus when a page over it closes (it's a
+/// [SheetPage] with `requestFocus: false`), which would hand the bar back focus it had
+/// before the map took it: what comes back is only what it noted.
 class SearchSheet extends StatefulWidget {
   const SearchSheet({super.key});
 
@@ -24,15 +39,21 @@ class SearchSheet extends StatefulWidget {
   State<SearchSheet> createState() => _SearchSheetState();
 }
 
-class _SearchSheetState extends State<SearchSheet> {
+class _SearchSheetState extends State<SearchSheet> with RouteAware {
   static const _bar = #searchBar;
 
   final _text = TextEditingController();
   final _focus = FocusNode(debugLabel: 'search');
   PlaceSearch? _search;
 
-  /// Set while coming back from a place this sheet opened, to search again.
-  bool _searchAgain = false;
+  /// Whether the sheet is searching; see [SearchSheet].
+  bool _searching = false;
+
+  /// What the sheet was when a page covered it, to be again when that page closes.
+  ({bool searching, SheetAnchor anchor, bool keyboard})? _covered;
+
+  SheetController? _sheet;
+  ModalRoute<Object?>? _route;
 
   @override
   void initState() {
@@ -43,6 +64,13 @@ class _SearchSheetState extends State<SearchSheet> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _sheet = SheetScaffold.controllerOf(context);
+    final route = ModalRoute.of(context);
+    if (route != _route) {
+      sheetPages.unsubscribe(this);
+      if (route is PageRoute<Object?>) sheetPages.subscribe(this, route);
+      _route = route;
+    }
     _search ??= PlaceSearch(
       GeocoderScope.of(context),
       lang: PlatformDispatcher.instance.locale.toLanguageTag(),
@@ -51,33 +79,92 @@ class _SearchSheetState extends State<SearchSheet> {
 
   @override
   void dispose() {
+    sheetPages.unsubscribe(this);
     _focus.dispose();
     _text.dispose();
     _search?.dispose();
     super.dispose();
   }
 
+  /// Focus however it comes, a keyboard's Tab key say, means searching; only a tap on
+  /// the bar pulls the sheet up as well.
   void _focusChanged() {
-    if (!_focus.hasFocus) return;
-    // A page closing over this one gives the bar back the focus it last had, though
-    // the map may have had it since. That's not a wish to search: drop it, which also
-    // keeps this page from giving it back again.
-    final searchAgain = _searchAgain;
-    _searchAgain = false;
-    final uncovering = ModalRoute.of(context)?.secondaryAnimation?.status ?? AnimationStatus.dismissed;
-    if (!searchAgain && uncovering != AnimationStatus.dismissed) {
-      _focus.unfocus();
+    if (_focus.hasFocus && !_searching) setState(() => _searching = true);
+  }
+
+  /// The bar's tapped: searching, full, the keyboard up.
+  void _searchFull() {
+    if (!_searching) setState(() => _searching = true);
+    _sampleMap();
+    _sheet!.animateTo(const SheetAnchor.full());
+  }
+
+  /// Back while searching: browsing, keeping the query and results for next time.
+  void _stopSearching() {
+    if (!_searching) return;
+    setState(() => _searching = false);
+    // Letting go of focus, rather than only losing it, keeps the page from giving it
+    // back to the bar later.
+    _focus.unfocus();
+    _sheet!.animateTo(const SheetAnchor.section(_bar));
+  }
+
+  @override
+  void didPushNext() {
+    final sheet = _sheet!;
+    _covered = (
+      searching: _searching,
+      anchor:
+          sheet.restingAt ??
+          (sheet.isAtMax
+              ? const SheetAnchor.full()
+              : const SheetAnchor.section(_bar)),
+      keyboard: _focus.hasFocus,
+    );
+    _focus.unfocus();
+  }
+
+  @override
+  void didPopNext() {
+    final covered = _covered;
+    _covered = null;
+    if (covered == null) return;
+    setState(() => _searching = covered.searching);
+    _sheet!.animateTo(covered.anchor);
+    if (covered.keyboard) _focusWhenAllowed();
+  }
+
+  /// Focuses the bar as soon as its page may take focus: no page may during a back
+  /// gesture, which lasts until its transition is over, after the pop.
+  void _focusWhenAllowed() {
+    final gesture = Navigator.of(context).userGestureInProgressNotifier;
+    if (!gesture.value) {
+      _focus.requestFocus();
       return;
     }
-    _sampleMap();
-    SheetScaffold.controllerOf(context).animateTo(const SheetAnchor.full());
+    void ended() {
+      if (gesture.value) return;
+      gesture.removeListener(ended);
+      // The page lets focus in again as it rebuilds for the gesture's end.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            _covered == null &&
+            (ModalRoute.of(context)?.isCurrent ?? false)) {
+          _focus.requestFocus();
+        }
+      });
+      WidgetsBinding.instance.scheduleFrame();
+    }
+
+    gesture.addListener(ended);
   }
 
   /// Results near what the map shows rank higher: what the sheet leaves uncovered now,
   /// before the sheet covers it. If it covers everything already, what was last seen.
   void _sampleMap() {
     final view = SheetScaffold.viewOf(context);
-    final clear = EdgeInsets.only(top: MediaQuery.paddingOf(context).top) + view.obscured;
+    final clear =
+        EdgeInsets.only(top: MediaQuery.paddingOf(context).top) + view.obscured;
     final area = clear.deflateRect(Offset.zero & MediaQuery.sizeOf(context));
     if (area.isEmpty) return;
     final map = MapScope.of(context);
@@ -102,75 +189,81 @@ class _SearchSheetState extends State<SearchSheet> {
   }
 
   Future<void> _open(Place place) async {
-    _focus.unfocus();
     await StoreScope.of(context).places.put(place);
     if (!mounted) return;
-    // Its close button comes back here to search again.
-    final closed = await context.push<bool>(placeLocation(place.id));
-    if (closed == true && mounted) {
-      _searchAgain = true;
-      _focus.requestFocus();
-    }
+    await context.push<void>(placeLocation(place.id));
   }
 
   @override
   Widget build(BuildContext context) {
     final search = _search!;
-    return ListenableBuilder(
-      listenable: Listenable.merge([_focus, search]),
-      builder: (context, _) => SheetContent(
-        // Just the bar, until there's something to show above the keyboard or below it.
-        anchors: _focus.hasFocus || search.results.isNotEmpty
-            ? const [SheetAnchor.section(_bar), SheetAnchor.full()]
-            : const [SheetAnchor.section(_bar)],
-        slivers: [
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _SearchBarHeader(
-              color: Theme.of(context).colorScheme.surfaceContainerLow,
-              child: SheetSection(
-                id: _bar,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                  child: SearchBar(
-                    controller: _text,
-                    focusNode: _focus,
-                    hintText: 'Search',
-                    elevation: const WidgetStatePropertyAll(0),
-                    leading: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8),
-                      child: Icon(Icons.search),
-                    ),
-                    trailing: [
-                      ListenableBuilder(
-                        listenable: _text,
-                        builder: (context, _) => _text.text.isEmpty
-                            ? const SizedBox.shrink()
-                            : IconButton(
-                                tooltip: 'Clear',
-                                icon: const Icon(Icons.close),
-                                onPressed: () {
-                                  _text.clear();
-                                  search.update('');
-                                  _focus.requestFocus();
-                                },
-                              ),
+    return PopScope(
+      // Back stops searching before it leaves the app.
+      canPop: !_searching,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _stopSearching();
+      },
+      child: ListenableBuilder(
+        listenable: search,
+        builder: (context, _) => SheetContent(
+          // Just the bar, until searching.
+          anchors: _searching
+              ? const [SheetAnchor.section(_bar), SheetAnchor.full()]
+              : const [SheetAnchor.section(_bar)],
+          slivers: [
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _SearchBarHeader(
+                color: Theme.of(context).colorScheme.surfaceContainerLow,
+                child: SheetSection(
+                  id: _bar,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                    child: SearchBar(
+                      controller: _text,
+                      focusNode: _focus,
+                      onTap: _searchFull,
+                      hintText: 'Search',
+                      elevation: const WidgetStatePropertyAll(0),
+                      leading: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        child: Icon(Icons.search),
                       ),
-                    ],
-                    onChanged: search.update,
-                    onSubmitted: (_) {
-                      if (search.results case [final first, ...]) _open(first);
-                    },
+                      trailing: [
+                        ListenableBuilder(
+                          listenable: _text,
+                          builder: (context, _) => _text.text.isEmpty
+                              ? const SizedBox.shrink()
+                              : IconButton(
+                                  tooltip: 'Clear',
+                                  icon: const Icon(Icons.close),
+                                  onPressed: () {
+                                    _text.clear();
+                                    search.update('');
+                                    // Ready to type again, if searching; otherwise
+                                    // clearing it is all.
+                                    if (_searching) _focus.requestFocus();
+                                  },
+                                ),
+                        ),
+                      ],
+                      onChanged: search.update,
+                      onSubmitted: (_) {
+                        if (search.results case [final first, ...]) {
+                          _open(first);
+                        }
+                      },
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          ListenableBuilder(
-            listenable: search,
-            builder: (context, _) => _Results(search: search, onTap: _open),
-          ),
-        ],
+            ListenableBuilder(
+              listenable: search,
+              builder: (context, _) => _Results(search: search, onTap: _open),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -193,8 +286,11 @@ class _SearchBarHeader extends SliverPersistentHeaderDelegate {
   double get maxExtent => _height;
 
   @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) =>
-      ColoredBox(color: color, child: child);
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) => ColoredBox(color: color, child: child);
 
   @override
   bool shouldRebuild(_SearchBarHeader oldDelegate) =>
@@ -213,7 +309,8 @@ class _Results extends StatelessWidget {
     final results = search.results;
     final message = switch (search) {
       PlaceSearch(error: final error?) => 'Search failed: $error',
-      PlaceSearch(loading: false, results: [], text: final text) when text.trim().isNotEmpty =>
+      PlaceSearch(loading: false, results: [], text: final text)
+          when text.trim().isNotEmpty =>
         'No results',
       _ => null,
     };
@@ -243,7 +340,8 @@ class _Results extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
             sliver: SliverList.builder(
               itemCount: results.length,
-              itemBuilder: (context, i) => _ResultCard(place: results[i], onTap: onTap),
+              itemBuilder: (context, i) =>
+                  _ResultCard(place: results[i], onTap: onTap),
             ),
           ),
       ],
@@ -264,7 +362,11 @@ class _ResultCard extends StatelessWidget {
       margin: const EdgeInsets.symmetric(vertical: 4),
       clipBehavior: Clip.antiAlias,
       child: ListTile(
-        title: Text(placeTitle(place), maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Text(
+          placeTitle(place),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         subtitle: subtitle == null
             ? null
             : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
