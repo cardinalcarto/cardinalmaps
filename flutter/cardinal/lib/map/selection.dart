@@ -67,10 +67,44 @@ void addSelectionLayers(Map<String, Object?> style) {
   });
 }
 
+/// How wide an area needs to be on screen, in logical pixels, at [placeZoom], for its
+/// boundary to show where it is without a pin.
+const areaMinSize = 40.0;
+
+/// Whether [place] is a polygon at least [areaMinSize] across at [placeZoom]: a park or a
+/// city, say, rather than a building, whose boundary is a speck.
+bool showsAsArea(Place place) {
+  final shape = place.shape;
+  if (shape == null || (shape['type'] != 'Polygon' && shape['type'] != 'MultiPolygon')) return false;
+  var west = double.infinity, east = -double.infinity, south = double.infinity, north = -double.infinity;
+  void visit(Object? coords) {
+    if (coords is List && coords.length >= 2 && coords[0] is num && coords[1] is num) {
+      final lng = (coords[0] as num).toDouble(), lat = (coords[1] as num).toDouble();
+      west = math.min(west, lng);
+      east = math.max(east, lng);
+      south = math.min(south, lat);
+      north = math.max(north, lat);
+    } else if (coords is List) {
+      coords.forEach(visit);
+    }
+  }
+
+  visit(shape['coordinates']);
+  if (west > east) return false;
+  // Web Mercator with 512-pixel tiles: a degree of longitude is this many pixels at
+  // [placeZoom], and a degree of latitude near [lat] about as many over cos(lat).
+  final lat = (south + north) / 2 * math.pi / 180;
+  final pixelsPerDegree = 512 * math.pow(2, placeZoom) / 360;
+  final wide = (east - west) * pixelsPerDegree;
+  final tall = (north - south) * pixelsPerDegree / math.max(math.cos(lat), 1e-6);
+  return math.max(wide, tall) >= areaMinSize;
+}
+
 /// The place [showSelection] last showed.
 String? _shown;
 
-/// Shows [place]'s pin, and its boundary if it has a shape, or nothing for null. [dark]
+/// Shows [place]'s boundary if it has a shape, and its pin unless it's an area big enough
+/// for its boundary to show where it is (see [showsAsArea]); or nothing for null. [dark]
 /// is whether the app is in dark mode, which has a pin of its own.
 void showSelection(SparkleMapController map, Place? place, {bool dark = false}) {
   _shown = place?.id;
@@ -78,6 +112,7 @@ void showSelection(SparkleMapController map, Place? place, {bool dark = false}) 
     map.setGeoJson(selectionSource, _empty);
     return;
   }
+  final area = showsAsArea(place);
   map.setGeoJson(selectionSource, {
     'type': 'FeatureCollection',
     'features': [
@@ -87,14 +122,15 @@ void showSelection(SparkleMapController map, Place? place, {bool dark = false}) 
           'properties': {'role': 'boundary'},
           'geometry': shape,
         },
-      {
-        'type': 'Feature',
-        'properties': {'role': 'pin', 'dark': dark},
-        'geometry': {
-          'type': 'Point',
-          'coordinates': [place.center.lon, place.center.lat],
+      if (!area)
+        {
+          'type': 'Feature',
+          'properties': {'role': 'pin', 'dark': dark},
+          'geometry': {
+            'type': 'Point',
+            'coordinates': [place.center.lon, place.center.lat],
+          },
         },
-      },
     ],
   });
 }
