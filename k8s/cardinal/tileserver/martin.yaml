@@ -1,4 +1,10 @@
 # The basemap of the release in MAP_RELEASE, at /tiles/basemap.
 mbtiles:
   sources:
-    basemap: /releases/${MAP_RELEASE}/tiles.mbtiles
+    basemap:
+      path: /releases/${MAP_RELEASE}/tiles.mbtiles
+      # The tiles are already MLT, but Martin 1.16 misdetects them as MVT
+      # (its MLT sniffer predates the current framing), so it would try to
+      # convert them for clients that ask for MLT. Serve them as stored.
+      convert_to_mlt: disabled
+      convert_to_mvt: disabled
