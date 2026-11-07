@@ -13,5 +13,6 @@ const mapStyle = String.fromEnvironment('CARDINAL_STYLE', defaultValue: 'headway
 /// The bundled Cardinal Topo style, a file in `assets/map`.
 const topoStyle = 'cardinal-topo.json';
 
-/// Where the map starts, as `lng,lat,zoom`; the tileset's center if empty.
+/// Where the map opens on the first launch, as `lng,lat,zoom`; the whole planet if empty.
+/// After that it opens where it was (see `map/viewport.dart`).
 const initialView = String.fromEnvironment('CARDINAL_VIEW');

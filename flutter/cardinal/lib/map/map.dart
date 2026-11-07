@@ -15,6 +15,7 @@ import '../sheet/sheet.dart';
 import '../store/store.dart';
 import 'layers.dart';
 import 'poi.dart';
+import 'viewport.dart';
 
 /// Provides the map's controller to the widgets below it.
 class MapScope extends InheritedWidget {
@@ -54,10 +55,28 @@ class _CardinalMapState extends State<CardinalMap> {
   /// The style file's writes, one after another.
   Future<void> _writing = Future.value();
 
+  SettingsStore? _settings;
+  late final AppLifecycleListener _lifecycle;
+
+  @override
+  void initState() {
+    super.initState();
+    // Whichever comes first as the app goes away: it may not come back from any of them.
+    _lifecycle = AppLifecycleListener(onHide: _saveView, onPause: _saveView, onDetach: _saveView);
+  }
+
+  /// Keeps where the map is looking, to open there next time.
+  void _saveView() {
+    final settings = _settings;
+    final view = MapViewport.of(widget.controller);
+    if (settings != null && view != null) settings.set(savedViewport, view);
+  }
+
   /// Starts the map in the stored layers, then follows the layer picker's choices.
   Future<List<String>> _start(SettingsStore settings) async {
+    _settings = settings;
     final layers = await MapLayers.read(settings);
-    final args = await _mapArgs(layers);
+    final args = await _mapArgs(layers, openingView(await settings.get(savedViewport)));
     _layers = layers;
     _watching.addAll([
       settings.watch(mapStyleChoice).listen((v) => _change((l) => l.copyWith(style: v))),
@@ -94,6 +113,8 @@ class _CardinalMapState extends State<CardinalMap> {
 
   @override
   void dispose() {
+    _saveView();
+    _lifecycle.dispose();
     _sheet?.removeListener(_updatePadding);
     for (final watching in _watching) {
       watching.cancel();
@@ -196,8 +217,8 @@ Future<void> _writeStyle(MapLayers layers) async {
 }
 
 /// Arguments for sparkle (as `sparkle_harness` takes them): the style for [layers] and
-/// the bundled sprites, copied out to files, and [tilesUrl]'s tiles.
-Future<List<String>> _mapArgs(MapLayers layers) async {
+/// the bundled sprites, copied out to files, [tilesUrl]'s tiles, and the [view] to open.
+Future<List<String>> _mapArgs(MapLayers layers, MapViewport view) async {
   if (tilesUrl.isEmpty) {
     throw StateError('no tiles: build with --dart-define=CARDINAL_TILES_URL=<TileJSON URL>');
   }
@@ -218,7 +239,8 @@ Future<List<String>> _mapArgs(MapLayers layers) async {
     '$d/sprites',
     '--cache',
     '${cache.path}/tiles',
-    if (initialView.isNotEmpty) ...['--view', initialView],
+    '--view',
+    view.arg,
     '--tiles',
     'openmaptiles=$tilesUrl',
   ];
