@@ -39,6 +39,8 @@ use crate::camera::{Camera, Placement};
 /// One tile's buckets on the GPU, sorted by style layer.
 pub struct GpuTile {
     buckets: Vec<GpuBucket>,
+    /// What its buffers and textures took when uploaded.
+    bytes: usize,
 }
 
 struct GpuBucket {
@@ -271,6 +273,7 @@ impl Renderer {
         tile: ProcessedTile,
         states: &FeatureStates,
     ) -> GpuTile {
+        let before = self.gpu.created_bytes();
         let buckets = tile
             .buckets
             .into_iter()
@@ -290,7 +293,10 @@ impl Renderer {
                 })
             })
             .collect();
-        GpuTile { buckets }
+        GpuTile {
+            buckets,
+            bytes: self.gpu.created_bytes() - before,
+        }
     }
 
     /// Evaluate the paint of features `ids` (all for `None`) of `source_layer` again
@@ -880,6 +886,10 @@ impl sparkle_view::map::TileUploader for Renderer {
 
     fn upload(&mut self, style: &Style, tile: ProcessedTile, states: &FeatureStates) -> GpuTile {
         Renderer::upload(self, style, tile, states)
+    }
+
+    fn tile_bytes(&self, tile: &GpuTile) -> usize {
+        tile.bytes
     }
 
     fn style_changed(&mut self) {

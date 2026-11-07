@@ -14,8 +14,8 @@ use bytemuck::{Pod, Zeroable};
 use sparkle::style::{LayerKind, StyleLayer, SymbolLayer};
 use sparkle::symbol::Labels;
 use sparkle::symbol::placement::{
-    BucketKey, DEFAULT_FADE_DURATION, DrawMode, LabelAt, PartAlignment, PlacementBucket, PlacementView,
-    SymbolPlacer,
+    BucketKey, DEFAULT_FADE_DURATION, DrawMode, LabelAt, PartAlignment, PlacementBucket,
+    PlacementView, SymbolPlacer,
 };
 use sparkle::tile::{SymbolQuads, SymbolVertex};
 use sparkle::{Bucket, BucketGeometry};

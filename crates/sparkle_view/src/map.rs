@@ -21,9 +21,6 @@ use sparkle::{ProcessedTile, Style, TileId};
 use crate::camera::{Camera, MAX_ZOOM, Placement};
 use crate::loader::{TileLoader, TileMessage};
 
-/// Uploaded tiles kept around per source after they go out of view, so panning back is
-/// instant.
-const CACHE_SIZE: usize = 512;
 /// How many levels up to look for a loaded tile to show while a tile is loading.
 const MAX_FALLBACK_LEVELS: u8 = 8;
 /// How many levels down to look for loaded tiles to show while a tile is loading.
@@ -37,6 +34,9 @@ pub trait TileUploader {
     /// Make a processed tile ready to draw, with the current feature state applied to
     /// buckets whose paint reads it.
     fn upload(&mut self, style: &Style, tile: ProcessedTile, states: &FeatureStates) -> Self::Tile;
+
+    /// Bytes the tile takes, on the GPU and off it, as of its upload.
+    fn tile_bytes(&self, tile: &Self::Tile) -> usize;
 
     /// Forget what is kept per style layer, before drawing with a new style.
     fn style_changed(&mut self);
@@ -120,6 +120,8 @@ enum CacheEntry<T> {
         stale: bool,
         /// A request to process it again is under way.
         requested: bool,
+        /// What the tile and its features take in memory.
+        bytes: usize,
     },
 }
 
@@ -129,6 +131,9 @@ pub struct MapState<T> {
     pub style: Arc<Style>,
     sources: Vec<MapSource>,
     caches: Vec<HashMap<TileId, CacheEntry<T>>>,
+    /// Bytes loaded tiles may take, across sources, before the least recently drawn are
+    /// dropped (so that panning back to them is instant until then).
+    memory_budget: usize,
     /// Per source, the oldest style generation its tiles may have been processed with.
     min_generation: Vec<u64>,
     loader: TileLoader,
@@ -157,9 +162,17 @@ impl Frame {
 }
 
 impl<T> MapState<T> {
-    pub fn new(style: Arc<Style>, sources: Vec<MapSource>, loader: TileLoader) -> Self {
+    /// A map of `sources`, keeping loaded tiles in up to `memory_budget` bytes (more only
+    /// when the tiles on screen alone take more).
+    pub fn new(
+        style: Arc<Style>,
+        sources: Vec<MapSource>,
+        loader: TileLoader,
+        memory_budget: usize,
+    ) -> Self {
         let mut map = Self {
             caches: sources.iter().map(|_| HashMap::new()).collect(),
+            memory_budget,
             min_generation: vec![0; sources.len()],
             style,
             sources,
@@ -236,7 +249,8 @@ impl<T> MapState<T> {
 
         let mut wanted = Vec::new();
         let mut tiles = Vec::new();
-        let mut evicted_terrain = Vec::new();
+        // Per source, the tiles drawn this frame.
+        let mut drawn: Vec<HashSet<TileId>> = vec![HashSet::new(); self.sources.len()];
         let mut complete = true;
         for (s, source) in self.sources.iter().enumerate() {
             if !used.contains(source.id.as_str()) {
@@ -294,14 +308,13 @@ impl<T> MapState<T> {
                     *last_used = self.frame;
                 }
             }
-            let dropped = evict(cache, &used);
-            if Some(s) == self.terrain_source {
-                evicted_terrain = dropped;
-            }
+            drawn[s] = used;
             tiles.extend(chosen.into_iter().map(|(clip, p)| (s, clip, p)));
         }
-        for id in evicted_terrain {
-            self.terrain.remove(id);
+        for (s, id) in evict(&mut self.caches, &drawn, self.memory_budget) {
+            if Some(s) == self.terrain_source {
+                self.terrain.remove(id);
+            }
         }
         self.loader.set_wanted(wanted);
         let loading = self
@@ -369,6 +382,8 @@ impl<T> MapState<T> {
                     self.terrain.insert(id, dem);
                 }
                 let gpu = renderer.upload(&self.style, tile, &self.states);
+                let bytes = renderer.tile_bytes(&gpu)
+                    + features.as_ref().map_or(0, FeatureIndex::heap_bytes);
                 self.caches[s].insert(
                     id,
                     CacheEntry::Ready {
@@ -378,6 +393,7 @@ impl<T> MapState<T> {
                         zoom,
                         stale: false,
                         requested: false,
+                        bytes,
                     },
                 );
             }
@@ -461,8 +477,8 @@ impl<T> MapState<T> {
             .iter()
             .position(|m| m.id == id)
             .with_context(|| format!("GeoJSON source {id:?} isn't loaded"))?;
-        let index = GeoJsonIndex::new(source, data)
-            .with_context(|| format!("GeoJSON source {id:?}"))?;
+        let index =
+            GeoJsonIndex::new(source, data).with_context(|| format!("GeoJSON source {id:?}"))?;
         self.sources[s].max_zoom = index.max_zoom();
         let generation = self.loader.set_geojson(s, Arc::new(index));
         self.min_generation[s] = generation;
@@ -719,24 +735,41 @@ fn descendants<T>(
     found
 }
 
-/// Drop the least recently drawn tiles beyond [`CACHE_SIZE`], never ones drawn this frame.
-/// Returns the tiles dropped.
-fn evict<T>(cache: &mut HashMap<TileId, CacheEntry<T>>, keep: &HashSet<TileId>) -> Vec<TileId> {
-    let mut ready: Vec<_> = cache
-        .iter()
-        .filter_map(|(id, e)| match e {
-            CacheEntry::Ready { last_used, .. } if !keep.contains(id) => Some((*last_used, *id)),
-            _ => None,
-        })
-        .collect();
-    let excess = (ready.len() + keep.len()).saturating_sub(CACHE_SIZE);
-    if excess == 0 {
+/// Drop the least recently drawn tiles, of any source, until the loaded ones take no more
+/// than `budget` bytes, never ones drawn this frame (`drawn`, per source). Returns the
+/// tiles dropped, as `(source index, tile)`.
+fn evict<T>(
+    caches: &mut [HashMap<TileId, CacheEntry<T>>],
+    drawn: &[HashSet<TileId>],
+    budget: usize,
+) -> Vec<(usize, TileId)> {
+    let mut total = 0;
+    let mut droppable = Vec::new();
+    for (s, cache) in caches.iter().enumerate() {
+        for (id, entry) in cache {
+            if let CacheEntry::Ready {
+                last_used, bytes, ..
+            } = entry
+            {
+                total += bytes;
+                if !drawn[s].contains(id) {
+                    droppable.push((*last_used, s, *id, *bytes));
+                }
+            }
+        }
+    }
+    if total <= budget {
         return Vec::new();
     }
-    ready.sort_unstable_by_key(|&(last_used, _)| last_used);
-    let dropped: Vec<TileId> = ready.into_iter().take(excess).map(|(_, id)| id).collect();
-    for id in &dropped {
-        cache.remove(id);
+    droppable.sort_unstable_by_key(|&(last_used, ..)| last_used);
+    let mut dropped = Vec::new();
+    for (_, s, id, bytes) in droppable {
+        if total <= budget {
+            break;
+        }
+        caches[s].remove(&id);
+        total -= bytes;
+        dropped.push((s, id));
     }
     dropped
 }
@@ -760,6 +793,7 @@ mod tests {
                     zoom: p.z,
                     stale: false,
                     requested: false,
+                    bytes: 0,
                 };
                 (p.id(), entry)
             })
@@ -821,5 +855,53 @@ mod tests {
     fn no_descendants_past_the_source_max_zoom() {
         let p = at(2, 1, 1);
         assert!(choose(&cache(&p.children()), &[p], 2).is_empty());
+    }
+
+    fn sized(entries: &[(Placement, u64, usize)]) -> HashMap<TileId, CacheEntry<()>> {
+        entries
+            .iter()
+            .map(|&(p, last_used, bytes)| {
+                let entry = CacheEntry::Ready {
+                    tile: (),
+                    features: None,
+                    last_used,
+                    zoom: p.z,
+                    stale: false,
+                    requested: false,
+                    bytes,
+                };
+                (p.id(), entry)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn evicts_the_least_recently_drawn_of_any_source_down_to_the_budget() {
+        let [a, b, c, d] = at(1, 0, 0).children();
+        let mut caches = vec![
+            sized(&[(a, 1, 400), (b, 3, 400)]),
+            sized(&[(c, 2, 400), (d, 4, 400)]),
+        ];
+        let drawn = vec![HashSet::new(), HashSet::new()];
+        let dropped = evict(&mut caches, &drawn, 900);
+        assert_eq!(dropped, vec![(0, a.id()), (1, c.id())]);
+        assert!(caches[0].contains_key(&b.id()) && caches[1].contains_key(&d.id()));
+    }
+
+    #[test]
+    fn keeps_tiles_drawn_this_frame_even_over_the_budget() {
+        let [a, b, ..] = at(1, 0, 0).children();
+        let mut caches = vec![sized(&[(a, 1, 1000), (b, 2, 1000)])];
+        let drawn = vec![HashSet::from([a.id()])];
+        assert_eq!(evict(&mut caches, &drawn, 500), vec![(0, b.id())]);
+        assert!(caches[0].contains_key(&a.id()));
+    }
+
+    #[test]
+    fn nothing_is_dropped_within_the_budget() {
+        let [a, b, ..] = at(1, 0, 0).children();
+        let mut caches = vec![sized(&[(a, 1, 400), (b, 2, 400)])];
+        assert!(evict(&mut caches, &[HashSet::new()], 800).is_empty());
+        assert_eq!(caches[0].len(), 2);
     }
 }

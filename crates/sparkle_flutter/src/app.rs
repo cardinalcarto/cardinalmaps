@@ -171,7 +171,7 @@ impl MapView {
                 }
             },
         )?;
-        let mut map = MapState::new(style.clone(), map_sources, loader);
+        let mut map = MapState::new(style.clone(), map_sources, loader, args.tile_memory);
         let mut camera = Camera::new(size.map(f64::from), pixel_ratio);
         initial_camera(&mut camera, &args, &style, metadata.as_ref());
         initial_feature_state(&mut map, &mut renderer, &args);

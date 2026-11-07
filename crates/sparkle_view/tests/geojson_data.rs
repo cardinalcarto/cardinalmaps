@@ -19,6 +19,9 @@ struct Nothing;
 impl TileUploader for Nothing {
     type Tile = ();
     fn upload(&mut self, _: &Style, _: ProcessedTile, _: &FeatureStates) {}
+    fn tile_bytes(&self, _: &()) -> usize {
+        0
+    }
     fn style_changed(&mut self) {}
     fn rebuild_paint(&mut self, _: &mut (), _: &Style, _: usize, _: &FeatureStates) -> bool {
         true
@@ -77,7 +80,7 @@ impl Fixture {
             },
         )
         .unwrap();
-        let map = MapState::new(style, vec![map_source], loader);
+        let map = MapState::new(style, vec![map_source], loader, usize::MAX);
         let mut camera = Camera::new([800.0, 600.0], 1.0);
         camera.look_at(-122.33, 47.6, 14.0);
         Self {
@@ -128,7 +131,10 @@ fn replacing_data_redraws_the_source() {
     assert_eq!(f.in_the_middle(), 1);
 
     f.map
-        .set_geojson("selection", &json!({"type": "FeatureCollection", "features": []}))
+        .set_geojson(
+            "selection",
+            &json!({"type": "FeatureCollection", "features": []}),
+        )
         .unwrap();
     assert_eq!(f.in_the_middle(), 0);
 }
@@ -138,7 +144,11 @@ fn only_geojson_sources_take_data() {
     let mut f = Fixture::new();
     let empty = json!({"type": "FeatureCollection", "features": []});
     assert!(f.map.set_geojson("elsewhere", &empty).is_err());
-    assert!(f.map.set_geojson("selection", &json!({"type": "Nonsense"})).is_err());
+    assert!(
+        f.map
+            .set_geojson("selection", &json!({"type": "Nonsense"}))
+            .is_err()
+    );
 }
 
 #[test]
@@ -161,12 +171,18 @@ fn replaced_data_is_never_drawn_again() {
     f.settle();
 
     f.map
-        .set_geojson("selection", &json!({"type": "FeatureCollection", "features": []}))
+        .set_geojson(
+            "selection",
+            &json!({"type": "FeatureCollection", "features": []}),
+        )
         .unwrap();
     // Before the new tiles arrive, at this zoom or another, nothing draws the old pin.
     for zoom in [14.0, 13.0, 12.0] {
         f.camera.look_at(-122.33, 47.6, zoom);
         f.map.frame(&f.camera);
-        assert!(f.map.query_point(&f.camera, [400.0, 300.0]).is_empty(), "zoom {zoom}");
+        assert!(
+            f.map.query_point(&f.camera, [400.0, 300.0]).is_empty(),
+            "zoom {zoom}"
+        );
     }
 }

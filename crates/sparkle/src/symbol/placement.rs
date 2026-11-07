@@ -781,7 +781,13 @@ impl SymbolPlacer {
             // A rebuilt tile's labels keep their ids, and with them their opacity and
             // anchor, rather than fading in again.
             let previous: HashMap<u32, LabelState> = current
-                .map(|s| s.ids.iter().copied().zip(s.placed.iter().copied()).collect())
+                .map(|s| {
+                    s.ids
+                        .iter()
+                        .copied()
+                        .zip(s.placed.iter().copied())
+                        .collect()
+                })
                 .unwrap_or_default();
             let ids = self.index.add(b.key, b.labels);
             let placed = ids
@@ -1261,7 +1267,12 @@ fn place_label(
     let text = shapes[..text_shapes].iter().filter(|_| result.text);
     let icon = shapes[text_shapes..].iter().filter(|_| result.icon);
     result.bounds = text.chain(icon).map(Shape::bounds).reduce(|a, b| {
-        [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]
+        [
+            a[0].min(b[0]),
+            a[1].min(b[1]),
+            a[2].max(b[2]),
+            a[3].max(b[3]),
+        ]
     });
     result
 }

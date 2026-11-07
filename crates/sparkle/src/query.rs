@@ -98,6 +98,15 @@ impl FeatureIndex {
         }
     }
 
+    /// Bytes this index alone keeps in memory: a GeoJSON source's index is shared by all
+    /// its tiles, so it counts for none of them.
+    pub fn heap_bytes(&self) -> usize {
+        match &self.data {
+            IndexData::Mlt(data) => data.len(),
+            IndexData::GeoJson(_) => 0,
+        }
+    }
+
     pub fn tile(&self) -> TileId {
         self.tile
     }

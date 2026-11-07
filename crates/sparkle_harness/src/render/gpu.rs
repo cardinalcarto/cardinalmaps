@@ -4,6 +4,7 @@
 
 use std::borrow::Cow;
 use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 use sparkle::light::ExtrusionLight;
@@ -193,6 +194,8 @@ pub struct Gpu {
     pub nearest_sampler: wgpu::Sampler,
     /// The style's sprites, if any were loaded.
     pub images: Option<ImageTexture>,
+    /// Bytes of every buffer and texture made with contents so far, freed or not.
+    created: AtomicUsize,
 }
 
 /// Whether and how a pipeline uses the depth buffer.
@@ -311,10 +314,18 @@ impl Gpu {
             sample_count,
             draw_layout,
             images: None,
+            created: AtomicUsize::new(0),
         }
     }
 
+    /// Bytes of every buffer and texture made with contents so far, freed or not: what
+    /// something makes is the difference from before to after.
+    pub fn created_bytes(&self) -> usize {
+        self.created.load(Ordering::Relaxed)
+    }
+
     pub fn buffer(&self, label: &str, contents: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
+        self.created.fetch_add(contents.len(), Ordering::Relaxed);
         self.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
@@ -365,8 +376,7 @@ impl Gpu {
         height: u32,
         pixels: &[u8],
     ) -> wgpu::Texture {
-        self.device.create_texture_with_data(
-            &self.queue,
+        self.texture_with_data(
             &wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
@@ -381,8 +391,22 @@ impl Gpu {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             },
-            wgpu::util::TextureDataOrder::LayerMajor,
             pixels,
+        )
+    }
+
+    /// A texture holding `data`, in layer-major order.
+    pub fn texture_with_data(
+        &self,
+        desc: &wgpu::TextureDescriptor<'_>,
+        data: &[u8],
+    ) -> wgpu::Texture {
+        self.created.fetch_add(data.len(), Ordering::Relaxed);
+        self.device.create_texture_with_data(
+            &self.queue,
+            desc,
+            wgpu::util::TextureDataOrder::LayerMajor,
+            data,
         )
     }
 

@@ -83,6 +83,8 @@ pub struct ImageTexture {
 /// One tile's buckets on the GPU, sorted by style layer.
 pub struct GpuTile {
     buckets: Vec<GpuBucket>,
+    /// What its buffers and textures took when uploaded.
+    bytes: usize,
 }
 
 struct GpuBucket {
@@ -239,6 +241,7 @@ impl Renderer {
         tile: ProcessedTile,
         states: &FeatureStates,
     ) -> GpuTile {
+        let before = self.gpu.created_bytes();
         let mut buckets = Vec::new();
         // Consecutive buckets to upload as one, and their renderer and merge key.
         let mut run: Vec<Bucket> = Vec::new();
@@ -273,7 +276,10 @@ impl Renderer {
             buckets.extend(self.upload_one(layer, r, bucket, cpu));
         }
         self.upload_run(style, &mut run, &mut buckets);
-        GpuTile { buckets }
+        GpuTile {
+            buckets,
+            bytes: self.gpu.created_bytes() - before,
+        }
     }
 
     fn upload_one(
@@ -677,6 +683,10 @@ impl TileUploader for Renderer {
 
     fn upload(&mut self, style: &Style, tile: ProcessedTile, states: &FeatureStates) -> GpuTile {
         Renderer::upload(self, style, tile, states)
+    }
+
+    fn tile_bytes(&self, tile: &GpuTile) -> usize {
+        tile.bytes
     }
 
     fn style_changed(&mut self) {

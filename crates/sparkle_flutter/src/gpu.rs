@@ -22,6 +22,7 @@
 //! with wgpu; the stream sits behind a mutex that is only ever taken briefly.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Opcodes. Mirrored in `executor.dart`.
@@ -492,6 +493,8 @@ pub struct Gpu {
     screen: Mutex<Texture>,
     /// Bound as `dem` to draws that sample no terrain.
     no_dem: Texture,
+    /// Bytes of every buffer and texture created so far, freed or not.
+    created: AtomicUsize,
 }
 
 impl Gpu {
@@ -519,6 +522,7 @@ impl Gpu {
                 height: 1,
                 r8: false,
             },
+            created: AtomicUsize::new(0),
         };
         gpu.no_dem = gpu.rgba_texture(1, 1, &[0; 4]);
         gpu
@@ -585,7 +589,14 @@ impl Gpu {
         self.stream().uploads.len()
     }
 
+    /// Bytes of every buffer and texture created so far, freed or not: what something
+    /// creates is the difference from before to after.
+    pub fn created_bytes(&self) -> usize {
+        self.created.load(Ordering::Relaxed)
+    }
+
     pub fn buffer(&self, contents: &[u8]) -> Buffer {
+        self.created.fetch_add(contents.len(), Ordering::Relaxed);
         let handle = self.next_id(Kind::Buffer);
         let mut s = self.stream();
         let [offset, len] = s.upload(contents);
@@ -609,6 +620,19 @@ impl Gpu {
         let (width, height) = (width.max(1), height.max(1));
         let r8 = format == TextureFormat::R8;
         let format = if r8 { TextureFormat::Rgba8 } else { format };
+        let texel = match format {
+            TextureFormat::Rgba16Float => 8,
+            // The screen's format and the depth-stencil one are 4 bytes on every device
+            // we know of.
+            TextureFormat::Screen
+            | TextureFormat::Rgba8
+            | TextureFormat::R8
+            | TextureFormat::DepthStencil => 4,
+        };
+        self.created.fetch_add(
+            (width * height * sample_count) as usize * texel,
+            Ordering::Relaxed,
+        );
         let mut s = self.stream();
         let [offset, len] = contents.map_or([0, 0], |c| {
             if r8 {

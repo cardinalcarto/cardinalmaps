@@ -12,7 +12,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use wgpu::util::DeviceExt;
 
 use sparkle::paint::PaintArrays;
 use sparkle::style::{LayerKind, StyleLayer, SymbolLayer};
@@ -282,8 +281,7 @@ impl LayerRenderer for SymbolRenderer {
         };
         let text = Self::upload_quads(gpu, &symbol.text).map(|quads| {
             let atlas = &symbol.glyphs;
-            let texture = gpu.device.create_texture_with_data(
-                &gpu.queue,
+            let texture = gpu.texture_with_data(
                 &wgpu::TextureDescriptor {
                     label: Some("glyphs"),
                     size: wgpu::Extent3d {
@@ -298,7 +296,6 @@ impl LayerRenderer for SymbolRenderer {
                     usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 },
-                wgpu::util::TextureDataOrder::LayerMajor,
                 &atlas.pixels,
             );
             let group = self.bind_group(gpu, &texture.create_view(&Default::default()));

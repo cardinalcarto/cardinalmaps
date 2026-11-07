@@ -97,7 +97,7 @@ fn run_headless(
     }
     let (tx, rx) = mpsc::channel();
     let loader = spawn_loader(&args, &style, configs, atlas, move |m| drop(tx.send(m)))?;
-    let mut map = MapState::new(style.clone(), map_sources, loader);
+    let mut map = MapState::new(style.clone(), map_sources, loader, args.tile_memory);
     let mut camera = Camera::new([f64::from(width), f64::from(height)], pixel_ratio);
     initial_camera(&mut camera, &args, &style, metadata.as_ref());
     initial_feature_state(&mut map, &mut renderer, &args);
@@ -408,7 +408,12 @@ impl App {
             let loader = spawn_loader(&self.args, &self.style, configs, atlas, move |m| {
                 drop(proxy.send_event(m))
             })?;
-            let mut map = MapState::new(self.style.clone(), map_sources, loader);
+            let mut map = MapState::new(
+                self.style.clone(),
+                map_sources,
+                loader,
+                self.args.tile_memory,
+            );
             initial_feature_state(&mut map, &mut view.renderer, &self.args);
             self.map = Some(map);
         }

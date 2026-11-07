@@ -18,6 +18,9 @@ usage: sparkle_harness | sparkle_example [tiles.mbtiles | TileJSON URL] [options
                                  $XDG_CACHE_HOME/sparkle or ~/.cache/sparkle, else in memory)
   --cache-size MB                the most the cache holds before dropping the least recently
                                  used tiles (default 100)
+  --tile-memory MB               the most loaded tiles may take in memory, GPU included, before
+                                 dropping the least recently drawn (default 256); tiles on
+                                 screen are always kept
   --style style.json             the style (default: the built-in MapTiler Basic)
   --source name                  the source a bare tiles path stands in for
   --sprite [id=]path-prefix      a local sprite: reads prefix.json/.png (or @2x) (repeatable);
@@ -61,6 +64,8 @@ pub struct Args {
     pub cache: Option<PathBuf>,
     /// Bytes.
     pub cache_size: u64,
+    /// Bytes.
+    pub tile_memory: usize,
     pub view: Option<ViewArg>,
     pub screenshot: Option<PathBuf>,
     pub headless: bool,
@@ -124,6 +129,7 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Args> {
         fonts: None,
         cache: None,
         cache_size: 100 << 20,
+        tile_memory: 256 << 20,
         view: None,
         screenshot: None,
         headless: false,
@@ -153,6 +159,12 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Args> {
                     .parse()
                     .context("--cache-size needs megabytes")?;
                 args.cache_size = (mb * 1048576.0) as u64;
+            }
+            "--tile-memory" => {
+                let mb: f64 = value(&mut it, "--tile-memory")?
+                    .parse()
+                    .context("--tile-memory needs megabytes")?;
+                args.tile_memory = (mb * 1048576.0) as usize;
             }
             "--screenshot" => args.screenshot = Some(value(&mut it, "--screenshot")?.into()),
             "--headless" => args.headless = true,

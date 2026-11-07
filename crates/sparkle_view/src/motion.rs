@@ -459,7 +459,12 @@ mod tests {
         m.step(&mut c, now);
         let jump = (c.center[0] - before.0[0]).hypot(c.center[1] - before.0[1]);
         assert!(jump < 1e-5, "{jump}");
-        assert!((c.zoom - before.1).abs() < 5e-3, "{} -> {}", before.1, c.zoom);
+        assert!(
+            (c.zoom - before.1).abs() < 5e-3,
+            "{} -> {}",
+            before.1,
+            c.zoom
+        );
         settle(&mut m, &mut c, now);
         assert!((c.center[1] - moved[1]).abs() < 1e-12 && (c.zoom - 14.0).abs() < 1e-9);
         assert!(!m.retarget(to, 14.0), "no flight to retarget once landed");

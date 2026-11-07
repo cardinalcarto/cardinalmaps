@@ -292,7 +292,9 @@ impl SparkleMap {
             x: tile_x,
             y: tile_y,
         };
-        let properties = self.view().tile_feature(&source, tile, Some(&source_layer), id)?;
+        let properties = self
+            .view()
+            .tile_feature(&source, tile, Some(&source_layer), id)?;
         Some(properties_text(&properties))
     }
 
@@ -378,7 +380,8 @@ impl SparkleMap {
         max_zoom: f64,
         margin: f64,
     ) {
-        self.view().set_subject([west, south, east, north], max_zoom, margin);
+        self.view()
+            .set_subject([west, south, east, north], max_zoom, margin);
     }
 
     /// Stop keeping the subject in view, leaving the camera where it is.
