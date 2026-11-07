@@ -19,7 +19,7 @@ Everything runs in the `cardinal` namespace, behind one public hostname:
 | Path | Service |
 | --- | --- |
 | `/tiles/basemap/{z}/{x}/{y}` | [Martin](https://maplibre.org/martin/) serving the release's `tiles.mbtiles` (TileJSON at `/tiles/basemap`) |
-| `/geocoder/v1/search?q=…` | `airmail_service` serving the release's `index/` and `categories/` ([API](../airmail/airmail_service/openapi.yaml)) |
+| `/geocoder/v1/search?q=…` | `airmail_service` serving the release's `index/`, `categories/` and `tagger.model` ([API](../airmail/airmail_service/openapi.yaml)) |
 | `/routing/…` | reserved for a routing engine |
 
 A Caddy proxy ([cardinal/proxy/Caddyfile](cardinal/proxy/Caddyfile)) routes
@@ -74,7 +74,7 @@ A release is a directory built from one OSM extract by the data pipeline
   planets/                 extracts, including the one the POI database was bootstrapped from
   wof/                     Who's On First databases for builds
   qrank/qrank.csv.gz       QRank, for POI importance (https://qrank.wmcloud.org)
-  releases/<id>/           tiles.mbtiles, index/, categories/, manifest.json
+  releases/<id>/           tiles.mbtiles, index/, categories/, tagger.model, manifest.json
 ```
 
 The tileserver and geocoder serve the release named by `MAP_RELEASE` in

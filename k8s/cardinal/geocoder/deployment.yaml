@@ -26,6 +26,7 @@ spec:
           args:
             - --index=/releases/$(MAP_RELEASE)/index
             - --categories=/releases/$(MAP_RELEASE)/categories
+            - --tagger=/releases/$(MAP_RELEASE)/tagger.model
           env:
             - name: MAP_RELEASE
               valueFrom:
