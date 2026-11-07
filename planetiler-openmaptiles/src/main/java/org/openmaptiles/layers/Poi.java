@@ -51,6 +51,7 @@ import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.expression.MultiExpression;
 import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
+import com.onthegomap.planetiler.geo.TileCoord;
 import com.onthegomap.planetiler.reader.SimpleFeature;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
@@ -60,6 +61,7 @@ import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.MemoryEstimator;
 import com.onthegomap.planetiler.util.Parse;
 import com.onthegomap.planetiler.util.Translations;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -67,12 +69,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Consumer;
 import org.locationtech.jts.geom.Point;
 import org.openmaptiles.OpenMapTilesProfile;
 import org.openmaptiles.generated.OpenMapTilesSchema;
 import org.openmaptiles.generated.Tables;
 import org.openmaptiles.util.OmtLanguageUtils;
+import org.openmaptiles.util.WofAdmins;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -89,6 +93,7 @@ public class Poi implements
   Tables.OsmPoiPoint.Handler,
   Tables.OsmPoiPolygon.Handler,
   ForwardingProfile.LayerPostProcessor,
+  ForwardingProfile.TilePostProcessor,
   ForwardingProfile.OsmRelationPreprocessor,
   ForwardingProfile.FinishHandler {
 
@@ -100,6 +105,14 @@ public class Poi implements
   private static final Logger LOGGER = LoggerFactory.getLogger(Poi.class);
   static final String POI_ID_TAG = "cardinal:poi_id";
   static final String CARDINAL_VERSION = "cardinal:version";
+  /** The attribute of a POI holding the ID of the Who's On First area of a placetype it's in, after this prefix. */
+  static final String ADMIN_PREFIX = "cardinal:admin:";
+  /**
+   * A layer of one feature for each area POIs in the tile are in, by ID, with their names in {@value #ADMIN_NAMES}. It
+   * leaves out {@link WofAdmins#NAMED_IN_APP}.
+   */
+  static final String ADMINS_LAYER = "admins";
+  static final String ADMIN_NAMES = "names";
   private static final Map<String, Integer> CLASS_RANKS = Map.ofEntries(
     entry(FieldValues.CLASS_HOSPITAL, 20),
     entry(FieldValues.CLASS_RAILWAY, 40),
@@ -138,11 +151,16 @@ public class Poi implements
   private final Translations translations;
   private final Stats stats;
   private final Map<String, List<Tables.OsmPoiPoint>> aggStops = new HashMap<>();
+  /** The areas POIs are in, or null if there's no Who's On First database to tell. */
+  private final WofAdmins admins;
 
   public Poi(Translations translations, PlanetilerConfig config, Stats stats) {
     this.classMapping = FieldMappings.Class.index();
     this.translations = translations;
     this.stats = stats;
+    String wofDb = config.arguments().getString("wof_db",
+      "Who's On First SpatiaLite database, to give POIs the areas they're in", "");
+    this.admins = wofDb.isEmpty() ? null : new WofAdmins(Path.of(wofDb));
   }
 
   static int poiClassRank(String clazz) {
@@ -311,6 +329,7 @@ public class Poi implements
     feature.setId(poiId);
     if (poiId != VectorTile.NO_FEATURE_ID) {
       feature.setAttr(CARDINAL_VERSION, Parse.parseIntOrNull(source.getTag(CARDINAL_VERSION)));
+      addAdmins(feature, source);
     }
     addIncludedTags(feature, source);
     Backcountry.addDetails(feature, source);
@@ -412,6 +431,7 @@ public class Poi implements
       // The OSM version, which poi_service's patch command adds alongside the poi_id. It tells clients whether a POI's
       // data is fresher than what they cached, since each poi_id belongs to a single element.
       feature.setAttr(CARDINAL_VERSION, Parse.parseIntOrNull(element.source().getTag(CARDINAL_VERSION)));
+      addAdmins(feature, element.source());
     }
 
     addIncludedTags(feature, element.source());
@@ -439,6 +459,51 @@ public class Poi implements
         }
       }
     }
+  }
+
+  /** The areas a POI is in, for its place card. Only POIs with IDs have cards. */
+  private void addAdmins(FeatureCollector.Feature feature, SourceFeature source) {
+    if (admins == null) {
+      return;
+    }
+    try {
+      var center = source.latLonGeometry().getCentroid();
+      admins.at(center.getX(), center.getY())
+        .forEach((placetype, id) -> feature.setAttr(ADMIN_PREFIX + placetype, id));
+    } catch (GeometryException e) {
+      e.log(stats, "poi_admins", "Unable to find the center of " + source);
+    }
+  }
+
+  @Override
+  public Map<String, List<VectorTile.Feature>> postProcessTile(TileCoord tile,
+    Map<String, List<VectorTile.Feature>> layers) {
+    List<VectorTile.Feature> pois = layers.get(LAYER_NAME);
+    if (admins == null || pois == null) {
+      return layers;
+    }
+    Set<Long> ids = new TreeSet<>();
+    for (VectorTile.Feature poi : pois) {
+      for (String placetype : WofAdmins.PLACETYPES) {
+        if (!WofAdmins.NAMED_IN_APP.contains(placetype) &&
+          poi.tags().get(ADMIN_PREFIX + placetype) instanceof Number id) {
+          ids.add(id.longValue());
+        }
+      }
+    }
+    if (ids.isEmpty()) {
+      return layers;
+    }
+    // An unstyled layer, so where its points are doesn't matter.
+    var geometry = VectorTile.encodeGeometry(GeoUtils.point(128, 128));
+    List<VectorTile.Feature> features = new ArrayList<>(ids.size());
+    for (long id : ids) {
+      admins.namesJson(id).ifPresent(names -> features
+        .add(new VectorTile.Feature(ADMINS_LAYER, id, geometry, Map.of(ADMIN_NAMES, names))));
+    }
+    Map<String, List<VectorTile.Feature>> result = new HashMap<>(layers);
+    result.put(ADMINS_LAYER, features);
+    return result;
   }
 
   /**

@@ -28,6 +28,8 @@ Omit the first line if you're using docker instead of podman.
 - `--wof-db` is a Who's On First SpatiaLite database covering the extract.
   Every administrative area in it is indexed for search, so for a regional
   deployment use one covering the region, and the planet's for a global one.
+  Tiles get the areas POIs are in from it too; see "Differences from
+  OpenMapTiles" in `planetiler-openmaptiles/README.md`.
   Point-in-polygon caches built from it are kept in an `airmail-wof-<digest>`
   cache volume, which the engine's garbage collection can reclaim once the
   database is replaced.

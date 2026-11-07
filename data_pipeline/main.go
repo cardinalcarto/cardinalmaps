@@ -128,7 +128,7 @@ func (m *DataPipeline) Build(
 		}
 		args = append(topoTileArgs(), args...)
 	}
-	tiles, err := m.tiles(ctx, forTiles, args, maxRamPercentage, sources)
+	tiles, err := m.tiles(ctx, forTiles, wofDb, args, maxRamPercentage, sources)
 	if err != nil {
 		return nil, err
 	}
@@ -263,6 +263,10 @@ func (m *DataPipeline) Tiles(
 	// lake_centerline.shp.zip), to use instead of downloading them.
 	// +optional
 	sources *dagger.Directory,
+	// Who's On First SpatiaLite database covering the extract, to give POIs
+	// the areas they're in.
+	// +optional
+	wofDb *dagger.File,
 ) (*dagger.File, error) {
 	if databaseUrl != nil {
 		var err error
@@ -270,10 +274,10 @@ func (m *DataPipeline) Tiles(
 			return nil, err
 		}
 	}
-	return m.tiles(ctx, osm, args, maxRamPercentage, sources)
+	return m.tiles(ctx, osm, wofDb, args, maxRamPercentage, sources)
 }
 
-func (m *DataPipeline) tiles(ctx context.Context, osm *dagger.File, args []string, maxRamPercentage int, sources *dagger.Directory) (*dagger.File, error) {
+func (m *DataPipeline) tiles(ctx context.Context, osm *dagger.File, wofDb *dagger.File, args []string, maxRamPercentage int, sources *dagger.Directory) (*dagger.File, error) {
 	cmd := []string{
 		"java", "-jar", "/app/planetiler-openmaptiles.jar",
 		"--osm-path=/input/input.osm.pbf",
@@ -290,6 +294,11 @@ func (m *DataPipeline) tiles(ctx context.Context, osm *dagger.File, args []strin
 			"--water_polygons_path=/input/sources/water-polygons-split-3857.zip",
 			"--natural_earth_path=/input/sources/natural_earth_vector.sqlite.zip",
 			"--lake_centerlines_path=/input/sources/lake_centerline.shp.zip")
+	}
+	if wofDb != nil {
+		// POIs get the areas they're in.
+		planetiler = planetiler.WithMountedFile("/input/wof.spatial.db", wofDb)
+		cmd = append(cmd, "--wof_db=/input/wof.spatial.db")
 	}
 	cmd = append(cmd, args...)
 	ctr, err := planetiler.
@@ -428,7 +437,7 @@ func (m *DataPipeline) TopoTiles(
 	if err != nil {
 		return nil, err
 	}
-	return m.tiles(ctx, combined, append(topoTileArgs(), args...), maxRamPercentage, sources)
+	return m.tiles(ctx, combined, nil, append(topoTileArgs(), args...), maxRamPercentage, sources)
 }
 
 // What the Cardinal Topo tileset needs from planetiler beyond the defaults.

@@ -32,6 +32,13 @@ available options.
   or wikipedia page or name)
 - Some line and polygon tolerances are different, can be tweaked with `--simplify-tolerance` parameter
 - For bigger bays whose label points show above Z9, centerline is used for Z9+
+- With `--wof_db=<Who's On First SpatiaLite database>`, a POI with an identifier gets the ID of the area of each
+  placetype it's in as `cardinal:admin:<placetype>`, such as `cardinal:admin:locality`. Where it's in several of one
+  placetype, that's the largest locality or local admin, since that's the city in an address, and the smallest of
+  anything else, as the most specific. Each tile with POIs has an `admins` layer with one feature per area they're in,
+  whose ID is the area's and whose `names` property is JSON: `name` is its default name, `abbr` its abbreviation, and
+  ISO 639-3 keys its name in other languages where that differs. Countries, dependencies, macroregions and regions
+  aren't in that layer, as they'd repeat in every tile: the app has them (`flutter/cardinal/tool/wof_areas.py`).
 - MVT IDs encoded as `{ID} * 10 + {1 for OSM nodes, 2 for OSM ways, 3 for OSM relations, 0 for any other source}` by
   default
 

@@ -442,6 +442,9 @@ type DataPipelineTilesOpts struct {
 	// names (water-polygons-split-3857.zip, natural_earth_vector.sqlite.zip,
 	// lake_centerline.shp.zip), to use instead of downloading them.
 	Sources *Directory
+	// Who's On First SpatiaLite database covering the extract, to give POIs
+	// the areas they're in.
+	WofDb *File
 }
 
 // Builds an MLT mbtiles tileset from a local OSM extract.
@@ -468,6 +471,10 @@ func (r *DataPipeline) Tiles(osm *File, opts ...DataPipelineTilesOpts) *File {
 		// `sources` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Sources) {
 			q = q.Arg("sources", opts[i].Sources)
+		}
+		// `wofDb` optional argument
+		if !querybuilder.IsZeroValue(opts[i].WofDb) {
+			q = q.Arg("wofDb", opts[i].WofDb)
 		}
 	}
 	q = q.Arg("osm", osm)
