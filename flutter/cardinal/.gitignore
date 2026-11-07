@@ -49,3 +49,5 @@ app.*.map.json
 
 # Local server URLs: copy dart_defines.example.json and pass --dart-define-from-file.
 /dart_defines.json
+# What tool/map_bench.sh measures, while it runs.
+/assets/map/bench-style.json

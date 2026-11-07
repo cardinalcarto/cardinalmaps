@@ -114,7 +114,7 @@ Future<List<String>> _mapArgs() async {
         .writeAsBytes(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
   }
   final style =
-      jsonDecode(await rootBundle.loadString('assets/map/headway.json')) as Map<String, Object?>;
+      jsonDecode(await rootBundle.loadString('assets/map/$mapStyle')) as Map<String, Object?>;
   addSelectionLayers(style);
   await File('${dir.path}/style.json').writeAsString(jsonEncode(style), flush: true);
   final cache = await getApplicationCacheDirectory();

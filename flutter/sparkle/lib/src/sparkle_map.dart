@@ -404,6 +404,53 @@ class _SparkleMapState extends State<SparkleMap> {
     SchedulerBinding.instance.scheduleFrame();
   }
 
+  // For `flutter/cardinal/tool/map_bench.sh`: with `--dart-define=SPARKLE_BENCH=true`, moves
+  // the camera around a closed square, a fixed step per frame, so every run draws the same
+  // frames, and logs how many missed their deadlines. Otherwise compiled out.
+  static const _bench = bool.fromEnvironment('SPARKLE_BENCH');
+  static const _benchLeg = 120;
+  static const _benchLoops = 6;
+  int _benchFrame = -2;
+  final _benchClock = Stopwatch();
+  int _benchLast = 0;
+  int _benchWorst = 0;
+  int _benchOver = 0;
+  void _benchStep(rust.SparkleMap map) {
+    if (_benchFrame < 0 || _benchFrame > _benchLeg * 4 * _benchLoops) return;
+    final now = _benchClock.elapsedMicroseconds;
+    if (_benchFrame == 0) {
+      _benchClock..reset()..start();
+      _benchLast = 0;
+    } else {
+      final gap = now - _benchLast;
+      _benchLast = now;
+      if (gap > _benchWorst) _benchWorst = gap;
+      // A frame that took longer than one and a half refreshes missed its deadline.
+      final refresh = View.of(context).display.refreshRate;
+      if (gap > 1500000 / refresh) _benchOver++;
+    }
+    final inLoop = _benchFrame % (_benchLeg * 4);
+    if (_benchFrame > 0 && inLoop == 0) {
+      final loop = _benchFrame ~/ (_benchLeg * 4);
+      debugPrint('BENCH loop $loop end ${now ~/ 1000} ms worst ${_benchWorst ~/ 1000} ms missed $_benchOver of ${_benchLeg * 4} at ${View.of(context).display.refreshRate.round()} Hz');
+      _benchWorst = 0;
+      _benchOver = 0;
+      if (loop == _benchLoops) debugPrint('BENCH done');
+    }
+    if (_benchFrame < _benchLeg * 4 * _benchLoops) {
+      const step = 4.0;
+      final (dx, dy) = switch (inLoop ~/ _benchLeg) {
+        0 => (-step, 0.0),
+        1 => (0.0, step),
+        2 => (step, 0.0),
+        _ => (0.0, -step),
+      };
+      map.panZoom(x: 200, y: 400, dx: dx, dy: dy, scale: 1, rotation: 0);
+      _requestFrame();
+    }
+    _benchFrame++;
+  }
+
   void _drawFrame() {
     _frameScheduled = false;
     final map = _map;
@@ -412,12 +459,20 @@ class _SparkleMapState extends State<SparkleMap> {
     if (map == null || surface == null || executor == null || !mounted) {
       return;
     }
+    if (_bench) _benchStep(map);
     final rust.FrameOutput out;
     try {
       final sw = Stopwatch()..start(); // PERF-TEMP
       final gap = _sinceFrame.elapsedMicroseconds; // PERF-TEMP
       _sinceFrame.reset(); // PERF-TEMP
       out = map.frame();
+      if (_bench && _benchFrame == -2 && out.complete) {
+        _benchFrame = -1;
+        Timer(const Duration(seconds: 3), () {
+          _benchFrame = 0;
+          _requestFrame();
+        });
+      }
       final tRust = sw.elapsedMicroseconds; // PERF-TEMP
       final frame = surface.acquireNextFrame();
       final commandBuffer = gpu.gpuContext.createCommandBuffer();
