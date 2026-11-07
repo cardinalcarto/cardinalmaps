@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:cardinal/geocoder/geocoder.dart';
 import 'package:cardinal/map/map.dart';
 import 'package:cardinal/place/place_page.dart';
+import 'package:cardinal/routes.dart';
 import 'package:cardinal/search/search_sheet.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
@@ -18,7 +19,7 @@ import '../fakes/fake_place_store.dart';
 import '../geocoder/geocoder_test.dart' show spaceNeedle;
 
 /// The app's sheet pages over a blank body instead of the map, which needs Flutter GPU.
-Future<Store> _pumpApp(WidgetTester tester, {List<Uri>? asked, FakeMap? map}) async {
+Future<Store> _pumpApp(WidgetTester tester, {List<Uri>? asked, FakeMap? map, Widget? body}) async {
   tester.view
     ..physicalSize = const Size(400, 800) * 2
     ..devicePixelRatio = 2;
@@ -42,7 +43,7 @@ Future<Store> _pumpApp(WidgetTester tester, {List<Uri>? asked, FakeMap? map}) as
       ShellRoute(
         builder: (context, state, child) => Scaffold(
           resizeToAvoidBottomInset: false,
-          body: SheetScaffold(body: const SizedBox.expand(), sheet: child),
+          body: SheetScaffold(body: body ?? const SizedBox.expand(), sheet: child),
         ),
         routes: [
           GoRoute(
@@ -130,6 +131,101 @@ void main() {
     expect(find.text('Space Needle'), findsOneWidget);
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'search');
     expect(_sheet(tester).isAtMax, isTrue);
+  });
+
+  testWidgets('closing a place tapped on the map goes back to the sheet as it was', (tester) async {
+    final store = await _pumpApp(tester);
+    final peek = _sheet(tester).extent;
+    await store.places.put(spacePlace);
+    openPlaceFromMap(GoRouter.of(tester.element(find.byType(SearchSheet))), spacePlace.id);
+    await tester.pumpAndSettle();
+    expect(find.byType(PlacePage), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
+    expect(find.byType(PlacePage), findsNothing);
+    expect(_sheet(tester).extent, peek);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
+  });
+
+  testWidgets('closing a place tapped on the map after searching goes back to the sheet as it was', (tester) async {
+    final store = await _pumpApp(tester);
+    final peek = _sheet(tester).extent;
+    await tester.tap(find.byType(SearchBar));
+    await tester.pumpAndSettle();
+    // Done with the search: down to the peek again, keyboard away.
+    tester.testTextInput.hide();
+    _sheet(tester).animateTo(const SheetAnchor.section(#searchBar));
+    await tester.pumpAndSettle();
+
+    await store.places.put(spacePlace);
+    openPlaceFromMap(GoRouter.of(tester.element(find.byType(SearchSheet))), spacePlace.id);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
+    expect(_sheet(tester).extent, peek);
+  });
+
+  for (final close in ['X', 'back']) {
+    testWidgets('closing a place tapped on the map with $close, after searching, leaves the sheet as it was', (tester) async {
+      // The map takes focus when it's pressed, as SparkleMap does.
+      final mapFocus = FocusNode(debugLabel: 'map');
+      addTearDown(mapFocus.dispose);
+      final store = await _pumpApp(tester, body: Focus(focusNode: mapFocus, child: const SizedBox.expand()));
+      final peek = _sheet(tester).extent;
+      await tester.tap(find.byType(SearchBar));
+      await tester.pumpAndSettle();
+      tester.testTextInput.hide();
+      _sheet(tester).animateTo(const SheetAnchor.section(#searchBar));
+      await tester.pumpAndSettle();
+
+      final router = GoRouter.of(tester.element(find.byType(SearchSheet)));
+      await store.places.put(spacePlace);
+      await store.places.put(
+        const Place(id: 'poi:2', kind: 'poi', name: 'Other', center: LngLat(-122.34, 47.61), tags: {}),
+      );
+      for (final id in [spacePlace.id, 'poi:2']) {
+        mapFocus.requestFocus();
+        openPlaceFromMap(router, id);
+        await tester.pumpAndSettle();
+      }
+      if (close == 'X') {
+        await tester.tap(find.byTooltip('Close'));
+      } else {
+        await tester.binding.handlePopRoute();
+      }
+      await tester.pumpAndSettle();
+      await tester.pumpAndSettle();
+      expect(find.byType(PlacePage), findsNothing);
+      expect(_sheet(tester).extent, peek);
+      expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
+    });
+  }
+
+  testWidgets('a page closing over the sheet never refocuses search by itself', (tester) async {
+    final mapFocus = FocusNode(debugLabel: 'map');
+    addTearDown(mapFocus.dispose);
+    final store = await _pumpApp(tester, body: Focus(focusNode: mapFocus, autofocus: true, child: const SizedBox.expand()));
+    final peek = _sheet(tester).extent;
+    await tester.tap(find.byType(SearchBar));
+    await tester.pumpAndSettle();
+    tester.testTextInput.hide();
+    _sheet(tester).animateTo(const SheetAnchor.section(#searchBar));
+    await tester.pumpAndSettle();
+    // Focus moves to the map without the bar giving it up, so the sheet's page remembers it.
+    mapFocus.requestFocus();
+    await tester.pumpAndSettle();
+
+    await store.places.put(spacePlace);
+    GoRouter.of(tester.element(find.byType(SearchSheet))).push(placeLocation(spacePlace.id));
+    await tester.pumpAndSettle();
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
+    expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
+    expect(_sheet(tester).extent, peek);
   });
 
   testWidgets('clearing the search keeps it ready to type', (tester) async {
@@ -309,3 +405,12 @@ void main() {
     });
   });
 }
+
+/// The Space Needle as a map pin knows it.
+const spacePlace = Place(
+  id: 'poi:97175',
+  kind: 'poi',
+  name: 'Space Needle',
+  center: LngLat(-122.3493, 47.6205),
+  tags: {'tourism': 'attraction'},
+);

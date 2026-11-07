@@ -16,8 +16,12 @@ String placeLocation(String id) => '/place/${Uri.encodeComponent(id)}';
 
 /// Shows the place with [id], tapped on the map. It takes the place of a place card
 /// already open, so that going back leaves the map's places all at once.
+///
+/// The search bar gives up its focus first: closing the card would give it back, and
+/// focusing search pulls the sheet up, when it should come back as it was.
 void openPlaceFromMap(GoRouter router, String id) {
   final location = placeLocation(id);
+  FocusManager.instance.primaryFocus?.unfocus();
   // Of the page on top: a pushed page isn't in the router's configuration's URI.
   final current = router.state.uri.toString();
   if (current == location) return;

@@ -31,6 +31,9 @@ class _SearchSheetState extends State<SearchSheet> {
   final _focus = FocusNode(debugLabel: 'search');
   PlaceSearch? _search;
 
+  /// Set while coming back from a place this sheet opened, to search again.
+  bool _searchAgain = false;
+
   @override
   void initState() {
     super.initState();
@@ -56,6 +59,16 @@ class _SearchSheetState extends State<SearchSheet> {
 
   void _focusChanged() {
     if (!_focus.hasFocus) return;
+    // A page closing over this one gives the bar back the focus it last had, though
+    // the map may have had it since. That's not a wish to search: drop it, which also
+    // keeps this page from giving it back again.
+    final searchAgain = _searchAgain;
+    _searchAgain = false;
+    final uncovering = ModalRoute.of(context)?.secondaryAnimation?.status ?? AnimationStatus.dismissed;
+    if (!searchAgain && uncovering != AnimationStatus.dismissed) {
+      _focus.unfocus();
+      return;
+    }
     _sampleMap();
     SheetScaffold.controllerOf(context).animateTo(const SheetAnchor.full());
   }
@@ -94,7 +107,10 @@ class _SearchSheetState extends State<SearchSheet> {
     if (!mounted) return;
     // Its close button comes back here to search again.
     final closed = await context.push<bool>(placeLocation(place.id));
-    if (closed == true && mounted) _focus.requestFocus();
+    if (closed == true && mounted) {
+      _searchAgain = true;
+      _focus.requestFocus();
+    }
   }
 
   @override
