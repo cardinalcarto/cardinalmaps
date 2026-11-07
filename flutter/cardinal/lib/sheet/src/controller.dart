@@ -74,14 +74,21 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
   /// Whether a page transition is moving the sheet.
   bool get isTransitioning => _phase == _Phase.transition;
 
-  /// Springs the sheet to [anchor], one of the current page's anchors, keeping whatever
-  /// speed it has.
+  /// Springs the sheet to [anchor], keeping whatever speed it has. If a page transition
+  /// has the sheet, or the current page doesn't have that anchor yet, as when it's about
+  /// to add it, once that's over.
   void animateTo(SheetAnchor anchor) {
-    if (isTransitioning) return;
+    _awaited = null;
     final target = _anchors.firstWhereOrNull((a) => a.anchor == anchor);
-    if (target == null) return;
+    if (isTransitioning || target == null) {
+      _awaited = anchor;
+      return;
+    }
     _settleOn(target, _phase == _Phase.settling ? _spring.velocity : 0);
   }
+
+  /// The anchor to spring to as soon as the current page has it.
+  SheetAnchor? _awaited;
 
   /// Springs the sheet to the next anchor up, or back to the lowest from the highest.
   void cycle() {
@@ -96,6 +103,7 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
   /// decides where it settles.
   void hold({Object? holder}) {
     if (isTransitioning) return;
+    _awaited = null;
     _spring.stop();
     _wheelSettle?.cancel();
     _phase = _Phase.held;
@@ -214,12 +222,21 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
     _anchors = anchors;
     _maxExtent = maxExtent;
     _floor = floor;
+    final awaited = _anchors.firstWhereOrNull((a) => a.anchor == _awaited);
+    if (awaited != null && !isTransitioning) {
+      _awaited = null;
+      _settleOn(awaited, _phase == _Phase.settling ? _spring.velocity : 0);
+      return;
+    }
     if (_phase == _Phase.settling) {
       // Springing to an anchor that moved (as when the keyboard hides): spring on to
       // where it is now, from where the sheet is and at its speed.
       final target = _settlingTo;
       final moved = _anchors.firstWhereOrNull((a) => a.anchor == target?.anchor);
-      if (target != null && moved != null && (moved.extent - target.extent).abs() > _epsilon) {
+      if (target != null && moved == null && _anchors.isNotEmpty) {
+        // It's gone: spring to the nearest instead.
+        _settleOn(_anchors[_physics.target(_anchors, extent, 0)], _spring.velocity);
+      } else if (target != null && moved != null && (moved.extent - target.extent).abs() > _epsilon) {
         _settleOn(moved, _spring.velocity);
       }
       return;
@@ -229,8 +246,8 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
     if (resting != null) {
       _set(resting.extent);
     } else if (_anchors.isNotEmpty && _restingAt != null) {
-      // The anchor it rested at is gone: find the nearest.
-      _rest(_anchors[_physics.target(_anchors, extent, 0)]);
+      // The anchor it rested at is gone: spring to the nearest.
+      _settleOn(_anchors[_physics.target(_anchors, extent, 0)], 0);
     }
   }
 
@@ -251,8 +268,12 @@ class SheetController extends ChangeNotifier implements ValueListenable<double> 
   void _endTransition(SheetAnchor? anchor) {
     if (!isTransitioning) return;
     _phase = _Phase.idle;
+    final awaited = _anchors.firstWhereOrNull((a) => a.anchor == _awaited);
+    _awaited = null;
     final target = _anchors.firstWhereOrNull((a) => a.anchor == anchor);
-    if (target != null) {
+    if (awaited != null) {
+      _settleOn(awaited, 0);
+    } else if (target != null) {
       _rest(target);
     } else {
       _settle(0);

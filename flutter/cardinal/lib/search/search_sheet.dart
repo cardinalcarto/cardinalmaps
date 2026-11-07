@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:go_router/go_router.dart';
@@ -54,76 +56,106 @@ class _SearchSheetState extends State<SearchSheet> {
 
   void _focusChanged() {
     if (!_focus.hasFocus) return;
-    // Results near what the map shows rank higher: the middle of what the sheet leaves
-    // uncovered now, before the sheet covers it.
+    _sampleMap();
+    SheetScaffold.controllerOf(context).animateTo(const SheetAnchor.full());
+  }
+
+  /// Results near what the map shows rank higher: what the sheet leaves uncovered now,
+  /// before the sheet covers it. If it covers everything already, what was last seen.
+  void _sampleMap() {
     final view = SheetScaffold.viewOf(context);
     final clear = EdgeInsets.only(top: MediaQuery.paddingOf(context).top) + view.obscured;
-    final middle = clear.deflateRect(Offset.zero & MediaQuery.sizeOf(context)).center;
-    if (MapScope.of(context).screenToLngLat(middle) case final p?) {
+    final area = clear.deflateRect(Offset.zero & MediaQuery.sizeOf(context));
+    if (area.isEmpty) return;
+    final map = MapScope.of(context);
+    if (map.screenToLngLat(area.center) case final p?) {
       _search!.focus = LngLat(p.lng, p.lat);
     }
-    SheetScaffold.controllerOf(context).animateTo(const SheetAnchor.full());
+    // The bounds of its corners, as the map may be turned.
+    final corners = [
+      area.topLeft,
+      area.topRight,
+      area.bottomLeft,
+      area.bottomRight,
+    ].map(map.screenToLngLat).nonNulls.toList();
+    _search!.viewport = corners.length < 4
+        ? null
+        : (
+            west: corners.map((c) => c.lng).reduce(math.min),
+            south: corners.map((c) => c.lat).reduce(math.min),
+            east: corners.map((c) => c.lng).reduce(math.max),
+            north: corners.map((c) => c.lat).reduce(math.max),
+          );
   }
 
   Future<void> _open(Place place) async {
     _focus.unfocus();
     await StoreScope.of(context).places.put(place);
     if (!mounted) return;
-    context.push(placeLocation(place.id));
+    // Its close button comes back here to search again.
+    final closed = await context.push<bool>(placeLocation(place.id));
+    if (closed == true && mounted) _focus.requestFocus();
   }
 
   @override
   Widget build(BuildContext context) {
     final search = _search!;
-    return SheetContent(
-      anchors: const [SheetAnchor.section(_bar), SheetAnchor.fraction(0.5), SheetAnchor.full()],
-      slivers: [
-        SliverPersistentHeader(
-          pinned: true,
-          delegate: _SearchBarHeader(
-            color: Theme.of(context).colorScheme.surfaceContainerLow,
-            child: SheetSection(
-              id: _bar,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                child: SearchBar(
-                  controller: _text,
-                  focusNode: _focus,
-                  hintText: 'Search',
-                  elevation: const WidgetStatePropertyAll(0),
-                  leading: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 8),
-                    child: Icon(Icons.search),
-                  ),
-                  trailing: [
-                    ListenableBuilder(
-                      listenable: _text,
-                      builder: (context, _) => _text.text.isEmpty
-                          ? const SizedBox.shrink()
-                          : IconButton(
-                              tooltip: 'Clear',
-                              icon: const Icon(Icons.close),
-                              onPressed: () {
-                                _text.clear();
-                                search.update('');
-                              },
-                            ),
+    return ListenableBuilder(
+      listenable: Listenable.merge([_focus, search]),
+      builder: (context, _) => SheetContent(
+        // Just the bar, until there's something to show above the keyboard or below it.
+        anchors: _focus.hasFocus || search.results.isNotEmpty
+            ? const [SheetAnchor.section(_bar), SheetAnchor.full()]
+            : const [SheetAnchor.section(_bar)],
+        slivers: [
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _SearchBarHeader(
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
+              child: SheetSection(
+                id: _bar,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                  child: SearchBar(
+                    controller: _text,
+                    focusNode: _focus,
+                    hintText: 'Search',
+                    elevation: const WidgetStatePropertyAll(0),
+                    leading: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8),
+                      child: Icon(Icons.search),
                     ),
-                  ],
-                  onChanged: search.update,
-                  onSubmitted: (_) {
-                    if (search.results case [final first, ...]) _open(first);
-                  },
+                    trailing: [
+                      ListenableBuilder(
+                        listenable: _text,
+                        builder: (context, _) => _text.text.isEmpty
+                            ? const SizedBox.shrink()
+                            : IconButton(
+                                tooltip: 'Clear',
+                                icon: const Icon(Icons.close),
+                                onPressed: () {
+                                  _text.clear();
+                                  search.update('');
+                                  _focus.requestFocus();
+                                },
+                              ),
+                      ),
+                    ],
+                    onChanged: search.update,
+                    onSubmitted: (_) {
+                      if (search.results case [final first, ...]) _open(first);
+                    },
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-        ListenableBuilder(
-          listenable: search,
-          builder: (context, _) => _Results(search: search, onTap: _open),
-        ),
-      ],
+          ListenableBuilder(
+            listenable: search,
+            builder: (context, _) => _Results(search: search, onTap: _open),
+          ),
+        ],
+      ),
     );
   }
 }

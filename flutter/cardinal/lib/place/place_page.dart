@@ -182,7 +182,7 @@ class _PlacePageState extends State<PlacePage> {
                   IconButton(
                     tooltip: 'Close',
                     icon: const Icon(Icons.close),
-                    onPressed: () => context.canPop() ? context.pop() : context.go('/'),
+                    onPressed: () => context.canPop() ? context.pop(true) : context.go('/'),
                   ),
                 ],
               ),

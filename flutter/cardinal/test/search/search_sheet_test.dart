@@ -86,9 +86,10 @@ SheetController _sheet(WidgetTester tester) =>
 void main() {
   testWidgets('focusing the search bar pulls the sheet up', (tester) async {
     await _pumpApp(tester);
-    expect(_sheet(tester).isAtMax, isFalse);
+    final peek = _sheet(tester).extent;
     await tester.tap(find.byType(SearchBar));
     await tester.pumpAndSettle();
+    expect(_sheet(tester).extent, greaterThan(peek));
     expect(_sheet(tester).isAtMax, isTrue);
   });
 
@@ -125,10 +126,56 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pumpAndSettle();
     expect(find.byType(PlacePage), findsNothing);
-    // Back to the results as they were, without the keyboard.
+    // Back to the results as they were, ready to search again.
     expect(find.text('Space Needle'), findsOneWidget);
-    expect(FocusManager.instance.primaryFocus?.context?.widget, isNot(isA<EditableText>()));
-    expect(tester.testTextInput.isVisible, isFalse);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'search');
+    expect(_sheet(tester).isAtMax, isTrue);
+  });
+
+  testWidgets('clearing the search keeps it ready to type', (tester) async {
+    await _pumpApp(tester);
+    await tester.tap(find.byType(SearchBar));
+    await tester.enterText(find.byType(TextField), 'space ne');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pumpAndSettle();
+    expect(_sheet(tester).isAtMax, isTrue, reason: 'it has results');
+
+    await tester.tap(find.byTooltip('Clear'));
+    await tester.pumpAndSettle();
+    expect(find.text('Space Needle'), findsNothing);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'search');
+    expect(_sheet(tester).isAtMax, isTrue);
+  });
+
+  testWidgets('the sheet only peeks without focus or results, and never rests between', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+    final sheet = _sheet(tester);
+    final peek = sheet.extent;
+    // Nothing to pull up to.
+    await tester.tapAt(Offset(200, 800 - peek + 4));
+    await tester.pumpAndSettle();
+    expect(sheet.extent, moreOrLessEquals(peek));
+
+    await tester.tap(find.byType(SearchBar));
+    await tester.pumpAndSettle();
+    expect(sheet.isAtMax, isTrue);
+
+    // Pulled partway down, it settles at one end or the other.
+    final gesture = await tester.startGesture(Offset(200, 800 - sheet.extent + 12));
+    await gesture.moveBy(const Offset(0, 300));
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(sheet.isAtMax || (sheet.extent - peek).abs() < 1, isTrue, reason: '${sheet.extent}');
+
+    // With nothing to show, it goes back to peeking.
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pumpAndSettle();
+    expect(sheet.extent, moreOrLessEquals(peek));
   });
 
   group('closing a place partly pulled up', () {

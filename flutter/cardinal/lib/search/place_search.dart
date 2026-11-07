@@ -22,6 +22,9 @@ class PlaceSearch extends ChangeNotifier {
   /// Results near here rank higher.
   LngLat? focus;
 
+  /// What the map shows, which says how much nearness counts.
+  Viewport? viewport;
+
   /// The text the results are for, or will be once they arrive.
   String get text => _text;
   String _text = '';
@@ -79,6 +82,7 @@ class PlaceSearch extends ChangeNotifier {
       results = await _geocoder.search(
         text,
         focus: focus,
+        viewport: viewport,
         lang: lang,
         prefix: true,
         typos: true,

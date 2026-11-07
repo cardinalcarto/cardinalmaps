@@ -17,6 +17,9 @@ class GeocoderException implements Exception {
 }
 
 /// Cardinal's geocoder (airmail's `/v1` API; see `airmail_service/openapi.yaml`).
+/// What the map shows, in degrees.
+typedef Viewport = ({double west, double south, double east, double north});
+
 class Geocoder {
   Geocoder(this.base, {http.Client? client}) : _client = client ?? http.Client();
 
@@ -32,6 +35,7 @@ class Geocoder {
   Future<List<Place>> search(
     String query, {
     LngLat? focus,
+    Viewport? viewport,
     String? lang,
     bool prefix = false,
     bool typos = false,
@@ -44,6 +48,8 @@ class Geocoder {
       if (prefix) 'prefix': 'true',
       if (typos) 'typos': 'true',
       if (focus != null) 'focus': '${focus.lon},${focus.lat}',
+      if (viewport != null)
+        'viewport': '${viewport.west},${viewport.south},${viewport.east},${viewport.north}',
       if (limit != null) 'limit': '$limit',
     }, abort);
     return [for (final r in json['results'] as List<Object?>) placeFromResult(r as _Json)];
