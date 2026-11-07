@@ -16,7 +16,7 @@ use icu_properties::CodePointMapData;
 
 /// Identifies the rules below. Deployments with different rulesets assign
 /// different identifiers, so the database records which one it was built with.
-pub const RULESET_VERSION: i32 = 2;
+pub const RULESET_VERSION: i32 = 3;
 
 pub type Tags = BTreeMap<String, String>;
 
@@ -68,17 +68,75 @@ const OPERATOR_NAMED: [((&str, &str), &[&str]); 3] = [
     (("amenity", "parcel_locker"), &["operator"]),
 ];
 
+/// Tags that make an element a POI without any name, since people look for
+/// them whatever they're called. Businesses aren't here: without a name, there's
+/// no telling when a new one moves in. Sorted. `stable_ids` doesn't mirror these:
+/// it measures the rules for named places.
+const UNNAMED_POI_TAGS: [(&str, &str); 49] = [
+    ("amenity", "atm"),
+    ("amenity", "bbq"),
+    ("amenity", "bench"),
+    ("amenity", "bicycle_parking"),
+    ("amenity", "bicycle_rental"),
+    ("amenity", "bicycle_repair_station"),
+    ("amenity", "charging_station"),
+    ("amenity", "compressed_air"),
+    ("amenity", "drinking_water"),
+    ("amenity", "fountain"),
+    ("amenity", "parcel_locker"),
+    ("amenity", "post_box"),
+    ("amenity", "public_bookcase"),
+    ("amenity", "recycling"),
+    ("amenity", "sanitary_dump_station"),
+    ("amenity", "shelter"),
+    ("amenity", "telephone"),
+    ("amenity", "toilets"),
+    ("amenity", "water_point"),
+    ("emergency", "defibrillator"),
+    ("emergency", "phone"),
+    ("highway", "bus_stop"),
+    ("highway", "emergency_access_point"),
+    ("highway", "rest_area"),
+    ("highway", "trailhead"),
+    ("historic", "memorial"),
+    ("historic", "monument"),
+    ("leisure", "dog_park"),
+    ("leisure", "firepit"),
+    ("leisure", "fitness_station"),
+    ("leisure", "picnic_table"),
+    ("leisure", "playground"),
+    ("leisure", "slipway"),
+    ("man_made", "water_tap"),
+    ("man_made", "water_well"),
+    ("natural", "cave_entrance"),
+    ("natural", "hot_spring"),
+    ("natural", "peak"),
+    ("natural", "saddle"),
+    ("natural", "spring"),
+    ("railway", "subway_entrance"),
+    ("tourism", "alpine_hut"),
+    ("tourism", "artwork"),
+    ("tourism", "camp_site"),
+    ("tourism", "caravan_site"),
+    ("tourism", "information"),
+    ("tourism", "picnic_site"),
+    ("tourism", "viewpoint"),
+    ("tourism", "wilderness_hut"),
+];
+
 /// Every key in [`OPERATOR_NAMED`] that can name a POI.
 const OPERATOR_NAME_KEYS: [&str; 2] = ["operator", "network"];
 
-/// True if these tags describe a named POI.
+/// True if these tags describe a POI: a named element with a POI tag, or one
+/// that doesn't need a name.
 pub fn is_poi<'a>(tags: impl IntoIterator<Item = (&'a str, &'a str)>) -> bool {
-    let (mut named, mut poi) = (false, false);
+    let (mut named, mut poi, mut unnamed) = (false, false, false);
     let mut operator_named = None;
     let mut operator_keys = [false; OPERATOR_NAME_KEYS.len()];
     for (key, value) in tags {
         named |= key == "name" || key == "brand";
         poi |= is_poi_tag(key, value);
+        unnamed |= UNNAMED_POI_TAGS.binary_search(&(key, value)).is_ok();
         if let Some(i) = OPERATOR_NAMED.iter().position(|&(tag, _)| tag == (key, value)) {
             operator_named = Some(i);
         }
@@ -89,7 +147,7 @@ pub fn is_poi<'a>(tags: impl IntoIterator<Item = (&'a str, &'a str)>) -> bool {
     named |= operator_named.is_some_and(|i| {
         OPERATOR_NAMED[i].1.iter().any(|key| operator_keys[OPERATOR_NAME_KEYS.iter().position(|k| k == key).unwrap()])
     });
-    named && poi
+    (named && poi) || unnamed
 }
 
 /// True for keys that make a named element a POI whatever their value.
@@ -132,6 +190,16 @@ fn normalized_name(tags: &Tags) -> String {
 fn operator_name(tags: &Tags) -> Option<&str> {
     let (_, keys) = OPERATOR_NAMED.iter().find(|&&((k, v), _)| tags.get(k).is_some_and(|value| value == v))?;
     keys.iter().find_map(|&key| tags.get(key)).map(String::as_str)
+}
+
+/// True if nothing names this POI: no name, brand or naming operator.
+fn is_nameless(tags: &Tags) -> bool {
+    !tags.contains_key("name") && !tags.contains_key("brand") && operator_name(tags).is_none()
+}
+
+/// The tags that say what a POI is when it has no name.
+fn unnamed_kind(tags: &Tags) -> Vec<(&'static str, &'static str)> {
+    UNNAMED_POI_TAGS.iter().filter(|&&(k, v)| tags.get(k).is_some_and(|value| value == v)).copied().collect()
 }
 
 /// Normalized translations, transliterations and other names of a place.
@@ -208,7 +276,14 @@ fn brand_changed(a: &Tags, b: &Tags) -> bool {
 /// place as long as its operator is, so adding or removing a name, such as
 /// "Ladesäule Kaiserdamm" on a charging station operated by Allego, doesn't
 /// change its identity.
+///
+/// A version with no name has only its top-level tags to go by, such as
+/// `amenity=drinking_water` becoming `amenity=fountain`. A name added later is
+/// judged as below, where an empty name is similar to any name.
 pub fn same_place(a: &Tags, b: &Tags) -> bool {
+    if is_nameless(b) {
+        return unnamed_kind(a) == unnamed_kind(b);
+    }
     let has_name = |tags: &Tags| tags.contains_key("name") || tags.contains_key("brand");
     if (!has_name(a) || !has_name(b))
         && let (Some(oa), Some(ob)) = (operator_name(a), operator_name(b))
@@ -392,9 +467,60 @@ mod tests {
         assert!(is_poi([("amenity", "charging_station"), ("operator", "Allego")]));
         assert!(is_poi([("amenity", "parcel_locker"), ("operator", "DHL")]));
         assert!(is_poi([("network", "Cash Group"), ("amenity", "atm")]));
-        assert!(!is_poi([("amenity", "charging_station"), ("network", "X")]));
         assert!(!is_poi([("amenity", "waste_basket"), ("operator", "BSR")]));
         assert!(!is_poi([("power", "substation"), ("operator", "Stromnetz Berlin")]));
+    }
+
+    #[test]
+    fn some_pois_need_no_name() {
+        assert!(UNNAMED_POI_TAGS.is_sorted());
+        assert!(is_poi([("amenity", "charging_station")]));
+        assert!(is_poi([("amenity", "drinking_water")]));
+        assert!(is_poi([("natural", "spring")]));
+        assert!(!is_poi([("amenity", "cafe")]));
+        assert!(!is_poi([("building", "yes")]));
+        assert!(!is_poi([("natural", "tree")]));
+        // The same value under another key isn't enough.
+        assert!(!is_poi([("shop", "drinking_water")]));
+    }
+
+    #[test]
+    fn nameless_pois_are_the_same_place_while_their_top_level_tag_is() {
+        let water = tags([("amenity", "drinking_water")]);
+        // Other tags, top-level or not, can change freely.
+        assert!(same_place(&water, &tags([("amenity", "drinking_water"), ("bottle", "yes")])));
+        assert!(same_place(&water, &tags([("amenity", "drinking_water"), ("building", "yes")])));
+        // A change of what it is makes it another place.
+        assert!(!same_place(&water, &tags([("amenity", "fountain")])));
+        assert!(!same_place(&water, &tags([("amenity", "drinking_water"), ("natural", "spring")])));
+    }
+
+    #[test]
+    fn naming_a_nameless_poi_uses_the_name_rules() {
+        let water = tags([("amenity", "drinking_water")]);
+        let named = tags([("amenity", "drinking_water"), ("name", "Pioneer Fountain")]);
+        assert!(same_place(&water, &named));
+        // Once it's named, renames are judged as for any other POI.
+        assert!(!same_place(&named, &tags([("amenity", "drinking_water"), ("name", "Rainier Spring")])));
+    }
+
+    #[test]
+    fn removing_a_name_compares_top_level_tags() {
+        let named = tags([("amenity", "drinking_water"), ("name", "Pioneer Fountain")]);
+        assert!(same_place(&named, &tags([("amenity", "drinking_water")])));
+        assert!(!same_place(&named, &tags([("amenity", "fountain")])));
+        // A closed cafe isn't a drinking fountain just because it lost its name.
+        assert!(!same_place(&tags([("amenity", "cafe"), ("name", "Joe's")]), &tags([("amenity", "drinking_water")])));
+    }
+
+    #[test]
+    fn nameless_chargers_follow_their_operator_once_they_have_one() {
+        let charger = tags([("amenity", "charging_station")]);
+        let allego = tags([("amenity", "charging_station"), ("operator", "Allego")]);
+        let ionity = tags([("amenity", "charging_station"), ("operator", "Ionity")]);
+        assert!(same_place(&charger, &allego));
+        assert!(same_place(&allego, &charger));
+        assert!(!same_place(&allego, &ionity));
     }
 
     #[test]

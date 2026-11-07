@@ -13,7 +13,9 @@ scope; that churn is accepted.
 
 ## The rules
 
-`same_place_label` in `stable_ids/poi_tags.py` mirrors the Rust rules:
+`same_place_label` in `stable_ids/poi_tags.py` mirrors the Rust rules for named
+places (`UNNAMED_POI_TAGS` is only in Rust, and this tooling doesn't run in
+production):
 
 - **Same:** the name is unchanged, respelled (typos, punctuation, added or
   removed words), or switched to one of the place's translations or other

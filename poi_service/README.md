@@ -10,14 +10,17 @@ A POI is an element with a `name` or `brand` and any
 [top-level key](https://wiki.openstreetmap.org/wiki/Top-level_tag) that isn't
 about transportation infrastructure, such as `amenity`, `shop`, `building`,
 `natural`, `place` or `public_transport`, or a specific tag such as
-`highway=bus_stop` (`POI_KEYS` and `POI_TAGS` in `src/rules.rs` list them).
+`highway=bus_stop` (`POI_KEYS` and `POI_TAGS` in `src/rules.rs` list them). Some
+tags, like `amenity=drinking_water` and `amenity=charging_station`, make an
+element a POI with no name at all (`UNNAMED_POI_TAGS`).
 Each POI version belongs to an identity:
 
 - A new POI starts a new identity.
 - A POI version keeps its element's identity if the rules in `src/rules.rs`
   say it's the same place as the element's last POI version (similar name, or
   one of its translations or other names, and no brand switch alongside a
-  rename). Otherwise it starts a new one.
+  rename, or with no name, the same `UNNAMED_POI_TAGS` tags). Otherwise it
+  starts a new one. A name added to a nameless POI keeps its identity.
 - Versions that are deleted or aren't POIs (e.g. `disused:shop`) don't end an
   identity: if the element becomes a POI again, it's compared against its last
   POI version.
