@@ -1,13 +1,19 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sparkle/sparkle.dart';
 
 import '../config.dart';
+import '../routes.dart';
 import '../sheet/sheet.dart';
+import '../store/store.dart';
+import 'poi.dart';
 import 'selection.dart';
 
 /// Provides the map's controller to the widgets below it.
@@ -37,6 +43,7 @@ class CardinalMap extends StatefulWidget {
 
 class _CardinalMapState extends State<CardinalMap> {
   late final Future<List<String>> _args = _mapArgs();
+  late final Future<Map<int, WofArea>> _wofAreas = _loadWofAreas();
   Object? _error;
   SheetController? _sheet;
 
@@ -66,6 +73,30 @@ class _CardinalMapState extends State<CardinalMap> {
     widget.controller.setPadding(EdgeInsets.only(top: MediaQuery.paddingOf(context).top) + covered);
   }
 
+  /// Opens the card of the POI [features] has first, as a search result does: stores
+  /// what the map knows about it and goes to its ID.
+  Future<void> _openPoi(List<ClickedFeature> features) async {
+    final poi = features.where((f) => f.sourceLayer == poiLayer).firstOrNull;
+    if (poi == null) return;
+    // Now, while the tile is sure to be loaded: it names the smaller areas.
+    final inTile = <int, WofArea>{};
+    for (final MapEntry(key: placetype, value: id) in poiAdmins(poi.properties).entries) {
+      if (namedInApp.contains(placetype)) continue;
+      final names = widget.controller.featureBeside(poi, adminsLayer, id)?[adminNames];
+      if (names != null) inTile[id] = WofArea(jsonDecode(names) as Map<String, Object?>);
+    }
+    final inApp = await _wofAreas;
+    if (!mounted) return;
+    final place = placeFromPoi(
+      poi,
+      lang: PlatformDispatcher.instance.locale.languageCode,
+      area: (placetype, id) => namedInApp.contains(placetype) ? inApp[id] : inTile[id],
+    );
+    await StoreScope.of(context).places.put(place);
+    if (!mounted) return;
+    openPlaceFromMap(GoRouter.of(context), place.id);
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -89,11 +120,27 @@ class _CardinalMapState extends State<CardinalMap> {
             args: args,
             controller: widget.controller,
             onError: (e) => setState(() => _error = e),
+            onFeaturesClicked: _openPoi,
           );
         },
       ),
     );
   }
+}
+
+/// The names of the large areas that tiles leave out, from `tool/wof_areas.py`.
+Future<Map<int, WofArea>> _loadWofAreas() async {
+  // Gzipped, but not named `.gz`: Android's packaging would take that off its name.
+  final data = await rootBundle.load('assets/map/wof_areas.jsongz');
+  return compute(_decodeWofAreas, data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+}
+
+Map<int, WofArea> _decodeWofAreas(Uint8List compressed) {
+  final areas = jsonDecode(utf8.decode(gzip.decode(compressed))) as Map<String, Object?>;
+  return {
+    for (final MapEntry(:key, :value) in areas.entries)
+      int.parse(key): WofArea(value as Map<String, Object?>),
+  };
 }
 
 /// The bundled map assets, which sparkle reads from files.

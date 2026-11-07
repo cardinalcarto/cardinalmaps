@@ -13,6 +13,20 @@ import 'sheet/sheet.dart';
 /// parameter is the ID again.
 String placeLocation(String id) => '/place/${Uri.encodeComponent(id)}';
 
+/// Shows the place with [id], tapped on the map. It takes the place of a place card
+/// already open, so that going back leaves the map's places all at once.
+void openPlaceFromMap(GoRouter router, String id) {
+  final location = placeLocation(id);
+  // Of the page on top: a pushed page isn't in the router's configuration's URI.
+  final current = router.state.uri.toString();
+  if (current == location) return;
+  if (current.startsWith('/place/')) {
+    router.pushReplacement(location);
+  } else {
+    router.push(location);
+  }
+}
+
 /// The app's routes: sheet pages over the map.
 ///
 /// The app restores where it was (see `MainApp`): routes carry only IDs, and what they

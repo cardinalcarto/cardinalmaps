@@ -123,8 +123,8 @@ class AdminRef {
 
 /// A place with its own screen: a POI, an address or an administrative area.
 ///
-/// What's known about a place depends on where it came from: a map pin knows its center
-/// and some tags, a search result also knows its shape, address and admins. Null fields
+/// What's known about a place depends on where it came from: a map pin knows its center,
+/// address, admins and some tags, and a search result also knows its shape. Null fields
 /// are unknown, and [merge] fills them in from what's already stored.
 class Place {
   const Place({
