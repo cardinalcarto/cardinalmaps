@@ -567,7 +567,8 @@ impl CategoryModel {
         QueryCategories {
             categories: categories
                 .into_iter()
-                .filter(|(_, p)| *p >= t.categories)
+                // What a building is built as isn't what's in it.
+                .filter(|(c, p)| *p >= t.categories && !c.starts_with("building"))
                 .collect(),
             food,
             cuisines,

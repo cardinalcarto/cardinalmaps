@@ -43,6 +43,10 @@ struct Args {
     #[arg(long, env = "AIRMAIL_CATEGORY_INCLUDE_THRESHOLD", default_value_t = DEFAULT_INCLUDE_THRESHOLD)]
     category_include_threshold: f32,
 
+    /// Search with `airmail::plan` unless a request says otherwise.
+    #[arg(long, env = "AIRMAIL_PLANNED_SEARCH")]
+    planned_search: bool,
+
     /// Cors origins to allow
     #[arg(
         short,
@@ -82,6 +86,7 @@ async fn main() -> Result<()> {
         index,
         categories,
         category_include_threshold: args.category_include_threshold,
+        planned_search: args.planned_search,
         schema_version: index::schema_version(std::path::Path::new(&args.index))?,
         documents,
     });

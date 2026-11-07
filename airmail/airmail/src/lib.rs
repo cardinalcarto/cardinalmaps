@@ -14,6 +14,7 @@ pub mod geometry;
 pub mod importance;
 pub mod index;
 pub mod interpret;
+pub mod plan;
 pub mod poi;
 pub mod query;
 pub mod spelling;

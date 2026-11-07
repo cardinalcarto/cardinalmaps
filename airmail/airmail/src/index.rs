@@ -186,7 +186,7 @@ const FOCUS_WEIGHT: f32 = 1.5;
 const FOCUS_SCALE_KM: f64 = 5.0;
 const REGION_WEIGHT: f32 = 0.75;
 const REGION_SCALE_KM: f64 = 300.0;
-const EARTH_RADIUS_KM: f64 = 6371.0088;
+pub(crate) const EARTH_RADIUS_KM: f64 = 6371.0088;
 
 /// Which fields `AirmailIndex::text_query_in` matches words in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -473,7 +473,7 @@ impl AirmailIndex {
     }
 
     /// The words of `text` as the name field indexes them.
-    fn tokens(&self, text: &str) -> Vec<String> {
+    pub(crate) fn tokens(&self, text: &str) -> Vec<String> {
         let mut analyzer = self.tantivy_index.tokenizer_for_field(self.field(FIELD_NAME)).expect("tokenizer");
         let mut tokens = Vec::new();
         let normalized = normalize_text(text);
@@ -520,16 +520,26 @@ impl AirmailIndex {
     /// last word may be unfinished.
     #[must_use]
     pub fn interpret(&self, text: &str, prefix: bool, focus: Option<[f64; 2]>) -> Option<(Vec<String>, Vec<airmail_tagger::Interpretation>)> {
-        let tagger = self.tagger.as_ref()?;
+        let (words, readings) = self.tagged(text, prefix, focus, MAX_INTERPRETATIONS, INTERPRETATION_COVERAGE);
+        Some((words, readings?))
+    }
+
+    /// The query's words, and the tagger's likeliest readings of them if
+    /// there's a tagger, until together they're at least `coverage` likely or
+    /// there are `max` of them.
+    pub(crate) fn tagged(&self, text: &str, prefix: bool, focus: Option<[f64; 2]>, max: usize, coverage: f64) -> (Vec<String>, Option<Vec<airmail_tagger::Interpretation>>) {
         let words = self.query_words(text);
-        let prefix = prefix && !text.ends_with(char::is_whitespace);
-        let mut query = airmail_tagger::tagger::query(text, prefix, focus);
-        if query.words.len() != words.words.len() {
-            return None;
-        }
-        query.words.clone_from(&words.words);
-        let areas = airmail_tagger::features::Gazetteer::areas(&crate::gazetteer::IndexGazetteer::new(self).ok()?, &query);
-        Some((words.words, tagger.interpret(&query, &areas, MAX_INTERPRETATIONS, INTERPRETATION_COVERAGE)))
+        let readings = self.tagger.as_ref().and_then(|tagger| {
+            let prefix = prefix && !text.ends_with(char::is_whitespace);
+            let mut query = airmail_tagger::tagger::query(text, prefix, focus);
+            if query.words.len() != words.words.len() {
+                return None;
+            }
+            query.words.clone_from(&words.words);
+            let areas = airmail_tagger::features::Gazetteer::areas(&crate::gazetteer::IndexGazetteer::new(self).ok()?, &query);
+            Some(tagger.interpret(&query, &areas, max, coverage))
+        });
+        (words.words, readings)
     }
 
     /// The interpretations of a request's query: given, or made.
@@ -541,7 +551,7 @@ impl AirmailIndex {
     }
 
     /// Matches one query word in one field.
-    fn word_query(&self, field: &str, word: &str, prefix: bool, typos: bool) -> Box<dyn Query> {
+    pub(crate) fn word_query(&self, field: &str, word: &str, prefix: bool, typos: bool) -> Box<dyn Query> {
         let term = Term::from_field_text(self.field(field), word);
         let distance = match (typos, prefix) {
             (false, _) => 0,
@@ -576,6 +586,11 @@ impl AirmailIndex {
     /// Requires every word of the query, each in some text field, and ranks
     /// phrase and exact name matches higher. Also returns the per-word
     /// queries, for ranking category matches.
+    /// Every word in some text field.
+    pub(crate) fn any_field_query(&self, tokens: &[String], prefix: bool, typos: bool) -> Box<dyn Query> {
+        self.text_query(tokens, prefix, typos).all
+    }
+
     fn text_query(&self, tokens: &[String], prefix: bool, typos: bool) -> TextQueries {
         self.text_query_in(tokens, prefix, typos, Fields::All)
     }
@@ -703,7 +718,7 @@ impl AirmailIndex {
     }
 
     /// Matches documents whose covering intersects the S2 cells.
-    fn covering_query(&self, cells: &[s2::cellid::CellID]) -> Box<dyn Query> {
+    pub(crate) fn covering_query(&self, cells: &[s2::cellid::CellID]) -> Box<dyn Query> {
         let mut inside = BTreeSet::new();
         let mut containing = BTreeSet::new();
         for cell in cells {
@@ -1386,6 +1401,12 @@ fn lines(geometry: &Geometry<f64>) -> Vec<geo::LineString<f64>> {
 /// of a same-named area containing it, since `zurich` usually means the city
 /// rather than the canton.
 fn rerank_admins(hits: &mut Vec<SearchHit>) {
+    merge_duplicates(hits);
+    rerank_merged_admins(hits);
+}
+
+/// Merges a street's pieces and drops areas entered twice.
+pub(crate) fn merge_duplicates(hits: &mut Vec<SearchHit>) {
     merge_street_pieces(hits);
     let key = |hit: &SearchHit| hit.wof.as_ref().map(|w| (normalize_text(&w.default_name).to_lowercase(), w.placetype.clone()));
     let mut kept: Vec<SearchHit> = Vec::with_capacity(hits.len());
@@ -1399,7 +1420,9 @@ fn rerank_admins(hits: &mut Vec<SearchHit>) {
         }
     }
     *hits = kept;
+}
 
+fn rerank_merged_admins(hits: &mut Vec<SearchHit>) {
     // Its default and English names, so the city Luzern matches the canton
     // whose default name is Lucerne. Not every language's: some
     // neighbourhoods' preferred names in some languages are their city's.

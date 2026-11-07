@@ -36,7 +36,7 @@ def understand(models: dict, meta: dict, parents: dict, query: str) -> dict:
     implied = {a for c in cuisines for a in with_ancestors([c], parents) if a != c}
     diets = probs(models["diet"], query)
     return {
-        "categories": sorted((c for c, p in cats.items() if p >= t["categories"]), key=lambda c: -cats[c]),
+        "categories": sorted((c for c, p in cats.items() if p >= t["categories"] and not c.startswith("building")), key=lambda c: -cats[c]),
         "best_category": max(cats, key=cats.get),
         "food": food,
         "cuisines": sorted(c for c in cuisines if c not in implied),

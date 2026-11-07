@@ -199,6 +199,7 @@ fn state() -> Arc<AppState> {
             index,
             categories: CategoryModels::default(),
             category_include_threshold: 0.4,
+            planned_search: false,
             schema_version: SCHEMA_VERSION,
             documents: 13,
         });
@@ -384,6 +385,29 @@ async fn prefix_and_typos_are_separate() {
     assert!(search("q=seatle").await.is_empty());
     assert!(search("q=seatle&prefix=true").await.is_empty());
     assert_eq!(ids(&search("q=seatle&typos=true").await)[0], "wof:101730401");
+}
+
+#[tokio::test]
+async fn a_space_finishes_the_last_word() {
+    assert_eq!(ids(&search("q=seattle%20cof&prefix=true").await)[0], "poi:28349");
+    assert!(search("q=seattle%20cof%20&prefix=true").await.is_empty());
+}
+
+#[tokio::test]
+async fn planned_search_finds_names_and_requires_every_word() {
+    assert_eq!(ids(&search("q=seattle&engine=planned").await)[0], "wof:101730401");
+    assert_eq!(ids(&search("q=seattle%20cof&engine=planned&prefix=true").await), ["poi:28349"]);
+    assert!(search("q=seatle&engine=planned").await.is_empty());
+    assert_eq!(ids(&search("q=seatle&engine=planned&typos=true").await)[0], "wof:101730401");
+    assert!(search("q=seattle&engine=planned&limit=1").await.len() == 1);
+}
+
+#[tokio::test]
+async fn viewport_and_location_are_validated() {
+    let (status, _, body) = get("/v1/search?q=a&viewport=1,2,3&location=x&engine=z").await;
+    assert_eq!(status, 400);
+    let names: Vec<&str> = body["invalid_params"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
+    assert!(["viewport", "location", "engine"].iter().all(|name| names.contains(name)), "{names:?}");
 }
 
 #[tokio::test]
