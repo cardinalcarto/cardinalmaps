@@ -222,6 +222,43 @@ Ferrostar sums these into its annotations).
 On the oracle corpora (see `tools/oracle/README.md`), every trip matches mainline's exactly,
 apart from paths that tie at equal cost.
 
+## The router and the server
+
+`valinor-router` is mainline's whole server in one process.
+`Router::handle` takes an HTTP request (method, target, content type, and body)
+and runs the front and Loki (`valinor_loki::handle_request`),
+Thor's worker (path search with a pooled `Workspace`, then trip building),
+and Odin's (narration and Tyr), as the staged chain does, and answers with what mainline sends:
+the status, content type, GPX disposition, and body, with errors in the request's format.
+Actions Valinor doesn't have yet are error 107, as in the Thor worker.
+`Router::route` is `POST /route` with a body, the one function the app calls.
+
+- **Tile sets.** `Router::open` takes one or more `build_extract` tarballs or tile directories
+  as one tile set: the first set that has a tile supplies it, and a tile no set has is
+  the edge of the graph, as in mainline. Sets from different builds are refused:
+  the build ID in each tile header's `checksum` must be the same in every tile read,
+  which is every tile of a set of up to 4096 tiles (any region) and 4096 spread across a
+  larger one (a planet), reading only headers. Opening a tarball maps it and reads its index.
+- **Tile handles.** Tarball tiles are validated on first use and kept as references into the
+  map, which the stages copy freely; an `Arc` per lookup, or a shared LRU's lock, made
+  concurrent routes slower than one (see `valinor-router`'s `tiles` module).
+- **Concurrency.** `Router` is `Send` and `Sync`; requests run on the caller's threads,
+  and path searches take workspaces from a bounded pool (`RouterConfig::workspaces`).
+- **Interrupts.** `handle_interruptible` stops path search and trip building when asked
+  (every 5000 iterations, as mainline); Loki and Odin, which take milliseconds, don't check.
+
+`valinor-server` serves the router over HTTP (axum), at Valhalla's paths with GET `?json=`
+and POST: `valinor-server --config <valhalla.json> [--tiles <set>...] --listen <addr:port>`.
+Without `--tiles`, it opens `mjolnir.tile_extract` relative to the config's directory.
+Routing runs on a blocking pool behind a semaphore sized to the workspaces,
+with a request timeout (504, which interrupts the search, as a client going away does)
+and a body limit (413). `/status` doesn't wait for a worker, since it is the health probe.
+It adds `Access-Control-Allow-Origin: *` to every response and answers methods
+`prime_server` doesn't parse with its bare 501, as mainline's server does.
+
+`valinor-router`'s `capture_tests` send every Andorra capture in `valinor-tyr/fixtures` through
+the router; the end-to-end runs of `valinor-server` are in `tools/oracle/README.md`.
+
 ## The oracle
 
 Reference data comes from mainline 3.9.1 running in stages,

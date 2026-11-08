@@ -1,8 +1,9 @@
-# On-device routing API (proposal)
+# On-device routing API
 
 How the Cardinal app calls the router offline, through flutter_rust_bridge.
-This is a proposal: nothing here is built yet,
-and the open questions at the end need decisions before it is.
+It is built: `crates/routing_flutter` (the bindings over `valinor-router`)
+and the `flutter/routing` plugin, whose test routes a Ferrostar body over the Andorra fixture.
+The app doesn't use it yet.
 
 ## How Ferrostar asks for routes
 
@@ -32,7 +33,7 @@ and online and offline routing differ only in transport.
 
 ```rust
 /// Opaque to Dart. Thread-safe: concurrent requests are fine.
-pub struct OfflineRouter { /* valinor-router over a CachingTileProvider */ }
+pub struct OfflineRouter { /* a valinor-router */ }
 
 impl OfflineRouter {
     /// Opens tile sets (mainline `build_extract` tarballs or tile directories).
@@ -91,6 +92,23 @@ The ZeroMQ workers remain for splicing stages into the mainline oracle.
   and a device opens all of its regions as one router.
   The router refuses to mix builds (the build ID in each tile's checksum).
   When one region is updated, the others need the same build.
+
+## As built
+
+- `OpenError` has a `kind` (`NoTileSets`, `Unreadable`, `NoBuildId`, or `MixedBuilds`)
+  and a `message` naming the file and tile; Dart sees it as an exception from `open`.
+  `MixedBuilds` is the one that means "download the other regions again".
+- `open` is not `#[frb(sync)]` either: it maps each tarball, reads its index,
+  and reads up to 4096 tile headers per set for the build check (every tile of a region).
+- Two routes run at once on a device; more calls wait.
+  Each running route keeps its search storage, which grows with the largest search it ran.
+- The router's configuration is mainline's defaults (service limits included),
+  since a device has no `valhalla.json`.
+- `valhalla-graphtile` builds with no special `--cfg` (cargokit's Android builds set their
+  own `RUSTFLAGS`, which replace a cargo config's).
+- iOS links the static library through cargokit's `build_pod.sh` and `-force_load`
+  (see `flutter/routing/ios/routing.podspec`), as `flutter/sparkle` does; it can't be
+  built on Linux, so it is untested.
 
 ## Open questions
 

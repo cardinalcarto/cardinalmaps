@@ -503,3 +503,41 @@ tools/oracle/check-passthrough.sh <build-dir> tools/oracle/corpus/andorra.json <
 ```
 
 On the Andorra build and corpus, all 41 responses and all 34 Thor→Odin messages match.
+
+## The whole router (`valinor-server`)
+
+`valinor-server` runs every stage in one process (see "The router and the server" in
+`docs/routing.md`), so it has no taps: capture its responses with an empty tap directory,
+and compare them with full mainline's using `compare-runs.py --responses-only --pbf`
+(PBF responses are compared apart from their statistics).
+The baselines are full mainline captures: `n5-captures/{andorra,seattle}` for the shared corpora,
+`ferrostar/captures` for Ferrostar, and `n4/captures/{andorra,seattle}` for the Odin corpora
+(with `capture-pbf.py` for their `odin-trips-*` cases).
+
+```shell
+cargo build --release -p valinor-server
+target/release/valinor-server --config /mnt/maps/cardinal/valhalla-oracle/seattle/valhalla.json \
+  --tiles /mnt/maps/cardinal/valhalla-oracle/seattle/tiles.tar --listen 127.0.0.1:8413 &
+mkdir -p "$work/taps"
+python3 -I tools/oracle/capture.py tools/oracle/corpus/seattle.json "$work/taps" "$work/seattle" \
+  --url http://localhost:8413 --protos valhalla-proto/proto
+python3 -I tools/oracle/compare-runs.py /mnt/maps/cardinal/valhalla-oracle/n5-captures/seattle \
+  "$work/seattle" --protos valhalla-proto/proto --responses-only --pbf
+```
+
+The Andorra corpora run on `valhalla-graphtile/fixtures/andorra-tiles.tar` with
+`andorra-oracle/valhalla.json`. Every response matches but the documented divergences:
+
+| Corpus | JSON and OSRM | PBF | Differences |
+|---|---|---|---|
+| Andorra | 120 | 58 | 18 for the six costings Sif lacks (107), 2 approach alerts in miles |
+| Ferrostar | 7 | 8 | 1 approach alert in miles (the baseline also has `ferrostar_error_no_data`, no longer in the corpus) |
+| Odin Andorra | 82 | 43 | 17 approach alerts in miles |
+| Seattle | 23 | 11 | none |
+| Odin Seattle | 90 | 48 | 18 approach alerts in miles |
+
+The approach-alert responses differ only in `voiceInstructions`.
+Against mainline's `valhalla_service`, the HTTP behavior matches too (status, content type,
+GPX disposition, CORS, and bodies for bad methods, unknown paths, and bad bodies),
+apart from the PBF content type and the actions Valinor doesn't serve yet
+(`height`, `isochrone`, the matrices, `optimized_route`, and `centroid` are 107).
