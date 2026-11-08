@@ -1,0 +1,18 @@
+{
+  "action": "route",
+  "request": {
+    "locations": [
+      {
+        "lat": 42.505,
+        "lon": 1.52
+      },
+      {
+        "lat": 42.505,
+        "lon": 1.515
+      }
+    ],
+    "costing": "auto",
+    "language": "de-DE",
+    "units": "miles"
+  }
+}

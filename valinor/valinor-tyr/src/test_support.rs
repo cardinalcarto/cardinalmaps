@@ -39,7 +39,33 @@ impl Capture {
         format!("{}/{}", self.case, self.format)
     }
 
+    /// The exact HTTP request, for cases that describe one
+    /// (GET requests, extra query parameters, raw or PBF bodies, other methods;
+    /// see `tools/oracle/capture.py`).
+    ///
+    /// `None` for ordinary cases, which are a JSON body sent with `POST /<action>`
+    /// (see [`Capture::request`]).
+    pub(crate) fn http(&self) -> Option<HttpCapture> {
+        let request = read_json(&self.dir().join("request.json"));
+        let http = request.get("http")?;
+        let field = |name: &str| http[name].as_str().map(str::to_string);
+        let body = match (field("body"), field("body_file")) {
+            (Some(body), _) => body.into_bytes(),
+            (None, Some(file)) => fs::read(self.dir().join(file)).expect("request body file"),
+            (None, None) => Vec::new(),
+        };
+        Some(HttpCapture {
+            method: field("method").expect("http request has a method"),
+            target: field("target").expect("http request has a target"),
+            content_type: field("content_type"),
+            body,
+        })
+    }
+
     /// The captured HTTP request: its action and its JSON body.
+    ///
+    /// For cases with an exact [`Capture::http`] request, the body is the JSON the case
+    /// was built from (`null` for raw and PBF bodies), not necessarily what was sent.
     pub(crate) fn request(&self) -> (String, Value) {
         let mut request = read_json(&self.dir().join("request.json"));
         let action = request["action"]
@@ -86,6 +112,19 @@ impl Capture {
         let body = fs::read(self.dir().join("response.bin")).expect("response body");
         (status, body)
     }
+}
+
+/// An exact HTTP request a captured case sent (see [`Capture::http`]).
+#[derive(Debug, Clone)]
+pub(crate) struct HttpCapture {
+    /// The method, for example `GET`.
+    pub(crate) method: String,
+    /// The path and query, as sent.
+    pub(crate) target: String,
+    /// The `Content-Type` header, if one was set.
+    pub(crate) content_type: Option<String>,
+    /// The body.
+    pub(crate) body: Vec<u8>,
 }
 
 /// Every captured case in the given format, sorted by name.

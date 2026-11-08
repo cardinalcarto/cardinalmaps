@@ -1,0 +1,11 @@
+{
+  "action": "route",
+  "request": null,
+  "http": {
+    "method": "POST",
+    "body_file": "request.bin",
+    "target": "/route",
+    "content_type": "application/x-protobuf"
+  },
+  "pbf_text": "options { format: json action: route costing_type: pedestrian locations { ll { lat: 42.5078 lng: 1.5211 } } locations { ll { lat: 42.5074 lng: 1.5203 } } }"
+}

@@ -1,0 +1,1 @@
+{"status":400,"body":{"error_code":143,"error":"ignore_closures in costing and exclude_closures in search_filter cannot both be specified","status_code":400,"status":"Bad Request"}}

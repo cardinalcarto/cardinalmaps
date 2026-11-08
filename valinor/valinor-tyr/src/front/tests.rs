@@ -11,6 +11,7 @@ use crate::test_support::{Capture, captures};
 use ::http::Method;
 use alloc::string::String;
 use alloc::vec::Vec;
+use serde_json::Value;
 use valhalla_proto::costing::options::{HasFlowMask, HasIgnoreClosures, HasUseTolls};
 use valhalla_proto::costing::{HasFilterClosures, HasName, HasOptions, Type as CostingType};
 use valhalla_proto::lat_lng::{HasLat, HasLng};
@@ -164,6 +165,15 @@ fn strip_loki_options(reference: &mut Options, front: &Options) {
 }
 
 fn front_options(capture: &Capture) -> (Api, Result<(), ValhallaError>) {
+    if let Some(http) = capture.http() {
+        let method = Method::from_bytes(http.method.as_bytes()).expect("valid method");
+        return request(
+            &method,
+            &http.target,
+            http.content_type.as_deref(),
+            &http.body,
+        );
+    }
     let (action, body) = capture.request();
     let body = serde_json::to_string(&body).expect("serializable");
     post(&action, &body)
@@ -201,7 +211,8 @@ fn options_match_mainline() {
 /// A GET request with `?json=` gives the same options as the POST body.
 #[test]
 fn get_requests_match_post() {
-    for capture in captures("json") {
+    // Cases with an exact HTTP request are not a JSON body to resend.
+    for capture in captures("json").into_iter().filter(|c| c.http().is_none()) {
         let (action, body) = capture.request();
         let body = serde_json::to_string(&body).expect("serializable");
         let (post_api, post_result) = post(&action, &body);
@@ -219,26 +230,45 @@ fn captured_errors() {
         for capture in captures(format) {
             let name = capture.name();
             let (api, result) = front_options(&capture);
-            if capture.case.ends_with("error_unknown_costing") {
-                assert_eq!(
-                    result,
-                    Err(ValhallaError::with_detail(
-                        ErrorCode::UnknownCosting,
-                        "'spaceship'"
-                    )),
-                    "{name}"
-                );
-                // The format is already parsed, so the error is serialized in it.
-                let parsed_format = api.options.as_ref().map(|o| o.format);
-                let expected = match format {
-                    "osrm" => Format::Osrm,
-                    "pbf" => Format::Pbf,
-                    _ => Format::Json,
-                };
-                assert_eq!(parsed_format, Some(expected as i32), "{name}");
-            } else {
-                // 120 (one location) and 171 (no data) are Loki's errors.
+            if capture.loki_thor().is_some() {
                 assert_eq!(result, Ok(()), "{name}");
+                continue;
+            }
+            // Mainline failed before Thor; its Valhalla JSON error says with what.
+            // Exact-request cases capture only one format, which is JSON for every error case.
+            let json = Capture {
+                case: capture.case.clone(),
+                format: "json".to_string(),
+            };
+            let (_, body) = json.json_response();
+            // Loki answers `/locate` itself, so that succeeds without reaching Thor.
+            let Some(code) = body.get("error_code").and_then(Value::as_u64) else {
+                assert_eq!(result, Ok(()), "{name}");
+                continue;
+            };
+            let message = body["error"].as_str().expect("an error message");
+            match result {
+                Err(error) => {
+                    assert_eq!(u64::from(error.code().code()), code, "{name}");
+                    assert_eq!(error.message(), message, "{name}");
+                    if capture.http().is_none() {
+                        // The format is already parsed, so the error is serialized in it.
+                        let parsed_format = api.options.as_ref().map(|o| o.format);
+                        let expected = match format {
+                            "osrm" => Format::Osrm,
+                            "pbf" => Format::Pbf,
+                            _ => Format::Json,
+                        };
+                        assert_eq!(parsed_format, Some(expected as i32), "{name}");
+                    }
+                }
+                // These are Loki's errors: an action it does not offer (106), too few
+                // locations (120), no costing (124), too many locations (150),
+                // and no data near a location (171).
+                Ok(()) => assert!(
+                    [106, 120, 124, 150, 171].contains(&code),
+                    "{name}: the front accepted a request mainline refused with {code}"
+                ),
             }
         }
     }
@@ -259,10 +289,20 @@ fn pbf_requests_round_trip() {
         }
         let path = format!("/{}", capture.request().0);
         let mut options = api.options.clone().expect("options");
+        let mut had_ignore_closures = false;
+        let mut ignores_closures = false;
         for costing in options.costings.values_mut() {
             if let Some(HasOptions::Options(costing_options)) = costing.has_options.as_mut() {
-                costing_options.has_ignore_closures = None;
+                let ignore = costing_options.has_ignore_closures.take();
+                had_ignore_closures |= ignore.is_some();
+                ignores_closures |= ignore == Some(HasIgnoreClosures::IgnoreClosures(true));
             }
+        }
+        // A request that ignores closures cannot round-trip:
+        // without `ignore_closures` its locations would exclude closures again,
+        // and with it, the locations' `exclude_closures` conflict (143).
+        if ignores_closures {
+            continue;
         }
         let body = Api {
             options: Some(options.clone()),
@@ -274,6 +314,10 @@ fn pbf_requests_round_trip() {
         assert_eq!(pbf_api.options, api.options, "{}", capture.name());
 
         // With both set, mainline refuses the request.
+        // (Without a costing, as in a request mainline refuses with 124, there is nothing to set.)
+        if !had_ignore_closures {
+            continue;
+        }
         let body = Api {
             options: api.options.clone(),
             ..Api::default()

@@ -1,0 +1,17 @@
+{
+  "action": "route",
+  "request": {
+    "locations": [
+      {
+        "lat": 42.5425,
+        "lon": 1.7333
+      },
+      {
+        "lat": 42.55,
+        "lon": 1.748
+      }
+    ],
+    "costing": "auto",
+    "admin_crossings": true
+  }
+}

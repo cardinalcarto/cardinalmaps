@@ -1,0 +1,17 @@
+{
+  "action": "route",
+  "request": {
+    "locations": [
+      {
+        "lat": 42.505,
+        "lon": 1.515
+      },
+      {
+        "lat": 42.505,
+        "lon": 1.52
+      }
+    ],
+    "costing": "auto",
+    "directions_type": "maneuvers"
+  }
+}

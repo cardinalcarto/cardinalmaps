@@ -1,0 +1,1 @@
+{"status":405,"body":{"error_code":101,"error":"Try a POST or GET request instead","status_code":405,"status":"Method Not Allowed"}}

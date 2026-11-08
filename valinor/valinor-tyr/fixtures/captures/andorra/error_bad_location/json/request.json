@@ -1,0 +1,15 @@
+{
+  "action": "route",
+  "request": {
+    "locations": [
+      {
+        "lon": 1.5211
+      },
+      {
+        "lat": 42.5355,
+        "lon": 1.583
+      }
+    ],
+    "costing": "auto"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "action": "route",
+  "request": null,
+  "http": {
+    "method": "POST",
+    "body": "{\"locations\": [",
+    "target": "/route",
+    "content_type": null
+  }
+}
