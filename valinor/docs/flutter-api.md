@@ -67,18 +67,23 @@ pub struct RouterResponse {
   it turns an escaped panic into a Dart exception for non-sync functions,
   but not under `panic = "abort"`.
 
+## Decided: the router runs in process
+
+On the device, `valinor-router` calls the stage functions directly,
+inside the app's process, with no ZeroMQ.
+iOS doesn't let apps start child processes,
+so mainline's separate worker processes can't run there.
+Since Android 10, apps can't run executables from their writable storage either.
+Connecting threads with ZeroMQ inside one process would only add
+serialization at every stage boundary,
+and it would put the `zeromq` crate and tokio in the app.
+Parity with the server holds at the stage level,
+because the ZeroMQ workers wrap these same stage functions.
+ZeroMQ workers remain for the server and for splicing stages into the oracle.
+
 ## Open questions
 
-1. **ZeroMQ on the device.** We decided offline mode would talk to the router
-   over ZeroMQ `ipc://`. With flutter_rust_bridge, the router can run in process instead:
-   `valinor-router` calls the stage functions directly,
-   and those are the same functions the ZeroMQ workers wrap.
-   That keeps parity at the stage level,
-   and avoids putting the `zeromq` crate and tokio
-   (which `valhalla-microservice` depends on) in the app.
-   **Recommendation:** run in process on the device, and keep ZeroMQ for the server.
-   This reverses an earlier decision, so it's yours to make.
-2. **Where the bindings live.** The app should have one flutter_rust_bridge crate for routing,
+1. **Where the bindings live.** The app should have one flutter_rust_bridge crate for routing,
    since a second one carries a second bridge runtime. That crate will most likely be
    wherever Ferrostar's core gets bound for Flutter (Ferrostar has no Flutter SDK).
    If Ferrostar is bound in Rust next to the router,
@@ -86,13 +91,13 @@ pub struct RouterResponse {
    as a local route provider, and Dart never handles the blobs.
    **Recommendation:** keep `valinor-router` a plain library in `valinor/`,
    and decide where the bindings go as part of the Ferrostar integration.
-3. **Several offline regions.** Tiles where two regions meet only agree
+2. **Several offline regions.** Tiles where two regions meet only agree
    if both regions come from the same build.
    Every build restamps the build ID in every tile, so the ID is a reliable test.
    **Recommendation:** cut regions from one planet build,
    open all of a device's regions as one router (a tile can come from any of them),
    and refuse to mix builds.
    When a region is updated, the others need the same build.
-4. **Cancellation.** Ferrostar may supersede a reroute while it is still running.
+3. **Cancellation.** Ferrostar may supersede a reroute while it is still running.
    Loki doesn't check interrupts yet, and offline routes over region-sized graphs should be fast,
    so v1 has no cancellation. Adding a cancel token to `route` later is a compatible change.
