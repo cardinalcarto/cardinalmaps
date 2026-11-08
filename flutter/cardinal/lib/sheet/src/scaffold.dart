@@ -14,6 +14,8 @@ class SheetScaffold extends StatefulWidget {
     required this.body,
     required this.sheet,
     this.floating,
+    this.bottomBar,
+    this.bottomBarHeight = 56,
     this.controller,
     this.physics = const SheetPhysics(),
     this.dockedBreakpoint = 600,
@@ -31,6 +33,14 @@ class SheetScaffold extends StatefulWidget {
   /// Between [body] and the sheet: buttons that ride above the sheet, say. Fills the
   /// scaffold; a [SheetBuilder] can follow the sheet.
   final Widget? floating;
+
+  /// A bar along the bottom of the sheet, over it and the navigation bar, on the pages
+  /// that show it ([SheetContent.showsBottomBar]). It paints its own background behind
+  /// the navigation bar.
+  final Widget? bottomBar;
+
+  /// How tall [bottomBar] is over the navigation bar.
+  final double bottomBarHeight;
 
   /// Moves the sheet; the scaffold makes its own if null.
   final SheetController? controller;
@@ -56,12 +66,17 @@ class SheetScaffold extends StatefulWidget {
   /// Where the nearest sheet is, without listening for it to move.
   static SheetView viewOf(BuildContext context) {
     final scope = _SheetScope.of(context);
+    final entry = _SheetContentScope.maybeOf(context);
     return SheetView._(
       scope.controller,
-      scope.geometry,
-      _SheetContentScope.maybeOf(context),
+      entry?.geometry ?? scope.geometry,
+      entry,
     );
   }
+
+  /// How tall the nearest sheet's bottom bar is, 0 if it hasn't one.
+  static double bottomBarHeightOf(BuildContext context) =>
+      _SheetScope.of(context).bottomBarHeight;
 
   @override
   State<SheetScaffold> createState() => _SheetScaffoldState();
@@ -82,8 +97,13 @@ class _SheetScaffoldState extends State<SheetScaffold>
   /// The content of the current page, which the sheet's anchors come from.
   _SheetEntry? _active;
 
-  /// The page transition the sheet is following: from [under] to [top].
-  ({_SheetEntry top, _SheetEntry? under})? _transition;
+  /// The page transition the sheet is following: from [under] to [top], or if there's
+  /// nothing under it, from where the sheet and bottom bar were when it began.
+  ({_SheetEntry top, _SheetEntry? under, double? extent, double bar})?
+  _transition;
+
+  /// How far the bottom bar is showing, from 0 (below the screen) to 1.
+  final _barShown = ValueNotifier<double>(0);
 
   bool _updateScheduled = false;
 
@@ -119,6 +139,7 @@ class _SheetScaffoldState extends State<SheetScaffold>
       _unlisten(entry, animation);
     }
     _ownController?.dispose();
+    _barShown.dispose();
     super.dispose();
   }
 
@@ -195,6 +216,7 @@ class _SheetScaffoldState extends State<SheetScaffold>
 
     if (top == null) {
       _setActive(current);
+      if (current != null) _barShown.value = current._barValue;
       if (_transition != null) {
         _transition = null;
         controller._endTransition(current?.memory ?? current?.initial);
@@ -225,14 +247,19 @@ class _SheetScaffoldState extends State<SheetScaffold>
       }
       top.memory ??= top.initial;
       under?.memory ??= under.initial;
-      _transition = (top: top, under: under);
+      _transition = (
+        top: top,
+        under: under,
+        extent: controller.hasExtent ? controller.extent : null,
+        bar: _barShown.value,
+      );
       controller._beginTransition();
     }
     _setActive(current ?? top);
 
     // Either page's anchors may not be laid out yet; until they are, hold still.
     final to = top.resting?.extent;
-    final from = under?.resting?.extent;
+    final from = under?.resting?.extent ?? _transition!.extent;
     final route = top.route!;
     final t = route is _SheetPageRoute
         ? route._arrival
@@ -241,6 +268,11 @@ class _SheetScaffoldState extends State<SheetScaffold>
         ? to
         : (to == null ? from : lerpDouble(from, to, t));
     if (extent != null) controller._follow(extent);
+    _barShown.value = lerpDouble(
+      under?._barValue ?? _transition!.bar,
+      top._barValue,
+      t,
+    )!;
   }
 
   void _setActive(_SheetEntry? entry) {
@@ -251,6 +283,7 @@ class _SheetScaffoldState extends State<SheetScaffold>
       entry.resolved,
       geometry.maxExtent,
       floor: geometry.keyboard,
+      draggable: entry.draggable,
     );
     if (!_controller.hasExtent && entry.resting != null) {
       _controller._place(entry.resting!);
@@ -289,6 +322,9 @@ class _SheetScaffoldState extends State<SheetScaffold>
           state: this,
           controller: controller,
           geometry: geometry,
+          bottomBarHeight: widget.bottomBar == null
+              ? 0
+              : widget.bottomBarHeight,
           color: color,
           child: _SystemBarsStyle(
             controller: controller,
@@ -341,6 +377,13 @@ class _SheetScaffoldState extends State<SheetScaffold>
                     ),
                   ),
                 ),
+                if (widget.bottomBar case final bar?)
+                  _BottomBar(
+                    shown: _barShown,
+                    geometry: geometry,
+                    height: widget.bottomBarHeight,
+                    child: bar,
+                  ),
               ],
             ),
           ),
@@ -350,11 +393,44 @@ class _SheetScaffoldState extends State<SheetScaffold>
   }
 }
 
+/// The scaffold's bottom bar, along the bottom of the sheet: as much of it as [shown]
+/// says rises from below the screen.
+class _BottomBar extends StatelessWidget {
+  const _BottomBar({
+    required this.shown,
+    required this.geometry,
+    required this.height,
+    required this.child,
+  });
+
+  final ValueListenable<double> shown;
+  final SheetGeometry geometry;
+  final double height;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = height + geometry.padding.bottom;
+    return ValueListenableBuilder(
+      valueListenable: shown,
+      child: child,
+      builder: (context, shown, child) => Positioned(
+        left: geometry.left,
+        width: geometry.width,
+        height: total,
+        bottom: total * (shown - 1),
+        child: Offstage(offstage: shown == 0, child: child),
+      ),
+    );
+  }
+}
+
 class _SheetScope extends InheritedWidget {
   const _SheetScope({
     required this.state,
     required this.controller,
     required this.geometry,
+    required this.bottomBarHeight,
     required this.color,
     required super.child,
   });
@@ -362,6 +438,9 @@ class _SheetScope extends InheritedWidget {
   final _SheetScaffoldState state;
   final SheetController controller;
   final SheetGeometry geometry;
+
+  /// How tall the scaffold's bottom bar is, 0 if it hasn't one.
+  final double bottomBarHeight;
 
   /// The sheet's color, which pages paint behind themselves to cover the page below.
   final Color color;
@@ -377,6 +456,7 @@ class _SheetScope extends InheritedWidget {
       state != oldWidget.state ||
       controller != oldWidget.controller ||
       geometry != oldWidget.geometry ||
+      bottomBarHeight != oldWidget.bottomBarHeight ||
       color != oldWidget.color;
 }
 

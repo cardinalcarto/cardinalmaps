@@ -10,6 +10,8 @@ class SheetContent extends StatefulWidget {
     super.key,
     required this.anchors,
     this.initialAnchor = 0,
+    this.showsBottomBar = false,
+    this.draggable = true,
     required this.slivers,
   }) : assert(anchors.length > 0);
 
@@ -18,6 +20,17 @@ class SheetContent extends StatefulWidget {
 
   /// The index into [anchors] the sheet moves to when this content first shows.
   final int initialAnchor;
+
+  /// Whether the scaffold's bottom bar shows on this page, in which case the anchors
+  /// and the end of the content keep clear of it. It slides away and back as pages
+  /// change.
+  final bool showsBottomBar;
+
+  /// Whether dragging moves the sheet while this page shows. If not, the sheet stays
+  /// where it is under a finger, a mouse wheel or a tap on the handle, and content too
+  /// long to fit still scrolls; [SheetController.animateTo] and page changes still move
+  /// it.
+  final bool draggable;
 
   final List<Widget> slivers;
 
@@ -29,6 +42,11 @@ class _SheetContentState extends State<SheetContent> {
   final _SheetEntry _entry = _SheetEntry();
   _SheetScaffoldState? _scaffold;
   _SheetScrollController? _scroll;
+
+  /// [SheetScaffold]'s geometry, as this page sees it.
+  SheetGeometry _geometry(_SheetScope scope) => widget.showsBottomBar
+      ? scope.geometry.withBottomBar(scope.bottomBarHeight)
+      : scope.geometry;
 
   @override
   void didChangeDependencies() {
@@ -46,10 +64,12 @@ class _SheetContentState extends State<SheetContent> {
     }
     _entry
       ..route = ModalRoute.of(context)
-      ..geometry = scope.geometry
+      ..geometry = _geometry(scope)
       ..physics = scope.controller.physics
       ..anchors = widget.anchors
-      ..initialAnchor = widget.initialAnchor;
+      ..initialAnchor = widget.initialAnchor
+      ..showsBottomBar = widget.showsBottomBar
+      ..draggable = widget.draggable;
     _scaffold!._scheduleUpdate();
   }
 
@@ -57,8 +77,12 @@ class _SheetContentState extends State<SheetContent> {
   void didUpdateWidget(SheetContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     _entry
+      ..geometry = _geometry(_SheetScope.of(context))
       ..anchors = widget.anchors
-      ..initialAnchor = widget.initialAnchor;
+      ..initialAnchor = widget.initialAnchor
+      ..showsBottomBar = widget.showsBottomBar
+      ..draggable = widget.draggable;
+    if (widget.draggable != oldWidget.draggable) _scaffold?._scheduleUpdate();
   }
 
   @override
@@ -84,7 +108,11 @@ class _SheetContentState extends State<SheetContent> {
         physics: _entry.physics,
         child: Scrollable(
           controller: _scroll,
-          physics: const AlwaysScrollableScrollPhysics(),
+          // Always, to catch drags for the sheet; without that, content that fits
+          // doesn't respond to them at all.
+          physics: widget.draggable
+              ? const AlwaysScrollableScrollPhysics()
+              : const ScrollPhysics(),
           viewportBuilder: (context, offset) => _SheetViewport(
             entry: _entry,
             offset: offset,
@@ -108,6 +136,11 @@ class _SheetEntry extends ChangeNotifier {
   SheetPhysics physics = const SheetPhysics();
   List<SheetAnchor> anchors = const [];
   int initialAnchor = 0;
+  bool showsBottomBar = false;
+  bool draggable = true;
+
+  /// What the bottom bar's [_SheetScaffoldState._barShown] is on this page.
+  double get _barValue => showsBottomBar ? 1 : 0;
 
   final Set<_RenderSheetSection> sections = {};
   Map<Object, _Span> spans = const {};
@@ -485,7 +518,7 @@ class SheetBuilder extends StatelessWidget {
           : Listenable.merge([scope.controller, entry]),
       builder: (context, child) => builder(
         context,
-        SheetView._(scope.controller, scope.geometry, entry),
+        SheetView._(scope.controller, entry?.geometry ?? scope.geometry, entry),
         child,
       ),
       child: child,

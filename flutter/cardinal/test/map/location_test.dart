@@ -11,6 +11,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../fakes/fake_map.dart';
 import '../fakes/fake_place_store.dart';
+import '../fakes/fake_saved_store.dart';
 
 /// A location service that answers as told, and counts what it's asked.
 class FakeLocation implements LocationSource {
@@ -211,6 +212,7 @@ void main() {
           child: StoreScope(
             store: Store.withoutDatabase(
               places: FakePlaceStore(),
+              saved: FakeSavedStore(FakePlaceStore()),
               settings: settings,
             ),
             child: MaterialApp(

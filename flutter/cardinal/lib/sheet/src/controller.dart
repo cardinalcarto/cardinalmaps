@@ -68,6 +68,10 @@ class SheetController extends ChangeNotifier
   double get _min => _anchors.isEmpty ? 0 : _anchors.first.extent;
   double get _max => _anchors.isEmpty ? _maxExtent : _anchors.last.extent;
 
+  /// Whether dragging moves the sheet: see [SheetContent.draggable].
+  bool get isDraggable => _draggable;
+  bool _draggable = true;
+
   /// Whether the sheet is at its highest anchor, where dragging scrolls its content.
   bool get isAtMax => extent >= _max - _epsilon;
 
@@ -95,7 +99,7 @@ class SheetController extends ChangeNotifier
 
   /// Springs the sheet to the next anchor up, or back to the lowest from the highest.
   void cycle() {
-    if (isTransitioning || _anchors.isEmpty) return;
+    if (isTransitioning || _anchors.isEmpty || !_draggable) return;
     final next = _anchors.firstWhereOrNull((a) => a.extent > extent + _epsilon);
     _settleOn(next ?? _anchors.first, 0);
   }
@@ -105,7 +109,7 @@ class SheetController extends ChangeNotifier
   /// Only [release] with the same [holder] lets go of it, so whatever took hold last
   /// decides where it settles.
   void hold({Object? holder}) {
-    if (isTransitioning) return;
+    if (isTransitioning || !_draggable) return;
     _awaited = null;
     _spring.stop();
     _wheelSettle?.cancel();
@@ -229,7 +233,9 @@ class SheetController extends ChangeNotifier
     List<ResolvedAnchor> anchors,
     double maxExtent, {
     double floor = 0,
+    bool draggable = true,
   }) {
+    _draggable = draggable;
     _anchors = anchors;
     _maxExtent = maxExtent;
     _floor = floor;

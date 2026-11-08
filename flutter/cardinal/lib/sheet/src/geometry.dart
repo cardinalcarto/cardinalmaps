@@ -19,6 +19,7 @@ class SheetGeometry {
     required this.padding,
     required this.placement,
     this.keyboard = 0,
+    this.bottomBar = 0,
     this.handleHeight = 24,
     this.cornerRadius = 28,
     this.dockedWidth = 400,
@@ -57,9 +58,27 @@ class SheetGeometry {
   /// rest above it, and the sheet can't be pulled down behind it.
   final double keyboard;
 
-  /// What covers the bottom of the window: the keyboard, or else the navigation bar.
-  /// The content's anchors are measured from its top.
-  double get bottomInset => math.max(padding.bottom, keyboard);
+  /// How tall the scaffold's bottom bar is over the navigation bar, 0 if the page
+  /// doesn't show one (see [SheetContent.showsBottomBar]).
+  final double bottomBar;
+
+  /// What covers the bottom of the window: the keyboard, or else the navigation bar and
+  /// the bottom bar, which the keyboard hides. The content's anchors are measured from
+  /// its top.
+  double get bottomInset => math.max(padding.bottom + bottomBar, keyboard);
+
+  /// This geometry for a page that shows a bottom bar [height] tall.
+  SheetGeometry withBottomBar(double height) => SheetGeometry(
+    size: size,
+    padding: padding,
+    placement: placement,
+    keyboard: keyboard,
+    bottomBar: height,
+    handleHeight: handleHeight,
+    cornerRadius: cornerRadius,
+    dockedWidth: dockedWidth,
+    margin: margin,
+  );
 
   /// The drag handle's strip at the top of the sheet.
   final double handleHeight;
@@ -174,6 +193,7 @@ class SheetGeometry {
       other.padding == padding &&
       other.placement == placement &&
       other.keyboard == keyboard &&
+      other.bottomBar == bottomBar &&
       other.handleHeight == handleHeight &&
       other.cornerRadius == cornerRadius &&
       other.dockedWidth == dockedWidth &&
@@ -185,6 +205,7 @@ class SheetGeometry {
     padding,
     placement,
     keyboard,
+    bottomBar,
     handleHeight,
     cornerRadius,
     dockedWidth,

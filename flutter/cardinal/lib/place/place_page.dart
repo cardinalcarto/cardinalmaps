@@ -8,6 +8,10 @@ import '../geocoder/address.dart';
 import '../geocoder/geocoder.dart';
 import '../map/map.dart';
 import '../map/selection.dart';
+import '../saved/destination_picker.dart';
+import '../saved/manage_saved.dart';
+import '../saved/saved_feedback.dart';
+import '../saved/saved_names.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
 
@@ -35,7 +39,11 @@ class _PlacePageState extends State<PlacePage> {
   /// Whether the map has been sent to the place.
   bool _focused = false;
   StreamSubscription<Place?>? _watch;
+  StreamSubscription<SavedTree>? _watchSaved;
   late SparkleMapController _map;
+
+  SavedTree? _savedTree;
+  List<SavedPlace> get _copies => _savedTree?.copiesOf(widget.id) ?? const [];
 
   /// This page's route animation: once it has come all the way in, the page is leaving
   /// whenever it's less than all the way in (closing, or a back gesture under way).
@@ -65,6 +73,9 @@ class _PlacePageState extends State<PlacePage> {
       _watch = places.watch(widget.id).listen(_changed);
       if (_place != null) _show();
     }
+    _watchSaved ??= StoreScope.of(context).saved.watch().listen((tree) {
+      setState(() => _savedTree = tree);
+    });
     final route = ModalRoute.of(context)?.animation;
     if (route != _route) {
       _route?.removeListener(_routeMoved);
@@ -76,6 +87,7 @@ class _PlacePageState extends State<PlacePage> {
   @override
   void dispose() {
     _watch?.cancel();
+    _watchSaved?.cancel();
     _route?.removeListener(_routeMoved);
     clearSelection(_map, widget.id);
     super.dispose();
@@ -141,10 +153,58 @@ class _PlacePageState extends State<PlacePage> {
     }
   }
 
+  /// Saves the place to the top of Saved, offering to file it in a list.
+  Future<void> _save() async {
+    final saved = StoreScope.of(context).saved;
+    await saved.savePlace(widget.id);
+    if (!mounted) return;
+    showSheetMessage(context, 'Saved', action: 'Move…', onAction: _moveSaved);
+  }
+
+  /// Moves the copy just saved at the top level.
+  Future<void> _moveSaved() async {
+    final saved = StoreScope.of(context).saved;
+    final item = _copies.where((copy) => copy.parent == null).firstOrNull;
+    if (item == null) return;
+    final picked = await showDestinationPicker(
+      context,
+      items: [item],
+      unavailable: {item.parent},
+    );
+    if (picked == null || !mounted) return;
+    await saved.move([item], picked.list);
+  }
+
+  /// Asks which lists the place should be in, and puts it there, with Undo.
+  Future<void> _manage() async {
+    final saved = StoreScope.of(context).saved;
+    final before = {for (final copy in _copies) copy.parent};
+    final after = await showManageSaved(context, placeId: widget.id);
+    if (after == null || !mounted) return;
+    final undo = await saved.setLocations(widget.id, after);
+    final added = after.difference(before);
+    final removed = before.difference(after);
+    if (!mounted || (added.isEmpty && removed.isEmpty)) return;
+    final tree = await saved.watch().first;
+    if (!mounted) return;
+    showSheetMessage(
+      context,
+      switch ((added.toList(), removed.toList())) {
+        _ when after.isEmpty => 'Removed from Saved',
+        ([final one], []) => 'Added to ${destinationName(tree, one)}',
+        ([], [final one]) => 'Removed from ${destinationName(tree, one)}',
+        _ => 'Updated where it\'s saved',
+      },
+      action: 'Undo',
+      onAction: () => unawaited(saved.restore(undo)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final place = _place;
+    final isSaved = _copies.isNotEmpty;
     final subtitle = place == null ? null : placeSubtitle(place);
     return SheetContent(
       anchors: const [SheetAnchor.section(_header), SheetAnchor.fraction(0.5)],
@@ -183,6 +243,22 @@ class _PlacePageState extends State<PlacePage> {
                           const Padding(
                             padding: EdgeInsets.only(top: 8),
                             child: LinearProgressIndicator(),
+                          ),
+                        if (place != null && _savedTree != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: OutlinedButton.icon(
+                              onPressed: isSaved ? _manage : _save,
+                              style: const ButtonStyle(
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              icon: Icon(
+                                isSaved
+                                    ? Icons.favorite
+                                    : Icons.favorite_border,
+                              ),
+                              label: Text(isSaved ? 'Manage' : 'Save'),
+                            ),
                           ),
                       ],
                     ),

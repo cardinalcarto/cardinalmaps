@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'database.dart';
 import 'places.dart';
+import 'saved.dart';
 import 'settings.dart';
 
 /// The app's persistent state: what screens are about, stored by ID so that routes
@@ -14,21 +15,27 @@ class Store {
   Store(CardinalDatabase db)
     : _db = db,
       places = PlaceStore(db),
+      saved = SavedStore(db),
       settings = SettingsStore(db);
 
   /// The store in the app's database.
   Store.open() : this(CardinalDatabase.open());
 
-  /// A store of [places] without a database, for widget tests to give fakes. Settings
-  /// are kept in memory unless [settings] is given.
+  /// A store of [places] and [saved] without a database, for widget tests to give
+  /// fakes. Settings are kept in memory unless [settings] is given.
   @visibleForTesting
-  Store.withoutDatabase({required this.places, SettingsStore? settings})
-    : _db = null,
-      settings = settings ?? SettingsStore.inMemory();
+  Store.withoutDatabase({
+    required this.places,
+    required this.saved,
+    SettingsStore? settings,
+  }) : _db = null,
+       settings = settings ?? SettingsStore.inMemory();
 
   final CardinalDatabase? _db;
 
   final PlaceStore places;
+
+  final SavedStore saved;
 
   final SettingsStore settings;
 

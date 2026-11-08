@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'dart:ui' show PlatformDispatcher;
@@ -9,6 +10,7 @@ import '../geocoder/address.dart';
 import '../geocoder/geocoder.dart';
 import '../map/map.dart';
 import '../routes.dart';
+import '../saved/saved_names.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
 import 'place_search.dart';
@@ -27,6 +29,7 @@ import 'place_search.dart';
 /// | browsing | back | the app's left |
 /// | either | a page covers it | it notes its mode, anchor and keyboard, and lets go of focus |
 /// | either | that page closes, however | as it noted; the keyboard as soon as the page can take focus |
+/// | either | the app bar's Search button is tapped | searching: full, keyboard up |
 ///
 /// The bar pins to the top of the sheet, with the results scrolling under it; tapping one
 /// opens its place. Its page doesn't take focus when a page over it closes (it's a
@@ -46,6 +49,10 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
   final _focus = FocusNode(debugLabel: 'search');
   PlaceSearch? _search;
 
+  /// The pinned places, each with a chip under the bar while browsing.
+  List<SavedPlace> _pinned = const [];
+  StreamSubscription<SavedTree>? _watchSaved;
+
   /// Whether the sheet is searching; see [SearchSheet].
   bool _searching = false;
 
@@ -59,6 +66,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
   void initState() {
     super.initState();
     _focus.addListener(_focusChanged);
+    searchRequests.addListener(_searchRequested);
   }
 
   @override
@@ -71,6 +79,9 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
       if (route is PageRoute<Object?>) sheetPages.subscribe(this, route);
       _route = route;
     }
+    _watchSaved ??= StoreScope.of(context).saved.watch().listen((tree) {
+      setState(() => _pinned = tree.pinned);
+    });
     _search ??= PlaceSearch(
       GeocoderScope.of(context),
       lang: PlatformDispatcher.instance.locale.toLanguageTag(),
@@ -80,6 +91,8 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
   @override
   void dispose() {
     sheetPages.unsubscribe(this);
+    searchRequests.removeListener(_searchRequested);
+    _watchSaved?.cancel();
     _focus.dispose();
     _text.dispose();
     _search?.dispose();
@@ -97,6 +110,12 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     if (!_searching) setState(() => _searching = true);
     _sampleMap();
     _sheet!.animateTo(const SheetAnchor.full());
+  }
+
+  /// The app bar's Search button, tapped on this page: the same as tapping the bar.
+  void _searchRequested() {
+    _focus.requestFocus();
+    _searchFull();
   }
 
   /// Back while searching: browsing, keeping the query and results for next time.
@@ -194,6 +213,9 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     await context.push<void>(placeLocation(place.id));
   }
 
+  /// Whether the pinned places' chips show, under the bar while browsing.
+  bool get _chipsShowing => !_searching && _pinned.isNotEmpty;
+
   @override
   Widget build(BuildContext context) {
     final search = _search!;
@@ -206,6 +228,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
       child: ListenableBuilder(
         listenable: search,
         builder: (context, _) => SheetContent(
+          showsBottomBar: true,
           // Just the bar, until searching.
           anchors: _searching
               ? const [SheetAnchor.section(_bar), SheetAnchor.full()]
@@ -215,45 +238,58 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
               pinned: true,
               delegate: _SearchBarHeader(
                 color: Theme.of(context).colorScheme.surfaceContainerLow,
+                height: _chipsShowing
+                    ? _SearchBarHeader.heightWithChips
+                    : _SearchBarHeader.barHeight,
                 child: SheetSection(
                   id: _bar,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                    child: SearchBar(
-                      controller: _text,
-                      focusNode: _focus,
-                      onTap: _searchFull,
-                      hintText: 'Search',
-                      elevation: const WidgetStatePropertyAll(0),
-                      leading: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 8),
-                        child: Icon(Icons.search),
-                      ),
-                      trailing: [
-                        ListenableBuilder(
-                          listenable: _text,
-                          builder: (context, _) => _text.text.isEmpty
-                              ? const SizedBox.shrink()
-                              : IconButton(
-                                  tooltip: 'Clear',
-                                  icon: const Icon(Icons.close),
-                                  onPressed: () {
-                                    _text.clear();
-                                    search.update('');
-                                    // Ready to type again, if searching; otherwise
-                                    // clearing it is all.
-                                    if (_searching) _focus.requestFocus();
-                                  },
-                                ),
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          16,
+                          4,
+                          16,
+                          _chipsShowing ? 8 : 12,
                         ),
-                      ],
-                      onChanged: search.update,
-                      onSubmitted: (_) {
-                        if (search.results case [final first, ...]) {
-                          _open(first);
-                        }
-                      },
-                    ),
+                        child: SearchBar(
+                          controller: _text,
+                          focusNode: _focus,
+                          onTap: _searchFull,
+                          hintText: 'Search',
+                          elevation: const WidgetStatePropertyAll(0),
+                          leading: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 8),
+                            child: Icon(Icons.search),
+                          ),
+                          trailing: [
+                            ListenableBuilder(
+                              listenable: _text,
+                              builder: (context, _) => _text.text.isEmpty
+                                  ? const SizedBox.shrink()
+                                  : IconButton(
+                                      tooltip: 'Clear',
+                                      icon: const Icon(Icons.close),
+                                      onPressed: () {
+                                        _text.clear();
+                                        search.update('');
+                                        // Ready to type again, if searching; otherwise
+                                        // clearing it is all.
+                                        if (_searching) _focus.requestFocus();
+                                      },
+                                    ),
+                            ),
+                          ],
+                          onChanged: search.update,
+                          onSubmitted: (_) {
+                            if (search.results case [final first, ...]) {
+                              _open(first);
+                            }
+                          },
+                        ),
+                      ),
+                      if (_chipsShowing) _PinnedChips(pinned: _pinned),
+                    ],
                   ),
                 ),
               ),
@@ -271,19 +307,27 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
 
 /// The search bar, pinned to the top of the sheet's content.
 class _SearchBarHeader extends SliverPersistentHeaderDelegate {
-  _SearchBarHeader({required this.color, required this.child});
+  _SearchBarHeader({
+    required this.color,
+    required this.height,
+    required this.child,
+  });
 
   final Color color;
+  final double height;
   final Widget child;
 
   /// The bar and its padding.
-  static const double _height = 72;
+  static const double barHeight = 72;
+
+  /// The bar, its padding, and a row of pinned places.
+  static const double heightWithChips = 112;
 
   @override
-  double get minExtent => _height;
+  double get minExtent => height;
 
   @override
-  double get maxExtent => _height;
+  double get maxExtent => height;
 
   @override
   Widget build(
@@ -294,7 +338,36 @@ class _SearchBarHeader extends SliverPersistentHeaderDelegate {
 
   @override
   bool shouldRebuild(_SearchBarHeader oldDelegate) =>
-      color != oldDelegate.color || child != oldDelegate.child;
+      color != oldDelegate.color ||
+      height != oldDelegate.height ||
+      child != oldDelegate.child;
+}
+
+/// A chip for each pinned place, which opens it.
+class _PinnedChips extends StatelessWidget {
+  const _PinnedChips({required this.pinned});
+
+  final List<SavedPlace> pinned;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 36,
+    child: ListView.separated(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      itemCount: pinned.length,
+      separatorBuilder: (context, _) => const SizedBox(width: 8),
+      itemBuilder: (context, i) => FilledButton.tonal(
+        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+        onPressed: () => context.push<void>(placeLocation(pinned[i].id)),
+        child: Text(
+          savedName(pinned[i]),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    ),
+  );
 }
 
 class _Results extends StatelessWidget {

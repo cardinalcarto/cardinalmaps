@@ -3,6 +3,7 @@
 import 'package:drift/drift.dart';
 import 'package:drift_dev/api/migrations_native.dart';
 import 'package:cardinal/store/src/database.dart';
+import 'package:cardinal/store/src/saved.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'generated/schema.dart';
@@ -35,6 +36,32 @@ void main() {
         }
       });
     }
+  });
+
+  test('v5 keeps what was saved in v4', () async {
+    final schema = await verifier.schemaAt(4);
+    schema.rawDatabase.execute(
+      "INSERT INTO places (id, kind, center_lon, center_lat, tags, updated_at, "
+      "accessed_at) VALUES ('poi:1', 'poi', 0, 0, '{}', 0, 0)",
+    );
+    schema.rawDatabase.execute(
+      "INSERT INTO saved_lists (id, name, position) VALUES (7, 'Food', 0)",
+    );
+    schema.rawDatabase.execute(
+      "INSERT INTO saved_places (place_id, list_id, name, note, pinned, position, "
+      "saved_at) VALUES ('poi:1', 7, 'Home', 'Back door', 1, 3, 0)",
+    );
+    final db = CardinalDatabase(schema.newConnection());
+    addTearDown(db.close);
+    await verifier.migrateAndValidate(db, 5);
+
+    final tree = await SavedStore(db).watch().first;
+    final copy = tree.copiesOf('poi:1').single;
+    expect(copy.parent, 7);
+    expect(copy.customName, 'Home');
+    expect(copy.note, 'Back door');
+    expect(copy.pinned, isTrue);
+    expect(tree.list(7)!.name, 'Food');
   });
 
   // The following template shows how to write tests ensuring your migrations
