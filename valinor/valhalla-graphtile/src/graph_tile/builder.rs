@@ -1284,12 +1284,12 @@ mod tests {
         assert_eq!(tile.header().version(), "3.9.1");
 
         let out = GraphTileBuilder::from(&tile)
-            .with_version("valinor-0.1.0-x")
+            .with_version("3.9.1-valinor-x")
             .unwrap()
             .into_bytes()
             .unwrap();
         let out = OwnedGraphTileHandle::try_from(out).expect("parse");
-        assert_eq!(out.header().version(), "valinor-0.1.0-x");
+        assert_eq!(out.header().version(), "3.9.1-valinor-x");
 
         for bad in ["sixteen bytes!!!", "nul\0inside"] {
             assert!(matches!(

@@ -5,7 +5,7 @@
 //! See <https://valhalla.github.io/valhalla/tiles/> for a full writeup.
 
 use super::{GraphId, RoadClass};
-use geo::{CoordFloat, Rect, coord};
+use geo::{Coord, CoordFloat, Rect, coord};
 use num_traits::FromPrimitive;
 use std::sync::LazyLock;
 
@@ -44,8 +44,36 @@ impl TilingSystem {
         }
     }
 
+    /// The total number of tiles in the tiling system.
+    #[inline]
     pub const fn tile_count(&self) -> u32 {
         self.n_rows * self.n_cols
+    }
+
+    /// The southwest corner of a tile, computed exactly as Valhalla's `Tiles::Base` does.
+    ///
+    /// Valhalla computes the corner in double precision
+    /// and stores it in the tile header in single precision,
+    /// so we do the same to match it bit for bit.
+    ///
+    /// Returns `None` if the tile ID is out of range for this tiling system.
+    #[inline]
+    pub fn base_coordinate(&self, tile_id: u64) -> Option<Coord<f32>> {
+        let tile_id = u32::try_from(tile_id)
+            .ok()
+            .filter(|&id| id < self.tile_count())?;
+        let row = tile_id / self.n_cols;
+        let col = tile_id % self.n_cols;
+        let tile_size = f64::from(self.tile_size);
+        let min = self.bounding_box.min();
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "Valhalla narrows the corner to single precision in the same way."
+        )]
+        Some(coord! {
+            x: (f64::from(min.x) + f64::from(col) * tile_size) as f32,
+            y: (f64::from(min.y) + f64::from(row) * tile_size) as f32,
+        })
     }
 
     pub const fn min_zoom(&self) -> u8 {
@@ -72,19 +100,21 @@ pub struct TileLevel {
 }
 
 impl TileLevel {
-    /// Returns an iterator over tile indices (0-based, row-major) in this level
+    /// Returns the base IDs (row-major) of the tiles in this level
     /// whose geographic extent intersects the axis-aligned bbox:
     /// `lon ∈ [west, east], lat ∈ [south, north]`.
     ///
     /// Longitudes are expected in degrees, in the `[-180, 180]` range.
     /// If `west > east`, the bbox is assumed to wrap across the antimeridian
-    /// and is treated as the union of `[left, 180] ∪ [-180, right]`
+    /// and is treated as the union of `[west, 180] ∪ [-180, east]`.
     ///
     /// # Correctness
     ///
-    /// This function does not sanity check the input.
+    /// This function does not sanity check the input beyond never panicking.
     /// It is the responsibility of the caller to ensure that the coordinates are in the range for
     /// latitude and longitude, and that they describe a valid bounding box.
+    /// Coordinates past the edge of the world (including infinite ones) are clamped to the edge,
+    /// and a bbox with a NaN coordinate intersects no tiles.
     pub fn tiles_intersecting_bbox<N: CoordFloat + FromPrimitive>(
         &self,
         north: N,
@@ -92,59 +122,76 @@ impl TileLevel {
         south: N,
         west: N,
     ) -> Vec<GraphId> {
-        // These conversions cannot fail and are exercised by unit tests
-        let size = N::from(self.tiling_system.tile_size).unwrap();
+        // These conversions are exact for f32 and f64.
+        // They could only fail for an exotic float type that cannot represent small numbers,
+        // which has no meaningful tiles anyway.
+        let (Some(size), Some(n_90), Some(n_180)) = (
+            N::from(self.tiling_system.tile_size),
+            N::from_u8(90),
+            N::from_u8(180),
+        ) else {
+            return Vec::new();
+        };
         let width = i64::from(self.tiling_system.n_cols);
         let height = i64::from(self.tiling_system.n_rows);
 
-        let n_90 = N::from(90).unwrap();
-        let n_180 = N::from(180).unwrap();
+        // Map lon from [-180, 180] to [0, 360], and lat from [-90, 90] to [0, 180],
+        // and then to tile columns and rows.
+        let (Some(west_x), Some(east_x), Some(min_y), Some(max_y)) = (
+            grid_index((west + n_180) / size, width),
+            grid_index((east + n_180) / size, width),
+            grid_index((south + n_90) / size, height),
+            grid_index((north + n_90) / size, height),
+        ) else {
+            return Vec::new();
+        };
 
-        if west > east {
-            // Wrap across the antimeridian: [west, 180] ∪ [-180, east].
-            self.tiles_intersecting_bbox(north, n_180, south, west)
-                .into_iter()
-                .chain(self.tiles_intersecting_bbox(north, east, south, -n_180))
-                .collect()
+        // A bbox that wraps across the antimeridian covers [west, 180] and then [-180, east].
+        // We list the two parts one after the other, each in row-major order.
+        // (The second range is empty unless the bbox wraps.)
+        #[expect(
+            clippy::reversed_empty_ranges,
+            reason = "the empty range stands in for the missing second part of the bbox"
+        )]
+        let column_ranges = if west > east {
+            [west_x..=width - 1, 0..=east_x]
         } else {
-            // At this point we have a non-wrapping lon interval [w, e] with w <= e.
+            [west_x..=east_x, 1..=0]
+        };
 
-            // Map lon from [-180, 180] to [0, 360] and then to tile index.
-            let min_x = (((west + n_180) / size)
-                .floor()
-                .to_i64()
-                .expect("Unable to convert value to i64"))
-            .clamp(0, width - 1);
-            let max_x = (((east + n_180) / size)
-                .floor()
-                .to_i64()
-                .expect("Unable to convert value to i64"))
-            .clamp(0, width - 1);
-
-            // Map lat from [-90, 90] to [0, 180] and then to tile index.
-            let min_y = (((south + n_90) / size)
-                .floor()
-                .to_i64()
-                .expect("Unable to convert value to i64"))
-            .clamp(0, height - 1);
-            let max_y = (((north + n_90) / size)
-                .floor()
-                .to_i64()
-                .expect("Unable to convert value to i64"))
-            .clamp(0, height - 1);
-
-            // Iterate row-major: for each y, for each x, compute tile_index.
-            (min_y..=max_y)
-                .flat_map(move |y| {
-                    (min_x..=max_x).map(move |x| {
-                        let tile_index = (y * width + x) as u64;
-                        GraphId::try_from_components(self.level, tile_index, 0)
-                            .expect("valid base id")
-                    })
-                })
-                .collect()
-        }
+        column_ranges
+            .into_iter()
+            .flat_map(|columns| {
+                (min_y..=max_y).flat_map(move |y| columns.clone().map(move |x| (x, y)))
+            })
+            .map(|(x, y)| {
+                // Both are clamped to the grid, so the index is non-negative and in range.
+                let tile_index = u64::try_from(y * width + x).expect("clamped to the grid");
+                GraphId::try_from_components(self.level, tile_index, 0)
+                    .expect("tile IDs within the grid fit in a graph ID")
+            })
+            .collect()
     }
+}
+
+/// Converts a position in units of tiles to a tile row or column, clamped to the grid.
+///
+/// Positions past either edge of the grid (including infinite ones) map to that edge.
+/// Returns `None` for NaN, which is nowhere on the grid.
+fn grid_index<N: CoordFloat>(position: N, count: i64) -> Option<i64> {
+    if position.is_nan() {
+        return None;
+    }
+    // Conversion only fails for values out of the i64 range, which we clamp anyway.
+    let index = position
+        .floor()
+        .to_i64()
+        .unwrap_or(if position.is_sign_negative() {
+            0
+        } else {
+            count - 1
+        });
+    Some(index.clamp(0, count - 1))
 }
 
 /// A concrete instantiation of the standard Valhalla tile system.
@@ -208,6 +255,7 @@ pub static TRANSIT_LEVEL: LazyLock<TileLevel> = LazyLock::new(|| TileLevel {
 mod tests {
     use super::*;
     use crate::tile_hierarchy::STANDARD_LEVELS;
+    use proptest::{prop_assert, proptest};
 
     /// Helper to compute the base tile GraphId at (x, y) for a given level.
     fn base_tile_id(level: &TileLevel, x: i64, y: i64) -> GraphId {
@@ -377,5 +425,95 @@ mod tests {
             base_tile_id(level, 1, 1),
             GraphId::try_from_components(1, 361, 0).unwrap()
         );
+    }
+
+    #[test]
+    fn bbox_with_nan_intersects_nothing() {
+        let level = &STANDARD_LEVELS[2];
+        for (north, east, south, west) in [
+            (f64::NAN, 1.0, 0.0, 0.0),
+            (1.0, f64::NAN, 0.0, 0.0),
+            (1.0, 1.0, f64::NAN, 0.0),
+            (1.0, 1.0, 0.0, f64::NAN),
+        ] {
+            assert!(
+                level
+                    .tiles_intersecting_bbox(north, east, south, west)
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn bbox_with_infinite_coordinates_clamps_to_the_edge() {
+        let level = &STANDARD_LEVELS[0];
+        let width = i64::from(level.tiling_system.n_cols);
+        let height = i64::from(level.tiling_system.n_rows);
+
+        // A bbox running off the north-east edge of the world.
+        let ids = level.tiles_intersecting_bbox(f64::INFINITY, f64::INFINITY, 89.0, 179.0);
+        assert_eq!(ids, vec![base_tile_id(level, width - 1, height - 1)]);
+
+        // Infinite west and east longitudes "wrap" (west > east) but must not recurse forever.
+        let ids = level.tiles_intersecting_bbox(-89.0, -f64::INFINITY, -90.0, f64::INFINITY);
+        assert_eq!(
+            ids,
+            vec![base_tile_id(level, width - 1, 0), base_tile_id(level, 0, 0)]
+        );
+
+        // Out-of-range finite longitudes behave the same way.
+        let ids = level.tiles_intersecting_bbox(-89.0, -200.0, -90.0, 200.0);
+        assert_eq!(
+            ids,
+            vec![base_tile_id(level, width - 1, 0), base_tile_id(level, 0, 0)]
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn bbox_never_panics(
+            north in proptest::num::f64::ANY,
+            east in proptest::num::f64::ANY,
+            south in proptest::num::f64::ANY,
+            west in proptest::num::f64::ANY,
+        ) {
+            let level = &STANDARD_LEVELS[0];
+            let ids = level.tiles_intersecting_bbox(north, east, south, west);
+            let tile_count = u64::from(level.tiling_system.tile_count());
+            prop_assert!(ids.iter().all(|id| id.tile_id() < tile_count));
+        }
+    }
+
+    #[test]
+    fn test_base_coordinate() {
+        // Cross-checked with the base_ll of the Andorra fixture tiles built by Valhalla 3.9.1.
+        let cases = [
+            (0, 3015, coord! {x: 0.0, y: 42.0}),
+            (1, 47701, coord! {x: 1.0, y: 42.0}),
+            (2, 762_485, coord! {x: 1.25, y: 42.25}),
+            (2, 763_927, coord! {x: 1.75, y: 42.5}),
+        ];
+        for (level, tile_id, expected) in cases {
+            assert_eq!(
+                STANDARD_LEVELS[level]
+                    .tiling_system
+                    .base_coordinate(tile_id),
+                Some(expected),
+                "level {level} tile {tile_id}"
+            );
+        }
+
+        let tiling = &STANDARD_LEVELS[2].tiling_system;
+        assert_eq!(
+            tiling.base_coordinate(0),
+            Some(coord! {x: -180.0, y: -90.0})
+        );
+        let last = u64::from(tiling.tile_count()) - 1;
+        assert_eq!(
+            tiling.base_coordinate(last),
+            Some(coord! {x: 179.75, y: 89.75})
+        );
+        assert_eq!(tiling.base_coordinate(last + 1), None);
+        assert_eq!(tiling.base_coordinate(u64::MAX), None);
     }
 }

@@ -45,9 +45,18 @@ impl RoadClass {
     const fn into_bits(self) -> u8 {
         self as _
     }
+
+    /// Decodes a road class from the 3-bit field in a directed edge.
+    ///
+    /// Every 3-bit value is a valid road class, so this cannot fail.
+    /// Only the low 3 bits of `value` are read.
+    ///
+    /// Valhalla 3.9 also defines `RoadClass::kInvalid = 8`,
+    /// but that is an in-memory sentinel used while building tiles.
+    /// It does not fit in the 3-bit field, so it never appears in a tile,
+    /// and we do not model it.
     const fn from_bits(value: u8) -> Self {
-        // FIXME: This is hackish
-        match value {
+        match value & 0b111 {
             0 => Self::Motorway,
             1 => Self::Trunk,
             2 => Self::Primary,
@@ -55,10 +64,8 @@ impl RoadClass {
             4 => Self::Tertiary,
             5 => Self::Unclassified,
             6 => Self::Residential,
-            7 => Self::ServiceOther,
-            _ => panic!(
-                "Invalid RoadClass. As far as I can tell, this crate doesn't support failable ops."
-            ),
+            // The mask leaves 7 as the only remaining value.
+            _ => Self::ServiceOther,
         }
     }
 
@@ -66,7 +73,7 @@ impl RoadClass {
         // SAFETY: If the enum specifies a primitive representation,
         // then the discriminant may be reliably accessed via unsafe pointer casting.
         // https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
-        unsafe { *std::ptr::from_ref::<Self>(self).cast::<u8>() }
+        unsafe { *core::ptr::from_ref::<Self>(self).cast::<u8>() }
     }
 }
 
@@ -92,9 +99,13 @@ impl Surface {
     const fn into_bits(self) -> u8 {
         self as _
     }
+
+    /// Decodes a surface from the 3-bit field in a directed edge.
+    ///
+    /// Every 3-bit value is a valid surface, so this cannot fail.
+    /// Only the low 3 bits of `value` are read.
     const fn from_bits(value: u8) -> Self {
-        // FIXME: This is hackish
-        match value {
+        match value & 0b111 {
             0 => Self::PavedSmooth,
             1 => Self::Paved,
             2 => Self::PavedRough,
@@ -102,10 +113,8 @@ impl Surface {
             4 => Self::Dirt,
             5 => Self::Gravel,
             6 => Self::Path,
-            7 => Self::Impassable,
-            _ => panic!(
-                "Invalid RoadClass. As far as I can tell, this crate doesn't support failable ops."
-            ),
+            // The mask leaves 7 as the only remaining value.
+            _ => Self::Impassable,
         }
     }
 }
@@ -197,9 +206,32 @@ impl RoadUse {
     const fn into_bits(self) -> u8 {
         self as _
     }
+
+    /// Decodes a road use from the 6-bit field in a directed edge.
+    ///
+    /// Unlike road class and surface, only some 6-bit values are valid road uses.
+    /// The bit field accessors need an infallible conversion,
+    /// so values that are not road uses decode as [`RoadUse::Other`].
+    ///
+    /// This fallback is never reached for edges read through a
+    /// [`GraphTileView`](crate::graph_tile::GraphTileView):
+    /// parsing a tile checks every edge with [`RoadUse::try_from_bits`]
+    /// and rejects tiles with invalid values.
+    /// It can only be reached by reinterpreting arbitrary bytes as a
+    /// [`DirectedEdge`](crate::graph_tile::DirectedEdge) directly.
     const fn from_bits(value: u8) -> Self {
-        // FIXME: This is hackish
-        match value {
+        match Self::try_from_bits(value) {
+            Some(road_use) => road_use,
+            None => Self::Other,
+        }
+    }
+
+    /// Decodes a road use from its numeric value in Valhalla's `baldr::Use` enum.
+    ///
+    /// Returns `None` if the value is not a road use.
+    #[inline]
+    pub const fn try_from_bits(value: u8) -> Option<Self> {
+        Some(match value {
             0 => RoadUse::Road,
             1 => RoadUse::Ramp,
             2 => RoadUse::TurnChannel,
@@ -220,12 +252,12 @@ impl RoadUse {
             27 => RoadUse::Path,
             28 => RoadUse::Pedestrian,
             29 => RoadUse::Bridleway,
+            30 => RoadUse::RestArea,
+            31 => RoadUse::ServiceArea,
             32 => RoadUse::PedestrianCrossing,
             33 => RoadUse::Elevator,
             34 => RoadUse::Escalator,
             35 => RoadUse::Platform,
-            30 => RoadUse::RestArea,
-            31 => RoadUse::ServiceArea,
             40 => RoadUse::Other,
             41 => RoadUse::Ferry,
             42 => RoadUse::RailFerry,
@@ -235,10 +267,8 @@ impl RoadUse {
             52 => RoadUse::EgressConnection,
             53 => RoadUse::PlatformConnection,
             54 => RoadUse::TransitConnection,
-            _ => panic!(
-                "Invalid RoadUse. As far as I can tell, this crate doesn't support failable ops."
-            ),
-        }
+            _ => return None,
+        })
     }
 }
 
@@ -334,6 +364,9 @@ pub const BIN_COUNT: usize = const {
     val
 };
 
+/// The number of edge bins along each side of a graph tile (Valhalla's `kBinsDim`).
+pub const BINS_PER_SIDE: usize = BIN_COUNT.isqrt();
+
 trait AsCowStr {
     /// Converts the value to a [`Cow<str>`],
     /// where the bytes are interpreted as UTF-8,
@@ -352,8 +385,43 @@ impl AsCowStr for [u8] {
 
 #[cfg(test)]
 mod tests {
-    use crate::Access;
+    use crate::{Access, RoadClass, RoadUse, Surface};
     use enumset::EnumSet;
+    use zerocopy::TryFromBytes;
+
+    #[test]
+    fn test_road_class_and_surface_decode_every_bit_pattern() {
+        // Both are 3-bit fields with 8 variants, so every value round trips.
+        for value in 0..8u8 {
+            assert_eq!(RoadClass::from_bits(value).into_bits(), value);
+            assert_eq!(Surface::from_bits(value).into_bits(), value);
+        }
+        // Bits above the field width are ignored rather than causing a panic.
+        for value in 8..=u8::MAX {
+            assert_eq!(RoadClass::from_bits(value).into_bits(), value & 0b111);
+            assert_eq!(Surface::from_bits(value).into_bits(), value & 0b111);
+        }
+    }
+
+    #[test]
+    fn test_road_use_try_from_bits() {
+        let mut valid = 0;
+        for value in 0..=u8::MAX {
+            // The zerocopy derive checks validity against the enum discriminants,
+            // which gives us an independent oracle for the hand-written match.
+            let expected = RoadUse::try_read_from_bytes(&[value]).ok();
+            assert_eq!(RoadUse::try_from_bits(value), expected, "value {value}");
+            if let Some(road_use) = RoadUse::try_from_bits(value) {
+                valid += 1;
+                assert_eq!(road_use.into_bits(), value);
+            } else {
+                // The infallible bit field conversion never panics.
+                assert_eq!(RoadUse::from_bits(value), RoadUse::Other);
+            }
+        }
+        // baldr::Use in Valhalla 3.9.1 has 35 values (excluding kSize).
+        assert_eq!(valid, 35);
+    }
 
     #[test]
     fn test_access_representation() {

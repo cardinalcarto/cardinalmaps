@@ -1,11 +1,23 @@
+//! # Graph tile header
+//!
+//! The fixed-size header at the start of every graph tile.
+//! It holds the tile's identity, the record counts of the fixed-size sections,
+//! and the byte offsets of the variable-size sections.
+//!
+//! The header is the only part of a tile that [`GraphTileView`](super::GraphTileView)
+//! trusts to describe the rest,
+//! so [`GraphTileHeader::validate`] checks that it is internally consistent
+//! before any section is read.
+
 use crate::graph_tile::GraphTileDecodingError;
 use crate::graph_tile::checksum::{BuildId, TileHash, checksum};
-use crate::tile_hierarchy::STANDARD_LEVELS;
+use crate::tile_hierarchy::{STANDARD_LEVELS, TileLevel};
 use crate::{AsCowStr, BIN_COUNT, GraphId};
 use bitfield_struct::bitfield;
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
+use chrono::{DateTime, Days, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
 use geo::{Coord, coord};
 use std::borrow::Cow;
+use thiserror::Error;
 use zerocopy::{F32, FromBytes, LE, U16, U32, U64};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
@@ -20,7 +32,73 @@ const EMPTY_SLOTS: usize = 10;
 /// The number of UTF-8 bytes in the fixed size version field.
 pub(crate) const VERSION_LEN: usize = 16;
 
+/// The version prefix of the tiles we support.
+///
+/// We only read tiles built by Valhalla 3.9.x (see the routing architecture docs).
+/// Valhalla itself only logs a warning on a major version mismatch,
+/// but the tile format has changed within major versions before,
+/// so we refuse anything else outright.
+const SUPPORTED_VERSION_PREFIX: &[u8] = b"3.9.";
+
+/// Valhalla's pivot date (`kPivotDate` in `baldr/graphconstants.h`).
+///
+/// Tile creation dates count days from here.
+const PIVOT_DATE: NaiveDate = NaiveDate::from_ymd_opt(2014, 1, 1).expect("valid date");
+
+/// Ways in which a graph tile header can be invalid or unsupported.
+///
+/// These are all checked by [`GraphTileHeader::validate`],
+/// before reading any data that the header describes.
+#[derive(Debug, Error, PartialEq)]
+pub enum GraphTileHeaderError {
+    #[error("read the tile version: {version:?} is not a Valhalla 3.9.x version")]
+    UnsupportedVersion { version: String },
+    #[error("read the tile level: level {0} is not supported")]
+    UnsupportedLevel(u8),
+    #[error(
+        "read the tile ID: tile {tile_id} does not exist on level {level}, which has {tile_count} tiles"
+    )]
+    TileIdOutOfRange {
+        level: u8,
+        tile_id: u64,
+        tile_count: u32,
+    },
+    #[error(
+        "read the tile's southwest corner: tile {tile_id} on level {level} starts at {expected:?}, but the header says {actual:?}"
+    )]
+    BaseCoordinateMismatch {
+        level: u8,
+        tile_id: u64,
+        expected: Coord<f32>,
+        actual: Coord<f32>,
+    },
+    #[error("read the tile size: the header says {header} bytes, but the tile has {actual} bytes")]
+    TileSizeMismatch { header: usize, actual: usize },
+    #[error("read the {section} section: it starts at byte {start}, after its end at byte {end}")]
+    SectionEndsBeforeStart {
+        section: &'static str,
+        start: usize,
+        end: usize,
+    },
+    #[error("read edge bin {bin}: it starts at entry {start}, after its end at entry {end}")]
+    BinEndsBeforeStart {
+        bin: usize,
+        start: usize,
+        end: usize,
+    },
+    #[error(
+        "read the {section} section: the header says it starts at byte {expected}, but the preceding sections end at byte {actual}"
+    )]
+    SectionOffsetMismatch {
+        section: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+}
+
 /// The Valhalla epoch: Midnight Jan 1, 2014, Eastern Standard Time.
+///
+/// This is only used to round trip [`GraphTileHeader::create_date`] through the tile builder.
 const VALHALLA_EPOCH: DateTime<Utc> = DateTime::<FixedOffset>::from_naive_utc_and_offset(
     NaiveDateTime::new(
         NaiveDate::from_ymd_opt(2014, 1, 1).unwrap(),
@@ -94,7 +172,7 @@ struct TransitionCountBitfield {
     transition_count: U32<LE>,
     // Deprecated; scheduled for deletion in v4
     #[bits(10)]
-    _spare: U16<LE>,
+    _spare: u16,
 }
 
 #[bitfield(u32,
@@ -120,7 +198,7 @@ struct TransitRecordBitfield {
     #[bits(16, from = bit_twiddling_helpers::conv_u16le::from_inner, into = bit_twiddling_helpers::conv_u16le::into_inner)]
     transfer_count: U16<LE>,
     #[bits(7)]
-    _spare: U8<LE>,
+    _spare: u8,
     #[bits(24, from = bit_twiddling_helpers::conv_u32le::from_inner, into = bit_twiddling_helpers::conv_u32le::into_inner)]
     departure_count: U32<LE>,
     #[bits(16, from = bit_twiddling_helpers::conv_u16le::from_inner, into = bit_twiddling_helpers::conv_u16le::into_inner)]
@@ -143,7 +221,7 @@ struct MiscCountsBitFieldOne {
     #[bits(24, from = bit_twiddling_helpers::conv_u32le::from_inner, into = bit_twiddling_helpers::conv_u32le::into_inner)]
     sign_count: U32<LE>,
     #[bits(16)]
-    _spare: Ui6<LE>,
+    _spare: u16,
 }
 
 #[bitfield(u64,
@@ -158,7 +236,7 @@ struct MiscCountsBitFieldTwo {
     #[bits(16, from = bit_twiddling_helpers::conv_u16le::from_inner, into = bit_twiddling_helpers::conv_u16le::into_inner)]
     admin_count: U16<LE>,
     #[bits(24)]
-    _spare: U32<LE>,
+    _spare: u32,
 }
 
 // TODO: Unsure if packed is needed as well.
@@ -200,10 +278,11 @@ pub struct GraphTileHeader {
     complex_restriction_reverse_offset: U32<LE>,
     edge_info_offset: U32<LE>,
     text_list_offset: U32<LE>,
-    /// The date the tile was created, expressed as the number of days (rounded down)
-    /// since midnight of Jan 1, 2014, Eastern Standard Time.
+    /// The date the tile was created, as the number of days since Valhalla's pivot date
+    /// (2014-01-01).
     ///
-    /// NOTE: Valhalla 3.9 no longer sets this, so it is usually zero.
+    /// Zero means that the date was not recorded,
+    /// which is the case for every tile Valhalla 3.9 builds.
     create_date: U32<LE>,
     /// Offsets for each bin of the grid
     ///
@@ -245,12 +324,26 @@ impl GraphTileHeader {
         self.bit_field_1.density()
     }
 
-    /// The date this tile was created.
+    /// The date this tile was created, if the tile records one.
     ///
-    /// Valhalla 3.9 no longer sets the creation date,
-    /// so this is usually the Valhalla epoch (midnight Jan 1, 2014, Eastern Standard Time).
+    /// Valhalla stores the number of days since its pivot date (2014-01-01),
+    /// with zero meaning that no date was recorded.
+    /// Valhalla 3.9's tile build leaves it at zero,
+    /// so expect `None` for tiles built by mainline.
     #[inline]
-    pub fn create_date(&self) -> DateTime<Utc> {
+    pub fn date_created(&self) -> Option<NaiveDate> {
+        match self.create_date.get() {
+            0 => None,
+            days => PIVOT_DATE.checked_add_days(Days::new(u64::from(days))),
+        }
+    }
+
+    /// The raw creation date as a timestamp, for the tile builder to copy through unchanged.
+    ///
+    /// This maps the "not recorded" value of zero to the epoch,
+    /// so it is not public; use [`GraphTileHeader::date_created`] instead.
+    #[inline]
+    pub(crate) fn create_date(&self) -> DateTime<Utc> {
         VALHALLA_EPOCH + TimeDelta::days(i64::from(self.create_date.get()))
     }
 
@@ -486,54 +579,246 @@ impl GraphTileHeader {
     /// The returned tuple is in `(start, end)` order.
     /// The end index is "one past the end" (the start of the next bin).
     ///
-    /// # Panics
-    ///
-    /// Panics if the bin index is illegal (25 or greater).
+    /// Returns `None` if the bin index is out of range (25 or greater),
+    /// or if the bin's offsets are out of order
+    /// (which [`GraphTileHeader::validate`] rules out).
     #[inline]
-    pub const fn edge_bin_offsets(&self, bin_index: usize) -> (usize, usize) {
-        assert!(bin_index < BIN_COUNT, "Invalid bin index");
+    pub const fn edge_bin_offsets(&self, bin_index: usize) -> Option<(usize, usize)> {
+        if bin_index >= BIN_COUNT {
+            return None;
+        }
         let start = if bin_index == 0 {
             0usize
         } else {
             self.bin_offsets[bin_index - 1].get() as usize
         };
         let end = self.bin_offsets[bin_index].get() as usize;
-        (start, end)
+        if start <= end {
+            Some((start, end))
+        } else {
+            None
+        }
+    }
+
+    /// The size in bytes of the section between two header offsets.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the section would end before it starts.
+    #[inline]
+    fn section_size(
+        section: &'static str,
+        start: u32,
+        end: u32,
+    ) -> Result<usize, GraphTileHeaderError> {
+        match end.checked_sub(start) {
+            Some(size) => Ok(size as usize),
+            None => Err(GraphTileHeaderError::SectionEndsBeforeStart {
+                section,
+                start: start as usize,
+                end: end as usize,
+            }),
+        }
     }
 
     /// The size (in bytes) occupied by the complex forward restrictions.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the section's offsets are out of order.
     #[inline]
-    pub const fn complex_forward_restrictions_size(&self) -> usize {
-        (self.complex_restriction_reverse_offset.get()
-            - self.complex_restriction_forward_offset.get()) as usize
+    pub(crate) fn complex_forward_restrictions_size(&self) -> Result<usize, GraphTileHeaderError> {
+        Self::section_size(
+            "complex_forward_restrictions",
+            self.complex_restriction_forward_offset.get(),
+            self.complex_restriction_reverse_offset.get(),
+        )
     }
 
     /// The size (in bytes) occupied by the complex reverse restrictions.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the section's offsets are out of order.
     #[inline]
-    pub const fn complex_reverse_restrictions_size(&self) -> usize {
-        (self.edge_info_offset.get() - self.complex_restriction_reverse_offset.get()) as usize
+    pub(crate) fn complex_reverse_restrictions_size(&self) -> Result<usize, GraphTileHeaderError> {
+        Self::section_size(
+            "complex_reverse_restrictions",
+            self.complex_restriction_reverse_offset.get(),
+            self.edge_info_offset.get(),
+        )
     }
 
     /// The size (in bytes) occupied by the edge info data structure.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the section's offsets are out of order.
     #[inline]
-    pub const fn edge_info_size(&self) -> usize {
-        (self.text_list_offset.get() - self.edge_info_offset.get()) as usize
+    pub(crate) fn edge_info_size(&self) -> Result<usize, GraphTileHeaderError> {
+        Self::section_size(
+            "edge_info",
+            self.edge_info_offset.get(),
+            self.text_list_offset.get(),
+        )
     }
 
     /// The size (in bytes) occupied by the text list.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the section's offsets are out of order.
     #[inline]
-    pub const fn text_list_size(&self) -> usize {
-        (self.lane_connectivity_offset.get() - self.text_list_offset.get()) as usize
+    pub(crate) fn text_list_size(&self) -> Result<usize, GraphTileHeaderError> {
+        Self::section_size(
+            "text_list",
+            self.text_list_offset.get(),
+            self.lane_connectivity_offset.get(),
+        )
     }
 
     /// The size (in bytes) occupied by the lane connectivity data.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the section's offsets are out of order.
     #[inline]
-    pub const fn lane_connectivity_size(&self) -> usize {
-        if self.predicted_speeds_count() > 0 {
-            (self.predicted_speeds_offset.get() - self.lane_connectivity_offset.get()) as usize
+    pub(crate) fn lane_connectivity_size(&self) -> Result<usize, GraphTileHeaderError> {
+        // Like Valhalla, only trust the predicted speed offset when there are predicted speeds.
+        let end = if self.predicted_speeds_count() > 0 {
+            self.predicted_speeds_offset.get()
         } else {
-            (self.tile_size.get() - self.lane_connectivity_offset.get()) as usize
+            self.tile_size.get()
+        };
+        Self::section_size(
+            "lane_connectivity",
+            self.lane_connectivity_offset.get(),
+            end,
+        )
+    }
+
+    /// The byte offset of the predicted speeds, if the tile has any.
+    #[inline]
+    pub(crate) const fn predicted_speeds_offset(&self) -> Option<usize> {
+        if self.predicted_speeds_count() > 0 {
+            Some(self.predicted_speeds_offset.get() as usize)
+        } else {
+            None
         }
+    }
+
+    /// Is this a version of the tile format that we can read?
+    ///
+    /// We only support tiles built by Valhalla 3.9.x,
+    /// whose version field starts with `3.9.` and a digit.
+    #[inline]
+    pub fn has_supported_version(&self) -> bool {
+        // The version is a NUL-terminated string in a fixed-size field.
+        let len = self
+            .version
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(VERSION_LEN);
+        self.version[..len]
+            .strip_prefix(SUPPORTED_VERSION_PREFIX)
+            .and_then(<[u8]>::first)
+            .is_some_and(u8::is_ascii_digit)
+    }
+
+    /// The tile hierarchy level that this tile belongs to,
+    /// if it is a level we support.
+    #[inline]
+    fn tile_level(&self) -> Option<&'static TileLevel> {
+        let level = self.graph_id().level();
+        STANDARD_LEVELS.iter().find(|lvl| lvl.level == level)
+    }
+
+    /// Checks that the header describes a tile that we can read,
+    /// and that it is internally consistent.
+    ///
+    /// `tile_len` is the length in bytes of the whole tile, including the header.
+    ///
+    /// Once this succeeds, the section size helpers cannot fail,
+    /// and the edge bin offsets are monotonic.
+    /// This does not check anything outside the header;
+    /// [`GraphTileView`](super::GraphTileView) checks the sections themselves as it reads them.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first problem found.
+    /// The checks run in a fixed order:
+    /// the version, the level and tile ID, the base coordinate, the tile size,
+    /// the variable-size section offsets, and finally the edge bin offsets.
+    pub fn validate(&self, tile_len: usize) -> Result<(), GraphTileHeaderError> {
+        if !self.has_supported_version() {
+            return Err(GraphTileHeaderError::UnsupportedVersion {
+                version: self.version().into_owned(),
+            });
+        }
+
+        let graph_id = self.graph_id();
+        let level = graph_id.level();
+        // Transit tiles (level 3) are out of scope; see the routing architecture docs.
+        let tile_level = self
+            .tile_level()
+            .ok_or(GraphTileHeaderError::UnsupportedLevel(level))?;
+        let tiling = &tile_level.tiling_system;
+        let tile_id = graph_id.tile_id();
+        let Some(expected) = tiling.base_coordinate(tile_id) else {
+            return Err(GraphTileHeaderError::TileIdOutOfRange {
+                level,
+                tile_id,
+                tile_count: tiling.tile_count(),
+            });
+        };
+
+        // Valhalla derives the base coordinate from the tile ID in single precision
+        // (`Tiles::Base`), so a tile built by Valhalla matches it bit for bit.
+        // Checking it also rules out non-finite coordinates.
+        let actual = self.sw_corner();
+        if expected.x.to_bits() != actual.x.to_bits() || expected.y.to_bits() != actual.y.to_bits()
+        {
+            return Err(GraphTileHeaderError::BaseCoordinateMismatch {
+                level,
+                tile_id,
+                expected,
+                actual,
+            });
+        }
+
+        let header_tile_size = self.tile_size.get() as usize;
+        if header_tile_size != tile_len {
+            return Err(GraphTileHeaderError::TileSizeMismatch {
+                header: header_tile_size,
+                actual: tile_len,
+            });
+        }
+
+        // Each helper checks that its section does not end before it starts.
+        // Together, they check that the offsets increase monotonically up to the tile size.
+        self.complex_forward_restrictions_size()?;
+        self.complex_reverse_restrictions_size()?;
+        self.edge_info_size()?;
+        self.text_list_size()?;
+        self.lane_connectivity_size()?;
+        if self.predicted_speeds_count() > 0 {
+            Self::section_size(
+                "predicted_speeds",
+                self.predicted_speeds_offset.get(),
+                self.tile_size.get(),
+            )?;
+        }
+
+        let mut start = 0;
+        for (bin, offset) in self.bin_offsets.iter().enumerate() {
+            let end = offset.get() as usize;
+            if end < start {
+                return Err(GraphTileHeaderError::BinEndsBeforeStart { bin, start, end });
+            }
+            start = end;
+        }
+
+        Ok(())
     }
 }
 

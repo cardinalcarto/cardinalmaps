@@ -7,10 +7,10 @@
 //! and work down from there as needed.
 //! For writing tiles, a safe builder API is provided in [`GraphTileBuilder`].
 
-use std::ops::Deref;
+use core::ops::Deref;
 use std::sync::Arc;
 use thiserror::Error;
-use zerocopy::{FromBytes, I16, LE, U32};
+use zerocopy::{FromBytes, I16, Immutable, LE, U32};
 
 use enumset::EnumSet;
 use geo::{CoordFloat, Point, coord};
@@ -38,6 +38,7 @@ pub mod predicted_speeds;
 mod sign;
 mod transit;
 mod turn_lane;
+mod validation;
 
 // Variable-length sections and the values stored in the text list.
 mod complex_restriction;
@@ -65,11 +66,12 @@ pub use builder::GraphTileBuilder;
 pub use checksum::{BuildId, TileHash, TileHasher};
 pub use directed_edge::{DirectedEdge, DirectedEdgeExt};
 pub use edge_info::EdgeInfo;
-pub use header::GraphTileHeader;
+pub use header::{GraphTileHeader, GraphTileHeaderError};
 pub use node::{NodeInfo, NodeTransition};
 pub use sign::{Sign, SignType};
 pub use transit::{TransitDeparture, TransitRoute, TransitSchedule, TransitStop, TransitTransfer};
 pub use turn_lane::TurnLane;
+pub use validation::GraphTileDataError;
 
 // Variable-length sections and the values stored in the text list.
 pub use access_restriction::AccessRestrictionValue;
@@ -88,37 +90,38 @@ pub use tagged_value::{
 pub use time_domain::{ConditionalSpeedLimit, DayType, TimeDomain};
 pub use turn_lane::{TurnLaneDirection, TurnLaneMask, TurnLanes};
 
+/// Ways in which reading graph tile data can fail.
+///
+/// Tile data comes from outside the process (often from a download, on a phone),
+/// so every way in which it can be truncated, corrupt, or unsupported is an error here,
+/// never a panic.
 #[derive(Debug, Error)]
 pub enum GraphTileDecodingError {
-    #[error("Unable to extract a slice of the correct length; the tile data is malformed.")]
-    SliceArrayConversion(#[from] std::array::TryFromSliceError),
-    #[error("Unable to extract a slice of the correct length; the tile data is malformed.")]
+    #[error("extract a slice of the correct length (the tile data is malformed)")]
+    SliceArrayConversion(#[from] core::array::TryFromSliceError),
+    #[error("extract a slice of the correct length (the tile data is malformed)")]
     SliceLength,
-    #[error("The byte sequence is not valid for this type.")]
+    #[error("interpret the bytes as this type (the byte sequence is not valid for it)")]
     ByteSequenceValidityError,
-    #[error("Invalid graph ID.")]
+    #[error("read a graph ID: {0}")]
     GraphIdParseError(#[from] InvalidGraphIdError),
     #[error(
-        "Data cast failed for field {field} (this almost always means invalid data): {error_description}"
+        "read the {field} section (this almost always means invalid data): {error_description}"
     )]
     CastError {
         field: String,
         error_description: String,
     },
     #[error(
-        "Expected to have consumed all bytes in the graph tile, but we still have a leftover buffer of {0} bytes. This is either a tile reader implementation error, or the tile is invalid."
+        "consume all bytes in the graph tile: {0} bytes are left over (either the tile is invalid or the reader has a bug)"
     )]
     LeftoverBytesAfterReading(usize),
-    #[error("Tile level {0} is not currently supported by Valinor.")]
-    UnsupportedTileLevel(u8),
-    #[error(
-        "read the {section} section: the header says it starts at byte {expected}, but the preceding sections end at byte {actual}"
-    )]
-    SectionOffsetMismatch {
-        section: &'static str,
-        expected: usize,
-        actual: usize,
-    },
+    /// The header is invalid, inconsistent, or from an unsupported version.
+    #[error(transparent)]
+    InvalidHeader(#[from] GraphTileHeaderError),
+    /// The data sections are inconsistent with each other.
+    #[error(transparent)]
+    InvalidData(#[from] GraphTileDataError),
 }
 
 #[derive(Debug, Error)]
@@ -192,15 +195,23 @@ pub trait GraphTile {
     ///
     /// This does not perform any heap allocations and returns a continuous slice.
     ///
-    /// # Errors
+    /// # Correctness
     ///
-    /// This function may return an incorrect result or panic if the node info
-    /// is from another tile.
-    /// The node info does not contain tile information, so it is the responsibility of the caller
+    /// The node info must come from this tile.
+    /// It does not contain tile information, so it is the responsibility of the caller
     /// to ensure this.
+    /// Parsing a tile checks that the edges of each of its nodes are in range,
+    /// so this never panics,
+    /// but the result for a node from another tile is meaningless
+    /// (and empty if its edges would be out of range for this tile).
     fn get_outbound_edges_from_node(&self, node_info: &NodeInfo) -> &[DirectedEdge];
 
     /// Gets a slice of all (outbound) transitions (links to other levels) from a node.
+    ///
+    /// # Correctness
+    ///
+    /// The node info must come from this tile,
+    /// as for [`get_outbound_edges_from_node`](GraphTile::get_outbound_edges_from_node).
     fn get_transitions(&self, node: &NodeInfo) -> &[NodeTransition];
 
     /// Gets a reference to the directed edge in this tile by graph ID.
@@ -294,9 +305,8 @@ pub trait GraphTile {
     /// While the directed graph edges always come in pairs,
     /// only one edge from the pair is included in the edge bins!
     ///
-    /// # Panics
-    ///
-    /// This may panic if the tile data is invalid and references an out-of-bounds index.
+    /// Returns an empty slice if the tile has no edge bins (outside of level 2),
+    /// or if the bin index is out of range ([`crate::BIN_COUNT`] or greater).
     fn edges_in_bin(&self, bin_index: usize) -> &[GraphId];
 
     /// Returns the bounding circles of the edges in the specified bin.
@@ -308,24 +318,22 @@ pub trait GraphTile {
     /// using the bin center from [`GraphTileHeader::bin_center`].
     ///
     /// Returns an empty slice if the tile has no bounding circles
-    /// (which is always the case outside of level 2, and for tiles built before Valhalla 3.9).
-    ///
-    /// # Panics
-    ///
-    /// This may panic if the bin index is 25 or greater,
-    /// or if the tile data is invalid and references an out-of-bounds index.
+    /// (which is always the case outside of level 2, and for tiles built before Valhalla 3.9),
+    /// or if the bin index is out of range ([`crate::BIN_COUNT`] or greater).
     fn bounding_circles_in_bin(&self, bin_index: usize) -> &[DiscretizedBoundingCircle];
 
     /// Computes the row-major bin index for the given bin coordinates within
     /// the tile's bin grid.
     ///
+    /// Every level uses the same 5x5 grid (Valhalla's `kBinsDim`),
+    /// so this does not depend on the tile's data.
+    ///
     /// # Panics
     ///
-    /// This function assumes that the level in the graph tile header is a standard Valhalla level.
-    /// Non-standard values will cause a panic.
-    ///
-    /// This function also assumes that the `x` and `y` values are within the accepted range
-    /// (specifically, they must each be <= the square root of [`crate::BIN_COUNT`]).
+    /// Panics if `x` or `y` is not less than the number of bins per side
+    /// (the square root of [`crate::BIN_COUNT`]).
+    /// This is a check on the caller's arguments, like slice indexing;
+    /// it never depends on tile data.
     fn bin_index_xy(&self, x: usize, y: usize) -> usize;
 
     /// Returns an iterator over all nodes near a specified point,
@@ -352,12 +360,11 @@ pub trait GraphTile {
     /// A k-d tree also maps directly to the most common question,
     /// which is to retrieve the `k` nearest nodes.
     ///
-    /// # Panics
+    /// # Accuracy
     ///
-    /// This isn't intended to be used to get nodes over large distances.
-    /// In debug builds, this will panic if `radius_in_meters` is larger than 20,000 (20km).
-    ///
-    /// Also panics if you provide non-finite floating point values (e.g., NaN or infinity).
+    /// This isn't intended to be used to get nodes over large distances;
+    /// see [`DistanceApproximator`] for the limits of the approximation.
+    /// A NaN center or radius matches no nodes.
     #[inline]
     fn nodes_within_radius<N: CoordFloat + FromPrimitive, F: Fn(&NodeInfo) -> bool>(
         &self,
@@ -383,11 +390,13 @@ pub trait GraphTile {
                     return None;
                 }
 
-                let node_id = GraphId::try_from_components(level, tile_id, idx as u64).ok()?;
+                let node_id =
+                    GraphId::try_from_components(level, tile_id, u64::try_from(idx).ok()?).ok()?;
                 let nc = node_info.coordinate(sw);
 
-                let nc_lon = N::from(nc.x).unwrap();
-                let nc_lat = N::from(nc.y).unwrap();
+                // Converting from f64 never fails for f32 or f64.
+                let nc_lon = N::from(nc.x)?;
+                let nc_lat = N::from(nc.y)?;
                 let sq_dist = approximator.distance_squared(coord! {x: nc_lon, y: nc_lat});
                 if sq_dist <= radius_squared {
                     Some((GraphNode { node_id, node_info }, sq_dist.sqrt()))
@@ -692,15 +701,21 @@ impl GraphTile for GraphTileView<'_> {
     fn get_outbound_edges_from_node(&self, node_info: &NodeInfo) -> &[DirectedEdge] {
         let start = node_info.edge_index() as usize;
         let count = usize::from(node_info.edge_count());
-
-        &self.directed_edges[start..(start + count)]
+        // Parsing checked this range for every node in the tile,
+        // so this only falls back to an empty slice for a node from another tile.
+        self.directed_edges
+            .get(start..start + count)
+            .unwrap_or_default()
     }
 
     #[inline]
     fn get_transitions(&self, node: &NodeInfo) -> &[NodeTransition] {
         let start = node.transition_index() as usize;
         let count = usize::from(node.transition_count());
-        &self.transitions[start..(start + count)]
+        // As above, parsing checked this range for every node in the tile.
+        self.transitions
+            .get(start..start + count)
+            .unwrap_or_default()
     }
 
     #[inline]
@@ -762,15 +777,15 @@ impl GraphTile for GraphTileView<'_> {
         directed_edge_index: usize,
         seconds_from_start_of_week: u32,
     ) -> Option<f32> {
-        match &self.predicted_speeds {
-            Some(ps) => {
-                if self.directed_edges[directed_edge_index].has_predicted_speed() {
-                    ps.speed(directed_edge_index, seconds_from_start_of_week)
-                } else {
-                    None
-                }
-            }
-            None => None,
+        let predicted_speeds = self.predicted_speeds.as_ref()?;
+        if self
+            .directed_edges
+            .get(directed_edge_index)?
+            .has_predicted_speed()
+        {
+            predicted_speeds.speed(directed_edge_index, seconds_from_start_of_week)
+        } else {
+            None
         }
     }
 
@@ -778,9 +793,17 @@ impl GraphTile for GraphTileView<'_> {
         &self,
         directed_edge: &DirectedEdge,
     ) -> Result<EdgeInfo<'_>, GraphTileDecodingError> {
-        let edge_info_offset = directed_edge.edge_info_offset() as usize;
+        let offset = directed_edge.edge_info_offset() as usize;
+        // Parsing checked this offset for every edge in the tile,
+        // so this can only fail for an edge from another tile.
+        let edge_info = self.edge_info_memory.get(offset..).ok_or(
+            GraphTileDataError::EdgeInfoLookupOutOfBounds {
+                offset,
+                size: self.edge_info_memory.len(),
+            },
+        )?;
 
-        EdgeInfo::try_from((&self.edge_info_memory[edge_info_offset..], self.text_memory))
+        EdgeInfo::try_from((edge_info, self.text_memory))
     }
 
     #[inline]
@@ -800,49 +823,33 @@ impl GraphTile for GraphTileView<'_> {
 
     #[inline]
     fn edges_in_bin(&self, bin_index: usize) -> &[GraphId] {
-        if self.edge_bins.is_empty() {
-            return &[];
-        }
-        let (start, end) = self.header.edge_bin_offsets(bin_index);
-        assert!(
-            end <= self.edge_bins.len(),
-            "Unexpected end that runs past the edge bins structure"
-        );
-        &self.edge_bins[start..end]
+        // Parsing checked that the bin offsets are monotonic
+        // and that the last one is the length of the edge bins,
+        // so this only falls back to an empty slice for an out-of-range bin.
+        self.header
+            .edge_bin_offsets(bin_index)
+            .and_then(|(start, end)| self.edge_bins.get(start..end))
+            .unwrap_or_default()
     }
 
     #[inline]
     fn bounding_circles_in_bin(&self, bin_index: usize) -> &[DiscretizedBoundingCircle] {
-        if self.bounding_circles.is_empty() {
-            return &[];
-        }
-        let (start, end) = self.header.edge_bin_offsets(bin_index);
-        assert!(
-            end <= self.bounding_circles.len(),
-            "Unexpected end that runs past the bounding circles structure"
-        );
-        &self.bounding_circles[start..end]
+        // There is either one circle per edge bin entry or none at all.
+        // As above, the range is in bounds whenever there are circles.
+        self.header
+            .edge_bin_offsets(bin_index)
+            .and_then(|(start, end)| self.bounding_circles.get(start..end))
+            .unwrap_or_default()
     }
 
     #[inline]
     fn bin_index_xy(&self, x: usize, y: usize) -> usize {
         assert!(
-            x << 1 < crate::BIN_COUNT,
-            "x must be less than the square root of crate::BIN_COUNT"
+            x < crate::BINS_PER_SIDE && y < crate::BINS_PER_SIDE,
+            "bin coordinates ({x}, {y}) must each be less than {}",
+            crate::BINS_PER_SIDE
         );
-        assert!(
-            y << 1 < crate::BIN_COUNT,
-            "y must be less than the square root of crate::BIN_COUNT"
-        );
-
-        let level = self.header.graph_id().level();
-        // Find the subdivision count for this level (defaults to 5 if unknown)
-        let n_subdivisions = crate::tile_hierarchy::STANDARD_LEVELS
-            .iter()
-            .find(|lvl| lvl.level == level)
-            .map(|lvl| lvl.tiling_system.n_subdivisions as usize)
-            .expect("Only Valhalla standard tile levels are supported");
-        y * n_subdivisions + x
+        y * crate::BINS_PER_SIDE + x
     }
 
     // Variable-length sections
@@ -860,293 +867,232 @@ impl GraphTile for GraphTileView<'_> {
     }
 }
 
+/// Reads the sections of a tile in order, consuming them from the front of the remaining bytes.
+///
+/// This is not *strictly* the same as how Valhalla parses the tile in `GraphTile::Initialize`
+/// (which jumps to the header offsets of the variable-size sections),
+/// but it is functionally identical for a valid tile,
+/// and [`SectionReader::expect_offset`] checks that the two agree.
+///
+/// One helpful side effect of this approach is that we can be certain
+/// that there are no accidentally overlapping borrows!
+/// Additionally, at the end, we can check that we've consumed all bytes,
+/// thus ensuring that we have either mapped every byte or else something is wrong.
+struct SectionReader<'a> {
+    remaining: &'a [u8],
+    tile_len: usize,
+}
+
+impl<'a> SectionReader<'a> {
+    /// Reads the next `count` elements of type `T`.
+    #[inline]
+    fn read<T>(
+        &mut self,
+        field: &'static str,
+        count: usize,
+    ) -> Result<&'a [T], GraphTileDecodingError>
+    where
+        T: FromBytes + Immutable,
+    {
+        let (section, remaining) = <[T]>::ref_from_prefix_with_elems(self.remaining, count)
+            .map_err(|e| GraphTileDecodingError::CastError {
+                field: field.to_string(),
+                error_description: e.to_string(),
+            })?;
+        self.remaining = remaining;
+        Ok(section)
+    }
+
+    /// Checks that the next section starts at the byte offset the header gives for it.
+    ///
+    /// Valhalla reads the bounding circles and everything after them from header offsets alone,
+    /// so this catches tiles whose header disagrees with their contents.
+    /// For example, `valhalla_add_landmarks` in Valhalla 3.9.1 drops the edge bins and circles
+    /// from the tiles it rewrites but leaves their offsets in the header.
+    #[inline]
+    fn expect_offset(
+        &self,
+        section: &'static str,
+        expected: usize,
+    ) -> Result<(), GraphTileHeaderError> {
+        let actual = self.tile_len - self.remaining.len();
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(GraphTileHeaderError::SectionOffsetMismatch {
+                section,
+                expected,
+                actual,
+            })
+        }
+    }
+}
+
 impl<'a> TryFrom<&'a [u8]> for GraphTileView<'a> {
     type Error = GraphTileDecodingError;
 
+    /// Parses and validates a graph tile.
+    ///
+    /// This checks everything that the view's accessors rely on,
+    /// so that none of them can index out of bounds or panic on a parsed tile:
+    ///
+    /// - the header, with [`GraphTileHeader::validate`]
+    ///   (the version, tile ID, tile size, and section offsets);
+    /// - that every section fits in the tile, starts where the header says,
+    ///   and that the sections cover the tile exactly;
+    /// - and the references between sections (see [`GraphTileDataError`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tile is truncated, corrupt, or from an unsupported version.
+    ///
+    /// # Performance
+    ///
+    /// This does not copy any tile data,
+    /// but it does visit every node, directed edge, and access restriction once.
     fn try_from(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         let tile_len = bytes.len();
-        let (header, bytes) = GraphTileHeader::ref_from_prefix(bytes).map_err(|e| {
+        let (header, remaining) = GraphTileHeader::ref_from_prefix(bytes).map_err(|e| {
             GraphTileDecodingError::CastError {
                 field: "header".to_string(),
                 error_description: e.to_string(),
             }
         })?;
+        header.validate(tile_len)?;
 
-        let level = header.graph_id().level();
-        if level > 2 {
-            // No transit tile support yet (see the end of this function for some more specific TODOs)
-            return Err(GraphTileDecodingError::UnsupportedTileLevel(level));
-        }
+        let mut reader = SectionReader {
+            remaining,
+            tile_len,
+        };
 
-        // All the variably sized data arrays...
-        // The pattern here is to use `ref_from_prefix_with_elems` to consume a known number of elements
-        // from the byte slice, returning a reference to the tail.
-        //
-        // In this way, we don't typically need to track manual offsets;
-        // we just consume the known number of elements sequentially.
-        // This is not *strictly* the same as how Valhalla parses the tile in `GraphTile::Initialize`,
-        // but it is functionally identical.
-        // The only theoretical avenues for breakage is when data order changes (a breaking change anyway!).
-        // All of our size calculations are explicit though (in header.rs),
-        // and the ordering of data sections is explicit in the implementation
-        // (this also doubles as documentation now).
-        //
-        // One helpful side effect of this approach is that we can be certain
-        // that there are no accidentally overlapping borrows!
-        // Additionally, at the end, we can check that we've consumed all bytes,
-        // thus ensuring that we have either mapped every byte or else something is wrong.
-
-        // Basic features
-        let (nodes, bytes) =
-            <[NodeInfo]>::ref_from_prefix_with_elems(bytes, header.node_count() as usize).map_err(
-                |e| GraphTileDecodingError::CastError {
-                    field: "node_info".to_string(),
-                    error_description: e.to_string(),
-                },
-            )?;
-        let (transitions, bytes) = <[NodeTransition]>::ref_from_prefix_with_elems(
-            bytes,
-            header.transition_count() as usize,
-        )
-        .map_err(|e| GraphTileDecodingError::CastError {
-            field: "transitions".to_string(),
-            error_description: e.to_string(),
-        })?;
-        let (directed_edges, bytes) = <[DirectedEdge]>::ref_from_prefix_with_elems(
-            bytes,
-            header.directed_edge_count() as usize,
-        )
-        .map_err(|e| GraphTileDecodingError::CastError {
-            field: "directed_edges".to_string(),
-            error_description: e.to_string(),
-        })?;
-
-        // Extended directed edges
+        // The fixed-size sections, whose sizes come from the header's record counts.
+        // The counts are at most 24 bits wide, so none of these sizes can overflow.
+        let nodes = reader.read::<NodeInfo>("node_info", header.node_count() as usize)?;
+        let transitions =
+            reader.read::<NodeTransition>("transitions", header.transition_count() as usize)?;
+        let directed_edges =
+            reader.read::<DirectedEdge>("directed_edges", header.directed_edge_count() as usize)?;
         let directed_edge_ext_count = if header.has_ext_directed_edge() {
             header.directed_edge_count() as usize
         } else {
             0
         };
-        let (ext_directed_edges, bytes) =
-            <[DirectedEdgeExt]>::ref_from_prefix_with_elems(bytes, directed_edge_ext_count)
-                .map_err(|e| GraphTileDecodingError::CastError {
-                    field: "directed_edge_ext".to_string(),
-                    error_description: e.to_string(),
-                })?;
-
-        // Access restrictions
-        let (access_restrictions, bytes) = <[AccessRestriction]>::ref_from_prefix_with_elems(
-            bytes,
+        let ext_directed_edges =
+            reader.read::<DirectedEdgeExt>("directed_edge_ext", directed_edge_ext_count)?;
+        let access_restrictions = reader.read::<AccessRestriction>(
+            "access_restrictions",
             header.access_restriction_count() as usize,
-        )
-        .map_err(|e| GraphTileDecodingError::CastError {
-            field: "access_restrictions".to_string(),
-            error_description: e.to_string(),
-        })?;
+        )?;
+        let transit_departures = reader
+            .read::<TransitDeparture>("transit_departures", header.departure_count() as usize)?;
+        let transit_stops =
+            reader.read::<TransitStop>("transit_stops", usize::from(header.stop_count()))?;
+        let transit_routes =
+            reader.read::<TransitRoute>("transit_routes", usize::from(header.route_count()))?;
+        let transit_schedules = reader
+            .read::<TransitSchedule>("transit_schedules", usize::from(header.schedule_count()))?;
+        let transit_transfers = reader
+            .read::<TransitTransfer>("transit_transfers", usize::from(header.transfer_count()))?;
+        let signs = reader.read::<Sign>("signs", header.sign_count() as usize)?;
+        let turn_lanes =
+            reader.read::<TurnLane>("turn_lanes", header.turn_lane_count() as usize)?;
+        let admins = reader.read::<Admin>("admins", usize::from(header.admin_count()))?;
+        let edge_bins = reader.read::<GraphId>("edge_bins", header.edge_bins_count())?;
 
-        // Transit features
-        let (transit_departures, bytes) = <[TransitDeparture]>::ref_from_prefix_with_elems(
-            bytes,
-            header.departure_count() as usize,
-        )
-        .map_err(|e| GraphTileDecodingError::CastError {
-            field: "transit_departures".to_string(),
-            error_description: e.to_string(),
-        })?;
-        let (transit_stops, bytes) =
-            <[TransitStop]>::ref_from_prefix_with_elems(bytes, header.stop_count() as usize)
-                .map_err(|e| GraphTileDecodingError::CastError {
-                    field: "transit_stops".to_string(),
-                    error_description: e.to_string(),
-                })?;
-        let (transit_routes, bytes) =
-            <[TransitRoute]>::ref_from_prefix_with_elems(bytes, header.route_count() as usize)
-                .map_err(|e| GraphTileDecodingError::CastError {
-                    field: "transit_routes".to_string(),
-                    error_description: e.to_string(),
-                })?;
-        let (transit_schedules, bytes) = <[TransitSchedule]>::ref_from_prefix_with_elems(
-            bytes,
-            header.schedule_count() as usize,
-        )
-        .map_err(|e| GraphTileDecodingError::CastError {
-            field: "transit_schedules".to_string(),
-            error_description: e.to_string(),
-        })?;
-        let (transit_transfers, bytes) = <[TransitTransfer]>::ref_from_prefix_with_elems(
-            bytes,
-            header.transfer_count() as usize,
-        )
-        .map_err(|e| GraphTileDecodingError::CastError {
-            field: "transit_transfers".to_string(),
-            error_description: e.to_string(),
-        })?;
-
-        let (signs, bytes) =
-            <[Sign]>::ref_from_prefix_with_elems(bytes, header.sign_count() as usize).map_err(
-                |e| GraphTileDecodingError::CastError {
-                    field: "signs".to_string(),
-                    error_description: e.to_string(),
-                },
-            )?;
-        let (turn_lanes, bytes) =
-            <[TurnLane]>::ref_from_prefix_with_elems(bytes, header.turn_lane_count() as usize)
-                .map_err(|e| GraphTileDecodingError::CastError {
-                    field: "turn_lanes".to_string(),
-                    error_description: e.to_string(),
-                })?;
-
-        let (admins, bytes) =
-            <[Admin]>::ref_from_prefix_with_elems(bytes, header.admin_count() as usize).map_err(
-                |e| GraphTileDecodingError::CastError {
-                    field: "admins".to_string(),
-                    error_description: e.to_string(),
-                },
-            )?;
-
-        let (edge_bins, bytes) =
-            <[GraphId]>::ref_from_prefix_with_elems(bytes, header.edge_bins_count()).map_err(
-                |e| GraphTileDecodingError::CastError {
-                    field: "edge_bins".to_string(),
-                    error_description: e.to_string(),
-                },
-            )?;
-
-        // Unlike the sections before them, the bounding circles have an explicit offset.
-        // Valhalla writes them right after the edge bins,
-        // but it reads them (and everything after) from header offsets alone.
-        // We read sequentially, so we check that the offsets agree with the layout we expect.
-        // This catches tiles whose header disagrees with their contents.
-        // For example, valhalla_add_landmarks in Valhalla 3.9.1 drops the edge bins and circles
-        // from the tiles it rewrites but leaves their offsets in the header.
-        let check_offset = |section: &'static str, expected: usize, remaining: &[u8]| {
-            let actual = tile_len - remaining.len();
-            if actual == expected {
-                Ok(())
-            } else {
-                Err(GraphTileDecodingError::SectionOffsetMismatch {
-                    section,
-                    expected,
-                    actual,
-                })
-            }
-        };
-
+        // The sections from here on have explicit offsets in the header.
+        // Valhalla writes the bounding circles right after the edge bins.
         if let Some(offset) = header.bounding_circles_offset() {
-            check_offset("bounding_circles", offset, bytes)?;
+            reader.expect_offset("bounding_circles", offset)?;
         }
-        let (bounding_circles, bytes) = <[DiscretizedBoundingCircle]>::ref_from_prefix_with_elems(
-            bytes,
+        let bounding_circles = reader.read::<DiscretizedBoundingCircle>(
+            "bounding_circles",
             header.bounding_circle_count(),
-        )
-        .map_err(|e| GraphTileDecodingError::CastError {
-            field: "bounding_circles".to_string(),
-            error_description: e.to_string(),
-        })?;
+        )?;
 
-        check_offset(
+        // The header has already checked that these offsets are monotonic,
+        // so checking the first one places all of them.
+        reader.expect_offset(
             "complex_forward_restrictions",
             header.complex_forward_restrictions_offset(),
-            bytes,
         )?;
-        let (complex_forward_restrictions_memory, bytes) =
-            <[u8]>::ref_from_prefix_with_elems(bytes, header.complex_forward_restrictions_size())
-                .map_err(|e| GraphTileDecodingError::CastError {
-                field: "complex_forward_restrictions".to_string(),
-                error_description: e.to_string(),
-            })?;
+        let complex_forward_restrictions_memory = reader.read::<u8>(
+            "complex_forward_restrictions",
+            header.complex_forward_restrictions_size()?,
+        )?;
+        let complex_reverse_restrictions_memory = reader.read::<u8>(
+            "complex_reverse_restrictions",
+            header.complex_reverse_restrictions_size()?,
+        )?;
+        let edge_info_memory = reader.read::<u8>("edge_info_memory", header.edge_info_size()?)?;
+        let text_memory = reader.read::<u8>("text_memory", header.text_list_size()?)?;
+        let lane_connectivity_memory =
+            reader.read::<u8>("lane_connectivity", header.lane_connectivity_size()?)?;
 
-        let (complex_reverse_restrictions_memory, bytes) =
-            <[u8]>::ref_from_prefix_with_elems(bytes, header.complex_reverse_restrictions_size())
-                .map_err(|e| GraphTileDecodingError::CastError {
-                field: "complex_reverse_restrictions".to_string(),
-                error_description: e.to_string(),
-            })?;
-
-        let (edge_info_memory, bytes) =
-            <[u8]>::ref_from_prefix_with_elems(bytes, header.edge_info_size()).map_err(|e| {
-                GraphTileDecodingError::CastError {
-                    field: "edge_info_memory".to_string(),
-                    error_description: e.to_string(),
-                }
-            })?;
-
-        let (text_memory, bytes) =
-            <[u8]>::ref_from_prefix_with_elems(bytes, header.text_list_size()).map_err(|e| {
-                GraphTileDecodingError::CastError {
-                    field: "text_memory".to_string(),
-                    error_description: e.to_string(),
-                }
-            })?;
-
-        let (lane_connectivity_memory, bytes) =
-            <[u8]>::ref_from_prefix_with_elems(bytes, header.lane_connectivity_size()).map_err(
-                |e| GraphTileDecodingError::CastError {
-                    field: "lane_connectivity".to_string(),
-                    error_description: e.to_string(),
-                },
-            )?;
-
-        let (predicted_speeds, bytes) = if header.predicted_speeds_count() > 0 {
-            // Curiously, these seem to actually be unaligned in a Valhalla tile I generated!
-            let (offsets, profile_data) = <[U32<LE>]>::ref_from_prefix_with_elems(
-                bytes,
-                header.directed_edge_count() as usize,
-            )
-            .map_err(|e| GraphTileDecodingError::CastError {
-                field: "predicted_speed_offsets".to_string(),
-                error_description: e.to_string(),
-            })?;
-
-            let (profiles, bytes) = <[I16<LE>]>::ref_from_prefix_with_elems(
-                profile_data,
-                header.predicted_speeds_count() as usize * COEFFICIENT_COUNT,
-            )
-            .map_err(|e| GraphTileDecodingError::CastError {
-                field: "predicted_speed_profiles".to_string(),
-                error_description: e.to_string(),
-            })?;
-
-            (Some(PredictedSpeeds::new(offsets, profiles)), bytes)
-        } else {
-            (None, bytes)
-        };
+        let (predicted_speed_offsets, predicted_speed_profiles) =
+            if let Some(offset) = header.predicted_speeds_offset() {
+                reader.expect_offset("predicted_speeds", offset)?;
+                // Curiously, these seem to actually be unaligned in a Valhalla tile I generated!
+                let offsets = reader.read::<U32<LE>>(
+                    "predicted_speed_offsets",
+                    header.directed_edge_count() as usize,
+                )?;
+                let profiles = reader.read::<I16<LE>>(
+                    "predicted_speed_profiles",
+                    header.predicted_speeds_count() as usize * COEFFICIENT_COUNT,
+                )?;
+                (offsets, profiles)
+            } else {
+                (&[][..], &[][..])
+            };
 
         // TODO: Transit info
         // - Stop one stops(?)
         // - Route one stops(?)
         // - Operator one stops(?)
 
-        if bytes.is_empty() {
-            Ok(Self {
-                header,
-                nodes,
-                transitions,
-                directed_edges,
-                ext_directed_edges,
-                access_restrictions,
-                transit_departures,
-                transit_stops,
-                transit_routes,
-                transit_schedules,
-                transit_transfers,
-                signs,
-                turn_lanes,
-                admins,
-                edge_bins,
-                bounding_circles,
-                complex_forward_restrictions_memory,
-                complex_reverse_restrictions_memory,
-                edge_info_memory,
-                text_memory,
-                lane_connectivity_memory,
-                predicted_speeds,
-            })
-        } else {
-            Err(GraphTileDecodingError::LeftoverBytesAfterReading(
-                bytes.len(),
-            ))
+        if !reader.remaining.is_empty() {
+            return Err(GraphTileDecodingError::LeftoverBytesAfterReading(
+                reader.remaining.len(),
+            ));
         }
+
+        validation::check_nodes(nodes, directed_edges.len(), transitions.len())?;
+        validation::check_directed_edges(
+            directed_edges,
+            edge_info_memory.len(),
+            predicted_speed_offsets,
+            header.predicted_speeds_count() as usize,
+        )?;
+        validation::check_access_restrictions(access_restrictions)?;
+
+        let predicted_speeds = header
+            .predicted_speeds_offset()
+            .map(|_| PredictedSpeeds::new(predicted_speed_offsets, predicted_speed_profiles));
+
+        Ok(Self {
+            header,
+            nodes,
+            transitions,
+            directed_edges,
+            ext_directed_edges,
+            access_restrictions,
+            transit_departures,
+            transit_stops,
+            transit_routes,
+            transit_schedules,
+            transit_transfers,
+            signs,
+            turn_lanes,
+            admins,
+            edge_bins,
+            bounding_circles,
+            complex_forward_restrictions_memory,
+            complex_reverse_restrictions_memory,
+            edge_info_memory,
+            text_memory,
+            lane_connectivity_memory,
+            predicted_speeds,
+        })
     }
 }
 
@@ -1228,7 +1174,9 @@ mod tests {
         TEST_GRAPH_TILE_WITH_FLOW,
     };
     use enumset::{EnumSet, enum_set};
+    use proptest::prelude::*;
     use rand::{RngExt, rng};
+    use zerocopy::IntoBytes;
 
     #[test]
     fn test_get_opp_edge_index() {
@@ -1324,7 +1272,10 @@ mod tests {
 
         // insta internally does a fork operation, which is not supported under Miri
         if !cfg!(miri) {
-            insta::assert_yaml_snapshot!(tile_view.edge_bins);
+            // Graph IDs serialize as their raw value,
+            // but only with the serde feature, so we snapshot the raw values directly.
+            let edge_bins: Vec<u64> = tile_view.edge_bins.iter().map(GraphId::value).collect();
+            insta::assert_yaml_snapshot!("edge_bins", edge_bins);
         }
     }
 
@@ -1350,15 +1301,35 @@ mod tests {
         }
         assert_eq!(total, l2_view.edge_bins.len());
 
-        // Check bin index mapping at corners doesn't panic and returns a valid index
-        let n = 5;
-        let idx_tl = l2_view.bin_index_xy(0, 0);
-        let idx_tr = l2_view.bin_index_xy(n - 1, 0);
-        let idx_bl = l2_view.bin_index_xy(0, n - 1);
-        let idx_br = l2_view.bin_index_xy(n - 1, n - 1);
-        for idx in [idx_tl, idx_tr, idx_bl, idx_br] {
-            assert!(idx < crate::BIN_COUNT);
+        // Bins that don't exist are empty, rather than a panic.
+        for i in [crate::BIN_COUNT, crate::BIN_COUNT + 1, usize::MAX] {
+            assert!(l2_view.edges_in_bin(i).is_empty());
+            assert!(l2_view.bounding_circles_in_bin(i).is_empty());
         }
+
+        // Bins are numbered in row-major order from the southwest corner,
+        // as in Valhalla (`row * kBinsDim + col`).
+        let n = crate::BINS_PER_SIDE;
+        assert_eq!(n, 5);
+        assert_eq!(l2_view.bin_index_xy(0, 0), 0);
+        assert_eq!(l2_view.bin_index_xy(n - 1, 0), 4);
+        assert_eq!(l2_view.bin_index_xy(0, n - 1), 20);
+        assert_eq!(l2_view.bin_index_xy(n - 1, n - 1), 24);
+        let mut seen = [false; crate::BIN_COUNT];
+        for y in 0..n {
+            for x in 0..n {
+                let index = l0_view.bin_index_xy(x, y);
+                assert!(!seen[index], "bin ({x}, {y})");
+                seen[index] = true;
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "bin coordinates (5, 0) must each be less than 5")]
+    fn test_bin_index_xy_rejects_out_of_range_coordinates() {
+        // Before this was fixed, (5, 0) aliased bin (0, 1).
+        TEST_GRAPH_TILE_L2.bin_index_xy(5, 0);
     }
 
     #[test]
@@ -1494,11 +1465,11 @@ mod tests {
         bytes[228..232].copy_from_slice(&wrong.to_le_bytes());
         assert!(matches!(
             GraphTileView::try_from(bytes.as_slice()),
-            Err(GraphTileDecodingError::SectionOffsetMismatch {
+            Err(GraphTileDecodingError::InvalidHeader(GraphTileHeaderError::SectionOffsetMismatch {
                 section: "bounding_circles",
                 expected,
                 actual,
-            }) if expected == offset + 4 && actual == offset
+            })) if expected == offset + 4 && actual == offset
         ));
     }
 
@@ -1543,11 +1514,11 @@ mod tests {
         // so the mismatch shows up where the complex restrictions should start.
         assert!(matches!(
             GraphTileView::try_from(bytes.as_slice()),
-            Err(GraphTileDecodingError::SectionOffsetMismatch {
+            Err(GraphTileDecodingError::InvalidHeader(GraphTileHeaderError::SectionOffsetMismatch {
                 section: "complex_forward_restrictions",
                 expected,
                 actual,
-            }) if expected == bins_start && actual == circles_end
+            })) if expected == bins_start && actual == circles_end
         ));
     }
 
@@ -1562,10 +1533,12 @@ mod tests {
         bytes[212..216].copy_from_slice(&4u32.to_le_bytes());
         assert!(matches!(
             GraphTileView::try_from(bytes.as_slice()),
-            Err(GraphTileDecodingError::SectionOffsetMismatch {
-                section: "complex_forward_restrictions",
-                ..
-            })
+            Err(GraphTileDecodingError::InvalidHeader(
+                GraphTileHeaderError::SectionOffsetMismatch {
+                    section: "complex_forward_restrictions",
+                    ..
+                }
+            ))
         ));
     }
 
@@ -1851,6 +1824,375 @@ mod tests {
                     .all(|(_, distance)| { distance <= 25.0 }),
                 "Expected all nodes to be within the search radius"
             );
+        }
+    }
+
+    /// Reads every fixture tile, with its path relative to the fixtures directory.
+    fn fixture_tiles() -> Vec<(String, Vec<u8>)> {
+        let fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+        let mut tiles: Vec<_> = ["andorra-tiles", "andorra-tiles-with-traffic"]
+            .into_iter()
+            .flat_map(|dir| walkdir::WalkDir::new(fixtures.join(dir)))
+            .map(|entry| entry.expect("readable fixture directory"))
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "gph"))
+            .map(|entry| {
+                let name = entry
+                    .path()
+                    .strip_prefix(&fixtures)
+                    .expect("under the fixtures directory")
+                    .display()
+                    .to_string();
+                (name, std::fs::read(entry.path()).expect("readable fixture"))
+            })
+            .collect();
+        tiles.sort();
+        tiles
+    }
+
+    /// Overwrites `width` bits at `shift` in the little-endian 64-bit word at `offset`.
+    fn patch_bits(bytes: &mut [u8], offset: usize, shift: u32, width: u32, value: u64) {
+        let mut word = [0u8; 8];
+        word.copy_from_slice(&bytes[offset..offset + 8]);
+        let mask = ((1u64 << width) - 1) << shift;
+        let word = (u64::from_le_bytes(word) & !mask) | ((value << shift) & mask);
+        bytes[offset..offset + 8].copy_from_slice(&word.to_le_bytes());
+    }
+
+    /// The byte offset of a node in a tile.
+    fn node_offset(index: usize) -> usize {
+        size_of::<GraphTileHeader>() + index * size_of::<NodeInfo>()
+    }
+
+    /// The byte offset of a directed edge in a tile.
+    fn directed_edge_offset(header: &GraphTileHeader, index: usize) -> usize {
+        node_offset(header.node_count() as usize)
+            + header.transition_count() as usize * size_of::<NodeTransition>()
+            + index * size_of::<DirectedEdge>()
+    }
+
+    #[test]
+    fn test_all_fixture_tiles_parse() {
+        let tiles = fixture_tiles();
+        // Seven tiles in the plain fixture and one with predicted speeds.
+        assert_eq!(tiles.len(), 8);
+        for (name, bytes) in &tiles {
+            let view = GraphTileView::try_from(bytes.as_slice())
+                .unwrap_or_else(|e| panic!("{name} should parse: {e}"));
+            let header = view.header();
+            // Cross-checked with GraphTileHeader.version and .date_created
+            // in the Valhalla 3.9.1 Python bindings.
+            assert_eq!(header.version(), "3.9.1", "{name}");
+            assert!(header.has_supported_version());
+            assert_eq!(header.date_created(), None, "{name}");
+            exercise_accessors(&view);
+        }
+    }
+
+    #[test]
+    fn test_rejects_unsupported_version() {
+        let mut bytes = TEST_GRAPH_TILE_L0.borrow_owner().clone();
+        // The version is the 16 bytes after the graph ID and base coordinate.
+        bytes[16..32].copy_from_slice(b"3.5.0\0\0\0\0\0\0\0\0\0\0\0");
+        assert!(matches!(
+            GraphTileView::try_from(bytes.as_slice()),
+            Err(GraphTileDecodingError::InvalidHeader(
+                GraphTileHeaderError::UnsupportedVersion { version }
+            )) if version == "3.5.0"
+        ));
+    }
+
+    #[test]
+    fn test_rejects_truncated_tile() {
+        let bytes = TEST_GRAPH_TILE_L0.borrow_owner();
+        assert!(matches!(
+            GraphTileView::try_from(&bytes[..bytes.len() - 1]),
+            Err(GraphTileDecodingError::InvalidHeader(
+                GraphTileHeaderError::TileSizeMismatch { header, actual }
+            )) if header == bytes.len() && actual == bytes.len() - 1
+        ));
+        assert!(matches!(
+            GraphTileView::try_from(&bytes[..size_of::<GraphTileHeader>() - 1]),
+            Err(GraphTileDecodingError::CastError { field, .. }) if field == "header"
+        ));
+        assert!(GraphTileView::try_from(&[][..]).is_err());
+    }
+
+    #[test]
+    fn test_rejects_node_edges_out_of_bounds() {
+        let tile = &*TEST_GRAPH_TILE_L0;
+        let edge_count = tile.header().directed_edge_count() as usize;
+        let mut bytes = tile.borrow_owner().clone();
+        // The edge index is the low 21 bits of the node's second word,
+        // and the edge count is the next 7 bits.
+        let second_word = node_offset(3) + 8;
+        patch_bits(&mut bytes, second_word, 0, 21, (edge_count - 1) as u64);
+        patch_bits(&mut bytes, second_word, 21, 7, 2);
+        assert_eq!(
+            GraphTileView::try_from(bytes.as_slice())
+                .err()
+                .map(|e| e.to_string()),
+            Some(
+                GraphTileDataError::NodeEdgesOutOfBounds {
+                    node: 3,
+                    start: edge_count - 1,
+                    end: edge_count + 1,
+                    edge_count,
+                }
+                .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn test_rejects_node_transitions_out_of_bounds() {
+        let tile = &*TEST_GRAPH_TILE_L0;
+        let transition_count = tile.header().transition_count() as usize;
+        let mut bytes = tile.borrow_owner().clone();
+        // The transition index is the low 21 bits of the node's third word,
+        // and the transition count is the next 3 bits.
+        let third_word = node_offset(0) + 16;
+        patch_bits(&mut bytes, third_word, 0, 21, transition_count as u64);
+        patch_bits(&mut bytes, third_word, 21, 3, 1);
+        assert!(matches!(
+            GraphTileView::try_from(bytes.as_slice()),
+            Err(GraphTileDecodingError::InvalidData(
+                GraphTileDataError::NodeTransitionsOutOfBounds { node: 0, start, end, transition_count: count }
+            )) if start == transition_count && end == transition_count + 1 && count == transition_count
+        ));
+    }
+
+    #[test]
+    fn test_rejects_edge_info_offset_out_of_bounds() {
+        let tile = &*TEST_GRAPH_TILE_L0;
+        let header = tile.header();
+        let size = header.edge_info_size().expect("valid header");
+        let last = header.directed_edge_count() as usize - 1;
+        let mut bytes = tile.borrow_owner().clone();
+        // The edge info offset is the low 25 bits of the edge's second word.
+        patch_bits(
+            &mut bytes,
+            directed_edge_offset(header, last) + 8,
+            0,
+            25,
+            size as u64,
+        );
+        assert!(matches!(
+            GraphTileView::try_from(bytes.as_slice()),
+            Err(GraphTileDecodingError::InvalidData(
+                GraphTileDataError::EdgeInfoOffsetOutOfBounds { edge, offset, size: s }
+            )) if edge == last && offset == size && s == size
+        ));
+    }
+
+    #[test]
+    fn test_rejects_invalid_road_use() {
+        let tile = &*TEST_GRAPH_TILE_L2;
+        let header = tile.header();
+        let mut bytes = tile.borrow_owner().clone();
+        // The road use is bits 40 to 45 of the edge's third word.
+        // 63 is unassigned in Valhalla 3.9.1.
+        patch_bits(&mut bytes, directed_edge_offset(header, 7) + 16, 40, 6, 63);
+        assert!(matches!(
+            GraphTileView::try_from(bytes.as_slice()),
+            Err(GraphTileDecodingError::InvalidData(
+                GraphTileDataError::InvalidRoadUse { edge: 7, value: 63 }
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_rejects_invalid_predicted_speed_offset() {
+        let tile = &*TEST_GRAPH_TILE_WITH_FLOW;
+        let header = tile.header();
+        let offsets_start = header
+            .predicted_speeds_offset()
+            .expect("has predicted speeds");
+        let profile_count = header.predicted_speeds_count() as usize;
+        // Edge 42 has predicted speeds (see TEST_GRAPH_TILE_WITH_FLOW).
+        let edge_offset = offsets_start + 42 * size_of::<u32>();
+        for (offset, expected) in [
+            // Not the start of a profile, but mainline reads a whole profile from it.
+            (1, false),
+            // Less than a whole profile left.
+            ((profile_count - 1) * COEFFICIENT_COUNT + 1, true),
+            // One past the last profile.
+            (profile_count * COEFFICIENT_COUNT, true),
+            // The last profile.
+            ((profile_count - 1) * COEFFICIENT_COUNT, false),
+        ] {
+            let mut bytes = tile.borrow_owner().clone();
+            bytes[edge_offset..edge_offset + 4]
+                .copy_from_slice(&u32::try_from(offset).unwrap().to_le_bytes());
+            let result = GraphTileView::try_from(bytes.as_slice());
+            if expected {
+                assert!(matches!(
+                    result,
+                    Err(GraphTileDecodingError::InvalidData(
+                        GraphTileDataError::InvalidPredictedSpeedOffset { edge: 42, offset: o, profile_count: p }
+                    )) if o == offset && p == profile_count
+                ));
+            } else {
+                assert!(result.is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn test_accessors_on_foreign_data() {
+        let tile = &*TEST_GRAPH_TILE_L0;
+
+        // A node from "another tile", whose edges and transitions are out of range for this one.
+        let mut node_bytes = tile.nodes()[0].as_bytes().to_vec();
+        patch_bits(&mut node_bytes, 8, 0, 21, (1 << 21) - 1);
+        patch_bits(&mut node_bytes, 8, 21, 7, 3);
+        patch_bits(&mut node_bytes, 16, 0, 21, (1 << 21) - 1);
+        patch_bits(&mut node_bytes, 16, 21, 3, 1);
+        let node = NodeInfo::read_from_bytes(&node_bytes).expect("node-sized");
+        assert!(tile.get_outbound_edges_from_node(&node).is_empty());
+        assert!(tile.get_transitions(&node).is_empty());
+
+        // An edge from "another tile", whose edge info offset is out of range for this one.
+        let mut edge_bytes = tile.directed_edges()[0].as_bytes().to_vec();
+        patch_bits(&mut edge_bytes, 8, 0, 25, (1 << 25) - 1);
+        let edge = DirectedEdge::read_from_bytes(&edge_bytes).expect("edge-sized");
+        assert!(matches!(
+            tile.get_edge_info(&edge),
+            Err(GraphTileDecodingError::InvalidData(
+                GraphTileDataError::EdgeInfoLookupOutOfBounds { offset, .. }
+            )) if offset == (1 << 25) - 1
+        ));
+
+        // Edge indexes past the end of the tile have no predicted speed.
+        let with_flow = &*TEST_GRAPH_TILE_WITH_FLOW;
+        let edge_count = with_flow.header().directed_edge_count() as usize;
+        assert!(with_flow.get_predicted_speed(42, 0).is_some());
+        assert_eq!(with_flow.get_predicted_speed(edge_count, 0), None);
+        assert_eq!(with_flow.get_predicted_speed(usize::MAX, 0), None);
+    }
+
+    /// Calls every accessor that reads tile data, on every element of the tile.
+    ///
+    /// This is for the robustness tests below:
+    /// once a tile parses, nothing here may panic, whatever the tile's contents.
+    fn exercise_accessors(view: &GraphTileView<'_>) {
+        let header = view.header();
+        let _ = (header.version(), header.date_created(), header.density());
+        for bin in 0..=crate::BIN_COUNT {
+            let edges = view.edges_in_bin(bin);
+            let circles = view.bounding_circles_in_bin(bin);
+            assert!(circles.is_empty() || circles.len() == edges.len());
+            if let Some(center) = header.bin_center(bin) {
+                for circle in circles {
+                    let _ = circle.decode(center);
+                }
+            }
+        }
+        for node in view.nodes() {
+            for edge in view.get_outbound_edges_from_node(node) {
+                let _ = (edge.road_use(), edge.classification(), edge.surface());
+            }
+            let _ = view.get_transitions(node).len();
+        }
+        for (index, _) in view.directed_edges().iter().enumerate() {
+            // TODO: also call `get_edge_info` once `EdgeInfo::try_from` is panic-free.
+            // It currently slices past the end of the edge info for corrupt shape sizes.
+            let _ = view.get_predicted_speed(index, 0);
+            let _ = view.get_access_restrictions(
+                u32::try_from(index).expect("edge indexes fit in u32"),
+                EnumSet::all(),
+            );
+            let id = view
+                .graph_id()
+                .with_feature_index(index as u64)
+                .expect("edge indexes fit in a graph ID");
+            assert!(view.get_directed_edge(id).is_ok());
+            let _ = view.get_opp_edge_index(id);
+            let _ = view.get_ext_directed_edge(id);
+        }
+        let center = header.sw_corner();
+        let _ = view
+            .nodes_within_radius(
+                |_| true,
+                Point::new(f64::from(center.x), f64::from(center.y)),
+                1_000.0,
+            )
+            .count();
+    }
+
+    /// The fixture tiles used for the robustness tests:
+    /// a small level 2 tile, a level 2 tile with bounding circles,
+    /// and a level 0 tile with predicted speeds.
+    static FUZZ_TILES: LazyLock<Vec<Vec<u8>>> = LazyLock::new(|| {
+        let fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+        [
+            "andorra-tiles/2/000/763/927.gph",
+            "andorra-tiles/2/000/762/485.gph",
+            "andorra-tiles-with-traffic/0/003/015.gph",
+        ]
+        .into_iter()
+        .map(|path| std::fs::read(fixtures.join(path)).expect("readable fixture"))
+        .collect()
+    });
+
+    /// Parses possibly corrupt tile data, and if it parses, exercises every accessor.
+    fn parse_and_exercise(bytes: &[u8]) {
+        if let Ok(view) = GraphTileView::try_from(bytes) {
+            exercise_accessors(&view);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+
+        #[test]
+        fn truncated_tiles_never_panic(tile in 0..3usize, len in any::<prop::sample::Index>()) {
+            let bytes = &FUZZ_TILES[tile];
+            let len = len.index(bytes.len());
+            // Every truncation changes the length, so it can never parse.
+            prop_assert!(GraphTileView::try_from(&bytes[..len]).is_err());
+        }
+
+        #[test]
+        fn corrupted_tiles_never_panic(
+            tile in 0..3usize,
+            edits in prop::collection::vec((any::<prop::sample::Index>(), any::<u8>()), 1..16),
+        ) {
+            let mut bytes = FUZZ_TILES[tile].clone();
+            for (index, value) in edits {
+                let index = index.index(bytes.len());
+                bytes[index] = value;
+            }
+            parse_and_exercise(&bytes);
+        }
+
+        #[test]
+        fn corrupted_headers_never_panic(
+            tile in 0..3usize,
+            edits in prop::collection::vec((any::<prop::sample::Index>(), any::<u8>()), 1..8),
+        ) {
+            // Most random edits to the identity fields (graph ID, base coordinate, and version)
+            // fail fast, so focus on the counts and offsets that follow them.
+            let mut bytes = FUZZ_TILES[tile].clone();
+            let counts = 40..size_of::<GraphTileHeader>();
+            for (index, value) in edits {
+                bytes[counts.start + index.index(counts.len())] = value;
+            }
+            parse_and_exercise(&bytes);
+        }
+
+        #[test]
+        fn corrupted_sections_never_panic(
+            tile in 0..3usize,
+            edits in prop::collection::vec((any::<prop::sample::Index>(), any::<u8>()), 1..64),
+        ) {
+            // With the header intact, more tiles parse, so this mostly exercises the accessors
+            // on corrupt nodes, edges, and other records.
+            let mut bytes = FUZZ_TILES[tile].clone();
+            let body = size_of::<GraphTileHeader>()..bytes.len();
+            for (index, value) in edits {
+                bytes[body.start + index.index(body.len())] = value;
+            }
+            parse_and_exercise(&bytes);
         }
     }
 }
