@@ -2521,8 +2521,12 @@ dependencies = [
 name = "valhalla-response"
 version = "0.1.0"
 dependencies = [
+ "http",
  "serde",
+ "serde_json",
  "serde_with",
+ "thiserror 2.0.21",
+ "valhalla-proto",
 ]
 
 [[package]]

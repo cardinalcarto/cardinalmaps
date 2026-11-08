@@ -1,0 +1,7 @@
+{
+  "status": 400,
+  "body": {
+    "code": "InvalidOptions",
+    "message": "Options are invalid."
+  }
+}

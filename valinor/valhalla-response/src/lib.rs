@@ -1,5 +1,16 @@
 //! Data structures and helpers for generating Valhalla-compatible responses.
+//!
+//! This includes [`ValhallaError`],
+//! which carries one of mainline's error codes ([`ErrorCode`])
+//! and serializes it exactly as mainline does for each response format.
 
+extern crate alloc;
+
+mod error;
+mod error_code;
+
+pub use error::{ERROR_CONTENT_TYPE, OsrmJsonError, ValhallaError, ValhallaJsonError};
+pub use error_code::{ErrorCode, HttpStatus, OsrmError, UnknownErrorCode};
 use serde::{Deserialize, Serialize};
 
 /// A Valhalla status response including server version, capabilities, etc.
