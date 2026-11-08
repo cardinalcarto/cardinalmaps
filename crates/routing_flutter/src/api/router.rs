@@ -7,12 +7,22 @@
 use core::num::NonZeroUsize;
 use flutter_rust_bridge::frb;
 use valinor_router::{Router, RouterConfig};
+use valinor_thor::{Retention, ThorConfig};
 
 /// How many routes run at once on a device; more calls wait for one to finish.
 ///
-/// Each running route has its own path search storage, which grows with the largest search
-/// it has run (tens of megabytes for a long route), so a phone keeps few.
+/// Each running route has its own path search storage, which grows as large as its search
+/// needs (tens of megabytes for a long route), so a phone keeps few.
 const WORKSPACES: NonZeroUsize = NonZeroUsize::new(2).unwrap();
+
+/// The search storage each idle workspace keeps between routes, in labels per search tree.
+///
+/// A search starts with room for this many labels anyway, so ordinary routes don't allocate
+/// as they go. After a longer search, the rest is given back as soon as the route finishes,
+/// rather than kept for the next one as mainline's server defaults (a million labels or more)
+/// would, so an idle router holds at most a few megabytes per workspace.
+/// This only bounds idle memory, not how far a search can go.
+const RETAINED_LABELS: usize = 1 << 16;
 
 /// The router over the device's offline regions. Opaque to Dart.
 #[frb(opaque)]
@@ -74,6 +84,13 @@ impl OfflineRouter {
     pub fn open(tile_sets: Vec<String>) -> Result<OfflineRouter, OpenError> {
         let config = RouterConfig {
             workspaces: WORKSPACES,
+            thor: ThorConfig {
+                retention: Retention {
+                    bidirectional_labels: RETAINED_LABELS,
+                    unidirectional_labels: RETAINED_LABELS,
+                },
+                ..ThorConfig::default()
+            },
             ..RouterConfig::default()
         };
         Ok(Self {
