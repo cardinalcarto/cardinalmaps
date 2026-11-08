@@ -39,6 +39,12 @@
     {"name": "auto_i5_exit_161", "action": "route", "request": {"locations": [{"lat": 47.6015, "lon": -122.326}, {"lat": 47.548, "lon": -122.317}], "costing": "auto"}},
     {"name": "auto_ferry_bainbridge", "action": "route", "request": {"locations": [{"lat": 47.6025, "lon": -122.3385}, {"lat": 47.63, "lon": -122.52}], "costing": "auto"}},
     {"name": "pedestrian_hillclimb_elevator", "action": "route", "request": {"locations": [{"lat": 47.6081, "lon": -122.3427}, {"lat": 47.6094, "lon": -122.3412}], "costing": "pedestrian"}},
+    {"name": "auto_uturn_left", "action": "route", "request": {"locations": [{"lat": 47.6263, "lon": -122.3546, "heading": 345}, {"lat": 47.602, "lon": -122.3753}], "costing": "auto"}},
+    {"name": "auto_uturn_right_stay_straight", "action": "route", "request": {"locations": [{"lat": 47.6243, "lon": -122.3425, "heading": 286}, {"lat": 47.5838, "lon": -122.3505}], "costing": "auto"}},
+    {"name": "auto_ferry_exit", "action": "route", "request": {"locations": [{"lat": 47.609, "lon": -122.3796, "heading": 102}, {"lat": 47.6253, "lon": -122.2822}], "costing": "auto"}},
+    {"name": "auto_ramp_straight", "action": "route", "request": {"locations": [{"lat": 47.649, "lon": -122.3488, "heading": 108}, {"lat": 47.6606, "lon": -122.3849}], "costing": "auto"}},
+    {"name": "pedestrian_ferry_elevator_steps", "action": "route", "request": {"locations": [{"lat": 47.6004, "lon": -122.3483}, {"lat": 47.6298, "lon": -122.3365}], "costing": "pedestrian"}},
+    {"name": "pedestrian_elevator_steps", "action": "route", "request": {"locations": [{"lat": 47.5935, "lon": -122.32}, {"lat": 47.6064, "lon": -122.3525}], "costing": "pedestrian"}},
     {"name": "bicycle_burke_gilman", "action": "route", "request": {"locations": [{"lat": 47.656, "lon": -122.31}, {"lat": 47.682, "lon": -122.265}], "costing": "bicycle"}}
   ]
 }
