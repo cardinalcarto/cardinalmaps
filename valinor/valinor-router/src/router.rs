@@ -2,9 +2,10 @@
 
 use crate::config::RouterConfig;
 use crate::pool::WorkspacePool;
-use crate::tiles::{OpenError, SharedTiles, TileSets};
+use crate::tiles::{OpenError, TileSets};
 use http::{Method, StatusCode};
 use illuvatar::Odin;
+use self_cell::self_cell;
 use std::path::Path;
 use valhalla_proto::Api;
 use valhalla_proto::options::Action;
@@ -56,6 +57,24 @@ impl HttpResponse {
 #[error("handle the request: it was interrupted")]
 pub struct Interrupted;
 
+/// Loki and Thor, borrowing the tile sets the router owns.
+struct Stages<'a> {
+    loki: Loki<&'a TileSets>,
+    thor: Thor<&'a TileSets>,
+}
+
+self_cell!(
+    /// The tile sets and the stages that borrow them.
+    ///
+    /// The stages read tiles through plain references (see [`crate::tiles::TileRef`]),
+    /// so they borrow the sets rather than share them through an `Arc`.
+    struct Chain {
+        owner: TileSets,
+        #[covariant]
+        dependent: Stages,
+    }
+);
+
 /// Valhalla's whole server in one process: the front, Loki, Thor, Odin, and Tyr.
 ///
 /// It is [`Send`] and [`Sync`]: one router serves every thread.
@@ -63,8 +82,7 @@ pub struct Interrupted;
 /// and path searches take a workspace from a bounded pool
 /// (see [`RouterConfig::workspaces`]).
 pub struct Router {
-    loki: Loki<SharedTiles>,
-    thor: Thor<SharedTiles>,
+    chain: Chain,
     odin: Odin,
     workspaces: WorkspacePool,
 }
@@ -82,11 +100,14 @@ impl Router {
         let sets = TileSets::open(tile_sets, config.tile_cache_size)?;
         let connectivity = ConnectivityMap::new(sets.tile_ids());
         let last_modified = sets.last_modified();
-        let tiles = SharedTiles::new(sets);
-        Ok(Self {
-            loki: Loki::new(config.loki, tiles.clone(), Some(connectivity))
+        let (loki, thor) = (config.loki, config.thor);
+        let chain = Chain::new(sets, |sets| Stages {
+            loki: Loki::new(loki, sets, Some(connectivity))
                 .with_tileset_last_modified(last_modified),
-            thor: Thor::new(config.thor, tiles),
+            thor: Thor::new(thor, sets),
+        });
+        Ok(Self {
+            chain,
             odin: config.odin,
             workspaces: WorkspacePool::new(config.workspaces.get()),
         })
@@ -95,7 +116,7 @@ impl Router {
     /// The tile sets.
     #[inline]
     pub fn tiles(&self) -> &TileSets {
-        self.loki.provider().sets()
+        self.chain.borrow_owner()
     }
 
     /// Answers a `route` request body (Valhalla JSON, as Ferrostar's request generator makes it),
@@ -136,7 +157,7 @@ impl Router {
         request: &HttpRequest<'_>,
         interrupt: &dyn Fn() -> bool,
     ) -> Result<HttpResponse, Interrupted> {
-        match handle_request(&self.loki, request) {
+        match handle_request(&self.chain.borrow_dependent().loki, request) {
             HttpOutcome::Forward(mut api) => self.thor_and_odin(&mut api, interrupt),
             HttpOutcome::Respond {
                 content_type, body, ..
@@ -202,15 +223,14 @@ impl Router {
         api: &mut Api,
         interrupt: &dyn Fn() -> bool,
     ) -> Result<(), ValhallaError> {
+        let thor = &self.chain.borrow_dependent().thor;
         let now = jiff::Timestamp::now();
         let paths = {
             let mut workspace = self.workspaces.take();
-            self.thor
-                .route_interruptible(workspace.get(), api, now, interrupt)?
+            thor.route_interruptible(workspace.get(), api, now, interrupt)?
         };
         // The workspace is back in the pool: trip building doesn't search.
-        self.thor
-            .build_trip_interruptible(api, &paths, now, interrupt)
+        thor.build_trip_interruptible(api, &paths, now, interrupt)
     }
 }
 

@@ -318,24 +318,24 @@ impl TileSets {
 
     /// The tile's handle: a tarball tile's from its slot (validated on first use),
     /// a directory tile's from the directory's cache.
-    fn handle(&self, graph_id: GraphId) -> Result<TileHandle, GraphTileProviderError> {
+    fn handle(&self, graph_id: GraphId) -> Result<TileRef<'_>, GraphTileProviderError> {
         let base_id = graph_id.tile_base_id();
         // Not `ok_or`: building (and dropping) the error on every hit is measurable here.
         let Some(slot) = self.index.get(&base_id) else {
             return Err(GraphTileProviderError::TileNotAvailable(base_id));
         };
         if let Some(handle) = slot.handle.get() {
-            return Ok(TileHandle::Mmap(handle.clone()));
+            return Ok(TileRef::Mmap(handle));
         }
         match self.sets.get(slot.set) {
             Some(TileSet::Tarball(tiles)) => {
                 let handle = tiles.get_handle_for_tile_containing(base_id)?;
                 // Two threads may validate the same tile at once; the first to finish keeps it.
-                Ok(TileHandle::Mmap(slot.handle.get_or_init(|| handle).clone()))
+                Ok(TileRef::Mmap(slot.handle.get_or_init(|| handle)))
             }
             Some(TileSet::Directory(tiles)) => tiles
                 .get_handle_for_tile_containing(base_id)
-                .map(TileHandle::Owned),
+                .map(TileRef::Owned),
             // `open` only makes slots for the sets it keeps.
             None => Err(GraphTileProviderError::TileNotAvailable(base_id)),
         }
@@ -362,16 +362,20 @@ fn modified_seconds(metadata: &std::fs::Metadata) -> u32 {
         .unwrap_or(0)
 }
 
-/// A tile from either kind of set.
+/// A tile from either kind of set, borrowed from the [`TileSets`].
+///
+/// A tarball tile is a plain reference, so that copying it (which the searches do for every
+/// edge) touches no shared memory: cloning an `Arc` would make every routing thread write
+/// the same reference counts of the same hot tiles, which cost more than the searches.
 #[derive(Clone)]
-pub enum TileHandle {
+pub enum TileRef<'a> {
     /// A tile in a memory-mapped tarball.
-    Mmap(Arc<MmapGraphTileHandle>),
+    Mmap(&'a MmapGraphTileHandle),
     /// A tile read from a file of a tile directory.
     Owned(Arc<OwnedGraphTileHandle>),
 }
 
-impl TileHandle {
+impl TileRef<'_> {
     #[inline]
     fn view(&self) -> &GraphTileView<'_> {
         match self {
@@ -381,14 +385,14 @@ impl TileHandle {
     }
 }
 
-impl GraphTileHandle for TileHandle {
+impl GraphTileHandle for TileRef<'_> {
     #[inline]
     fn tile_view(&'_ self) -> GraphTileView<'_> {
         self.view().clone()
     }
 }
 
-impl GraphTile for TileHandle {
+impl GraphTile for TileRef<'_> {
     #[inline]
     fn graph_id(&self) -> GraphId {
         self.view().graph_id()
@@ -503,8 +507,8 @@ impl GraphTile for TileHandle {
     }
 }
 
-impl GraphTileProvider for TileSets {
-    type TileHandle = TileHandle;
+impl<'a> GraphTileProvider for &'a TileSets {
+    type TileHandle = TileRef<'a>;
 
     #[inline]
     fn with_tile_containing<F, T>(
@@ -523,57 +527,14 @@ impl GraphTileProvider for TileSets {
         &self,
         graph_id: GraphId,
     ) -> Result<Self::TileHandle, GraphTileProviderError> {
-        self.handle(graph_id)
+        // Through the `&'a TileSets`, so the handle borrows the sets for `'a`.
+        let sets: &'a TileSets = self;
+        sets.handle(graph_id)
     }
 
     #[inline]
     fn contains_tile(&self, graph_id: GraphId) -> Result<bool, GraphTileProviderError> {
         Ok(self.index.contains_key(&graph_id.tile_base_id()))
-    }
-}
-
-/// The router's tiles, shared by Loki and Thor.
-#[derive(Clone)]
-pub struct SharedTiles(Arc<TileSets>);
-
-impl SharedTiles {
-    pub(crate) fn new(sets: TileSets) -> Self {
-        Self(Arc::new(sets))
-    }
-
-    /// The tile sets.
-    #[inline]
-    pub fn sets(&self) -> &TileSets {
-        &self.0
-    }
-}
-
-impl GraphTileProvider for SharedTiles {
-    type TileHandle = TileHandle;
-
-    #[inline]
-    fn with_tile_containing<F, T>(
-        &self,
-        graph_id: GraphId,
-        process: F,
-    ) -> Result<T, GraphTileProviderError>
-    where
-        F: FnOnce(&GraphTileView) -> T,
-    {
-        self.0.with_tile_containing(graph_id, process)
-    }
-
-    #[inline]
-    fn get_handle_for_tile_containing(
-        &self,
-        graph_id: GraphId,
-    ) -> Result<Self::TileHandle, GraphTileProviderError> {
-        self.0.get_handle_for_tile_containing(graph_id)
-    }
-
-    #[inline]
-    fn contains_tile(&self, graph_id: GraphId) -> Result<bool, GraphTileProviderError> {
-        self.0.contains_tile(graph_id)
     }
 }
 
