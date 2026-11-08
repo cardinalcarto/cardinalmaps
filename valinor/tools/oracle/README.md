@@ -326,6 +326,44 @@ and 2836 legs and 15 errors in Seattle, with 25, 8, and 36 requests with alterna
 Two requests fail in mainline's trip building, after path search
 (`leg_shape_index not set for intermediate location`); the test lists them.
 
+#### Trip building
+
+With a fourth argument, `trip`, the `thor` helper prints mainline's whole Thor→Odin message
+for each request instead of the summary (`<id>\tok\t<base64 Api>`, or `<id>\terror\t<code> <message>`).
+That is the reference for trip building (`TripLegBuilder`): the `trips_external` test in
+`valinor-thor` routes each Loki→Thor message, builds its trip, and compares it with mainline's,
+every field the same and floats within a relative 1e-6
+(cases whose paths tie at equal cost, which path search may break either way, are listed apart).
+
+The corpora above use mainline's default attributes.
+`thor-corpus.py <region> <count> <seed> trip` also uses the options trip building reads:
+attribute filters (Ferrostar's `shape_attributes` among them), `elevation_interval`, `recostings`,
+and locations on indoor levels with a `search_filter` level,
+picked from [`corpus/levels-andorra.tsv`](corpus/levels-andorra.tsv) and
+[`corpus/levels-seattle.tsv`](corpus/levels-seattle.tsv)
+(a sample of the midpoints of the edges with levels in each region's tiles, and their levels).
+
+```shell
+work=/mnt/maps/cardinal/valhalla-oracle/thor
+python3 -I tools/oracle/thor-corpus.py andorra 3000 31 trip > "$work/andorra-trip-requests.tsv"
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" \
+  -v "$PWD/valhalla-graphtile/fixtures/andorra-tiles:/fx:ro,z" \
+  -v /mnt/maps/cardinal/valhalla-oracle/andorra-oracle:/cfg:ro,z -v "$work:/io:z" \
+  valinor-valhalla-dev:3.9.1 sh -c '/w/loki /cfg/valhalla.json /fx /io/andorra-trip-requests.tsv \
+    > /io/andorra-trip-loki.tsv && /w/thor /cfg/valhalla.json /fx /io/andorra-trip-loki.tsv trip \
+    > /io/andorra-trip-trip.tsv'
+VALINOR_THOR_ORACLE=$work/andorra-trip VALINOR_THOR_TILES=$PWD/valhalla-graphtile/fixtures/andorra-tiles \
+  VALINOR_THOR_CONFIG=/mnt/maps/cardinal/valhalla-oracle/andorra-oracle \
+  cargo test --release -p valinor-thor trips_external -- --ignored --nocapture
+```
+
+The default-attribute corpora (`andorra`, `predicted`, and `seattle`, with the `trip` helper output
+as `<prefix>-trip.tsv`) and the trip corpora (`thor-corpus.py andorra 3000 31 trip`,
+`andorra 1500 33 trip` on the predicted tiles, and `seattle 2000 32 trip`) all match:
+2862, 1886, and 1953 trips, and 2869, 1442, and 1938 trips, with all of mainline's errors
+(the two above among them). Two Seattle trip-corpus cases have paths that tie at equal cost.
+In CI, the `captured_trips` test compares the trips of `valinor-tyr`'s Andorra captures.
+
 ## Message fixtures
 
 [`copy-message-fixtures.sh`](copy-message-fixtures.sh) copies the captured

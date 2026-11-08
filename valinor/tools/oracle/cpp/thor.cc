@@ -1,7 +1,7 @@
 // Runs mainline 3.9.1's Thor worker on Loki's output, as the reference for `valinor-thor`.
 //
 // Usage:
-//   thor <valhalla.json> <tile_dir> <loki_results.tsv>
+//   thor <valhalla.json> <tile_dir> <loki_results.tsv> [trip]
 //
 // The config's `mjolnir` section is pointed at <tile_dir> (with no tile extract or traffic),
 // so the same requests can be run against the fixture tiles.
@@ -26,6 +26,13 @@
 // The edges are mainline's `PathInfo`s, read back from the trip that `TripLegBuilder` made:
 // node i holds edge i and the transition onto it, and node i + 1 the elapsed cost at its end.
 // Floats are printed with 17 significant digits, so they round-trip exactly.
+//
+// With `trip`, each line instead holds the whole `valhalla.Api` that Thor sends to Odin
+// (the options with Thor's changes, the warnings, and the `trip` that `TripLegBuilder` made),
+// which is the reference for trip building:
+//
+//   <id>\tok\t<base64 of the serialized Api>
+//   <id>\terror\t<code> <message>
 #include <valhalla/baldr/rapidjson_utils.h>
 #include <valhalla/exceptions.h>
 #include <valhalla/midgard/logging.h>
@@ -89,8 +96,9 @@ std::string summarize(const Api& api) {
 } // namespace
 
 int main(int argc, char** argv) {
-  if (argc != 4) {
-    std::cerr << "usage: thor <valhalla.json> <tile_dir> <loki_results.tsv>\n";
+  const bool trip_mode = argc == 5 && std::string(argv[4]) == "trip";
+  if (argc != 4 && !trip_mode) {
+    std::cerr << "usage: thor <valhalla.json> <tile_dir> <loki_results.tsv> [trip]\n";
     return 1;
   }
   boost::property_tree::ptree config;
@@ -122,6 +130,7 @@ int main(int argc, char** argv) {
       return 1;
     }
     std::string summary;
+    std::string error;
     try {
       switch (request.options().action()) {
         case Options::route:
@@ -134,14 +143,21 @@ int main(int argc, char** argv) {
           worker.cleanup();
           continue;
       }
-      summary = summarize(request);
+      summary = trip_mode ? request.SerializeAsString() : summarize(request);
     } catch (const valhalla_exception_t& e) {
-      summary = "error " + std::to_string(e.code) + ' ' + e.message + '\n';
+      error = std::to_string(e.code) + ' ' + e.message;
     } catch (const std::exception& e) {
-      summary = "error 499 " + std::string(e.what()) + '\n';
+      error = "499 " + std::string(e.what());
     }
     worker.cleanup();
-    std::cout << fields[0] << '\t' << midgard::encode64(summary) << '\n';
+    if (trip_mode) {
+      std::cout << fields[0] << '\t' << (error.empty() ? "ok\t" + midgard::encode64(summary)
+                                                       : "error\t" + error)
+                << '\n';
+    } else {
+      std::cout << fields[0] << '\t'
+                << midgard::encode64(error.empty() ? summary : "error " + error + '\n') << '\n';
+    }
   }
   return 0;
 }
