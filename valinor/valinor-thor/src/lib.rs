@@ -1,4 +1,4 @@
-//! Valhalla-compatible path search: mainline's Thor, for `route` requests.
+//! Valhalla-compatible path search and trip building: mainline's Thor, for `route` requests.
 //!
 //! See `docs/routing.md` for where this sits in the stage chain:
 //! Loki correlates each location to candidate edges, Thor finds the best paths between them,
@@ -13,6 +13,10 @@
 //!   times along the route.
 //!   It returns the [`Paths`]: per route (the best, then alternates) and per leg,
 //!   the edges with their elapsed and transition costs.
+//! - [`Thor::build_trip`] is mainline's trip building (`TripLegBuilder`):
+//!   it turns the [`Paths`] into the request's `trip`, a `TripLeg` per leg,
+//!   with the shape, the attributes of each edge and node the request asks for
+//!   (mainline's `AttributesController`), and the locations' shape indexes.
 //! - A [`Workspace`] holds the searches' storage, kept between requests so that searches
 //!   don't allocate as they go.
 //!
@@ -21,8 +25,8 @@
 //! single precision arithmetic, hierarchy limits, and the searches' thresholds)
 //! follows mainline exactly.
 //!
-//! Not here (yet): trip building, `optimized_route`, map matching, isochrones, matrices,
-//! expansion, multimodal and transit routing, live traffic, and interrupting a search.
+//! Not here (yet): `optimized_route`, map matching, isochrones, matrices,
+//! expansion, multimodal and transit routing, live traffic, and landmarks.
 
 #![expect(
     clippy::similar_names,
@@ -44,12 +48,15 @@ mod queue;
 mod route;
 mod search;
 mod time;
+mod trip;
 mod unidirectional;
 
 #[cfg(test)]
 mod bench_tests;
 #[cfg(test)]
 mod oracle_tests;
+#[cfg(test)]
+mod trip_oracle_tests;
 
 pub use config::{ConfigError, HierarchyLimitsConfig, ThorConfig};
 pub use error::ThorError;

@@ -9,6 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+enumset = { workspace = true }
 # Location times are formatted in their time zones, as mainline's `DateTime::offset_date` does.
 jiff = { workspace = true }
 serde_json = { workspace = true }

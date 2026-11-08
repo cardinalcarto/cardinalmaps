@@ -1,6 +1,6 @@
 //! Thor's internal errors, and how they reach the client.
 //!
-//! Path search fails in two ways a client sees:
+//! Path search and trip building fail in two ways a client sees:
 //! no path (mainline's error 442, a [`ValhallaError`] returned directly),
 //! and everything mainline would report as an exception (error 499, "Unknown",
 //! with the exception's text): unreadable or corrupt tiles, costing failures,
@@ -9,7 +9,9 @@
 
 use thiserror::Error;
 use valhalla_graphtile::GraphId;
-use valhalla_graphtile::graph_tile::{LookupError, SectionDecodingError};
+use valhalla_graphtile::graph_tile::{
+    GraphTileDecodingError, LookupError, SectionDecodingError, UnknownValueError,
+};
 use valhalla_graphtile::tile_provider::GraphTileProviderError;
 use valhalla_response::{ErrorCode, ValhallaError};
 use valinor_sif::{CostingError, RecostError};
@@ -58,6 +60,37 @@ pub enum ThorError {
     /// The request has no options, or its costing can't be built.
     #[error("build the costing: {0}")]
     Options(String),
+    /// An edge's info (names, shape, and tagged values) can't be read.
+    #[error("read edge info: {0}")]
+    EdgeInfo(#[from] GraphTileDecodingError),
+    /// An edge's shape can't be decoded.
+    #[error("decode the shape of edge {0}: {1}")]
+    Shape(GraphId, std::io::Error),
+    /// A tile field holds a value Valhalla doesn't define (a node type, for one;
+    /// mainline's "Unhandled `NodeType`").
+    #[error("read a tile value: {0}")]
+    UnknownValue(#[from] UnknownValueError),
+    /// An edge has a tagged value of a kind Valhalla doesn't define
+    /// (mainline's "Unknown tag type").
+    #[error("Unknown tag type: {0}")]
+    UnknownTag(u8),
+    /// An edge has a predicted speed flag, but its tile has no profile for it.
+    #[error("read the predicted speeds of edge {0}: the tile has none")]
+    MissingSpeedProfile(GraphId),
+    /// The access restriction a path edge saw isn't among the edge's restrictions.
+    #[error("find the access restriction seen on edge {0}")]
+    MissingAccessRestriction(GraphId),
+    /// A leg has no edges, or no locations.
+    #[error("build a trip leg: the leg has no edges")]
+    EmptyLeg,
+    /// The edge a location's leg uses isn't among its candidates
+    /// (mainline's text, from `RemovePathEdges`).
+    #[error("Could not find matching edge candidate")]
+    MissingPathCandidate,
+    /// An intermediate location's edge index doesn't come after the previous one's,
+    /// which means path search didn't set it (mainline's text, from `CopyLocations`).
+    #[error("leg_shape_index not set for intermediate location")]
+    LegShapeIndexNotSet,
 }
 
 impl From<ThorError> for ValhallaError {
