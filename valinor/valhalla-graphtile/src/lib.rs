@@ -28,7 +28,7 @@ pub use graph_id::{GraphId, InvalidGraphIdError};
 /// - For estimating speeds when better data is not available
 /// - To determine preference / avoidance for roads
 #[repr(u8)]
-#[derive(TryFromBytes, Debug, Eq, PartialEq, PartialOrd)]
+#[derive(TryFromBytes, Clone, Copy, Debug, Eq, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum RoadClass {
     Motorway,
@@ -69,11 +69,10 @@ impl RoadClass {
         }
     }
 
+    /// The numeric value of the road class, as in Valhalla's `baldr::RoadClass`.
+    #[inline]
     pub const fn discriminant(&self) -> u8 {
-        // SAFETY: If the enum specifies a primitive representation,
-        // then the discriminant may be reliably accessed via unsafe pointer casting.
-        // https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
-        unsafe { *core::ptr::from_ref::<Self>(self).cast::<u8>() }
+        *self as u8
     }
 }
 

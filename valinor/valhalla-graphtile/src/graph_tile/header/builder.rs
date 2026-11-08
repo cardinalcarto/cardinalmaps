@@ -38,7 +38,7 @@ impl From<&GraphTileHeader> for HeaderPassthrough {
             name_quality: header.bit_field_1.name_quality(),
             speed_quality: header.bit_field_1.speed_quality(),
             exit_quality: header.bit_field_1.exit_quality(),
-            spare_word: header._reserved_1.get(),
+            spare_word: header.spare_word.get(),
         }
     }
 }
@@ -275,7 +275,7 @@ impl GraphTileHeaderBuilder {
             transit_record_bitfield,
             misc_counts_bit_field_one,
             misc_counts_bit_field_two,
-            _reserved_1: self.passthrough.spare_word.into(),
+            spare_word: self.passthrough.spare_word.into(),
             checksum: self.checksum.into(),
             complex_restriction_forward_offset: u32::try_from(dst_base_offset)?.into(),
             complex_restriction_reverse_offset: u32::try_from(complex_reverse_restrictions_offset)?

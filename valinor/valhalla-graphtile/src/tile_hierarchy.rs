@@ -164,11 +164,11 @@ impl TileLevel {
             .flat_map(|columns| {
                 (min_y..=max_y).flat_map(move |y| columns.clone().map(move |x| (x, y)))
             })
-            .map(|(x, y)| {
-                // Both are clamped to the grid, so the index is non-negative and in range.
-                let tile_index = u64::try_from(y * width + x).expect("clamped to the grid");
-                GraphId::try_from_components(self.level, tile_index, 0)
-                    .expect("tile IDs within the grid fit in a graph ID")
+            .filter_map(|(x, y)| {
+                // Both are clamped to the grid, so the index is non-negative and in range,
+                // and fits in a graph ID; this never filters anything out.
+                let tile_index = u64::try_from(y * width + x).ok()?;
+                GraphId::try_from_components(self.level, tile_index, 0).ok()
             })
             .collect()
     }
@@ -257,10 +257,10 @@ mod tests {
     use crate::tile_hierarchy::STANDARD_LEVELS;
     use proptest::{prop_assert, proptest};
 
-    /// Helper to compute the base tile GraphId at (x, y) for a given level.
+    /// Helper to compute the base tile `GraphId` at (x, y) for a given level.
     fn base_tile_id(level: &TileLevel, x: i64, y: i64) -> GraphId {
         let width = i64::from(level.tiling_system.n_cols);
-        let tile_index = (y * width + x) as u64;
+        let tile_index = u64::try_from(y * width + x).expect("non-negative tile index");
         GraphId::try_from_components(level.level, tile_index, 0)
             .expect("valid base tile GraphId in test")
     }
@@ -277,9 +277,9 @@ mod tests {
         let x = width / 2;
         let y = height / 2;
 
-        let west = -180.0 + (x as f64) * size;
+        let west = -180.0 + f64::from(u32::try_from(x).expect("small")) * size;
         let east = west + size;
-        let south = -90.0 + (y as f64) * size;
+        let south = -90.0 + f64::from(u32::try_from(y).expect("small")) * size;
         let north = south + size;
 
         // Bbox strictly inside that tile.
@@ -310,7 +310,7 @@ mod tests {
         let east = 179.9;
 
         let mut ids: Vec<GraphId> = level.tiles_intersecting_bbox(north, east, south, west);
-        ids.sort_by_key(|gid| gid.value());
+        ids.sort_by_key(GraphId::value);
 
         let expected: Vec<GraphId> = (0..width).map(|x| base_tile_id(level, x, y)).collect();
         assert_eq!(ids, expected);

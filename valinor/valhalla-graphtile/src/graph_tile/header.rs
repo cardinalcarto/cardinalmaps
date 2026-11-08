@@ -267,7 +267,7 @@ pub struct GraphTileHeader {
     /// - The ordering of *existing* fields in the data structure doesn't change.
     ///
     /// Valhalla calls this `spareword0_`.
-    _reserved_1: U64<LE>,
+    spare_word: U64<LE>,
     /// The tileset build ID in the high 16 bits,
     /// and a hash of this tile's data in the low 48 bits.
     ///

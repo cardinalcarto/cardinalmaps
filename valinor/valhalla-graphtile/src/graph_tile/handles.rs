@@ -511,8 +511,8 @@ impl MmapTilePointer {
                 .as_mut_ptr()
                 .add(start)
                 .cast::<T>()
-                .write_volatile(value)
-        };
+                .write_volatile(value);
+        }
         Ok(())
     }
 }

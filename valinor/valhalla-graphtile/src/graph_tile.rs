@@ -690,7 +690,7 @@ impl GraphTile for GraphTileView<'_> {
     fn get_node(&self, id: GraphId) -> Result<&NodeInfo, LookupError> {
         if self.may_contain_id(id) {
             self.nodes
-                .get(id.feature_index() as usize)
+                .get(usize::try_from(id.feature_index()).unwrap_or(usize::MAX))
                 .ok_or(LookupError::InvalidIndex)
         } else {
             Err(LookupError::MismatchedBase)
@@ -722,7 +722,7 @@ impl GraphTile for GraphTileView<'_> {
     fn get_directed_edge(&self, id: GraphId) -> Result<&DirectedEdge, LookupError> {
         if self.may_contain_id(id) {
             self.directed_edges
-                .get(id.feature_index() as usize)
+                .get(usize::try_from(id.feature_index()).unwrap_or(usize::MAX))
                 .ok_or(LookupError::InvalidIndex)
         } else {
             Err(LookupError::MismatchedBase)
@@ -745,7 +745,7 @@ impl GraphTile for GraphTileView<'_> {
     fn get_ext_directed_edge(&self, id: GraphId) -> Result<&DirectedEdgeExt, LookupError> {
         if self.may_contain_id(id) {
             self.ext_directed_edges
-                .get(id.feature_index() as usize)
+                .get(usize::try_from(id.feature_index()).unwrap_or(usize::MAX))
                 .ok_or(LookupError::InvalidIndex)
         } else {
             Err(LookupError::MismatchedBase)
@@ -945,6 +945,10 @@ impl<'a> TryFrom<&'a [u8]> for GraphTileView<'a> {
     ///
     /// This does not copy any tile data,
     /// but it does visit every node, directed edge, and access restriction once.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one read per section, in tile order, reads best as a single sequence"
+    )]
     fn try_from(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         let tile_len = bytes.len();
         let (header, remaining) = GraphTileHeader::ref_from_prefix(bytes).map_err(|e| {
@@ -1104,7 +1108,7 @@ pub struct OpposingEdgeIndex {
 #[cfg(test)]
 const TEST_GRAPH_TILE_ID_L0: GraphId = unsafe { GraphId::from_components_unchecked(0, 3015, 0) };
 #[cfg(test)]
-const TEST_GRAPH_TILE_ID_L2: GraphId = unsafe { GraphId::from_components_unchecked(2, 762485, 0) };
+const TEST_GRAPH_TILE_ID_L2: GraphId = unsafe { GraphId::from_components_unchecked(2, 762_485, 0) };
 
 #[cfg(test)]
 static TEST_GRAPH_TILE_L0: LazyLock<OwnedGraphTileHandle> = LazyLock::new(|| {
@@ -1178,7 +1182,7 @@ mod tests {
         let tile = &*TEST_GRAPH_TILE_L0;
 
         let edges: Vec<_> = (0..u64::from(tile.header().directed_edge_count()))
-            .flat_map(|index| {
+            .filter_map(|index| {
                 let edge_id = TEST_GRAPH_TILE_ID_L0
                     .with_feature_index(index)
                     .expect("Invalid graph ID.");
@@ -1544,7 +1548,7 @@ mod tests {
         let tile = &*TEST_GRAPH_TILE_L0;
 
         let first_edge_info = tile
-            .get_edge_info(&tile.directed_edges().first().unwrap())
+            .get_edge_info(tile.directed_edges().first().unwrap())
             .expect("Unable to get edge info.");
 
         // insta internally does a fork operation, which is not supported under Miri
@@ -1602,15 +1606,15 @@ mod tests {
 
     #[test]
     fn test_traffic_flow_speeds() {
+        const EDGE_INDEX: usize = 0;
         let tile = &*TEST_GRAPH_TILE_WITH_FLOW;
         let tile_view = tile.borrow_dependent();
 
-        const EDGE_INDEX: usize = 0;
         let edge = &tile_view.directed_edges()[EDGE_INDEX];
 
         assert_eq!(edge.free_flow_speed(), 50);
         assert_eq!(edge.constrained_flow_speed(), 40);
-        assert_eq!(edge.has_predicted_speed(), false);
+        assert!(!edge.has_predicted_speed());
 
         // This edge doesn't have any predicted speeds.
         assert_eq!(tile_view.get_predicted_speed(EDGE_INDEX, 0), None);
@@ -1618,17 +1622,17 @@ mod tests {
 
     #[test]
     fn test_predicted_traffic_speeds() {
+        const EDGE_INDEX: usize = 42;
         let tile = &*TEST_GRAPH_TILE_WITH_FLOW;
         let tile_view = tile.borrow_dependent();
 
         // We specifically added predicted speeds to this random edge index.
         // See the test case info in the comment for TEST_GRAPH_TILE_WITH_FLOW.
-        const EDGE_INDEX: usize = 42;
         let edge = &tile_view.directed_edges()[EDGE_INDEX];
 
         assert_eq!(edge.free_flow_speed(), 100);
         assert_eq!(edge.constrained_flow_speed(), 42);
-        assert_eq!(edge.has_predicted_speed(), true);
+        assert!(edge.has_predicted_speed());
 
         // A few predicted speed samples.
         // See predicted_speeds.rs for the array of speeds that we expected to encode.
@@ -1660,24 +1664,30 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the expected speeds are one long literal"
+    )]
     fn test_predicted_traffic_speeds_second_profile() {
+        const EDGE_INDEX: usize = 7;
         let tile = &*TEST_GRAPH_TILE_WITH_FLOW;
         let tile_view = tile.borrow_dependent();
 
         // We specifically added predicted speeds to another random edge index.
         // See the test case info in the comment for TEST_GRAPH_TILE_WITH_FLOW.
-        const EDGE_INDEX: usize = 7;
         let edge = &tile_view.directed_edges()[EDGE_INDEX];
 
         assert_eq!(edge.free_flow_speed(), 12);
         // No, this isn't intended to make sense; it's test data ;)
         assert_eq!(edge.constrained_flow_speed(), 34);
-        assert_eq!(edge.has_predicted_speed(), true);
+        assert!(edge.has_predicted_speed());
 
         // Reconstruct the entire array of speeds.
+        // The expected values were recorded by truncating the speeds.
+        #[expect(clippy::cast_possible_truncation)]
         let speeds: [i64; BUCKETS_PER_WEEK] = std::array::from_fn(|i| {
             tile_view
-                .get_predicted_speed(EDGE_INDEX, (i as u32) * 300)
+                .get_predicted_speed(EDGE_INDEX, u32::try_from(i).unwrap() * 300)
                 .unwrap() as i64
         });
 
@@ -1784,7 +1794,7 @@ mod tests {
                 100, 98, 95, 90, 83, 76, 68, 59, 50, 41, 33, 25, 19, 13, 9, 6, 5, 4, 5, 6, 8, 9,
                 11, 12, 12
             ]
-        )
+        );
     }
 
     #[test]
@@ -1794,7 +1804,7 @@ mod tests {
         let tile_view = tile.borrow_dependent();
         let sw = tile_view.header().sw_corner();
 
-        for (idx, node) in tile_view.nodes().into_iter().enumerate().filter(|_| {
+        for (idx, node) in tile_view.nodes().iter().enumerate().filter(|_| {
             if cfg!(miri) {
                 rng.random_bool(0.1)
             } else {

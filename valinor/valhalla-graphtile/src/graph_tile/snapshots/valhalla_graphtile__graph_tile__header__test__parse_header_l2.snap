@@ -94,7 +94,7 @@ GraphTileHeader {
             2,
         ),
     },
-    _reserved_1: U64(
+    spare_word: U64(
         0,
     ),
     checksum: U64(

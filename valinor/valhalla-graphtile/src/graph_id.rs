@@ -235,7 +235,7 @@ impl GraphId {
         let l = max_id.max(1).ilog10() + 1;
         let rem = l % 3;
         let n_digits = if rem == 0 { l } else { l + (3 - rem) };
-        debug_assert!(n_digits % 3 == 0);
+        debug_assert_eq!(n_digits % 3, 0);
 
         // This may not be as efficient as the Valhalla implementation, but it's more readable.
         // Format tile_id with leading zeros to match max_length
@@ -271,7 +271,7 @@ impl Ord for GraphId {
             other_level.cmp(&level)
         } else if tile_id != other_tile_id {
             // Same level, but different tile
-            return tile_id.cmp(&other_tile_id);
+            tile_id.cmp(&other_tile_id)
         } else {
             // Same tile
             self.feature_index().cmp(&other.feature_index())
@@ -369,11 +369,11 @@ mod tests {
     #[test]
     fn test_valid_tile_by_id() {
         // This a very strange one.... but verified from live debugging a Valhalla process...
-        let Ok(graph_id) = GraphId::try_from_id(16889572344463360) else {
+        let Ok(graph_id) = GraphId::try_from_id(16_889_572_344_463_360) else {
             panic!("Expected that we would construct a valid graph ID.")
         };
 
-        assert_eq!(graph_id, GraphId(16889572344463360.into()));
+        assert_eq!(graph_id, GraphId(16_889_572_344_463_360.into()));
         assert_eq!(graph_id.level(), 0);
         assert_eq!(graph_id.tile_id(), 0);
         assert_eq!(graph_id.feature_index(), 32000);
@@ -419,7 +419,7 @@ mod tests {
         );
         // Transit level
         assert_eq!(
-            GraphId::try_from_components(3, 1000000, 1)
+            GraphId::try_from_components(3, 1_000_000, 1)
                 .unwrap()
                 .file_path("gph"),
             Ok("3/001/000/000.gph".into())
