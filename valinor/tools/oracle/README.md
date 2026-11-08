@@ -57,6 +57,16 @@ podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" -v "$PWD/valhalla-graphtile/fixt
   valinor-valhalla-dev:3.9.1 /w/oracle /fx/andorra-tiles
 ```
 
+A second program, `records`, prints every directed edge, node, and node transition accessor
+for a sample of each fixture tile (pass `all` for every record).
+Its output is the expected-values fixture `valhalla-graphtile/fixtures/mainline-3.9.1-records.txt`:
+
+```shell
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" -v "$PWD/valhalla-graphtile/fixtures:/fx:ro,z" \
+  valinor-valhalla-dev:3.9.1 /w/records /fx/andorra-tiles \
+  > valhalla-graphtile/fixtures/mainline-3.9.1-records.txt
+```
+
 The Containerfile adds a compiler and development headers to the pinned image.
 (Its `FROM` line names the tag; keep it in step with [`valhalla-image`](valhalla-image).)
 
