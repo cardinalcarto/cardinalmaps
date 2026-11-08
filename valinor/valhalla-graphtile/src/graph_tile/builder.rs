@@ -1,15 +1,24 @@
+//! Rewriting graph tiles.
+//!
+//! [`GraphTileBuilder`] starts from an existing tile and writes a modified copy.
+//! Every header field that locates or counts a section is recomputed
+//! from the sections actually written, so a section can't be dropped or resized
+//! while the header still describes the old layout.
+//! (That is the class of bug behind mainline's `valhalla_add_landmarks` misrouting in 3.9.1.)
+//! The tests check that mainline reads modified tiles back identically,
+//! apart from the intended changes.
 use super::{
     AccessRestriction, Admin, BuildId, DirectedEdge, DirectedEdgeExt, DiscretizedBoundingCircle,
-    GraphTileBuildError, GraphTileHeader, GraphTileView, NodeInfo, NodeTransition,
-    OwnedGraphTileHandle, Sign, TileHasher, TransitDeparture, TransitRoute, TransitSchedule,
-    TransitStop, TransitTransfer, TurnLane,
+    GraphTileBuildError, GraphTileView, NodeInfo, NodeTransition, OwnedGraphTileHandle, Sign,
+    TileHasher, TransitDeparture, TransitRoute, TransitSchedule, TransitStop, TransitTransfer,
+    TurnLane,
 };
-use crate::GraphId;
 use crate::graph_tile::checksum::checksum;
 use crate::graph_tile::header::{GraphTileHeaderBuilder, VERSION_LEN};
 use crate::graph_tile::predicted_speeds::{
     BUCKETS_PER_WEEK, COEFFICIENT_COUNT, compress_speed_buckets, decode_base64_speed_coefficients,
 };
+use crate::{BIN_COUNT, GraphId};
 use chrono::{DateTime, Utc};
 use geo::Coord;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
@@ -17,33 +26,16 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use zerocopy::{I16, Immutable, IntoBytes, LE, U32};
 
-/// The writer version.
+/// Encodes a writer version for the header.
 ///
-/// Historically this meant the version of baldr/mjolnir and was stored as a simple semver string,
-/// but this is a bit fuzzy now that there are multiple writer implementations ;)
-const DEFAULT_WRITER_VERSION: [u8; VERSION_LEN] = {
-    const VERSION: &str = env!("CARGO_PKG_VERSION");
-    const BYTES: [&[u8]; 2] = ["valinor-".as_bytes(), VERSION.as_bytes()];
-
-    let mut out = [0u8; 16];
-    let mut i = 0;
-    let mut l = 0;
-    while l < BYTES.len() {
-        let mut c = 0;
-        while c < BYTES[l].len() {
-            out[i] = BYTES[l][c];
-            i += 1;
-            c += 1;
-        }
-        l += 1;
-    }
-    out
-};
-
-fn writer_version_to_bytes(version: &str) -> Option<[u8; 16]> {
+/// Mainline reads the version as a NUL-terminated string,
+/// and its own `set_version` keeps at most 15 bytes so the last byte is always NUL.
+/// A longer version (or one with a NUL inside) would read differently in mainline,
+/// so it's rejected.
+fn writer_version_to_bytes(version: &str) -> Option<[u8; VERSION_LEN]> {
     let bytes = version.as_bytes();
-    if bytes.len() <= 16 {
-        let mut out = [0u8; 16];
+    if bytes.len() < VERSION_LEN && !bytes.contains(&0) {
+        let mut out = [0u8; VERSION_LEN];
         out[..bytes.len()].copy_from_slice(bytes);
         Some(out)
     } else {
@@ -51,7 +43,7 @@ fn writer_version_to_bytes(version: &str) -> Option<[u8; 16]> {
     }
 }
 
-/// A builder for constructing new / modified graph tiles.
+/// A builder for constructing modified graph tiles.
 ///
 /// # Design principles
 ///
@@ -69,6 +61,14 @@ fn writer_version_to_bytes(version: &str) -> Option<[u8; 16]> {
 ///
 /// Things like headers are not computed every time.
 /// Rather, we keep enough information around to derive what the header fields should be.
+///
+/// ## Writer version
+///
+/// The builder keeps the writer version of the tile it started from,
+/// as mainline's `GraphTileBuilder` does when it rewrites a tile
+/// (mainline only stamps its own version into tiles it creates from scratch).
+/// Nothing reads the version to decide compatibility.
+/// Use [`GraphTileBuilder::with_version`] to set a different one.
 pub struct GraphTileBuilder<'a> {
     writer_version: [u8; VERSION_LEN],
     graph_id: GraphId,
@@ -76,8 +76,15 @@ pub struct GraphTileBuilder<'a> {
     sw_corner: Coord<f32>,
     create_date: DateTime<Utc>,
     build_id: BuildId,
-    // TODO: Remove this eventually. Currently referenced for a few properties like binning which we don't edit yet anyways.
-    remove_me_header: GraphTileHeader,
+    /// The relative road density (0-15), kept from the original tile.
+    density: u8,
+    /// Whether the edge info carries elevation, kept from the original tile.
+    has_elevation: bool,
+    /// The cumulative edge counts of each bin, kept from the original tile.
+    ///
+    /// These describe `edge_bins` (the last one is its length),
+    /// which the builder never changes.
+    bin_offsets: [u32; BIN_COUNT],
     nodes: Cow<'a, [NodeInfo]>,
     transitions: Cow<'a, [NodeTransition]>,
     directed_edges: Cow<'a, [DirectedEdge]>,
@@ -98,6 +105,11 @@ pub struct GraphTileBuilder<'a> {
     edge_info_memory: Cow<'a, [u8]>,
     text_memory: Cow<'a, [u8]>,
     lane_connectivity_memory: Cow<'a, [u8]>,
+    /// The coefficient offset of each directed edge's speed profile.
+    ///
+    /// Either empty (no profiles) or one per directed edge.
+    /// The tile reader guarantees this for tiles it reads,
+    /// and the builder fills in the whole array when it adds the first profile.
     predicted_speed_offsets: Cow<'a, [U32<LE>]>,
     /// Raw profile memory (`n_profiles x COEFFICIENT_COUNT` entries back to back)
     predicted_speed_profile_memory: Cow<'a, [I16<LE>]>,
@@ -109,24 +121,17 @@ pub struct GraphTileBuilder<'a> {
 /// Builds a deduplication map from predicted speed profile memory.
 ///
 /// Scans the flat profile memory (semantically a 2D array with fixed-width rows)
-/// and creates a HashMap mapping each unique profile to its offset.
+/// and creates a `HashMap` mapping each unique profile to its offset.
 /// If duplicate profiles exist in the input, only the first occurrence is retained.
 fn build_speed_profile_dedup_map(memory: &[I16<LE>]) -> HashMap<[i16; COEFFICIENT_COUNT], u32> {
     let mut map = HashMap::new();
-
-    for (chunk_idx, chunk) in memory.chunks_exact(COEFFICIENT_COUNT).enumerate() {
-        let offset = (chunk_idx * COEFFICIENT_COUNT) as u32;
-
-        // Convert the chunk to a native array for HashMap key
-        let mut profile = [0i16; COEFFICIENT_COUNT];
-        for (i, v) in chunk.iter().enumerate() {
-            profile[i] = v.get();
-        }
-
+    let (profiles, _) = memory.as_chunks::<COEFFICIENT_COUNT>();
+    // Offsets are u32, so profiles past u32::MAX coefficients can't be referenced anyway.
+    let offsets = (0..=u32::MAX).step_by(COEFFICIENT_COUNT);
+    for (offset, profile) in offsets.zip(profiles) {
         // Only insert if this profile hasn't been seen before
-        map.entry(profile).or_insert(offset);
+        map.entry(profile.map(I16::get)).or_insert(offset);
     }
-
     map
 }
 
@@ -172,7 +177,9 @@ impl<'a> From<&'a OwnedGraphTileHandle> for GraphTileBuilder<'a> {
             sw_corner: header.sw_corner(),
             create_date: header.create_date(),
             build_id: header.build_id(),
-            remove_me_header: (*header).clone(),
+            density: header.density(),
+            has_elevation: header.has_elevation(),
+            bin_offsets: header.bin_offsets.map(U32::get),
             nodes: Cow::Borrowed(nodes),
             transitions: Cow::Borrowed(transitions),
             directed_edges: Cow::Borrowed(directed_edges),
@@ -204,6 +211,7 @@ impl GraphTileBuilder<'_> {
     /// The Graph ID for the tile.
     ///
     /// This is guaranteed to always be a base ID.
+    #[inline]
     pub fn graph_id(&self) -> GraphId {
         self.graph_id
     }
@@ -214,8 +222,10 @@ impl GraphTileBuilder<'_> {
     ///
     /// # Errors
     ///
-    /// The string must be <= 16 bytes when encoded as UTF-8.
-    /// If it is longer, this will return an error.
+    /// The string must be at most 15 bytes in UTF-8, with no NUL characters,
+    /// since mainline reads it as a NUL-terminated string in a 16-byte field.
+    /// Otherwise, this returns an error.
+    #[inline]
     pub fn with_version(self, version: &str) -> Result<Self, GraphTileBuildError> {
         let writer_version = writer_version_to_bytes(version)
             .ok_or_else(|| GraphTileBuildError::InvalidVersionString(version.to_string()))?;
@@ -237,38 +247,50 @@ impl GraphTileBuilder<'_> {
     /// If you only know the build ID after building every tile
     /// (because it depends on their hashes),
     /// build the tiles first and then stamp the ID into each of them
-    /// with [`GraphTileHeader::stamp_build_id`].
+    /// with [`GraphTileHeader::stamp_build_id`](super::GraphTileHeader::stamp_build_id).
+    #[inline]
     #[must_use]
     pub fn with_build_id(self, build_id: BuildId) -> Self {
         Self { build_id, ..self }
     }
 
+    /// Checks that a directed edge index is in this tile.
+    fn check_edge_index(
+        &self,
+        directed_edge_index: usize,
+        what: &str,
+    ) -> Result<(), GraphTileBuildError> {
+        if directed_edge_index < self.directed_edges.len() {
+            Ok(())
+        } else {
+            Err(GraphTileBuildError::InvalidIndex(format!(
+                "Attempted to set {what} for directed edge index {directed_edge_index}, but tile only has {} edges",
+                self.directed_edges.len()
+            )))
+        }
+    }
+
     /// Adds historical average (coarse granularity) speed information to a directed edge.
     ///
     /// Zero indicates that no data is available.
+    /// This is what mainline's `valhalla_add_predicted_traffic` sets
+    /// from the free and constrained flow columns of its CSV input.
     ///
     /// # Errors
     ///
     /// Fails if the directed edge index is out of bounds.
     pub fn with_average_speeds(
-        self,
+        mut self,
         directed_edge_index: usize,
         free_flow_speed: u8,
         constrained_speed: u8,
     ) -> Result<Self, GraphTileBuildError> {
-        let mut result = self;
-        if directed_edge_index >= result.directed_edges.len() {
-            return Err(GraphTileBuildError::InvalidIndex(format!(
-                "Attempted to set historical average speeds for directed edge index {directed_edge_index}, but tile only has {} edges",
-                result.directed_edges.len()
-            )));
+        self.check_edge_index(directed_edge_index, "historical average speeds")?;
+        if let Some(edge) = self.directed_edges.to_mut().get_mut(directed_edge_index) {
+            edge.set_free_flow_speed(free_flow_speed);
+            edge.set_constrained_speed(constrained_speed);
         }
-
-        let edge = &mut result.directed_edges.to_mut()[directed_edge_index];
-        edge.set_free_flow_speed(free_flow_speed);
-        edge.set_constrained_speed(constrained_speed);
-
-        Ok(result)
+        Ok(self)
     }
 
     /// Adds predicted speeds to a directed edge using pre-encoded DCT-II coefficients.
@@ -278,6 +300,9 @@ impl GraphTileBuilder<'_> {
     /// since it doesn't need to do any format shifting.
     /// All other predicted speed methods are convenience wrappers around this.
     ///
+    /// Identical profiles are stored once, as mainline's `GraphTileBuilder::AddPredictedSpeed` does.
+    /// If the edge already had a profile, it now points at the new one.
+    ///
     /// See the [`crate::graph_tile::predicted_speeds`] module for more details
     /// on predicted speeds.
     ///
@@ -286,46 +311,45 @@ impl GraphTileBuilder<'_> {
     /// Fails if the directed edge index is invalid,
     /// or you somehow managed to add more than 2 billion speed profiles to a single tile.
     pub fn with_predicted_speed_coefficients(
-        self,
+        mut self,
         directed_edge_index: usize,
         coefficients: &[i16; COEFFICIENT_COUNT],
     ) -> Result<Self, GraphTileBuildError> {
-        let mut result = self.grow_predicted_speeds_if_needed(true);
-        if directed_edge_index >= result.directed_edges.len() {
-            return Err(GraphTileBuildError::InvalidIndex(format!(
-                "Attempted to set predicted speeds for directed edge index {directed_edge_index}, but tile only has {} edges",
-                result.directed_edges.len()
-            )));
-        }
-
-        // Set the flag indicating that we have predicted speeds for this edge.
-        let edge = &mut result.directed_edges.to_mut()[directed_edge_index];
-        edge.set_has_predicted_speed(true);
+        self.check_edge_index(directed_edge_index, "predicted speeds")?;
 
         // Lazy initialization: populate the dedup map from existing profiles if needed
-        let dedup_map = result.speed_profile_dedup.get_or_insert_with(|| {
-            build_speed_profile_dedup_map(&result.predicted_speed_profile_memory)
+        let dedup_map = self.speed_profile_dedup.get_or_insert_with(|| {
+            build_speed_profile_dedup_map(&self.predicted_speed_profile_memory)
         });
         let offset = if let Some(&existing_offset) = dedup_map.get(coefficients) {
             // Profile already exists; reuse the existing offset
             existing_offset
         } else {
             // New profile; append it to the memory and record the offset
-            let new_offset = u32::try_from(result.predicted_speed_profile_memory.len())?;
-
-            let predicted_speed_profiles = result.predicted_speed_profile_memory.to_mut();
-            predicted_speed_profiles
-                .extend::<[I16<LE>; COEFFICIENT_COUNT]>(coefficients.map(Into::into));
-
+            let new_offset = u32::try_from(self.predicted_speed_profile_memory.len())?;
+            self.predicted_speed_profile_memory
+                .to_mut()
+                .extend(coefficients.map(I16::new));
             dedup_map.insert(*coefficients, new_offset);
             new_offset
         };
 
-        // Set the offset for this directed edge
-        let predicted_speed_offsets = result.predicted_speed_offsets.to_mut();
-        predicted_speed_offsets[directed_edge_index] = offset.into();
+        // A tile with any profile has an offset for every edge (0 for edges without one).
+        let edge_count = self.directed_edges.len();
+        let offsets = self.predicted_speed_offsets.to_mut();
+        if offsets.is_empty() {
+            offsets.resize(edge_count, U32::new(0));
+        }
+        if let Some(slot) = offsets.get_mut(directed_edge_index) {
+            *slot = U32::new(offset);
+        }
 
-        Ok(result)
+        // Set the flag indicating that we have predicted speeds for this edge.
+        if let Some(edge) = self.directed_edges.to_mut().get_mut(directed_edge_index) {
+            edge.set_has_predicted_speed(true);
+        }
+
+        Ok(self)
     }
 
     /// Adds predicted speeds to a directed edge from a base64 encoded string
@@ -344,6 +368,7 @@ impl GraphTileBuilder<'_> {
     /// This will fail if the directed edge index is out of bounds,
     /// the compressed speeds string doesn't decode to exactly 400 bytes,
     /// or you somehow managed to add more than 2 billion speed profiles to a single tile.
+    #[inline]
     pub fn with_predicted_encoded_speeds(
         self,
         directed_edge_index: usize,
@@ -365,37 +390,13 @@ impl GraphTileBuilder<'_> {
     ///
     /// Fails if the directed edge index is invalid,
     /// or you somehow managed to add more than 2 billion speed profiles to a single tile.
+    #[inline]
     pub fn with_predicted_speeds(
         self,
         directed_edge_index: usize,
         speeds: &[f32; BUCKETS_PER_WEEK],
     ) -> Result<Self, GraphTileBuildError> {
         self.with_predicted_speed_coefficients(directed_edge_index, &compress_speed_buckets(speeds))
-    }
-
-    fn grow_predicted_speeds_if_needed(self, force_create_offsets_array: bool) -> Self {
-        assert!(
-            self.predicted_speed_offsets.len() <= self.directed_edges.len(),
-            "There are currently more predicted speeds than directed edges. That's not supposed to happen!"
-        );
-
-        // Don't need to grow unless there are actually speed profiles
-        if !force_create_offsets_array
-            && self.predicted_speed_offsets.is_empty()
-            && self.predicted_speed_profile_memory.is_empty()
-        {
-            return self;
-        }
-
-        let mut result = self;
-        if result.predicted_speed_offsets.len() != result.directed_edges.len() {
-            let predicted_speed_offsets = result.predicted_speed_offsets.to_mut();
-            let delta = result.directed_edges.len() - predicted_speed_offsets.len();
-
-            predicted_speed_offsets.extend(std::iter::repeat_n(U32::<LE>::from(0), delta));
-        }
-
-        result
     }
 
     /// Yields the raw bytes of a full tile in the order they should be stored on disk.
@@ -416,63 +417,32 @@ impl GraphTileBuilder<'_> {
     /// * Setting a creation date more than 11,758,979.59 years after January 1, 2014
     ///
     /// TL;DR, things that you really shouldn't do, or are a clear programming error.
-    ///
-    /// # Panics
-    ///
-    /// This function includes several assertions.
-    /// These do _not_ introduce noticeable runtime overhead
-    /// and should not trigger during regular operation.
-    /// The assertions exist to verify invariants of the generated tile.
-    ///
-    /// If you hit any of these, it is a bug in Valinor, not your code.
     pub fn into_byte_iter(self) -> Result<impl Iterator<Item = Box<[u8]>>, GraphTileBuildError> {
-        // Validate and finalize predicted speeds arrays (sizes and counts)
-        let intermediate = self.grow_predicted_speeds_if_needed(false);
-        if intermediate.predicted_speed_profile_memory.is_empty() {
-            assert!(
-                intermediate.predicted_speed_offsets.is_empty(),
-                "Expected an empty offset array as there are no speed profiles"
-            );
-        } else {
-            assert_eq!(
-                intermediate.predicted_speed_offsets.len(),
-                intermediate.directed_edges.len(),
-                "Expected to have one predicted speed offset per directed edge"
-            );
-            assert!(
-                intermediate
-                    .predicted_speed_profile_memory
-                    .len()
-                    .is_multiple_of(COEFFICIENT_COUNT),
-                "Expected the speed profile memory size to be some multiple of {COEFFICIENT_COUNT} (this is a bug in the builder)."
-            );
-        }
-
         let mut tile = TileByteIter {
-            header: Vec::new(),
+            header: Box::default(),
             stage: TileBuildStage::Header,
-            nodes: intermediate.nodes,
-            transitions: intermediate.transitions,
-            directed_edges: intermediate.directed_edges,
-            ext_directed_edges: intermediate.ext_directed_edges,
-            access_restrictions: intermediate.access_restrictions,
-            transit_departures: intermediate.transit_departures,
-            transit_stops: intermediate.transit_stops,
-            transit_routes: intermediate.transit_routes,
-            transit_schedules: intermediate.transit_schedules,
-            transit_transfers: intermediate.transit_transfers,
-            signs: intermediate.signs,
-            turn_lanes: intermediate.turn_lanes,
-            admins: intermediate.admins,
-            edge_bins: intermediate.edge_bins,
-            bounding_circles: intermediate.bounding_circles,
-            complex_forward_restrictions_memory: intermediate.complex_forward_restrictions_memory,
-            complex_reverse_restrictions_memory: intermediate.complex_reverse_restrictions_memory,
-            edge_info_memory: intermediate.edge_info_memory,
-            text_memory: intermediate.text_memory,
-            lane_connectivity_memory: intermediate.lane_connectivity_memory,
-            predicted_speed_offsets: intermediate.predicted_speed_offsets,
-            predicted_speed_profile_memory: intermediate.predicted_speed_profile_memory,
+            nodes: self.nodes,
+            transitions: self.transitions,
+            directed_edges: self.directed_edges,
+            ext_directed_edges: self.ext_directed_edges,
+            access_restrictions: self.access_restrictions,
+            transit_departures: self.transit_departures,
+            transit_stops: self.transit_stops,
+            transit_routes: self.transit_routes,
+            transit_schedules: self.transit_schedules,
+            transit_transfers: self.transit_transfers,
+            signs: self.signs,
+            turn_lanes: self.turn_lanes,
+            admins: self.admins,
+            edge_bins: self.edge_bins,
+            bounding_circles: self.bounding_circles,
+            complex_forward_restrictions_memory: self.complex_forward_restrictions_memory,
+            complex_reverse_restrictions_memory: self.complex_reverse_restrictions_memory,
+            edge_info_memory: self.edge_info_memory,
+            text_memory: self.text_memory,
+            lane_connectivity_memory: self.lane_connectivity_memory,
+            predicted_speed_offsets: self.predicted_speed_offsets,
+            predicted_speed_profile_memory: self.predicted_speed_profile_memory,
         };
 
         // The header holds a hash of everything after it,
@@ -483,17 +453,18 @@ impl GraphTileBuilder<'_> {
         }
         let tile_hash = hasher.finish();
 
-        // Build the header from the finalized state, then own the header bytes.
+        // Every count and size comes from the sections as they will be written.
         let header = GraphTileHeaderBuilder {
-            version: intermediate.writer_version,
-            graph_id: intermediate.graph_id,
-            density: intermediate.remove_me_header.density(),
-            has_elevation: intermediate.remove_me_header.has_elevation(),
+            version: self.writer_version,
+            graph_id: self.graph_id,
+            density: self.density,
+            has_elevation: self.has_elevation,
             has_ext_directed_edges: !tile.ext_directed_edges.is_empty(),
-            sw_corner: intermediate.sw_corner,
-            dataset_id: intermediate.dataset_id,
+            sw_corner: self.sw_corner,
+            dataset_id: self.dataset_id,
             node_count: tile.nodes.len(),
             directed_edge_count: tile.directed_edges.len(),
+            // Profiles are only ever stored whole, so this is exact.
             predicted_speed_profile_count: tile.predicted_speed_profile_memory.len()
                 / COEFFICIENT_COUNT,
             transition_count: tile.transitions.len(),
@@ -506,18 +477,17 @@ impl GraphTileBuilder<'_> {
             sign_count: tile.signs.len(),
             access_restriction_count: tile.access_restrictions.len(),
             admin_count: tile.admins.len(),
-            create_date: intermediate.create_date,
-            bin_offsets: intermediate.remove_me_header.bin_offsets.map(Into::into),
+            create_date: self.create_date,
+            bin_offsets: self.bin_offsets,
             bounding_circle_count: tile.bounding_circles.len(),
-            checksum: checksum(intermediate.build_id, tile_hash),
+            checksum: checksum(self.build_id, tile_hash),
             complex_forward_restrictions_size: tile.complex_forward_restrictions_memory.len(),
             complex_reverse_restrictions_size: tile.complex_reverse_restrictions_memory.len(),
             edge_info_size: tile.edge_info_memory.len(),
             text_list_size: tile.text_memory.len(),
             lane_connectivity_size: tile.lane_connectivity_memory.len(),
         };
-        // Meh extra alloc...
-        tile.header = header.build()?.as_bytes().to_vec();
+        tile.header = header.build()?.as_bytes().into();
 
         Ok(tile)
     }
@@ -531,6 +501,7 @@ impl GraphTileBuilder<'_> {
     /// # Errors
     ///
     /// Refer to the documentation for [`GraphTileBuilder::into_byte_iter`] for error conditions.
+    #[inline]
     pub fn into_bytes(self) -> Result<Vec<u8>, GraphTileBuildError> {
         Ok(self.into_byte_iter()?.flatten().collect())
     }
@@ -545,7 +516,7 @@ impl GraphTileBuilder<'_> {
 /// This dramatically reduces the peak memory usage when serializing a tile directly
 /// to an output stream (file, network, etc.).
 struct TileByteIter<'a> {
-    header: Vec<u8>,
+    header: Box<[u8]>,
 
     /// The current stage of production.
     stage: TileBuildStage,
@@ -653,58 +624,58 @@ impl Iterator for TileByteIter<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let bytes = match self.stage {
-            TileBuildStage::Header => std::mem::take(&mut self.header).into_boxed_slice(),
-            TileBuildStage::Nodes => bytes_from_items(std::mem::take(&mut self.nodes)),
-            TileBuildStage::Transitions => bytes_from_items(std::mem::take(&mut self.transitions)),
+            TileBuildStage::Header => std::mem::take(&mut self.header),
+            TileBuildStage::Nodes => bytes_from_items(&std::mem::take(&mut self.nodes)),
+            TileBuildStage::Transitions => bytes_from_items(&std::mem::take(&mut self.transitions)),
             TileBuildStage::DirectedEdges => {
-                bytes_from_items(std::mem::take(&mut self.directed_edges))
+                bytes_from_items(&std::mem::take(&mut self.directed_edges))
             }
             TileBuildStage::ExtDirectedEdges => {
-                bytes_from_items(std::mem::take(&mut self.ext_directed_edges))
+                bytes_from_items(&std::mem::take(&mut self.ext_directed_edges))
             }
             TileBuildStage::AccessRestrictions => {
-                bytes_from_items(std::mem::take(&mut self.access_restrictions))
+                bytes_from_items(&std::mem::take(&mut self.access_restrictions))
             }
             TileBuildStage::TransitDepartures => {
-                bytes_from_items(std::mem::take(&mut self.transit_departures))
+                bytes_from_items(&std::mem::take(&mut self.transit_departures))
             }
             TileBuildStage::TransitStops => {
-                bytes_from_items(std::mem::take(&mut self.transit_stops))
+                bytes_from_items(&std::mem::take(&mut self.transit_stops))
             }
             TileBuildStage::TransitRoutes => {
-                bytes_from_items(std::mem::take(&mut self.transit_routes))
+                bytes_from_items(&std::mem::take(&mut self.transit_routes))
             }
             TileBuildStage::TransitSchedules => {
-                bytes_from_items(std::mem::take(&mut self.transit_schedules))
+                bytes_from_items(&std::mem::take(&mut self.transit_schedules))
             }
             TileBuildStage::TransitTransfers => {
-                bytes_from_items(std::mem::take(&mut self.transit_transfers))
+                bytes_from_items(&std::mem::take(&mut self.transit_transfers))
             }
-            TileBuildStage::Signs => bytes_from_items(std::mem::take(&mut self.signs)),
-            TileBuildStage::TurnLanes => bytes_from_items(std::mem::take(&mut self.turn_lanes)),
-            TileBuildStage::Admins => bytes_from_items(std::mem::take(&mut self.admins)),
-            TileBuildStage::EdgeBins => bytes_from_items(std::mem::take(&mut self.edge_bins)),
+            TileBuildStage::Signs => bytes_from_items(&std::mem::take(&mut self.signs)),
+            TileBuildStage::TurnLanes => bytes_from_items(&std::mem::take(&mut self.turn_lanes)),
+            TileBuildStage::Admins => bytes_from_items(&std::mem::take(&mut self.admins)),
+            TileBuildStage::EdgeBins => bytes_from_items(&std::mem::take(&mut self.edge_bins)),
             TileBuildStage::BoundingCircles => {
-                bytes_from_items(std::mem::take(&mut self.bounding_circles))
+                bytes_from_items(&std::mem::take(&mut self.bounding_circles))
             }
-            TileBuildStage::ComplexForwardRestrictions => bytes_from_items(std::mem::take(
+            TileBuildStage::ComplexForwardRestrictions => bytes_from_items(&std::mem::take(
                 &mut self.complex_forward_restrictions_memory,
             )),
-            TileBuildStage::ComplexReverseRestrictions => bytes_from_items(std::mem::take(
+            TileBuildStage::ComplexReverseRestrictions => bytes_from_items(&std::mem::take(
                 &mut self.complex_reverse_restrictions_memory,
             )),
             TileBuildStage::EdgeInfo => {
-                bytes_from_items(std::mem::take(&mut self.edge_info_memory))
+                bytes_from_items(&std::mem::take(&mut self.edge_info_memory))
             }
-            TileBuildStage::TextMemory => bytes_from_items(std::mem::take(&mut self.text_memory)),
+            TileBuildStage::TextMemory => bytes_from_items(&std::mem::take(&mut self.text_memory)),
             TileBuildStage::LaneConnectivity => {
-                bytes_from_items(std::mem::take(&mut self.lane_connectivity_memory))
+                bytes_from_items(&std::mem::take(&mut self.lane_connectivity_memory))
             }
             TileBuildStage::PredictedSpeedOffsets => {
-                bytes_from_items(std::mem::take(&mut self.predicted_speed_offsets))
+                bytes_from_items(&std::mem::take(&mut self.predicted_speed_offsets))
             }
             TileBuildStage::PredictedSpeedProfiles => {
-                bytes_from_items(std::mem::take(&mut self.predicted_speed_profile_memory))
+                bytes_from_items(&std::mem::take(&mut self.predicted_speed_profile_memory))
             }
             TileBuildStage::Done => {
                 // No more sections
@@ -717,25 +688,20 @@ impl Iterator for TileByteIter<'_> {
     }
 }
 
-fn bytes_from_items<T: IntoBytes + Immutable>(items: Cow<'_, [T]>) -> Box<[u8]>
-where
-    [T]: ToOwned,
-{
-    let items = items.as_ref();
-    // Reserve an estimated capacity to minimize reallocations
-    let mut buf = Vec::with_capacity(size_of_val(items));
-    for v in items {
-        buf.extend(v.as_bytes());
-    }
-
-    buf.into_boxed_slice()
+/// Copies a section's bytes out.
+///
+/// Callers pass a section they've just taken out of the iterator,
+/// so its memory is released as soon as the copy is made.
+fn bytes_from_items<T: IntoBytes + Immutable>(items: &[T]) -> Box<[u8]> {
+    items.as_bytes().into()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::graph_tile::predicted_speeds::COEFFICIENT_COUNT;
     use crate::graph_tile::{
-        BuildId, GraphTile, GraphTileBuilder, GraphTileHeader, OwnedGraphTileHandle, TileHash,
+        BuildId, GraphTile, GraphTileBuildError, GraphTileBuilder, GraphTileHeader,
+        OwnedGraphTileHandle, TileHash,
     };
     use std::path::Path;
     use walkdir::WalkDir;
@@ -762,20 +728,17 @@ mod tests {
 
         assert_eq!(
             in_header, out_header,
-            "Failed round-trip builder test (header) for fixture at {:?}",
-            path
+            "Failed round-trip builder test (header) for fixture at {path:?}"
         );
 
         assert_eq!(
             in_header_slice, out_header_slice,
-            "Failed round-trip builder test (header; slice) for fixture at {:?}",
-            path
+            "Failed round-trip builder test (header; slice) for fixture at {path:?}"
         );
 
         assert_eq!(
             in_bytes, out_bytes,
-            "Failed round-trip builder test (whole tile) for fixture at {:?}",
-            path
+            "Failed round-trip builder test (whole tile) for fixture at {path:?}"
         );
     }
 
@@ -902,7 +865,9 @@ mod tests {
                 .expect("Unable to read file");
 
         if out_bytes != expected_out_bytes {
-            std::fs::write("/tmp/failed.gph", &out_bytes).expect("Failed to write failed output");
+            let path = std::env::temp_dir().join("valinor-add-predicted-speeds-failed.gph");
+            std::fs::write(&path, &out_bytes).expect("Failed to write failed output");
+            eprintln!("wrote the mismatched tile to {}", path.display());
         }
 
         assert_eq!(out_bytes, expected_out_bytes);
@@ -1027,5 +992,389 @@ mod tests {
             offsets[2].get(),
             "Edges 0 and 2 have different profiles, so they should have different offsets"
         );
+    }
+
+    /// Modified tiles that mainline reads back (see `tools/oracle/README.md`).
+    mod mainline {
+        use super::*;
+        use crate::graph_tile::GraphTileView;
+        use crate::graph_tile::predicted_speeds::{
+            BUCKETS_PER_WEEK, DEFAULT_FLOW_MASK, FlowSource, SPEED_BUCKET_SIZE_SECONDS,
+            SpeedBucket, select_speed,
+        };
+        use std::path::PathBuf;
+        use zerocopy::IntoBytes;
+
+        /// The profile in mainline's predicted speed decoding test.
+        const MAINLINE_TEST: &str = "BcUACQAEACEADP/7/9sAGf/fAAwAGwARAAX/+AAAAB0AFAAS//AAF//+ACwACQAqAAAAKP/6AEMABABsAAsBBAAq/rcAAP+bAAz/zv/s/9MABf/Y//X/8//9/+wACf/P//EADv/8//L//P/y//H////7AAwAFf/5//oADgAZAAQAFf/3/+8AB//yAB8ABv/0AAUAEf/8//QAFAAG//b////j//v//QAT//7/+f/kABMABwABAAv/6//8//cAEwAAABT/8v/6//wAAAAQ//cACwAFAAT/1//sAAEADAABAAYAE//9AAn/7gAH/+AAFQAB//4AC//o/+gAE//+AAAAFf/l//kABP/+//kACAAG//cAHv/qAB0AAv/4/+v/+wALAAMABP/3AAT/8wAIAAr/9wAK//j/+wAEAAD/+P/8//v/8f/2//L//AALAAcABgAG//gAAv/5AAoAHv//AAcAFf/zABD/7AAUAAv/7v/8AAgACAAN//0ADP/iABD/9f/3//7/+P/3AAQADP//AAMABw==";
+
+        /// The level 2 tile we modify: small, with edge bins and bounding circles.
+        const LEVEL_2_TILE: [&str; 4] = ["2", "000", "763", "927.gph"];
+
+        fn fixtures() -> PathBuf {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
+        }
+
+        fn read_tile(path: PathBuf) -> OwnedGraphTileHandle {
+            OwnedGraphTileHandle::try_from(std::fs::read(path).expect("read tile"))
+                .expect("parse tile")
+        }
+
+        fn level_2_path(dir: &str) -> PathBuf {
+            LEVEL_2_TILE
+                .iter()
+                .fold(fixtures().join(dir), |path, part| path.join(part))
+        }
+
+        /// The edges the modification touches, for a tile with `edge_count` edges.
+        fn modified_edges(edge_count: usize) -> [usize; 5] {
+            [0, 1, 2, 3, edge_count - 1]
+        }
+
+        /// Every way the builder can change a tile, applied to the level 2 tile.
+        fn modify(original: &OwnedGraphTileHandle) -> Vec<u8> {
+            let [first, second, third, fourth, last] =
+                modified_edges(original.directed_edges().len());
+            let sawtooth: [f32; BUCKETS_PER_WEEK] =
+                core::array::from_fn(|i| f32::from(u8::try_from(i % 100).expect("small")));
+            let coefficients =
+                crate::graph_tile::predicted_speeds::decode_base64_speed_coefficients(
+                    MAINLINE_TEST,
+                )
+                .expect("valid");
+            GraphTileBuilder::from(original)
+                .with_average_speeds(first, 50, 40)
+                .unwrap()
+                .with_predicted_encoded_speeds(second, MAINLINE_TEST)
+                .unwrap()
+                .with_predicted_speeds(third, &sawtooth)
+                .unwrap()
+                // The same profile as the second edge, so it's stored once.
+                .with_predicted_speed_coefficients(fourth, &coefficients)
+                .unwrap()
+                .with_average_speeds(fourth, 12, 34)
+                .unwrap()
+                .with_average_speeds(last, 0, 33)
+                .unwrap()
+                .into_bytes()
+                .unwrap()
+        }
+
+        /// The modified level 2 tile is the committed fixture that mainline reads.
+        ///
+        /// Set `VALINOR_UPDATE_FIXTURES=1` to rewrite the fixture,
+        /// then rerun the mainline comparison in `tools/oracle/README.md`.
+        #[test]
+        fn modified_level_2_tile_is_the_fixture() {
+            let original = read_tile(level_2_path("andorra-tiles"));
+            assert!(original.header().has_bounding_circles());
+            let out = modify(&original);
+            let path = level_2_path("builder-modified");
+            if std::env::var_os("VALINOR_UPDATE_FIXTURES").is_some() {
+                std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+                std::fs::write(&path, &out).expect("write fixture");
+            }
+            assert!(
+                std::fs::read(&path).expect("read fixture") == out,
+                "the builder's output changed; see the test docs"
+            );
+        }
+
+        /// Valinor reads every section of the modified tile identically,
+        /// apart from the intended changes.
+        #[test]
+        fn modified_level_2_tile_keeps_everything_else() {
+            let original = read_tile(level_2_path("andorra-tiles"));
+            let modified = OwnedGraphTileHandle::try_from(modify(&original)).expect("parse");
+            let (a, b): (&GraphTileView, &GraphTileView) =
+                (original.borrow_dependent(), modified.borrow_dependent());
+
+            assert_eq!(a.nodes.as_bytes(), b.nodes.as_bytes());
+            assert_eq!(a.transitions.as_bytes(), b.transitions.as_bytes());
+            assert_eq!(
+                a.ext_directed_edges.as_bytes(),
+                b.ext_directed_edges.as_bytes()
+            );
+            assert_eq!(
+                a.access_restrictions.as_bytes(),
+                b.access_restrictions.as_bytes()
+            );
+            assert_eq!(a.signs.as_bytes(), b.signs.as_bytes());
+            assert_eq!(a.turn_lanes.as_bytes(), b.turn_lanes.as_bytes());
+            assert_eq!(a.admins.as_bytes(), b.admins.as_bytes());
+            assert_eq!(a.edge_bins.as_bytes(), b.edge_bins.as_bytes());
+            assert_eq!(a.bounding_circles.as_bytes(), b.bounding_circles.as_bytes());
+            assert_eq!(
+                a.complex_forward_restrictions_memory,
+                b.complex_forward_restrictions_memory
+            );
+            assert_eq!(
+                a.complex_reverse_restrictions_memory,
+                b.complex_reverse_restrictions_memory
+            );
+            assert_eq!(a.edge_info_memory, b.edge_info_memory);
+            assert_eq!(a.text_memory, b.text_memory);
+            assert_eq!(a.lane_connectivity_memory, b.lane_connectivity_memory);
+            for bin in 0..crate::BIN_COUNT {
+                assert_eq!(a.edges_in_bin(bin), b.edges_in_bin(bin));
+                assert_eq!(
+                    a.bounding_circles_in_bin(bin),
+                    b.bounding_circles_in_bin(bin)
+                );
+            }
+
+            let modified_edges = modified_edges(a.directed_edges().len());
+            for (i, (x, y)) in a
+                .directed_edges()
+                .iter()
+                .zip(b.directed_edges())
+                .enumerate()
+            {
+                if !modified_edges.contains(&i) {
+                    assert_eq!(x.as_bytes(), y.as_bytes(), "edge {i}");
+                }
+            }
+
+            let ha = a.header();
+            let hb = b.header();
+            assert_eq!(ha.version(), hb.version());
+            assert_eq!(ha.graph_id(), hb.graph_id());
+            assert_eq!(ha.density(), hb.density());
+            assert_eq!(ha.has_elevation(), hb.has_elevation());
+            assert_eq!(ha.sw_corner(), hb.sw_corner());
+            assert_eq!(ha.create_date(), hb.create_date());
+            assert_eq!(ha.build_id(), hb.build_id());
+            assert_eq!(ha.predicted_speeds_count(), 0);
+            // Two distinct profiles; the fourth edge shares the second's.
+            assert_eq!(hb.predicted_speeds_count(), 2);
+        }
+
+        /// Mainline reads the modified tile, and everything it reads matches the original
+        /// apart from the intended changes.
+        ///
+        /// `mainline-compare.txt` is the C++ helper's `compare` of the original level 2 tile
+        /// with the fixture, which reads every section through mainline's accessors.
+        #[test]
+        fn mainline_reads_the_modified_tile_identically() {
+            let compare = std::fs::read_to_string(
+                fixtures()
+                    .join("builder-modified")
+                    .join("mainline-compare.txt"),
+            )
+            .expect("read mainline-compare.txt");
+            let fixture_bytes = std::fs::read(level_2_path("builder-modified")).expect("read");
+            let fixture = OwnedGraphTileHandle::try_from(fixture_bytes.clone()).expect("parse");
+            let view = fixture.borrow_dependent();
+            let modified_edges = modified_edges(view.directed_edges().len());
+
+            let lines: Vec<&str> = compare.lines().collect();
+            let [first, differences @ .., last] = &lines[..] else {
+                panic!("too short");
+            };
+            assert!(first.starts_with("compare 2/763927: "), "{first}");
+            assert_eq!(*last, format!("{} differences", differences.len() / 2));
+            let mut checked_speeds = 0;
+            for line in differences {
+                let (sign, value) = line.split_at(2);
+                assert!(sign == "- " || sign == "+ ", "{line}");
+                let words: Vec<&str> = value.split(' ').collect();
+                match words[..] {
+                    ["header", "counts", "nodes", ..] => {
+                        let predicted = if sign == "- " { "0" } else { "2" };
+                        assert_eq!(words[6..8], ["predicted", predicted], "{line}");
+                    }
+                    [
+                        "header",
+                        "tile_checksum",
+                        hash,
+                        "build_id",
+                        build_id,
+                        "end_offset",
+                        end,
+                    ] => {
+                        if sign == "+ " {
+                            let header = fixture.header();
+                            assert_eq!(hash, header.tile_hash().value().to_string());
+                            assert_eq!(build_id, header.build_id().value().to_string());
+                            assert_eq!(end, fixture_bytes.len().to_string());
+                        }
+                    }
+                    ["edge", index, kind, ..] => {
+                        let index: usize = index.parse().expect("edge index");
+                        assert!(modified_edges.contains(&index), "{line}");
+                        if kind == "get_speed" {
+                            if sign == "+ " {
+                                assert_mainline_speeds(view, index, &words[3..]);
+                                checked_speeds += 1;
+                            }
+                        } else {
+                            // The directed edge itself, as raw bytes.
+                            assert_eq!(words.len(), 3, "{line}");
+                        }
+                    }
+                    _ => panic!("unexpected difference: {line}"),
+                }
+            }
+            assert_eq!(checked_speeds, modified_edges.len());
+        }
+
+        /// Checks mainline's `get_speed ...` line for an edge of the fixture against Valinor.
+        fn assert_mainline_speeds(view: &GraphTileView, index: usize, words: &[&str]) {
+            let [
+                "default",
+                default,
+                "night",
+                night,
+                "day",
+                day,
+                "predicted",
+                predicted @ ..,
+            ] = words
+            else {
+                panic!("bad speeds {words:?}");
+            };
+            let edge = &view.directed_edges()[index];
+            let ps = view.predicted_speeds.as_ref();
+            let select = |mask, seconds| {
+                select_speed(edge, mask, seconds, false, |s| {
+                    ps.expect("profiles").try_speed(index, u64::from(s))
+                })
+                .expect("speed")
+                .kph
+                .to_string()
+            };
+            assert_eq!(*default, select(DEFAULT_FLOW_MASK, None), "edge {index}");
+            assert_eq!(
+                *night,
+                select(DEFAULT_FLOW_MASK, Some(3600)),
+                "edge {index}"
+            );
+            assert_eq!(
+                *day,
+                select(DEFAULT_FLOW_MASK, Some(43_200)),
+                "edge {index}"
+            );
+            if edge.has_predicted_speed() {
+                assert_eq!(predicted.len(), BUCKETS_PER_WEEK);
+                for (bucket, expected) in SpeedBucket::all().zip(predicted) {
+                    let seconds = u64::from(SPEED_BUCKET_SIZE_SECONDS)
+                        * u64::try_from(bucket.index()).expect("small");
+                    assert_eq!(
+                        *expected,
+                        select(FlowSource::Predicted.into(), Some(seconds)),
+                        "edge {index} {bucket:?}"
+                    );
+                }
+            } else {
+                assert!(predicted.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn version_must_fit_mainlines_string() {
+        let tile = OwnedGraphTileHandle::try_from(
+            std::fs::read(
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("fixtures/andorra-tiles/2/000/763/927.gph"),
+            )
+            .expect("read"),
+        )
+        .expect("parse");
+        assert_eq!(tile.header().version(), "3.9.1");
+
+        let out = GraphTileBuilder::from(&tile)
+            .with_version("valinor-0.1.0-x")
+            .unwrap()
+            .into_bytes()
+            .unwrap();
+        let out = OwnedGraphTileHandle::try_from(out).expect("parse");
+        assert_eq!(out.header().version(), "valinor-0.1.0-x");
+
+        for bad in ["sixteen bytes!!!", "nul\0inside"] {
+            assert!(matches!(
+                GraphTileBuilder::from(&tile).with_version(bad),
+                Err(GraphTileBuildError::InvalidVersionString(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn edge_indices_out_of_range_are_errors() {
+        let tile = OwnedGraphTileHandle::try_from(
+            std::fs::read(
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("fixtures/andorra-tiles/2/000/763/927.gph"),
+            )
+            .expect("read"),
+        )
+        .expect("parse");
+        let count = tile.directed_edges().len();
+        for index in [count, usize::MAX] {
+            assert!(matches!(
+                GraphTileBuilder::from(&tile).with_average_speeds(index, 1, 1),
+                Err(GraphTileBuildError::InvalidIndex(_))
+            ));
+            assert!(matches!(
+                GraphTileBuilder::from(&tile)
+                    .with_predicted_speed_coefficients(index, &[0; COEFFICIENT_COUNT]),
+                Err(GraphTileBuildError::InvalidIndex(_))
+            ));
+        }
+    }
+
+    /// Adding profiles to a tile that already has some
+    /// reuses identical existing profiles and keeps the others.
+    #[test]
+    fn add_profiles_to_a_tile_with_profiles() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/andorra-tiles-with-traffic/0/003/015.gph");
+        let tile =
+            OwnedGraphTileHandle::try_from(std::fs::read(path).expect("read")).expect("parse");
+        let view = tile.borrow_dependent();
+        let speeds = view.predicted_speeds.as_ref().expect("profiles");
+        let profile_7 = speeds.coefficients(7).unwrap().map(zerocopy::I16::get);
+        let profile_42 = speeds.coefficients(42).unwrap().map(zerocopy::I16::get);
+        let new_profile = [3; COEFFICIENT_COUNT];
+
+        let out = GraphTileBuilder::from(&tile)
+            // An existing profile on a new edge: no new profile.
+            .with_predicted_speed_coefficients(100, &profile_7)
+            .unwrap()
+            // A new profile replacing an edge's existing one.
+            .with_predicted_speed_coefficients(42, &new_profile)
+            .unwrap()
+            .into_bytes()
+            .unwrap();
+        let out = OwnedGraphTileHandle::try_from(out).expect("parse");
+        let out_view = out.borrow_dependent();
+        assert_eq!(out.header().predicted_speeds_count(), 3);
+        let out_speeds = out_view.predicted_speeds.as_ref().expect("profiles");
+        let get = |edge| {
+            out_speeds
+                .coefficients(edge)
+                .unwrap()
+                .map(zerocopy::I16::get)
+        };
+        assert_eq!(get(7), profile_7);
+        assert_eq!(get(100), profile_7);
+        assert_eq!(get(42), new_profile);
+        assert_ne!(get(42), profile_42);
+        assert!(out_view.directed_edges()[100].has_predicted_speed());
+        // Edges the builder didn't touch are unchanged.
+        for (i, (a, b)) in view
+            .directed_edges()
+            .iter()
+            .zip(out_view.directed_edges())
+            .enumerate()
+        {
+            if i != 100 {
+                assert_eq!(
+                    zerocopy::IntoBytes::as_bytes(a),
+                    zerocopy::IntoBytes::as_bytes(b),
+                    "edge {i}"
+                );
+            }
+        }
     }
 }

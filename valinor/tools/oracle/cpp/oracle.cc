@@ -4,6 +4,9 @@
 //       Values from the Andorra tiles (shortcuts, access restrictions, bins, circles, ...).
 //   oracle <tile_dir> speeds
 //       GraphTile::GetSpeed for edges of tile 0/3015 over flow masks, times, and truck flags.
+//   oracle compare <tile_dir_a> <tile_dir_b> <level> <tile_id>
+//       Reads one tile from each directory through mainline's accessors
+//       and prints every value that differs.
 #include <valhalla/baldr/graphconstants.h>
 #include <valhalla/baldr/graphreader.h>
 #include <valhalla/baldr/tilehierarchy.h>
@@ -23,6 +26,22 @@ using namespace valhalla::baldr;
 using namespace valhalla::midgard;
 
 namespace {
+
+std::string hex(const void* data, size_t size) {
+  std::string out;
+  char buf[3];
+  for (size_t i = 0; i < size; ++i) {
+    snprintf(buf, sizeof(buf), "%02x", static_cast<const unsigned char*>(data)[i]);
+    out += buf;
+  }
+  return out;
+}
+
+template <typename... Args> std::string fmt(const char* format, Args... args) {
+  char buf[512];
+  snprintf(buf, sizeof(buf), format, args...);
+  return buf;
+}
 
 // GetSpeed for a few edges of tile 0/3015, one line per call:
 //   speed <edge> <flow mask> <seconds> <is truck> <kph> <flow sources>
@@ -88,9 +107,147 @@ int speeds(GraphReader& reader) {
   return 0;
 }
 
+// Everything mainline reads from one tile, one value per line.
+std::vector<std::string> dump(GraphReader& reader, GraphId base) {
+  std::vector<std::string> out;
+  auto tile = reader.GetGraphTile(base);
+  if (!tile) {
+    out.push_back("tile missing or rejected");
+    return out;
+  }
+  const GraphTileHeader* h = tile->header();
+  out.push_back("header version " + h->version());
+  out.push_back(fmt("header dataset_id %llu", (unsigned long long)h->dataset_id()));
+  out.push_back(fmt("header density %u quality %u %u %u", h->density(), h->name_quality(),
+                    h->speed_quality(), h->exit_quality()));
+  out.push_back(fmt("header has_elevation %d has_ext_directededge %d", h->has_elevation(),
+                    h->has_ext_directededge()));
+  out.push_back(fmt("header base_ll %.9g %.9g", h->base_ll().lng(), h->base_ll().lat()));
+  out.push_back(fmt("header counts nodes %u edges %u predicted %u transitions %u turnlanes %u",
+                    h->nodecount(), h->directededgecount(), h->predictedspeeds_count(),
+                    h->transitioncount(), h->turnlane_count()));
+  out.push_back(fmt("header counts signs %u access %u admins %u", h->signcount(),
+                    h->access_restriction_count(), h->admincount()));
+  out.push_back(fmt("header counts transit departures %u stops %u routes %u schedules %u "
+                    "transfers %u",
+                    h->departurecount(), h->stopcount(), h->routecount(), h->schedulecount(),
+                    h->transfercount()));
+  out.push_back(fmt("header date_created %u has_bounding_circles %d", h->date_created(),
+                    h->has_bounding_circles()));
+  out.push_back(fmt("header tile_checksum %llu build_id %u end_offset %u",
+                    (unsigned long long)h->tile_checksum(), h->build_id(), h->end_offset()));
+
+  for (uint32_t i = 0; i < h->admincount(); ++i) {
+    auto a = tile->admininfo(i);
+    out.push_back(fmt("admin %u ", i) + a.country_text() + "|" + a.state_text() + "|" +
+                  a.country_iso() + "|" + a.state_iso());
+  }
+  for (uint32_t i = 0; i < h->nodecount(); ++i) {
+    const NodeInfo* node = tile->node(i);
+    auto ll = node->latlng(h->base_ll());
+    out.push_back(fmt("node %u %.9g %.9g ", i, ll.lng(), ll.lat()) + hex(node, sizeof(NodeInfo)));
+    for (uint32_t t = 0; t < node->transition_count(); ++t) {
+      const auto* tr = tile->transition(node->transition_index() + t);
+      out.push_back(fmt("node %u transition %u ", i, t) + hex(tr, sizeof(NodeTransition)));
+    }
+    if (node->named_intersection()) {
+      for (const auto& sign : tile->GetSigns(i, true))
+        out.push_back(fmt("node %u sign %d ", i, static_cast<int>(sign.type())) + sign.text());
+    }
+  }
+  for (uint32_t i = 0; i < h->directededgecount(); ++i) {
+    const DirectedEdge* de = tile->directededge(i);
+    GraphId id(base.tileid(), base.level(), i);
+    out.push_back(fmt("edge %u ", i) + hex(de, sizeof(DirectedEdge)));
+    if (h->has_ext_directededge())
+      out.push_back(fmt("edge %u ext ", i) +
+                    hex(tile->ext_directededge(i), sizeof(DirectedEdgeExt)));
+    auto ei = tile->edgeinfo(de);
+    std::string names;
+    for (const auto& name : ei.GetNames())
+      names += "[" + name + "]";
+    out.push_back(fmt("edge %u info way %llu speed_limit %u bike_network %u mean_elevation %.9g "
+                      "names ",
+                      i, (unsigned long long)ei.wayid(), ei.speed_limit(), ei.bike_network(),
+                      ei.mean_elevation()) +
+                  names);
+    out.push_back(fmt("edge %u shape ", i) + ei.encoded_shape());
+    if (de->sign()) {
+      for (const auto& sign : tile->GetSigns(i))
+        out.push_back(fmt("edge %u sign %d ", i, static_cast<int>(sign.type())) + sign.text());
+    }
+    if (de->laneconnectivity()) {
+      for (const auto& lc : tile->GetLaneConnectivity(i))
+        out.push_back(fmt("edge %u lanes from %llu to %u ", i, (unsigned long long)lc.from(),
+                          lc.to()) +
+                      lc.from_lanes() + "|" + lc.to_lanes());
+    }
+    if (de->turnlanes()) {
+      std::string masks;
+      for (auto m : tile->turnlanes(i))
+        masks += fmt(" %u", m);
+      out.push_back(fmt("edge %u turnlanes", i) + masks);
+    }
+    for (const auto& r : tile->GetAccessRestrictions(i, kAllAccess))
+      out.push_back(fmt("edge %u access type %d modes %u value %llu", i,
+                        static_cast<int>(r.type()), r.modes(), (unsigned long long)r.value()));
+    for (bool forward : {true, false}) {
+      for (const auto& cr : tile->GetComplexRestrictions(forward, id, kAllAccess))
+        out.push_back(fmt("edge %u complex %d ", i, forward) + hex(&cr, cr.SizeOf()));
+    }
+    std::string speeds;
+    if (de->has_predicted_speed()) {
+      for (uint32_t b = 0; b < kBucketsPerWeek; ++b)
+        speeds += fmt(" %u", tile->GetSpeed(de, kPredictedFlowMask, b * kSpeedBucketSizeSeconds));
+    }
+    out.push_back(fmt("edge %u get_speed default %u night %u day %u predicted", i,
+                      tile->GetSpeed(de, kDefaultFlowMask),
+                      tile->GetSpeed(de, kDefaultFlowMask, 3600),
+                      tile->GetSpeed(de, kDefaultFlowMask, 43200)) +
+                  speeds);
+  }
+  for (size_t bin = 0; bin < kBinCount; ++bin) {
+    std::string edges;
+    for (const auto& e : tile->GetBin(bin))
+      edges += fmt(" %u/%u/%u", e.level(), e.tileid(), e.id());
+    out.push_back(fmt("bin %zu", bin) + edges);
+    std::string circles;
+    for (const auto& c : tile->GetBoundingCircles(bin))
+      circles += fmt(" %u,%u,%u", c.x_offset(), c.y_offset(), c.radius_index());
+    out.push_back(fmt("bin %zu circles", bin) + circles);
+  }
+  return out;
+}
+
+int compare(const char* dir_a, const char* dir_b, uint32_t level, uint32_t tile_id) {
+  boost::property_tree::ptree pt_a, pt_b;
+  pt_a.put("tile_dir", dir_a);
+  pt_b.put("tile_dir", dir_b);
+  GraphReader reader_a(pt_a), reader_b(pt_b);
+  GraphId base(tile_id, level, 0);
+  auto a = dump(reader_a, base);
+  auto b = dump(reader_b, base);
+  printf("compare %u/%u: %zu and %zu values\n", level, tile_id, a.size(), b.size());
+  size_t differences = 0;
+  const std::string none = "(none)";
+  for (size_t i = 0; i < std::max(a.size(), b.size()); ++i) {
+    const auto& x = i < a.size() ? a[i] : none;
+    const auto& y = i < b.size() ? b[i] : none;
+    if (x != y) {
+      ++differences;
+      printf("- %s\n+ %s\n", x.c_str(), y.c_str());
+    }
+  }
+  printf("%zu differences\n", differences);
+  return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
+  if (argc == 6 && strcmp(argv[1], "compare") == 0) {
+    return compare(argv[2], argv[3], std::stoul(argv[4]), std::stoul(argv[5]));
+  }
   if (argc == 3 && strcmp(argv[2], "speeds") == 0) {
     boost::property_tree::ptree pt;
     pt.put("tile_dir", argv[1]);

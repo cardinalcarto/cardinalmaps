@@ -68,6 +68,25 @@ podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" -v "$PWD/valhalla-graphtile/fixt
 Mainline's float results depend on the platform's `cosf`,
 so Valinor's tests compare bit for bit only on Linux with glibc, as these were made.
 
+## Modified tiles
+
+`valhalla-graphtile/fixtures/builder-modified` holds level 2 tile `2/000/763/927`
+(which has edge bins and bounding circles)
+after Valinor's `GraphTileBuilder` changes speeds on five of its edges
+(see the `builder` tests; set `VALINOR_UPDATE_FIXTURES=1` to rewrite it).
+`mainline-compare.txt` is the C++ helper's `compare` mode,
+which reads the original and the modified tile through every mainline accessor
+(header, nodes, transitions, edges, edge info, signs, lanes, restrictions, bins, circles, and speeds)
+and prints what differs.
+The builder tests check that only the intended values differ
+and that mainline's speeds for the changed edges match Valinor's.
+
+```shell
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" -v "$PWD/valhalla-graphtile/fixtures:/fx:ro,z" \
+  valinor-valhalla-dev:3.9.1 /w/oracle compare /fx/andorra-tiles /fx/builder-modified 2 763927 \
+  > valhalla-graphtile/fixtures/builder-modified/mainline-compare.txt
+```
+
 ## Linking against mainline (C++)
 
 [`cpp/`](cpp) holds a small C++ program that links mainline's `libvalhalla`
