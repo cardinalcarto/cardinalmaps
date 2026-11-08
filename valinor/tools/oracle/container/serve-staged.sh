@@ -12,6 +12,8 @@
 # All sockets live in /ipc, which the host mounts so the taps can reach them.
 #
 # Usage: serve-staged.sh <config: valhalla.json built by build.sh> <port>
+#
+# With ODIN=illuvatar, no Odin worker is started; one outside the container serves odin_out.
 set -euo pipefail
 
 config="$1"
@@ -48,7 +50,9 @@ for proxy in loki tap_thor thor tap_odin odin; do
 done
 valhalla_loki_worker "$cfg_dir/loki.json" &
 valhalla_thor_worker "$cfg_dir/thor.json" &
-valhalla_odin_worker "$cfg_dir/odin.json" &
+if [ "${ODIN:-mainline}" = mainline ]; then
+	valhalla_odin_worker "$cfg_dir/odin.json" &
+fi
 
 # If any process exits, stop everything so a half-working chain is never left running.
 wait -n

@@ -2482,9 +2482,11 @@ dependencies = [
 name = "valhalla-microservice"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bit-twiddling-helpers",
  "bitfield-struct",
  "bytes",
+ "clap",
  "http",
  "insta",
  "serde",
@@ -2492,6 +2494,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "valhalla-proto",
  "valhalla-response",
  "zerocopy",

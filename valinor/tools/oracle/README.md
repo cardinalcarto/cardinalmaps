@@ -71,3 +71,32 @@ The captures default to `/mnt/maps/cardinal/valhalla-oracle/captures`;
 pass a different directory as the first argument.
 The messages are derived from OpenStreetMap data,
 © OpenStreetMap contributors, available under the Open Database License.
+
+## Splicing in Valinor workers
+
+[`serve-staged.sh`](serve-staged.sh) runs mainline as separate processes,
+with taps recording the Loki→Thor and Thor→Odin messages.
+Two environment variables swap Valinor components into that chain:
+
+- `PASSTHROUGH=loki-thor` (or `thor-odin`) runs `valhalla-microservice`'s
+  [`passthrough`](../../valhalla-microservice/examples/passthrough.rs) example
+  in place of the tap at that boundary.
+  It decodes every job and forwards the re-encoded `Api` downstream,
+  so it exercises the worker protocol (advertising, forwarding, and interrupts)
+  and our message definitions against mainline.
+- `ODIN=illuvatar` runs `illuvatar-service` in place of mainline's Odin worker.
+
+[`check-passthrough.sh`](check-passthrough.sh) runs a corpus twice,
+once through plain staged mainline and once with the passthrough spliced in,
+and compares the runs with [`compare-runs.py`](compare-runs.py):
+every response must be the same,
+and so must every Thor→Odin message apart from Loki's and Thor's latency statistics.
+It needs `protoc` on the `PATH` to compare messages field by field.
+
+```shell
+cargo build --release -p valinor-tap
+cargo build --release -p valhalla-microservice --example passthrough
+tools/oracle/check-passthrough.sh <build-dir> tools/oracle/corpus/andorra.json <work-dir>
+```
+
+On the Andorra build and corpus, all 41 responses and all 34 Thor→Odin messages match.

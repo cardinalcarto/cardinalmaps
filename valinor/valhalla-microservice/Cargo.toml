@@ -24,8 +24,11 @@ zerocopy-derive = { workspace = true }
 zeromq = { workspace = true }
 
 [dev-dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
 insta = { workspace = true }
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "signal"] }
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

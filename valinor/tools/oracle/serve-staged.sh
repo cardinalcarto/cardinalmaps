@@ -11,12 +11,38 @@
 #
 # Runs in the foreground until interrupted, then stops the container and both taps.
 # Build the tap first: cargo build --release -p valinor-tap
+#
+# Environment:
+#   PASSTHROUGH=loki-thor|thor-odin
+#                runs valhalla-microservice's passthrough example at that boundary instead of a tap
+#                (build it with: cargo build --release -p valhalla-microservice --example passthrough)
+#   ODIN=illuvatar
+#                runs illuvatar-service in place of mainline's Odin worker
+#                (build it with: cargo build --release -p illuvatar-service)
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 image="$(cat "$here/valhalla-image")"
 runtime="${CONTAINER:-podman}"
 tap="$here/../../target/release/valinor-tap"
+passthrough="$here/../../target/release/examples/passthrough"
+illuvatar="$here/../../target/release/illuvatar-service"
+splice="${PASSTHROUGH:-}"
+odin="${ODIN:-mainline}"
+case "$splice" in
+	"" | loki-thor | thor-odin) ;;
+	*)
+		echo "PASSTHROUGH must be loki-thor or thor-odin, not $splice" >&2
+		exit 1
+		;;
+esac
+case "$odin" in
+	mainline | illuvatar) ;;
+	*)
+		echo "ODIN must be mainline or illuvatar, not $odin" >&2
+		exit 1
+		;;
+esac
 
 build="$(cd "$1" && pwd)"
 mkdir -p "$2"
@@ -29,6 +55,14 @@ name="valinor-oracle-$port"
 
 [ -x "$tap" ] || {
 	echo "missing $tap; run: cargo build --release -p valinor-tap" >&2
+	exit 1
+}
+[ -z "$splice" ] || [ -x "$passthrough" ] || {
+	echo "missing $passthrough; run: cargo build --release -p valhalla-microservice --example passthrough" >&2
+	exit 1
+}
+[ "$odin" = mainline ] || [ -x "$illuvatar" ] || {
+	echo "missing $illuvatar; run: cargo build --release -p illuvatar-service" >&2
 	exit 1
 }
 
@@ -46,6 +80,7 @@ trap cleanup EXIT INT TERM
 	-v "$here/container:/oracle:ro,z" \
 	-v "$build:/out:ro,z" \
 	-v "$ipc:/ipc:z" \
+	-e "ODIN=$odin" \
 	"$image" /oracle/serve-staged.sh /out/valhalla.json "$port" >/dev/null
 
 # Wait for the proxies the taps connect to.
@@ -54,12 +89,25 @@ for _ in $(seq 60); do
 	sleep 0.5
 done
 
-"$tap" --upstream "ipc://$ipc/tap_thor_out" --downstream "ipc://$ipc/thor_in" \
-	--out-dir "$capture/loki-thor" &
-pids+=($!)
-"$tap" --upstream "ipc://$ipc/tap_odin_out" --downstream "ipc://$ipc/odin_in" \
-	--out-dir "$capture/thor-odin" &
-pids+=($!)
+# Starts the tap, or the passthrough worker if it is spliced in here.
+boundary() {
+	local name="$1" upstream="$2" downstream="$3"
+	if [ "$splice" = "$name" ]; then
+		"$passthrough" --upstream "$upstream" --downstream "$downstream" \
+			--loopback "ipc://$ipc/loopback" --interrupt "ipc://$ipc/interrupt" &
+	else
+		"$tap" --upstream "$upstream" --downstream "$downstream" --out-dir "$capture/$name" &
+	fi
+	pids+=($!)
+}
+boundary loki-thor "ipc://$ipc/tap_thor_out" "ipc://$ipc/thor_in"
+boundary thor-odin "ipc://$ipc/tap_odin_out" "ipc://$ipc/odin_in"
+if [ "$odin" = illuvatar ]; then
+	"$illuvatar" --upstream-socket-endpoint "ipc://$ipc/odin_out" \
+		--loopback-socket-endpoint "ipc://$ipc/loopback" \
+		--interrupt-socket-endpoint "ipc://$ipc/interrupt" &
+	pids+=($!)
+fi
 
 for _ in $(seq 60); do
 	curl -fs "localhost:$port/status" >/dev/null && break
@@ -70,7 +118,7 @@ curl -fs "localhost:$port/status" >/dev/null || {
 	"$runtime" logs "$name" >&2
 	exit 1
 }
-echo "ready: http://localhost:$port (captures in $capture)"
+echo "ready: http://localhost:$port (captures in $capture${splice:+; passthrough at $splice}; odin: $odin)"
 
 # Exit (and clean up) if the container or either tap stops.
 "$runtime" wait "$name" >/dev/null &
