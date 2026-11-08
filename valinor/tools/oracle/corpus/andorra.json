@@ -1,0 +1,26 @@
+{
+  "region": "andorra",
+  "cases": [
+    {"name": "auto_town", "action": "route", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211}, {"lat": 42.5355, "lon": 1.583}], "costing": "auto"}},
+    {"name": "auto_cross_country", "action": "route", "request": {"locations": [{"lat": 42.4637, "lon": 1.4913}, {"lat": 42.5425, "lon": 1.7333}], "costing": "auto"}},
+    {"name": "auto_avoid_tolls", "action": "route", "request": {"locations": [{"lat": 42.4637, "lon": 1.4913}, {"lat": 42.5425, "lon": 1.7333}], "costing": "auto", "costing_options": {"auto": {"use_tolls": 0}}}},
+    {"name": "auto_depart_at", "action": "route", "request": {"locations": [{"lat": 42.4637, "lon": 1.4913}, {"lat": 42.5425, "lon": 1.7333}], "costing": "auto", "date_time": {"type": 1, "value": "2026-11-09T08:00"}}},
+    {"name": "auto_arrive_by", "action": "route", "request": {"locations": [{"lat": 42.4637, "lon": 1.4913}, {"lat": 42.5425, "lon": 1.7333}], "costing": "auto", "date_time": {"type": 2, "value": "2026-11-09T18:00"}}},
+    {"name": "auto_alternates", "action": "route", "request": {"locations": [{"lat": 42.4637, "lon": 1.4913}, {"lat": 42.5425, "lon": 1.7333}], "costing": "auto", "alternates": 2}},
+    {"name": "auto_through_waypoint", "action": "route", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211}, {"lat": 42.5562, "lon": 1.5331, "type": "through"}, {"lat": 42.545, "lon": 1.5148}], "costing": "auto"}},
+    {"name": "auto_three_legs", "action": "route", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211}, {"lat": 42.5562, "lon": 1.5331}, {"lat": 42.545, "lon": 1.5148}], "costing": "auto"}},
+    {"name": "auto_heading", "action": "route", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211, "heading": 90, "heading_tolerance": 45}, {"lat": 42.5355, "lon": 1.583}], "costing": "auto"}},
+    {"name": "auto_catalan_miles", "action": "route", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211}, {"lat": 42.5355, "lon": 1.583}], "costing": "auto", "language": "ca-ES", "units": "miles"}},
+    {"name": "auto_same_street", "action": "route", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211}, {"lat": 42.5081, "lon": 1.5222}], "costing": "auto"}},
+    {"name": "bicycle_road", "action": "route", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211}, {"lat": 42.5562, "lon": 1.5331}], "costing": "bicycle", "costing_options": {"bicycle": {"bicycle_type": "Road"}}}},
+    {"name": "bicycle_mountain", "action": "route", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211}, {"lat": 42.5562, "lon": 1.5331}], "costing": "bicycle", "costing_options": {"bicycle": {"bicycle_type": "Mountain"}}}},
+    {"name": "pedestrian_old_town", "action": "route", "request": {"locations": [{"lat": 42.5068, "lon": 1.5229}, {"lat": 42.5063, "lon": 1.5196}], "costing": "pedestrian"}},
+    {"name": "pedestrian_town", "action": "route", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211}, {"lat": 42.5099, "lon": 1.5357}], "costing": "pedestrian"}},
+    {"name": "hiking_default_difficulty", "action": "route", "request": {"locations": [{"lat": 42.572, "lon": 1.4842}, {"lat": 42.5917, "lon": 1.4469}], "costing": "pedestrian"}},
+    {"name": "hiking_max_difficulty", "action": "route", "request": {"locations": [{"lat": 42.572, "lon": 1.4842}, {"lat": 42.5917, "lon": 1.4469}], "costing": "pedestrian", "costing_options": {"pedestrian": {"max_hiking_difficulty": 6}}}},
+    {"name": "error_no_data", "action": "route", "request": {"locations": [{"lat": 48.8566, "lon": 2.3522}, {"lat": 42.5355, "lon": 1.583}], "costing": "auto"}},
+    {"name": "error_unknown_costing", "action": "route", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211}, {"lat": 42.5355, "lon": 1.583}], "costing": "spaceship"}},
+    {"name": "error_one_location", "action": "route", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211}], "costing": "auto"}},
+    {"name": "locate_verbose", "action": "locate", "request": {"locations": [{"lat": 42.5078, "lon": 1.5211}, {"lat": 42.5355, "lon": 1.583}], "costing": "auto", "verbose": true}}
+  ]
+}

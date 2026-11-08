@@ -1,0 +1,16 @@
+{
+  "region": "seattle",
+  "cases": [
+    {"name": "auto_downtown_to_ballard", "action": "route", "request": {"locations": [{"lat": 47.6097, "lon": -122.3422}, {"lat": 47.6687, "lon": -122.3846}], "costing": "auto"}},
+    {"name": "auto_west_seattle_to_uw", "action": "route", "request": {"locations": [{"lat": 47.5612, "lon": -122.387}, {"lat": 47.6553, "lon": -122.3035}], "costing": "auto"}},
+    {"name": "auto_depart_at_rush_hour", "action": "route", "request": {"locations": [{"lat": 47.5612, "lon": -122.387}, {"lat": 47.6553, "lon": -122.3035}], "costing": "auto", "date_time": {"type": 1, "value": "2026-11-09T08:00"}}},
+    {"name": "auto_arrive_by", "action": "route", "request": {"locations": [{"lat": 47.5612, "lon": -122.387}, {"lat": 47.6553, "lon": -122.3035}], "costing": "auto", "date_time": {"type": 2, "value": "2026-11-09T17:30"}}},
+    {"name": "auto_alternates", "action": "route", "request": {"locations": [{"lat": 47.5596, "lon": -122.2867}, {"lat": 47.6687, "lon": -122.3846}], "costing": "auto", "alternates": 2}},
+    {"name": "bicycle_fremont_to_uw", "action": "route", "request": {"locations": [{"lat": 47.651, "lon": -122.3505}, {"lat": 47.6553, "lon": -122.3035}], "costing": "bicycle"}},
+    {"name": "bicycle_capitol_hill_to_columbia_city", "action": "route", "request": {"locations": [{"lat": 47.6253, "lon": -122.3222}, {"lat": 47.5596, "lon": -122.2867}], "costing": "bicycle"}},
+    {"name": "pedestrian_pike_place_to_space_needle", "action": "route", "request": {"locations": [{"lat": 47.6097, "lon": -122.3422}, {"lat": 47.6205, "lon": -122.3493}], "costing": "pedestrian"}},
+    {"name": "pedestrian_westlake_to_capitol_hill", "action": "route", "request": {"locations": [{"lat": 47.6117, "lon": -122.3375}, {"lat": 47.6195, "lon": -122.3203}], "costing": "pedestrian"}},
+    {"name": "hiking_discovery_park", "action": "route", "request": {"locations": [{"lat": 47.6573, "lon": -122.4057}, {"lat": 47.662, "lon": -122.418}], "costing": "pedestrian", "costing_options": {"pedestrian": {"max_hiking_difficulty": 3}}}},
+    {"name": "locate_verbose", "action": "locate", "request": {"locations": [{"lat": 47.6097, "lon": -122.3422}], "costing": "auto", "verbose": true}}
+  ]
+}
