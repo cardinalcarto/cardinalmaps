@@ -471,8 +471,14 @@ Two environment variables swap Valinor components into that chain:
 - `ODIN=illuvatar` runs `illuvatar-service` in place of mainline's Odin worker.
 - `THOR=valinor` runs `valinor-thor-service` in place of mainline's Thor worker,
   with the build's `valhalla.json` and `tiles.tar`.
-  Until trip building is written it answers routes it finds with error 107,
-  so only its errors (such as 442) can be compared with mainline's end to end.
+  With `LOKI=valinor THOR=valinor`, mainline runs only httpd and Odin.
+  On the Andorra, Seattle, Ferrostar, and Odin corpora, every response and Thor→Odin message
+  matches mainline's (apart from Thor's statistics, which Valinor doesn't record,
+  and the order of a request's excluded edges, which Loki doesn't reproduce),
+  except for the costings Sif doesn't have yet (bus, taxi, truck, motorcycle, and motor scooter),
+  which are error 107.
+  `illuvatar-service` doesn't narrate yet (it answers routes with error 107),
+  so `ODIN=illuvatar` can't complete a route end to end.
 
 [`check-passthrough.sh`](check-passthrough.sh) runs a corpus twice,
 once through plain staged mainline and once with the passthrough spliced in,

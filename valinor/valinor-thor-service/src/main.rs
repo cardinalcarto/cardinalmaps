@@ -15,8 +15,8 @@ use valhalla_graphtile::tile_provider::{
 use valhalla_microservice::{Interrupt, Stage, ValhallaMicroserviceBuilder, WorkerResult};
 use valhalla_proto::Api;
 use valhalla_proto::options::Action;
-use valhalla_response::{ErrorCode, ValhallaError};
-use valinor_thor::{Paths, Thor, ThorConfig, Workspace};
+use valhalla_response::ErrorCode;
+use valinor_thor::{Thor, ThorConfig, Workspace};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -166,17 +166,18 @@ impl<P: GraphTileProvider> Worker<P> {
             .workspace
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        let now = jiff_now();
+        let interrupted = || interrupt.is_interrupted();
         let result = self
             .thor
-            .route_interruptible(&mut workspace, &mut api, jiff_now(), &|| {
-                interrupt.is_interrupted()
+            .route_interruptible(&mut workspace, &mut api, now, &interrupted)
+            .and_then(|paths| {
+                self.thor
+                    .build_trip_interruptible(&mut api, &paths, now, &interrupted)
             });
         match result {
-            Ok(paths) => match build_trip(&paths, &mut api) {
-                Ok(()) => WorkerResult::forward(api),
-                Err(e) => WorkerResult::error(&e, &mut api),
-            },
-            // An interrupted search sends nothing.
+            Ok(()) => WorkerResult::forward(api),
+            // An interrupted request sends nothing.
             Err(_) if interrupt.is_interrupted() => match interrupt.check() {
                 Err(interrupted) => interrupted.into(),
                 Ok(()) => WorkerResult::error(&ErrorCode::ThorUnknown.into(), &mut api),
@@ -189,17 +190,6 @@ impl<P: GraphTileProvider> Worker<P> {
 /// The current time, for `current` date and times.
 fn jiff_now() -> jiff::Timestamp {
     jiff::Timestamp::now()
-}
-
-/// Turns the paths into the request's `trip` (mainline's `TripLegBuilder`).
-///
-/// Trip building isn't written yet, so a route that path search finds is error 107
-/// (mainline's code for an action it means to support but hasn't written).
-fn build_trip(_paths: &Paths, _api: &mut Api) -> Result<(), ValhallaError> {
-    Err(ValhallaError::with_detail(
-        ErrorCode::NotImplemented,
-        "trip building",
-    ))
 }
 
 #[cfg(test)]
@@ -265,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn routes_until_trip_building() {
+    fn routes_and_builds_trips() {
         // Loki's output for a short Andorra route, from the Thor oracle fixtures.
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../valinor-thor/fixtures/oracle/andorra-loki.tsv");
@@ -285,12 +275,22 @@ mod tests {
             {
                 continue;
             }
-            let (status, body) = response(worker.handle(api, &Interrupt::never()));
+            let locations = api.options.as_ref().map_or(0, |o| o.locations.len());
+            let result = worker.handle(api, &Interrupt::never());
+            if let WorkerResult::Forward(api) = &result {
+                // A route goes on to Odin with its trip: a leg per pair of break locations.
+                let trip = api.trip.as_ref().expect("a trip");
+                let legs = trip.routes.first().map_or(0, |r| r.legs.len());
+                assert!(
+                    legs >= 1 && legs < locations,
+                    "{legs} legs for {locations} locations"
+                );
+                assert!(trip.routes[0].legs.iter().all(|l| !l.shape.is_empty()));
+                routed += 1;
+                continue;
+            }
+            let (status, body) = response(result);
             match body["error_code"].as_u64() {
-                Some(107) => {
-                    assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
-                    routed += 1;
-                }
                 Some(442) => {
                     assert_eq!(status, StatusCode::BAD_REQUEST);
                     assert_eq!(body["error"], json!("No path could be found for input"));
