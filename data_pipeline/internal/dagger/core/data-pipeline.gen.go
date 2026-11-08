@@ -92,12 +92,15 @@ type DataPipelineBuildOpts struct {
 	// contourConfig and dem. A planet's DEMs are hundreds of gigabytes, which
 	// needn't stay in the engine for the rest of the build.
 	Contours *File
+	// Default speeds for the routing tiles; see RoutingTiles.
+	RoutingSpeeds *File
 }
 
-// Builds tiles and the geocoder index from one OSM extract, into a release:
-// a directory holding tiles.mbtiles, index/, and the categorical models and
-// query tagger it's given, as categories/ and tagger.model. The steps run one
-// after another, since each can use most of a planet build machine's memory.
+// Builds tiles, the geocoder index and routing tiles from one OSM extract,
+// into a release: a directory holding tiles.mbtiles, index/, routing/ (see
+// RoutingTiles), and the categorical models and query tagger it's given, as
+// categories/ and tagger.model. The steps run one after another, since each
+// can use most of a planet build machine's memory.
 func (r *DataPipeline) Build(osm *File, wofDb *File, categories *Directory, tagger *File, opts ...DataPipelineBuildOpts) *Directory {
 	assertNotNil("osm", osm)
 	assertNotNil("wofDb", wofDb)
@@ -152,6 +155,10 @@ func (r *DataPipeline) Build(osm *File, wofDb *File, categories *Directory, tagg
 		// `contours` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Contours) {
 			q = q.Arg("contours", opts[i].Contours)
+		}
+		// `routingSpeeds` optional argument
+		if !querybuilder.IsZeroValue(opts[i].RoutingSpeeds) {
+			q = q.Arg("routingSpeeds", opts[i].RoutingSpeeds)
 		}
 	}
 	q = q.Arg("osm", osm)

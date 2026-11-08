@@ -66,10 +66,11 @@ func New(ws *dagger.Workspace) *DataPipeline {
 	}
 }
 
-// Builds tiles and the geocoder index from one OSM extract, into a release:
-// a directory holding tiles.mbtiles, index/, and the categorical models and
-// query tagger it's given, as categories/ and tagger.model. The steps run one
-// after another, since each can use most of a planet build machine's memory.
+// Builds tiles, the geocoder index and routing tiles from one OSM extract,
+// into a release: a directory holding tiles.mbtiles, index/, routing/ (see
+// RoutingTiles), and the categorical models and query tagger it's given, as
+// categories/ and tagger.model. The steps run one after another, since each
+// can use most of a planet build machine's memory.
 // +cache="never"
 func (m *DataPipeline) Build(
 	ctx context.Context,
@@ -127,6 +128,9 @@ func (m *DataPipeline) Build(
 	// needn't stay in the engine for the rest of the build.
 	// +optional
 	contours *dagger.File,
+	// Default speeds for the routing tiles; see RoutingTiles.
+	// +optional
+	routingSpeeds *dagger.File,
 ) (*dagger.Directory, error) {
 	patched := osm
 	if databaseUrl != nil {
@@ -160,9 +164,16 @@ func (m *DataPipeline) Build(
 	if err != nil {
 		return nil, err
 	}
+	// Routing doesn't use POI identifiers, so it reads the extract itself,
+	// and its tiles can be reused when only the POI database has changed.
+	routing, err := m.RoutingTiles(ctx, osm, routingSpeeds)
+	if err != nil {
+		return nil, err
+	}
 	return dag.Directory().
 		WithFile("tiles.mbtiles", tiles).
 		WithDirectory("index", index).
+		WithDirectory("routing", routing).
 		WithDirectory("categories", categories).
 		WithFile("tagger.model", tagger), nil
 }
@@ -797,8 +808,8 @@ func (m *DataPipeline) RoutingTiles(
 		WithMountedFile("/input/input.osm.pbf", osm).
 		WithMountedFile("/input/admins.sqlite", admins).
 		WithMountedFile("/input/timezones.sqlite", timezones).
-		// A planet's tiles are around 100GB before they're packed into the
-		// tarball, so they're built in a cache volume rather than a layer.
+		// A planet's tiles are many tens of gigabytes before they're packed
+		// into the tarball, so they're built in a cache volume, not a layer.
 		WithMountedCache("/work", dag.CacheVolume("routing-tiles-work"), dagger.ContainerWithMountedCacheOpts{
 			Sharing: dagger.CacheSharingModePrivate,
 		}).
