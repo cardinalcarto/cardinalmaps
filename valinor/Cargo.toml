@@ -13,6 +13,7 @@ members = [
     "valinor-export-graph",
     "valinor-loki",
     "valinor-loki-service",
+    "valinor-router",
     "valinor-sif",
     "valinor-tap",
     "valinor-thor",
@@ -76,6 +77,7 @@ valhalla-proto = { path = "valhalla-proto" }
 valhalla-microservice = { path = "valhalla-microservice" }
 valhalla-response = { path = "valhalla-response" }
 valinor-loki = { path = "valinor-loki" }
+valinor-router = { path = "valinor-router" }
 valinor-sif = { path = "valinor-sif" }
 valinor-thor = { path = "valinor-thor" }
 valinor-tyr = { path = "valinor-tyr" }

@@ -1,0 +1,27 @@
+[package]
+name = "valinor-router"
+description = "Valhalla's whole server in one process: the front, Loki, Thor, Odin, and Tyr, chained in process for the server and the app."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+enumset = { workspace = true }
+http = { workspace = true }
+illuvatar = { workspace = true }
+jiff = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+valhalla-graphtile = { workspace = true }
+valhalla-proto = { workspace = true }
+valhalla-response = { workspace = true }
+valinor-loki = { workspace = true }
+valinor-thor = { workspace = true }
+valinor-tyr = { workspace = true }
+
+[lints]
+workspace = true

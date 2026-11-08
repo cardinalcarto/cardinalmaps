@@ -2595,6 +2595,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "valinor-router"
+version = "0.1.0"
+dependencies = [
+ "enumset",
+ "http",
+ "illuvatar",
+ "jiff",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "valhalla-graphtile",
+ "valhalla-proto",
+ "valhalla-response",
+ "valinor-loki",
+ "valinor-thor",
+ "valinor-tyr",
+]
+
+[[package]]
 name = "valinor-sif"
 version = "0.1.0"
 dependencies = [
