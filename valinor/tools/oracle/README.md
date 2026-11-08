@@ -154,6 +154,30 @@ pass a different directory as the first argument.
 The messages are derived from OpenStreetMap data,
 © OpenStreetMap contributors, available under the Open Database License.
 
+## Odin fixtures
+
+Odin (`illuvatar`) is tested against mainline's PBF responses,
+which carry the `directions` that mainline's Odin built from the captured Thor→Odin message.
+Besides the shared corpora, two corpora exist for it:
+
+- `corpus/odin-andorra.json` and `corpus/odin-seattle.json` (made with `capture.py`):
+  every mainline locale on a short Andorra route with roundabouts and on a Seattle highway route
+  with exits and forks (alternating kilometers and miles),
+  plus a ferry, an elevator, a numbered exit, a cycle trail, a long hike, blind pedestrians,
+  combined roundabout entry and exit, a language alias, and the `maneuvers` and `none`
+  directions types.
+- `corpus/odin-trips-andorra.json` and `corpus/odin-trips-seattle.json`
+  (made with [`capture-pbf.py`](capture-pbf.py), which sends PBF requests):
+  routes whose responses also carry the `trip`,
+  since `pbf_field_selector` can only be set in a PBF request.
+  That trip has Odin's in-place updates (turn lanes and short-edge headings).
+
+[`copy-illuvatar-fixtures.sh`](copy-illuvatar-fixtures.sh) copies the cases into `illuvatar/fixtures`:
+
+```shell
+tools/oracle/copy-illuvatar-fixtures.sh /mnt/maps/cardinal/valhalla-oracle/captures <odin-captures-dir>
+```
+
 ## Splicing in Valinor workers
 
 [`serve-staged.sh`](serve-staged.sh) runs mainline as separate processes,

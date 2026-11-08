@@ -1,0 +1,8 @@
+{
+  "region": "seattle",
+  "cases": [
+    {"name": "trip_auto_highway", "action": "route", "request_text": "options { action: route format: pbf costing_type: auto_ locations { ll { lat: 47.6245 lng: -122.329 } } locations { ll { lat: 47.6612 lng: -122.32 } } pbf_field_selector { directions: true trip: true } }"},
+    {"name": "trip_auto_i5_exit_161", "action": "route", "request_text": "options { action: route format: pbf costing_type: auto_ locations { ll { lat: 47.6015 lng: -122.326 } } locations { ll { lat: 47.548 lng: -122.317 } } pbf_field_selector { directions: true trip: true } }"},
+    {"name": "trip_auto_downtown_to_ballard", "action": "route", "request_text": "options { action: route format: pbf costing_type: auto_ locations { ll { lat: 47.6097 lng: -122.3422 } } locations { ll { lat: 47.6687 lng: -122.3846 } } pbf_field_selector { directions: true trip: true } }"}
+  ]
+}

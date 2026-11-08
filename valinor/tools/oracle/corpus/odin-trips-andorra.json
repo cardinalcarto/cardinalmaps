@@ -1,0 +1,7 @@
+{
+  "region": "andorra",
+  "cases": [
+    {"name": "trip_auto_town_roundabouts", "action": "route", "request_text": "options { action: route format: pbf costing_type: auto_ locations { ll { lat: 42.5078 lng: 1.5211 } } locations { ll { lat: 42.5099 lng: 1.5357 } } pbf_field_selector { directions: true trip: true } }"},
+    {"name": "trip_auto_cross_country", "action": "route", "request_text": "options { action: route format: pbf costing_type: auto_ locations { ll { lat: 42.4637 lng: 1.4913 } } locations { ll { lat: 42.5425 lng: 1.7333 } } pbf_field_selector { directions: true trip: true } }"}
+  ]
+}

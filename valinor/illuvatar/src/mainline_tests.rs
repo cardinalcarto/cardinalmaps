@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use valhalla_proto::directions_leg::Maneuver;
 use valhalla_proto::prost::Message;
-use valhalla_proto::{Api, Directions, DirectionsLeg, Summary};
+use valhalla_proto::{Api, Directions, DirectionsLeg, Summary, Trip};
 
 const FIXTURES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures");
 const RELATIVE_TOLERANCE: f64 = 1e-6;
@@ -203,15 +203,53 @@ pub(crate) fn compare_directions(expected: &Directions, actual: &Directions) -> 
     out
 }
 
+/// Compares the trip after our in-place updates with the trip in mainline's response.
+///
+/// These are copies of the same input with the same updates, so they must be identical.
+fn compare_trips(expected: &Trip, actual: Option<&Trip>) -> Vec<String> {
+    let Some(actual) = actual else {
+        return vec!["no trip".to_owned()];
+    };
+    let mut out = Vec::new();
+    for (r, (expected_route, actual_route)) in
+        expected.routes.iter().zip(&actual.routes).enumerate()
+    {
+        for (l, (expected_leg, actual_leg)) in expected_route
+            .legs
+            .iter()
+            .zip(&actual_route.legs)
+            .enumerate()
+        {
+            for (n, (e, a)) in expected_leg.node.iter().zip(&actual_leg.node).enumerate() {
+                if e != a {
+                    let (e, a) = (
+                        e.edge.clone().unwrap_or_default(),
+                        a.edge.clone().unwrap_or_default(),
+                    );
+                    out.push(format!(
+                        "trip route {r} leg {l} node {n} differs:\n    ours:     headings {}/{} lanes {:?}\n    mainline: headings {}/{} lanes {:?}",
+                        a.begin_heading, a.end_heading, a.turn_lanes, e.begin_heading, e.end_heading, e.turn_lanes
+                    ));
+                }
+            }
+        }
+    }
+    if out.is_empty() && expected != actual {
+        out.push("trips differ outside their nodes".to_owned());
+    }
+    out
+}
+
 #[test]
 fn directions_match_mainline() {
     let cases = cases();
     assert!(
-        cases.len() >= 27,
-        "expected at least 27 fixture cases, found {}",
+        cases.len() >= 112,
+        "expected at least 112 fixture cases, found {}",
         cases.len()
     );
     let mut failures = Vec::new();
+    let mut trips_compared = 0;
     for case in &cases {
         let name = case
             .strip_prefix(FIXTURES_DIR)
@@ -220,13 +258,18 @@ fn directions_match_mainline() {
             .to_string();
         let mut request = decode(&case.join("thor-odin.bin"));
         let response = decode(&case.join("response.bin"));
-        let expected = response.directions.expect("mainline directions");
+        let expected = response.directions.clone().unwrap_or_default();
         if let Err(error) = narrate(&mut request) {
             failures.push(format!("{name}: {error}"));
             continue;
         }
-        let actual = request.directions.unwrap_or_default();
-        let mismatches = compare_directions(&expected, &actual);
+        let actual = request.directions.clone().unwrap_or_default();
+        let mut mismatches = compare_directions(&expected, &actual);
+        // With the trip selected, the response shows the trip after Odin's in-place updates.
+        if let Some(expected_trip) = &response.trip {
+            trips_compared += 1;
+            mismatches.extend(compare_trips(expected_trip, request.trip.as_ref()));
+        }
         if !mismatches.is_empty() {
             failures.push(format!("{name}:\n  {}", mismatches.join("\n  ")));
         }
@@ -237,6 +280,10 @@ fn directions_match_mainline() {
         failures.len(),
         cases.len(),
         failures.join("\n")
+    );
+    assert!(
+        trips_compared >= 5,
+        "only {trips_compared} cases had a trip to compare"
     );
 }
 
