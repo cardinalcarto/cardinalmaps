@@ -29,6 +29,10 @@ spec:
             - --config=/releases/$(MAP_RELEASE)/routing/valhalla.json
             - --tiles=/releases/$(MAP_RELEASE)/routing/tiles.tar
             - --listen=0.0.0.0:8002
+            # Routes searched at once; more requests wait for a worker. The default is the
+            # node's core count, far more than this pod's CPU request. Raise it with the
+            # request (in an overlay) when the router gets more traffic.
+            - --workers=4
           env:
             - name: MAP_RELEASE
               valueFrom:
@@ -61,8 +65,11 @@ spec:
               path: /status
               port: http
           resources:
+            # Between requests, each worker keeps up to mainline's label reservations
+            # (thor.max_reserved_labels_count_*), hundreds of MB once long searches have run;
+            # the tiles are memory-mapped page cache.
             requests:
-              memory: 1Gi
+              memory: 2Gi
               cpu: 250m
           securityContext:
             allowPrivilegeEscalation: false
