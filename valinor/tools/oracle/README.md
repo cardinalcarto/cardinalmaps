@@ -222,6 +222,21 @@ tools/oracle/build-tiles.sh predicted "$work" "$work/csv"
 The committed tiles are `0/003/015` and `2/000/763/927` of `$work/tiles-predicted`.
 The profiles are a hash of each edge ID, so a rebuild gives the same tiles.
 
+#### Truck speeds
+
+No fixture edge has a truck speed below its speed,
+so `select_speed`'s truck cap was never compared with mainline.
+`valhalla-graphtile/fixtures/builder-truck` is the level 2 tile `2/000/763/927`
+with truck speeds set by `GraphTileBuilder::with_truck_speed`
+(half the speed, ten above it, or none, in turn; see the `builder` tests),
+and `mainline-truck-speeds.txt` is mainline's `GetSpeed` for trucks on it
+for several masks and times:
+
+```shell
+tools/oracle/sif-oracle.sh speeds valhalla-graphtile/fixtures/builder-truck 2 763927 \
+  valhalla-graphtile/fixtures/builder-truck/mainline-truck-speeds.txt
+```
+
 The Containerfile adds a compiler and development headers to the pinned image.
 (Its `FROM` line names the tag; keep it in step with [`valhalla-image`](valhalla-image).)
 

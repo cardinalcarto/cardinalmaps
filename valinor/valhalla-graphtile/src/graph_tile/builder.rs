@@ -296,6 +296,26 @@ impl GraphTileBuilder<'_> {
         Ok(self)
     }
 
+    /// Sets the truck speed of a directed edge, in kph (0 for none).
+    ///
+    /// Speed selection caps an edge's default speed at its truck speed for trucks
+    /// (see [`select_speed`](crate::graph_tile::predicted_speeds::select_speed)).
+    ///
+    /// # Errors
+    ///
+    /// Fails if the directed edge index is out of bounds.
+    pub fn with_truck_speed(
+        mut self,
+        directed_edge_index: usize,
+        truck_speed: u8,
+    ) -> Result<Self, GraphTileBuildError> {
+        self.check_edge_index(directed_edge_index, "a truck speed")?;
+        if let Some(edge) = self.directed_edges.to_mut().get_mut(directed_edge_index) {
+            edge.set_truck_speed(truck_speed);
+        }
+        Ok(self)
+    }
+
     /// Adds predicted speeds to a directed edge using pre-encoded DCT-II coefficients.
     ///
     /// This method is probably the least ergonomic in the family of predicted speed APIs,
@@ -1006,6 +1026,7 @@ mod tests {
             BUCKETS_PER_WEEK, DEFAULT_FLOW_MASK, FlowSource, SPEED_BUCKET_SIZE_SECONDS,
             SpeedBucket, select_speed,
         };
+        use enumset::EnumSet;
         use std::path::PathBuf;
         use zerocopy::IntoBytes;
 
@@ -1272,6 +1293,108 @@ mod tests {
             } else {
                 assert!(predicted.is_empty());
             }
+        }
+
+        /// The truck speed given to an edge of the truck fixture:
+        /// half its speed (below it), ten above it, or none, in turn.
+        fn truck_speed(index: usize, speed: u8) -> u8 {
+            match index % 3 {
+                0 => (speed / 2).max(1),
+                1 => speed.saturating_add(10),
+                _ => 0,
+            }
+        }
+
+        /// The level 2 tile with truck speeds on most edges.
+        fn with_truck_speeds(original: &OwnedGraphTileHandle) -> Vec<u8> {
+            original
+                .directed_edges()
+                .iter()
+                .enumerate()
+                .fold(GraphTileBuilder::from(original), |builder, (i, edge)| {
+                    builder
+                        .with_truck_speed(i, truck_speed(i, edge.speed()))
+                        .unwrap()
+                })
+                .into_bytes()
+                .unwrap()
+        }
+
+        /// The truck speed tile is the committed fixture mainline reads
+        /// (`VALINOR_UPDATE_FIXTURES=1` rewrites it).
+        #[test]
+        fn truck_tile_is_the_fixture() {
+            let original = read_tile(level_2_path("andorra-tiles"));
+            let out = with_truck_speeds(&original);
+            let path = level_2_path("builder-truck");
+            if std::env::var_os("VALINOR_UPDATE_FIXTURES").is_some() {
+                std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+                std::fs::write(&path, &out).expect("write fixture");
+            }
+            assert!(
+                std::fs::read(&path).expect("read fixture") == out,
+                "the builder's output changed; see the test docs"
+            );
+            let tile = read_tile(path);
+            for (i, (edge, before)) in tile
+                .directed_edges()
+                .iter()
+                .zip(original.directed_edges())
+                .enumerate()
+            {
+                assert_eq!(edge.truck_speed(), truck_speed(i, before.speed()));
+                assert_eq!(edge.speed(), before.speed());
+            }
+        }
+
+        /// `select_speed` for trucks matches mainline's `GetSpeed(edge, mask, seconds, true)`
+        /// on every edge of the truck fixture, for several masks and times
+        /// (`mainline-truck-speeds.txt`, from the sif helper's `speeds` mode).
+        #[test]
+        fn truck_speeds_match_mainline() {
+            let reference = std::fs::read_to_string(
+                fixtures()
+                    .join("builder-truck")
+                    .join("mainline-truck-speeds.txt"),
+            )
+            .expect("read mainline-truck-speeds.txt");
+            let tile = read_tile(level_2_path("builder-truck"));
+            let view = tile.borrow_dependent();
+            let mut checked = 0;
+            let mut capped = 0;
+            for line in reference.lines() {
+                let fields: Vec<&str> = line.split('\t').collect();
+                let ["S", index, mask, seconds, speed, sources] = fields[..] else {
+                    panic!("bad line {line}");
+                };
+                let index: usize = index.parse().expect("index");
+                let mask = EnumSet::<FlowSource>::from_repr_truncated(mask.parse().expect("mask"));
+                let seconds = (seconds != "-").then(|| seconds.parse::<u64>().expect("seconds"));
+                let edge = &view.directed_edges()[index];
+                let selected = select_speed(edge, mask, seconds, true, |s| {
+                    view.predicted_speeds
+                        .as_ref()
+                        .expect("profiles")
+                        .try_speed(index, u64::from(s))
+                })
+                .expect("speed");
+                assert_eq!(selected.kph.to_string(), speed, "{line}");
+                assert_eq!(
+                    selected.flow_sources.as_repr().to_string(),
+                    sources,
+                    "{line}"
+                );
+                checked += 1;
+                if selected.flow_sources.is_empty()
+                    && edge.truck_speed() > 0
+                    && edge.truck_speed() < edge.speed()
+                {
+                    capped += 1;
+                }
+            }
+            assert_eq!(checked, view.directed_edges().len() * 4 * 5);
+            // A third of the edges are capped, for every mask and time that falls back to them.
+            assert!(capped >= 200, "only {capped} capped speeds");
         }
     }
 
