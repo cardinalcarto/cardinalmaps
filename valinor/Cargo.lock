@@ -2572,6 +2572,7 @@ dependencies = [
 name = "valinor-tyr"
 version = "0.1.0"
 dependencies = [
+ "http",
  "insta",
  "serde",
  "serde_json",

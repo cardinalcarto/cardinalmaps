@@ -18,6 +18,7 @@ mod base;
 mod costings;
 
 pub use base::{DEFAULT_FLOW_MASK, RangedDefault, TIME_DEPENDENT_FLOW_MASK};
+pub(crate) use costings::parse_filter_action;
 
 use crate::front::json::JsonValue;
 use alloc::format;
