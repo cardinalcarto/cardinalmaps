@@ -380,6 +380,17 @@ fn oracle_andorra() {
     report(checked, &failures);
 }
 
+/// Hand-written requests for the limits, validation errors, and warnings.
+#[test]
+fn oracle_andorra_cases() {
+    let loki =
+        loki_over_tarball(&fixtures().join("../../valhalla-graphtile/fixtures/andorra-tiles.tar"));
+    let dir = fixtures().join("oracle/andorra-cases");
+    let (checked, failures) = run(&loki, &dir.join("requests.tsv"), &dir.join("results.tsv"));
+    assert_eq!(checked, 50);
+    report(checked, &failures);
+}
+
 /// The worker's entry point gives the same results from raw HTTP requests.
 #[test]
 fn oracle_andorra_over_http() {
