@@ -314,6 +314,21 @@ impl NodeInfo {
         sw_corner + coord! {x: lon_offset as f32, y: lat_offset as f32}
     }
 
+    /// Gets the coordinate of the node in double precision,
+    /// exactly as Valhalla's `NodeInfo::latlng` computes it:
+    /// the corner (single precision in the header, widened) plus the offsets in degrees.
+    ///
+    /// Use this where results must match Valhalla's to the last bit
+    /// (for example, Loki compares projected points with node positions exactly).
+    #[inline]
+    pub fn coordinate_f64(&self, sw_corner: Coord<f32>) -> Coord<f64> {
+        let lat_offset = f64::from(self.first_bit_field.lat_offset().get()) * 1e-6f64
+            + f64::from(self.first_bit_field.lat_offset7()) * 1e-7f64;
+        let lon_offset = f64::from(self.first_bit_field.lon_offset().get()) * 1e-6f64
+            + f64::from(self.first_bit_field.lon_offset7()) * 1e-7f64;
+        coord! {x: f64::from(sw_corner.x) + lon_offset, y: f64::from(sw_corner.y) + lat_offset}
+    }
+
     /// The elevation at the node, in meters.
     ///
     /// Returns `None` when the tile has no elevation for this node.

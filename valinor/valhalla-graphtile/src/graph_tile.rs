@@ -1489,6 +1489,28 @@ mod tests {
         assert_eq!(header.bin_center(crate::BIN_COUNT), None);
     }
 
+    /// Mainline writes tiles that only hold edge bins (for edges crossing in from neighbors)
+    /// without setting their corner. This one is level 2 tile 792229 of a Seattle build.
+    #[test]
+    fn test_bin_only_tile_without_a_corner() {
+        let bytes = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/bin-only/792229.gph"),
+        )
+        .expect("fixture");
+        let tile = GraphTileView::try_from(bytes.as_slice()).expect("a valid tile");
+        assert_eq!(tile.header().sw_corner(), coord! {x: 0.0, y: 0.0});
+        assert!(tile.nodes().is_empty() && tile.directed_edges().is_empty());
+        let in_bins: usize = (0..crate::BIN_COUNT)
+            .map(|b| tile.edges_in_bin(b).len())
+            .sum();
+        assert!(in_bins > 0, "the tile's bins hold edges of other tiles");
+        for bin in 0..crate::BIN_COUNT {
+            for edge in tile.edges_in_bin(bin) {
+                assert_ne!(edge.tile_base_id(), tile.graph_id().tile_base_id());
+            }
+        }
+    }
+
     #[test]
     fn test_rejects_bounding_circles_at_wrong_offset() {
         // valhalla_add_landmarks in Valhalla 3.9.1 drops the edge bins and bounding circles

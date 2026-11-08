@@ -775,8 +775,18 @@ impl GraphTileHeader {
         // Valhalla derives the base coordinate from the tile ID in single precision
         // (`Tiles::Base`), so a tile built by Valhalla matches it bit for bit.
         // Checking it also rules out non-finite coordinates.
+        //
+        // The exception is a tile that only holds edge bins (for edges of neighboring tiles
+        // that cross it): mainline's builder never sets its corner, which stays at (0, 0).
+        // Nothing in such a tile is positioned relative to its corner.
         let actual = self.sw_corner();
-        if expected.x.to_bits() != actual.x.to_bits() || expected.y.to_bits() != actual.y.to_bits()
+        let bin_only = self.node_count() == 0
+            && self.directed_edge_count() == 0
+            && actual.x.to_bits() == 0
+            && actual.y.to_bits() == 0;
+        if !bin_only
+            && (expected.x.to_bits() != actual.x.to_bits()
+                || expected.y.to_bits() != actual.y.to_bits())
         {
             return Err(GraphTileHeaderError::BaseCoordinateMismatch {
                 level,
