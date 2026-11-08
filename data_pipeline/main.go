@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"strings"
 	"time"
@@ -131,6 +132,13 @@ func (m *DataPipeline) Build(
 	// Default speeds for the routing tiles; see RoutingTiles.
 	// +optional
 	routingSpeeds *dagger.File,
+	// GEDTM, for elevation in the routing tiles; see RoutingTiles.
+	// +optional
+	gedtm string,
+	// The server GEDTM is read from, if it's served from this machine; see
+	// RoutingTiles.
+	// +optional
+	gedtmService *dagger.Service,
 ) (*dagger.Directory, error) {
 	patched := osm
 	if databaseUrl != nil {
@@ -166,7 +174,7 @@ func (m *DataPipeline) Build(
 	}
 	// Routing doesn't use POI identifiers, so it reads the extract itself,
 	// and its tiles can be reused when only the POI database has changed.
-	routing, err := m.RoutingTiles(ctx, osm, routingSpeeds)
+	routing, err := m.RoutingTiles(ctx, osm, routingSpeeds, gedtm, gedtmService)
 	if err != nil {
 		return nil, err
 	}
@@ -765,8 +773,14 @@ func (m *DataPipeline) RoutingAdmins(
 // only the build reads are cleared. Valinor's oracle builds tiles the same
 // way: pedestrian areas, bounding circles, admins and time zones, and no
 // landmarks, since mainline's landmarks step makes tiles that route
-// incorrectly (see valinor/tools/oracle/README.md). Unlike the oracle's, the
-// tiles have no elevation.
+// incorrectly (see valinor/tools/oracle/README.md).
+//
+// With gedtm, edges get elevation (heights along them, and grades) from
+// GEDTM: after the stages before elevation, the 1x1 degree cells under the
+// graph tiles are cut from it into .hgt tiles beside them, which the
+// elevation stage samples (see routing_elevation.py). GEDTM is read in place,
+// with GDAL's range requests, so neither it nor the cut tiles enter the
+// engine's store; the tiles are deleted with the rest of the build's work.
 // +cache="never"
 func (m *DataPipeline) RoutingTiles(
 	ctx context.Context,
@@ -778,7 +792,22 @@ func (m *DataPipeline) RoutingTiles(
 	// without a maxspeed get mainline's built-in speeds by road class.
 	// +optional
 	speeds *dagger.File,
+	// OpenGeoHub's GEDTM v1.2, the global 1 arcsecond DTM
+	// (gedtm_rf_m_30m_s_20060101_20151231_go_epsg.4326.3855_v1.2.tif), as GDAL
+	// opens it from the build's container: /vsicurl/ and a URL serving it
+	// with range requests, such as
+	// /vsicurl/http://gedtm:8080/gedtm_rf_m_30m_s_20060101_20151231_go_epsg.4326.3855_v1.2.tif
+	// with gedtmService. Without it, the tiles have no elevation.
+	// +optional
+	gedtm string,
+	// A server for GEDTM, such as a file server on this machine passed as
+	// tcp://localhost:8080, which the build reaches as host gedtm.
+	// +optional
+	gedtmService *dagger.Service,
 ) (*dagger.Directory, error) {
+	if gedtmService != nil && gedtm == "" {
+		return nil, fmt.Errorf("gedtmService needs gedtm, the path to read from it")
+	}
 	image, err := m.ValhallaImage(ctx)
 	if err != nil {
 		return nil, err
@@ -801,10 +830,22 @@ func (m *DataPipeline) RoutingTiles(
 		"--mjolnir-landmarks", "",
 		"--mjolnir-pedestrian-areas", "True",
 		"--mjolnir-data-processing-build-bounding-circles", "True",
-		"--additional-data-elevation", "",
 	}
-	ctr := dag.Container().
-		From(image).
+	ctr := dag.Container().From(image)
+	if gedtm != "" {
+		config = append(config, "--additional-data-elevation", "/work/elevation")
+		// The image has Python but not GDAL.
+		ctr = ctr.
+			WithEnvVariable("DEBIAN_FRONTEND", "noninteractive").
+			WithExec([]string{"sh", "-c", "apt-get update && apt-get install -y --no-install-recommends python3-gdal && rm -rf /var/lib/apt/lists/*"}).
+			WithNewFile("/input/routing_elevation.py", routingElevationScript)
+		if gedtmService != nil {
+			ctr = ctr.WithServiceBinding("gedtm", gedtmService)
+		}
+	} else {
+		config = append(config, "--additional-data-elevation", "")
+	}
+	ctr = ctr.
 		WithMountedFile("/input/input.osm.pbf", osm).
 		WithMountedFile("/input/admins.sqlite", admins).
 		WithMountedFile("/input/timezones.sqlite", timezones).
@@ -818,11 +859,23 @@ func (m *DataPipeline) RoutingTiles(
 		ctr = ctr.WithMountedFile("/input/default_speeds.json", speeds)
 		config = append(config, "--mjolnir-default-speeds-config", "/input/default_speeds.json")
 	}
-	ctr, err = ctr.
+	ctr = ctr.
 		// Clear what an interrupted run left behind.
 		WithExec([]string{"sh", "-c", "rm -rf /work/* && mkdir -p /out /work/tiles"}).
-		WithExec(config, dagger.ContainerWithExecOpts{RedirectStdout: "/work/valhalla.json"}).
-		WithExec([]string{"valhalla_build_tiles", "-c", "/work/valhalla.json", "/input/input.osm.pbf"}).
+		WithExec(config, dagger.ContainerWithExecOpts{RedirectStdout: "/work/valhalla.json"})
+	buildTiles := []string{"valhalla_build_tiles", "-c", "/work/valhalla.json"}
+	if gedtm != "" {
+		// Elevation is the stage after restrictions; its tiles are cut once
+		// the graph tiles show which cells it needs.
+		ctr = ctr.
+			WithExec(append(buildTiles, "-e", "restrictions", "/input/input.osm.pbf")).
+			WithExec([]string{"python3", "-I", "/input/routing_elevation.py", gedtm, "/input/input.osm.pbf", "/work/tiles", "/work/elevation", fmt.Sprint(elevationJobs)}).
+			WithExec([]string{"du", "-sh", "/work/elevation"}).
+			WithExec(append(buildTiles, "-s", "elevation", "/input/input.osm.pbf"))
+	} else {
+		ctr = ctr.WithExec(append(buildTiles, "/input/input.osm.pbf"))
+	}
+	ctr, err = ctr.
 		WithExec([]string{"valhalla_build_extract", "-c", "/work/valhalla.json", "--overwrite"}).
 		WithExec([]string{"python3", "-I", "-c", routingConfigScript, "/work/valhalla.json", "/out/valhalla.json"}).
 		WithExec([]string{"sh", "-c", "rm -rf /work/*"}).
@@ -834,6 +887,14 @@ func (m *DataPipeline) RoutingTiles(
 		WithFile("tiles.tar", ctr.File("/out/tiles.tar")).
 		WithFile("valhalla.json", ctr.File("/out/valhalla.json")), nil
 }
+
+// Cuts the elevation tiles that a build needs from GEDTM.
+//
+//go:embed routing_elevation.py
+var routingElevationScript string
+
+// How many cells are cut from GEDTM at once. Each one reads around 50MB of it.
+const elevationJobs = 8
 
 // Rewrites the build's valhalla.json into the one served with the tarball:
 // tile_extract is the tarball next to it, and the build's inputs are gone.

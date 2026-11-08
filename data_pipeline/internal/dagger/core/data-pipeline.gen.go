@@ -94,6 +94,11 @@ type DataPipelineBuildOpts struct {
 	Contours *File
 	// Default speeds for the routing tiles; see RoutingTiles.
 	RoutingSpeeds *File
+	// GEDTM, for elevation in the routing tiles; see RoutingTiles.
+	Gedtm string
+	// The server GEDTM is read from, if it's served from this machine; see
+	// RoutingTiles.
+	GedtmService *Service
 }
 
 // Builds tiles, the geocoder index and routing tiles from one OSM extract,
@@ -159,6 +164,14 @@ func (r *DataPipeline) Build(osm *File, wofDb *File, categories *Directory, tagg
 		// `routingSpeeds` optional argument
 		if !querybuilder.IsZeroValue(opts[i].RoutingSpeeds) {
 			q = q.Arg("routingSpeeds", opts[i].RoutingSpeeds)
+		}
+		// `gedtm` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Gedtm) {
+			q = q.Arg("gedtm", opts[i].Gedtm)
+		}
+		// `gedtmService` optional argument
+		if !querybuilder.IsZeroValue(opts[i].GedtmService) {
+			q = q.Arg("gedtmService", opts[i].GedtmService)
 		}
 	}
 	q = q.Arg("osm", osm)
@@ -483,6 +496,16 @@ type DataPipelineRoutingTilesOpts struct {
 	// https://github.com/OpenStreetMapSpeeds/schema. Without it, edges
 	// without a maxspeed get mainline's built-in speeds by road class.
 	Speeds *File
+	// OpenGeoHub's GEDTM v1.2, the global 1 arcsecond DTM
+	// (gedtm_rf_m_30m_s_20060101_20151231_go_epsg.4326.3855_v1.2.tif), as GDAL
+	// opens it from the build's container: /vsicurl/ and a URL serving it
+	// with range requests, such as
+	// /vsicurl/http://gedtm:8080/gedtm_rf_m_30m_s_20060101_20151231_go_epsg.4326.3855_v1.2.tif
+	// with gedtmService. Without it, the tiles have no elevation.
+	Gedtm string
+	// A server for GEDTM, such as a file server on this machine passed as
+	// tcp://localhost:8080, which the build reaches as host gedtm.
+	GedtmService *Service
 }
 
 // Builds Valhalla routing tiles from an OSM extract with mainline Valhalla's
@@ -493,8 +516,14 @@ type DataPipelineRoutingTilesOpts struct {
 // only the build reads are cleared. Valinor's oracle builds tiles the same
 // way: pedestrian areas, bounding circles, admins and time zones, and no
 // landmarks, since mainline's landmarks step makes tiles that route
-// incorrectly (see valinor/tools/oracle/README.md). Unlike the oracle's, the
-// tiles have no elevation.
+// incorrectly (see valinor/tools/oracle/README.md).
+//
+// With gedtm, edges get elevation (heights along them, and grades) from
+// GEDTM: after the stages before elevation, the 1x1 degree cells under the
+// graph tiles are cut from it into .hgt tiles beside them, which the
+// elevation stage samples (see routing_elevation.py). GEDTM is read in place,
+// with GDAL's range requests, so neither it nor the cut tiles enter the
+// engine's store; the tiles are deleted with the rest of the build's work.
 func (r *DataPipeline) RoutingTiles(osm *File, opts ...DataPipelineRoutingTilesOpts) *Directory {
 	assertNotNil("osm", osm)
 	q := r.query.Select("routingTiles")
@@ -502,6 +531,14 @@ func (r *DataPipeline) RoutingTiles(osm *File, opts ...DataPipelineRoutingTilesO
 		// `speeds` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Speeds) {
 			q = q.Arg("speeds", opts[i].Speeds)
+		}
+		// `gedtm` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Gedtm) {
+			q = q.Arg("gedtm", opts[i].Gedtm)
+		}
+		// `gedtmService` optional argument
+		if !querybuilder.IsZeroValue(opts[i].GedtmService) {
+			q = q.Arg("gedtmService", opts[i].GedtmService)
 		}
 	}
 	q = q.Arg("osm", osm)
