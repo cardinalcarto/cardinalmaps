@@ -68,8 +68,10 @@ const HIGHWAY_FACTOR: [f32; 8] = [1.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
 
 /// Surface factors by surface (`kSurfaceFactor`).
 ///
-/// Mainline's table has no entry for impassable surfaces (and reads past it),
-/// but auto never costs an impassable edge, since [`AutoCost::allowed`] rejects them.
+/// Mainline's table has no entry for impassable surfaces and reads past it,
+/// which is undefined. Auto never enters an impassable edge ([`Costing::allowed`] rejects them),
+/// but Loki's filter lets locations correlate to one, so Thor can cost one at an origin
+/// or destination; this treats it like `kPath` (see "Known divergences" in docs/routing.md).
 const SURFACE_FACTOR: [f32; 8] = [0.0, 0.0, 0.0, 0.1, 0.2, 0.5, 1.0, 1.0];
 
 /// Auto costing (mainline's `AutoCost`): driving a car,

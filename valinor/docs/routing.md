@@ -74,6 +74,36 @@ The front stage's reference output is the `options` in the Loki→Thor capture.
 - Stages must accept everything mainline's equivalent stage accepts at that boundary,
   including fields they do not use, and pass unknown data through untouched.
 
+## Costing (Sif)
+
+`valinor-sif` is mainline's Sif: the costing options parser (which the front calls)
+and the cost model that Loki and Thor call on their hot paths.
+
+- `Costing` is the interface (mainline's `DynamicCost` virtual methods):
+  `allowed` and `allowed_reverse` (access, U-turns, simple turn restrictions,
+  exclusions, and access restrictions at a time), `edge_cost` and `partial_edge_cost`,
+  `transition_cost` and `transition_cost_reverse`, `edge_filter` and `node_allowed`
+  (Loki's filters), and the A* factor.
+  `DynamicCost` holds what every costing shares, including complex restrictions
+  (`restricted`), hierarchy limits, and user avoid edges.
+- `AutoCost`, `PedestrianCost` (with hiking, wheelchair, and blind pedestrians),
+  and `BicycleCost` implement it; `AnyCosting` picks one from the request's options
+  and dispatches with a `match`.
+  Other costings return `CostingError::NotImplemented` until they are added;
+  each is a new type implementing `Costing` and a new `AnyCosting` variant.
+- `Label` is what costing reads about the predecessor edge.
+  Thor implements it over its own edge labels, or embeds `EdgeLabel`;
+  the `label` module documents where each value comes from.
+- `TimeInfo` is mainline's time along a route, and `recost_forward` recosts a known path
+  (as Thor does for bidirectional searches).
+  Mainline's times are 27 seconds late (it counts leap seconds and then reads the count
+  as Unix time); `TimeInfo` reproduces that, since it shifts every time-dependent cost.
+- Live traffic is out of scope: no edge is closed, and live speeds are never used.
+  Conditional speed limits aren't costed (mainline 3.9.1 only reports them).
+
+Results match mainline bit for bit: see `tools/oracle/README.md` for the oracles
+(a C++ helper that runs mainline's costings, and the captured trips).
+
 ## The oracle
 
 Reference data comes from mainline 3.9.1 running in stages,
@@ -120,3 +150,4 @@ Deliberate differences, each documented next to the test that covers it.
 | OSRM approach voice alerts in miles | Passes kilometers to the alert, so a kilometer figure is announced as miles | Uses the request's units | A wrong spoken distance helps no one (Ferrostar plays these). |
 | PBF response content type | `application/json` (the format is read after `options` is cleared) | `application/x-protobuf` | Clients decoding PBF need the right type. |
 | Landmarks in tiles | `valhalla_add_landmarks` drops edge bins and bounding circles but keeps their header offsets | Landmarks are left out of builds; the reader rejects such tiles | See `tools/oracle/README.md`. |
+| Out-of-range table reads in costing | Auto reads past `kSurfaceFactor` for impassable edges (which it never allows, but can cost as an origin or destination); bicycle reads past its speed penalty and surface factor tables for edges faster than 252 kph or with impassable surfaces | Uses the last entry (auto treats impassable like `kPath`) | The reads are undefined behavior with no value to match. Documented in `valinor-sif`'s `auto.rs` and `bicycle.rs`. |

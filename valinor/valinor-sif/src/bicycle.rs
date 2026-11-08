@@ -393,6 +393,8 @@ impl BicycleCost {
                 roadway_stress += self.road_factor
                     * ROAD_CLASS_FACTOR[usize::from(edge.classification().discriminant())];
                 // The edge's own speed, not a measured one.
+                // Mainline reads past the table for speeds above 252 kph (which tiles don't
+                // hold); this uses its last entry (see "Known divergences" in docs/routing.md).
                 let speed = usize::from(edge.speed()).min(self.speedpenalty.len() - 1);
                 roadway_stress *= self.speedpenalty[speed];
             }
@@ -410,6 +412,9 @@ impl BicycleCost {
         let mut factor = 1.0 + self.grade_penalty[grade] + (accommodation_factor * roadway_stress);
 
         if edge.surface() >= self.minimal_surface_penalized {
+            // Mainline reads past the table for impassable surfaces on road bikes
+            // (which it never allows, but can cost at an origin or destination);
+            // this uses its last entry (see "Known divergences" in docs/routing.md).
             let index = (edge.surface() as usize - self.minimal_surface_penalized as usize)
                 .min(SURFACE_FACTORS.len() - 1);
             factor += self.avoid_bad_surfaces * SURFACE_FACTORS[index];

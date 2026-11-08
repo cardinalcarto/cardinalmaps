@@ -39,6 +39,8 @@ pub mod recost;
 pub mod time_info;
 
 #[cfg(test)]
+mod bench_tests;
+#[cfg(test)]
 mod oracle_tests;
 #[cfg(test)]
 mod trip_tests;
