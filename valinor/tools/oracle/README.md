@@ -325,6 +325,7 @@ On these, every path, cost, error, warning, and location time matches mainline e
 and 2836 legs and 15 errors in Seattle, with 25, 8, and 36 requests with alternates.
 Two requests fail in mainline's trip building, after path search
 (`leg_shape_index not set for intermediate location`); the test lists them.
+Valinor builds those trips (see "Known divergences" in `docs/routing.md`).
 
 #### Trip building
 
@@ -361,7 +362,8 @@ The default-attribute corpora (`andorra`, `predicted`, and `seattle`, with the `
 as `<prefix>-trip.tsv`) and the trip corpora (`thor-corpus.py andorra 3000 31 trip`,
 `andorra 1500 33 trip` on the predicted tiles, and `seattle 2000 32 trip`) all match:
 2862, 1886, and 1953 trips, and 2869, 1442, and 1938 trips, with all of mainline's errors
-(the two above among them). Two Seattle trip-corpus cases have paths that tie at equal cost.
+(the two above among them, and two more in the Andorra trip corpus, which Valinor builds
+and the test counts apart). Two Seattle trip-corpus cases have paths that tie at equal cost.
 In CI, the `captured_trips` test compares the trips of `valinor-tyr`'s Andorra captures.
 
 ## Message fixtures

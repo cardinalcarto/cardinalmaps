@@ -221,6 +221,8 @@ struct Report {
     trips: usize,
     legs: usize,
     errors_matched: usize,
+    /// Cases mainline fails on and Valinor builds, by design (the two via locations at one node).
+    divergences: Vec<String>,
     failures: Vec<String>,
     /// The failures by the field where they first differ.
     by_field: BTreeMap<String, usize>,
@@ -253,6 +255,9 @@ impl Report {
             self.errors_matched,
             self.failures.len()
         );
+        if !self.divergences.is_empty() {
+            println!("  known divergences: {:?}", self.divergences);
+        }
         for tie in &self.path_ties {
             println!("  path tie (not compared): {tie}");
         }
@@ -266,6 +271,27 @@ impl Report {
             println!("  {f}");
         }
     }
+}
+
+/// Whether a leg has two intermediate locations in a row at the same shape index
+/// (the trips mainline fails to build).
+fn has_shared_shape_index(api: &Api) -> bool {
+    api.trip
+        .iter()
+        .flat_map(|t| &t.routes)
+        .flat_map(|r| &r.legs)
+        .any(|leg| {
+            let intermediates = leg
+                .location
+                .get(1..leg.location.len().saturating_sub(1))
+                .unwrap_or_default();
+            intermediates.windows(2).any(|w| {
+                let index = |l: &valhalla_proto::Location| {
+                    l.correlation.as_ref().map(|c| c.leg_shape_index)
+                };
+                index(&w[0]) == index(&w[1])
+            })
+        })
 }
 
 /// The edges of each leg of each route.
@@ -424,6 +450,13 @@ fn check<P: GraphTileProvider>(
                     format!("error: ours {code} {message}, mainline's {c} {m}"),
                 );
             }
+        }
+        // The known divergence: two intermediate locations at one node, which mainline
+        // fails on and Valinor builds (see "Known divergences" in `docs/routing.md`).
+        (Ok(ours), Reference::Error(499, m))
+            if m.starts_with("leg_shape_index not set") && has_shared_shape_index(&ours) =>
+        {
+            report.divergences.push(id.to_owned());
         }
         (Ok(_), Reference::Error(c, m)) => {
             report.fail(id, format!("error: ours none, mainline's {c} {m}"));
@@ -651,4 +684,39 @@ fn comparison_catches_changes() {
         .is_some_and(|d| d.contains("location 1"))
     );
     assert!(mutate(&|leg| leg.shape.push('?')).is_some_and(|d| d.contains("shape")));
+}
+
+/// Two via locations at the same node (Andorra's `andorra-01959`, from the Thor oracle fixture):
+/// mainline fails with "`leg_shape_index` not set for intermediate location";
+/// Valinor builds the trip, with both locations at the node's shape index and distance.
+#[test]
+fn builds_trips_with_two_vias_at_one_node() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/oracle/andorra-loki.tsv");
+    let inputs = read_inputs(&fixture);
+    let input = inputs.get("andorra-01959").expect("the case");
+    let tiles = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../valhalla-graphtile/fixtures/andorra-tiles");
+    let provider = DirectoryGraphTileProvider::new(tiles, NonZeroUsize::new(64).expect("64"));
+    let thor = Thor::new(ThorConfig::default(), provider);
+    let mut workspace = Workspace::default();
+    let api = route_and_build(&thor, &mut workspace, input, now()).expect("a trip");
+    assert!(has_shared_shape_index(&api));
+    let trip = api.trip.as_ref().expect("a trip");
+    let leg = &trip.routes[0].legs[0];
+    assert_eq!(leg.location.len(), 4);
+    let (a, b) = (
+        leg.location[1].correlation.as_ref().expect("a correlation"),
+        leg.location[2].correlation.as_ref().expect("a correlation"),
+    );
+    assert_eq!(a.leg_shape_index, b.leg_shape_index);
+    assert_eq!(a.distance_from_leg_origin, b.distance_from_leg_origin);
+    assert!(a.leg_shape_index > 0);
+    // Both are at the end of the edge the path reaches them on.
+    let edge = leg.node.iter().find(|n| {
+        n.edge
+            .as_ref()
+            .is_some_and(|e| e.end_shape_index == a.leg_shape_index)
+    });
+    assert!(edge.is_some());
 }

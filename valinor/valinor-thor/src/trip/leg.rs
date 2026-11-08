@@ -125,7 +125,7 @@ fn remove_path_edges(location: &mut Location, edge_id: GraphId) -> Result<(), Th
 /// # Errors
 ///
 /// Mainline's "`leg_shape_index` not set for intermediate location" when the intermediate
-/// locations' edge indexes don't increase, and "Could not find matching edge candidate"
+/// locations' edge indexes go back, and "Could not find matching edge candidate"
 /// when a location's edge isn't among its candidates.
 fn copy_locations(leg: &Leg) -> Result<Vec<Location>, ThorError> {
     let (Some(first), Some(last)) = (leg.edges.first(), leg.edges.last()) else {
@@ -148,7 +148,10 @@ fn copy_locations(leg: &Leg) -> Result<Vec<Location>, ThorError> {
             .correlation
             .as_ref()
             .map_or(0, |c| c.leg_shape_index);
-        if last_index.is_some_and(|last| index <= last) {
+        // Mainline also rejects an index equal to the previous one, which two intermediate
+        // locations at the same node have; Valinor builds that trip (see "Known divergences"
+        // in `docs/routing.md`). An index that goes back is still path search's mistake.
+        if last_index.is_some_and(|last| index < last) {
             return Err(ThorError::LegShapeIndexNotSet);
         }
         last_index = Some(index);
@@ -626,7 +629,14 @@ pub(crate) fn build_leg<P: GraphTileProvider>(
         let used = edge.length() as f32 * (trim_end_pct - trim_start_pct);
         total_distance += f64::from(used);
 
-        if let Some(location) = trip.location.get_mut(intermediate)
+        // Several intermediate locations can be at the same node, with no path between them
+        // (two via locations snapped to one node; see "Known divergences" in `docs/routing.md`),
+        // so after the first location this edge reaches, the next ones are checked too
+        // (but not the destination, which mainline's single check would never reach there).
+        let locations = trip.location.len();
+        let mut first_at_edge = true;
+        while (first_at_edge || intermediate + 1 < locations)
+            && let Some(location) = trip.location.get_mut(intermediate)
             && usize::try_from(
                 location
                     .correlation
@@ -636,6 +646,7 @@ pub(crate) fn build_leg<P: GraphTileProvider>(
             .ok()
                 == Some(edge_index)
         {
+            first_at_edge = false;
             let correlation = location.correlation.get_or_insert_default();
             correlation.leg_shape_index = u32::try_from(last_index).unwrap_or(u32::MAX);
             correlation.distance_from_leg_origin = total_distance;
