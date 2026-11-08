@@ -1,66 +1,716 @@
 ---
 source: valhalla-graphtile/src/graph_tile/turn_lane.rs
-expression: tile.turn_lanes
+expression: tile_view.turn_lanes
 ---
 [
     TurnLane {
         edge_index: EdgeIndex {
             edge_index: U32(
-                1710,
+                152,
             ),
         },
         text_offset: U32(
-            702,
+            132,
         ),
     },
     TurnLane {
         edge_index: EdgeIndex {
             edge_index: U32(
-                1728,
+                221,
             ),
         },
         text_offset: U32(
-            726,
+            151,
         ),
     },
     TurnLane {
         edge_index: EdgeIndex {
             edge_index: U32(
-                2403,
+                222,
             ),
         },
         text_offset: U32(
-            962,
+            153,
         ),
     },
     TurnLane {
         edge_index: EdgeIndex {
             edge_index: U32(
-                2417,
+                227,
             ),
         },
         text_offset: U32(
-            962,
+            151,
         ),
     },
     TurnLane {
         edge_index: EdgeIndex {
             edge_index: U32(
-                2719,
+                244,
             ),
         },
         text_offset: U32(
-            987,
+            151,
         ),
     },
     TurnLane {
         edge_index: EdgeIndex {
             edge_index: U32(
-                2814,
+                245,
             ),
         },
         text_offset: U32(
-            962,
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                248,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                257,
+            ),
+        },
+        text_offset: U32(
+            151,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                258,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                259,
+            ),
+        },
+        text_offset: U32(
+            151,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                260,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                1487,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                1539,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                1544,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2007,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2096,
+            ),
+        },
+        text_offset: U32(
+            132,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2098,
+            ),
+        },
+        text_offset: U32(
+            132,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2191,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2200,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2212,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2215,
+            ),
+        },
+        text_offset: U32(
+            1287,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2225,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2227,
+            ),
+        },
+        text_offset: U32(
+            1287,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2246,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2249,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2252,
+            ),
+        },
+        text_offset: U32(
+            1287,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2255,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2759,
+            ),
+        },
+        text_offset: U32(
+            132,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2865,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2879,
+            ),
+        },
+        text_offset: U32(
+            1771,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2889,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2891,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2924,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2949,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2987,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2988,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3034,
+            ),
+        },
+        text_offset: U32(
+            132,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3040,
+            ),
+        },
+        text_offset: U32(
+            132,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3061,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3065,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3127,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3129,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3130,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3132,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3165,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3167,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3335,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3337,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3339,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3343,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3723,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3725,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3849,
+            ),
+        },
+        text_offset: U32(
+            132,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3909,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                3913,
+            ),
+        },
+        text_offset: U32(
+            132,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4039,
+            ),
+        },
+        text_offset: U32(
+            900,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4045,
+            ),
+        },
+        text_offset: U32(
+            1765,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4090,
+            ),
+        },
+        text_offset: U32(
+            1969,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4112,
+            ),
+        },
+        text_offset: U32(
+            1287,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4114,
+            ),
+        },
+        text_offset: U32(
+            1287,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4117,
+            ),
+        },
+        text_offset: U32(
+            1287,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4142,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4144,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4146,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4175,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4178,
+            ),
+        },
+        text_offset: U32(
+            2004,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4180,
+            ),
+        },
+        text_offset: U32(
+            153,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4218,
+            ),
+        },
+        text_offset: U32(
+            132,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4222,
+            ),
+        },
+        text_offset: U32(
+            2011,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4268,
+            ),
+        },
+        text_offset: U32(
+            2011,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                4274,
+            ),
+        },
+        text_offset: U32(
+            2011,
         ),
     },
 ]

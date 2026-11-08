@@ -1,6 +1,6 @@
 ---
 source: valhalla-graphtile/src/graph_tile/header.rs
-expression: tile.header
+expression: tile.header()
 ---
 GraphTileHeader {
     bit_field_1: FirstBitfield {
@@ -11,7 +11,7 @@ GraphTileHeader {
         name_quality: 0,
         speed_quality: 0,
         exit_quality: 0,
-        has_elevation: 0,
+        has_elevation: 1,
         has_ext_directed_edge: 0,
     },
     base_lon_lat: [
@@ -25,9 +25,9 @@ GraphTileHeader {
     version: [
         51,
         46,
-        53,
+        57,
         46,
-        48,
+        49,
         0,
         0,
         0,
@@ -41,14 +41,14 @@ GraphTileHeader {
         0,
     ],
     dataset_id: U64(
-        12218323114,
+        14349686249,
     ),
     bit_field_2: SecondBitfield {
         node_count: U32(
-            1343,
+            1807,
         ),
         directed_edge_count: U32(
-            3426,
+            4634,
         ),
         predicted_speeds_count: U32(
             0,
@@ -56,12 +56,12 @@ GraphTileHeader {
     },
     transition_count_bitfield: TransitionCountBitfield {
         transition_count: U32(
-            712,
+            950,
         ),
     },
     turn_lane_count_bitfield: TurnLaneCountBitfield {
         turn_lane_count: U32(
-            6,
+            71,
         ),
     },
     transit_record_bitfield: TransitRecordBitfield {
@@ -83,34 +83,34 @@ GraphTileHeader {
             0,
         ),
         sign_count: U32(
-            0,
+            48,
         ),
     },
     misc_counts_bit_field_two: MiscCountsBitFieldTwo {
         access_restriction_count: U32(
-            8,
+            20,
         ),
         admin_count: U16(
-            4,
+            2,
         ),
     },
     _reserved_1: U64(
         0,
     ),
-    _reserved_2: U64(
-        0,
+    checksum: U64(
+        14967184494290194456,
     ),
     complex_restriction_forward_offset: U32(
-        213632,
+        289432,
     ),
     complex_restriction_reverse_offset: U32(
-        213632,
+        289432,
     ),
     edge_info_offset: U32(
-        213632,
+        289464,
     ),
     text_list_offset: U32(
-        304836,
+        411368,
     ),
     create_date: U32(
         0,
@@ -193,18 +193,18 @@ GraphTileHeader {
         ),
     ],
     lane_connectivity_offset: U32(
-        305888,
+        413432,
     ),
     predicted_speeds_offset: U32(
         0,
     ),
     tile_size: U32(
-        305888,
+        413432,
+    ),
+    bounding_circles_offset: U32(
+        0,
     ),
     _empty_slots: [
-        U32(
-            0,
-        ),
         U32(
             0,
         ),

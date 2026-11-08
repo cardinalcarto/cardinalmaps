@@ -5,9 +5,9 @@
 //! Each offers different performance, flexibility, and safety tradeoffs.
 
 use super::{
-    AccessRestriction, Admin, DirectedEdge, DirectedEdgeExt, EdgeInfo, GraphTile,
-    GraphTileDecodingError, GraphTileHeader, GraphTileView, LookupError, NodeInfo, NodeTransition,
-    OpposingEdgeIndex,
+    AccessRestriction, Admin, DirectedEdge, DirectedEdgeExt, DiscretizedBoundingCircle, EdgeInfo,
+    GraphTile, GraphTileDecodingError, GraphTileHeader, GraphTileView, LookupError, NodeInfo,
+    NodeTransition, OpposingEdgeIndex,
 };
 use crate::{Access, GraphId};
 use enumset::EnumSet;
@@ -134,6 +134,11 @@ impl GraphTile for OwnedGraphTileHandle {
     }
 
     #[inline]
+    fn bounding_circles_in_bin(&self, bin_index: usize) -> &[DiscretizedBoundingCircle] {
+        self.borrow_dependent().bounding_circles_in_bin(bin_index)
+    }
+
+    #[inline]
     fn bin_index_xy(&self, x: usize, y: usize) -> usize {
         self.borrow_dependent().bin_index_xy(x, y)
     }
@@ -241,6 +246,11 @@ impl GraphTile for MmapGraphTileHandle {
     #[inline]
     fn edges_in_bin(&self, bin_index: usize) -> &[GraphId] {
         self.borrow_dependent().edges_in_bin(bin_index)
+    }
+
+    #[inline]
+    fn bounding_circles_in_bin(&self, bin_index: usize) -> &[DiscretizedBoundingCircle] {
+        self.borrow_dependent().bounding_circles_in_bin(bin_index)
     }
 
     #[inline]

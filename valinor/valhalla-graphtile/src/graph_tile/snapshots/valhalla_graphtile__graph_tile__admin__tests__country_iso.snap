@@ -1,10 +1,8 @@
 ---
 source: valhalla-graphtile/src/graph_tile/admin.rs
-expression: "tile.admins.iter().map(|admin| admin.country_iso()).collect::<Vec<_>>()"
+expression: country_isos
 ---
 [
     "",
     "AD",
-    "ES",
-    "FR",
 ]

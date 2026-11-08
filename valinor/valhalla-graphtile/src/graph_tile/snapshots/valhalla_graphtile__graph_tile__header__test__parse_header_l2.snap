@@ -11,7 +11,7 @@ GraphTileHeader {
         name_quality: 0,
         speed_quality: 0,
         exit_quality: 0,
-        has_elevation: 0,
+        has_elevation: 1,
         has_ext_directed_edge: 0,
     },
     base_lon_lat: [
@@ -25,9 +25,9 @@ GraphTileHeader {
     version: [
         51,
         46,
-        53,
+        57,
         46,
-        48,
+        49,
         0,
         0,
         0,
@@ -41,14 +41,14 @@ GraphTileHeader {
         0,
     ],
     dataset_id: U64(
-        12218323114,
+        14349686249,
     ),
     bit_field_2: SecondBitfield {
         node_count: U32(
-            968,
+            1203,
         ),
         directed_edge_count: U32(
-            1985,
+            2532,
         ),
         predicted_speeds_count: U32(
             0,
@@ -56,7 +56,7 @@ GraphTileHeader {
     },
     transition_count_bitfield: TransitionCountBitfield {
         transition_count: U32(
-            230,
+            262,
         ),
     },
     turn_lane_count_bitfield: TurnLaneCountBitfield {
@@ -91,29 +91,29 @@ GraphTileHeader {
             0,
         ),
         admin_count: U16(
-            3,
+            2,
         ),
     },
     _reserved_1: U64(
         0,
     ),
-    _reserved_2: U64(
-        0,
+    checksum: U64(
+        14967246891577181204,
     ),
     complex_restriction_forward_offset: U32(
-        141320,
+        185616,
     ),
     complex_restriction_reverse_offset: U32(
-        141320,
+        185616,
     ),
     edge_info_offset: U32(
-        141320,
+        185616,
     ),
     text_list_offset: U32(
-        195100,
+        253500,
     ),
     create_date: U32(
-        3930,
+        0,
     ),
     bin_offsets: [
         U32(
@@ -174,37 +174,37 @@ GraphTileHeader {
             5,
         ),
         U32(
-            263,
+            305,
         ),
         U32(
-            263,
+            305,
         ),
         U32(
-            263,
+            305,
         ),
         U32(
-            263,
+            305,
         ),
         U32(
-            311,
+            352,
         ),
         U32(
-            1613,
+            1932,
         ),
     ],
     lane_connectivity_offset: U32(
-        196680,
+        255312,
     ),
     predicted_speeds_offset: U32(
         0,
     ),
     tile_size: U32(
-        196680,
+        255312,
+    ),
+    bounding_circles_offset: U32(
+        177888,
     ),
     _empty_slots: [
-        U32(
-            0,
-        ),
         U32(
             0,
         ),

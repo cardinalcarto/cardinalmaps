@@ -5,9 +5,9 @@ use super::{
 };
 use crate::graph_tile::predicted_speeds::COEFFICIENT_COUNT;
 use crate::graph_tile::{
-    AccessRestriction, Admin, DirectedEdge, DirectedEdgeExt, GraphTileBuildError, NodeInfo,
-    NodeTransition, Sign, TransitDeparture, TransitRoute, TransitSchedule, TransitStop,
-    TransitTransfer, TurnLane,
+    AccessRestriction, Admin, DirectedEdge, DirectedEdgeExt, DiscretizedBoundingCircle,
+    GraphTileBuildError, NodeInfo, NodeTransition, Sign, TransitDeparture, TransitRoute,
+    TransitSchedule, TransitStop, TransitTransfer, TurnLane,
 };
 use crate::{BIN_COUNT, GraphId};
 use chrono::{DateTime, Utc};
@@ -57,6 +57,10 @@ pub(crate) struct GraphTileHeaderBuilder {
     pub create_date: DateTime<Utc>,
     // FIXME: This deserves a better interface
     pub bin_offsets: [u32; BIN_COUNT],
+    /// The number of bounding circles (either zero or the number of edge bin entries).
+    pub bounding_circle_count: usize,
+    /// The raw checksum (see [`crate::graph_tile::checksum`]).
+    pub checksum: u64,
     /// Raw memory size in bytes
     pub complex_forward_restrictions_size: usize,
     /// Raw memory size in bytes
@@ -168,8 +172,16 @@ impl GraphTileHeaderBuilder {
                 value: self.admin_count,
             })?;
 
+        let edge_bins_count = usize::try_from(self.bin_offsets[BIN_COUNT - 1])?;
+        if self.bounding_circle_count != 0 && self.bounding_circle_count != edge_bins_count {
+            return Err(GraphTileBuildError::MismatchedBoundingCircles {
+                edge_bins: edge_bins_count,
+                bounding_circles: self.bounding_circle_count,
+            });
+        }
+
         // Calculate the starting offset of the variable sized data areas
-        let dst_base_offset = size_of::<GraphTileHeader>()
+        let bins_end_offset = size_of::<GraphTileHeader>()
             + (self.node_count * size_of::<NodeInfo>())
             + (self.transition_count * size_of::<NodeTransition>())
             + (self.directed_edge_count * size_of::<DirectedEdge>())
@@ -189,7 +201,16 @@ impl GraphTileHeaderBuilder {
             + (self.admin_count * size_of::<Admin>())
             // Cross reference with edge_bins_size in header.rs...
             // The interface for this will improve at some point.
-            + (usize::try_from(self.bin_offsets[BIN_COUNT - 1])? * size_of::<GraphId>());
+            + (edge_bins_count * size_of::<GraphId>());
+        // Valhalla writes the bounding circles immediately after the edge bins.
+        // A zero offset means there are none.
+        let bounding_circles_offset = if self.bounding_circle_count > 0 {
+            bins_end_offset
+        } else {
+            0
+        };
+        let dst_base_offset =
+            bins_end_offset + (self.bounding_circle_count * size_of::<DiscretizedBoundingCircle>());
         let complex_reverse_restrictions_offset =
             dst_base_offset + self.complex_forward_restrictions_size;
         let edge_info_offset =
@@ -220,7 +241,7 @@ impl GraphTileHeaderBuilder {
             misc_counts_bit_field_one,
             misc_counts_bit_field_two,
             _reserved_1: Default::default(),
-            _reserved_2: Default::default(),
+            checksum: self.checksum.into(),
             complex_restriction_forward_offset: u32::try_from(dst_base_offset)?.into(),
             complex_restriction_reverse_offset: u32::try_from(complex_reverse_restrictions_offset)?
                 .into(),
@@ -232,6 +253,7 @@ impl GraphTileHeaderBuilder {
             lane_connectivity_offset: u32::try_from(lane_connectivity_offset)?.into(),
             predicted_speeds_offset: u32::try_from(predicted_speed_offset)?.into(),
             tile_size: u32::try_from(tile_size)?.into(),
+            bounding_circles_offset: u32::try_from(bounding_circles_offset)?.into(),
             _empty_slots: [0.into(); _],
         })
     }

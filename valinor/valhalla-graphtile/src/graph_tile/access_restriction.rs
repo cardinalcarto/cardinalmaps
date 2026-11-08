@@ -97,7 +97,6 @@ impl AccessRestriction {
 mod tests {
     use super::{Access, AccessRestrictionType};
     use crate::graph_tile::{GraphTile, TEST_GRAPH_TILE_L0};
-    use enumset::EnumSet;
 
     #[test]
     fn test_parse_access_restrictions_count() {
@@ -123,13 +122,16 @@ mod tests {
             );
         }
 
+        // Cross-checked with GraphTile::GetAccessRestrictions in Valhalla 3.9.1
+        // (type 1 with modes 233 on edge 1456).
+        assert_eq!(tile_view.access_restrictions[0].edge_index(), 1456);
         assert_eq!(
             tile_view.access_restrictions[0].restriction_type(),
-            AccessRestrictionType::MaxWeight
+            AccessRestrictionType::MaxHeight
         );
         assert_eq!(
             tile_view.access_restrictions[0].affected_access_modes(),
-            EnumSet::from(Access::Truck)
+            Access::Auto | Access::Truck | Access::Taxi | Access::Bus | Access::HOV
         );
 
         if !cfg!(miri) {

@@ -3,6 +3,6 @@ source: valhalla-graphtile/src/graph_tile.rs
 expression: other_edge_info.get_names()
 ---
 [
-    "Port d'Envalira",
-    "CG-2",
+    "Avinguda d'Enclar",
+    "Avinguda de Santa Coloma",
 ]

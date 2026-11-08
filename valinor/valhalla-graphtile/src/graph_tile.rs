@@ -26,7 +26,9 @@ use std::sync::LazyLock;
 
 mod access_restriction;
 mod admin;
+mod bounding_circle;
 mod builder;
+mod checksum;
 mod directed_edge;
 mod edge_info;
 pub mod handles;
@@ -48,7 +50,9 @@ pub use crate::{
 };
 pub use access_restriction::{AccessRestriction, AccessRestrictionType};
 pub use admin::Admin;
+pub use bounding_circle::{BoundingCircle, DiscretizedBoundingCircle};
 pub use builder::GraphTileBuilder;
+pub use checksum::{BuildId, TileHash, TileHasher};
 pub use directed_edge::{DirectedEdge, DirectedEdgeExt};
 pub use edge_info::EdgeInfo;
 pub use header::GraphTileHeader;
@@ -80,6 +84,14 @@ pub enum GraphTileDecodingError {
     LeftoverBytesAfterReading(usize),
     #[error("Tile level {0} is not currently supported by Valinor.")]
     UnsupportedTileLevel(u8),
+    #[error(
+        "read the {section} section: the header says it starts at byte {expected}, but the preceding sections end at byte {actual}"
+    )]
+    SectionOffsetMismatch {
+        section: &'static str,
+        expected: usize,
+        actual: usize,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -104,6 +116,13 @@ pub enum GraphTileBuildError {
     IoError(#[from] std::io::Error),
     #[error("Poisoned cache lock when writing tile: {0}")]
     PoisonedCacheLock(String),
+    #[error(
+        "write bounding circles: there are {bounding_circles} circles for {edge_bins} edge bin entries (there must be one per entry, or none)"
+    )]
+    MismatchedBoundingCircles {
+        edge_bins: usize,
+        bounding_circles: usize,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -252,6 +271,23 @@ pub trait GraphTile {
     ///
     /// This may panic if the tile data is invalid and references an out-of-bounds index.
     fn edges_in_bin(&self, bin_index: usize) -> &[GraphId];
+
+    /// Returns the bounding circles of the edges in the specified bin.
+    ///
+    /// When the tile has bounding circles,
+    /// the result is parallel to [`edges_in_bin`](GraphTile::edges_in_bin):
+    /// the circle at each position bounds the shape of the edge at the same position.
+    /// Decode a circle with [`DiscretizedBoundingCircle::decode`],
+    /// using the bin center from [`GraphTileHeader::bin_center`].
+    ///
+    /// Returns an empty slice if the tile has no bounding circles
+    /// (which is always the case outside of level 2, and for tiles built before Valhalla 3.9).
+    ///
+    /// # Panics
+    ///
+    /// This may panic if the bin index is 25 or greater,
+    /// or if the tile data is invalid and references an out-of-bounds index.
+    fn bounding_circles_in_bin(&self, bin_index: usize) -> &[DiscretizedBoundingCircle];
 
     /// Computes the row-major bin index for the given bin coordinates within
     /// the tile's bin grid.
@@ -433,6 +469,11 @@ where
     }
 
     #[inline]
+    fn bounding_circles_in_bin(&self, bin_index: usize) -> &[DiscretizedBoundingCircle] {
+        self.deref().bounding_circles_in_bin(bin_index)
+    }
+
+    #[inline]
     fn bin_index_xy(&self, x: usize, y: usize) -> usize {
         self.deref().bin_index_xy(x, y)
     }
@@ -476,6 +517,8 @@ pub struct GraphTileView<'a> {
     turn_lanes: &'a [TurnLane],
     admins: &'a [Admin],
     edge_bins: &'a [GraphId],
+    /// One bounding circle per edge bin entry (or empty if the tile has none).
+    bounding_circles: &'a [DiscretizedBoundingCircle],
     complex_forward_restrictions_memory: &'a [u8],
     complex_reverse_restrictions_memory: &'a [u8],
     // Variable length byte arrays (indexed into at various other points; hidden with public safe accessors)...
@@ -640,6 +683,19 @@ impl GraphTile for GraphTileView<'_> {
     }
 
     #[inline]
+    fn bounding_circles_in_bin(&self, bin_index: usize) -> &[DiscretizedBoundingCircle] {
+        if self.bounding_circles.is_empty() {
+            return &[];
+        }
+        let (start, end) = self.header.edge_bin_offsets(bin_index);
+        assert!(
+            end <= self.bounding_circles.len(),
+            "Unexpected end that runs past the bounding circles structure"
+        );
+        &self.bounding_circles[start..end]
+    }
+
+    #[inline]
     fn bin_index_xy(&self, x: usize, y: usize) -> usize {
         assert!(
             x << 1 < crate::BIN_COUNT,
@@ -665,6 +721,7 @@ impl<'a> TryFrom<&'a [u8]> for GraphTileView<'a> {
     type Error = GraphTileDecodingError;
 
     fn try_from(bytes: &'a [u8]) -> Result<Self, Self::Error> {
+        let tile_len = bytes.len();
         let (header, bytes) = GraphTileHeader::ref_from_prefix(bytes).map_err(|e| {
             GraphTileDecodingError::CastError {
                 field: "header".to_string(),
@@ -812,6 +869,43 @@ impl<'a> TryFrom<&'a [u8]> for GraphTileView<'a> {
                 },
             )?;
 
+        // Unlike the sections before them, the bounding circles have an explicit offset.
+        // Valhalla writes them right after the edge bins,
+        // but it reads them (and everything after) from header offsets alone.
+        // We read sequentially, so we check that the offsets agree with the layout we expect.
+        // This catches tiles whose header disagrees with their contents.
+        // For example, valhalla_add_landmarks in Valhalla 3.9.1 drops the edge bins and circles
+        // from the tiles it rewrites but leaves their offsets in the header.
+        let check_offset = |section: &'static str, expected: usize, remaining: &[u8]| {
+            let actual = tile_len - remaining.len();
+            if actual == expected {
+                Ok(())
+            } else {
+                Err(GraphTileDecodingError::SectionOffsetMismatch {
+                    section,
+                    expected,
+                    actual,
+                })
+            }
+        };
+
+        if let Some(offset) = header.bounding_circles_offset() {
+            check_offset("bounding_circles", offset, bytes)?;
+        }
+        let (bounding_circles, bytes) = <[DiscretizedBoundingCircle]>::ref_from_prefix_with_elems(
+            bytes,
+            header.bounding_circle_count(),
+        )
+        .map_err(|e| GraphTileDecodingError::CastError {
+            field: "bounding_circles".to_string(),
+            error_description: e.to_string(),
+        })?;
+
+        check_offset(
+            "complex_forward_restrictions",
+            header.complex_forward_restrictions_offset(),
+            bytes,
+        )?;
         let (complex_forward_restrictions_memory, bytes) =
             <[u8]>::ref_from_prefix_with_elems(bytes, header.complex_forward_restrictions_size())
                 .map_err(|e| GraphTileDecodingError::CastError {
@@ -897,6 +991,7 @@ impl<'a> TryFrom<&'a [u8]> for GraphTileView<'a> {
                 turn_lanes,
                 admins,
                 edge_bins,
+                bounding_circles,
                 complex_forward_restrictions_memory,
                 complex_reverse_restrictions_memory,
                 edge_info_memory,
@@ -1052,7 +1147,7 @@ mod tests {
                     .is_empty()
             );
 
-            // This set includes one mode that matches 4 elements in the fixture tile,
+            // This set includes one mode that matches every element in the fixture tile,
             // and another mode that matches none.
             for restriction in
                 tile.get_access_restrictions(edge_index, enum_set!(Access::Auto | Access::GolfCart))
@@ -1063,8 +1158,9 @@ mod tests {
         }
 
         // Hard-coded bits based on the test fixture
-        assert_eq!(found_restriction_count, 8);
-        assert_eq!(found_partial_subset_count, 4);
+        // (cross-checked with GraphTile::GetAccessRestrictions in Valhalla 3.9.1)
+        assert_eq!(found_restriction_count, 20);
+        assert_eq!(found_partial_subset_count, 20);
     }
 
     #[test]
@@ -1123,6 +1219,214 @@ mod tests {
     }
 
     #[test]
+    fn test_bounding_circles_absent_outside_level_2() {
+        let tile = &*TEST_GRAPH_TILE_L0;
+        assert!(!tile.header().has_bounding_circles());
+        for i in 0..crate::BIN_COUNT {
+            assert!(tile.bounding_circles_in_bin(i).is_empty());
+        }
+    }
+
+    #[test]
+    fn test_bounding_circles() {
+        let tile = &*TEST_GRAPH_TILE_L2;
+        let header = tile.header();
+        assert!(header.has_bounding_circles());
+
+        // Every edge bin entry has exactly one circle.
+        let mut total = 0;
+        for i in 0..crate::BIN_COUNT {
+            let circles = tile.bounding_circles_in_bin(i);
+            assert_eq!(circles.len(), tile.edges_in_bin(i).len(), "bin {i}");
+            // Valhalla 3.9.1 was able to compute a circle for every edge in this tile.
+            assert!(circles.iter().all(DiscretizedBoundingCircle::is_valid));
+            total += circles.len();
+        }
+        assert_eq!(total, header.edge_bins_count());
+
+        // The expected values below are printed by Valhalla 3.9.1 itself,
+        // using GraphTile::GetBoundingCircles and DiscretizedBoundingCircle::get
+        // with the bin center computed as in loki's search.
+        // We expect bit-for-bit equality.
+        let bin_center = header.bin_center(18).expect("valid bin");
+        assert_eq!(
+            bin_center,
+            coord! {x: 1.425_000_011_920_929, y: 42.425_000_011_920_93}
+        );
+        let edges = tile.edges_in_bin(18);
+        let circles = tile.bounding_circles_in_bin(18);
+        assert_eq!(edges.len(), 5);
+        assert_eq!(
+            edges[0],
+            TEST_GRAPH_TILE_ID_L2.with_feature_index(0).unwrap()
+        );
+        assert_eq!(
+            (
+                circles[0].x_offset(),
+                circles[0].y_offset(),
+                circles[0].radius_index()
+            ),
+            (5211, 4883, 60)
+        );
+        assert_eq!(
+            circles[0].decode(bin_center),
+            Some(BoundingCircle {
+                center: coord! {x: 1.442_567_769_282_198_3, y: 42.434_154_802_719_654},
+                radius_meters: 1000.0,
+            })
+        );
+        assert_eq!(
+            edges[2],
+            TEST_GRAPH_TILE_ID_L2.with_feature_index(21).unwrap()
+        );
+        assert_eq!(
+            circles[2].decode(bin_center),
+            Some(BoundingCircle {
+                center: coord! {x: 1.445_749_021_623_728, y: 42.442_943_401_886_424},
+                radius_meters: 300.0,
+            })
+        );
+
+        let bin_center = header.bin_center(24).expect("valid bin");
+        assert_eq!(
+            bin_center,
+            coord! {x: 1.475_000_008_940_696_7, y: 42.475_000_008_940_7}
+        );
+        let edges = tile.edges_in_bin(24);
+        let circles = tile.bounding_circles_in_bin(24);
+        assert_eq!(edges.len(), 1580);
+        assert_eq!(
+            edges[0],
+            TEST_GRAPH_TILE_ID_L2.with_feature_index(83).unwrap()
+        );
+        assert_eq!(
+            (
+                circles[0].x_offset(),
+                circles[0].y_offset(),
+                circles[0].radius_index()
+            ),
+            (3555, 2046, 6)
+        );
+        assert_eq!(
+            circles[0].decode(bin_center),
+            Some(BoundingCircle {
+                center: coord! {x: 1.466_480_999_584_143_7, y: 42.451_174_302_601_67},
+                radius_meters: 7.0,
+            })
+        );
+    }
+
+    #[test]
+    fn test_bin_centers() {
+        let header = TEST_GRAPH_TILE_L2.header();
+        // Valhalla adds single precision offsets (0.05f increments) to the double precision corner.
+        assert_eq!(
+            header.bin_center(0),
+            Some(coord! {x: 1.275_000_000_372_529, y: 42.275_000_000_372_53})
+        );
+        assert_eq!(
+            header.bin_center(2),
+            Some(coord! {x: 1.375, y: 42.275_000_000_372_53})
+        );
+        assert_eq!(
+            header.bin_center(13),
+            Some(coord! {x: 1.425_000_011_920_929, y: 42.375})
+        );
+        assert_eq!(header.bin_center(crate::BIN_COUNT), None);
+    }
+
+    #[test]
+    fn test_rejects_bounding_circles_at_wrong_offset() {
+        // valhalla_add_landmarks in Valhalla 3.9.1 drops the edge bins and bounding circles
+        // but keeps their offsets in the header.
+        // Simulate a tile whose header says the circles start somewhere else.
+        let tile = &*TEST_GRAPH_TILE_L2;
+        let mut bytes = tile.borrow_owner().clone();
+        let offset = tile
+            .header()
+            .bounding_circles_offset()
+            .expect("has circles");
+        let wrong = u32::try_from(offset + 4).unwrap();
+        // The bounding circle offset is the 58th 32-bit word of the header.
+        bytes[228..232].copy_from_slice(&wrong.to_le_bytes());
+        assert!(matches!(
+            GraphTileView::try_from(bytes.as_slice()),
+            Err(GraphTileDecodingError::SectionOffsetMismatch {
+                section: "bounding_circles",
+                expected,
+                actual,
+            }) if expected == offset + 4 && actual == offset
+        ));
+    }
+
+    /// Reproduces the tiles that `valhalla_add_landmarks` writes in Valhalla 3.9.1.
+    ///
+    /// It rewrites tiles with `GraphTileBuilder::StoreTileData`,
+    /// which drops the edge bins and bounding circles,
+    /// shifts the later section offsets down to match,
+    /// but keeps the header's bin offsets and bounding circle offset.
+    /// Mainline then reads the start of the complex restrictions and edge info as edge bins.
+    /// We must refuse such a tile instead.
+    ///
+    /// We build the reproduction from a good fixture tile instead of committing a corrupted one
+    /// (a real one is 1.7 MB).
+    /// A real corrupted level 2 tile from such a build fails in the same way.
+    #[test]
+    fn test_rejects_tile_with_dropped_edge_bins() {
+        let tile = &*TEST_GRAPH_TILE_L2;
+        let header = tile.header();
+        let circles_start = header.bounding_circles_offset().expect("has circles");
+        let bins_start = circles_start - header.edge_bins_count() * size_of::<GraphId>();
+        let circles_end =
+            circles_start + header.bounding_circle_count() * size_of::<DiscretizedBoundingCircle>();
+        assert_eq!(circles_end, header.complex_forward_restrictions_offset());
+        let removed = circles_end - bins_start;
+
+        let original = tile.borrow_owner();
+        let mut bytes = original[..bins_start].to_vec();
+        bytes.extend_from_slice(&original[circles_end..]);
+        // Shift complex restrictions (forward and reverse), edge info, text list,
+        // lane connectivity, and the tile size down.
+        // The predicted speed offset is zero (this tile has none) and stays that way.
+        assert_eq!(header.predicted_speeds_count(), 0);
+        for field_offset in [96, 100, 104, 108, 216, 224] {
+            let mut word = [0u8; 4];
+            word.copy_from_slice(&bytes[field_offset..field_offset + 4]);
+            let shifted = u32::from_le_bytes(word) - u32::try_from(removed).unwrap();
+            bytes[field_offset..field_offset + 4].copy_from_slice(&shifted.to_le_bytes());
+        }
+
+        // The edge bins still line up with the stale circle offset,
+        // so the mismatch shows up where the complex restrictions should start.
+        assert!(matches!(
+            GraphTileView::try_from(bytes.as_slice()),
+            Err(GraphTileDecodingError::SectionOffsetMismatch {
+                section: "complex_forward_restrictions",
+                expected,
+                actual,
+            }) if expected == bins_start && actual == circles_end
+        ));
+    }
+
+    #[test]
+    fn test_rejects_missing_edge_bins() {
+        // The level 0 tile has no edge bins.
+        // Claim four entries in the last bin (so the offsets stay monotonic).
+        // The tile must be rejected rather than read with every later section shifted.
+        let tile = &*TEST_GRAPH_TILE_L0;
+        let mut bytes = tile.borrow_owner().clone();
+        // The last bin offset is at byte 116 + 24 * 4.
+        bytes[212..216].copy_from_slice(&4u32.to_le_bytes());
+        assert!(matches!(
+            GraphTileView::try_from(bytes.as_slice()),
+            Err(GraphTileDecodingError::SectionOffsetMismatch {
+                section: "complex_forward_restrictions",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn test_edge_info() {
         let tile = &*TEST_GRAPH_TILE_L0;
 
@@ -1155,11 +1459,11 @@ mod tests {
             insta::assert_debug_snapshot!("last_edge_info", last_edge_info);
         }
 
-        assert_eq!(last_edge_info.way_id(), 247995246);
+        assert_eq!(last_edge_info.way_id(), 762_680_030);
 
-        // Edge chosen somewhat randomly; it happens to have multiple names.
+        // This edge has two different street names (checked with EdgeInfo::GetNames in Valhalla 3.9.1).
         let other_edge_info = tile
-            .get_edge_info(&tile.directed_edges()[2000])
+            .get_edge_info(&tile.directed_edges()[52])
             .expect("Unable to get edge info.");
 
         // insta internally does a fork operation, which is not supported under Miri
@@ -1168,7 +1472,7 @@ mod tests {
             insta::assert_debug_snapshot!("other_edge_info_names", other_edge_info.get_names());
         }
 
-        assert_eq!(other_edge_info.way_id(), 28833880);
+        assert_eq!(other_edge_info.way_id(), 704_181_817);
     }
 
     #[test]

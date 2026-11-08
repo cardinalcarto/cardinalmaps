@@ -1,9 +1,12 @@
+use crate::graph_tile::GraphTileDecodingError;
+use crate::graph_tile::checksum::{BuildId, TileHash, checksum};
+use crate::tile_hierarchy::STANDARD_LEVELS;
 use crate::{AsCowStr, BIN_COUNT, GraphId};
 use bitfield_struct::bitfield;
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
 use geo::{Coord, coord};
 use std::borrow::Cow;
-use zerocopy::{F32, LE, U16, U32, U64};
+use zerocopy::{F32, FromBytes, LE, U16, U32, U64};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 mod builder;
@@ -11,8 +14,8 @@ mod builder;
 pub(super) use builder::GraphTileHeaderBuilder;
 
 /// Remaining variable offset slots for growth.
-/// See valhalla/balder/graphtileheader.h for details.
-const EMPTY_SLOTS: usize = 11;
+/// See valhalla/baldr/graphtileheader.h for details.
+const EMPTY_SLOTS: usize = 10;
 
 /// The number of UTF-8 bytes in the fixed size version field.
 pub(crate) const VERSION_LEN: usize = 16;
@@ -179,13 +182,19 @@ pub struct GraphTileHeader {
     transit_record_bitfield: TransitRecordBitfield,
     misc_counts_bit_field_one: MiscCountsBitFieldOne,
     misc_counts_bit_field_two: MiscCountsBitFieldTwo,
-    /// These can be used for custom information while retaining Valhalla compatibility.
+    /// This can be used for custom information while retaining Valhalla compatibility.
     /// However, you must uphold the following invariants:
     ///
     /// - The header size doesn't change.
     /// - The ordering of *existing* fields in the data structure doesn't change.
+    ///
+    /// Valhalla calls this `spareword0_`.
     _reserved_1: U64<LE>,
-    _reserved_2: U64<LE>,
+    /// The tileset build ID in the high 16 bits,
+    /// and a hash of this tile's data in the low 48 bits.
+    ///
+    /// Valhalla calls this `checksum_` (formerly `spareword1_`).
+    checksum: U64<LE>,
     // Internal offsets that help us size the variable length data fields.
     complex_restriction_forward_offset: U32<LE>,
     complex_restriction_reverse_offset: U32<LE>,
@@ -193,6 +202,8 @@ pub struct GraphTileHeader {
     text_list_offset: U32<LE>,
     /// The date the tile was created, expressed as the number of days (rounded down)
     /// since midnight of Jan 1, 2014, Eastern Standard Time.
+    ///
+    /// NOTE: Valhalla 3.9 no longer sets this, so it is usually zero.
     create_date: U32<LE>,
     /// Offsets for each bin of the grid
     ///
@@ -209,7 +220,13 @@ pub struct GraphTileHeader {
     predicted_speeds_offset: U32<LE>,
     /// The size of the tile (in bytes)
     pub tile_size: U32<LE>,
-    /// See valhalla/balder/graphtileheader.h for details.
+    /// Offset to the beginning of the bounding circles.
+    ///
+    /// Zero means that there are no bounding circles.
+    /// Early Valhalla 3.x versions filled unused offset slots with the tile size,
+    /// so that value also means that there are no bounding circles.
+    bounding_circles_offset: U32<LE>,
+    /// See valhalla/baldr/graphtileheader.h for details.
     _empty_slots: [U32<LE>; EMPTY_SLOTS],
 }
 
@@ -229,6 +246,9 @@ impl GraphTileHeader {
     }
 
     /// The date this tile was created.
+    ///
+    /// Valhalla 3.9 no longer sets the creation date,
+    /// so this is usually the Valhalla epoch (midnight Jan 1, 2014, Eastern Standard Time).
     #[inline]
     pub fn create_date(&self) -> DateTime<Utc> {
         VALHALLA_EPOCH + TimeDelta::days(i64::from(self.create_date.get()))
@@ -246,6 +266,106 @@ impl GraphTileHeader {
     #[inline]
     pub const fn has_ext_directed_edge(&self) -> bool {
         self.bit_field_1.has_ext_directed_edge() != 0
+    }
+
+    /// The hash of this tile's data (everything after the header).
+    ///
+    /// This is unique per tile, but reproducible across builds of the same data.
+    /// See [`TileHash`] for how it is computed.
+    #[inline]
+    pub const fn tile_hash(&self) -> TileHash {
+        TileHash::from_checksum(self.checksum.get())
+    }
+
+    /// The ID of the tileset build that this tile belongs to.
+    ///
+    /// This is the same for every tile in a tileset.
+    /// See [`BuildId`] for how it is computed.
+    #[inline]
+    pub const fn build_id(&self) -> BuildId {
+        BuildId::from_checksum(self.checksum.get())
+    }
+
+    /// Stamps a tileset build ID into the header of a serialized tile.
+    ///
+    /// This only rewrites the build ID; the tile hash and everything else stay the same.
+    /// This mirrors Valhalla's `set_tileset_build_id`,
+    /// which runs after every tile in a tileset has been written:
+    /// compute the build ID from all tile hashes with [`BuildId::of_tileset`],
+    /// then stamp it into every tile.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `tile` is too short to contain a header.
+    pub fn stamp_build_id(
+        tile: &mut [u8],
+        build_id: BuildId,
+    ) -> Result<(), GraphTileDecodingError> {
+        let (header, _) =
+            Self::mut_from_prefix(tile).map_err(|e| GraphTileDecodingError::CastError {
+                field: "header".to_string(),
+                error_description: e.to_string(),
+            })?;
+        header.checksum = checksum(build_id, header.tile_hash()).into();
+        Ok(())
+    }
+
+    /// Does this tile include bounding circles for the edges in its edge bins?
+    #[inline]
+    pub const fn has_bounding_circles(&self) -> bool {
+        let offset = self.bounding_circles_offset.get();
+        offset != 0 && offset != self.tile_size.get()
+    }
+
+    /// The byte offset of the bounding circles, if the tile has any.
+    #[inline]
+    pub(crate) const fn bounding_circles_offset(&self) -> Option<usize> {
+        if self.has_bounding_circles() {
+            Some(self.bounding_circles_offset.get() as usize)
+        } else {
+            None
+        }
+    }
+
+    /// The byte offset of the complex forward restrictions,
+    /// which immediately follow the edge bins (and bounding circles, if any).
+    #[inline]
+    pub(crate) const fn complex_forward_restrictions_offset(&self) -> usize {
+        self.complex_restriction_forward_offset.get() as usize
+    }
+
+    /// The center of an edge bin, computed exactly as Valhalla's loki and mjolnir do.
+    ///
+    /// Use this to decode the bin's bounding circles
+    /// (see [`DiscretizedBoundingCircle::decode`](crate::graph_tile::DiscretizedBoundingCircle::decode)).
+    /// Bins are numbered in row-major order from the southwest corner.
+    ///
+    /// Valhalla adds a single precision offset within the tile to the tile's corner;
+    /// we do the same so that decoded circles match Valhalla's bit for bit.
+    ///
+    /// Returns `None` if the bin index is out of range,
+    /// or if the tile is not on a standard Valhalla hierarchy level.
+    pub fn bin_center(&self, bin_index: usize) -> Option<Coord<f64>> {
+        let level = self.graph_id().level();
+        let tiling = &STANDARD_LEVELS
+            .iter()
+            .find(|lvl| lvl.level == level)?
+            .tiling_system;
+        let bins_per_side = usize::from(tiling.n_subdivisions);
+        if bin_index >= bins_per_side * bins_per_side {
+            return None;
+        }
+        let subdivision_size = tiling.tile_size / f32::from(tiling.n_subdivisions);
+        // These are both less than the number of subdivisions, which is a u8.
+        let col = f32::from(u8::try_from(bin_index % bins_per_side).ok()?);
+        let row = f32::from(u8::try_from(bin_index / bins_per_side).ok()?);
+        let lng_offset = col * subdivision_size + subdivision_size / 2.0;
+        let lat_offset = row * subdivision_size + subdivision_size / 2.0;
+        let sw = self.sw_corner();
+        Some(coord! {
+            x: f64::from(sw.x) + f64::from(lng_offset),
+            y: f64::from(sw.y) + f64::from(lat_offset),
+        })
     }
 
     /// The coordinate of the southwest corner of this graph tile.
@@ -348,6 +468,18 @@ impl GraphTileHeader {
         self.bin_offsets[BIN_COUNT - 1].get() as usize
     }
 
+    /// The number of bounding circles.
+    ///
+    /// When present, there is exactly one bounding circle for every edge bin entry.
+    #[inline]
+    pub const fn bounding_circle_count(&self) -> usize {
+        if self.has_bounding_circles() {
+            self.edge_bins_count()
+        } else {
+            0
+        }
+    }
+
     /// Gets the start and end offset for the given bin index.
     /// This offset can be used to index into the array of edge IDs in the `GraphTile` struct.
     ///
@@ -407,7 +539,9 @@ impl GraphTileHeader {
 
 #[cfg(test)]
 mod test {
-    use crate::graph_tile::{GraphTile, TEST_GRAPH_TILE_L0, TEST_GRAPH_TILE_L2};
+    use super::GraphTileHeader;
+    use crate::graph_tile::{BuildId, GraphTile, TEST_GRAPH_TILE_L0, TEST_GRAPH_TILE_L2, TileHash};
+    use zerocopy::FromBytes;
 
     #[test]
     fn test_parse_header() {
@@ -417,6 +551,58 @@ mod test {
         if !cfg!(miri) {
             insta::assert_debug_snapshot!(tile.header());
         }
+    }
+
+    #[test]
+    fn test_checksum_fields() {
+        // Cross-checked with the Valhalla 3.9.1 Python bindings
+        // (GraphTileHeader.build_id and GraphTileHeader.tile_checksum).
+        let l0 = TEST_GRAPH_TILE_L0.header();
+        assert_eq!(l0.build_id(), BuildId::new(53174));
+        assert_eq!(l0.tile_hash().value(), 0x1eff_7de6_d018);
+        let l2 = TEST_GRAPH_TILE_L2.header();
+        assert_eq!(l2.build_id(), BuildId::new(53174));
+        assert_eq!(l2.tile_hash().value(), 0x57bf_7e07_0414);
+
+        // The stored hash is the hash of everything after the header.
+        for tile in [&*TEST_GRAPH_TILE_L0, &*TEST_GRAPH_TILE_L2] {
+            let bytes = tile.borrow_owner();
+            assert_eq!(
+                TileHash::of_tile_data(&bytes[size_of::<GraphTileHeader>()..]),
+                tile.header().tile_hash()
+            );
+        }
+    }
+
+    #[test]
+    fn test_stamp_build_id() {
+        let mut bytes = TEST_GRAPH_TILE_L0.borrow_owner().clone();
+        let original = TEST_GRAPH_TILE_L0.header().clone();
+        GraphTileHeader::stamp_build_id(&mut bytes, BuildId::new(0xbeef)).unwrap();
+        let (stamped, _) = GraphTileHeader::ref_from_prefix(&bytes).unwrap();
+        assert_eq!(stamped.build_id(), BuildId::new(0xbeef));
+        assert_eq!(stamped.tile_hash(), original.tile_hash());
+        // Nothing else changes.
+        assert_eq!(&bytes[..88], &TEST_GRAPH_TILE_L0.borrow_owner()[..88]);
+        assert_eq!(&bytes[96..], &TEST_GRAPH_TILE_L0.borrow_owner()[96..]);
+
+        assert!(GraphTileHeader::stamp_build_id(&mut bytes[..100], BuildId::new(1)).is_err());
+    }
+
+    #[test]
+    fn test_bounding_circle_presence() {
+        // Mainline treats a bounding circle offset equal to the tile size as absent
+        // (early 3.x versions filled unused offset slots with the tile size).
+        let mut header = TEST_GRAPH_TILE_L2.header().clone();
+        assert!(header.has_bounding_circles());
+        assert_eq!(header.bounding_circle_count(), header.edge_bins_count());
+        header.bounding_circles_offset = header.tile_size;
+        assert!(!header.has_bounding_circles());
+        assert_eq!(header.bounding_circles_offset(), None);
+        assert_eq!(header.bounding_circle_count(), 0);
+        header.bounding_circles_offset = 0.into();
+        assert!(!header.has_bounding_circles());
+        assert_eq!(header.bounding_circle_count(), 0);
     }
 
     #[test]

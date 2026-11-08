@@ -1,9 +1,11 @@
 use super::{
-    AccessRestriction, Admin, DirectedEdge, DirectedEdgeExt, GraphTileBuildError, GraphTileHeader,
-    GraphTileView, NodeInfo, NodeTransition, OwnedGraphTileHandle, Sign, TransitDeparture,
-    TransitRoute, TransitSchedule, TransitStop, TransitTransfer, TurnLane,
+    AccessRestriction, Admin, BuildId, DirectedEdge, DirectedEdgeExt, DiscretizedBoundingCircle,
+    GraphTileBuildError, GraphTileHeader, GraphTileView, NodeInfo, NodeTransition,
+    OwnedGraphTileHandle, Sign, TileHasher, TransitDeparture, TransitRoute, TransitSchedule,
+    TransitStop, TransitTransfer, TurnLane,
 };
 use crate::GraphId;
+use crate::graph_tile::checksum::checksum;
 use crate::graph_tile::header::{GraphTileHeaderBuilder, VERSION_LEN};
 use crate::graph_tile::predicted_speeds::{
     BUCKETS_PER_WEEK, COEFFICIENT_COUNT, compress_speed_buckets, decode_base64_speed_coefficients,
@@ -73,6 +75,7 @@ pub struct GraphTileBuilder<'a> {
     dataset_id: u64,
     sw_corner: Coord<f32>,
     create_date: DateTime<Utc>,
+    build_id: BuildId,
     // TODO: Remove this eventually. Currently referenced for a few properties like binning which we don't edit yet anyways.
     remove_me_header: GraphTileHeader,
     nodes: Cow<'a, [NodeInfo]>,
@@ -89,6 +92,7 @@ pub struct GraphTileBuilder<'a> {
     turn_lanes: Cow<'a, [TurnLane]>,
     admins: Cow<'a, [Admin]>,
     edge_bins: Cow<'a, [GraphId]>,
+    bounding_circles: Cow<'a, [DiscretizedBoundingCircle]>,
     complex_forward_restrictions_memory: Cow<'a, [u8]>,
     complex_reverse_restrictions_memory: Cow<'a, [u8]>,
     edge_info_memory: Cow<'a, [u8]>,
@@ -144,6 +148,7 @@ impl<'a> From<&'a OwnedGraphTileHandle> for GraphTileBuilder<'a> {
             turn_lanes,
             admins,
             edge_bins,
+            bounding_circles,
             complex_forward_restrictions_memory,
             complex_reverse_restrictions_memory,
             edge_info_memory,
@@ -166,6 +171,7 @@ impl<'a> From<&'a OwnedGraphTileHandle> for GraphTileBuilder<'a> {
             dataset_id: header.dataset_id.get(),
             sw_corner: header.sw_corner(),
             create_date: header.create_date(),
+            build_id: header.build_id(),
             remove_me_header: (*header).clone(),
             nodes: Cow::Borrowed(nodes),
             transitions: Cow::Borrowed(transitions),
@@ -181,6 +187,7 @@ impl<'a> From<&'a OwnedGraphTileHandle> for GraphTileBuilder<'a> {
             turn_lanes: Cow::Borrowed(turn_lanes),
             admins: Cow::Borrowed(admins),
             edge_bins: Cow::Borrowed(edge_bins),
+            bounding_circles: Cow::Borrowed(bounding_circles),
             complex_forward_restrictions_memory: Cow::Borrowed(complex_forward_restrictions_memory),
             complex_reverse_restrictions_memory: Cow::Borrowed(complex_reverse_restrictions_memory),
             edge_info_memory: Cow::Borrowed(edge_info_memory),
@@ -217,6 +224,23 @@ impl GraphTileBuilder<'_> {
             writer_version,
             ..self
         })
+    }
+
+    /// Sets the tileset build ID to stamp into the tile header.
+    ///
+    /// The build ID is derived from the hashes of every tile in the tileset
+    /// (see [`BuildId::of_tileset`]),
+    /// so a single tile cannot compute it.
+    /// By default, the builder keeps the build ID of the tile it started from,
+    /// which is what Valhalla does until it recomputes the build ID for the whole tileset.
+    ///
+    /// If you only know the build ID after building every tile
+    /// (because it depends on their hashes),
+    /// build the tiles first and then stamp the ID into each of them
+    /// with [`GraphTileHeader::stamp_build_id`].
+    #[must_use]
+    pub fn with_build_id(self, build_id: BuildId) -> Self {
+        Self { build_id, ..self }
     }
 
     /// Adds historical average (coarse granularity) speed information to a directed edge.
@@ -424,46 +448,8 @@ impl GraphTileBuilder<'_> {
             );
         }
 
-        // Build the header from the finalized state, then own the header bytes.
-        let header = GraphTileHeaderBuilder {
-            version: intermediate.writer_version,
-            graph_id: intermediate.graph_id,
-            density: intermediate.remove_me_header.density(),
-            has_elevation: intermediate.remove_me_header.has_elevation(),
-            has_ext_directed_edges: !intermediate.ext_directed_edges.is_empty(),
-            sw_corner: intermediate.sw_corner,
-            dataset_id: intermediate.dataset_id,
-            node_count: intermediate.nodes.len(),
-            directed_edge_count: intermediate.directed_edges.len(),
-            predicted_speed_profile_count: intermediate.predicted_speed_profile_memory.len()
-                / COEFFICIENT_COUNT,
-            transition_count: intermediate.transitions.len(),
-            turn_lane_count: intermediate.turn_lanes.len(),
-            transfer_count: intermediate.transit_transfers.len(),
-            departure_count: intermediate.transit_departures.len(),
-            stop_count: intermediate.transit_stops.len(),
-            route_count: intermediate.transit_routes.len(),
-            schedule_count: intermediate.transit_schedules.len(),
-            sign_count: intermediate.signs.len(),
-            access_restriction_count: intermediate.access_restrictions.len(),
-            admin_count: intermediate.admins.len(),
-            create_date: intermediate.create_date,
-            bin_offsets: intermediate.remove_me_header.bin_offsets.map(Into::into),
-            complex_forward_restrictions_size: intermediate
-                .complex_forward_restrictions_memory
-                .len(),
-            complex_reverse_restrictions_size: intermediate
-                .complex_reverse_restrictions_memory
-                .len(),
-            edge_info_size: intermediate.edge_info_memory.len(),
-            text_list_size: intermediate.text_memory.len(),
-            lane_connectivity_size: intermediate.lane_connectivity_memory.len(),
-        };
-        // Meh extra alloc...
-        let header_bytes = header.build()?.as_bytes().to_vec();
-
-        Ok(TileByteIter {
-            header: header_bytes,
+        let mut tile = TileByteIter {
+            header: Vec::new(),
             stage: TileBuildStage::Header,
             nodes: intermediate.nodes,
             transitions: intermediate.transitions,
@@ -479,6 +465,7 @@ impl GraphTileBuilder<'_> {
             turn_lanes: intermediate.turn_lanes,
             admins: intermediate.admins,
             edge_bins: intermediate.edge_bins,
+            bounding_circles: intermediate.bounding_circles,
             complex_forward_restrictions_memory: intermediate.complex_forward_restrictions_memory,
             complex_reverse_restrictions_memory: intermediate.complex_reverse_restrictions_memory,
             edge_info_memory: intermediate.edge_info_memory,
@@ -486,7 +473,53 @@ impl GraphTileBuilder<'_> {
             lane_connectivity_memory: intermediate.lane_connectivity_memory,
             predicted_speed_offsets: intermediate.predicted_speed_offsets,
             predicted_speed_profile_memory: intermediate.predicted_speed_profile_memory,
-        })
+        };
+
+        // The header holds a hash of everything after it,
+        // so we hash the body before producing the header.
+        let mut hasher = TileHasher::new();
+        for section in tile.body_sections() {
+            hasher.update(section);
+        }
+        let tile_hash = hasher.finish();
+
+        // Build the header from the finalized state, then own the header bytes.
+        let header = GraphTileHeaderBuilder {
+            version: intermediate.writer_version,
+            graph_id: intermediate.graph_id,
+            density: intermediate.remove_me_header.density(),
+            has_elevation: intermediate.remove_me_header.has_elevation(),
+            has_ext_directed_edges: !tile.ext_directed_edges.is_empty(),
+            sw_corner: intermediate.sw_corner,
+            dataset_id: intermediate.dataset_id,
+            node_count: tile.nodes.len(),
+            directed_edge_count: tile.directed_edges.len(),
+            predicted_speed_profile_count: tile.predicted_speed_profile_memory.len()
+                / COEFFICIENT_COUNT,
+            transition_count: tile.transitions.len(),
+            turn_lane_count: tile.turn_lanes.len(),
+            transfer_count: tile.transit_transfers.len(),
+            departure_count: tile.transit_departures.len(),
+            stop_count: tile.transit_stops.len(),
+            route_count: tile.transit_routes.len(),
+            schedule_count: tile.transit_schedules.len(),
+            sign_count: tile.signs.len(),
+            access_restriction_count: tile.access_restrictions.len(),
+            admin_count: tile.admins.len(),
+            create_date: intermediate.create_date,
+            bin_offsets: intermediate.remove_me_header.bin_offsets.map(Into::into),
+            bounding_circle_count: tile.bounding_circles.len(),
+            checksum: checksum(intermediate.build_id, tile_hash),
+            complex_forward_restrictions_size: tile.complex_forward_restrictions_memory.len(),
+            complex_reverse_restrictions_size: tile.complex_reverse_restrictions_memory.len(),
+            edge_info_size: tile.edge_info_memory.len(),
+            text_list_size: tile.text_memory.len(),
+            lane_connectivity_size: tile.lane_connectivity_memory.len(),
+        };
+        // Meh extra alloc...
+        tile.header = header.build()?.as_bytes().to_vec();
+
+        Ok(tile)
     }
 
     /// Serializes the tile as owned bytes.
@@ -532,6 +565,7 @@ struct TileByteIter<'a> {
     turn_lanes: Cow<'a, [TurnLane]>,
     admins: Cow<'a, [Admin]>,
     edge_bins: Cow<'a, [GraphId]>,
+    bounding_circles: Cow<'a, [DiscretizedBoundingCircle]>,
     complex_forward_restrictions_memory: Cow<'a, [u8]>,
     complex_reverse_restrictions_memory: Cow<'a, [u8]>,
     edge_info_memory: Cow<'a, [u8]>,
@@ -563,6 +597,7 @@ enum TileBuildStage {
     TurnLanes,
     Admins,
     EdgeBins,
+    BoundingCircles,
     ComplexForwardRestrictions,
     ComplexReverseRestrictions,
     EdgeInfo,
@@ -578,6 +613,38 @@ impl TileBuildStage {
         let current: u8 = self.into();
 
         TileBuildStage::try_from(current + 1).unwrap_or(TileBuildStage::Done)
+    }
+}
+
+impl TileByteIter<'_> {
+    /// The raw bytes of every section after the header, in the order they are stored on disk.
+    ///
+    /// This must stay in sync with [`TileBuildStage`] and [`Iterator::next`].
+    fn body_sections(&self) -> [&[u8]; 22] {
+        [
+            self.nodes.as_bytes(),
+            self.transitions.as_bytes(),
+            self.directed_edges.as_bytes(),
+            self.ext_directed_edges.as_bytes(),
+            self.access_restrictions.as_bytes(),
+            self.transit_departures.as_bytes(),
+            self.transit_stops.as_bytes(),
+            self.transit_routes.as_bytes(),
+            self.transit_schedules.as_bytes(),
+            self.transit_transfers.as_bytes(),
+            self.signs.as_bytes(),
+            self.turn_lanes.as_bytes(),
+            self.admins.as_bytes(),
+            self.edge_bins.as_bytes(),
+            self.bounding_circles.as_bytes(),
+            self.complex_forward_restrictions_memory.as_bytes(),
+            self.complex_reverse_restrictions_memory.as_bytes(),
+            self.edge_info_memory.as_bytes(),
+            self.text_memory.as_bytes(),
+            self.lane_connectivity_memory.as_bytes(),
+            self.predicted_speed_offsets.as_bytes(),
+            self.predicted_speed_profile_memory.as_bytes(),
+        ]
     }
 }
 
@@ -617,6 +684,9 @@ impl Iterator for TileByteIter<'_> {
             TileBuildStage::TurnLanes => bytes_from_items(std::mem::take(&mut self.turn_lanes)),
             TileBuildStage::Admins => bytes_from_items(std::mem::take(&mut self.admins)),
             TileBuildStage::EdgeBins => bytes_from_items(std::mem::take(&mut self.edge_bins)),
+            TileBuildStage::BoundingCircles => {
+                bytes_from_items(std::mem::take(&mut self.bounding_circles))
+            }
             TileBuildStage::ComplexForwardRestrictions => bytes_from_items(std::mem::take(
                 &mut self.complex_forward_restrictions_memory,
             )),
@@ -664,7 +734,9 @@ where
 #[cfg(test)]
 mod tests {
     use crate::graph_tile::predicted_speeds::COEFFICIENT_COUNT;
-    use crate::graph_tile::{GraphTileBuilder, GraphTileHeader, OwnedGraphTileHandle};
+    use crate::graph_tile::{
+        BuildId, GraphTile, GraphTileBuilder, GraphTileHeader, OwnedGraphTileHandle, TileHash,
+    };
     use std::path::Path;
     use walkdir::WalkDir;
 
@@ -771,7 +843,8 @@ mod tests {
         // 0/3015/0,50,40,
         // 0/3015/42,100,42,BcUACQAEACEADP/7/9sAGf/fAAwAGwARAAX/+AAAAB0AFAAS//AAF//+ACwACQAqAAAAKP/6AEMABABsAAsBBAAq/rcAAP+bAAz/zv/s/9MABf/Y//X/8//9/+wACf/P//EADv/8//L//P/y//H////7AAwAFf/5//oADgAZAAQAFf/3/+8AB//yAB8ABv/0AAUAEf/8//QAFAAG//b////j//v//QAT//7/+f/kABMABwABAAv/6//8//cAEwAAABT/8v/6//wAAAAQ//cACwAFAAT/1//sAAEADAABAAYAE//9AAn/7gAH/+AAFQAB//4AC//o/+gAE//+AAAAFf/l//kABP/+//kACAAG//cAHv/qAB0AAv/4/+v/+wALAAMABP/3AAT/8wAIAAr/9wAK//j/+wAEAAD/+P/8//v/8f/2//L//AALAAcABgAG//gAAv/5AAoAHv//AAcAFf/zABD/7AAUAAv/7v/8AAgACAAN//0ADP/iABD/9f/3//7/+P/3AAQADP//AAMABw==
         // 0/3015/7,12,34,CKD/4f/r/+H/6//g/+v/4P/q/9//6v/f/+r/3v/q/93/6f/b/+n/2v/o/9f/5//V/+b/0f/l/8z/4//G/+D/vf/d/67/1/+V/8z/Xf+u/nz+GwLJAEcAqwAWAFwABwA8AAAAK//8ACD/+AAZ//YAE//0AA//8gAM//AACf/uAAb/7AAE/+kAAv/m////4v/9/93/+f/U//T/xf/q/5//y/6PAQMAngApADkAFwAfABAAEwAMAAwACQAHAAcAAwAGAAAABf/9AAT/+wAD//kAA//2AAL/9AAC//EAAf/tAAH/6AAA/+EAAP/U////tv///x8AFADL//8AQ///ACf//gAa//4AE//+AA7//QAL//0ACP/9AAb//AAE//wAAv/8AAD/+//+//v//P/6//r/+v/2//n/8v/4/+v/9f/b/+//nP+TALoADAAyAAMAHgAAABX//gAQ//0ADf/9AAv//AAJ//sAB//7AAb/+gAF//kABP/4AAP/9wAC//YAAf/1AAD/8//+//D//P/q//f/2w==
-        let out_bytes = GraphTileBuilder::from(&tile_handle)
+        let enriched = || {
+            GraphTileBuilder::from(&tile_handle)
             // Typical flow speeds
             .with_average_speeds(0, 50, 40).unwrap()
             .with_average_speeds(42, 100, 42).unwrap()
@@ -780,7 +853,46 @@ mod tests {
             // Granular predicted (historical) speeds
             .with_predicted_encoded_speeds(7, "CKD/4f/r/+H/6//g/+v/4P/q/9//6v/f/+r/3v/q/93/6f/b/+n/2v/o/9f/5//V/+b/0f/l/8z/4//G/+D/vf/d/67/1/+V/8z/Xf+u/nz+GwLJAEcAqwAWAFwABwA8AAAAK//8ACD/+AAZ//YAE//0AA//8gAM//AACf/uAAb/7AAE/+kAAv/m////4v/9/93/+f/U//T/xf/q/5//y/6PAQMAngApADkAFwAfABAAEwAMAAwACQAHAAcAAwAGAAAABf/9AAT/+wAD//kAA//2AAL/9AAC//EAAf/tAAH/6AAA/+EAAP/U////tv///x8AFADL//8AQ///ACf//gAa//4AE//+AA7//QAL//0ACP/9AAb//AAE//wAAv/8AAD/+//+//v//P/6//r/+v/2//n/8v/4/+v/9f/b/+//nP+TALoADAAyAAMAHgAAABX//gAQ//0ADf/9AAv//AAJ//sAB//7AAb/+gAF//kABP/4AAP/9wAC//YAAf/1AAD/8//+//D//P/q//f/2w==").unwrap()
             .with_predicted_encoded_speeds(42, "BcUACQAEACEADP/7/9sAGf/fAAwAGwARAAX/+AAAAB0AFAAS//AAF//+ACwACQAqAAAAKP/6AEMABABsAAsBBAAq/rcAAP+bAAz/zv/s/9MABf/Y//X/8//9/+wACf/P//EADv/8//L//P/y//H////7AAwAFf/5//oADgAZAAQAFf/3/+8AB//yAB8ABv/0AAUAEf/8//QAFAAG//b////j//v//QAT//7/+f/kABMABwABAAv/6//8//cAEwAAABT/8v/6//wAAAAQ//cACwAFAAT/1//sAAEADAABAAYAE//9AAn/7gAH/+AAFQAB//4AC//o/+gAE//+AAAAFf/l//kABP/+//kACAAG//cAHv/qAB0AAv/4/+v/+wALAAMABP/3AAT/8wAIAAr/9wAK//j/+wAEAAD/+P/8//v/8f/2//L//AALAAcABgAG//gAAv/5AAoAHv//AAcAFf/zABD/7AAUAAv/7v/8AAgACAAN//0ADP/iABD/9f/3//7/+P/3AAQADP//AAMABw==").unwrap()
-            .into_bytes().unwrap();
+        };
+        let out_bytes = enriched().into_bytes().unwrap();
+
+        // Adding speeds changes this tile's hash, and thus the build ID of the whole tileset.
+        // Like valhalla_add_predicted_traffic, we compute the new build ID
+        // from the hashes of every tile in the set
+        // (the other tiles are unchanged, so we take their hashes from the original fixtures),
+        // then stamp it into the tile we changed.
+        let out_hash = OwnedGraphTileHandle::try_from(out_bytes.clone())
+            .expect("Unable to parse output tile")
+            .header()
+            .tile_hash();
+        let mut tile_hashes = vec![out_hash];
+        for entry in WalkDir::new(&base_dir) {
+            let entry = entry.expect("Unable to traverse directory");
+            if entry.file_type().is_file()
+                && entry.path().extension().is_some_and(|ext| ext == "gph")
+                && !entry.path().ends_with("0/003/015.gph")
+            {
+                let bytes = std::fs::read(entry.path()).expect("Unable to read file");
+                let header = OwnedGraphTileHandle::try_from(bytes)
+                    .expect("Unable to get tile handle")
+                    .header()
+                    .clone();
+                tile_hashes.push(header.tile_hash());
+            }
+        }
+        assert_eq!(
+            tile_hashes.len(),
+            7,
+            "Expected every tile in the fixture tileset"
+        );
+        let build_id = BuildId::of_tileset(tile_hashes);
+        assert_ne!(
+            build_id,
+            tile_handle.header().build_id(),
+            "Changing a tile should change the build ID"
+        );
+        let mut out_bytes = out_bytes;
+        GraphTileHeader::stamp_build_id(&mut out_bytes, build_id).expect("Unable to stamp");
 
         let base_dir_with_traffic = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures")
@@ -794,6 +906,52 @@ mod tests {
         }
 
         assert_eq!(out_bytes, expected_out_bytes);
+
+        // Supplying the build ID up front must give the same result.
+        let out_bytes_with_build_id = enriched().with_build_id(build_id).into_bytes().unwrap();
+        assert_eq!(out_bytes_with_build_id, expected_out_bytes);
+    }
+
+    #[test]
+    fn modified_tile_keeps_edge_bins_and_bounding_circles() {
+        // Unlike Valhalla's StoreTileData, rewriting a tile must keep the edge bins
+        // and bounding circles, with offsets that agree with the new layout.
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures")
+            .join("andorra-tiles")
+            .join("2")
+            .join("000")
+            .join("762")
+            .join("485.gph");
+        let original =
+            OwnedGraphTileHandle::try_from(std::fs::read(path).expect("Unable to read file"))
+                .expect("Unable to get tile handle");
+        assert!(original.header().has_bounding_circles());
+
+        let out_bytes = GraphTileBuilder::from(&original)
+            .with_predicted_speed_coefficients(3, &[7; COEFFICIENT_COUNT])
+            .unwrap()
+            .into_bytes()
+            .unwrap();
+        // Parsing checks that the circles start right after the bins
+        // and end right where the complex restrictions start.
+        let modified = OwnedGraphTileHandle::try_from(out_bytes.clone())
+            .expect("Unable to parse the modified tile");
+        assert!(modified.header().has_bounding_circles());
+        assert_eq!(modified.header().predicted_speeds_count(), 1);
+        assert_ne!(modified.header().tile_hash(), original.header().tile_hash());
+        assert_eq!(modified.header().build_id(), original.header().build_id());
+        assert_eq!(
+            modified.header().tile_hash(),
+            TileHash::of_tile_data(&out_bytes[size_of::<GraphTileHeader>()..])
+        );
+        for bin in 0..crate::BIN_COUNT {
+            assert_eq!(modified.edges_in_bin(bin), original.edges_in_bin(bin));
+            assert_eq!(
+                modified.bounding_circles_in_bin(bin),
+                original.bounding_circles_in_bin(bin)
+            );
+        }
     }
 
     #[test]

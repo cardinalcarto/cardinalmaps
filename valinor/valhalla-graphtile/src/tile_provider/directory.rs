@@ -287,8 +287,8 @@ mod test {
         //
         //   LOG_INFO("Shortcut " + std::to_string(edge_id) + " contains edges: " + oss.str());
         // }
-        let expected_shortcut_id = GraphId::try_from_components(0, 3015, 1).unwrap();
-        let graph_id = GraphId::try_from_components(0, 3015, 4).unwrap();
+        let expected_shortcut_id = GraphId::try_from_components(0, 3015, 0).unwrap();
+        let graph_id = GraphId::try_from_components(0, 3015, 5).unwrap();
         let shortcut_id = provider
             .get_shortcut(graph_id)
             .expect("Unable to get shortcut")
@@ -296,7 +296,7 @@ mod test {
 
         assert_eq!(shortcut_id, expected_shortcut_id);
 
-        let graph_id = GraphId::try_from_components(0, 3015, 19).unwrap();
+        let graph_id = GraphId::try_from_components(0, 3015, 386).unwrap();
         let shortcut_id = provider
             .get_shortcut(graph_id)
             .expect("Unable to get shortcut")
@@ -372,18 +372,25 @@ mod test {
                         assert!(found_match, "Couldn't find any matching sub-geometry. Shortcut = {shortcut_edge_geom:?}; Edge = {edge_geom:?}");
                     }
 
-                    edges_inside_shortcuts += 1;
+                    // Shortcuts resolve to themselves; only count the edges they contain.
+                    if edge.is_shortcut() {
+                        assert_eq!(shortcut_id, graph_id, "Shortcuts should resolve to themselves");
+                    } else {
+                        edges_inside_shortcuts += 1;
+                    }
                     unique_shortcut_ids.insert(shortcut_id);
                 }
             }
 
             assert!(found_non_superseded_edge_with_shortcuts, "Expected to find non-superseded edges with shortcuts too");
-            // You can verify and ballpark check (respectively) these numbers using the above C++ snippet in valhalla_ways_to_edges.cpp
-            assert_eq!(unique_shortcut_ids.len(), 414);
+            // These match GraphReader::RecoverShortcut in Valhalla 3.9.1
+            // over every shortcut in this tile (see the C++ snippet above):
+            // there are 530 shortcuts, which contain 2710 edges in this tile.
+            assert_eq!(unique_shortcut_ids.len(), 530);
             // We do a precise check here (even though it would break with a fixture tile rebuild)
             // to ensure we don't accidentally break the get_shortcut method in a subtle way
             // so that some shortcuts aren't reported.
-            assert_eq!(edges_inside_shortcuts, 2448);
+            assert_eq!(edges_inside_shortcuts, 2710);
         });
     }
 

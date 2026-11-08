@@ -376,6 +376,7 @@ impl NodeInfo {
 
 #[cfg(test)]
 mod test {
+    use crate::Access;
     use crate::graph_tile::{GraphTile, TEST_GRAPH_TILE_L0};
     use enumset::EnumSet;
 
@@ -400,11 +401,16 @@ mod test {
 
         // Sanity check our coordinate parsing
         let coord = tile_view.nodes[0].coordinate(tile.header().sw_corner());
-        assert!(coord.x - 1.5008542999999999 < f32::EPSILON);
-        assert!(coord.y - 42.493887200000003 < f32::EPSILON);
+        // (cross-checked with NodeInfo::latlng in Valhalla 3.9.1)
+        assert!(coord.x - 1.4436321000000001 < f32::EPSILON);
+        assert!(coord.y - 42.4953225 < f32::EPSILON);
 
         // TODO: Find some examples of restricted access
-        assert_eq!(tile_view.nodes[0].access(), EnumSet::all());
+        // Every mode except golf carts (access 2047 in Valhalla 3.9.1).
+        assert_eq!(
+            tile_view.nodes[0].access(),
+            EnumSet::all() - Access::GolfCart
+        );
 
         // TODO: Test the headings
     }

@@ -24,6 +24,7 @@ bit-twiddling-helpers = { workspace = true }
 enumset = { workspace = true }
 integer-encoding = { workspace = true }
 lru = { workspace = true }
+md-5 = { workspace = true }
 memmap2 = { workspace = true }
 nutype = { workspace = true }
 num_enum = { workspace = true }
