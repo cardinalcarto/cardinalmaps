@@ -5,7 +5,7 @@ use crate::interrupt::Interrupted;
 use http::header::{ACCESS_CONTROL_ALLOW_ORIGIN, CONNECTION, CONTENT_LENGTH, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, StatusCode};
 use serde::Serialize;
-use valhalla_proto::Api;
+use valhalla_proto::{Api, Options};
 use valhalla_response::{ERROR_CONTENT_TYPE, ValhallaError};
 
 /// The `Content-Type` mainline uses for JSON responses.
@@ -94,6 +94,32 @@ impl WorkerResult {
             status_code,
             headers,
             body,
+        }
+    }
+
+    /// Runs a stage that passes its result on (see "Stage contract" in `docs/routing.md`),
+    /// forwarding the `Api` it returns or answering the client with its error.
+    ///
+    /// The stage consumes the request, but mainline serializes an error
+    /// for the request's format and includes the request's `info` in PBF errors,
+    /// so this keeps the action, format, and `info` aside before running the stage.
+    /// (Warnings the stage added before failing are lost with the request.)
+    pub fn from_stage(
+        request: Api,
+        stage: impl FnOnce(Api) -> Result<Api, ValhallaError>,
+    ) -> WorkerResult {
+        let mut error_request = Api {
+            options: request.options.as_ref().map(|options| Options {
+                action: options.action,
+                format: options.format,
+                ..Options::default()
+            }),
+            info: request.info.clone(),
+            ..Api::default()
+        };
+        match stage(request) {
+            Ok(api) => WorkerResult::forward(api),
+            Err(error) => WorkerResult::error(&error, &mut error_request),
         }
     }
 }
@@ -214,6 +240,57 @@ mod tests {
             String::from_utf8(response).expect("UTF-8"),
             "HTTP/1.1 400 Bad Request\r\naccess-control-allow-origin: *\r\nconnection: Close\r\ncontent-length: 2\r\n\r\n{}"
         );
+    }
+
+    #[test]
+    fn from_stage_forwards_success() {
+        let result = WorkerResult::from_stage(Api::default(), |mut api| {
+            api.status = Some(valhalla_proto::Status::default());
+            Ok(api)
+        });
+        let WorkerResult::Forward(api) = result else {
+            panic!("expected a forward");
+        };
+        assert!(api.status.is_some());
+    }
+
+    #[test]
+    fn from_stage_serializes_errors_for_the_request() {
+        let request = Api {
+            options: Some(Options {
+                action: valhalla_proto::options::Action::Route.into(),
+                format: valhalla_proto::options::Format::Pbf.into(),
+                ..Default::default()
+            }),
+            info: Some(valhalla_proto::Info {
+                warnings: vec![valhalla_proto::CodedDescription {
+                    description: "from Loki".to_string(),
+                    code: 100,
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let result = WorkerResult::from_stage(request, |_| {
+            Err(ValhallaError::new(
+                valhalla_response::ErrorCode::NoPathFound,
+            ))
+        });
+        let WorkerResult::HttpResponse {
+            status_code, body, ..
+        } = result
+        else {
+            panic!("expected an HTTP response");
+        };
+        assert_eq!(status_code, StatusCode::BAD_REQUEST);
+        // A PBF error: the request's info, plus the error and its statistic.
+        let info = <Api as valhalla_proto::prost::Message>::decode(body.as_slice())
+            .expect("valid Api")
+            .info
+            .expect("info");
+        assert_eq!(info.warnings[0].description, "from Loki");
+        assert_eq!(info.errors[0].code, 442);
+        assert_eq!(info.statistics[0].key, "route.warn.thor.no_path");
     }
 
     #[test]
