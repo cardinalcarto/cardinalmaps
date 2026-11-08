@@ -257,6 +257,18 @@ pub trait GraphTile {
         access_modes: EnumSet<Access>,
     ) -> Vec<&AccessRestriction>;
 
+    /// Gets every access restriction of a directed edge, for all access modes,
+    /// in tile order.
+    ///
+    /// This is [`get_access_restrictions`](Self::get_access_restrictions) without the mode filter,
+    /// as a borrowed slice, for callers that can't afford an allocation.
+    /// Filter by [`AccessRestriction::affected_access_modes`] to get the same records.
+    ///
+    /// # Performance
+    ///
+    /// This is a binary search over the tile's restrictions and allocates nothing.
+    fn edge_access_restrictions(&self, directed_edge_index: u32) -> &[AccessRestriction];
+
     /// Gets predicted speed information for a directed edge.
     ///
     /// `seconds_from_start_of_week` is measured from midnight Sunday **local time**.
@@ -563,6 +575,11 @@ where
     }
 
     #[inline]
+    fn edge_access_restrictions(&self, directed_edge_index: u32) -> &[AccessRestriction] {
+        self.deref().edge_access_restrictions(directed_edge_index)
+    }
+
+    #[inline]
     fn get_predicted_speed(
         &self,
         directed_edge_index: usize,
@@ -757,19 +774,22 @@ impl GraphTile for GraphTileView<'_> {
         directed_edge_index: u32,
         access_modes: EnumSet<Access>,
     ) -> Vec<&AccessRestriction> {
-        // Find the point such that all elements below index are less than directed_edge_index
-        // (NOTE: the list is pre-sorted during tile building)
-        let index = self
-            .access_restrictions
-            .partition_point(|e| e.edge_index() < directed_edge_index);
-
-        self.access_restrictions
+        self.edge_access_restrictions(directed_edge_index)
             .iter()
-            // Iterate over the relevant objects (this is an empty iterator if index >= length)
-            .skip(index)
-            .take_while(|e| e.edge_index() == directed_edge_index)
             .filter(|e| !e.affected_access_modes().is_disjoint(access_modes))
             .collect()
+    }
+
+    #[inline]
+    fn edge_access_restrictions(&self, directed_edge_index: u32) -> &[AccessRestriction] {
+        // Find the point such that all elements below index are less than directed_edge_index
+        // (NOTE: the list is pre-sorted during tile building)
+        let start = self
+            .access_restrictions
+            .partition_point(|e| e.edge_index() < directed_edge_index);
+        let rest = &self.access_restrictions[start..];
+        let len = rest.partition_point(|e| e.edge_index() == directed_edge_index);
+        &rest[..len]
     }
 
     fn get_predicted_speed(
@@ -1251,6 +1271,25 @@ mod tests {
         // (cross-checked with GraphTile::GetAccessRestrictions in Valhalla 3.9.1)
         assert_eq!(found_restriction_count, 20);
         assert_eq!(found_partial_subset_count, 20);
+    }
+
+    #[test]
+    fn test_edge_access_restrictions_match_a_linear_scan() {
+        for tile in [&*TEST_GRAPH_TILE_L0, &*TEST_GRAPH_TILE_L2] {
+            let all = tile.borrow_dependent().access_restrictions;
+            let mut total = 0;
+            // One past the last edge too, which has no restrictions.
+            for edge_index in 0..=tile.header().directed_edge_count() {
+                let expected: Vec<_> = all
+                    .iter()
+                    .filter(|r| r.edge_index() == edge_index)
+                    .collect();
+                let found: Vec<_> = tile.edge_access_restrictions(edge_index).iter().collect();
+                assert_eq!(found, expected, "edge {edge_index}");
+                total += found.len();
+            }
+            assert_eq!(total, all.len());
+        }
     }
 
     #[test]

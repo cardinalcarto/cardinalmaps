@@ -99,6 +99,12 @@ impl GraphTile for OwnedGraphTileHandle {
     }
 
     #[inline]
+    fn edge_access_restrictions(&self, directed_edge_index: u32) -> &[AccessRestriction] {
+        self.borrow_dependent()
+            .edge_access_restrictions(directed_edge_index)
+    }
+
+    #[inline]
     fn get_predicted_speed(
         &self,
         directed_edge_index: usize,
@@ -217,6 +223,12 @@ impl GraphTile for MmapGraphTileHandle {
     ) -> Vec<&AccessRestriction> {
         self.borrow_dependent()
             .get_access_restrictions(directed_edge_index, access_modes)
+    }
+
+    #[inline]
+    fn edge_access_restrictions(&self, directed_edge_index: u32) -> &[AccessRestriction] {
+        self.borrow_dependent()
+            .edge_access_restrictions(directed_edge_index)
     }
 
     #[inline]

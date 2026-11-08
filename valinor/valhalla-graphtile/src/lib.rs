@@ -81,7 +81,7 @@ impl RoadClass {
 /// Certain costing models use this to avoid or disallow edges
 /// which are "too rough" or an appropriate for the vehicle type to travel on.
 #[repr(u8)]
-#[derive(TryFromBytes, Debug, Eq, PartialEq)]
+#[derive(TryFromBytes, Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum Surface {
     PavedSmooth,
@@ -119,7 +119,7 @@ impl Surface {
 }
 
 /// Sub-categorization of roads based on specialized usage.
-#[derive(TryFromBytes, Debug, Eq, PartialEq)]
+#[derive(TryFromBytes, Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[repr(u8)]
 pub enum RoadUse {
