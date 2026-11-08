@@ -78,6 +78,8 @@ struct CurrentStyle {
     used_layers: Vec<HashSet<String>>,
     /// Per source, the index GeoJSON sources' tiles are cut from.
     geojson: Vec<Option<Arc<GeoJsonIndex>>>,
+    /// Sprite images for icons and patterns.
+    images: Option<Arc<ImageAtlas>>,
 }
 
 impl CurrentStyle {
@@ -86,6 +88,7 @@ impl CurrentStyle {
         style: Arc<Style>,
         sources: &[SourceConfig],
         geojson: Vec<Option<Arc<GeoJsonIndex>>>,
+        images: Option<Arc<ImageAtlas>>,
     ) -> Self {
         let used_layers = sources
             .iter()
@@ -103,6 +106,7 @@ impl CurrentStyle {
             style,
             used_layers,
             geojson,
+            images,
         }
     }
 }
@@ -142,6 +146,7 @@ impl TileLoader {
             config.style.clone(),
             &config.sources,
             config.sources.iter().map(|s| s.geojson.clone()).collect(),
+            config.images.clone(),
         ))));
         // Fonts are found and read as text first needs them, shared by all workers.
         let glyphs = Arc::new(FontLibrary::new(config.fonts.clone()));
@@ -193,11 +198,11 @@ impl TileLoader {
                         let worker = Worker {
                             reader: readers[source].as_ref(),
                             fetcher: fetcher.as_deref(),
-                            config: &config,
                             style: &current.style,
                             source: &config.sources[source],
                             geojson: current.geojson[source].as_ref(),
                             used_layers: &current.used_layers[source],
+                            images: current.images.as_deref(),
                             glyphs: &glyphs,
                         };
                         let fetched = match job {
@@ -245,8 +250,22 @@ impl TileLoader {
             style,
             &self.config.sources,
             geojson,
+            current.images.clone(),
         ));
         generation
+    }
+
+    /// Process tiles from now on with `images`, which must have what the current ones
+    /// have in the same places (see [`ImageAtlas::with_images`]).
+    pub fn set_images(&self, images: Arc<ImageAtlas>) {
+        let mut current = self.current.write().unwrap();
+        *current = Arc::new(CurrentStyle::new(
+            current.generation,
+            current.style.clone(),
+            &self.config.sources,
+            current.geojson.clone(),
+            Some(images),
+        ));
     }
 
     /// Cut tiles of GeoJSON source `source` requested from now on from `index`. Returns
@@ -261,6 +280,7 @@ impl TileLoader {
             current.style.clone(),
             &self.config.sources,
             geojson,
+            current.images.clone(),
         ));
         generation
     }
@@ -323,12 +343,12 @@ struct Worker<'a> {
     reader: Option<&'a MbTiles>,
     /// Set if some source is a tile server.
     fetcher: Option<&'a Fetcher>,
-    config: &'a LoaderConfig,
     style: &'a Style,
     source: &'a SourceConfig,
     /// The index of a GeoJSON source.
     geojson: Option<&'a Arc<GeoJsonIndex>>,
     used_layers: &'a HashSet<String>,
+    images: Option<&'a ImageAtlas>,
     glyphs: &'a FontLibrary,
 }
 
@@ -343,7 +363,7 @@ impl Worker<'_> {
     ) -> Result<Loaded> {
         let (_, id) = request;
         let resources = TileResources {
-            images: self.config.images.as_deref(),
+            images: self.images,
             glyphs: Some(self.glyphs),
         };
         if let Some(index) = self.geojson {

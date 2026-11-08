@@ -32,12 +32,15 @@ class FakeSavedStore implements SavedStore {
 
   void _changed() => _changes.add(null);
 
-  int _topList(int? parent) => _lists
-      .where((r) => r.parentId == parent)
-      .fold(0, (lowest, r) => r.position < lowest ? r.position : lowest);
+  bool _startsShown(int? list) =>
+      list != null && _tree.shownState(list) == true;
 
   int _endList(int? parent) => _lists
       .where((r) => r.parentId == parent)
+      .fold(-1, (highest, r) => r.position > highest ? r.position : highest);
+
+  int _endPlace(int? parent) => _places
+      .where((r) => r.listId == parent)
       .fold(-1, (highest, r) => r.position > highest ? r.position : highest);
 
   int _topPlace(int? parent) => _places
@@ -59,6 +62,7 @@ class FakeSavedStore implements SavedStore {
         parentId: parent,
         name: name,
         position: _endList(parent) + 1,
+        shownOnMap: _startsShown(parent),
       ),
     );
     _changed();
@@ -73,6 +77,7 @@ class FakeSavedStore implements SavedStore {
         id: _nextEntry++,
         placeId: placeId,
         pinned: false,
+        shownOnMap: false,
         position: _topPlace(null) - 1,
         savedAt: DateTime(2026),
       ),
@@ -85,6 +90,7 @@ class FakeSavedStore implements SavedStore {
     SavedItem item, {
     required String name,
     String? note,
+    String? emoji,
   }) async {
     final blankNote = note == null || note.trim().isEmpty;
     switch (item) {
@@ -100,6 +106,7 @@ class FakeSavedStore implements SavedStore {
         _places[i] = _places[i].copyWith(
           name: Value(name.trim().isEmpty ? null : name.trim()),
           note: Value(blankNote ? null : note.trim()),
+          emoji: Value(emoji),
         );
     }
     _changed();
@@ -132,8 +139,10 @@ class FakeSavedStore implements SavedStore {
           listId: list,
           name: rows.firstOrNull?.name,
           note: rows.firstOrNull?.note,
+          emoji: rows.firstOrNull?.emoji,
           pinned: false,
-          position: _topPlace(list) - 1,
+          shownOnMap: _startsShown(list),
+          position: _endPlace(list) + 1,
           savedAt: DateTime(2026),
         ),
       );
@@ -143,10 +152,33 @@ class FakeSavedStore implements SavedStore {
   }
 
   @override
+  Future<void> setShown(SavedItem item, bool shown) async {
+    switch (item) {
+      case SavedPlace(:final entryId):
+        final i = _places.indexWhere((r) => r.id == entryId);
+        _places[i] = _places[i].copyWith(shownOnMap: shown);
+      case SavedList(:final id):
+        final lists = {id, ..._tree.descendants(id)};
+        for (final (i, row) in _lists.indexed) {
+          if (lists.contains(row.id)) {
+            _lists[i] = row.copyWith(shownOnMap: shown);
+          }
+        }
+        for (final (i, row) in _places.indexed) {
+          if (lists.contains(row.listId)) {
+            _places[i] = row.copyWith(shownOnMap: shown);
+          }
+        }
+    }
+    _changed();
+  }
+
+  @override
   Future<SavedSnapshot> copy(List<SavedPlace> items, int? to) async {
     final added = <int>[];
-    var position = _topPlace(to);
-    for (final item in items.reversed) {
+    final shown = _startsShown(to);
+    var position = _endPlace(to);
+    for (final item in items) {
       if (_places.any((r) => r.placeId == item.id && r.listId == to)) continue;
       final id = _nextEntry++;
       added.add(id);
@@ -157,8 +189,10 @@ class FakeSavedStore implements SavedStore {
           listId: to,
           name: item.customName,
           note: item.note,
+          emoji: item.emoji,
           pinned: false,
-          position: --position,
+          shownOnMap: shown,
+          position: ++position,
           savedAt: DateTime(2026),
         ),
       );
@@ -178,17 +212,41 @@ class FakeSavedStore implements SavedStore {
       }
     }
     final entries = places.map((p) => p.entryId).toSet();
+    final shown = _startsShown(to);
+    final turningOn = {
+      ...lists,
+      if (shown)
+        for (final id in lists) ...tree.descendants(id),
+    };
     final snapshot = SavedSnapshot(
-      lists: _lists.where((r) => lists.contains(r.id)).toList(),
-      places: _places.where((r) => entries.contains(r.id)).toList(),
+      lists: _lists.where((r) => turningOn.contains(r.id)).toList(),
+      places: _places
+          .where(
+            (r) =>
+                entries.contains(r.id) ||
+                (shown && turningOn.contains(r.listId)),
+          )
+          .toList(),
     );
-    var position = _topList(to);
-    for (final id in lists.reversed) {
-      final i = _lists.indexWhere((r) => r.id == id);
-      _lists[i] = _lists[i].copyWith(parentId: Value(to), position: --position);
+    if (shown) {
+      for (final (i, row) in _lists.indexed) {
+        if (turningOn.contains(row.id)) {
+          _lists[i] = row.copyWith(shownOnMap: true);
+        }
+      }
+      for (final (i, row) in _places.indexed) {
+        if (turningOn.contains(row.listId)) {
+          _places[i] = row.copyWith(shownOnMap: true);
+        }
+      }
     }
-    position = _topPlace(to);
-    for (final place in places.reversed) {
+    var position = _endList(to);
+    for (final id in lists) {
+      final i = _lists.indexWhere((r) => r.id == id);
+      _lists[i] = _lists[i].copyWith(parentId: Value(to), position: ++position);
+    }
+    position = _endPlace(to);
+    for (final place in places) {
       if (place.parent == to) continue;
       final i = _places.indexWhere((r) => r.id == place.entryId);
       if (_places.any((r) => r.placeId == place.id && r.listId == to)) {
@@ -196,7 +254,8 @@ class FakeSavedStore implements SavedStore {
       } else {
         _places[i] = _places[i].copyWith(
           listId: Value(to),
-          position: --position,
+          position: ++position,
+          shownOnMap: shown ? true : _places[i].shownOnMap,
         );
       }
     }

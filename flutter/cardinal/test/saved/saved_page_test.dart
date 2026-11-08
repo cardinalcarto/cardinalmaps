@@ -1,5 +1,6 @@
 import 'package:cardinal/home/navigation_bar.dart';
 import 'package:cardinal/routes.dart';
+import 'package:cardinal/saved/saved_names.dart';
 import 'package:cardinal/search/search_sheet.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -190,9 +191,6 @@ void main() {
 
       await tapAndSettle(tester, text('Food'));
       expect(enabled('Move'), isTrue);
-      expect(enabled('Edit'), isTrue);
-      // Only places can be pinned.
-      expect(enabled('Pin'), isFalse);
     });
 
     testWidgets('Move to a nested list, and Undo', (tester) async {
@@ -421,39 +419,190 @@ void main() {
       expect(t.copiesOf('poi:1').single.parent, t.listsIn(null).single.id);
     });
 
-    testWidgets('Pin puts a chip on the home sheet, and Unpin takes it off', (
-      tester,
-    ) async {
+    testWidgets('a place\'s pin toggles without selecting it', (tester) async {
       await place('poi:1', name: 'Cafe');
       await open(tester);
       await startEditing(tester);
-      await tapAndSettle(tester, text('Cafe'));
-      await tapAndSettle(tester, text('Pin'));
-      expect((await tree()).pinned, hasLength(1));
+      expect(text('Select items'), findsOneWidget);
 
-      await tapAndSettle(tester, text('Unpin'));
+      await tapAndSettle(tester, find.byTooltip('Pin'));
+      expect((await tree()).pinned, hasLength(1));
+      expect(text('Select items'), findsOneWidget);
+      IconButton pin() => tester.widget<IconButton>(
+        find.widgetWithIcon(IconButton, Icons.push_pin),
+      );
+      expect(pin().isSelected, isTrue);
+
+      await tapAndSettle(tester, find.byTooltip('Unpin'));
       expect((await tree()).pinned, isEmpty);
+    });
+
+    testWidgets('pins are per row, and lists have none', (tester) async {
+      await store.saved.createList('Food');
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      await open(tester);
+      await startEditing(tester);
+      expect(find.byTooltip('Pin'), findsNWidgets(2));
+      expect(find.byTooltip('Edit'), findsNWidgets(3));
+
+      await tapAndSettle(tester, find.byTooltip('Pin').last);
+      final pinned = (await tree()).pinned.single;
+      expect(savedName(pinned), 'Cafe');
+    });
+
+    testWidgets('the pencil edits its own row, whatever is selected', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      await open(tester);
+      await startEditing(tester);
+      await tapAndSettle(tester, text('Select all'));
+
+      await tapAndSettle(tester, find.byTooltip('Edit').last);
+      await tester.enterText(find.byType(TextField).first, 'Work');
+      await tester.pump();
+      await tapAndSettle(tester, text('Save'));
+      expect((await tree()).copiesOf('poi:1').single.customName, 'Work');
+      expect((await tree()).copiesOf('poi:2').single.customName, isNull);
+      expect(text('2 selected'), findsOneWidget);
+    });
+
+    testWidgets('the bar has only what acts on the selection', (tester) async {
+      await place('poi:1', name: 'Cafe');
+      await open(tester);
+      await startEditing(tester);
+      Finder inBar(String label) => find.ancestor(
+        of: text(label),
+        matching: find.byWidgetPredicate((w) => w is TextButton),
+      );
+      expect(inBar('Move'), findsOneWidget);
+      expect(inBar('Copy'), findsOneWidget);
+      expect(inBar('Delete'), findsOneWidget);
+      expect(inBar('Pin'), findsNothing);
     });
 
     testWidgets('Edit renames, and Delete with Undo', (tester) async {
       await place('poi:1', name: 'Cafe');
       await open(tester);
       await startEditing(tester);
-      await tapAndSettle(tester, text('Cafe'));
-
-      await tapAndSettle(tester, find.widgetWithText(TextButton, 'Edit').last);
+      await tapAndSettle(tester, find.byTooltip('Edit'));
       await tester.enterText(find.byType(TextField).first, 'Work');
-      await tester.enterText(find.byType(TextField).last, 'Quiet');
+      await tester.enterText(find.byType(TextField).at(1), 'Quiet');
       await tester.pump();
       await tapAndSettle(tester, text('Save'));
       expect(text('Work'), findsOneWidget);
       expect(text('Quiet'), findsOneWidget);
 
+      await tapAndSettle(tester, text('Work'));
       await tapAndSettle(tester, text('Delete'));
       expect((await tree()).copiesOf('poi:1'), isEmpty);
       expect(text('Work'), findsNothing);
       await tapAndSettle(tester, text('Undo'));
       expect((await tree()).copiesOf('poi:1'), isNotEmpty);
+    });
+
+    group('emoji', () {
+      Future<void> editCafe(WidgetTester tester) async {
+        await place('poi:1', name: 'Cafe');
+        await open(tester);
+        await startEditing(tester);
+        await tapAndSettle(tester, find.byTooltip('Edit'));
+      }
+
+      Finder anyEmoji() => find.widgetWithText(TextField, 'Any emoji');
+
+      testWidgets('a common one is a tap, and shows on the row', (
+        tester,
+      ) async {
+        await editCafe(tester);
+        await tapAndSettle(tester, text('🍕'));
+        await tapAndSettle(tester, text('Save'));
+        expect((await tree()).copiesOf('poi:1').single.emoji, '🍕');
+        await tapAndSettle(tester, text('Done'));
+        expect(text('🍕'), findsOneWidget);
+      });
+
+      testWidgets('the field keeps only the last emoji typed', (tester) async {
+        await editCafe(tester);
+        await tester.enterText(anyEmoji(), 'abc🦄');
+        await tester.pump();
+        expect(tester.widget<TextField>(anyEmoji()).controller!.text, '🦄');
+        await tester.enterText(anyEmoji(), 'abc');
+        await tester.pump();
+        expect(tester.widget<TextField>(anyEmoji()).controller!.text, '');
+        await tester.enterText(anyEmoji(), '🦄🐙');
+        await tester.pump();
+        await tapAndSettle(tester, text('Save'));
+        expect((await tree()).copiesOf('poi:1').single.emoji, '🐙');
+      });
+
+      testWidgets('a typed emoji shows once', (tester) async {
+        await editCafe(tester);
+        await tester.enterText(anyEmoji(), '🦄');
+        await tester.pump();
+        expect(text('🦄'), findsOneWidget);
+        expect(
+          tester.widget<TextField>(anyEmoji()).decoration!.prefixText,
+          null,
+        );
+      });
+
+      testWidgets('one from the keyboard is in the field next time', (
+        tester,
+      ) async {
+        await place('poi:1', name: 'Cafe');
+        await store.saved.edit(
+          (await tree()).copiesOf('poi:1').single,
+          name: '',
+          emoji: '🦄',
+        );
+        await open(tester);
+        await startEditing(tester);
+        await tapAndSettle(tester, find.byTooltip('Edit'));
+        expect(tester.widget<TextField>(anyEmoji()).controller!.text, '🦄');
+
+        // And emptying the field takes it away.
+        await tester.enterText(anyEmoji(), '');
+        await tester.pump();
+        await tapAndSettle(tester, text('Save'));
+        expect((await tree()).copiesOf('poi:1').single.emoji, isNull);
+      });
+
+      testWidgets('a common one is kept if the field is typed in', (
+        tester,
+      ) async {
+        await editCafe(tester);
+        await tapAndSettle(tester, text('🍕'));
+        await tester.enterText(anyEmoji(), 'abc');
+        await tester.pump();
+        await tapAndSettle(tester, text('Save'));
+        expect((await tree()).copiesOf('poi:1').single.emoji, '🍕');
+      });
+
+      testWidgets('None takes it away', (tester) async {
+        await place('poi:1', name: 'Cafe');
+        await store.saved.edit(
+          (await tree()).copiesOf('poi:1').single,
+          name: '',
+          emoji: '🍕',
+        );
+        await open(tester);
+        await startEditing(tester);
+        await tapAndSettle(tester, find.byTooltip('Edit'));
+        await tapAndSettle(tester, text('None'));
+        await tapAndSettle(tester, text('Save'));
+        expect((await tree()).copiesOf('poi:1').single.emoji, isNull);
+      });
+
+      testWidgets('lists don\'t have one', (tester) async {
+        await store.saved.createList('Food');
+        await open(tester);
+        await startEditing(tester);
+        await tapAndSettle(tester, find.byTooltip('Edit'));
+        expect(text('Emoji'), findsNothing);
+      });
     });
 
     testWidgets('handles reorder within places', (tester) async {
@@ -546,6 +695,19 @@ void main() {
     }
 
     Finder row(String label) => find.widgetWithText(CheckboxListTile, label);
+
+    testWidgets('Move… into a list that is on shows it on the map', (
+      tester,
+    ) async {
+      final food = await store.saved.createList('Food');
+      await store.saved.setShown((await tree()).list(food)!, true);
+      await card(tester);
+      await tapAndSettle(tester, find.widgetWithText(OutlinedButton, 'Save'));
+      await tapAndSettle(tester, text('Move…'));
+      await tapAndSettle(tester, text('Food'));
+      await tapAndSettle(tester, text('Move here'));
+      expect((await tree()).shownPlaces.single.id, 'poi:1');
+    });
 
     testWidgets('Manage shows only where it is, and adds through the picker', (
       tester,

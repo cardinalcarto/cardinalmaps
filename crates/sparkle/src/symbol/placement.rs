@@ -185,8 +185,9 @@ pub struct PlacedBucket {
     pub text: Vec<[f32; 4]>,
     /// One per vertex of [`SymbolBucket::icons`](crate::tile::SymbolBucket::icons).
     pub icons: Vec<[f32; 4]>,
-    /// Triangle lists in draw order, when labels overlap and are drawn sorted by how far
-    /// down the screen they are (`symbol-z-order`); `None` keeps the bucket's order.
+    /// Triangle lists in draw order, when labels overlap: by how far down the screen they
+    /// are for `symbol-z-order: viewport-y`, otherwise with those that win placement on
+    /// top. `None` keeps the bucket's order.
     pub text_triangles: Option<Vec<u32>>,
     pub icon_triangles: Option<Vec<u32>>,
     /// Changes whenever the triangle lists do.
@@ -249,6 +250,11 @@ struct LayerParams {
     place_by_y: bool,
     /// Draw labels lowest on screen last, when they may overlap.
     draw_by_y: bool,
+    /// Draw labels in reverse, when they may overlap: placement goes first to last, so
+    /// what wins a collision is also what's on top, and a label's text and icon are
+    /// never beaten by different labels. Where MapLibre has what's placed first
+    /// underneath, for `symbol-z-order: auto`.
+    draw_winners_on_top: bool,
 }
 
 /// `*-translate` in tile units, turned with the map unless anchored to the viewport.
@@ -297,20 +303,17 @@ impl LayerParams {
             ),
         };
         let z_order = l.symbol_z_order.evaluate_at_zoom(zoom);
-        let sort_by_key = z_order != SymbolZOrder::ViewportY
-            && !matches!(l.symbol_sort_key.as_constant(), Some(None));
         let can_overlap = text.overlap != Overlap::Never
             || icon.overlap != Overlap::Never
             || text.ignore_placement
             || icon.ignore_placement;
-        let by_y =
-            z_order == SymbolZOrder::ViewportY || (z_order == SymbolZOrder::Auto && !sort_by_key);
         Self {
             text_size: SizeAt::new(&l.text_size, zoom, labels.zoom),
             icon_size: SizeAt::new(&l.icon_size, zoom, labels.zoom),
             avoid_edges: l.symbol_avoid_edges.evaluate_at_zoom(zoom),
             place_by_y: z_order == SymbolZOrder::ViewportY,
-            draw_by_y: by_y && can_overlap,
+            draw_by_y: z_order == SymbolZOrder::ViewportY && can_overlap,
+            draw_winners_on_top: z_order == SymbolZOrder::Auto && can_overlap,
             text,
             icon,
         }
@@ -1018,11 +1021,18 @@ impl SymbolPlacer {
             }
         }
 
-        if params.draw_by_y && state.sorted_for != Some(view.bearing) {
-            state.sorted_for = Some(view.bearing);
-            let ys = viewport_ys(&labels, view.bearing);
+        let reordered = params.draw_by_y || params.draw_winners_on_top;
+        // Only an order by the screen depends on which way the map is turned.
+        let sorted_for = if params.draw_by_y { view.bearing } else { 0.0 };
+        if reordered && state.sorted_for != Some(sorted_for) {
+            state.sorted_for = Some(sorted_for);
             let mut order: Vec<usize> = (0..labels.instances.len()).collect();
-            order.sort_by(|&a, &b| ys[a].total_cmp(&ys[b]));
+            if params.draw_by_y {
+                let ys = viewport_ys(&labels, view.bearing);
+                order.sort_by(|&a, &b| ys[a].total_cmp(&ys[b]));
+            } else {
+                order.reverse();
+            }
             let triangles = |ranges: &mut dyn Iterator<Item = std::ops::Range<u32>>| {
                 ranges
                     .flat_map(|r| (r.start / 4..r.end / 4).map(|q| q * 4))
@@ -1037,7 +1047,7 @@ impl SymbolPlacer {
                 &mut order.iter().map(|&i| instances[i].icon_vertices.clone()),
             ));
             out.triangles_version += 1;
-        } else if !params.draw_by_y && state.sorted_for.take().is_some() {
+        } else if !reordered && state.sorted_for.take().is_some() {
             out.text_triangles = None;
             out.icon_triangles = None;
             out.triangles_version += 1;

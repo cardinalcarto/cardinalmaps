@@ -15,6 +15,7 @@ import '../sheet/sheet.dart';
 import '../store/store.dart';
 import 'layers.dart';
 import 'poi.dart';
+import 'saved_layer.dart';
 import 'viewport.dart';
 
 /// Provides the map's controller to the widgets below it.
@@ -59,6 +60,7 @@ class _CardinalMapState extends State<CardinalMap> {
   Future<void> _writing = Future.value();
 
   SettingsStore? _settings;
+  SavedMapLayer? _savedLayer;
   late final AppLifecycleListener _lifecycle;
   Timer? _viewSaver;
   MapViewport? _savedView;
@@ -91,6 +93,13 @@ class _CardinalMapState extends State<CardinalMap> {
   /// Starts the map in the stored layers, then follows the layer picker's choices.
   Future<List<String>> _start(SettingsStore settings) async {
     _settings = settings;
+    _savedLayer = SavedMapLayer(
+      store: StoreScope.of(context).saved,
+      map: widget.controller,
+      painter: discMarkerPainter(
+        WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio,
+      ),
+    )..start();
     final layers = await MapLayers.read(settings);
     final args = await _mapArgs(
       layers,
@@ -139,6 +148,7 @@ class _CardinalMapState extends State<CardinalMap> {
   @override
   void dispose() {
     _saveView();
+    _savedLayer?.dispose();
     _viewSaver?.cancel();
     _lifecycle.dispose();
     _sheet?.removeListener(_updatePadding);
@@ -158,9 +168,14 @@ class _CardinalMapState extends State<CardinalMap> {
     );
   }
 
-  /// Opens the card of the POI [features] has first, as a search result does: stores
-  /// what the map knows about it and goes to its ID.
+  /// Opens the card of what [features] has first: a saved place, or else a POI, as a
+  /// search result does, storing what the map knows about it and going to its ID.
   Future<void> _openPoi(List<ClickedFeature> features) async {
+    final saved = features.where((f) => f.source == savedSource).firstOrNull;
+    if (saved?.properties[savedPlaceProperty] case final id?) {
+      openPlaceFromMap(GoRouter.of(context), id);
+      return;
+    }
     final poi = features.where((f) => f.sourceLayer == poiLayer).firstOrNull;
     if (poi == null) return;
     // Now, while the tile is sure to be loaded: it names the smaller areas.
