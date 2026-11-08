@@ -160,6 +160,9 @@ impl core::fmt::Display for TarballEntry {
 /// Tiles that are not in the index are reported as
 /// [`GraphTileProviderError::TileNotAvailable`],
 /// which is expected for regional extracts.
+/// To detect extracts mixed from different builds, or with corrupt tile data, see
+/// [`TarballTileProvider::check_build_ids`] (cheap) and
+/// [`TarballTileProvider::verify_tileset`] (reads every tile).
 ///
 /// # Safety
 ///
@@ -325,6 +328,25 @@ impl<const MUT: bool, const CACHE: bool> TarballTileProvider<MUT, CACHE> {
     #[inline]
     pub fn tile_count(&self) -> usize {
         self.tile_index.len()
+    }
+
+    /// Pointers to every tile, in the order the tiles are stored in the file.
+    ///
+    /// Reading tiles in this order makes I/O sequential.
+    pub(super) fn tile_pointers_in_file_order(
+        &self,
+    ) -> impl Iterator<Item = (GraphId, MmapTilePointer)> + '_ {
+        let mut tiles: Vec<_> = self.tile_index.iter().collect();
+        tiles.sort_unstable_by_key(|(_, offsets)| offsets.offset);
+        tiles.into_iter().map(|(graph_id, offsets)| {
+            (
+                *graph_id,
+                MmapTilePointer {
+                    mmap: self.mmap.clone(),
+                    offsets: *offsets,
+                },
+            )
+        })
     }
 
     /// Does the tarball contain the tile that the given graph ID belongs to?

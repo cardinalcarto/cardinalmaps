@@ -26,6 +26,7 @@ use num_traits::FromPrimitive;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+mod consistency;
 mod directory;
 mod error;
 mod iterators;
@@ -35,6 +36,7 @@ mod traffic;
 use crate::graph_tile::{
     DirectedEdge, GraphTile, GraphTileView, LookupError, NodeInfo, OpposingEdgeIndex,
 };
+pub use consistency::{TileBuildIds, TileHashMismatch, TilesetVerification};
 pub use directory::DirectoryGraphTileProvider;
 pub use error::{
     GraphTileProviderError, GraphTileProviderErrorKind, InvalidSearchError, TileAvailability,
