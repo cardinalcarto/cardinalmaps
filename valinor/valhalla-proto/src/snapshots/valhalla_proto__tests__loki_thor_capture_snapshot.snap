@@ -1,0 +1,726 @@
+---
+source: valhalla-proto/src/lib.rs
+expression: api
+---
+Api {
+    options: Some(
+        Options {
+            units: Kilometers,
+            directions_type: Instructions,
+            format: Json,
+            action: Route,
+            range: false,
+            costing_type: Bicycle,
+            costings: {
+                1: Costing {
+                    r#type: Bicycle,
+                    has_options: Some(
+                        Options(
+                            Options {
+                                hazmat: false,
+                                wheelchair: false,
+                                bicycle: false,
+                                filter_stop_action: NoAction,
+                                filter_stop_ids: [],
+                                filter_operator_action: NoAction,
+                                filter_operator_ids: [],
+                                filter_route_action: NoAction,
+                                filter_route_ids: [],
+                                ignore_restrictions: false,
+                                ignore_oneways: false,
+                                ignore_access: false,
+                                shortest: false,
+                                exclude_unpaved: false,
+                                include_hot: false,
+                                include_hov2: false,
+                                include_hov3: false,
+                                exclude_cash_only_tolls: false,
+                                exclude_edges: [],
+                                fixed_speed: 0,
+                                axle_count: 0,
+                                use_lit: 0.0,
+                                disable_hierarchy_pruning: false,
+                                ignore_non_vehicular_restrictions: false,
+                                use_truck_route: 0.0,
+                                exclude_bridges: false,
+                                exclude_tunnels: false,
+                                exclude_tolls: false,
+                                exclude_highways: false,
+                                exclude_ferries: false,
+                                hierarchy_limits: {},
+                                ignore_construction: false,
+                                cost_factor_edges: [],
+                                has_maneuver_penalty: Some(
+                                    ManeuverPenalty(
+                                        5.0,
+                                    ),
+                                ),
+                                has_destination_only_penalty: Some(
+                                    DestinationOnlyPenalty(
+                                        600.0,
+                                    ),
+                                ),
+                                has_gate_cost: Some(
+                                    GateCost(
+                                        30.0,
+                                    ),
+                                ),
+                                has_gate_penalty: Some(
+                                    GatePenalty(
+                                        300.0,
+                                    ),
+                                ),
+                                has_toll_booth_cost: None,
+                                has_toll_booth_penalty: None,
+                                has_alley_penalty: Some(
+                                    AlleyPenalty(
+                                        60.0,
+                                    ),
+                                ),
+                                has_country_crossing_cost: Some(
+                                    CountryCrossingCost(
+                                        600.0,
+                                    ),
+                                ),
+                                has_country_crossing_penalty: Some(
+                                    CountryCrossingPenalty(
+                                        0.0,
+                                    ),
+                                ),
+                                has_ferry_cost: Some(
+                                    FerryCost(
+                                        300.0,
+                                    ),
+                                ),
+                                has_avoid_bad_surfaces: Some(
+                                    AvoidBadSurfaces(
+                                        0.25,
+                                    ),
+                                ),
+                                has_use_ferry: Some(
+                                    UseFerry(
+                                        0.5,
+                                    ),
+                                ),
+                                has_use_highways: None,
+                                has_use_tolls: None,
+                                has_use_roads: Some(
+                                    UseRoads(
+                                        0.25,
+                                    ),
+                                ),
+                                has_max_distance: None,
+                                has_walking_speed: None,
+                                has_step_penalty: None,
+                                has_max_grade: None,
+                                has_max_hiking_difficulty: None,
+                                has_mode_factor: None,
+                                has_walkway_factor: None,
+                                has_sidewalk_factor: None,
+                                has_alley_factor: None,
+                                has_driveway_factor: None,
+                                has_driveway_penalty: None,
+                                has_transit_start_end_max_distance: None,
+                                has_transit_transfer_max_distance: None,
+                                has_transport_type: Some(
+                                    TransportType(
+                                        "road",
+                                    ),
+                                ),
+                                has_top_speed: None,
+                                has_use_hills: Some(
+                                    UseHills(
+                                        0.25,
+                                    ),
+                                ),
+                                has_use_primary: None,
+                                has_use_trails: None,
+                                has_low_class_penalty: None,
+                                has_weight: Some(
+                                    Weight(
+                                        0.8,
+                                    ),
+                                ),
+                                has_axle_load: None,
+                                has_height: Some(
+                                    Height(
+                                        1.6,
+                                    ),
+                                ),
+                                has_width: Some(
+                                    Width(
+                                        1.9,
+                                    ),
+                                ),
+                                has_length: Some(
+                                    Length(
+                                        2.7,
+                                    ),
+                                ),
+                                has_cycling_speed: Some(
+                                    CyclingSpeed(
+                                        25.0,
+                                    ),
+                                ),
+                                has_use_bus: None,
+                                has_use_rail: None,
+                                has_use_transfers: None,
+                                has_transfer_cost: None,
+                                has_transfer_penalty: None,
+                                has_flow_mask: Some(
+                                    FlowMask(
+                                        3,
+                                    ),
+                                ),
+                                has_bike_share_cost: Some(
+                                    BikeShareCost(
+                                        120.0,
+                                    ),
+                                ),
+                                has_bike_share_penalty: Some(
+                                    BikeSharePenalty(
+                                        0.0,
+                                    ),
+                                ),
+                                has_rail_ferry_cost: None,
+                                has_use_rail_ferry: None,
+                                has_ignore_closures: Some(
+                                    IgnoreClosures(
+                                        false,
+                                    ),
+                                ),
+                                has_service_penalty: Some(
+                                    ServicePenalty(
+                                        15.0,
+                                    ),
+                                ),
+                                has_use_tracks: Some(
+                                    UseTracks(
+                                        0.5,
+                                    ),
+                                ),
+                                has_use_distance: Some(
+                                    UseDistance(
+                                        0.0,
+                                    ),
+                                ),
+                                has_use_living_streets: Some(
+                                    UseLivingStreets(
+                                        0.5,
+                                    ),
+                                ),
+                                has_service_factor: Some(
+                                    ServiceFactor(
+                                        1.0,
+                                    ),
+                                ),
+                                has_closure_factor: Some(
+                                    ClosureFactor(
+                                        9.0,
+                                    ),
+                                ),
+                                has_private_access_penalty: Some(
+                                    PrivateAccessPenalty(
+                                        450.0,
+                                    ),
+                                ),
+                                has_restriction_probability: None,
+                                has_elevator_penalty: None,
+                                has_hgv_no_access_penalty: None,
+                                has_speed_penalty_factor: Some(
+                                    SpeedPenaltyFactor(
+                                        0.05,
+                                    ),
+                                ),
+                                has_multimodal_start_end_max_distance: None,
+                                has_low_class_factor: None,
+                            },
+                        ),
+                    ),
+                    has_name: Some(
+                        Name(
+                            "bicycle",
+                        ),
+                    ),
+                    has_filter_closures: Some(
+                        FilterClosures(
+                            true,
+                        ),
+                    ),
+                },
+            },
+            locations: [
+                Location {
+                    ll: Some(
+                        LatLng {
+                            has_lat: Some(
+                                Lat(
+                                    42.5078,
+                                ),
+                            ),
+                            has_lng: Some(
+                                Lng(
+                                    1.5211,
+                                ),
+                            ),
+                        },
+                    ),
+                    r#type: KBreak,
+                    name: "",
+                    street: "",
+                    date_time: "",
+                    side_of_street: KNone,
+                    skip_ranking_candidates: false,
+                    preferred_side: Either,
+                    display_ll: None,
+                    search_filter: Some(
+                        SearchFilter {
+                            exclude_tunnel: false,
+                            exclude_bridge: false,
+                            exclude_ramp: false,
+                            exclude_toll: false,
+                            exclude_ferry: false,
+                            has_min_road_class: Some(
+                                MinRoadClass(
+                                    KServiceOther,
+                                ),
+                            ),
+                            has_max_road_class: Some(
+                                MaxRoadClass(
+                                    KMotorway,
+                                ),
+                            ),
+                            has_exclude_closures: Some(
+                                ExcludeClosures(
+                                    true,
+                                ),
+                            ),
+                            has_level: Some(
+                                Level(
+                                    3.4028235e38,
+                                ),
+                            ),
+                        },
+                    ),
+                    waiting_secs: 0.0,
+                    correlation: Some(
+                        Correlation {
+                            edges: [
+                                PathEdge {
+                                    graph_id: 16106508969,
+                                    percent_along: 0.20695282375839888,
+                                    ll: Some(
+                                        LatLng {
+                                            has_lat: Some(
+                                                Lat(
+                                                    42.50782136884871,
+                                                ),
+                                            ),
+                                            has_lng: Some(
+                                                Lng(
+                                                    1.5210864898787375,
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                    side_of_street: KNone,
+                                    distance: 2.6244561353849036,
+                                    begin_node: false,
+                                    end_node: false,
+                                    names: [
+                                        "Carrer Doctor Nequí",
+                                    ],
+                                    outbound_reach: 50,
+                                    inbound_reach: 50,
+                                    heading: 240.37027,
+                                    bounding_circle: Some(
+                                        BoundingCircle {
+                                            radius: 40,
+                                            latlng: Some(
+                                                LatLng {
+                                                    has_lat: Some(
+                                                        Lat(
+                                                            42.50774249314624,
+                                                        ),
+                                                    ),
+                                                    has_lng: Some(
+                                                        Lng(
+                                                            1.5208435621797258,
+                                                        ),
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                },
+                            ],
+                            filtered_edges: [],
+                            original_index: 0,
+                            projected_ll: None,
+                            leg_shape_index: 0,
+                            distance_from_leg_origin: 0.0,
+                            route_index: 0,
+                            waypoint_index: 0,
+                        },
+                    ),
+                    time_zone_offset: "",
+                    time_zone_name: "",
+                    transit_available: false,
+                    has_heading: None,
+                    has_heading_tolerance: Some(
+                        HeadingTolerance(
+                            60,
+                        ),
+                    ),
+                    has_node_snap_tolerance: Some(
+                        NodeSnapTolerance(
+                            5,
+                        ),
+                    ),
+                    has_minimum_reachability: None,
+                    has_radius: Some(
+                        Radius(
+                            0,
+                        ),
+                    ),
+                    has_accuracy: None,
+                    has_time: Some(
+                        Time(
+                            -1.0,
+                        ),
+                    ),
+                    has_search_cutoff: Some(
+                        SearchCutoff(
+                            35000,
+                        ),
+                    ),
+                    has_street_side_tolerance: Some(
+                        StreetSideTolerance(
+                            5,
+                        ),
+                    ),
+                    has_street_side_max_distance: Some(
+                        StreetSideMaxDistance(
+                            1000,
+                        ),
+                    ),
+                    has_preferred_layer: None,
+                    has_street_side_cutoff: Some(
+                        StreetSideCutoff(
+                            KServiceOther,
+                        ),
+                    ),
+                    has_minimum_inbound_reachability: Some(
+                        MinimumInboundReachability(
+                            0,
+                        ),
+                    ),
+                    has_minimum_outbound_reachability: Some(
+                        MinimumOutboundReachability(
+                            50,
+                        ),
+                    ),
+                },
+                Location {
+                    ll: Some(
+                        LatLng {
+                            has_lat: Some(
+                                Lat(
+                                    42.5562,
+                                ),
+                            ),
+                            has_lng: Some(
+                                Lng(
+                                    1.5331,
+                                ),
+                            ),
+                        },
+                    ),
+                    r#type: KBreak,
+                    name: "",
+                    street: "",
+                    date_time: "",
+                    side_of_street: KNone,
+                    skip_ranking_candidates: false,
+                    preferred_side: Either,
+                    display_ll: None,
+                    search_filter: Some(
+                        SearchFilter {
+                            exclude_tunnel: false,
+                            exclude_bridge: false,
+                            exclude_ramp: false,
+                            exclude_toll: false,
+                            exclude_ferry: false,
+                            has_min_road_class: Some(
+                                MinRoadClass(
+                                    KServiceOther,
+                                ),
+                            ),
+                            has_max_road_class: Some(
+                                MaxRoadClass(
+                                    KMotorway,
+                                ),
+                            ),
+                            has_exclude_closures: Some(
+                                ExcludeClosures(
+                                    true,
+                                ),
+                            ),
+                            has_level: Some(
+                                Level(
+                                    3.4028235e38,
+                                ),
+                            ),
+                        },
+                    ),
+                    waiting_secs: 0.0,
+                    correlation: Some(
+                        Correlation {
+                            edges: [
+                                PathEdge {
+                                    graph_id: 194789589170,
+                                    percent_along: 0.15241586932885032,
+                                    ll: Some(
+                                        LatLng {
+                                            has_lat: Some(
+                                                Lat(
+                                                    42.556176619670204,
+                                                ),
+                                            ),
+                                            has_lng: Some(
+                                                Lng(
+                                                    1.5330111695629618,
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                    side_of_street: KLeft,
+                                    distance: 7.735106698110659,
+                                    begin_node: false,
+                                    end_node: false,
+                                    names: [
+                                        "Cami Peu de la Grau",
+                                    ],
+                                    outbound_reach: 50,
+                                    inbound_reach: 50,
+                                    heading: 160.33751,
+                                    bounding_circle: Some(
+                                        BoundingCircle {
+                                            radius: 30,
+                                            latlng: Some(
+                                                LatLng {
+                                                    has_lat: Some(
+                                                        Lat(
+                                                            42.55602197634034,
+                                                        ),
+                                                    ),
+                                                    has_lng: Some(
+                                                        Lng(
+                                                            1.533074845748595,
+                                                        ),
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                },
+                                PathEdge {
+                                    graph_id: 195695558834,
+                                    percent_along: 0.8475841306711497,
+                                    ll: Some(
+                                        LatLng {
+                                            has_lat: Some(
+                                                Lat(
+                                                    42.556176619670204,
+                                                ),
+                                            ),
+                                            has_lng: Some(
+                                                Lng(
+                                                    1.5330111695629618,
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                    side_of_street: KRight,
+                                    distance: 7.735106698110659,
+                                    begin_node: false,
+                                    end_node: false,
+                                    names: [
+                                        "Cami Peu de la Grau",
+                                    ],
+                                    outbound_reach: 50,
+                                    inbound_reach: 50,
+                                    heading: 340.33752,
+                                    bounding_circle: None,
+                                },
+                            ],
+                            filtered_edges: [],
+                            original_index: 1,
+                            projected_ll: None,
+                            leg_shape_index: 0,
+                            distance_from_leg_origin: 0.0,
+                            route_index: 0,
+                            waypoint_index: 0,
+                        },
+                    ),
+                    time_zone_offset: "",
+                    time_zone_name: "",
+                    transit_available: false,
+                    has_heading: None,
+                    has_heading_tolerance: Some(
+                        HeadingTolerance(
+                            60,
+                        ),
+                    ),
+                    has_node_snap_tolerance: Some(
+                        NodeSnapTolerance(
+                            5,
+                        ),
+                    ),
+                    has_minimum_reachability: None,
+                    has_radius: Some(
+                        Radius(
+                            0,
+                        ),
+                    ),
+                    has_accuracy: None,
+                    has_time: Some(
+                        Time(
+                            -1.0,
+                        ),
+                    ),
+                    has_search_cutoff: Some(
+                        SearchCutoff(
+                            35000,
+                        ),
+                    ),
+                    has_street_side_tolerance: Some(
+                        StreetSideTolerance(
+                            5,
+                        ),
+                    ),
+                    has_street_side_max_distance: Some(
+                        StreetSideMaxDistance(
+                            1000,
+                        ),
+                    ),
+                    has_preferred_layer: None,
+                    has_street_side_cutoff: Some(
+                        StreetSideCutoff(
+                            KServiceOther,
+                        ),
+                    ),
+                    has_minimum_inbound_reachability: Some(
+                        MinimumInboundReachability(
+                            50,
+                        ),
+                    ),
+                    has_minimum_outbound_reachability: Some(
+                        MinimumOutboundReachability(
+                            0,
+                        ),
+                    ),
+                },
+            ],
+            exclude_locations: [],
+            sources: [],
+            targets: [],
+            date_time_type: NoTime,
+            shape: [],
+            contours: [],
+            polygons: false,
+            show_locations: false,
+            trace: [],
+            shape_match: WalkOrSnap,
+            filter_action: NoAction,
+            filter_attributes: [],
+            use_timestamps: false,
+            guidance_views: false,
+            linear_references: false,
+            recostings: [],
+            exclude_polygons: [],
+            prioritize_bidirectional: false,
+            skip_opposites: false,
+            expansion_properties: [],
+            pbf_field_selector: None,
+            reverse: false,
+            banner_instructions: false,
+            elevation_interval: 0.0,
+            voice_instructions: false,
+            dedupe: false,
+            admin_crossings: false,
+            turn_lanes: false,
+            cost_factor_lines: [],
+            reverse_time_tracking: RttHeuristic,
+            tile_xyz: None,
+            tile_options: None,
+            exclude_levels: [],
+            expansion_max_distance: 0,
+            has_language: Some(
+                Language(
+                    "en-US",
+                ),
+            ),
+            has_id: None,
+            has_jsonp: None,
+            has_encoded_polyline: None,
+            has_verbose: Some(
+                Verbose(
+                    false,
+                ),
+            ),
+            has_date_time: None,
+            has_resample_distance: None,
+            has_denoise: Some(
+                Denoise(
+                    1.0,
+                ),
+            ),
+            has_generalize: None,
+            has_gps_accuracy: None,
+            has_search_radius: None,
+            has_turn_penalty_factor: None,
+            has_breakage_distance: None,
+            has_shape_format: None,
+            has_alternates: Some(
+                Alternates(
+                    0,
+                ),
+            ),
+            has_interpolation_distance: None,
+            has_height_precision: None,
+            has_roundabout_exits: Some(
+                RoundaboutExits(
+                    true,
+                ),
+            ),
+            has_expansion_action: None,
+            has_matrix_locations: Some(
+                MatrixLocations(
+                    4294967295,
+                ),
+            ),
+        },
+    ),
+    trip: None,
+    directions: None,
+    status: None,
+    matrix: None,
+    isochrone: None,
+    expansion: None,
+    info: Some(
+        Info {
+            statistics: [
+                Statistic {
+                    key: "route.info.loki.latency_ms",
+                    value: 0.781181,
+                    frequency: 0.0,
+                    r#type: Timing,
+                },
+            ],
+            errors: [],
+            warnings: [],
+            is_service: false,
+        },
+    ),
+}

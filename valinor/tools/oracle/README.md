@@ -59,3 +59,15 @@ podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" -v "$PWD/valhalla-graphtile/fixt
 
 The Containerfile adds a compiler and development headers to the pinned image.
 (Its `FROM` line names the tag; keep it in step with [`valhalla-image`](valhalla-image).)
+
+## Message fixtures
+
+[`copy-message-fixtures.sh`](copy-message-fixtures.sh) copies the captured
+Loki→Thor and Thor→Odin messages (see `capture.py`) into crate fixtures:
+the `valhalla.Api` frames go to `valhalla-proto/fixtures/captures`,
+and prime_server's 12-byte request info frames go to `valhalla-microservice/fixtures/captures`,
+both as `<region>/<case>/<format>/<boundary>`.
+The captures default to `/mnt/maps/cardinal/valhalla-oracle/captures`;
+pass a different directory as the first argument.
+The messages are derived from OpenStreetMap data,
+© OpenStreetMap contributors, available under the Open Database License.
