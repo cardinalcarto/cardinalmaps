@@ -111,6 +111,34 @@ podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" -v "$PWD/valhalla-graphtile/fixt
   > valhalla-graphtile/fixtures/mainline-3.9.1-records.txt
 ```
 
+### Variable-length tile sections
+
+[`cpp/sections.cc`](cpp/sections.cc) dumps every edge info (names, tagged values,
+linguistic records, levels, and elevation), sign, turn lane, access restriction,
+complex restriction, lane connectivity record, and admin in a tile directory,
+decoded by mainline's readers.
+With `--synthetic`, it instead builds the records the fixtures lack
+(landmarks, conditional speed limits, OSM node IDs, fractional levels,
+timed complex restrictions, lane connectivity, and so on) with mainline's encoders,
+and prints their bytes followed by mainline's decoding.
+The `section_oracle` tests in `valhalla-graphtile` format the same dumps with Valinor's decoders.
+
+```shell
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" valinor-valhalla-dev:3.9.1 /w/build-sections.sh
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" -v "$PWD/valhalla-graphtile/fixtures:/fx:ro,z" \
+  valinor-valhalla-dev:3.9.1 /w/sections /fx/andorra-tiles > sections.txt
+python3 tools/oracle/sections-fixture.py sections.txt \
+  > valhalla-graphtile/fixtures/oracle/sections-3.9.1.txt
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" valinor-valhalla-dev:3.9.1 /w/sections --synthetic \
+  > valhalla-graphtile/fixtures/oracle/sections-synthetic-3.9.1.txt
+```
+
+The full dump of the fixture tiles is several megabytes,
+so [`sections-fixture.py`](sections-fixture.py) condenses it to a line count and digest
+per tile and kind of line, plus a sample of the lines.
+When the test reports a difference, it writes Valinor's dump to a temporary file
+to diff against `sections.txt`.
+
 The Containerfile adds a compiler and development headers to the pinned image.
 (Its `FROM` line names the tag; keep it in step with [`valhalla-image`](valhalla-image).)
 

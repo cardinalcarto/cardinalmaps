@@ -1,0 +1,1013 @@
+# Mainline Valhalla 3.9.1's decoding of the variable-length sections of the fixture tiles,
+# condensed by tools/oracle/sections-fixture.py from the output of tools/oracle/cpp/sections.
+# group<TAB>tile<TAB>kind<TAB>line count<TAB>MD5 of the lines (each ending in a newline)
+# sample<TAB>tile<TAB>kind<TAB>index in the group<TAB>line
+group	0/3015/0	edgeinfo	10885	9637245dfcabe6cc83e6a745dfe199de
+sample	0/3015/0	edgeinfo	0	 edgeinfo edge=0 offset=0 way=0 mean_elevation=1130 speed_limit=0 bike=4 has_elevation=0 names=0 types=0
+sample	0/3015/0	edgeinfo	1	 edgeinfo edge=1 offset=1200 way=24374057 mean_elevation=1312 speed_limit=0 bike=4 has_elevation=1 names=1 types=1
+sample	0/3015/0	edgeinfo	2	  name rn=1 CG-6
+sample	0/3015/0	edgeinfo	3	 edgeinfo edge=2 offset=1344 way=24374055 mean_elevation=1258 speed_limit=0 bike=4 has_elevation=0 names=2 types=1
+sample	0/3015/0	edgeinfo	4	  name rn=1 CG-6
+sample	0/3015/0	edgeinfo	5	  linguistic \x09\x00\x05
+sample	0/3015/0	edgeinfo	6	  linguistic_map 0 lang=9 alphabet=5 
+sample	0/3015/0	edgeinfo	7	 edgeinfo edge=3 offset=1376 way=24374055 mean_elevation=1262 speed_limit=0 bike=4 has_elevation=1 names=2 types=1
+sample	0/3015/0	edgeinfo	8	  name rn=1 CG-6
+sample	0/3015/0	edgeinfo	9	  linguistic \x09\x00\x05
+sample	0/3015/0	edgeinfo	10	  linguistic_map 0 lang=9 alphabet=5 
+sample	0/3015/0	edgeinfo	11	 edgeinfo edge=4 offset=1416 way=24374057 mean_elevation=1284 speed_limit=0 bike=4 has_elevation=1 names=2 types=1
+sample	0/3015/0	edgeinfo	12	  name rn=1 CG-6
+sample	0/3015/0	edgeinfo	13	  linguistic \x09\x00\x05
+sample	0/3015/0	edgeinfo	14	  linguistic_map 0 lang=9 alphabet=5 
+sample	0/3015/0	edgeinfo	15	 edgeinfo edge=5 offset=1528 way=24374056 mean_elevation=1266 speed_limit=0 bike=4 has_elevation=0 names=1 types=0
+sample	0/3015/0	edgeinfo	16	  tag 1 \x01
+sample	0/3015/0	edgeinfo	17	  layer 1
+sample	0/3015/0	edgeinfo	18	 edgeinfo edge=11 offset=1556 way=24374054 mean_elevation=1260 speed_limit=0 bike=4 has_elevation=0 names=1 types=0
+sample	0/3015/0	edgeinfo	19	  tag 1 \x01
+sample	0/3015/0	edgeinfo	20	  layer 1
+sample	0/3015/0	edgeinfo	21	 edgeinfo edge=12 offset=1584 way=997857709 mean_elevation=1222 speed_limit=0 bike=4 has_elevation=1 names=2 types=1
+sample	0/3015/0	edgeinfo	22	  name rn=1 CG-6
+sample	0/3015/0	edgeinfo	23	  linguistic \x09\x00\x05
+sample	0/3015/0	edgeinfo	24	  linguistic_map 0 lang=9 alphabet=5 
+sample	0/3015/0	edgeinfo	25	 edgeinfo edge=14 offset=1876 way=547233362 mean_elevation=1098 speed_limit=0 bike=4 has_elevation=1 names=2 types=1
+sample	0/3015/0	edgeinfo	26	  name rn=1 CG-6
+sample	0/3015/0	edgeinfo	27	  linguistic \x09\x00\x05
+sample	0/3015/0	edgeinfo	28	  linguistic_map 0 lang=9 alphabet=5 
+sample	0/3015/0	edgeinfo	29	 edgeinfo edge=15 offset=2456 way=997857800 mean_elevation=1156 speed_limit=40 bike=4 has_elevation=1 names=2 types=1
+sample	0/3015/0	edgeinfo	30	  name rn=1 CG-6
+sample	0/3015/0	edgeinfo	31	  linguistic \x09\x00\x05
+sample	0/3015/0	edgeinfo	32	  linguistic_map 0 lang=9 alphabet=5 
+sample	0/3015/0	edgeinfo	33	 edgeinfo edge=17 offset=2504 way=997857800 mean_elevation=1168 speed_limit=40 bike=4 has_elevation=1 names=2 types=1
+sample	0/3015/0	edgeinfo	34	  name rn=1 CG-6
+sample	0/3015/0	edgeinfo	35	  linguistic \x09\x00\x05
+sample	0/3015/0	edgeinfo	36	  linguistic_map 0 lang=9 alphabet=5 
+sample	0/3015/0	edgeinfo	37	 edgeinfo edge=19 offset=2552 way=1226549009 mean_elevation=1178 speed_limit=40 bike=4 has_elevation=1 names=2 types=1
+sample	0/3015/0	edgeinfo	38	  name rn=1 CG-6
+sample	0/3015/0	edgeinfo	39	  linguistic \x09\x00\x05
+sample	0/3015/0	edgeinfo	997	 edgeinfo edge=380 offset=11704 way=176487216 mean_elevation=928 speed_limit=0 bike=4 has_elevation=0 names=2 types=1
+sample	0/3015/0	edgeinfo	1994	  linguistic \x09\x00\x0d
+sample	0/3015/0	edgeinfo	2991	  linguistic_map 0 lang=9 alphabet=5 
+sample	0/3015/0	edgeinfo	3988	  name rn=0 Avinguda del Ravell
+sample	0/3015/0	edgeinfo	4985	  linguistic_map 0 lang=9 alphabet=5 
+sample	0/3015/0	edgeinfo	5982	  name rn=1 CG 2
+sample	0/3015/0	edgeinfo	6979	  linguistic_map 0 lang=9 alphabet=5 
+sample	0/3015/0	edgeinfo	7976	  linguistic_map 0 lang=9 alphabet=5 
+sample	0/3015/0	edgeinfo	8973	  linguistic \x09\x00\x05
+sample	0/3015/0	edgeinfo	9970	  name rn=0 Port d'Envalira
+group	0/3015/0	elevation	1602	b694f0f00c6386f7d748abf89e9924ec
+sample	0/3015/0	elevation	0	 elevation edge=1 length=557 interval=30.944444444444443: 18 -3 9 8 4 -16 7 9 -1 2 11 7 7 18 27 8 13
+sample	0/3015/0	elevation	1	 elevation edge=3 length=84 interval=28: 15 10
+sample	0/3015/0	elevation	2	 elevation edge=4 length=441 interval=31.5: 12 17 -11 14 12 15 13 16 1 -2 1 7 8
+sample	0/3015/0	elevation	3	 elevation edge=6 length=84 interval=28: 15 10
+sample	0/3015/0	elevation	4	 elevation edge=8 length=441 interval=31.5: 12 17 -11 14 12 15 13 16 1 -2 1 7 8
+sample	0/3015/0	elevation	5	 elevation edge=9 length=557 interval=30.944444444444443: 18 -3 9 8 4 -16 7 9 -1 2 11 7 7 18 27 8 13
+sample	0/3015/0	elevation	6	 elevation edge=12 length=1173 interval=31.702702702702702: 36 15 21 1 -5 6 2 -17 -23 -7 -5 23 44 17 1 -9 17 8 6 8 33 -17 -24 23 0 19 19 4 9 33 -22 4 8 24 23 6
+sample	0/3015/0	elevation	7	 elevation edge=14 length=1816 interval=31.859649122807017: 6 0 10 69 5 8 43 -10 -4 31 23 -37 -25 -4 55 -21 -10 13 -7 69 -2 -15 7 32 -17 1 1 3 18 13 6 10 7 -17 -6 41 9 -19 18 5 3 25 8 -6 26 -14 2 9 17 11 4 4 8 22 -1 4
+sample	0/3015/0	elevation	8	 elevation edge=15 length=101 interval=25.25: 7 4 13
+sample	0/3015/0	elevation	9	 elevation edge=16 length=101 interval=25.25: 7 4 13
+sample	0/3015/0	elevation	10	 elevation edge=17 length=126 interval=31.5: 4 9 24
+sample	0/3015/0	elevation	11	 elevation edge=18 length=126 interval=31.5: 4 9 24
+sample	0/3015/0	elevation	12	 elevation edge=19 length=68 interval=22.666666666666668: 4 11
+sample	0/3015/0	elevation	13	 elevation edge=20 length=1173 interval=31.702702702702702: 36 15 21 1 -5 6 2 -17 -23 -7 -5 23 44 17 1 -9 17 8 6 8 33 -17 -24 23 0 19 19 4 9 33 -22 4 8 24 23 6
+sample	0/3015/0	elevation	14	 elevation edge=22 length=68 interval=22.666666666666668: 4 11
+sample	0/3015/0	elevation	15	 elevation edge=24 length=150 interval=30: 6 10 13 13
+sample	0/3015/0	elevation	16	 elevation edge=25 length=120 interval=30: -2 1 23
+sample	0/3015/0	elevation	17	 elevation edge=26 length=120 interval=30: -2 1 23
+sample	0/3015/0	elevation	18	 elevation edge=27 length=885 interval=31.607142857142858: 7 7 -3 0 7 0 30 12 39 20 14 -1 7 41 11 -2 6 15 5 2 19 47 47 -16 -63 -15 26
+sample	0/3015/0	elevation	19	 elevation edge=28 length=885 interval=31.607142857142858: 7 7 -3 0 7 0 30 12 39 20 14 -1 7 41 11 -2 6 15 5 2 19 47 47 -16 -63 -15 26
+sample	0/3015/0	elevation	20	 elevation edge=29 length=1816 interval=31.859649122807017: 6 0 10 69 5 8 43 -10 -4 31 23 -37 -25 -4 55 -21 -10 13 -7 69 -2 -15 7 32 -17 1 1 3 18 13 6 10 7 -17 -6 41 9 -19 18 5 3 25 8 -6 26 -14 2 9 17 11 4 4 8 22 -1 4
+sample	0/3015/0	elevation	21	 elevation edge=31 length=72 interval=24: -4 -5
+sample	0/3015/0	elevation	22	 elevation edge=33 length=80 interval=26.666666666666668: 8 1
+sample	0/3015/0	elevation	23	 elevation edge=34 length=32 interval=16: -8
+sample	0/3015/0	elevation	24	 elevation edge=39 length=46 interval=23: 0
+sample	0/3015/0	elevation	25	 elevation edge=41 length=72 interval=24: -4 -5
+sample	0/3015/0	elevation	26	 elevation edge=42 length=32 interval=16: -8
+sample	0/3015/0	elevation	27	 elevation edge=47 length=206 interval=29.428571428571427: -3 -2 -3 -3 -11 -5
+sample	0/3015/0	elevation	28	 elevation edge=50 length=667 interval=31.761904761904763: 1 11 7 3 3 4 0 -4 -3 1 6 6 7 10 5 2 5 6 5 16
+sample	0/3015/0	elevation	29	 elevation edge=52 length=36 interval=18: -3
+sample	0/3015/0	elevation	30	 elevation edge=57 length=41 interval=20.5: 1
+sample	0/3015/0	elevation	31	 elevation edge=58 length=41 interval=20.5: 1
+sample	0/3015/0	elevation	32	 elevation edge=59 length=40 interval=20: -2
+sample	0/3015/0	elevation	33	 elevation edge=63 length=63 interval=31.5: -3
+sample	0/3015/0	elevation	34	 elevation edge=64 length=40 interval=20: 3
+sample	0/3015/0	elevation	35	 elevation edge=65 length=33 interval=16.5: -2
+sample	0/3015/0	elevation	36	 elevation edge=66 length=41 interval=20.5: 2
+sample	0/3015/0	elevation	37	 elevation edge=67 length=34 interval=17: -2
+sample	0/3015/0	elevation	38	 elevation edge=69 length=34 interval=17: -2
+sample	0/3015/0	elevation	39	 elevation edge=75 length=40 interval=20: 3
+sample	0/3015/0	elevation	997	 elevation edge=3352 length=117 interval=29.25: 9 2 10
+group	0/3015/0	sign	48	7094fd7f2291902f0b1ddfb3b4811ad2
+sample	0/3015/0	sign	0	 sign 0 index=327 type=5 rn=0 tagged=0 offset=177
+sample	0/3015/0	sign	1	 sign 1 index=327 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	2	 sign 2 index=328 type=5 rn=0 tagged=0 offset=189
+sample	0/3015/0	sign	3	 sign 3 index=328 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	4	 sign 4 index=461 type=5 rn=0 tagged=0 offset=177
+sample	0/3015/0	sign	5	 sign 5 index=461 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	6	 sign 6 index=463 type=5 rn=0 tagged=0 offset=177
+sample	0/3015/0	sign	7	 sign 7 index=463 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	8	 sign 8 index=465 type=5 rn=0 tagged=0 offset=177
+sample	0/3015/0	sign	9	 sign 9 index=465 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	10	 sign 10 index=467 type=5 rn=0 tagged=0 offset=177
+sample	0/3015/0	sign	11	 sign 11 index=467 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	12	 sign 12 index=529 type=5 rn=0 tagged=0 offset=177
+sample	0/3015/0	sign	13	 sign 13 index=529 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	14	 sign 14 index=1194 type=5 rn=1 tagged=0 offset=27
+sample	0/3015/0	sign	15	 sign 15 index=1194 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	16	 sign 16 index=2723 type=5 rn=0 tagged=0 offset=1696
+sample	0/3015/0	sign	17	 sign 17 index=2723 type=5 rn=0 tagged=0 offset=1704
+sample	0/3015/0	sign	18	 sign 18 index=2723 type=5 rn=0 tagged=0 offset=1711
+sample	0/3015/0	sign	19	 sign 19 index=2723 type=5 rn=0 tagged=0 offset=1718
+sample	0/3015/0	sign	20	 sign 20 index=2723 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	21	 sign 21 index=2723 type=255 rn=0 tagged=1 offset=1729
+sample	0/3015/0	sign	22	 sign 22 index=2723 type=255 rn=0 tagged=1 offset=1733
+sample	0/3015/0	sign	23	 sign 23 index=2723 type=255 rn=0 tagged=1 offset=1737
+sample	0/3015/0	sign	24	 sign 24 index=2737 type=5 rn=0 tagged=0 offset=1696
+sample	0/3015/0	sign	25	 sign 25 index=2737 type=5 rn=0 tagged=0 offset=1704
+sample	0/3015/0	sign	26	 sign 26 index=2737 type=5 rn=0 tagged=0 offset=1711
+sample	0/3015/0	sign	27	 sign 27 index=2737 type=5 rn=0 tagged=0 offset=1718
+sample	0/3015/0	sign	28	 sign 28 index=2737 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	29	 sign 29 index=2737 type=255 rn=0 tagged=1 offset=1729
+sample	0/3015/0	sign	30	 sign 30 index=2737 type=255 rn=0 tagged=1 offset=1733
+sample	0/3015/0	sign	31	 sign 31 index=2737 type=255 rn=0 tagged=1 offset=1737
+sample	0/3015/0	sign	32	 sign 32 index=3916 type=5 rn=0 tagged=0 offset=1696
+sample	0/3015/0	sign	33	 sign 33 index=3916 type=5 rn=0 tagged=0 offset=1888
+sample	0/3015/0	sign	34	 sign 34 index=3916 type=5 rn=0 tagged=0 offset=1906
+sample	0/3015/0	sign	35	 sign 35 index=3916 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	36	 sign 36 index=3916 type=255 rn=0 tagged=1 offset=1729
+sample	0/3015/0	sign	37	 sign 37 index=3916 type=255 rn=0 tagged=1 offset=1733
+sample	0/3015/0	sign	38	 sign 38 index=3922 type=5 rn=0 tagged=0 offset=1921
+sample	0/3015/0	sign	39	 sign 39 index=3922 type=5 rn=0 tagged=0 offset=1938
+sample	0/3015/0	sign	40	 sign 40 index=3922 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	41	 sign 41 index=3922 type=255 rn=0 tagged=1 offset=1729
+sample	0/3015/0	sign	42	 sign 42 index=3952 type=5 rn=0 tagged=0 offset=1696
+sample	0/3015/0	sign	43	 sign 43 index=3952 type=5 rn=0 tagged=0 offset=1906
+sample	0/3015/0	sign	44	 sign 44 index=3952 type=5 rn=0 tagged=0 offset=1946
+sample	0/3015/0	sign	45	 sign 45 index=3952 type=255 rn=0 tagged=1 offset=185
+sample	0/3015/0	sign	46	 sign 46 index=3952 type=255 rn=0 tagged=1 offset=1729
+sample	0/3015/0	sign	47	 sign 47 index=3952 type=255 rn=0 tagged=1 offset=1733
+group	0/3015/0	get_signs	48	9d2be27a03a677824d92548734fea848
+sample	0/3015/0	get_signs	0	 get_signs edge=327 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs	1	 get_signs edge=327 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	2	 get_signs edge=328 type=5 rn=0 tagged=0 Sant Julia de L\xc3\xb2ria
+sample	0/3015/0	get_signs	3	 get_signs edge=328 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	4	 get_signs edge=461 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs	5	 get_signs edge=461 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	6	 get_signs edge=463 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs	7	 get_signs edge=463 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	8	 get_signs edge=465 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs	9	 get_signs edge=465 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	10	 get_signs edge=467 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs	11	 get_signs edge=467 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	12	 get_signs edge=529 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs	13	 get_signs edge=529 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	14	 get_signs edge=1194 type=5 rn=1 tagged=0 CG-1
+sample	0/3015/0	get_signs	15	 get_signs edge=1194 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	16	 get_signs edge=2723 type=5 rn=0 tagged=0 Fran\xc3\xa7a
+sample	0/3015/0	get_signs	17	 get_signs edge=2723 type=5 rn=0 tagged=0 Encamp
+sample	0/3015/0	get_signs	18	 get_signs edge=2723 type=5 rn=0 tagged=0 Ordino
+sample	0/3015/0	get_signs	19	 get_signs edge=2723 type=5 rn=0 tagged=0 La Massana
+sample	0/3015/0	get_signs	20	 get_signs edge=2723 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	21	 get_signs edge=2723 type=255 rn=0 tagged=1 \x09\x00\x0d
+sample	0/3015/0	get_signs	22	 get_signs edge=2723 type=255 rn=0 tagged=1 \x09\x00\x15
+sample	0/3015/0	get_signs	23	 get_signs edge=2723 type=255 rn=0 tagged=1 \x09\x00\x1d
+sample	0/3015/0	get_signs	24	 get_signs edge=2737 type=5 rn=0 tagged=0 Fran\xc3\xa7a
+sample	0/3015/0	get_signs	25	 get_signs edge=2737 type=5 rn=0 tagged=0 Encamp
+sample	0/3015/0	get_signs	26	 get_signs edge=2737 type=5 rn=0 tagged=0 Ordino
+sample	0/3015/0	get_signs	27	 get_signs edge=2737 type=5 rn=0 tagged=0 La Massana
+sample	0/3015/0	get_signs	28	 get_signs edge=2737 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	29	 get_signs edge=2737 type=255 rn=0 tagged=1 \x09\x00\x0d
+sample	0/3015/0	get_signs	30	 get_signs edge=2737 type=255 rn=0 tagged=1 \x09\x00\x15
+sample	0/3015/0	get_signs	31	 get_signs edge=2737 type=255 rn=0 tagged=1 \x09\x00\x1d
+sample	0/3015/0	get_signs	32	 get_signs edge=3916 type=5 rn=0 tagged=0 Fran\xc3\xa7a
+sample	0/3015/0	get_signs	33	 get_signs edge=3916 type=5 rn=0 tagged=0 T\xc3\xbanel d'Envalira
+sample	0/3015/0	get_signs	34	 get_signs edge=3916 type=5 rn=0 tagged=0 Pas de la Casa
+sample	0/3015/0	get_signs	35	 get_signs edge=3916 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	36	 get_signs edge=3916 type=255 rn=0 tagged=1 \x09\x00\x0d
+sample	0/3015/0	get_signs	37	 get_signs edge=3916 type=255 rn=0 tagged=1 \x09\x00\x15
+sample	0/3015/0	get_signs	38	 get_signs edge=3922 type=5 rn=0 tagged=0 Andorra la Vella
+sample	0/3015/0	get_signs	39	 get_signs edge=3922 type=5 rn=0 tagged=0 Canillo
+sample	0/3015/0	get_signs	40	 get_signs edge=3922 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	41	 get_signs edge=3922 type=255 rn=0 tagged=1 \x09\x00\x0d
+sample	0/3015/0	get_signs	42	 get_signs edge=3952 type=5 rn=0 tagged=0 Fran\xc3\xa7a
+sample	0/3015/0	get_signs	43	 get_signs edge=3952 type=5 rn=0 tagged=0 Pas de la Casa
+sample	0/3015/0	get_signs	44	 get_signs edge=3952 type=5 rn=0 tagged=0 Grand Valira Grau Roig
+sample	0/3015/0	get_signs	45	 get_signs edge=3952 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	0/3015/0	get_signs	46	 get_signs edge=3952 type=255 rn=0 tagged=1 \x09\x00\x0d
+sample	0/3015/0	get_signs	47	 get_signs edge=3952 type=255 rn=0 tagged=1 \x09\x00\x15
+group	0/3015/0	get_signs_linguistic	24	b8cc2497fff705b2dee9b15e421d018b
+sample	0/3015/0	get_signs_linguistic	0	 get_signs_linguistic edge=327 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs_linguistic	1	 get_signs_linguistic edge=328 type=5 rn=0 tagged=0 Sant Julia de L\xc3\xb2ria
+sample	0/3015/0	get_signs_linguistic	2	 get_signs_linguistic edge=461 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs_linguistic	3	 get_signs_linguistic edge=463 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs_linguistic	4	 get_signs_linguistic edge=465 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs_linguistic	5	 get_signs_linguistic edge=467 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs_linguistic	6	 get_signs_linguistic edge=529 type=5 rn=0 tagged=0 Espanya
+sample	0/3015/0	get_signs_linguistic	7	 get_signs_linguistic edge=1194 type=5 rn=1 tagged=0 CG-1
+sample	0/3015/0	get_signs_linguistic	8	 get_signs_linguistic edge=2723 type=5 rn=0 tagged=0 Fran\xc3\xa7a
+sample	0/3015/0	get_signs_linguistic	9	 get_signs_linguistic edge=2723 type=5 rn=0 tagged=0 Encamp
+sample	0/3015/0	get_signs_linguistic	10	 get_signs_linguistic edge=2723 type=5 rn=0 tagged=0 Ordino
+sample	0/3015/0	get_signs_linguistic	11	 get_signs_linguistic edge=2723 type=5 rn=0 tagged=0 La Massana
+sample	0/3015/0	get_signs_linguistic	12	 get_signs_linguistic edge=2737 type=5 rn=0 tagged=0 Fran\xc3\xa7a
+sample	0/3015/0	get_signs_linguistic	13	 get_signs_linguistic edge=2737 type=5 rn=0 tagged=0 Encamp
+sample	0/3015/0	get_signs_linguistic	14	 get_signs_linguistic edge=2737 type=5 rn=0 tagged=0 Ordino
+sample	0/3015/0	get_signs_linguistic	15	 get_signs_linguistic edge=2737 type=5 rn=0 tagged=0 La Massana
+sample	0/3015/0	get_signs_linguistic	16	 get_signs_linguistic edge=3916 type=5 rn=0 tagged=0 Fran\xc3\xa7a
+sample	0/3015/0	get_signs_linguistic	17	 get_signs_linguistic edge=3916 type=5 rn=0 tagged=0 T\xc3\xbanel d'Envalira
+sample	0/3015/0	get_signs_linguistic	18	 get_signs_linguistic edge=3916 type=5 rn=0 tagged=0 Pas de la Casa
+sample	0/3015/0	get_signs_linguistic	19	 get_signs_linguistic edge=3922 type=5 rn=0 tagged=0 Andorra la Vella
+sample	0/3015/0	get_signs_linguistic	20	 get_signs_linguistic edge=3922 type=5 rn=0 tagged=0 Canillo
+sample	0/3015/0	get_signs_linguistic	21	 get_signs_linguistic edge=3952 type=5 rn=0 tagged=0 Fran\xc3\xa7a
+sample	0/3015/0	get_signs_linguistic	22	 get_signs_linguistic edge=3952 type=5 rn=0 tagged=0 Pas de la Casa
+sample	0/3015/0	get_signs_linguistic	23	 get_signs_linguistic edge=3952 type=5 rn=0 tagged=0 Grand Valira Grau Roig
+group	0/3015/0	sign_linguistic_map	24	410755c1e58af6a6618afa87956f6044
+sample	0/3015/0	sign_linguistic_map	0	 sign_linguistic_map edge=327 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	1	 sign_linguistic_map edge=328 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	2	 sign_linguistic_map edge=461 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	3	 sign_linguistic_map edge=463 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	4	 sign_linguistic_map edge=465 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	5	 sign_linguistic_map edge=467 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	6	 sign_linguistic_map edge=529 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	7	 sign_linguistic_map edge=1194 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	8	 sign_linguistic_map edge=2723 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	9	 sign_linguistic_map edge=2723 1 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	10	 sign_linguistic_map edge=2723 2 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	11	 sign_linguistic_map edge=2723 3 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	12	 sign_linguistic_map edge=2737 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	13	 sign_linguistic_map edge=2737 1 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	14	 sign_linguistic_map edge=2737 2 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	15	 sign_linguistic_map edge=2737 3 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	16	 sign_linguistic_map edge=3916 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	17	 sign_linguistic_map edge=3916 1 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	18	 sign_linguistic_map edge=3916 2 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	19	 sign_linguistic_map edge=3922 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	20	 sign_linguistic_map edge=3922 1 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	21	 sign_linguistic_map edge=3952 0 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	22	 sign_linguistic_map edge=3952 1 lang=9 alphabet=5 
+sample	0/3015/0	sign_linguistic_map	23	 sign_linguistic_map edge=3952 2 lang=9 alphabet=5 
+group	0/3015/0	turn_lanes	71	25c3fec6e6f20c9aff9b459b0839e62f
+sample	0/3015/0	turn_lanes	0	 turn_lanes edge=152 offset=132 text=8|2 masks=left|through
+sample	0/3015/0	turn_lanes	1	 turn_lanes edge=221 offset=151 text=2 masks=through
+sample	0/3015/0	turn_lanes	2	 turn_lanes edge=222 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	3	 turn_lanes edge=227 offset=151 text=2 masks=through
+sample	0/3015/0	turn_lanes	4	 turn_lanes edge=244 offset=151 text=2 masks=through
+sample	0/3015/0	turn_lanes	5	 turn_lanes edge=245 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	6	 turn_lanes edge=248 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	7	 turn_lanes edge=257 offset=151 text=2 masks=through
+sample	0/3015/0	turn_lanes	8	 turn_lanes edge=258 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	9	 turn_lanes edge=259 offset=151 text=2 masks=through
+sample	0/3015/0	turn_lanes	10	 turn_lanes edge=260 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	11	 turn_lanes edge=1487 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	12	 turn_lanes edge=1539 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	13	 turn_lanes edge=1544 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	14	 turn_lanes edge=2007 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	15	 turn_lanes edge=2096 offset=132 text=8|2 masks=left|through
+sample	0/3015/0	turn_lanes	16	 turn_lanes edge=2098 offset=132 text=8|2 masks=left|through
+sample	0/3015/0	turn_lanes	17	 turn_lanes edge=2191 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	18	 turn_lanes edge=2200 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	19	 turn_lanes edge=2212 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	20	 turn_lanes edge=2215 offset=1287 text=2|66 masks=through|through;right
+sample	0/3015/0	turn_lanes	21	 turn_lanes edge=2225 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	22	 turn_lanes edge=2227 offset=1287 text=2|66 masks=through|through;right
+sample	0/3015/0	turn_lanes	23	 turn_lanes edge=2246 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	24	 turn_lanes edge=2249 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	25	 turn_lanes edge=2252 offset=1287 text=2|66 masks=through|through;right
+sample	0/3015/0	turn_lanes	26	 turn_lanes edge=2255 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	27	 turn_lanes edge=2759 offset=132 text=8|2 masks=left|through
+sample	0/3015/0	turn_lanes	28	 turn_lanes edge=2865 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	29	 turn_lanes edge=2879 offset=1771 text=8|2|2 masks=left|through|through
+sample	0/3015/0	turn_lanes	30	 turn_lanes edge=2889 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	31	 turn_lanes edge=2891 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	32	 turn_lanes edge=2924 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	33	 turn_lanes edge=2949 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	34	 turn_lanes edge=2987 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	35	 turn_lanes edge=2988 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	36	 turn_lanes edge=3034 offset=132 text=8|2 masks=left|through
+sample	0/3015/0	turn_lanes	37	 turn_lanes edge=3040 offset=132 text=8|2 masks=left|through
+sample	0/3015/0	turn_lanes	38	 turn_lanes edge=3061 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	39	 turn_lanes edge=3065 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	40	 turn_lanes edge=3127 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	41	 turn_lanes edge=3129 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	42	 turn_lanes edge=3130 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	43	 turn_lanes edge=3132 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	44	 turn_lanes edge=3165 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	45	 turn_lanes edge=3167 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	46	 turn_lanes edge=3335 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	47	 turn_lanes edge=3337 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	48	 turn_lanes edge=3339 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	49	 turn_lanes edge=3343 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	50	 turn_lanes edge=3723 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	51	 turn_lanes edge=3725 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	52	 turn_lanes edge=3849 offset=132 text=8|2 masks=left|through
+sample	0/3015/0	turn_lanes	53	 turn_lanes edge=3909 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	54	 turn_lanes edge=3913 offset=132 text=8|2 masks=left|through
+sample	0/3015/0	turn_lanes	55	 turn_lanes edge=4039 offset=900 text=1024|0 masks=merge_to_right|
+sample	0/3015/0	turn_lanes	56	 turn_lanes edge=4045 offset=1765 text=0|512 masks=|merge_to_left
+sample	0/3015/0	turn_lanes	57	 turn_lanes edge=4090 offset=1969 text=1|512 masks=none|merge_to_left
+sample	0/3015/0	turn_lanes	58	 turn_lanes edge=4112 offset=1287 text=2|66 masks=through|through;right
+sample	0/3015/0	turn_lanes	59	 turn_lanes edge=4114 offset=1287 text=2|66 masks=through|through;right
+sample	0/3015/0	turn_lanes	60	 turn_lanes edge=4117 offset=1287 text=2|66 masks=through|through;right
+sample	0/3015/0	turn_lanes	61	 turn_lanes edge=4142 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	62	 turn_lanes edge=4144 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	63	 turn_lanes edge=4146 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	64	 turn_lanes edge=4175 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	65	 turn_lanes edge=4178 offset=2004 text=1024|2 masks=merge_to_right|through
+sample	0/3015/0	turn_lanes	66	 turn_lanes edge=4180 offset=153 text=2|2 masks=through|through
+sample	0/3015/0	turn_lanes	67	 turn_lanes edge=4218 offset=132 text=8|2 masks=left|through
+sample	0/3015/0	turn_lanes	68	 turn_lanes edge=4222 offset=2011 text=2|64 masks=through|right
+sample	0/3015/0	turn_lanes	69	 turn_lanes edge=4268 offset=2011 text=2|64 masks=through|right
+sample	0/3015/0	turn_lanes	70	 turn_lanes edge=4274 offset=2011 text=2|64 masks=through|right
+group	0/3015/0	access_restriction	20	a74b844d20a444ae34d65211dc3d164c
+sample	0/3015/0	access_restriction	0	 access_restriction edge=1456 type=1 modes=233 except_destination=0 value=440
+sample	0/3015/0	access_restriction	1	 access_restriction edge=1484 type=4 modes=233 except_destination=0 value=350
+sample	0/3015/0	access_restriction	2	 access_restriction edge=2363 type=1 modes=233 except_destination=0 value=440
+sample	0/3015/0	access_restriction	3	 access_restriction edge=2478 type=4 modes=233 except_destination=0 value=350
+sample	0/3015/0	access_restriction	4	 access_restriction edge=2479 type=4 modes=233 except_destination=0 value=350
+sample	0/3015/0	access_restriction	5	 access_restriction edge=2500 type=1 modes=233 except_destination=0 value=440
+sample	0/3015/0	access_restriction	6	 access_restriction edge=2501 type=1 modes=233 except_destination=0 value=440
+sample	0/3015/0	access_restriction	7	 access_restriction edge=2502 type=1 modes=233 except_destination=0 value=440
+sample	0/3015/0	access_restriction	8	 access_restriction edge=2503 type=1 modes=233 except_destination=0 value=440
+sample	0/3015/0	access_restriction	9	 access_restriction edge=2516 type=1 modes=233 except_destination=0 value=440
+sample	0/3015/0	access_restriction	10	 access_restriction edge=2523 type=4 modes=233 except_destination=0 value=350
+sample	0/3015/0	access_restriction	11	 access_restriction edge=2527 type=1 modes=233 except_destination=0 value=440
+sample	0/3015/0	access_restriction	12	 access_restriction edge=3915 type=1 modes=233 except_destination=0 value=430
+sample	0/3015/0	access_restriction	13	 access_restriction edge=3971 type=1 modes=233 except_destination=0 value=200
+sample	0/3015/0	access_restriction	14	 access_restriction edge=3973 type=1 modes=233 except_destination=0 value=200
+sample	0/3015/0	access_restriction	15	 access_restriction edge=3974 type=1 modes=233 except_destination=0 value=200
+sample	0/3015/0	access_restriction	16	 access_restriction edge=3993 type=1 modes=233 except_destination=0 value=200
+sample	0/3015/0	access_restriction	17	 access_restriction edge=4026 type=1 modes=233 except_destination=0 value=430
+sample	0/3015/0	access_restriction	18	 access_restriction edge=4183 type=1 modes=233 except_destination=0 value=430
+sample	0/3015/0	access_restriction	19	 access_restriction edge=4280 type=1 modes=233 except_destination=0 value=430
+group	0/3015/0	forward_restrictions	1	04aaf3c1806002b8a4700172699d9a53
+sample	0/3015/0	forward_restrictions	0	 forward_restrictions count=0
+group	0/3015/0	reverse_restriction	1	c01404da49119fe8cf4c7c105d81c9cf
+sample	0/3015/0	reverse_restriction	0	 reverse_restriction from=0/3015/2143 to=2/763926/5865 type=1 modes=1661 vias=1 0/3015/2141 probability=0 has_dt=0
+group	0/3015/0	reverse_restrictions	1	50e9f945aaaa52c4ccdc11e00c32c458
+sample	0/3015/0	reverse_restrictions	0	 reverse_restrictions count=1
+group	0/3015/0	get_restrictions	1	80138eae9cde17a7717e7b1320ca7702
+sample	0/3015/0	get_restrictions	0	 get_restrictions edge=2143 reverse from=0/3015/2143 to=2/763926/5865
+group	0/3015/0	admin	2	6a6e6602b69dcd9c901f63ce2df5904e
+sample	0/3015/0	admin	0	 admin 0 country=None state=None country_iso= state_iso=
+sample	0/3015/0	admin	1	 admin 1 country=Andorra state= country_iso=AD state_iso=
+group	1/47701/0	elevation	1376	8461cf9b91a6b12b544ff452760e13c2
+sample	1/47701/0	elevation	0	 elevation edge=0 length=1238 interval=31.743589743589745: -4 -35 -48 -14 -17 -18 -21 -18 -7 -13 -17 -19 -17 -8 -24 -19 -15 -8 -31 -34 -7 -15 -16 -19 -7 -2 -15 -25 -32 -18 -9 -16 -3 5 -21 -16 -16 -16
+sample	1/47701/0	elevation	1	 elevation edge=2 length=1250 interval=31.25: 1 -8 -14 -7 34 11 20 18 9 20 29 25 33 11 0 -9 -2 6 8 -7 5 0 19 41 41 22 -4 31 7 16 15 14 0 15 11 -9 19 16 13
+sample	1/47701/0	elevation	2	 elevation edge=4 length=1350 interval=31.395348837209301: 15 4 18 21 1 -1 -3 32 11 18 8 1 7 16 6 -3 15 23 4 -11 -3 29 38 18 4 6 9 22 29 20 13 8 -7 -13 -17 6 30 22 8 15 5 -3
+sample	1/47701/0	elevation	3	 elevation edge=5 length=434 interval=31: 12 20 14 6 18 10 7 3 9 3 6 20 9
+sample	1/47701/0	elevation	4	 elevation edge=6 length=434 interval=31: 12 20 14 6 18 10 7 3 9 3 6 20 9
+sample	1/47701/0	elevation	5	 elevation edge=7 length=1526 interval=31.791666666666668: 24 9 17 17 5 9 21 19 4 -8 -1 6 25 27 16 0 17 26 13 31 5 31 -3 8 14 15 19 -2 8 24 28 28 -8 10 0 -15 18 4 8 17 9 -1 4 15 21 20 14
+sample	1/47701/0	elevation	6	 elevation edge=10 length=1526 interval=31.791666666666668: 24 9 17 17 5 9 21 19 4 -8 -1 6 25 27 16 0 17 26 13 31 5 31 -3 8 14 15 19 -2 8 24 28 28 -8 10 0 -15 18 4 8 17 9 -1 4 15 21 20 14
+sample	1/47701/0	elevation	7	 elevation edge=12 length=205 interval=29.285714285714285: 5 -4 -9 3 -7 0
+sample	1/47701/0	elevation	8	 elevation edge=16 length=664 interval=31.61904761904762: -23 6 20 11 12 15 17 11 19 19 -6 7 12 29 16 12 5 12 15 16
+sample	1/47701/0	elevation	9	 elevation edge=17 length=776 interval=31.039999999999999: 4 18 31 -12 9 13 15 0 19 25 18 -1 10 28 5 3 11 14 24 16 19 17 4 11
+sample	1/47701/0	elevation	10	 elevation edge=20 length=205 interval=29.285714285714285: 5 -4 -9 3 -7 0
+sample	1/47701/0	elevation	11	 elevation edge=21 length=664 interval=31.61904761904762: -23 6 20 11 12 15 17 11 19 19 -6 7 12 29 16 12 5 12 15 16
+sample	1/47701/0	elevation	12	 elevation edge=22 length=1250 interval=31.25: 1 -8 -14 -7 34 11 20 18 9 20 29 25 33 11 0 -9 -2 6 8 -7 5 0 19 41 41 22 -4 31 7 16 15 14 0 15 11 -9 19 16 13
+sample	1/47701/0	elevation	13	 elevation edge=23 length=776 interval=31.039999999999999: 4 18 31 -12 9 13 15 0 19 25 18 -1 10 28 5 3 11 14 24 16 19 17 4 11
+sample	1/47701/0	elevation	14	 elevation edge=25 length=369 interval=30.75: -8 12 11 17 26 -11 -38 -22 -5 10 -14
+sample	1/47701/0	elevation	15	 elevation edge=28 length=60 interval=30: -16
+sample	1/47701/0	elevation	16	 elevation edge=29 length=211 interval=30.142857142857142: -5 -35 -20 -3 -11 -8
+sample	1/47701/0	elevation	17	 elevation edge=30 length=196 interval=28: -7 -4 0 14 -24 -15
+sample	1/47701/0	elevation	18	 elevation edge=31 length=60 interval=30: -16
+sample	1/47701/0	elevation	19	 elevation edge=32 length=48 interval=24: 8
+sample	1/47701/0	elevation	20	 elevation edge=33 length=333 interval=30.272727272727273: -5 8 10 15 11 22 9 20 11 -7
+sample	1/47701/0	elevation	21	 elevation edge=34 length=284 interval=31.555555555555557: 10 16 -2 9 20 26 22 10
+sample	1/47701/0	elevation	22	 elevation edge=35 length=48 interval=24: 8
+sample	1/47701/0	elevation	23	 elevation edge=38 length=69 interval=23: 27 -2
+sample	1/47701/0	elevation	24	 elevation edge=39 length=419 interval=29.928571428571427: 25 18 15 9 22 28 14 0 4 10 1 15 14
+sample	1/47701/0	elevation	25	 elevation edge=40 length=404 interval=31.076923076923077: -10 -16 -16 -15 -28 -2 5 7 12 0 -14 -23
+sample	1/47701/0	elevation	26	 elevation edge=41 length=57 interval=28.5: -2
+sample	1/47701/0	elevation	27	 elevation edge=42 length=57 interval=28.5: -2
+sample	1/47701/0	elevation	28	 elevation edge=43 length=75 interval=25: -12 -6
+sample	1/47701/0	elevation	29	 elevation edge=45 length=69 interval=23: 27 -2
+sample	1/47701/0	elevation	30	 elevation edge=49 length=75 interval=25: 0 -2
+sample	1/47701/0	elevation	31	 elevation edge=50 length=75 interval=25: -12 -6
+sample	1/47701/0	elevation	32	 elevation edge=52 length=283 interval=31.444444444444443: -8 6 -1 -6 -7 0 -5 -9
+sample	1/47701/0	elevation	33	 elevation edge=53 length=75 interval=25: 0 -2
+sample	1/47701/0	elevation	34	 elevation edge=54 length=119 interval=29.75: -19 -15 -16
+sample	1/47701/0	elevation	35	 elevation edge=55 length=283 interval=31.444444444444443: -8 6 -1 -6 -7 0 -5 -9
+sample	1/47701/0	elevation	36	 elevation edge=56 length=78 interval=26: -15 -8
+sample	1/47701/0	elevation	37	 elevation edge=57 length=196 interval=28: -7 -4 0 14 -24 -15
+sample	1/47701/0	elevation	38	 elevation edge=61 length=122 interval=30.5: 15 19 29
+sample	1/47701/0	elevation	39	 elevation edge=62 length=78 interval=26: -15 -8
+sample	1/47701/0	elevation	997	 elevation edge=1973 length=129 interval=25.800000000000001: -9 -5 -7 -4
+group	1/47701/0	edgeinfo	7195	5e4512ab1c2c5c4052e212651dc9577c
+sample	1/47701/0	edgeinfo	0	 edgeinfo edge=0 offset=0 way=32722515 mean_elevation=1562 speed_limit=0 bike=4 has_elevation=1 names=3 types=2
+sample	1/47701/0	edgeinfo	1	  name rn=0 Carretera del Coll de la Gallina
+sample	1/47701/0	edgeinfo	2	  name rn=1 CS-142
+sample	1/47701/0	edgeinfo	3	  linguistic \x09\x00\x05
+sample	1/47701/0	edgeinfo	4	  linguistic \x09\x00\x0d
+sample	1/47701/0	edgeinfo	5	  linguistic_map 0 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	6	  linguistic_map 1 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	7	 edgeinfo edge=1 offset=180 way=771740989 mean_elevation=1650 speed_limit=0 bike=4 has_elevation=0 names=4 types=2
+sample	1/47701/0	edgeinfo	8	  name rn=0 Carretera de Collada de la Gallina
+sample	1/47701/0	edgeinfo	9	  name rn=1 CS-142
+sample	1/47701/0	edgeinfo	10	  tag 1 \x01
+sample	1/47701/0	edgeinfo	11	  linguistic \x09\x00\x05
+sample	1/47701/0	edgeinfo	12	  linguistic \x09\x00\x0d
+sample	1/47701/0	edgeinfo	13	  linguistic_map 0 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	14	  linguistic_map 1 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	15	  layer 1
+sample	1/47701/0	edgeinfo	16	 edgeinfo edge=2 offset=220 way=771740988 mean_elevation=1704 speed_limit=0 bike=4 has_elevation=1 names=3 types=2
+sample	1/47701/0	edgeinfo	17	  name rn=0 Carretera del Coll de la Gallina
+sample	1/47701/0	edgeinfo	18	  name rn=1 CS-142
+sample	1/47701/0	edgeinfo	19	  linguistic \x09\x00\x05
+sample	1/47701/0	edgeinfo	20	  linguistic \x09\x00\x0d
+sample	1/47701/0	edgeinfo	21	  linguistic_map 0 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	22	  linguistic_map 1 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	23	 edgeinfo edge=4 offset=512 way=8164597 mean_elevation=1686 speed_limit=0 bike=4 has_elevation=1 names=3 types=2
+sample	1/47701/0	edgeinfo	24	  name rn=0 Carretera del Coll de la Gallina
+sample	1/47701/0	edgeinfo	25	  name rn=1 CS 600
+sample	1/47701/0	edgeinfo	26	  linguistic \x09\x00\x05
+sample	1/47701/0	edgeinfo	27	  linguistic \x09\x00\x0d
+sample	1/47701/0	edgeinfo	28	  linguistic_map 0 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	29	  linguistic_map 1 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	30	 edgeinfo edge=5 offset=844 way=8164597 mean_elevation=1752 speed_limit=0 bike=4 has_elevation=1 names=3 types=2
+sample	1/47701/0	edgeinfo	31	  name rn=0 Carretera del Coll de la Gallina
+sample	1/47701/0	edgeinfo	32	  name rn=1 CS 600
+sample	1/47701/0	edgeinfo	33	  linguistic \x09\x00\x05
+sample	1/47701/0	edgeinfo	34	  linguistic \x09\x00\x0d
+sample	1/47701/0	edgeinfo	35	  linguistic_map 0 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	36	  linguistic_map 1 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	37	 edgeinfo edge=7 offset=972 way=8164597 mean_elevation=1846 speed_limit=0 bike=4 has_elevation=1 names=3 types=2
+sample	1/47701/0	edgeinfo	38	  name rn=0 Carretera del Coll de la Gallina
+sample	1/47701/0	edgeinfo	39	  name rn=1 CS 600
+sample	1/47701/0	edgeinfo	997	 edgeinfo edge=314 offset=23180 way=8164597 mean_elevation=1548 speed_limit=0 bike=4 has_elevation=0 names=3 types=2
+sample	1/47701/0	edgeinfo	1994	  name rn=0 Avinguda del Pessebre
+sample	1/47701/0	edgeinfo	2991	  linguistic \x09\x00\x05
+sample	1/47701/0	edgeinfo	3988	  linguistic_map 0 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	4985	 edgeinfo edge=1826 offset=81936 way=371137838 mean_elevation=1550 speed_limit=0 bike=4 has_elevation=1 names=3 types=2
+sample	1/47701/0	edgeinfo	5982	  linguistic_map 0 lang=9 alphabet=5 
+sample	1/47701/0	edgeinfo	6979	  name rn=1 CS-131
+group	1/47701/0	sign	4	28900a3e9c91721074fd983714f76b20
+sample	1/47701/0	sign	0	 sign 0 index=639 type=5 rn=1 tagged=0 offset=793
+sample	1/47701/0	sign	1	 sign 1 index=639 type=255 rn=0 tagged=1 offset=798
+sample	1/47701/0	sign	2	 sign 2 index=1073 type=5 rn=0 tagged=0 offset=1386
+sample	1/47701/0	sign	3	 sign 3 index=1073 type=255 rn=0 tagged=1 offset=798
+group	1/47701/0	get_signs	4	510dd3cefcb5d39c03158c4089ab9303
+sample	1/47701/0	get_signs	0	 get_signs edge=639 type=5 rn=1 tagged=0 CG-1
+sample	1/47701/0	get_signs	1	 get_signs edge=639 type=255 rn=0 tagged=1 \x09\x00\x05
+sample	1/47701/0	get_signs	2	 get_signs edge=1073 type=5 rn=0 tagged=0 Escaldes-Eengordany
+sample	1/47701/0	get_signs	3	 get_signs edge=1073 type=255 rn=0 tagged=1 \x09\x00\x05
+group	1/47701/0	get_signs_linguistic	2	ff93ed8915288aad1ee0f4e7fef13b96
+sample	1/47701/0	get_signs_linguistic	0	 get_signs_linguistic edge=639 type=5 rn=1 tagged=0 CG-1
+sample	1/47701/0	get_signs_linguistic	1	 get_signs_linguistic edge=1073 type=5 rn=0 tagged=0 Escaldes-Eengordany
+group	1/47701/0	sign_linguistic_map	2	28f4142f23c7820b98cd6a71da40b289
+sample	1/47701/0	sign_linguistic_map	0	 sign_linguistic_map edge=639 0 lang=9 alphabet=5 
+sample	1/47701/0	sign_linguistic_map	1	 sign_linguistic_map edge=1073 0 lang=9 alphabet=5 
+group	1/47701/0	turn_lanes	2	2b6bccaa949fbe397e95cff80f69c5a9
+sample	1/47701/0	turn_lanes	0	 turn_lanes edge=431 offset=552 text=8|2 masks=left|through
+sample	1/47701/0	turn_lanes	1	 turn_lanes edge=433 offset=552 text=8|2 masks=left|through
+group	1/47701/0	access_restriction	8	5259b4cd4281d450e90ef15b34170c22
+sample	1/47701/0	access_restriction	0	 access_restriction edge=426 type=4 modes=233 except_destination=0 value=209
+sample	1/47701/0	access_restriction	1	 access_restriction edge=427 type=4 modes=233 except_destination=0 value=209
+sample	1/47701/0	access_restriction	2	 access_restriction edge=438 type=4 modes=233 except_destination=0 value=209
+sample	1/47701/0	access_restriction	3	 access_restriction edge=439 type=4 modes=233 except_destination=0 value=209
+sample	1/47701/0	access_restriction	4	 access_restriction edge=440 type=4 modes=233 except_destination=0 value=209
+sample	1/47701/0	access_restriction	5	 access_restriction edge=441 type=4 modes=233 except_destination=0 value=209
+sample	1/47701/0	access_restriction	6	 access_restriction edge=443 type=4 modes=233 except_destination=0 value=209
+sample	1/47701/0	access_restriction	7	 access_restriction edge=1520 type=4 modes=233 except_destination=0 value=209
+group	1/47701/0	forward_restriction	1	9b91d3197d644f5677a61feebdf477fa
+sample	1/47701/0	forward_restriction	0	 forward_restriction from=1/47701/1239 to=1/47701/1244 type=1 modes=1661 vias=1 1/47701/1241 probability=0 has_dt=0
+group	1/47701/0	forward_restrictions	1	f43b224468dcb82675d577a390113ac9
+sample	1/47701/0	forward_restrictions	0	 forward_restrictions count=1
+group	1/47701/0	reverse_restriction	1	bc4a3f84ea1884e073c73c55e7ca3073
+sample	1/47701/0	reverse_restriction	0	 reverse_restriction from=1/47701/1242 to=1/47701/1236 type=1 modes=1661 vias=1 1/47701/1246 probability=0 has_dt=0
+group	1/47701/0	reverse_restrictions	1	50e9f945aaaa52c4ccdc11e00c32c458
+sample	1/47701/0	reverse_restrictions	0	 reverse_restrictions count=1
+group	1/47701/0	get_restrictions	2	5c51e45f8a50b2e2f5b3c8cefe1ca3c4
+sample	1/47701/0	get_restrictions	0	 get_restrictions edge=1242 reverse from=1/47701/1242 to=1/47701/1236
+sample	1/47701/0	get_restrictions	1	 get_restrictions edge=1244 forward from=1/47701/1239 to=1/47701/1244
+group	1/47701/0	admin	2	6a6e6602b69dcd9c901f63ce2df5904e
+sample	1/47701/0	admin	0	 admin 0 country=None state=None country_iso= state_iso=
+sample	1/47701/0	admin	1	 admin 1 country=Andorra state= country_iso=AD state_iso=
+group	2/762485/0	elevation	1245	0d89c908d4ae11527a27435514cc9cbc
+sample	2/762485/0	elevation	0	 elevation edge=0 length=3104 interval=31.673469387755102: 26 35 63 42 81 71 36 43 8 -8 -16 41 26 17 23 42 -38 54 39 12 -27 23 7 19 59 112 10 95 15 -33 79 57 11 69 39 38 15 -10 16 4 -23 42 24 -2 11 10 22 12 20 24 18 -2 7 10 13 -5 -6 5 -3 -25 21 -20 -8 -32 -33 -18 -23 -38 -7 17 7 -19 -34 -36 -41 14 8 -45 -9 20 57 69 57 34 59 72 58 36 78 53 46 53 51 11 10 35 9
+sample	2/762485/0	elevation	1	 elevation edge=1 length=5164 interval=31.876543209876544: 20 26 12 10 10 9 4 19 19 10 18 19 6 11 3 5 3 15 18 23 14 -12 6 17 17 16 17 21 17 3 3 14 28 -6 9 7 10 22 13 -6 2 9 28 35 15 28 25 13 5 9 11 12 4 4 8 16 7 8 21 25 24 24 8 12 11 17 15 17 -13 -17 25 37 20 12 16 15 16 9 20 6 20 1 12 34 28 8 9 22 11 19 8 9 15 8 11 14 -1 5 -9 -8 -1 -10 -11 -8 4 -29 -18 -15 -12 -10 -19 -8 2 3 -3 8 -28 -36 -27 -17 28 0 -34 -19 -18 -22 6 -5 13 -5 -19 -23 -17 -7 -13 -17 -15 -11 15 -1 -18 -22 6 -24 -23 -5 -2 -17 -20 -9 -3 -5 -3 -12 -27 -40 -16 -7 4 -14 -32
+sample	2/762485/0	elevation	2	 elevation edge=2 length=2972 interval=31.956989247311828: 48 39 32 59 33 42 40 39 32 53 65 34 19 40 55 28 28 29 31 32 54 50 45 26 14 7 -8 -7 16 19 26 4 -16 -9 -14 -26 -32 3 5 3 20 5 -2 13 -3 7 18 30 51 15 27 17 -14 -31 -9 0 -23 -1 7 15 17 8 -7 -2 15 24 22 3 29 14 22 7 27 43 36 0 0 -12 -12 -12 -22 -20 -7 -2 15 0 5 -5 -6 -14 -21 -36
+sample	2/762485/0	elevation	3	 elevation edge=3 length=5164 interval=31.876543209876544: 20 26 12 10 10 9 4 19 19 10 18 19 6 11 3 5 3 15 18 23 14 -12 6 17 17 16 17 21 17 3 3 14 28 -6 9 7 10 22 13 -6 2 9 28 35 15 28 25 13 5 9 11 12 4 4 8 16 7 8 21 25 24 24 8 12 11 17 15 17 -13 -17 25 37 20 12 16 15 16 9 20 6 20 1 12 34 28 8 9 22 11 19 8 9 15 8 11 14 -1 5 -9 -8 -1 -10 -11 -8 4 -29 -18 -15 -12 -10 -19 -8 2 3 -3 8 -28 -36 -27 -17 28 0 -34 -19 -18 -22 6 -5 13 -5 -19 -23 -17 -7 -13 -17 -15 -11 15 -1 -18 -22 6 -24 -23 -5 -2 -17 -20 -9 -3 -5 -3 -12 -27 -40 -16 -7 4 -14 -32
+sample	2/762485/0	elevation	4	 elevation edge=4 length=3861 interval=31.90909090909091: -35 -10 8 4 7 -37 9 4 -20 -5 -13 -15 3 -25 -27 1 -37 -26 -31 -17 23 -5 -36 -11 -3 11 -19 -22 -40 -30 -17 3 6 3 1 -20 -18 -7 -30 -19 -18 -7 -32 -11 16 -3 -3 -20 -26 -6 14 -29 13 31 1 -21 -19 -17 -22 -5 21 7 -14 -40 -15 1 -18 -26 -18 7 30 32 7 -9 25 17 -1 12 22 17 18 14 7 2 18 -11 -6 62 25 4 25 -9 -16 -6 -21 4 48 35 28 2 28 30 19 5 5 1 12 19 5 -14 36 39 -7 -1 17 25 -1 -19 -24 -6
+sample	2/762485/0	elevation	5	 elevation edge=5 length=427 interval=30.5: 13 6 0 -14 -20 -20 -2 13 37 -13 -11 7 3
+sample	2/762485/0	elevation	6	 elevation edge=6 length=427 interval=30.5: 13 6 0 -14 -20 -20 -2 13 37 -13 -11 7 3
+sample	2/762485/0	elevation	7	 elevation edge=7 length=554 interval=30.777777777777779: -30 -16 -23 -25 -30 -33 -13 -11 -18 -22 -8 -19 -18 -15 -19 -27 -25
+sample	2/762485/0	elevation	8	 elevation edge=8 length=428 interval=30.571428571428573: -9 12 2 5 16 5 0 4 4 -7 16 19 -4
+sample	2/762485/0	elevation	9	 elevation edge=9 length=428 interval=30.571428571428573: -9 12 2 5 16 5 0 4 4 -7 16 19 -4
+sample	2/762485/0	elevation	10	 elevation edge=10 length=1868 interval=31.661016949152543: 13 15 8 26 23 24 10 -9 5 17 28 23 23 29 7 28 -28 18 -26 6 -7 -24 30 -10 -40 13 33 -8 -7 -21 -30 -68 -56 -46 22 -12 -10 -3 50 8 -47 -38 -24 -12 -14 -42 -14 -1 19 1 -2 -34 6 45 -30 -18 -42 -27
+sample	2/762485/0	elevation	11	 elevation edge=11 length=554 interval=30.777777777777779: -30 -16 -23 -25 -30 -33 -13 -11 -18 -22 -8 -19 -18 -15 -19 -27 -25
+sample	2/762485/0	elevation	12	 elevation edge=12 length=2723 interval=31.662790697674417: -39 -34 -37 -29 -17 -22 -39 -54 -46 -15 -26 -33 -40 -29 -32 -44 -43 -17 -4 -8 0 16 -4 -16 -11 -12 -12 -17 -1 -9 -22 -14 -3 -3 -6 -8 -33 -52 -15 -39 -39 -53 -44 -67 -67 -51 26 18 -78 -80 -81 -61 -16 -40 -54 -46 -8 -42 -41 -14 -24 -26 -5 2 -46 -24 -26 -21 -22 -26 5 4 -4 -14 -33 -47 -40 -42 -20 -20 -8 -50 -23 -26 -28
+sample	2/762485/0	elevation	13	 elevation edge=13 length=448 interval=29.866666666666667: 16 10 8 5 -1 10 22 23 18 10 4 3 0 1
+sample	2/762485/0	elevation	14	 elevation edge=14 length=1841 interval=31.741379310344829: -1 -2 -9 -18 -23 -18 -8 -14 -11 -13 -21 0 -10 -24 -32 -18 -12 -21 -24 -23 -24 8 31 -45 -22 -29 -26 -1 -10 -24 -23 -4 8 -2 -15 -26 -11 -12 -14 -14 -16 -20 1 4 -4 -9 -8 0 -6 -12 15 5 -16 -18 -27 -26 -7
+sample	2/762485/0	elevation	15	 elevation edge=15 length=320 interval=29.09090909090909: -11 0 -4 2 -4 -23 -26 -16 -3 -2
+sample	2/762485/0	elevation	16	 elevation edge=16 length=320 interval=29.09090909090909: -11 0 -4 2 -4 -23 -26 -16 -3 -2
+sample	2/762485/0	elevation	17	 elevation edge=17 length=448 interval=29.866666666666667: 16 10 8 5 -1 10 22 23 18 10 4 3 0 1
+sample	2/762485/0	elevation	18	 elevation edge=18 length=2878 interval=31.977777777777778: 11 8 17 25 16 19 13 13 16 13 10 22 17 1 13 37 17 8 8 25 5 0 11 39 25 -4 -2 19 -3 15 23 35 27 21 6 14 13 17 0 10 6 6 17 20 22 0 16 7 7 9 15 15 5 -1 12 10 22 28 30 27 8 20 26 8 -1 5 12 15 12 1 2 13 15 13 30 -4 13 15 9 33 3 18 -2 -6 -4 36 21 3 -5
+sample	2/762485/0	elevation	19	 elevation edge=19 length=1335 interval=31.785714285714285: 9 5 10 10 0 6 6 1 -5 10 9 14 1 6 10 11 -15 -13 -5 13 15 19 15 17 37 14 -21 14 40 38 23 28 25 26 41 49 35 54 58 26 24
+sample	2/762485/0	elevation	20	 elevation edge=20 length=171 interval=28.5: 2 -6 -14 1 9
+sample	2/762485/0	elevation	21	 elevation edge=21 length=646 interval=30.761904761904763: -3 -13 -13 -5 17 13 6 18 9 15 21 17 2 8 19 30 21 9 7 2
+sample	2/762485/0	elevation	22	 elevation edge=22 length=171 interval=28.5: 2 -6 -14 1 9
+sample	2/762485/0	elevation	23	 elevation edge=23 length=723 interval=31.434782608695652: -9 9 15 3 7 15 8 10 -12 -2 1 -20 0 14 8 1 3 3 9 3 -8 4
+sample	2/762485/0	elevation	24	 elevation edge=24 length=180 interval=30: 1 8 27 11 9
+sample	2/762485/0	elevation	25	 elevation edge=25 length=646 interval=30.761904761904763: -3 -13 -13 -5 17 13 6 18 9 15 21 17 2 8 19 30 21 9 7 2
+sample	2/762485/0	elevation	26	 elevation edge=26 length=180 interval=30: 1 8 27 11 9
+sample	2/762485/0	elevation	27	 elevation edge=27 length=3104 interval=31.673469387755102: 26 35 63 42 81 71 36 43 8 -8 -16 41 26 17 23 42 -38 54 39 12 -27 23 7 19 59 112 10 95 15 -33 79 57 11 69 39 38 15 -10 16 4 -23 42 24 -2 11 10 22 12 20 24 18 -2 7 10 13 -5 -6 5 -3 -25 21 -20 -8 -32 -33 -18 -23 -38 -7 17 7 -19 -34 -36 -41 14 8 -45 -9 20 57 69 57 34 59 72 58 36 78 53 46 53 51 11 10 35 9
+sample	2/762485/0	elevation	28	 elevation edge=28 length=290 interval=29: -11 6 18 16 29 -2 -11 11 9
+sample	2/762485/0	elevation	29	 elevation edge=29 length=102 interval=25.5: 13 17 -1
+sample	2/762485/0	elevation	30	 elevation edge=30 length=40 interval=20: -7
+sample	2/762485/0	elevation	31	 elevation edge=31 length=63 interval=31.5: 42
+sample	2/762485/0	elevation	32	 elevation edge=32 length=40 interval=20: -7
+sample	2/762485/0	elevation	33	 elevation edge=33 length=723 interval=31.434782608695652: -9 9 15 3 7 15 8 10 -12 -2 1 -20 0 14 8 1 3 3 9 3 -8 4
+sample	2/762485/0	elevation	34	 elevation edge=34 length=290 interval=29: -11 6 18 16 29 -2 -11 11 9
+sample	2/762485/0	elevation	35	 elevation edge=35 length=63 interval=31.5: 42
+sample	2/762485/0	elevation	36	 elevation edge=36 length=421 interval=30.071428571428573: 18 5 17 28 26 28 36 20 -11 15 39 3 17
+sample	2/762485/0	elevation	37	 elevation edge=37 length=170 interval=28.333333333333332: -3 -1 0 12 7
+sample	2/762485/0	elevation	38	 elevation edge=38 length=102 interval=25.5: 13 17 -1
+sample	2/762485/0	elevation	39	 elevation edge=39 length=170 interval=28.333333333333332: -3 -1 0 12 7
+sample	2/762485/0	elevation	997	 elevation edge=2180 length=47 interval=23.5: -21
+group	2/762485/0	edgeinfo	2124	dc8cfb9e67b4aa5af00fbd8617acec02
+sample	2/762485/0	edgeinfo	0	 edgeinfo edge=0 offset=0 way=427419302 mean_elevation=1210 speed_limit=0 bike=0 has_elevation=1 names=1 types=0
+sample	2/762485/0	edgeinfo	1	  name rn=0 Pallerols - Andorra
+sample	2/762485/0	edgeinfo	2	 edgeinfo edge=1 offset=744 way=27825697 mean_elevation=2032 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762485/0	edgeinfo	3	 edgeinfo edge=2 offset=1700 way=392064913 mean_elevation=2166 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762485/0	edgeinfo	4	 edgeinfo edge=4 offset=2652 way=27825697 mean_elevation=1882 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762485/0	edgeinfo	5	 edgeinfo edge=5 offset=3456 way=392063297 mean_elevation=1980 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762485/0	edgeinfo	6	 edgeinfo edge=7 offset=3648 way=392063297 mean_elevation=1922 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762485/0	edgeinfo	7	 edgeinfo edge=8 offset=3832 way=392063298 mean_elevation=1982 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762485/0	edgeinfo	8	 edgeinfo edge=10 offset=3980 way=1150356383 mean_elevation=2002 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762485/0	edgeinfo	9	 edgeinfo edge=12 offset=4936 way=1150356387 mean_elevation=1588 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762485/0	edgeinfo	10	 edgeinfo edge=13 offset=6132 way=338111409 mean_elevation=1732 speed_limit=0 bike=0 has_elevation=1 names=1 types=0
+sample	2/762485/0	edgeinfo	11	  name rn=0 Pista del Bosc de la Caubera
+sample	2/762485/0	edgeinfo	12	 edgeinfo edge=14 offset=6272 way=309170974 mean_elevation=1792 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762485/0	edgeinfo	13	 edgeinfo edge=15 offset=6620 way=309170974 mean_elevation=1700 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762485/0	edgeinfo	14	 edgeinfo edge=18 offset=6696 way=338111409 mean_elevation=1902 speed_limit=0 bike=0 has_elevation=1 names=1 types=0
+sample	2/762485/0	edgeinfo	15	  name rn=0 Pista del Bosc de la Caubera
+sample	2/762485/0	edgeinfo	16	 edgeinfo edge=19 offset=7428 way=392064912 mean_elevation=1802 speed_limit=0 bike=0 has_elevation=1 names=1 types=0
+sample	2/762485/0	edgeinfo	17	  name rn=0 Pista del Coll de Vista
+sample	2/762485/0	edgeinfo	18	 edgeinfo edge=20 offset=7808 way=31390934 mean_elevation=1370 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/762485/0	edgeinfo	19	  name rn=0 Pista d'Arduix al Mas d'Alins
+sample	2/762485/0	edgeinfo	20	  linguistic \x09\x00\x05
+sample	2/762485/0	edgeinfo	21	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/762485/0	edgeinfo	22	 edgeinfo edge=21 offset=7860 way=31390934 mean_elevation=1386 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/762485/0	edgeinfo	23	  name rn=0 Pista d'Arduix al Mas d'Alins
+sample	2/762485/0	edgeinfo	24	  linguistic \x09\x00\x05
+sample	2/762485/0	edgeinfo	25	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/762485/0	edgeinfo	26	 edgeinfo edge=23 offset=8004 way=31390930 mean_elevation=1438 speed_limit=0 bike=0 has_elevation=1 names=3 types=2
+sample	2/762485/0	edgeinfo	27	  name rn=0 Carretera de Mas d'Alins
+sample	2/762485/0	edgeinfo	28	  name rn=1 CS-143
+sample	2/762485/0	edgeinfo	29	  linguistic \x09\x00\x05
+sample	2/762485/0	edgeinfo	30	  linguistic \x09\x00\x0d
+sample	2/762485/0	edgeinfo	31	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/762485/0	edgeinfo	32	  linguistic_map 1 lang=9 alphabet=5 
+sample	2/762485/0	edgeinfo	33	 edgeinfo edge=24 offset=8140 way=31390934 mean_elevation=1420 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/762485/0	edgeinfo	34	  name rn=0 Pista d'Arduix al Mas d'Alins
+sample	2/762485/0	edgeinfo	35	  linguistic \x09\x00\x05
+sample	2/762485/0	edgeinfo	36	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/762485/0	edgeinfo	37	 edgeinfo edge=28 offset=8204 way=31390930 mean_elevation=1462 speed_limit=0 bike=0 has_elevation=1 names=3 types=2
+sample	2/762485/0	edgeinfo	38	  name rn=0 Carretera de Mas d'Alins
+sample	2/762485/0	edgeinfo	39	  name rn=1 CS-143
+sample	2/762485/0	edgeinfo	955	  tag 8 \x04\x00\x01
+sample	2/762485/0	edgeinfo	958	  levels precision=0: -1--1
+sample	2/762485/0	edgeinfo	959	  includes_level: -2=0 -1=1 0=0 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/762485/0	edgeinfo	997	 edgeinfo edge=1145 offset=35140 way=1320101125 mean_elevation=916 speed_limit=0 bike=0 has_elevation=0 names=0 types=0
+sample	2/762485/0	edgeinfo	1583	  tag 8 \x04\x00\x01
+sample	2/762485/0	edgeinfo	1586	  levels precision=0: -1--1
+sample	2/762485/0	edgeinfo	1587	  includes_level: -2=0 -1=1 0=0 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/762485/0	edgeinfo	1727	  tag 8 \x04\x00\x01
+sample	2/762485/0	edgeinfo	1730	  levels precision=0: -1--1
+sample	2/762485/0	edgeinfo	1731	  includes_level: -2=0 -1=1 0=0 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/762485/0	edgeinfo	1994	 edgeinfo edge=2365 offset=61696 way=1236442462 mean_elevation=892 speed_limit=0 bike=0 has_elevation=0 names=0 types=0
+group	2/762485/0	forward_restrictions	1	04aaf3c1806002b8a4700172699d9a53
+sample	2/762485/0	forward_restrictions	0	 forward_restrictions count=0
+group	2/762485/0	reverse_restrictions	1	b66a77d099a3e8bb6d788038cd2fc391
+sample	2/762485/0	reverse_restrictions	0	 reverse_restrictions count=0
+group	2/762485/0	admin	2	6a6e6602b69dcd9c901f63ce2df5904e
+sample	2/762485/0	admin	0	 admin 0 country=None state=None country_iso= state_iso=
+sample	2/762485/0	admin	1	 admin 1 country=Andorra state= country_iso=AD state_iso=
+group	2/762486/0	elevation	1396	703dce6caa9c5f44bf2aec9a748e8b9b
+sample	2/762486/0	elevation	0	 elevation edge=0 length=4412 interval=31.971014492753625: 4 -17 -5 7 4 -3 4 4 1 -8 2 1 3 -11 -25 3 10 9 -10 -20 -14 -7 3 -12 -4 2 -5 -7 -5 -7 -10 -16 -9 -5 -10 -13 -3 3 1 -4 4 -4 -9 1 1 -8 -8 -17 -16 8 21 -1 -6 -31 -3 -7 -13 -10 -10 -14 -13 -9 -4 -8 -9 -8 -3 -28 -20 9 -8 -8 -2 -19 -15 -10 -7 2 -1 -14 -27 -2 -20 0 9 -14 -18 -21 -22 -6 -8 -10 -11 0 -11 -3 -17 -10 -2 -1 -20 -14 -10 -11 -11 -28 -18 -17 -13 -1 -12 -33 -13 -3 -13 -12 -6 -7 -17 -14 -15 -25 -14 -11 -11 -19 -11 -5 -11 -6 1 6 12 6 24 7 2
+sample	2/762486/0	elevation	1	 elevation edge=1 length=622 interval=31.100000000000001: 4 10 2 8 5 8 10 6 -7 1 13 3 1 17 13 -1 11 13 15
+sample	2/762486/0	elevation	2	 elevation edge=2 length=1378 interval=31.318181818181817: 12 0 2 11 3 -6 2 10 5 -2 1 11 4 9 10 1 4 5 4 6 -3 5 13 3 5 19 0 -1 10 8 4 11 22 10 8 7 8 16 10 6 6 6 13
+sample	2/762486/0	elevation	3	 elevation edge=3 length=248 interval=31: -7 -10 -6 -2 0 -10 -4
+sample	2/762486/0	elevation	4	 elevation edge=4 length=1405 interval=31.931818181818183: -3 5 -4 -3 1 -3 -7 3 7 -1 -2 -10 -12 0 -10 -20 -13 -17 -19 -26 -26 -24 -22 -35 -40 -32 -27 -29 -34 -31 -31 -39 -43 -37 -40 -46 -40 -34 -28 -29 -37 -34 -26
+sample	2/762486/0	elevation	5	 elevation edge=5 length=69 interval=23: -17 -2
+sample	2/762486/0	elevation	6	 elevation edge=6 length=248 interval=31: -7 -10 -6 -2 0 -10 -4
+sample	2/762486/0	elevation	7	 elevation edge=7 length=419 interval=29.928571428571427: 20 19 16 13 10 19 37 30 17 21 38 34 19
+sample	2/762486/0	elevation	8	 elevation edge=8 length=443 interval=31.642857142857142: 32 33 29 28 29 29 22 28 18 16 19 15 18
+sample	2/762486/0	elevation	9	 elevation edge=9 length=69 interval=23: -17 -2
+sample	2/762486/0	elevation	10	 elevation edge=10 length=622 interval=31.100000000000001: 4 10 2 8 5 8 10 6 -7 1 13 3 1 17 13 -1 11 13 15
+sample	2/762486/0	elevation	11	 elevation edge=11 length=419 interval=29.928571428571427: 20 19 16 13 10 19 37 30 17 21 38 34 19
+sample	2/762486/0	elevation	12	 elevation edge=12 length=531 interval=31.235294117647058: 17 22 7 -1 11 26 23 15 13 11 19 14 10 7 12 15
+sample	2/762486/0	elevation	13	 elevation edge=13 length=115 interval=28.75: -10 -5 -15
+sample	2/762486/0	elevation	14	 elevation edge=14 length=77 interval=25.666666666666668: 14 31
+sample	2/762486/0	elevation	15	 elevation edge=15 length=793 interval=31.719999999999999: 0 0 -2 18 20 9 5 8 2 3 14 10 -10 13 12 -8 1 -5 -18 -5 -14 -19 -7 -4
+sample	2/762486/0	elevation	16	 elevation edge=16 length=77 interval=25.666666666666668: 14 31
+sample	2/762486/0	elevation	17	 elevation edge=18 length=161 interval=26.833333333333332: -15 -11 -2 1 1
+sample	2/762486/0	elevation	18	 elevation edge=19 length=232 interval=29: -19 -25 -13 -2 -6 -6 -3
+sample	2/762486/0	elevation	19	 elevation edge=21 length=99 interval=24.75: -14 -16 -17
+sample	2/762486/0	elevation	20	 elevation edge=22 length=62 interval=31: -18
+sample	2/762486/0	elevation	21	 elevation edge=24 length=91 interval=30.333333333333332: 5 9
+sample	2/762486/0	elevation	22	 elevation edge=25 length=4412 interval=31.971014492753625: 4 -17 -5 7 4 -3 4 4 1 -8 2 1 3 -11 -25 3 10 9 -10 -20 -14 -7 3 -12 -4 2 -5 -7 -5 -7 -10 -16 -9 -5 -10 -13 -3 3 1 -4 4 -4 -9 1 1 -8 -8 -17 -16 8 21 -1 -6 -31 -3 -7 -13 -10 -10 -14 -13 -9 -4 -8 -9 -8 -3 -28 -20 9 -8 -8 -2 -19 -15 -10 -7 2 -1 -14 -27 -2 -20 0 9 -14 -18 -21 -22 -6 -8 -10 -11 0 -11 -3 -17 -10 -2 -1 -20 -14 -10 -11 -11 -28 -18 -17 -13 -1 -12 -33 -13 -3 -13 -12 -6 -7 -17 -14 -15 -25 -14 -11 -11 -19 -11 -5 -11 -6 1 6 12 6 24 7 2
+sample	2/762486/0	elevation	23	 elevation edge=26 length=1378 interval=31.318181818181817: 12 0 2 11 3 -6 2 10 5 -2 1 11 4 9 10 1 4 5 4 6 -3 5 13 3 5 19 0 -1 10 8 4 11 22 10 8 7 8 16 10 6 6 6 13
+sample	2/762486/0	elevation	24	 elevation edge=27 length=115 interval=28.75: -10 -5 -15
+sample	2/762486/0	elevation	25	 elevation edge=28 length=161 interval=26.833333333333332: -15 -11 -2 1 1
+sample	2/762486/0	elevation	26	 elevation edge=29 length=531 interval=31.235294117647058: 17 22 7 -1 11 26 23 15 13 11 19 14 10 7 12 15
+sample	2/762486/0	elevation	27	 elevation edge=30 length=91 interval=30.333333333333332: 5 9
+sample	2/762486/0	elevation	28	 elevation edge=31 length=42 interval=21: -1
+sample	2/762486/0	elevation	29	 elevation edge=33 length=42 interval=21: -1
+sample	2/762486/0	elevation	30	 elevation edge=34 length=924 interval=31.862068965517242: -7 -15 -11 0 -14 -21 -21 -23 -15 -14 -10 -11 -14 -11 -16 -15 -13 -22 -19 -10 -18 -9 -19 -10 -11 -11 -3 -17
+sample	2/762486/0	elevation	31	 elevation edge=35 length=205 interval=29.285714285714285: 8 3 1 5 4 0
+sample	2/762486/0	elevation	32	 elevation edge=36 length=43 interval=21.5: -14
+sample	2/762486/0	elevation	33	 elevation edge=37 length=232 interval=29: -19 -25 -13 -2 -6 -6 -3
+sample	2/762486/0	elevation	34	 elevation edge=38 length=62 interval=31: -18
+sample	2/762486/0	elevation	35	 elevation edge=39 length=131 interval=26.199999999999999: -1 0 -7 -9
+sample	2/762486/0	elevation	36	 elevation edge=40 length=43 interval=21.5: -14
+sample	2/762486/0	elevation	37	 elevation edge=42 length=146 interval=29.199999999999999: 6 6 4 3
+sample	2/762486/0	elevation	38	 elevation edge=44 length=99 interval=24.75: -14 -16 -17
+sample	2/762486/0	elevation	39	 elevation edge=45 length=634 interval=31.699999999999999: 1 2 4 5 5 4 15 15 23 20 15 9 7 10 8 5 9 11 13
+sample	2/762486/0	elevation	997	 elevation edge=1615 length=971 interval=31.322580645161292: -27 -57 -48 -40 -50 -61 -67 -37 -42 -27 -49 -45 -9 -13 -17 -19 1 -4 -14 -28 -15 -9 -43 -43 -35 -39 -26 -39 -52 -44
+group	2/762486/0	edgeinfo	1596	7571eb4b66993fd7cbd3ac468d9456cb
+sample	2/762486/0	edgeinfo	0	 edgeinfo edge=0 offset=0 way=29249359 mean_elevation=2036 speed_limit=0 bike=8 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	1	 edgeinfo edge=1 offset=420 way=36989781 mean_elevation=2198 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	2	 edgeinfo edge=2 offset=576 way=371164436 mean_elevation=2176 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	3	 edgeinfo edge=3 offset=980 way=674085897 mean_elevation=2252 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	4	 edgeinfo edge=4 offset=1024 way=674085896 mean_elevation=2412 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	5	 edgeinfo edge=5 offset=1168 way=674085896 mean_elevation=2258 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	6	 edgeinfo edge=7 offset=1200 way=33184240 mean_elevation=2218 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/762486/0	edgeinfo	7	  name rn=0 Pistes de la Serra de Calm Ramonet
+sample	2/762486/0	edgeinfo	8	  linguistic \x09\x00\x05
+sample	2/762486/0	edgeinfo	9	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/762486/0	edgeinfo	10	 edgeinfo edge=8 offset=1328 way=33184240 mean_elevation=2308 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/762486/0	edgeinfo	11	  name rn=0 Pistes de la Serra de Calm Ramonet
+sample	2/762486/0	edgeinfo	12	  linguistic \x09\x00\x05
+sample	2/762486/0	edgeinfo	13	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/762486/0	edgeinfo	14	 edgeinfo edge=12 offset=1440 way=371233978 mean_elevation=2152 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/762486/0	edgeinfo	15	  name rn=0 Cam\xc3\xad de Calm Ramonet i Caborreu
+sample	2/762486/0	edgeinfo	16	  linguistic \x09\x00\x05
+sample	2/762486/0	edgeinfo	17	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/762486/0	edgeinfo	18	 edgeinfo edge=13 offset=1560 way=432393040 mean_elevation=2118 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	19	 edgeinfo edge=14 offset=1608 way=432393040 mean_elevation=2122 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	20	 edgeinfo edge=15 offset=1644 way=432393041 mean_elevation=2124 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	21	 edgeinfo edge=17 offset=1808 way=371233978 mean_elevation=2128 speed_limit=0 bike=0 has_elevation=0 names=2 types=0
+sample	2/762486/0	edgeinfo	22	  name rn=0 Cam\xc3\xad de Calm Ramonet i Caborreu
+sample	2/762486/0	edgeinfo	23	  linguistic \x09\x00\x05
+sample	2/762486/0	edgeinfo	24	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/762486/0	edgeinfo	25	 edgeinfo edge=18 offset=1844 way=371233978 mean_elevation=2124 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/762486/0	edgeinfo	26	  name rn=0 Cam\xc3\xad de Calm Ramonet i Caborreu
+sample	2/762486/0	edgeinfo	27	  linguistic \x09\x00\x05
+sample	2/762486/0	edgeinfo	28	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/762486/0	edgeinfo	29	 edgeinfo edge=19 offset=1908 way=1375059847 mean_elevation=2134 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/762486/0	edgeinfo	30	  name rn=0 Cam\xc3\xad de Calm Ramonet i Caborreu
+sample	2/762486/0	edgeinfo	31	  linguistic \x09\x00\x05
+sample	2/762486/0	edgeinfo	32	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/762486/0	edgeinfo	33	 edgeinfo edge=21 offset=1976 way=432393034 mean_elevation=2146 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	34	 edgeinfo edge=22 offset=2008 way=987498244 mean_elevation=2142 speed_limit=0 bike=8 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	35	 edgeinfo edge=23 offset=2048 way=987498244 mean_elevation=2138 speed_limit=0 bike=8 has_elevation=0 names=0 types=0
+sample	2/762486/0	edgeinfo	36	 edgeinfo edge=24 offset=2076 way=29249359 mean_elevation=2142 speed_limit=0 bike=8 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	37	 edgeinfo edge=31 offset=2124 way=32972313 mean_elevation=2138 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	38	 edgeinfo edge=34 offset=2156 way=32972313 mean_elevation=2088 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	39	 edgeinfo edge=35 offset=2384 way=706919715 mean_elevation=2144 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/762486/0	edgeinfo	997	 edgeinfo edge=1173 offset=33332 way=1056567105 mean_elevation=986 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+group	2/762486/0	forward_restrictions	1	04aaf3c1806002b8a4700172699d9a53
+sample	2/762486/0	forward_restrictions	0	 forward_restrictions count=0
+group	2/762486/0	reverse_restrictions	1	b66a77d099a3e8bb6d788038cd2fc391
+sample	2/762486/0	reverse_restrictions	0	 reverse_restrictions count=0
+group	2/762486/0	admin	2	6a6e6602b69dcd9c901f63ce2df5904e
+sample	2/762486/0	admin	0	 admin 0 country=None state=None country_iso= state_iso=
+sample	2/762486/0	admin	1	 admin 1 country=Andorra state= country_iso=AD state_iso=
+group	2/763925/0	elevation	1794	60053f0928c566493c4e19c5b04ab998
+sample	2/763925/0	elevation	0	 elevation edge=0 length=978 interval=31.548387096774192: 4 2 14 3 4 14 29 21 27 42 31 29 12 21 21 74 30 22 33 42 51 64 84 100 52 13 35 83 70 46
+sample	2/763925/0	elevation	1	 elevation edge=1 length=1832 interval=31.586206896551722: -21 -18 -42 -22 -5 -23 -35 -23 -25 -32 -37 -27 -24 -17 -28 -35 -43 -52 -55 -57 -43 -28 -9 -49 -49 -50 -34 -29 -38 -34 -22 -30 -36 -27 -26 -35 -112 -78 -59 -41 -36 -35 -128 -93 -13 -52 -28 -43 -36 -43 -88 -58 -52 -53 -47 -60 -43
+sample	2/763925/0	elevation	2	 elevation edge=2 length=621 interval=31.050000000000001: -13 -29 -15 -20 -60 -49 -34 -27 -62 -83 -58 -55 -34 -42 -28 -21 -32 -27 -16
+sample	2/763925/0	elevation	3	 elevation edge=3 length=1832 interval=31.586206896551722: -21 -18 -42 -22 -5 -23 -35 -23 -25 -32 -37 -27 -24 -17 -28 -35 -43 -52 -55 -57 -43 -28 -9 -49 -49 -50 -34 -29 -38 -34 -22 -30 -36 -27 -26 -35 -112 -78 -59 -41 -36 -35 -128 -93 -13 -52 -28 -43 -36 -43 -88 -58 -52 -53 -47 -60 -43
+sample	2/763925/0	elevation	4	 elevation edge=4 length=1867 interval=31.64406779661017: 0 -5 -13 4 27 14 -15 -24 -39 -27 -10 4 22 20 4 1 8 5 5 13 15 -5 -5 10 17 22 33 48 58 29 28 53 42 25 17 25 16 7 9 2 17 20 10 11 10 7 9 6 14 17 19 17 9 17 20 21 36 32
+sample	2/763925/0	elevation	5	 elevation edge=5 length=846 interval=31.333333333333332: -56 -45 -25 -49 -58 -33 -25 -28 -29 -16 -4 -18 -26 -41 -49 -53 -41 -25 8 -10 -1 -6 -9 -1 6 -2
+sample	2/763925/0	elevation	6	 elevation edge=6 length=46 interval=23: -7
+sample	2/763925/0	elevation	7	 elevation edge=7 length=421 interval=30.071428571428573: -3 -7 -22 -19 -38 -25 -16 -12 -23 -22 -11 -9 -22
+sample	2/763925/0	elevation	8	 elevation edge=8 length=518 interval=30.470588235294116: -18 -97 -68 -21 -2 21 -20 -13 2 -18 -25 -25 -34 -27 -15 -8
+sample	2/763925/0	elevation	9	 elevation edge=10 length=93 interval=31: -1 -24
+sample	2/763925/0	elevation	10	 elevation edge=11 length=45 interval=22.5: -12
+sample	2/763925/0	elevation	11	 elevation edge=12 length=93 interval=31: -1 -24
+sample	2/763925/0	elevation	12	 elevation edge=13 length=336 interval=30.545454545454547: 7 7 -22 -29 -4 -1 -24 0 10 7
+sample	2/763925/0	elevation	13	 elevation edge=14 length=45 interval=22.5: -12
+sample	2/763925/0	elevation	14	 elevation edge=15 length=67 interval=22.333333333333332: -24 -22
+sample	2/763925/0	elevation	15	 elevation edge=16 length=110 interval=27.5: -5 -12 -10
+sample	2/763925/0	elevation	16	 elevation edge=17 length=224 interval=28: -3 -13 -8 -11 -11 -8 -2
+sample	2/763925/0	elevation	17	 elevation edge=18 length=34 interval=17: -14
+sample	2/763925/0	elevation	18	 elevation edge=19 length=174 interval=29: -19 -15 -14 -11 -10
+sample	2/763925/0	elevation	19	 elevation edge=20 length=336 interval=30.545454545454547: 7 7 -22 -29 -4 -1 -24 0 10 7
+sample	2/763925/0	elevation	20	 elevation edge=21 length=110 interval=27.5: -5 -12 -10
+sample	2/763925/0	elevation	21	 elevation edge=22 length=67 interval=22.333333333333332: -24 -22
+sample	2/763925/0	elevation	22	 elevation edge=23 length=34 interval=17: -14
+sample	2/763925/0	elevation	23	 elevation edge=24 length=387 interval=29.76923076923077: -5 -7 1 -14 -7 1 -18 -11 4 4 1 -20
+sample	2/763925/0	elevation	24	 elevation edge=26 length=50 interval=25: 17
+sample	2/763925/0	elevation	25	 elevation edge=27 length=76 interval=25.333333333333332: -20 -20
+sample	2/763925/0	elevation	26	 elevation edge=28 length=46 interval=23: -7
+sample	2/763925/0	elevation	27	 elevation edge=29 length=50 interval=25: 17
+sample	2/763925/0	elevation	28	 elevation edge=30 length=429 interval=30.642857142857142: -1 10 3 -1 -1 -2 -2 -5 -7 -5 -7 -3 -16
+sample	2/763925/0	elevation	29	 elevation edge=31 length=387 interval=29.76923076923077: -5 -7 1 -14 -7 1 -18 -11 4 4 1 -20
+sample	2/763925/0	elevation	30	 elevation edge=32 length=76 interval=25.333333333333332: -20 -20
+sample	2/763925/0	elevation	31	 elevation edge=33 length=224 interval=28: -3 -13 -8 -11 -11 -8 -2
+sample	2/763925/0	elevation	32	 elevation edge=34 length=164 interval=27.333333333333332: -21 -2 2 1 -1
+sample	2/763925/0	elevation	33	 elevation edge=35 length=461 interval=30.733333333333334: 2 -6 -5 -4 -7 -11 -4 7 4 -7 -3 7 10 11
+sample	2/763925/0	elevation	34	 elevation edge=36 length=33 interval=16.5: -3
+sample	2/763925/0	elevation	35	 elevation edge=37 length=82 interval=27.333333333333332: 17 12
+sample	2/763925/0	elevation	36	 elevation edge=38 length=33 interval=16.5: -8
+sample	2/763925/0	elevation	37	 elevation edge=41 length=33 interval=16.5: -8
+sample	2/763925/0	elevation	38	 elevation edge=42 length=33 interval=16.5: -3
+sample	2/763925/0	elevation	39	 elevation edge=44 length=721 interval=31.347826086956523: -18 -32 -32 -42 -7 -2 -6 -1 7 6 -15 -6 1 -3 -6 7 7 -22 3 9 -17 3
+sample	2/763925/0	elevation	997	 elevation edge=1357 length=528 interval=31.058823529411764: 3 -10 2 -21 -5 4 12 -3 -2 -3 -3 -3 1 4 -9 -8
+group	2/763925/0	edgeinfo	2210	078df3e572d2ae24cc9cd1d68b50f65f
+sample	2/763925/0	edgeinfo	0	 edgeinfo edge=0 offset=0 way=973533214 mean_elevation=2632 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763925/0	edgeinfo	1	 edgeinfo edge=1 offset=448 way=816562438 mean_elevation=2182 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763925/0	edgeinfo	2	 edgeinfo edge=2 offset=1188 way=816562438 mean_elevation=2526 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763925/0	edgeinfo	3	 edgeinfo edge=4 offset=1380 way=816565927 mean_elevation=2512 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763925/0	edgeinfo	4	 edgeinfo edge=5 offset=1948 way=1205303006 mean_elevation=2500 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763925/0	edgeinfo	5	 edgeinfo edge=6 offset=2212 way=206377996 mean_elevation=2334 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763925/0	edgeinfo	6	 edgeinfo edge=7 offset=2240 way=206377996 mean_elevation=2298 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763925/0	edgeinfo	7	 edgeinfo edge=8 offset=2332 way=699068893 mean_elevation=2372 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763925/0	edgeinfo	8	 edgeinfo edge=9 offset=2436 way=206377995 mean_elevation=2328 speed_limit=0 bike=0 has_elevation=0 names=3 types=2
+sample	2/763925/0	edgeinfo	9	  name rn=0 Carretera General
+sample	2/763925/0	edgeinfo	10	  name rn=1 CG-3
+sample	2/763925/0	edgeinfo	11	  linguistic \x09\x00\x05
+sample	2/763925/0	edgeinfo	12	  linguistic \x09\x00\x0d
+sample	2/763925/0	edgeinfo	13	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763925/0	edgeinfo	14	  linguistic_map 1 lang=9 alphabet=5 
+sample	2/763925/0	edgeinfo	15	 edgeinfo edge=10 offset=2472 way=206377995 mean_elevation=2324 speed_limit=0 bike=0 has_elevation=1 names=3 types=2
+sample	2/763925/0	edgeinfo	16	  name rn=0 Carretera General
+sample	2/763925/0	edgeinfo	17	  name rn=1 CG-3
+sample	2/763925/0	edgeinfo	18	  linguistic \x09\x00\x05
+sample	2/763925/0	edgeinfo	19	  linguistic \x09\x00\x0d
+sample	2/763925/0	edgeinfo	20	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763925/0	edgeinfo	21	  linguistic_map 1 lang=9 alphabet=5 
+sample	2/763925/0	edgeinfo	22	 edgeinfo edge=11 offset=2536 way=432331569 mean_elevation=2324 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763925/0	edgeinfo	23	 edgeinfo edge=13 offset=2572 way=206377995 mean_elevation=2312 speed_limit=0 bike=0 has_elevation=1 names=3 types=2
+sample	2/763925/0	edgeinfo	24	  name rn=0 Carretera General
+sample	2/763925/0	edgeinfo	25	  name rn=1 CG-3
+sample	2/763925/0	edgeinfo	26	  linguistic \x09\x00\x05
+sample	2/763925/0	edgeinfo	27	  linguistic \x09\x00\x0d
+sample	2/763925/0	edgeinfo	28	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763925/0	edgeinfo	29	  linguistic_map 1 lang=9 alphabet=5 
+sample	2/763925/0	edgeinfo	30	 edgeinfo edge=15 offset=2684 way=432331569 mean_elevation=2310 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763925/0	edgeinfo	31	 edgeinfo edge=16 offset=2724 way=206377995 mean_elevation=2300 speed_limit=0 bike=0 has_elevation=1 names=3 types=2
+sample	2/763925/0	edgeinfo	32	  name rn=0 Carretera General
+sample	2/763925/0	edgeinfo	33	  name rn=1 CG-3
+sample	2/763925/0	edgeinfo	34	  linguistic \x09\x00\x05
+sample	2/763925/0	edgeinfo	35	  linguistic \x09\x00\x0d
+sample	2/763925/0	edgeinfo	36	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763925/0	edgeinfo	37	  linguistic_map 1 lang=9 alphabet=5 
+sample	2/763925/0	edgeinfo	38	 edgeinfo edge=17 offset=2784 way=206377995 mean_elevation=2290 speed_limit=0 bike=0 has_elevation=1 names=3 types=2
+sample	2/763925/0	edgeinfo	39	  name rn=0 Carretera General
+sample	2/763925/0	edgeinfo	373	  tag 49 T\xc3\xbanel del port de Rat
+sample	2/763925/0	edgeinfo	997	 edgeinfo edge=1154 offset=54252 way=438316061 mean_elevation=2738 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763925/0	edgeinfo	1994	  name rn=0 Cami Superior
+group	2/763925/0	forward_restrictions	1	04aaf3c1806002b8a4700172699d9a53
+sample	2/763925/0	forward_restrictions	0	 forward_restrictions count=0
+group	2/763925/0	reverse_restrictions	1	b66a77d099a3e8bb6d788038cd2fc391
+sample	2/763925/0	reverse_restrictions	0	 reverse_restrictions count=0
+group	2/763925/0	admin	2	6a6e6602b69dcd9c901f63ce2df5904e
+sample	2/763925/0	admin	0	 admin 0 country=None state=None country_iso= state_iso=
+sample	2/763925/0	admin	1	 admin 1 country=Andorra state= country_iso=AD state_iso=
+group	2/763926/0	elevation	9859	c095c32dfb42c73b8247e4e50a0fe668
+sample	2/763926/0	elevation	0	 elevation edge=0 length=38 interval=19: 49
+sample	2/763926/0	elevation	1	 elevation edge=1 length=66 interval=22: 30 77
+sample	2/763926/0	elevation	2	 elevation edge=2 length=215 interval=30.714285714285715: 13 -6 17 45 -17 9
+sample	2/763926/0	elevation	3	 elevation edge=3 length=39 interval=19.5: 47
+sample	2/763926/0	elevation	4	 elevation edge=4 length=66 interval=22: 30 77
+sample	2/763926/0	elevation	5	 elevation edge=5 length=38 interval=19: 49
+sample	2/763926/0	elevation	6	 elevation edge=6 length=39 interval=19.5: 47
+sample	2/763926/0	elevation	7	 elevation edge=7 length=221 interval=31.571428571428573: -1 -6 -7 -11 12 16
+sample	2/763926/0	elevation	8	 elevation edge=8 length=153 interval=30.600000000000001: 24 -29 14 6
+sample	2/763926/0	elevation	9	 elevation edge=9 length=52 interval=26: 17
+sample	2/763926/0	elevation	10	 elevation edge=10 length=153 interval=30.600000000000001: 24 -29 14 6
+sample	2/763926/0	elevation	11	 elevation edge=11 length=524 interval=30.823529411764707: 57 -37 -28 38 23 41 43 15 28 33 -15 -15 -3 31 26 -22
+sample	2/763926/0	elevation	12	 elevation edge=14 length=307 interval=30.699999999999999: -5 -5 -10 -36 -32 1 79 46 -2
+sample	2/763926/0	elevation	13	 elevation edge=15 length=52 interval=26: -8
+sample	2/763926/0	elevation	14	 elevation edge=16 length=92 interval=30.666666666666668: 3 -3
+sample	2/763926/0	elevation	15	 elevation edge=17 length=94 interval=31.333333333333332: 6 -27
+sample	2/763926/0	elevation	16	 elevation edge=18 length=38 interval=19: 19
+sample	2/763926/0	elevation	17	 elevation edge=19 length=34 interval=17: -11
+sample	2/763926/0	elevation	18	 elevation edge=20 length=34 interval=17: -11
+sample	2/763926/0	elevation	19	 elevation edge=22 length=35 interval=17.5: 1
+sample	2/763926/0	elevation	20	 elevation edge=23 length=35 interval=17.5: 1
+sample	2/763926/0	elevation	21	 elevation edge=27 length=38 interval=19: 19
+sample	2/763926/0	elevation	22	 elevation edge=28 length=164 interval=27.333333333333332: 5 -1 28 28 -13
+sample	2/763926/0	elevation	23	 elevation edge=29 length=201 interval=28.714285714285715: -7 2 50 -11 11 2
+sample	2/763926/0	elevation	24	 elevation edge=30 length=167 interval=27.833333333333332: 23 16 -9 26 38
+sample	2/763926/0	elevation	25	 elevation edge=31 length=128 interval=25.600000000000001: -17 1 6 -8
+sample	2/763926/0	elevation	26	 elevation edge=32 length=114 interval=28.5: -2 -19 -2
+sample	2/763926/0	elevation	27	 elevation edge=33 length=77 interval=25.666666666666668: -12 -8
+sample	2/763926/0	elevation	28	 elevation edge=34 length=66 interval=22: 12 15
+sample	2/763926/0	elevation	29	 elevation edge=35 length=498 interval=31.125: -8 13 12 12 8 -11 -26 -2 10 21 11 4 -18 -21 -15
+sample	2/763926/0	elevation	30	 elevation edge=36 length=232 interval=29: -7 4 1 16 12 -3 3
+sample	2/763926/0	elevation	31	 elevation edge=37 length=58 interval=29: -10
+sample	2/763926/0	elevation	32	 elevation edge=40 length=68 interval=22.666666666666668: -8 4
+sample	2/763926/0	elevation	33	 elevation edge=43 length=83 interval=27.666666666666668: 19 -4
+sample	2/763926/0	elevation	34	 elevation edge=45 length=224 interval=28: -17 0 13 4 9 -13 -13
+sample	2/763926/0	elevation	35	 elevation edge=52 length=343 interval=31.181818181818183: -18 -3 3 -25 -6 8 12 8 -7 -7
+sample	2/763926/0	elevation	36	 elevation edge=55 length=58 interval=29: -10
+sample	2/763926/0	elevation	37	 elevation edge=57 length=407 interval=31.307692307692307: -8 -7 -7 2 8 3 16 2 -18 8 16 4
+sample	2/763926/0	elevation	38	 elevation edge=68 length=34 interval=17: 8
+sample	2/763926/0	elevation	39	 elevation edge=70 length=220 interval=31.428571428571427: 16 -2 16 7 -3 12
+sample	2/763926/0	elevation	997	 elevation edge=2918 length=56 interval=28: -34
+sample	2/763926/0	elevation	1994	 elevation edge=4724 length=224 interval=28: 14 3 -8 -2 -2 -10 -11
+sample	2/763926/0	elevation	2991	 elevation edge=6764 length=111 interval=27.75: 50 62 55
+sample	2/763926/0	elevation	3988	 elevation edge=9935 length=202 interval=28.857142857142858: 3 -12 1 4 8 3
+sample	2/763926/0	elevation	4985	 elevation edge=11361 length=96 interval=24: 5 14 -9
+sample	2/763926/0	elevation	5982	 elevation edge=13444 length=121 interval=30.25: -21 0 1
+sample	2/763926/0	elevation	6979	 elevation edge=14997 length=45 interval=22.5: 0
+sample	2/763926/0	elevation	7976	 elevation edge=16435 length=289 interval=28.899999999999999: -19 10 -4 -19 -16 -31 -39 -16 17
+sample	2/763926/0	elevation	8973	 elevation edge=17886 length=226 interval=28.25: 14 32 10 10 6 21 -1
+group	2/763926/0	edgeinfo	17989	efaa9065337c429ee7b784f291289a59
+sample	2/763926/0	edgeinfo	0	 edgeinfo edge=0 offset=0 way=308837247 mean_elevation=1068 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	1	 edgeinfo edge=1 offset=44 way=308685893 mean_elevation=1082 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	2	 edgeinfo edge=2 offset=92 way=308685892 mean_elevation=1038 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	3	 edgeinfo edge=3 offset=184 way=308685893 mean_elevation=1042 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	4	 edgeinfo edge=7 offset=220 way=308685895 mean_elevation=1022 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	5	 edgeinfo edge=8 offset=280 way=308685895 mean_elevation=1034 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	6	 edgeinfo edge=9 offset=352 way=1056557618 mean_elevation=990 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	7	 edgeinfo edge=11 offset=392 way=308685895 mean_elevation=1078 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	8	 edgeinfo edge=12 offset=592 way=308837248 mean_elevation=1058 speed_limit=0 bike=0 has_elevation=0 names=0 types=0
+sample	2/763926/0	edgeinfo	9	 edgeinfo edge=14 offset=624 way=1056557615 mean_elevation=990 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	10	 edgeinfo edge=15 offset=708 way=1056557619 mean_elevation=986 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	11	 edgeinfo edge=16 offset=744 way=1056552357 mean_elevation=986 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	12	 edgeinfo edge=17 offset=772 way=1056552352 mean_elevation=982 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	13	 edgeinfo edge=18 offset=812 way=1056552353 mean_elevation=980 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	14	 edgeinfo edge=19 offset=844 way=1056552353 mean_elevation=982 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	15	 edgeinfo edge=21 offset=872 way=1056552354 mean_elevation=984 speed_limit=0 bike=0 has_elevation=0 names=0 types=0
+sample	2/763926/0	edgeinfo	16	 edgeinfo edge=22 offset=896 way=1056552353 mean_elevation=986 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	17	 edgeinfo edge=24 offset=932 way=1056552353 mean_elevation=984 speed_limit=0 bike=0 has_elevation=0 names=0 types=0
+sample	2/763926/0	edgeinfo	18	 edgeinfo edge=28 offset=960 way=191582664 mean_elevation=1094 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/763926/0	edgeinfo	19	  name rn=0 Passeig del Rec del Sol\xc3\xa0
+sample	2/763926/0	edgeinfo	20	  linguistic \x09\x00\x05
+sample	2/763926/0	edgeinfo	21	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763926/0	edgeinfo	22	 edgeinfo edge=29 offset=1044 way=1357528901 mean_elevation=1102 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/763926/0	edgeinfo	23	  name rn=0 Passeig del Rec del Sol\xc3\xa0
+sample	2/763926/0	edgeinfo	24	  linguistic \x09\x00\x05
+sample	2/763926/0	edgeinfo	25	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763926/0	edgeinfo	26	 edgeinfo edge=30 offset=1108 way=912559414 mean_elevation=1076 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	27	 edgeinfo edge=31 offset=1184 way=144428485 mean_elevation=1046 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/763926/0	edgeinfo	28	  name rn=0 Carrer Ciutat de Valls
+sample	2/763926/0	edgeinfo	29	  linguistic \x09\x00\x05
+sample	2/763926/0	edgeinfo	30	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763926/0	edgeinfo	31	 edgeinfo edge=32 offset=1244 way=1056149677 mean_elevation=1054 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/763926/0	edgeinfo	32	  name rn=0 Carrer Castell\xc3\xa0 del Sucar\xc3\xa0
+sample	2/763926/0	edgeinfo	33	  linguistic \x09\x00\x05
+sample	2/763926/0	edgeinfo	34	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763926/0	edgeinfo	35	 edgeinfo edge=33 offset=1300 way=144428485 mean_elevation=1054 speed_limit=0 bike=0 has_elevation=1 names=2 types=0
+sample	2/763926/0	edgeinfo	36	  name rn=0 Carrer Ciutat de Valls
+sample	2/763926/0	edgeinfo	37	  linguistic \x09\x00\x05
+sample	2/763926/0	edgeinfo	38	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763926/0	edgeinfo	39	 edgeinfo edge=34 offset=1360 way=1318319801 mean_elevation=1044 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	997	  linguistic \x09\x00\x05
+sample	2/763926/0	edgeinfo	1994	  linguistic \x09\x00\x05
+sample	2/763926/0	edgeinfo	2991	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763926/0	edgeinfo	3988	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763926/0	edgeinfo	4985	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763926/0	edgeinfo	5982	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763926/0	edgeinfo	6979	  linguistic \x09\x00\x05
+sample	2/763926/0	edgeinfo	7741	  tag 8 \x04\x00\x02
+sample	2/763926/0	edgeinfo	7742	  levels precision=0: 1-1
+sample	2/763926/0	edgeinfo	7743	  includes_level: -2=0 -1=0 0=0 0.5=0 1=1 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	7976	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763926/0	edgeinfo	8286	  tag 8 \x04\x00\x06
+sample	2/763926/0	edgeinfo	8287	  levels precision=0: 3-3
+sample	2/763926/0	edgeinfo	8288	  includes_level: -2=0 -1=0 0=0 0.5=0 1=0 2.5=0 3=1 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	8290	  tag 8 \x04\x00\x06
+sample	2/763926/0	edgeinfo	8291	  levels precision=0: 3-3
+sample	2/763926/0	edgeinfo	8292	  includes_level: -2=0 -1=0 0=0 0.5=0 1=0 2.5=0 3=1 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	8294	  tag 8 \x04\x00\x06
+sample	2/763926/0	edgeinfo	8295	  levels precision=0: 3-3
+sample	2/763926/0	edgeinfo	8296	  includes_level: -2=0 -1=0 0=0 0.5=0 1=0 2.5=0 3=1 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	8298	  tag 8 \x04\x00\x06
+sample	2/763926/0	edgeinfo	8299	  levels precision=0: 3-3
+sample	2/763926/0	edgeinfo	8300	  includes_level: -2=0 -1=0 0=0 0.5=0 1=0 2.5=0 3=1 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	8973	  layer -1
+sample	2/763926/0	edgeinfo	9970	 edgeinfo edge=9798 offset=193884 way=1317399651 mean_elevation=1026 speed_limit=0 bike=0 has_elevation=0 names=0 types=0
+sample	2/763926/0	edgeinfo	10967	  linguistic_map 0 lang=9 alphabet=5 
+sample	2/763926/0	edgeinfo	11964	 edgeinfo edge=12008 offset=259712 way=968853368 mean_elevation=1268 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	12961	 edgeinfo edge=12935 offset=283340 way=253348768 mean_elevation=1834 speed_limit=0 bike=0 has_elevation=0 names=0 types=0
+sample	2/763926/0	edgeinfo	13958	 edgeinfo edge=13952 offset=314784 way=605371363 mean_elevation=2042 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	14955	  tag 1 \x01
+sample	2/763926/0	edgeinfo	15952	 edgeinfo edge=16369 offset=413928 way=333483532 mean_elevation=2070 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	16949	 edgeinfo edge=17754 offset=453840 way=404222950 mean_elevation=2398 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763926/0	edgeinfo	17780	  tag 8 \x04\x00\x00
+sample	2/763926/0	edgeinfo	17781	  levels precision=0: 0-0
+sample	2/763926/0	edgeinfo	17782	  includes_level: -2=0 -1=0 0=1 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	17784	  tag 8 \x04\x00\x00
+sample	2/763926/0	edgeinfo	17785	  levels precision=0: 0-0
+sample	2/763926/0	edgeinfo	17786	  includes_level: -2=0 -1=0 0=1 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	17788	  tag 8 \x04\x00\x00
+sample	2/763926/0	edgeinfo	17789	  levels precision=0: 0-0
+sample	2/763926/0	edgeinfo	17790	  includes_level: -2=0 -1=0 0=1 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	17793	  tag 8 \x04\x00\x00
+sample	2/763926/0	edgeinfo	17794	  levels precision=0: 0-0
+sample	2/763926/0	edgeinfo	17795	  includes_level: -2=0 -1=0 0=1 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	17797	  tag 8 \x04\x00\x00
+sample	2/763926/0	edgeinfo	17798	  levels precision=0: 0-0
+sample	2/763926/0	edgeinfo	17799	  includes_level: -2=0 -1=0 0=1 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	17801	  tag 8 \x04\x00\x00
+sample	2/763926/0	edgeinfo	17802	  levels precision=0: 0-0
+sample	2/763926/0	edgeinfo	17803	  includes_level: -2=0 -1=0 0=1 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	17805	  tag 8 \x04\x00\x00
+sample	2/763926/0	edgeinfo	17806	  levels precision=0: 0-0
+sample	2/763926/0	edgeinfo	17807	  includes_level: -2=0 -1=0 0=1 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	17809	  tag 8 \x04\x00\x00
+sample	2/763926/0	edgeinfo	17810	  levels precision=0: 0-0
+sample	2/763926/0	edgeinfo	17811	  includes_level: -2=0 -1=0 0=1 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	17816	  tag 8 \x04\x00\x00
+sample	2/763926/0	edgeinfo	17817	  levels precision=0: 0-0
+sample	2/763926/0	edgeinfo	17818	  includes_level: -2=0 -1=0 0=1 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	17820	  tag 8 \x04\x00\x00
+sample	2/763926/0	edgeinfo	17821	  levels precision=0: 0-0
+sample	2/763926/0	edgeinfo	17822	  includes_level: -2=0 -1=0 0=1 0.5=0 1=0 2.5=0 3=0 13=0 14=0 17.5=0 25=0
+sample	2/763926/0	edgeinfo	17946	 edgeinfo edge=19160 offset=499376 way=210429460 mean_elevation=2788 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+group	2/763926/0	access_restriction	18	d14249521fcfe000415b14e8b504ff6f
+sample	2/763926/0	access_restriction	0	 access_restriction edge=282 type=4 modes=233 except_destination=0 value=350
+sample	2/763926/0	access_restriction	1	 access_restriction edge=289 type=4 modes=233 except_destination=0 value=350
+sample	2/763926/0	access_restriction	2	 access_restriction edge=1989 type=1 modes=233 except_destination=0 value=250
+sample	2/763926/0	access_restriction	3	 access_restriction edge=1992 type=1 modes=233 except_destination=0 value=250
+sample	2/763926/0	access_restriction	4	 access_restriction edge=13179 type=1 modes=233 except_destination=0 value=320
+sample	2/763926/0	access_restriction	5	 access_restriction edge=13194 type=1 modes=233 except_destination=0 value=320
+sample	2/763926/0	access_restriction	6	 access_restriction edge=13197 type=1 modes=233 except_destination=0 value=320
+sample	2/763926/0	access_restriction	7	 access_restriction edge=13198 type=1 modes=233 except_destination=0 value=320
+sample	2/763926/0	access_restriction	8	 access_restriction edge=18920 type=1 modes=233 except_destination=0 value=400
+sample	2/763926/0	access_restriction	9	 access_restriction edge=18934 type=1 modes=233 except_destination=0 value=400
+sample	2/763926/0	access_restriction	10	 access_restriction edge=18936 type=1 modes=233 except_destination=0 value=400
+sample	2/763926/0	access_restriction	11	 access_restriction edge=18938 type=1 modes=233 except_destination=0 value=400
+sample	2/763926/0	access_restriction	12	 access_restriction edge=18941 type=1 modes=233 except_destination=0 value=400
+sample	2/763926/0	access_restriction	13	 access_restriction edge=18943 type=1 modes=233 except_destination=0 value=400
+sample	2/763926/0	access_restriction	14	 access_restriction edge=18945 type=1 modes=233 except_destination=0 value=500
+sample	2/763926/0	access_restriction	15	 access_restriction edge=18947 type=1 modes=233 except_destination=0 value=380
+sample	2/763926/0	access_restriction	16	 access_restriction edge=18957 type=1 modes=233 except_destination=0 value=500
+sample	2/763926/0	access_restriction	17	 access_restriction edge=18958 type=1 modes=233 except_destination=0 value=380
+group	2/763926/0	forward_restriction	1	44633db16618225cddbd35f2535a4e4c
+sample	2/763926/0	forward_restriction	0	 forward_restriction from=0/3015/2149 to=2/763926/5879 type=1 modes=1661 vias=1 0/3015/2142 probability=0 has_dt=0
+group	2/763926/0	forward_restrictions	1	f43b224468dcb82675d577a390113ac9
+sample	2/763926/0	forward_restrictions	0	 forward_restrictions count=1
+group	2/763926/0	reverse_restrictions	1	b66a77d099a3e8bb6d788038cd2fc391
+sample	2/763926/0	reverse_restrictions	0	 reverse_restrictions count=0
+group	2/763926/0	get_restrictions	1	c57e591c355d1e22201554b528e84a4f
+sample	2/763926/0	get_restrictions	0	 get_restrictions edge=5879 forward from=0/3015/2149 to=2/763926/5879
+group	2/763926/0	admin	2	6a6e6602b69dcd9c901f63ce2df5904e
+sample	2/763926/0	admin	0	 admin 0 country=None state=None country_iso= state_iso=
+sample	2/763926/0	admin	1	 admin 1 country=Andorra state= country_iso=AD state_iso=
+group	2/763927/0	elevation	34	55c28ae4085c266f89a09260617b4915
+sample	2/763927/0	elevation	0	 elevation edge=0 length=5369 interval=31.958333333333332: 13 -3 21 16 9 18 28 11 6 19 33 10 30 42 42 -12 -4 13 14 8 1 19 2 10 7 0 17 10 18 20 11 -6 5 22 14 16 2 4 10 2 11 20 4 -3 4 -1 -7 2 5 9 20 6 -8 15 20 12 8 2 4 9 9 36 23 17 1 14 15 9 9 7 -20 -8 2 -3 -1 7 2 9 27 19 13 18 32 7 38 47 17 11 -4 25 1 5 31 25 37 33 7 12 19 18 17 18 21 18 12 19 21 19 7 22 31 21 14 0 -7 -5 -3 -2 -1 8 6 4 12 16 18 14 21 7 4 11 22 11 18 16 8 6 12 9 16 5 17 16 -1 8 14 12 16 24 13 11 20 21 43 27 23 21 28 28 25 21 20 20 28 22 21 13 14
+sample	2/763927/0	elevation	1	 elevation edge=1 length=339 interval=30.818181818181817: -13 -18 -11 -6 -4 -11 2 0 1 2
+sample	2/763927/0	elevation	2	 elevation edge=2 length=349 interval=31.727272727272727: 14 11 13 48 47 26 14 -4 -9 8
+sample	2/763927/0	elevation	3	 elevation edge=3 length=104 interval=26: -6 0 11
+sample	2/763927/0	elevation	4	 elevation edge=4 length=339 interval=30.818181818181817: -13 -18 -11 -6 -4 -11 2 0 1 2
+sample	2/763927/0	elevation	5	 elevation edge=5 length=156 interval=31.199999999999999: -9 -3 8 22
+sample	2/763927/0	elevation	6	 elevation edge=6 length=156 interval=31.199999999999999: -9 -3 8 22
+sample	2/763927/0	elevation	7	 elevation edge=7 length=349 interval=31.727272727272727: 14 11 13 48 47 26 14 -4 -9 8
+sample	2/763927/0	elevation	8	 elevation edge=8 length=2823 interval=31.719101123595507: 9 9 10 7 -6 -6 34 3 -10 2 4 -7 -3 16 5 -5 0 13 22 0 26 -11 -23 -4 8 6 9 2 1 18 32 16 5 -10 -16 10 28 17 5 25 -8 25 10 0 47 19 -4 0 29 12 -8 -15 10 32 22 18 17 -6 -2 29 20 25 -8 7 3 17 5 -9 18 31 24 24 26 18 4 2 -4 11 7 -10 13 18 7 0 -23 -9 -6 -9
+sample	2/763927/0	elevation	9	 elevation edge=9 length=104 interval=26: -6 0 11
+sample	2/763927/0	elevation	10	 elevation edge=10 length=755 interval=31.458333333333332: -20 -57 -18 -28 -29 -25 -26 -17 -7 18 -32 -43 16 -9 -13 0 -6 -13 -13 -26 -13 -24 -20
+sample	2/763927/0	elevation	11	 elevation edge=11 length=381 interval=31.75: 5 12 -2 -2 14 4 6 9 -2 -5 -3
+sample	2/763927/0	elevation	12	 elevation edge=12 length=5102 interval=31.887499999999999: 25 18 11 14 22 22 30 38 11 -18 -17 -8 -6 -16 -16 0 12 10 24 24 23 44 28 20 36 14 22 22 10 -2 0 -27 -25 -13 6 27 12 34 30 20 16 19 25 44 45 8 -26 8 12 -16 32 16 -28 -15 -7 2 11 13 3 -3 14 9 5 -4 17 21 2 -5 -15 -23 -34 -32 -13 0 -3 9 19 1 -16 -16 -12 -3 0 -3 0 -9 37 47 2 -3 9 2 -6 15 2 -3 14 23 19 11 15 13 18 29 22 16 38 54 59 68 24 9 18 26 11 -17 -23 -17 -6 -42 -23 -18 -19 -24 -10 -1 -21 -32 -54 1 -35 -34 24 -32 -23 11 23 -16 -9 3 4 -28 -6 -17 -7 -3 -7 4 -16 -23 -20 -29 -2 2 -18 -20 -10 -15 -13
+sample	2/763927/0	elevation	13	 elevation edge=13 length=381 interval=31.75: 5 12 -2 -2 14 4 6 9 -2 -5 -3
+sample	2/763927/0	elevation	14	 elevation edge=14 length=755 interval=31.458333333333332: -20 -57 -18 -28 -29 -25 -26 -17 -7 18 -32 -43 16 -9 -13 0 -6 -13 -13 -26 -13 -24 -20
+sample	2/763927/0	elevation	15	 elevation edge=15 length=2111 interval=31.984848484848484: 2 22 51 33 14 16 12 5 15 28 11 11 42 50 29 38 52 42 25 18 14 46 52 51 46 29 24 40 51 22 26 51 65 74 51 85 52 20 18 6 7 -12 8 -6 18 35 60 30 28 57 59 57 41 46 42 20 15 12 11 16 23 23 32 15 10
+sample	2/763927/0	elevation	16	 elevation edge=16 length=949 interval=31.633333333333333: 10 -17 4 -9 11 13 9 1 -27 -10 10 29 11 38 29 -6 -42 7 12 -11 -10 -20 -3 21 21 5 -7 -17 -21
+sample	2/763927/0	elevation	17	 elevation edge=17 length=378 interval=31.5: -16 -13 -8 -8 -8 -16 -19 14 -2 10 -5
+sample	2/763927/0	elevation	18	 elevation edge=18 length=949 interval=31.633333333333333: 10 -17 4 -9 11 13 9 1 -27 -10 10 29 11 38 29 -6 -42 7 12 -11 -10 -20 -3 21 21 5 -7 -17 -21
+sample	2/763927/0	elevation	19	 elevation edge=19 length=884 interval=31.571428571428573: 36 -6 11 -7 -11 6 7 -1 9 -4 7 15 4 -1 5 18 16 18 -10 12 15 14 -2 -6 7 -7 14
+sample	2/763927/0	elevation	20	 elevation edge=20 length=2823 interval=31.719101123595507: 9 9 10 7 -6 -6 34 3 -10 2 4 -7 -3 16 5 -5 0 13 22 0 26 -11 -23 -4 8 6 9 2 1 18 32 16 5 -10 -16 10 28 17 5 25 -8 25 10 0 47 19 -4 0 29 12 -8 -15 10 32 22 18 17 -6 -2 29 20 25 -8 7 3 17 5 -9 18 31 24 24 26 18 4 2 -4 11 7 -10 13 18 7 0 -23 -9 -6 -9
+sample	2/763927/0	elevation	21	 elevation edge=21 length=486 interval=30.375: 21 33 -4 6 14 21 6 -27 21 1 -6 13 15 15 8
+sample	2/763927/0	elevation	22	 elevation edge=22 length=378 interval=31.5: -16 -13 -8 -8 -8 -16 -19 14 -2 10 -5
+sample	2/763927/0	elevation	23	 elevation edge=23 length=486 interval=30.375: 21 33 -4 6 14 21 6 -27 21 1 -6 13 15 15 8
+sample	2/763927/0	elevation	24	 elevation edge=24 length=71 interval=23.666666666666668: 10 1
+sample	2/763927/0	elevation	25	 elevation edge=25 length=53 interval=26.5: 5
+sample	2/763927/0	elevation	26	 elevation edge=26 length=505 interval=31.5625: 32 15 7 16 9 -3 21 23 19 10 12 17 8 23 40
+sample	2/763927/0	elevation	27	 elevation edge=27 length=884 interval=31.571428571428573: 36 -6 11 -7 -11 6 7 -1 9 -4 7 15 4 -1 5 18 16 18 -10 12 15 14 -2 -6 7 -7 14
+sample	2/763927/0	elevation	28	 elevation edge=28 length=53 interval=26.5: 5
+sample	2/763927/0	elevation	29	 elevation edge=29 length=71 interval=23.666666666666668: 10 1
+sample	2/763927/0	elevation	30	 elevation edge=30 length=180 interval=30: 17 24 23 2 1
+sample	2/763927/0	elevation	31	 elevation edge=31 length=2111 interval=31.984848484848484: 2 22 51 33 14 16 12 5 15 28 11 11 42 50 29 38 52 42 25 18 14 46 52 51 46 29 24 40 51 22 26 51 65 74 51 85 52 20 18 6 7 -12 8 -6 18 35 60 30 28 57 59 57 41 46 42 20 15 12 11 16 23 23 32 15 10
+sample	2/763927/0	elevation	32	 elevation edge=32 length=198 interval=28.285714285714285: 18 24 20 17 10 -17
+sample	2/763927/0	elevation	33	 elevation edge=33 length=1847 interval=31.844827586206897: 36 50 31 26 22 -10 -5 -12 6 2 -7 -12 21 -3 4 15 2 5 -2 0 12 27 21 4 -10 10 71 41 19 46 -6 0 9 31 40 21 -1 7 9 -13 -17 33 -5 19 47 43 44 21 39 43 57 55 40 41 68 55 13
+group	2/763927/0	edgeinfo	20	d76ba87489f5409e00c4a10e99479fb7
+sample	2/763927/0	edgeinfo	0	 edgeinfo edge=0 offset=0 way=204666844 mean_elevation=2212 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	1	 edgeinfo edge=1 offset=1004 way=182583311 mean_elevation=1574 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	2	 edgeinfo edge=2 offset=1104 way=693779902 mean_elevation=1580 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	3	 edgeinfo edge=3 offset=1232 way=182583311 mean_elevation=1584 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	4	 edgeinfo edge=5 offset=1276 way=693711587 mean_elevation=1588 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	5	 edgeinfo edge=8 offset=1340 way=182583306 mean_elevation=1678 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	6	 edgeinfo edge=10 offset=1944 way=203372265 mean_elevation=2092 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	7	 edgeinfo edge=11 offset=2204 way=203372265 mean_elevation=2148 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	8	 edgeinfo edge=12 offset=2316 way=210428091 mean_elevation=2286 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	9	 edgeinfo edge=15 offset=3132 way=1560011619 mean_elevation=2412 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	10	 edgeinfo edge=16 offset=3564 way=1560491199 mean_elevation=1744 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	11	 edgeinfo edge=17 offset=3828 way=1560491198 mean_elevation=1750 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	12	 edgeinfo edge=19 offset=3944 way=1560491199 mean_elevation=1766 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	13	 edgeinfo edge=21 offset=4152 way=182583306 mean_elevation=1784 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	14	 edgeinfo edge=24 offset=4276 way=182583306 mean_elevation=1796 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	15	 edgeinfo edge=25 offset=4320 way=1560491199 mean_elevation=1792 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	16	 edgeinfo edge=26 offset=4356 way=1560491197 mean_elevation=1824 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	17	 edgeinfo edge=30 offset=4448 way=1560011618 mean_elevation=2664 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	18	 edgeinfo edge=32 offset=4516 way=1560011619 mean_elevation=2666 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+sample	2/763927/0	edgeinfo	19	 edgeinfo edge=33 offset=4576 way=978188089 mean_elevation=2370 speed_limit=0 bike=0 has_elevation=1 names=0 types=0
+group	2/763927/0	forward_restrictions	1	04aaf3c1806002b8a4700172699d9a53
+sample	2/763927/0	forward_restrictions	0	 forward_restrictions count=0
+group	2/763927/0	reverse_restrictions	1	b66a77d099a3e8bb6d788038cd2fc391
+sample	2/763927/0	reverse_restrictions	0	 reverse_restrictions count=0
+group	2/763927/0	admin	2	6a6e6602b69dcd9c901f63ce2df5904e
+sample	2/763927/0	admin	0	 admin 0 country=None state=None country_iso= state_iso=
+sample	2/763927/0	admin	1	 admin 1 country=Andorra state= country_iso=AD state_iso=
