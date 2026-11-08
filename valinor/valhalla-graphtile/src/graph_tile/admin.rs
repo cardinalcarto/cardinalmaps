@@ -1,8 +1,12 @@
-use crate::AsCowStr;
 use std::borrow::Cow;
 use zerocopy::{LE, U32};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, Unaligned};
 
+/// An administrative area (country and principal subdivision) referenced by nodes in the tile
+/// (mainline's `Admin`).
+///
+/// The names are in the text list;
+/// use [`GraphTile::get_admin_info`](super::GraphTile::get_admin_info) to resolve them.
 #[derive(FromBytes, IntoBytes, Immutable, Unaligned, Debug, Clone)]
 #[repr(C)]
 pub struct Admin {
@@ -17,14 +21,29 @@ pub struct Admin {
 }
 
 impl Admin {
-    /// Gets the ISO 3166-1 country code
+    /// Gets the ISO 3166-1 country code (empty if unknown).
+    ///
+    /// As in mainline, the code is empty if its first byte is NUL,
+    /// and otherwise both bytes.
+    #[inline]
     pub fn country_iso(&self) -> Cow<'_, str> {
-        self.country_iso.as_cow_str()
+        if self.country_iso[0] == 0 {
+            Cow::Borrowed("")
+        } else {
+            String::from_utf8_lossy(&self.country_iso)
+        }
     }
 
-    /// Gets the ISO 3166-2 principal subdivision code
+    /// Gets the principal subdivision part of the ISO 3166-2 code
+    /// (for example, `PA`; empty if unknown).
+    #[inline]
     pub fn principal_subdivision_iso(&self) -> Cow<'_, str> {
-        self.principal_subdivision_iso.as_cow_str()
+        let end = self
+            .principal_subdivision_iso
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.principal_subdivision_iso.len());
+        String::from_utf8_lossy(&self.principal_subdivision_iso[..end])
     }
 }
 
@@ -60,5 +79,21 @@ mod tests {
             insta::assert_debug_snapshot!("country_iso", country_isos);
             insta::assert_debug_snapshot!("principal_subdivision_iso", principal_subdivision_isos);
         }
+    }
+
+    #[test]
+    fn test_get_admin_info() {
+        // Cross-checked with GraphTile::admininfo in Valhalla 3.9.1.
+        let tile = &*TEST_GRAPH_TILE_L0;
+        let none = tile.get_admin_info(0).unwrap();
+        assert_eq!(none.country_text, "None");
+        assert_eq!(none.state_text, "None");
+        assert_eq!(none.country_iso, "");
+        let andorra = tile.get_admin_info(1).unwrap();
+        assert_eq!(andorra.country_text, "Andorra");
+        assert_eq!(andorra.state_text, "");
+        assert_eq!(andorra.country_iso, "AD");
+        assert_eq!(andorra.state_iso, "");
+        assert!(tile.get_admin_info(2).is_err());
     }
 }

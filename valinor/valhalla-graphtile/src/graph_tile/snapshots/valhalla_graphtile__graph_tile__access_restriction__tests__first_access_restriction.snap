@@ -3,16 +3,15 @@ source: valhalla-graphtile/src/graph_tile/access_restriction.rs
 expression: "tile_view.access_restrictions[0]"
 ---
 AccessRestriction {
-    bitfield: AccessRestrictionBitField {
-        edge_index: U32(
-            1456,
+    edge_index: 1456,
+    restriction_type: Ok(
+        MaxHeight,
+    ),
+    modes: EnumSet(Auto | Truck | Taxi | Bus | HOV),
+    except_destination: false,
+    value: Ok(
+        Hundredths(
+            440,
         ),
-        restriction_type: MaxHeight,
-        modes: U16(
-            233,
-        ),
-    },
-    value: U64(
-        440,
     ),
 }

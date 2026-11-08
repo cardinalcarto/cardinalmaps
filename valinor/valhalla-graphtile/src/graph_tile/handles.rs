@@ -4,6 +4,7 @@
 //! These can be used in cases where longer-lived access is needed.
 //! Each offers different performance, flexibility, and safety tradeoffs.
 
+use super::TileSections;
 use super::{
     AccessRestriction, Admin, DirectedEdge, DirectedEdgeExt, DiscretizedBoundingCircle, EdgeInfo,
     GraphTile, GraphTileDecodingError, GraphTileHeader, GraphTileView, LookupError, NodeInfo,
@@ -142,6 +143,12 @@ impl GraphTile for OwnedGraphTileHandle {
     fn bin_index_xy(&self, x: usize, y: usize) -> usize {
         self.borrow_dependent().bin_index_xy(x, y)
     }
+
+    // Variable-length sections
+    #[inline]
+    fn sections(&self) -> TileSections<'_> {
+        self.borrow_dependent().sections()
+    }
 }
 
 self_cell! {
@@ -256,6 +263,12 @@ impl GraphTile for MmapGraphTileHandle {
     #[inline]
     fn bin_index_xy(&self, x: usize, y: usize) -> usize {
         self.borrow_dependent().bin_index_xy(x, y)
+    }
+
+    // Variable-length sections
+    #[inline]
+    fn sections(&self) -> TileSections<'_> {
+        self.borrow_dependent().sections()
     }
 }
 

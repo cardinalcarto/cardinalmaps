@@ -39,6 +39,16 @@ mod sign;
 mod transit;
 mod turn_lane;
 
+// Variable-length sections and the values stored in the text list.
+mod complex_restriction;
+mod lane_connectivity;
+mod linguistic;
+#[cfg(test)]
+mod section_oracle;
+mod sections;
+mod tagged_value;
+mod time_domain;
+
 use crate::graph_tile::handles::OwnedGraphTileHandle;
 use crate::graph_tile::predicted_speeds::{
     COEFFICIENT_COUNT, PredictedSpeedCodecError, PredictedSpeeds,
@@ -60,6 +70,23 @@ pub use node::{NodeInfo, NodeTransition};
 pub use sign::{Sign, SignType};
 pub use transit::{TransitDeparture, TransitRoute, TransitSchedule, TransitStop, TransitTransfer};
 pub use turn_lane::TurnLane;
+
+// Variable-length sections and the values stored in the text list.
+pub use access_restriction::AccessRestrictionValue;
+pub use complex_restriction::{
+    ComplexRestriction, ComplexRestrictions, RestrictionDateTime, RestrictionType,
+};
+pub use edge_info::{EdgeName, EncodedElevation, NameInfo};
+pub use lane_connectivity::{LaneConnectivity, LaneConnectivityLanes};
+pub use linguistic::{
+    Language, LinguisticMap, LinguisticRecord, LinguisticRecords, PronunciationAlphabet,
+};
+pub use sections::{AdminInfo, SectionDecodingError, SignInfo, TileSections};
+pub use tagged_value::{
+    Landmark, LandmarkType, LevelRanges, Levels, OsmNodeIds, TaggedValue, TaggedValueKind,
+};
+pub use time_domain::{ConditionalSpeedLimit, DayType, TimeDomain};
+pub use turn_lane::{TurnLaneDirection, TurnLaneMask, TurnLanes};
 
 #[derive(Debug, Error)]
 pub enum GraphTileDecodingError {
@@ -369,6 +396,102 @@ pub trait GraphTile {
                 }
             })
     }
+
+    // Variable-length sections: signs, turn lanes, complex restrictions,
+    // lane connectivity, and admins.
+    // Only `sections` needs an implementation; the lookups are built on it.
+
+    /// Borrowed views of the tile's variable-length sections.
+    fn sections(&self) -> TileSections<'_>;
+
+    /// Gets the signs for a directed edge (or, with `signs_on_node`, a node) index,
+    /// as mainline's `GraphTile::GetSigns(idx, signs_on_node)` does.
+    ///
+    /// See [`TileSections::get_signs`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a sign's text is outside the text list or malformed.
+    #[inline]
+    fn get_signs(
+        &self,
+        index: u32,
+        signs_on_node: bool,
+    ) -> Result<Vec<SignInfo<'_>>, SectionDecodingError> {
+        self.sections().get_signs(index, signs_on_node)
+    }
+
+    /// Gets the signs for a directed edge (or node) index and their pronunciations,
+    /// as mainline's `GraphTile::GetSigns(idx, index_linguistic_map, signs_on_node)` does.
+    ///
+    /// See [`TileSections::get_signs_with_linguistics`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a sign's text is outside the text list or malformed.
+    #[inline]
+    fn get_signs_with_linguistics(
+        &self,
+        index: u32,
+        signs_on_node: bool,
+    ) -> Result<(Vec<SignInfo<'_>>, LinguisticMap<'_>), SectionDecodingError> {
+        self.sections()
+            .get_signs_with_linguistics(index, signs_on_node)
+    }
+
+    /// Gets the turn lanes at the end of a directed edge, if it has any
+    /// (mainline's `GraphTile::turnlanes`).
+    ///
+    /// See [`TileSections::get_turn_lanes`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the turn lane text is outside the text list.
+    #[inline]
+    fn get_turn_lanes(
+        &self,
+        directed_edge_index: u32,
+    ) -> Result<Option<TurnLanes<'_>>, SectionDecodingError> {
+        self.sections().get_turn_lanes(directed_edge_index)
+    }
+
+    /// Iterates over the complex restrictions that apply to an edge and any of the given modes,
+    /// as mainline's `GraphTile::GetComplexRestrictions(forward, id, modes)` does.
+    ///
+    /// See [`TileSections::get_complex_restrictions`].
+    ///
+    /// # Errors
+    ///
+    /// The iterator yields an error (and then stops) if the section is truncated.
+    #[inline]
+    fn get_complex_restrictions(
+        &self,
+        forward: bool,
+        edge_id: GraphId,
+        modes: EnumSet<Access>,
+    ) -> impl Iterator<Item = Result<ComplexRestriction<'_>, SectionDecodingError>> {
+        self.sections()
+            .get_complex_restrictions(forward, edge_id, modes)
+    }
+
+    /// Gets the lane connections that end on a directed edge
+    /// (mainline's `GraphTile::GetLaneConnectivity`).
+    #[inline]
+    fn get_lane_connectivity(&self, directed_edge_index: u32) -> &[LaneConnectivity] {
+        self.sections().get_lane_connectivity(directed_edge_index)
+    }
+
+    /// Gets the admin at an index with its names resolved
+    /// (mainline's `GraphTile::admininfo`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index is out of bounds
+    /// or the names are outside the text list.
+    #[inline]
+    fn get_admin_info(&self, index: usize) -> Result<AdminInfo<'_>, SectionDecodingError> {
+        self.sections().get_admin_info(index)
+    }
 }
 
 impl<T> GraphTile for Arc<T>
@@ -476,6 +599,12 @@ where
     #[inline]
     fn bin_index_xy(&self, x: usize, y: usize) -> usize {
         self.deref().bin_index_xy(x, y)
+    }
+
+    // Variable-length sections
+    #[inline]
+    fn sections(&self) -> TileSections<'_> {
+        self.deref().sections()
     }
 }
 
@@ -714,6 +843,20 @@ impl GraphTile for GraphTileView<'_> {
             .map(|lvl| lvl.tiling_system.n_subdivisions as usize)
             .expect("Only Valhalla standard tile levels are supported");
         y * n_subdivisions + x
+    }
+
+    // Variable-length sections
+    #[inline]
+    fn sections(&self) -> TileSections<'_> {
+        TileSections {
+            signs: self.signs,
+            turn_lanes: self.turn_lanes,
+            admins: self.admins,
+            complex_forward: self.complex_forward_restrictions_memory,
+            complex_reverse: self.complex_reverse_restrictions_memory,
+            text_list: self.text_memory,
+            lane_connectivity: self.lane_connectivity_memory,
+        }
     }
 }
 
