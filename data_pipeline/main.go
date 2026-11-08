@@ -25,6 +25,9 @@ import (
 	"dagger/data-pipeline/internal/dagger"
 )
 
+// The GDAL that cuts elevation tiles: Ubuntu noble's, matching the pinned Valhalla image's base.
+const routingGdalVersion = "3.8.4+dfsg-3ubuntu3"
+
 const (
 	buildImage        = "maven:3.9-eclipse-temurin-25"
 	runtimeImage      = "eclipse-temurin:25-jre"
@@ -834,10 +837,12 @@ func (m *DataPipeline) RoutingTiles(
 	ctr := dag.Container().From(image)
 	if gedtm != "" {
 		config = append(config, "--additional-data-elevation", "/work/elevation")
-		// The image has Python but not GDAL.
+		// The image has Python but not GDAL. Pin noble's GDAL (from its release pocket, which
+		// doesn't change), so the cut tiles don't change under the same cache key; python3-gdal
+		// depends on the libgdal of exactly its version. Update it with the Valhalla image.
 		ctr = ctr.
 			WithEnvVariable("DEBIAN_FRONTEND", "noninteractive").
-			WithExec([]string{"sh", "-c", "apt-get update && apt-get install -y --no-install-recommends python3-gdal && rm -rf /var/lib/apt/lists/*"}).
+			WithExec([]string{"sh", "-c", "apt-get update && apt-get install -y --no-install-recommends python3-gdal=" + routingGdalVersion + " && rm -rf /var/lib/apt/lists/*"}).
 			WithNewFile("/input/routing_elevation.py", routingElevationScript)
 		if gedtmService != nil {
 			ctr = ctr.WithServiceBinding("gedtm", gedtmService)
