@@ -6,6 +6,7 @@
 //! As in mainline, the status of a tile's edges is an array, allocated when the search
 //! first reaches the tile; here those arrays are kept for the next search.
 
+use core::hash::{BuildHasherDefault, Hasher};
 use std::collections::HashMap;
 
 use valhalla_graphtile::GraphId;
@@ -63,11 +64,36 @@ impl EdgeStatusInfo {
     }
 }
 
+/// A fast hasher for tile IDs, which are small integers chosen by the graph, not by users
+/// (so there is no need for the default hasher's protection against collisions).
+#[derive(Clone, Copy, Debug, Default)]
+struct TileHasher(u64);
+
+impl Hasher for TileHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        // Fibonacci hashing: spread the bits over the whole word.
+        self.0 = (self.0 ^ value).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
 /// The status of every edge a search has reached (mainline's `EdgeStatus`).
 #[derive(Debug, Default)]
 pub(crate) struct EdgeStatus {
     /// Slot by tile (the base graph ID's value).
-    tiles: HashMap<u64, usize>,
+    tiles: HashMap<u64, usize, BuildHasherDefault<TileHasher>>,
     /// Each slot holds one tile's edges.
     slots: Vec<Vec<EdgeStatusInfo>>,
     /// How many slots are in use; the rest are kept for later searches.

@@ -47,6 +47,8 @@ mod time;
 mod unidirectional;
 
 #[cfg(test)]
+mod bench_tests;
+#[cfg(test)]
 mod oracle_tests;
 
 pub use config::{ConfigError, HierarchyLimitsConfig, ThorConfig};
