@@ -7,6 +7,8 @@
 //! Errors are serialized by [`ValhallaError::serialize`] instead.
 
 mod gpx;
+mod locate;
+mod locate_verbose;
 mod numbers;
 mod openlr;
 mod osrm;
@@ -16,6 +18,7 @@ mod trip;
 mod valhalla;
 mod writer;
 
+pub use locate::serialize_locate;
 use valhalla_proto::Api;
 use valhalla_proto::options::Format;
 use valhalla_response::{ErrorCode, ValhallaError};

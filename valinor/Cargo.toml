@@ -11,6 +11,7 @@ members = [
     "valhalla-response",
     "valinor-cli",
     "valinor-export-graph",
+    "valinor-loki",
     "valinor-sif",
     "valinor-tap",
     "valinor-tyr",
@@ -72,6 +73,7 @@ valhalla-proto = { path = "valhalla-proto" }
 valhalla-microservice = { path = "valhalla-microservice" }
 valhalla-response = { path = "valhalla-response" }
 valinor-sif = { path = "valinor-sif" }
+valinor-tyr = { path = "valinor-tyr" }
 walkdir = "2.5.0"
 zerocopy = "0.8.63"
 zerocopy-derive = "0.8.63"

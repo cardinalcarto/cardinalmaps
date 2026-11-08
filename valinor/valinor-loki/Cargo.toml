@@ -1,0 +1,28 @@
+[package]
+name = "valinor-loki"
+description = "Valhalla-compatible location correlation (mainline's Loki): finding the edges near each location of a request."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+geo = { workspace = true }
+http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+valhalla-graphtile = { workspace = true }
+valhalla-proto = { workspace = true }
+valhalla-response = { workspace = true }
+valinor-sif = { workspace = true }
+valinor-tyr = { workspace = true }
+
+[dev-dependencies]
+base64 = { workspace = true }
+insta = { workspace = true }
+
+[lints]
+workspace = true

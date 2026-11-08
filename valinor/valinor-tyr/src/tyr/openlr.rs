@@ -335,6 +335,56 @@ fn line_binary(first: &ReferencePoint, last: &ReferencePoint) -> [u8; 16] {
     out
 }
 
+/// The base64 `OpenLR` point along a line from the first point of `shape` to the last,
+/// with a positive offset bucket (the location's fraction along it, out of 255),
+/// as `/locate` writes an edge's `linear_reference`.
+///
+/// Returns `None` for a shape with fewer than two points (mainline throws).
+pub(crate) fn point_along_line(
+    shape: &[LngLat],
+    frc: u8,
+    fow: u8,
+    length: u32,
+    positive_offset: u8,
+) -> Option<String> {
+    if shape.len() < 2 {
+        return None;
+    }
+    let (start, finish) = (*shape.first()?, *shape.last()?);
+    let last_index = shape.len() - 1;
+    let forward_heading = tangent_angle(0, start, shape, 20.0, true, 0, usize::MAX);
+    let reverse_heading = tangent_angle(last_index, finish, shape, 20.0, false, 0, usize::MAX);
+    let first = ReferencePoint::new(
+        start,
+        f64::from(forward_heading),
+        frc,
+        fow,
+        None,
+        f64::from(length),
+        frc,
+    );
+    let last = ReferencePoint::new(
+        finish,
+        f64::from(reverse_heading),
+        frc,
+        fow,
+        Some(&first),
+        0.0,
+        0,
+    );
+    let mut binary = line_binary(&first, &last).to_vec();
+    // `OpenLrStatus::PointAlongLine()`: version 3, has_attributes, and is_point.
+    binary[0] = 0x2B;
+    // The orientation (first point towards the second) is in the first point's attributes.
+    binary[7] |= 1 << 6;
+    // The side of the road is "directly on the road" (0), and the offset flags follow.
+    if positive_offset != 0 {
+        binary[15] |= 1 << 6;
+        binary.push(positive_offset);
+    }
+    Some(encode64(&binary))
+}
+
 /// `midgard::encode64`: standard base64 with padding.
 pub(crate) fn encode64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

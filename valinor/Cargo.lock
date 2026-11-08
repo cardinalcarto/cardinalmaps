@@ -2557,6 +2557,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "valinor-loki"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "geo",
+ "http",
+ "insta",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "valhalla-graphtile",
+ "valhalla-proto",
+ "valhalla-response",
+ "valinor-sif",
+ "valinor-tyr",
+]
+
+[[package]]
 name = "valinor-sif"
 version = "0.1.0"
 dependencies = [
@@ -2585,12 +2603,15 @@ dependencies = [
 name = "valinor-tyr"
 version = "0.1.0"
 dependencies = [
+ "enumset",
  "http",
  "illuvatar",
  "insta",
+ "jiff",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "valhalla-graphtile",
  "valhalla-proto",
  "valhalla-response",
  "valinor-sif",

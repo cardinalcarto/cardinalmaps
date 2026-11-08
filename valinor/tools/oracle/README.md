@@ -240,6 +240,44 @@ tools/oracle/sif-oracle.sh speeds valhalla-graphtile/fixtures/builder-truck 2 76
 The Containerfile adds a compiler and development headers to the pinned image.
 (Its `FROM` line names the tag; keep it in step with [`valhalla-image`](valhalla-image).)
 
+### Loki
+
+[`cpp/loki.cc`](cpp/loki.cc) runs mainline's own `loki_worker_t` on a list of requests:
+for each, `ParseApi` and the action (route, locate, the matrix actions, or the trace actions),
+then `cleanup()`, as the worker does for each HTTP request.
+It prints the `Api` that Loki sends to Thor (or the `/locate` response,
+or the error and the request as it was when it failed), base64-encoded.
+[`loki-corpus.py`](loki-corpus.py) generates reproducible random requests
+that use every option Loki reads (radius, reachability, headings, preferred side,
+street side tolerances, node snapping, search cutoffs, search filters, levels, layers,
+display coordinates, exclude locations and polygons, verbose locate)
+and requests that break the service limits.
+
+`valinor-loki/fixtures/oracle/andorra` holds 2,000 of these over the Andorra fixture tiles,
+which the `oracle_andorra` test checks.
+Larger sets, and other regions, are checked with the ignored `oracle_external` test:
+
+```shell
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" valinor-valhalla-dev:3.9.1 /w/build-loki.sh
+python3 -I tools/oracle/loki-corpus.py andorra 2000 2 > requests.tsv
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" \
+  -v "$PWD/valhalla-graphtile/fixtures/andorra-tiles:/fx:ro,z" \
+  -v /mnt/maps/cardinal/valhalla-oracle/andorra-oracle:/cfg:ro,z -v "$PWD:/io:z" \
+  valinor-valhalla-dev:3.9.1 sh -c '/w/loki /cfg/valhalla.json /fx /io/requests.tsv > /io/results.tsv'
+
+# Seattle (tiles from the oracle build):
+python3 -I tools/oracle/loki-corpus.py seattle 2000 3 > requests.tsv
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" -v /mnt/maps/cardinal/valhalla-oracle/seattle:/cfg:ro,z \
+  -v "$PWD:/io:z" valinor-valhalla-dev:3.9.1 \
+  sh -c '/w/loki /cfg/valhalla.json /cfg/tiles /io/requests.tsv > /io/results.tsv'
+VALINOR_LOKI_ORACLE=$PWD VALINOR_LOKI_TILES=/mnt/maps/cardinal/valhalla-oracle/seattle/tiles.tar \
+  cargo test --release -p valinor-loki oracle_external -- --ignored --nocapture
+```
+
+The Seattle build has a level 2 tile that only holds edge bins (2/792229),
+whose header corner mainline never sets;
+it is now a graph tile fixture (`valhalla-graphtile/fixtures/bin-only`).
+
 ## Message fixtures
 
 [`copy-message-fixtures.sh`](copy-message-fixtures.sh) copies the captured

@@ -9,11 +9,14 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+enumset = { workspace = true }
 http = { workspace = true }
 illuvatar = { workspace = true }
+jiff = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+valhalla-graphtile = { workspace = true }
 valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
 valinor-sif = { workspace = true }
