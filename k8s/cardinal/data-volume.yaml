@@ -2,7 +2,7 @@
 # releases that release.sh builds. Pods only read it:
 #
 #   planets/<file>.osm.pbf   extracts, read by the POI bootstrap
-#   releases/<id>/           tiles.mbtiles, index/, categories/, manifest.json
+#   releases/<id>/           tiles.mbtiles, index/, routing/, categories/, manifest.json
 #
 # If you change the path, set CARDINAL_DATA for release.sh to match. It's a
 # hostPath volume, which only suits a single-node cluster: on more nodes, use

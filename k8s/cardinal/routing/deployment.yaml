@@ -1,0 +1,76 @@
+# Valinor, Cardinal's Valhalla-compatible router, serving the release's
+# routing/tiles.tar with its routing/valhalla.json (see data_pipeline/README.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: routing
+spec:
+  replicas: 1
+  # The new release is served before the old pod stops.
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: routing
+  template:
+    metadata:
+      labels:
+        app: routing
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+      containers:
+        - name: valinor
+          image: cardinal-valinor
+          args:
+            - --config=/releases/$(MAP_RELEASE)/routing/valhalla.json
+            - --tiles=/releases/$(MAP_RELEASE)/routing/tiles.tar
+            - --listen=0.0.0.0:8002
+          env:
+            - name: MAP_RELEASE
+              valueFrom:
+                configMapKeyRef:
+                  name: map-release
+                  key: MAP_RELEASE
+            - name: RUST_LOG
+              value: info
+          ports:
+            - name: http
+              containerPort: 8002
+          volumeMounts:
+            - name: data
+              mountPath: /releases
+              subPath: releases
+              readOnly: true
+          # A planet's tarball can take a while to open.
+          startupProbe:
+            httpGet:
+              path: /status
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: http
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 250m
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data
+            readOnly: true

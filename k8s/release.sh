@@ -4,7 +4,7 @@
 #
 #   k8s/release.sh init
 #   k8s/release.sh bootstrap-pois PLANET.osm.pbf [REPLICATION_URL]
-#   k8s/release.sh build EXTRACT.osm.pbf [--id ID] [--wof-db FILE] [--qrank FILE] [--sources DIR] [--contours CONFIG [--dem DIR]] [--categories DIR] [--tagger FILE]
+#   k8s/release.sh build EXTRACT.osm.pbf [--id ID] [--wof-db FILE] [--qrank FILE] [--routing-speeds FILE] [--sources DIR] [--contours CONFIG [--dem DIR]] [--categories DIR] [--tagger FILE]
 #   k8s/release.sh promote ID [--query Q]
 #   k8s/release.sh list
 #   k8s/release.sh prune [--keep N] [--yes]
@@ -128,12 +128,15 @@ cmd_bootstrap_pois() {
 
 cmd_build() {
   local extract='' id='' wof=$root/wof/whosonfirst-data-admin-latest.spatial.db qrank=$root/qrank/qrank.csv.gz
+  local speeds=$root/speeds/default_speeds.json
   local contours='' extra_args=() categories='' tagger=''
   while [[ $# -gt 0 ]]; do
     case $1 in
       --id) id=$2; shift 2 ;;
       --wof-db) wof=$2; shift 2 ;;
       --qrank) qrank=$2; shift 2 ;;
+      # Default speeds for the routing tiles (mjolnir.default_speeds_config).
+      --routing-speeds) speeds=$2; shift 2 ;;
       --sources) extra_args+=(--sources="$(realpath "$2")"); shift 2 ;;
       # Reads AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY if its DEMs are in a bucket.
       --contours) contours=$2; shift 2 ;;
@@ -176,6 +179,14 @@ cmd_build() {
   else
     echo "No QRank at $qrank; POIs' Wikidata entities will all count the same." >&2
   fi
+  local speeds_args=() speeds_json=null
+  if [[ -f $speeds ]]; then
+    speeds=$(realpath "$speeds")
+    speeds_args=(--routing-speeds="$speeds")
+    speeds_json=$(jq -n --arg path "$speeds" --arg sha256 "$(sha256sum "$speeds" | cut -d' ' -f1)" '{path: $path, sha256: $sha256}')
+  else
+    echo "No default speeds at $speeds; routing tiles will use Valhalla's built-in speeds." >&2
+  fi
   command -v dagger >/dev/null || die "dagger isn't installed"
   command -v podman >/dev/null || die "podman isn't installed"
   lock_releases
@@ -203,10 +214,12 @@ cmd_build() {
   (cd "$repo" && DATABASE_URL=$(database_url "database:$db_port") dagger -m data_pipeline api call build \
     --osm="$extract" --wof-db="$wof" \
     --database-url=env://DATABASE_URL --database="tcp://localhost:$db_port" \
-    "${qrank_args[@]}" "${extra_args[@]}" -o "$partial")
+    "${qrank_args[@]}" "${speeds_args[@]}" "${extra_args[@]}" -o "$partial")
   [[ -s $partial/tiles.mbtiles ]] || die "the build has no tiles.mbtiles; left in $partial"
   [[ -f $partial/index/meta.json ]] || die "the build has no geocoder index; left in $partial"
   [[ -f $partial/tagger.model ]] || die "the build has no query tagger; left in $partial"
+  [[ -s $partial/routing/tiles.tar && -f $partial/routing/valhalla.json ]] ||
+    die "the build has no routing tiles; left in $partial"
   local schema_version
   schema_version=$(jq -er .schema_version "$partial/index/airmail-index.json") ||
     die "the geocoder index has no schema version; left in $partial"
@@ -230,11 +243,14 @@ cmd_build() {
     --argjson qrank "$([[ ${#qrank_args[@]} -gt 0 ]] && echo true || echo false)" \
     --arg categories "$categories" \
     --arg tagger "$tagger" \
+    --arg valhalla_image "$(<"$repo/valinor/tools/oracle/valhalla-image")" \
+    --argjson speeds "$speeds_json" \
     '{id: $id, built_at: $built_at,
       extract: {path: $path, size: $size, replication_timestamp: $extract_ts},
       poi_checkpoint: {sequence: $sequence, timestamp: $checkpoint_ts},
       index: {schema_version: $schema_version, qrank: $qrank},
       models: {categories: $categories, tagger: $tagger},
+      routing: {valhalla_image: $valhalla_image, speeds: $speeds},
       git: {commit: $commit, dirty: $dirty}}' >"$partial/manifest.json"
   chmod a+r "$partial/manifest.json"
   mv "$partial" "$dest"
@@ -257,6 +273,8 @@ cmd_promote() {
   # The geocoder won't start without them.
   [[ -f $root/releases/$id/tagger.model ]] || die "$id has no tagger.model"
   compgen -G "$root/releases/$id/categories/*.amcats" >/dev/null || die "$id has no categorical models in categories/"
+  # Nor will the router.
+  [[ -f $root/releases/$id/routing/tiles.tar ]] || die "$id has no routing tiles in routing/"
 
   local previous
   previous=$(live_release)
@@ -264,7 +282,7 @@ cmd_promote() {
   echo "MAP_RELEASE=$id" >"$releases_env"
   kubectl apply -k "$site" >/dev/null
   echo "Rolling out $id..."
-  for deploy in martin geocoder; do
+  for deploy in martin geocoder routing; do
     kubectl -n "$ns" rollout status "deploy/$deploy" --timeout=600s >/dev/null || {
       echo "deploy/$deploy didn't become ready; the previous pods are still serving." >&2
       [[ -z $previous ]] || echo "Go back with: k8s/release.sh promote $previous" >&2
@@ -281,7 +299,9 @@ cmd_promote() {
       die "https://$host/tiles/catalog doesn't list basemap"
     curl -fsS -m 20 -G "https://$host/geocoder/v1/search" --data-urlencode "q=$query" | jq -e '.results | length > 0' >/dev/null ||
       die "https://$host/geocoder/v1/search found nothing for \"$query\"; try another --query"
-    echo "Serving $id at https://$host/tiles/basemap and https://$host/geocoder/v1/search"
+    curl -fsS -m 20 "https://$host/routing/status" >/dev/null ||
+      die "https://$host/routing/status doesn't answer"
+    echo "Serving $id at https://$host/tiles/basemap, https://$host/geocoder/v1/search and https://$host/routing/route"
   fi
 }
 

@@ -10,11 +10,13 @@ resources:
   - tileserver/service.yaml
   - geocoder/deployment.yaml
   - geocoder/service.yaml
+  - routing/deployment.yaml
+  - routing/service.yaml
   - proxy/deployment.yaml
   - proxy/service.yaml
   - proxy/ingress.yaml
 configMapGenerator:
-  # The release the tileserver and geocoder serve; overlays replace it.
+  # The release the tileserver, geocoder and router serve; overlays replace it.
   - name: map-release
     envs: [releases.env]
   - name: martin-config
@@ -31,4 +33,7 @@ images:
     newTag: main
   - name: cardinal-airmail
     newName: ghcr.io/ellenhp/cardinal-airmail
+    newTag: main
+  - name: cardinal-valinor
+    newName: ghcr.io/ellenhp/cardinal-valinor
     newTag: main

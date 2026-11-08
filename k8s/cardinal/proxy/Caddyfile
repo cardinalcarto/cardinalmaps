@@ -10,7 +10,7 @@
 }
 
 :8080 {
-	# Geocoder results carry shapes, which compress well. Tiles are already
+	# Geocoder results and routes carry shapes, which compress well. Tiles are already
 	# compressed, and Caddy leaves responses with an encoding alone.
 	encode zstd gzip
 	handle /tiles/* {
@@ -19,7 +19,10 @@
 	handle_path /geocoder/* {
 		reverse_proxy geocoder:80
 	}
-	# /routing/* is reserved for the routing engine.
+	# Valinor serves Valhalla's API (/route, /locate, /status, ...) at its root.
+	handle_path /routing/* {
+		reverse_proxy routing:80
+	}
 	handle {
 		respond 404
 	}

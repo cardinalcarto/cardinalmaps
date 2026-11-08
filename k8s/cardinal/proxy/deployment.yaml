@@ -1,5 +1,6 @@
 # Routes cardinal.<tailnet>.ts.net to the services by path: /tiles/* to
-# Martin and /geocoder/* to airmail (without the prefix).
+# Martin, and /geocoder/* to airmail and /routing/* to Valinor (both without
+# the prefix).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
