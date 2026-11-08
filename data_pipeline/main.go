@@ -43,6 +43,9 @@ type DataPipeline struct {
 	AirmailSource *dagger.Directory
 	// +private
 	TopoSource *dagger.Directory
+	// The pinned mainline Valhalla image, shared with Valinor's oracle.
+	// +private
+	ValhallaImageRef *dagger.File
 }
 
 func New(ws *dagger.Workspace) *DataPipeline {
@@ -59,6 +62,7 @@ func New(ws *dagger.Workspace) *DataPipeline {
 		TopoSource: ws.Directory("/topo_pipeline", dagger.WorkspaceDirectoryOpts{
 			Exclude: []string{"target"},
 		}),
+		ValhallaImageRef: ws.File("/valinor/tools/oracle/valhalla-image"),
 	}
 }
 
@@ -690,3 +694,148 @@ func (m *DataPipeline) CategoricalModels(
 	}
 	return models, nil
 }
+
+// The pinned mainline Valhalla image that routing tiles are built with, as
+// valinor/tools/oracle/valhalla-image names it (a tag and digest), so the
+// pipeline and Valinor's oracle build tiles with the same tools.
+func (m *DataPipeline) ValhallaImage(ctx context.Context) (string, error) {
+	ref, err := m.ValhallaImageRef.Contents(ctx)
+	if err != nil {
+		return "", err
+	}
+	ref = strings.TrimSpace(ref)
+	if !strings.Contains(ref, "@sha256:") {
+		return "", fmt.Errorf("valinor/tools/oracle/valhalla-image must pin a digest, not %q", ref)
+	}
+	return ref, nil
+}
+
+// Valhalla's time zone database (valhalla_build_timezones), from the
+// timezone-boundary-builder release that the image's script names. It doesn't
+// depend on the extract, so it's built once per image.
+func (m *DataPipeline) RoutingTimezones(ctx context.Context) (*dagger.File, error) {
+	image, err := m.ValhallaImage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return dag.Container().
+		From(image).
+		WithWorkdir("/work").
+		WithExec([]string{"sh", "-c", "mkdir -p /out && valhalla_build_timezones >/out/timezones.sqlite"}).
+		File("/out/timezones.sqlite"), nil
+}
+
+// Valhalla's administrative areas (valhalla_build_admins) for an extract:
+// countries and their subdivisions, which give edges their country's access
+// rules and driving side, and choose default speeds by region.
+func (m *DataPipeline) RoutingAdmins(
+	ctx context.Context,
+	// OSM extract (.osm.pbf).
+	osm *dagger.File,
+) (*dagger.File, error) {
+	image, err := m.ValhallaImage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return dag.Container().
+		From(image).
+		WithMountedFile("/input/input.osm.pbf", osm).
+		WithWorkdir("/out").
+		WithExec([]string{"sh", "-c", "valhalla_build_config --mjolnir-admin /out/admins.sqlite >/tmp/valhalla.json && " +
+			"valhalla_build_admins -c /tmp/valhalla.json /input/input.osm.pbf"}).
+		File("/out/admins.sqlite"), nil
+}
+
+// Builds Valhalla routing tiles from an OSM extract with mainline Valhalla's
+// own tile builder (the pinned image; see ValhallaImage), into a directory
+// holding tiles.tar (valhalla_build_extract's tarball, with its index) and
+// valhalla.json, the configuration to serve it with. In the configuration,
+// tile_extract is tiles.tar, relative to the directory, and the paths that
+// only the build reads are cleared. Valinor's oracle builds tiles the same
+// way: pedestrian areas, bounding circles, admins and time zones, and no
+// landmarks, since mainline's landmarks step makes tiles that route
+// incorrectly (see valinor/tools/oracle/README.md). Unlike the oracle's, the
+// tiles have no elevation.
+// +cache="never"
+func (m *DataPipeline) RoutingTiles(
+	ctx context.Context,
+	// OSM extract (.osm.pbf).
+	osm *dagger.File,
+	// Default speeds by region, density and road class
+	// (mjolnir.default_speeds_config), such as default_speeds.json from
+	// https://github.com/OpenStreetMapSpeeds/schema. Without it, edges
+	// without a maxspeed get mainline's built-in speeds by road class.
+	// +optional
+	speeds *dagger.File,
+) (*dagger.Directory, error) {
+	image, err := m.ValhallaImage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	timezones, err := m.RoutingTimezones(ctx)
+	if err != nil {
+		return nil, err
+	}
+	admins, err := m.RoutingAdmins(ctx, osm)
+	if err != nil {
+		return nil, err
+	}
+	config := []string{
+		"valhalla_build_config",
+		"--mjolnir-tile-dir", "/work/tiles",
+		"--mjolnir-tile-extract", "/out/tiles.tar",
+		"--mjolnir-traffic-extract", "",
+		"--mjolnir-admin", "/input/admins.sqlite",
+		"--mjolnir-timezone", "/input/timezones.sqlite",
+		"--mjolnir-landmarks", "",
+		"--mjolnir-pedestrian-areas", "True",
+		"--mjolnir-data-processing-build-bounding-circles", "True",
+		"--additional-data-elevation", "",
+	}
+	ctr := dag.Container().
+		From(image).
+		WithMountedFile("/input/input.osm.pbf", osm).
+		WithMountedFile("/input/admins.sqlite", admins).
+		WithMountedFile("/input/timezones.sqlite", timezones).
+		// A planet's tiles are around 100GB before they're packed into the
+		// tarball, so they're built in a cache volume rather than a layer.
+		WithMountedCache("/work", dag.CacheVolume("routing-tiles-work"), dagger.ContainerWithMountedCacheOpts{
+			Sharing: dagger.CacheSharingModePrivate,
+		}).
+		WithWorkdir("/work")
+	if speeds != nil {
+		ctr = ctr.WithMountedFile("/input/default_speeds.json", speeds)
+		config = append(config, "--mjolnir-default-speeds-config", "/input/default_speeds.json")
+	}
+	ctr, err = ctr.
+		// Clear what an interrupted run left behind.
+		WithExec([]string{"sh", "-c", "rm -rf /work/* && mkdir -p /out /work/tiles"}).
+		WithExec(config, dagger.ContainerWithExecOpts{RedirectStdout: "/work/valhalla.json"}).
+		WithExec([]string{"valhalla_build_tiles", "-c", "/work/valhalla.json", "/input/input.osm.pbf"}).
+		WithExec([]string{"valhalla_build_extract", "-c", "/work/valhalla.json", "--overwrite"}).
+		WithExec([]string{"python3", "-I", "-c", routingConfigScript, "/work/valhalla.json", "/out/valhalla.json"}).
+		WithExec([]string{"sh", "-c", "rm -rf /work/*"}).
+		Sync(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return dag.Directory().
+		WithFile("tiles.tar", ctr.File("/out/tiles.tar")).
+		WithFile("valhalla.json", ctr.File("/out/valhalla.json")), nil
+}
+
+// Rewrites the build's valhalla.json into the one served with the tarball:
+// tile_extract is the tarball next to it, and the build's inputs are gone.
+const routingConfigScript = `
+import json, sys
+with open(sys.argv[1]) as f:
+    config = json.load(f)
+mjolnir = config["mjolnir"]
+mjolnir["tile_extract"] = "tiles.tar"
+for key in ("tile_dir", "traffic_extract", "admin", "timezone", "landmarks", "default_speeds_config"):
+    mjolnir[key] = ""
+config["additional_data"]["elevation"] = ""
+with open(sys.argv[2], "w") as f:
+    json.dump(config, f, indent=2)
+    f.write("\n")
+`

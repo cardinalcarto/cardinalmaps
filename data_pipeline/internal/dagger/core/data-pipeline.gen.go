@@ -16,7 +16,8 @@ type DataPipeline struct { // data-pipeline (../../../../:0:0)
 	// field again.
 	refetchID bool
 
-	id *ID
+	id            *ID
+	valhallaImage *string
 }
 
 func (r *DataPipeline) WithGraphQLQuery(q *querybuilder.Selection) *DataPipeline {
@@ -454,6 +455,68 @@ func (r *DataPipeline) PoiService() *File {
 	}
 }
 
+// Valhalla's administrative areas (valhalla_build_admins) for an extract:
+// countries and their subdivisions, which give edges their country's access
+// rules and driving side, and choose default speeds by region.
+func (r *DataPipeline) RoutingAdmins(osm *File) *File {
+	assertNotNil("osm", osm)
+	q := r.query.Select("routingAdmins")
+	q = q.Arg("osm", osm)
+
+	return &File{
+		query:     q,
+		refetchID: r.refetchID,
+	}
+}
+
+// DataPipelineRoutingTilesOpts contains options for DataPipeline.RoutingTiles
+type DataPipelineRoutingTilesOpts struct {
+	// Default speeds by region, density and road class
+	// (mjolnir.default_speeds_config), such as default_speeds.json from
+	// https://github.com/OpenStreetMapSpeeds/schema. Without it, edges
+	// without a maxspeed get mainline's built-in speeds by road class.
+	Speeds *File
+}
+
+// Builds Valhalla routing tiles from an OSM extract with mainline Valhalla's
+// own tile builder (the pinned image; see ValhallaImage), into a directory
+// holding tiles.tar (valhalla_build_extract's tarball, with its index) and
+// valhalla.json, the configuration to serve it with. In the configuration,
+// tile_extract is tiles.tar, relative to the directory, and the paths that
+// only the build reads are cleared. Valinor's oracle builds tiles the same
+// way: pedestrian areas, bounding circles, admins and time zones, and no
+// landmarks, since mainline's landmarks step makes tiles that route
+// incorrectly (see valinor/tools/oracle/README.md). Unlike the oracle's, the
+// tiles have no elevation.
+func (r *DataPipeline) RoutingTiles(osm *File, opts ...DataPipelineRoutingTilesOpts) *Directory {
+	assertNotNil("osm", osm)
+	q := r.query.Select("routingTiles")
+	for i := len(opts) - 1; i >= 0; i-- {
+		// `speeds` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Speeds) {
+			q = q.Arg("speeds", opts[i].Speeds)
+		}
+	}
+	q = q.Arg("osm", osm)
+
+	return &Directory{
+		query:     q,
+		refetchID: r.refetchID,
+	}
+}
+
+// Valhalla's time zone database (valhalla_build_timezones), from the
+// timezone-boundary-builder release that the image's script names. It doesn't
+// depend on the extract, so it's built once per image.
+func (r *DataPipeline) RoutingTimezones() *File {
+	q := r.query.Select("routingTimezones")
+
+	return &File{
+		query:     q,
+		refetchID: r.refetchID,
+	}
+}
+
 // DataPipelineTilesOpts contains options for DataPipeline.Tiles
 type DataPipelineTilesOpts struct {
 	// PostgreSQL URL of the poi_service database that gives POIs their
@@ -587,6 +650,21 @@ func (r *DataPipeline) TopoTiles(osm *File, config *File, opts ...DataPipelineTo
 		query:     q,
 		refetchID: r.refetchID,
 	}
+}
+
+// The pinned mainline Valhalla image that routing tiles are built with, as
+// valinor/tools/oracle/valhalla-image names it (a tag and digest), so the
+// pipeline and Valinor's oracle build tiles with the same tools.
+func (r *DataPipeline) ValhallaImage(ctx context.Context) (string, error) {
+	if r.valhallaImage != nil {
+		return *r.valhallaImage, nil
+	}
+	q := r.query.Select("valhallaImage")
+
+	var response string
+
+	q = q.Bind(&response)
+	return response, q.Execute(ctx)
 }
 
 func (r *Query) DataPipeline(ws *Workspace) *DataPipeline { // data-pipeline (../../../../:0:0)

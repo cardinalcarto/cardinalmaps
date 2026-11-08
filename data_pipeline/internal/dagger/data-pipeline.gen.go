@@ -26,6 +26,9 @@ type DataPipelinePatchOpts = core.DataPipelinePatchOpts
 // DataPipelinePlanetilerOpts contains options for DataPipeline.Planetiler
 type DataPipelinePlanetilerOpts = core.DataPipelinePlanetilerOpts
 
+// DataPipelineRoutingTilesOpts contains options for DataPipeline.RoutingTiles
+type DataPipelineRoutingTilesOpts = core.DataPipelineRoutingTilesOpts
+
 // DataPipelineTilesOpts contains options for DataPipeline.Tiles
 type DataPipelineTilesOpts = core.DataPipelineTilesOpts
 
