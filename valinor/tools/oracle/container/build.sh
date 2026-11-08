@@ -5,8 +5,12 @@
 # Subcommands:
 #   tiles <pbf> <out-dir> <bbox>
 #       Builds a complete tile set the same way the Cardinal pipeline does:
-#       admins, timezones, elevation, landmarks, pedestrian areas, and bounding circles,
+#       admins, timezones, elevation, pedestrian areas, and bounding circles,
 #       then a tarball extract with a live traffic skeleton.
+#
+#       Landmarks are deliberately left out for now:
+#       in 3.9.1, tiles that went through valhalla_add_landmarks route incorrectly
+#       (Loki snaps locations to edges kilometers away; see README.md).
 #   predicted <out-dir> <csv-dir>
 #       Copies <out-dir>/tiles to <out-dir>/tiles-predicted
 #       and applies valhalla_add_predicted_traffic with the CSVs in <csv-dir>.
@@ -27,7 +31,6 @@ tiles)
 		--mjolnir-traffic-extract "$out/traffic.tar" \
 		--mjolnir-timezone "$out/timezones.sqlite" \
 		--mjolnir-admin "$out/admins.sqlite" \
-		--mjolnir-landmarks "$out/landmarks.sqlite" \
 		--mjolnir-pedestrian-areas True \
 		--mjolnir-data-processing-build-bounding-circles True \
 		--additional-data-elevation "$out/elevation" \
@@ -35,9 +38,7 @@ tiles)
 	valhalla_build_timezones >"$out/timezones.sqlite"
 	valhalla_build_admins -c "$out/valhalla.json" "$pbf"
 	valhalla_build_elevation -c "$out/valhalla.json" -b "$bbox"
-	valhalla_build_landmarks -c "$out/valhalla.json" "$pbf"
 	valhalla_build_tiles -c "$out/valhalla.json" "$pbf"
-	valhalla_add_landmarks -c "$out/valhalla.json"
 	valhalla_build_extract -c "$out/valhalla.json" --with-traffic --overwrite
 	;;
 predicted)

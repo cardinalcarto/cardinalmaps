@@ -8,8 +8,15 @@ Everything runs in the pinned container image named in [`valhalla-image`](valhal
 ## Tile builds
 
 [`build-tiles.sh`](build-tiles.sh) builds a tile set the same way the Cardinal pipeline does:
-admins, timezones, elevation, landmarks, pedestrian areas, and bounding circles,
+admins, timezones, elevation, pedestrian areas, and bounding circles,
 plus a tarball extract with a live traffic skeleton.
+
+Landmarks are left out for now.
+In 3.9.1, running `valhalla_add_landmarks` produces tiles that route incorrectly:
+on the Andorra extract, Loki snaps a location in Andorra la Vella to an edge 5.4 km away
+and an 8.07 km route comes back as 0.049 km.
+Leaving out only that step fixes it;
+pedestrian areas, elevation, and bounding circles are not involved.
 
 ```shell
 tools/oracle/build-tiles.sh tiles <pbf> <out-dir> <minx,miny,maxx,maxy>
