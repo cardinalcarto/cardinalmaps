@@ -30,7 +30,11 @@ fn route_responses_match_mainline() {
         }
         let (status, expected) = capture.json_response();
         let Some(mut api) = capture.odin_output() else {
-            assert_ne!(status, 200, "{}", capture.name());
+            assert!(
+                status != 200 || !capture.has_directions(),
+                "{}",
+                capture.name()
+            );
             continue;
         };
         assert_eq!(status, 200, "{}", capture.name());

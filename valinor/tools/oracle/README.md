@@ -195,6 +195,8 @@ Its fixtures currently come from a capture of the full corpora in
 `/mnt/maps/cardinal/valhalla-oracle/n5-captures`;
 the cases that are also in the shared captures matched them exactly,
 apart from latency statistics, so those files were left as they were.
+Fifteen Andorra cases whose first capture missed the tapped messages
+were captured again (their responses were unchanged) and copied into that directory.
 
 ## Corpus cases
 

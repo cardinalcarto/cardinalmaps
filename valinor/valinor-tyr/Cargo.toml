@@ -17,6 +17,7 @@ valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
 
 [dev-dependencies]
+illuvatar = { workspace = true }
 insta = { workspace = true }
 
 [lints]

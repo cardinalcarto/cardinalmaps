@@ -140,9 +140,23 @@ fn strip_loki_location(reference: &mut Location, front: &Location) {
 /// Loki caps `alternates` at its configured `max_alternates`,
 /// adds `exclude_edges` to the costing for `exclude_locations` and `exclude_polygons`,
 /// and may turn off `disable_hierarchy_pruning` (warning 205).
-/// The captures use none of the last two, so only the cap is allowed for here:
-/// the reference may have fewer alternates than the front asked for, never more.
+/// No capture turns off hierarchy pruning, so that is not allowed for here.
+/// The reference may have fewer alternates than the front asked for, never more,
+/// and Loki's exclude edges come after any the front parsed (from a PBF request).
 fn strip_loki_options(reference: &mut Options, front: &Options) {
+    for (key, costing) in &mut reference.costings {
+        let fronts = match front.costings.get(key).and_then(|c| c.has_options.as_ref()) {
+            Some(HasOptions::Options(options)) => options.exclude_edges.as_slice(),
+            None => &[],
+        };
+        if let Some(HasOptions::Options(options)) = costing.has_options.as_mut() {
+            assert!(
+                options.exclude_edges.starts_with(fronts),
+                "Loki keeps the front's exclude edges"
+            );
+            options.exclude_edges.truncate(fronts.len());
+        }
+    }
     for (references, fronts) in [
         (&mut reference.locations, &front.locations),
         (&mut reference.sources, &front.sources),

@@ -7,6 +7,7 @@
     reason = "the helpers are shared by test modules that each use a subset"
 )]
 
+use illuvatar::Odin;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -82,14 +83,45 @@ impl Capture {
 
     /// What Odin handed Tyr: the Thor→Odin message plus Odin's directions,
     /// if mainline got that far.
+    ///
+    /// Odin's directions only reach us in a PBF response that selects them,
+    /// so exact-request cases (see [`Capture::http`]) captured in another format,
+    /// or with a selector that leaves the directions out, have none.
+    /// For those this returns `None` (JSON and OSRM formats),
+    /// or the request without directions (PBF format, whose output then leaves them out too).
+    /// Every other case that reached Odin must have directions.
     pub(crate) fn odin_output(&self) -> Option<Api> {
         let mut api = read_api(&self.dir().join("thor-odin.bin"))?;
         let trip = read_api(&self.case_dir().join("trip.bin")).expect("case has a trip");
-        let directions =
-            read_api(&self.case_dir().join("directions.bin")).expect("case has directions");
         api.trip = trip.trip;
-        api.directions = directions.directions;
+        // Mainline's Odin also updates the trip in place
+        // (it marks the turn lanes maneuvers use and fills in short edges' headings),
+        // and Tyr reads those updates.
+        // The captures only hold the trip before Odin, so Ilúvatar (our Odin) applies them;
+        // its directions are thrown away in favor of mainline's.
+        let mut narrated = api.clone();
+        Odin::default()
+            .narrate(&mut narrated)
+            .unwrap_or_else(|e| panic!("{}: Ilúvatar fails: {e}", self.name()));
+        api.trip = narrated.trip;
+        if let Some(directions) = read_api(&self.case_dir().join("directions.bin")) {
+            api.directions = directions.directions;
+        } else {
+            assert!(
+                self.http().is_some(),
+                "{}: only exact-request cases may lack directions",
+                self.name()
+            );
+            if self.format != "pbf" {
+                return None;
+            }
+        }
         Some(api)
+    }
+
+    /// Whether Odin's directions were captured for this case (see [`Capture::odin_output`]).
+    pub(crate) fn has_directions(&self) -> bool {
+        self.case_dir().join("directions.bin").is_file()
     }
 
     /// The captured JSON response: its HTTP status and parsed body.
