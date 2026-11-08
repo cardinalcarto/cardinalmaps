@@ -48,6 +48,10 @@ pub struct StatusResponse {
     pub has_transit_tiles: Option<bool>,
     /// The OSM changeset ID of the loaded tileset.
     ///
-    /// Only included in verbose responses.
+    /// Only included in verbose responses, and only when it is nonzero.
     pub osm_changeset: Option<u64>,
+    /// The bounding box of the tileset, as a `GeoJSON` object.
+    ///
+    /// Only included in verbose responses.
+    pub bbox: Option<serde_json::Value>,
 }
