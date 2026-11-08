@@ -207,12 +207,20 @@ fn check_trips(captures: &Path, tiles: &Path) -> TripReport {
                 } else {
                     TimeInfo::INVALID
                 };
-                // Through locations split a leg into segments, which mainline recosts
-                // separately and joins: the split edge appears twice in a row.
+                // Through and via locations split a leg into segments, which mainline
+                // recosts separately and joins. A location partway along an edge
+                // repeats that edge; one at a node starts a new edge at its shape index.
+                let splits: Vec<u32> = leg
+                    .location
+                    .iter()
+                    .skip(1)
+                    .take(leg.location.len().saturating_sub(2))
+                    .filter_map(|loc| loc.correlation.as_ref().map(|c| c.leg_shape_index))
+                    .collect();
                 let mut segments: Vec<std::ops::Range<usize>> = Vec::new();
                 let mut start = 0;
                 for i in 1..ids.len() {
-                    if ids[i] == ids[i - 1] {
+                    if ids[i] == ids[i - 1] || splits.contains(&edges[i].begin_shape_index) {
                         segments.push(start..i);
                         start = i;
                     }
