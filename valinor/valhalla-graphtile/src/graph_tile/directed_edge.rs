@@ -6,9 +6,6 @@
 //! Decoding never panics, even on corrupt data:
 //! fields whose bit width admits values that Valhalla never writes
 //! return a [`Result`] with an [`UnknownValueError`] instead.
-//! The one exception is [`DirectedEdge::road_use`],
-//! which keeps its infallible signature for now;
-//! use [`DirectedEdge::try_road_use`] on untrusted data.
 
 use crate::graph_tile::node::MAX_LOCAL_EDGE_INDEX;
 use crate::{Access, GraphId, RoadClass, RoadUse, Surface};
@@ -18,7 +15,7 @@ use enumset::EnumSet;
 #[cfg(feature = "serde")]
 use serde::{Serialize, Serializer, ser::SerializeStruct};
 use thiserror::Error;
-use zerocopy::{LE, TryFromBytes, U16, U32, U64};
+use zerocopy::{LE, U16, U32, U64};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, Unaligned};
 
 /// A field held a value that Valhalla never writes,
@@ -695,7 +692,7 @@ impl DirectedEdge {
         }
         // An unknown use is not one of the excluded uses, as in Valhalla.
         !matches!(
-            self.try_road_use(),
+            self.road_use(),
             // Transit-related uses
             Ok(RoadUse::TransitConnection
                 | RoadUse::PlatformConnection
@@ -730,41 +727,28 @@ impl DirectedEdge {
 
     /// The way the edge is used.
     ///
-    /// # Panics
-    ///
-    /// Panics if the tile holds a use that Valhalla does not define,
-    /// which only happens with corrupt data.
-    /// Prefer [`try_road_use`](Self::try_road_use) on any path that decodes tiles.
-    #[inline]
-    pub fn road_use(&self) -> RoadUse {
-        RoadUse::from_bits(self.third_bitfield.road_use())
-    }
-
-    /// The way the edge is used.
-    ///
     /// # Errors
     ///
     /// Returns an error if the tile holds a use that Valhalla does not define,
     /// which only happens with corrupt data.
+    /// [`GraphTileView`](crate::graph_tile::GraphTileView) rejects such tiles when it parses them,
+    /// so this is always `Ok` for edges read through a parsed tile.
     #[inline]
-    pub fn try_road_use(&self) -> Result<RoadUse, UnknownValueError> {
+    pub fn road_use(&self) -> Result<RoadUse, UnknownValueError> {
         let raw = self.third_bitfield.road_use();
-        RoadUse::try_read_from_bytes(&[raw]).map_err(|_| UnknownValueError::new("use", raw))
+        RoadUse::try_from_bits(raw).ok_or(UnknownValueError::new("use", raw))
     }
 
     /// Is this a road (a regular road or a service road)?
     #[inline]
     pub fn is_road(&self) -> bool {
-        matches!(
-            self.try_road_use(),
-            Ok(RoadUse::Road | RoadUse::ServiceRoad)
-        )
+        matches!(self.road_use(), Ok(RoadUse::Road | RoadUse::ServiceRoad))
     }
 
     /// Is this a transit line (bus or rail)?
     #[inline]
     pub fn is_transit_line(&self) -> bool {
-        matches!(self.try_road_use(), Ok(RoadUse::Rail | RoadUse::Bus))
+        matches!(self.road_use(), Ok(RoadUse::Rail | RoadUse::Bus))
     }
 
     /// The classification of the road.
@@ -828,10 +812,10 @@ impl DirectedEdge {
 
     /// Is this edge a ferry?
     ///
-    /// This is a convenience for checking [`try_road_use`](Self::try_road_use).
+    /// This is a convenience for checking [`road_use`](Self::road_use).
     #[inline]
     pub fn is_ferry(&self) -> bool {
-        matches!(self.try_road_use(), Ok(RoadUse::Ferry | RoadUse::RailFerry))
+        matches!(self.road_use(), Ok(RoadUse::Ferry | RoadUse::RailFerry))
     }
 
     // Structures
@@ -1289,7 +1273,7 @@ impl Serialize for DirectedEdge {
         state.serialize_field("shortcut_idx", &self.shortcut_index())?;
         state.serialize_field("superseded_idx", &self.superseded_index())?;
 
-        state.serialize_field("use", &self.try_road_use().ok())?;
+        state.serialize_field("use", &self.road_use().ok())?;
         state.serialize_field("classification", &self.classification())?;
         state.serialize_field("is_link", &self.is_link())?;
         state.serialize_field("is_internal_intersection", &self.is_intersection_internal())?;
@@ -1565,7 +1549,7 @@ pub(super) mod test {
                 "{ctx}"
             );
             assert_eq!(
-                i64::from(e.try_road_use().expect("known use") as u8),
+                i64::from(e.road_use().expect("known use") as u8),
                 int("use"),
                 "{ctx}"
             );
@@ -1822,7 +1806,7 @@ pub(super) mod test {
 
         // use is bits 40..46 of the third word; 12 is not a use.
         let edge = edge_from_words([0, 0, 12 << 40, 0, 0], 0, 0);
-        assert_eq!(edge.try_road_use(), Err(UnknownValueError::new("use", 12)));
+        assert_eq!(edge.road_use(), Err(UnknownValueError::new("use", 12)));
         assert!(!edge.is_road());
         assert!(!edge.is_transit_line());
         assert!(edge.can_form_shortcut());
@@ -1833,7 +1817,7 @@ pub(super) mod test {
         // A bus line (use 51) stores its line ID where other edges store stop impact.
         let edge = edge_from_words([0, 0, 51 << 40, 0, 0], 0xdead_beef, 0);
         assert!(edge.is_transit_line());
-        assert_eq!(edge.try_road_use(), Ok(RoadUse::Bus));
+        assert_eq!(edge.road_use(), Ok(RoadUse::Bus));
         assert_eq!(edge.line_id(), Some(0xdead_beef));
     }
 
@@ -1955,7 +1939,7 @@ pub(super) mod test {
     }
 
     proptest! {
-        /// No accessor panics on arbitrary bytes (except the documented `road_use`).
+        /// No accessor panics on arbitrary bytes.
         #[test]
         fn accessors_never_panic(bytes in proptest::collection::vec(any::<u8>(), 48)) {
             let e = DirectedEdge::read_from_bytes(&bytes).unwrap();
@@ -1964,7 +1948,7 @@ pub(super) mod test {
                 e.opposing_local_index(), e.edge_info_offset(), e.edge_info_is_forward(),
                 e.is_named(), e.name_consistency(), e.has_sign(), e.has_lane_connectivity(),
                 e.has_turn_lanes(), e.is_shortcut(), e.shortcut_index(), e.can_form_shortcut(),
-                e.is_superseded(), e.superseded_index(), e.try_road_use(), e.is_road(),
+                e.is_superseded(), e.superseded_index(), e.road_use(), e.is_road(),
                 e.is_transit_line(), e.classification(), e.is_link(),
             );
             let _ = (

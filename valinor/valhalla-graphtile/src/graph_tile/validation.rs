@@ -17,9 +17,9 @@
 
 use super::predicted_speeds::COEFFICIENT_COUNT;
 use super::{AccessRestriction, DirectedEdge, NodeInfo};
-use crate::RoadUse;
+
 use thiserror::Error;
-use zerocopy::{LE, U32, U64};
+use zerocopy::{LE, U32};
 
 /// Ways in which the data sections of a graph tile can be inconsistent with each other.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -136,9 +136,11 @@ pub(super) fn check_directed_edges(
             });
         }
 
-        let value = raw_road_use(directed_edge);
-        if VALID_ROAD_USES & (1 << value) == 0 {
-            return Err(GraphTileDataError::InvalidRoadUse { edge, value });
+        if let Err(error) = directed_edge.road_use() {
+            return Err(GraphTileDataError::InvalidRoadUse {
+                edge,
+                value: error.value(),
+            });
         }
 
         // Like Valhalla, only read the offsets of edges that claim to have predicted speeds.
@@ -187,56 +189,11 @@ pub(super) fn check_access_restrictions(
     Ok(())
 }
 
-/// A bit set of the valid 6-bit road use values,
-/// so that checking an edge is a shift and a mask rather than a match.
-const VALID_ROAD_USES: u64 = {
-    let mut mask = 0u64;
-    let mut value = 0u8;
-    while value < 64 {
-        if RoadUse::try_from_bits(value).is_some() {
-            mask |= 1 << value;
-        }
-        value += 1;
-    }
-    mask
-};
-
-/// Reads the raw 6-bit road use field of a directed edge.
-///
-/// [`DirectedEdge::road_use`] maps invalid values to [`RoadUse::Other`]
-/// (see [`RoadUse::try_from_bits`]),
-/// so validation needs the raw value instead.
-///
-/// The field is bits 40 to 45 of the edge's third 64-bit word,
-/// after the speed, free flow speed, constrained flow speed, truck speed,
-/// and name consistency bytes.
-/// See `baldr/directededge.h`.
-fn raw_road_use(edge: &DirectedEdge) -> u8 {
-    // The size of this transmute is checked at compile time.
-    let words: &[U64<LE>; 6] = zerocopy::transmute_ref!(edge);
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "the value is masked to 6 bits"
-    )]
-    let value = ((words[2].get() >> 40) & 0x3f) as u8;
-    value
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph_tile::{GraphTile, TEST_GRAPH_TILE_L0, TEST_GRAPH_TILE_L2};
+    use crate::graph_tile::{GraphTile, TEST_GRAPH_TILE_L0};
     use zerocopy::IntoBytes;
-
-    #[test]
-    fn test_raw_road_use_matches_accessor() {
-        for tile in [&*TEST_GRAPH_TILE_L0, &*TEST_GRAPH_TILE_L2] {
-            for edge in tile.directed_edges() {
-                let raw = raw_road_use(edge);
-                assert_eq!(RoadUse::try_from_bits(raw), Some(edge.road_use()));
-            }
-        }
-    }
 
     #[test]
     fn test_invalid_road_use_is_rejected() {
@@ -248,9 +205,6 @@ mod tests {
         word.copy_from_slice(&bytes[16..24]);
         let word = (u64::from_le_bytes(word) & !(0x3f << 40)) | (12 << 40);
         bytes[16..24].copy_from_slice(&word.to_le_bytes());
-        assert_eq!(raw_road_use(&edges[1]), 12);
-        // The accessor falls back to `Other` rather than panicking.
-        assert_eq!(edges[1].road_use(), RoadUse::Other);
 
         assert_eq!(
             check_directed_edges(&edges, usize::MAX, &[], 0),

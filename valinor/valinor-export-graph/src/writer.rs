@@ -104,7 +104,12 @@ impl<'a> StreamingEdgeWriter<'a> {
 
         // Classification
         let pidx = self.prop_string("road_class", &format!("{:?}", edge.classification()), pidx)?;
-        let pidx = self.prop_string("use", &format!("{:?}", edge.road_use()), pidx)?;
+        // Parsed tiles only hold known uses, but stay panic-free for an unknown one.
+        let road_use = match edge.road_use() {
+            Ok(road_use) => format!("{road_use:?}"),
+            Err(error) => format!("Unknown({})", error.value()),
+        };
+        let pidx = self.prop_string("use", &road_use, pidx)?;
 
         // Mode-based access bits (stringified for compact readability)
         let pidx = self.prop_string(

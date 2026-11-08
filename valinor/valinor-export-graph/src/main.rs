@@ -67,7 +67,7 @@ fn main() -> anyhow::Result<()> {
 
     let should_skip_edge = |edge: &DirectedEdge, names: &Vec<Cow<str>>| {
         (cli.skip_transit && edge.is_transit_line())
-            || (cli.skip_ferries && edge.road_use() == RoadUse::Ferry)
+            || (cli.skip_ferries && matches!(edge.road_use(), Ok(RoadUse::Ferry)))
             || (cli.skip_unnamed && names.is_empty())
     };
 

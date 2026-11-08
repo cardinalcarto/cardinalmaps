@@ -203,29 +203,6 @@ pub enum RoadUse {
 }
 
 impl RoadUse {
-    const fn into_bits(self) -> u8 {
-        self as _
-    }
-
-    /// Decodes a road use from the 6-bit field in a directed edge.
-    ///
-    /// Unlike road class and surface, only some 6-bit values are valid road uses.
-    /// The bit field accessors need an infallible conversion,
-    /// so values that are not road uses decode as [`RoadUse::Other`].
-    ///
-    /// This fallback is never reached for edges read through a
-    /// [`GraphTileView`](crate::graph_tile::GraphTileView):
-    /// parsing a tile checks every edge with [`RoadUse::try_from_bits`]
-    /// and rejects tiles with invalid values.
-    /// It can only be reached by reinterpreting arbitrary bytes as a
-    /// [`DirectedEdge`](crate::graph_tile::DirectedEdge) directly.
-    const fn from_bits(value: u8) -> Self {
-        match Self::try_from_bits(value) {
-            Some(road_use) => road_use,
-            None => Self::Other,
-        }
-    }
-
     /// Decodes a road use from its numeric value in Valhalla's `baldr::Use` enum.
     ///
     /// Returns `None` if the value is not a road use.
@@ -413,10 +390,7 @@ mod tests {
             assert_eq!(RoadUse::try_from_bits(value), expected, "value {value}");
             if let Some(road_use) = RoadUse::try_from_bits(value) {
                 valid += 1;
-                assert_eq!(road_use.into_bits(), value);
-            } else {
-                // The infallible bit field conversion never panics.
-                assert_eq!(RoadUse::from_bits(value), RoadUse::Other);
+                assert_eq!(road_use as u8, value);
             }
         }
         // baldr::Use in Valhalla 3.9.1 has 35 values (excluding kSize).
