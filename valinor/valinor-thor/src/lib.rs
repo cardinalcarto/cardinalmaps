@@ -58,7 +58,7 @@ mod oracle_tests;
 #[cfg(test)]
 mod trip_oracle_tests;
 
-pub use config::{ConfigError, HierarchyLimitsConfig, ThorConfig};
+pub use config::{ConfigError, HierarchyLimitsConfig, Retention, ThorConfig};
 pub use error::ThorError;
 pub use path::{EdgeTrim, EdgeTrimming, Leg, PathEdge, Paths, Route};
 pub use route::{Thor, Workspace};

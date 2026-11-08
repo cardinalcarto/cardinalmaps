@@ -110,6 +110,33 @@ impl EdgeStatus {
         self.last = None;
     }
 
+    /// Forgets every edge, and gives back the storage of tiles beyond the first that,
+    /// together, hold room for `max_edges` edges.
+    ///
+    /// Each slot holds a whole tile's edges, so a long search can leave hundreds of tiles'
+    /// worth behind; this bounds what a workspace keeps between requests.
+    pub(crate) fn clear_retaining(&mut self, max_edges: usize) {
+        self.clear();
+        let mut kept = 0usize;
+        let keep = self
+            .slots
+            .iter()
+            .take_while(|edges| {
+                kept = kept.saturating_add(edges.capacity());
+                kept <= max_edges
+            })
+            .count();
+        self.slots.truncate(keep);
+        self.slots.shrink_to(keep);
+        self.tiles.shrink_to(keep);
+    }
+
+    /// Room for how many edges the slots keep (for tests).
+    #[cfg(test)]
+    pub(crate) fn retained_edges(&self) -> usize {
+        self.slots.iter().map(Vec::capacity).sum()
+    }
+
     #[inline]
     fn slot(&self, tile: u64) -> Option<usize> {
         if let Some((t, s)) = self.last
@@ -206,5 +233,29 @@ mod tests {
         status.set(b, EdgeStatusInfo::new(EdgeSet::Temporary, 1), 4);
         assert_eq!(status.get(a).set(), EdgeSet::Unreached);
         assert_eq!(status.slots.len(), 2);
+    }
+
+    #[test]
+    fn clearing_gives_back_tiles_beyond_the_bound() {
+        let mut status = EdgeStatus::default();
+        for tile in 0..10 {
+            let id = GraphId::try_from_components(2, tile, 0).unwrap();
+            status.set(id, EdgeStatusInfo::new(EdgeSet::Temporary, 1), 100);
+        }
+        assert!(status.retained_edges() >= 1000);
+        // Room for 350 edges keeps the first three tiles' storage, and nothing of the rest.
+        status.clear_retaining(350);
+        assert_eq!(status.slots.len(), 3);
+        assert!(status.retained_edges() <= 350);
+        let first = GraphId::try_from_components(2, 0, 0).unwrap();
+        assert_eq!(status.get(first).set(), EdgeSet::Unreached);
+        // The kept storage is reused, and new tiles get new slots.
+        for tile in 0..5 {
+            let id = GraphId::try_from_components(2, tile, 0).unwrap();
+            status.set(id, EdgeStatusInfo::new(EdgeSet::Temporary, 2), 100);
+            assert_eq!(status.get(id).index(), 2);
+        }
+        status.clear_retaining(0);
+        assert_eq!(status.retained_edges(), 0);
     }
 }

@@ -34,8 +34,8 @@ use crate::label::{INVALID_LABEL, NewLabel, ThorLabel};
 use crate::path::PathEdge;
 use crate::queue::BucketQueue;
 use crate::search::{
-    BUCKET_COUNT, INITIAL_LABELS, MAX_RESERVED_LABELS_UNIDIRECTIONAL, SearchContext, UNIT_SIZE,
-    add_double, candidate_id, candidates, clear_labels, first_candidate_point, time_context,
+    BUCKET_COUNT, INITIAL_LABELS, SearchContext, UNIT_SIZE, add_double, candidate_id, candidates,
+    clear_labels, first_candidate_point, time_context,
 };
 use crate::time::location_time_info;
 
@@ -103,11 +103,17 @@ impl<const FORWARD: bool> UnidirectionalAStar<FORWARD> {
         "time_dependent_reverse_a*"
     };
 
-    /// Clears a search, keeping its storage (`Clear`).
-    pub(crate) fn clear(&mut self) {
-        clear_labels(&mut self.labels, MAX_RESERVED_LABELS_UNIDIRECTIONAL);
+    /// The labels and edge statuses the search has room for (for tests).
+    #[cfg(test)]
+    pub(crate) fn retained(&self) -> usize {
+        self.labels.capacity() + self.status.retained_edges()
+    }
+
+    /// Clears a search, keeping room for `max_labels` labels and edges (`Clear`).
+    pub(crate) fn clear(&mut self, max_labels: usize) {
+        clear_labels(&mut self.labels, max_labels);
         self.destinations.clear();
-        self.status.clear();
+        self.status.clear_retaining(max_labels);
         self.has_ferry = false;
     }
 

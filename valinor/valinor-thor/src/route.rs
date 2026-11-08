@@ -20,7 +20,7 @@ use valinor_sif::costing_options::costing_name;
 use valinor_sif::{AnyCosting, Costing, UNLIMITED_TRANSITIONS};
 
 use crate::bidirectional::{BidirectionalAStar, BidirectionalParams};
-use crate::config::{HierarchyLimitsConfig, ThorConfig, is_unset};
+use crate::config::{HierarchyLimitsConfig, Retention, ThorConfig, is_unset};
 use crate::error::ThorError;
 use crate::graph;
 use crate::path::{EdgeTrim, EdgeTrimming, Leg, PathEdge, Paths, Route};
@@ -217,29 +217,64 @@ impl Algorithm {
 }
 
 /// The searches, and their storage, which is kept between requests.
+///
+/// Storage beyond its [`Retention`] is given back when a search is cleared,
+/// at the start of each search and in [`Workspace::trim`].
 #[derive(Debug)]
 pub struct Workspace {
     bidirectional: BidirectionalAStar,
     forward: UnidirectionalAStar<true>,
     reverse: UnidirectionalAStar<false>,
+    retention: Retention,
 }
 
 impl Default for Workspace {
+    /// A workspace with mainline's retention.
     fn default() -> Self {
-        Self {
-            bidirectional: BidirectionalAStar::new(),
-            forward: UnidirectionalAStar::default(),
-            reverse: UnidirectionalAStar::default(),
-        }
+        Self::new(Retention::default())
     }
 }
 
 impl Workspace {
+    /// A workspace that keeps at most `retention`'s storage between requests.
+    #[must_use]
+    pub fn new(retention: Retention) -> Self {
+        Self {
+            bidirectional: BidirectionalAStar::new(),
+            forward: UnidirectionalAStar::default(),
+            reverse: UnidirectionalAStar::default(),
+            retention,
+        }
+    }
+
+    /// Gives back every search's storage beyond the workspace's retention.
+    ///
+    /// Searches only trim themselves when they next start,
+    /// so call this when a workspace goes idle to release a long search's memory right away.
+    ///
+    /// # Performance
+    ///
+    /// Clearing is cheap; shrinking frees memory that the next long search allocates again.
+    pub fn trim(&mut self) {
+        self.bidirectional
+            .clear(self.retention.bidirectional_labels);
+        self.forward.clear(self.retention.unidirectional_labels);
+        self.reverse.clear(self.retention.unidirectional_labels);
+    }
+
+    /// The labels and edge statuses every search has room for (for tests).
+    #[cfg(test)]
+    pub(crate) fn retained(&self) -> usize {
+        self.bidirectional.retained() + self.forward.retained() + self.reverse.retained()
+    }
+
     fn clear(&mut self, algorithm: Algorithm) {
         match algorithm {
-            Algorithm::Bidirectional => self.bidirectional.clear(),
-            Algorithm::TimeDepForward => self.forward.clear(),
-            Algorithm::TimeDepReverse => self.reverse.clear(),
+            Algorithm::Bidirectional => self
+                .bidirectional
+                .clear(self.retention.bidirectional_labels),
+            Algorithm::TimeDepForward => self.forward.clear(self.retention.unidirectional_labels),
+            Algorithm::TimeDepReverse => self.reverse.clear(self.retention.unidirectional_labels),
         }
     }
 

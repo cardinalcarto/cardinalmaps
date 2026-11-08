@@ -6,9 +6,11 @@
 //! At most `limit` workspaces are ever made (lazily, as concurrent requests need them);
 //! when all are in use, a request waits for one to come back.
 //! So the pool also bounds how many path searches run at once, and their memory.
+//! A workspace is trimmed to its [`Retention`] when it comes back,
+//! so an idle pool holds at most that much search storage per workspace.
 
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
-use valinor_thor::Workspace;
+use valinor_thor::{Retention, Workspace};
 
 struct State {
     idle: Vec<Workspace>,
@@ -19,10 +21,11 @@ pub(crate) struct WorkspacePool {
     state: Mutex<State>,
     returned: Condvar,
     limit: usize,
+    retention: Retention,
 }
 
 impl WorkspacePool {
-    pub(crate) fn new(limit: usize) -> Self {
+    pub(crate) fn new(limit: usize, retention: Retention) -> Self {
         Self {
             state: Mutex::new(State {
                 idle: Vec::with_capacity(limit),
@@ -30,6 +33,7 @@ impl WorkspacePool {
             }),
             returned: Condvar::new(),
             limit,
+            retention,
         }
     }
 
@@ -51,7 +55,7 @@ impl WorkspacePool {
                 state.created += 1;
                 // Don't hold the lock while the workspace allocates.
                 drop(state);
-                return PooledWorkspace::new(self, Workspace::default());
+                return PooledWorkspace::new(self, Workspace::new(self.retention));
             }
             state = self
                 .returned
@@ -87,13 +91,18 @@ impl<'a> PooledWorkspace<'a> {
 
     pub(crate) fn get(&mut self) -> &mut Workspace {
         // Only `drop` takes the workspace out.
-        self.workspace.get_or_insert_with(Workspace::default)
+        let retention = self.pool.retention;
+        self.workspace
+            .get_or_insert_with(|| Workspace::new(retention))
     }
 }
 
 impl Drop for PooledWorkspace<'_> {
     fn drop(&mut self) {
-        if let Some(workspace) = self.workspace.take() {
+        if let Some(mut workspace) = self.workspace.take() {
+            // Release a long search's storage now, not when the workspace is next used,
+            // and outside the pool's lock.
+            workspace.trim();
             self.pool.lock().idle.push(workspace);
             self.pool.returned.notify_one();
         }
@@ -109,7 +118,7 @@ mod tests {
 
     #[test]
     fn reuses_workspaces_up_to_the_limit() {
-        let pool = WorkspacePool::new(2);
+        let pool = WorkspacePool::new(2, Retention::default());
         {
             let _a = pool.take();
             let _b = pool.take();
@@ -126,7 +135,7 @@ mod tests {
 
     #[test]
     fn waits_when_every_workspace_is_in_use() {
-        let pool = Arc::new(WorkspacePool::new(2));
+        let pool = Arc::new(WorkspacePool::new(2, Retention::default()));
         let busy = Arc::new(AtomicUsize::new(0));
         let most = Arc::new(AtomicUsize::new(0));
         let threads: Vec<_> = (0..8)
@@ -153,7 +162,7 @@ mod tests {
 
     #[test]
     fn a_panicking_request_gives_its_workspace_back() {
-        let pool = Arc::new(WorkspacePool::new(1));
+        let pool = Arc::new(WorkspacePool::new(1, Retention::default()));
         let cloned = pool.clone();
         let result = std::thread::spawn(move || {
             let _workspace = cloned.take();

@@ -17,6 +17,8 @@ use thiserror::Error;
 use valhalla_proto::HierarchyLimits;
 use valinor_sif::UNLIMITED_TRANSITIONS;
 
+use crate::search::{MAX_RESERVED_LABELS_BIDIRECTIONAL, MAX_RESERVED_LABELS_UNIDIRECTIONAL};
+
 /// A failure to read a config.
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -48,6 +50,31 @@ pub struct HierarchyLimitsConfig {
     pub default_limits: Vec<HierarchyLimits>,
 }
 
+/// How much search storage a [`Workspace`](crate::Workspace) keeps between requests.
+///
+/// Searches keep their labels and edge status between requests so they don't allocate as
+/// they go; after a longer search, storage beyond these counts is given back.
+/// These only bound memory kept between requests: a search can still grow as large as it needs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retention {
+    /// Labels each bidirectional search tree keeps room for
+    /// (`thor.max_reserved_labels_count_bidir_astar`).
+    pub bidirectional_labels: usize,
+    /// Labels each time-dependent search keeps room for
+    /// (`thor.max_reserved_labels_count_astar`).
+    pub unidirectional_labels: usize,
+}
+
+impl Default for Retention {
+    /// Mainline's defaults, a million and two million labels.
+    fn default() -> Self {
+        Self {
+            bidirectional_labels: MAX_RESERVED_LABELS_BIDIRECTIONAL,
+            unidirectional_labels: MAX_RESERVED_LABELS_UNIDIRECTIONAL,
+        }
+    }
+}
+
 /// Thor's configuration for routes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThorConfig {
@@ -72,6 +99,8 @@ pub struct ThorConfig {
     pub hierarchy_limits_bidirectional: HierarchyLimitsConfig,
     /// Hierarchy limits for unidirectional (time-dependent) A*.
     pub hierarchy_limits_unidirectional: HierarchyLimitsConfig,
+    /// How much search storage workspaces keep between requests.
+    pub retention: Retention,
 }
 
 impl Default for ThorConfig {
@@ -98,6 +127,7 @@ impl Default for ThorConfig {
             allow_hierarchy_limits_modifications: false,
             hierarchy_limits_bidirectional: limits(DEFAULT_EXPANSION_WITHIN_DIST_BIDIR),
             hierarchy_limits_unidirectional: limits(DEFAULT_EXPANSION_WITHIN_DIST),
+            retention: Retention::default(),
         }
     }
 }
@@ -149,6 +179,25 @@ fn as_u32(v: f64) -> u32 {
 )]
 fn as_f32(v: f64) -> f32 {
     v as f32
+}
+
+/// A count read as a double. Negative and NaN values become 0, and huge ones saturate,
+/// as Rust's float-to-integer conversion does.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "config values are read as doubles; the conversion saturates"
+)]
+fn as_count(v: f64) -> usize {
+    v as usize
+}
+
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "the defaults are small enough to be exact as doubles"
+)]
+fn as_f64(v: usize) -> f64 {
+    v as f64
 }
 
 /// Mainline's `parse_hierarchy_limits_from_config` (with `uses_dist`, as the routes' searches do).
@@ -285,6 +334,18 @@ impl ThorConfig {
             )?,
             hierarchy_limits_bidirectional: hierarchy_limits(value, "bidirectional_astar")?,
             hierarchy_limits_unidirectional: hierarchy_limits(value, "unidirectional_astar")?,
+            retention: Retention {
+                bidirectional_labels: as_count(number(
+                    value,
+                    &["thor", "max_reserved_labels_count_bidir_astar"],
+                    as_f64(MAX_RESERVED_LABELS_BIDIRECTIONAL),
+                )?),
+                unidirectional_labels: as_count(number(
+                    value,
+                    &["thor", "max_reserved_labels_count_astar"],
+                    as_f64(MAX_RESERVED_LABELS_UNIDIRECTIONAL),
+                )?),
+            },
         })
     }
 }
@@ -334,5 +395,25 @@ mod tests {
         assert_eq!(bd[2].expand_within_dist, 9.0);
         assert_eq!(bd[1].expand_within_dist, 20_000.0);
         assert!(ThorConfig::from_valhalla_json(r#"{"thor":{"extended_search":3}}"#).is_err());
+    }
+
+    #[test]
+    fn reads_mainline_label_reservations() {
+        assert_eq!(
+            ThorConfig::default().retention,
+            Retention {
+                bidirectional_labels: 1_000_000,
+                unidirectional_labels: 2_000_000,
+            }
+        );
+        let json = r#"{"thor":{"max_reserved_labels_count_bidir_astar":"50000",
+            "max_reserved_labels_count_astar":70000}}"#;
+        let c = ThorConfig::from_valhalla_json(json).unwrap();
+        assert_eq!(c.retention.bidirectional_labels, 50_000);
+        assert_eq!(c.retention.unidirectional_labels, 70_000);
+        // A negative count keeps nothing rather than wrapping around.
+        let json = r#"{"thor":{"max_reserved_labels_count_astar":-1}}"#;
+        let c = ThorConfig::from_valhalla_json(json).unwrap();
+        assert_eq!(c.retention.unidirectional_labels, 0);
     }
 }

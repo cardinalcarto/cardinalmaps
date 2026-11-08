@@ -100,6 +100,7 @@ impl Router {
         let sets = TileSets::open(tile_sets, config.tile_cache_size)?;
         let connectivity = ConnectivityMap::new(sets.tile_ids());
         let last_modified = sets.last_modified();
+        let retention = config.thor.retention;
         let (loki, thor) = (config.loki, config.thor);
         let chain = Chain::new(sets, |sets| Stages {
             loki: Loki::new(loki, sets, Some(connectivity))
@@ -109,7 +110,7 @@ impl Router {
         Ok(Self {
             chain,
             odin: config.odin,
-            workspaces: WorkspacePool::new(config.workspaces.get()),
+            workspaces: WorkspacePool::new(config.workspaces.get(), retention),
         })
     }
 

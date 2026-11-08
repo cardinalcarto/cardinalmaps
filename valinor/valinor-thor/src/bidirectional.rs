@@ -38,9 +38,8 @@ use crate::label::{INVALID_LABEL, NewLabel, ThorLabel};
 use crate::path::PathEdge;
 use crate::queue::BucketQueue;
 use crate::search::{
-    BUCKET_COUNT, INITIAL_LABELS, MAX_RESERVED_LABELS_BIDIRECTIONAL, SearchContext, UNIT_SIZE,
-    add_double, candidate_id, candidates, clear_labels, find_percent_along, first_candidate_point,
-    time_context,
+    BUCKET_COUNT, INITIAL_LABELS, SearchContext, UNIT_SIZE, add_double, candidate_id, candidates,
+    clear_labels, find_percent_along, first_candidate_point, time_context,
 };
 use crate::time::location_time_info;
 
@@ -76,9 +75,9 @@ struct Tree {
 }
 
 impl Tree {
-    fn clear(&mut self) {
-        clear_labels(&mut self.labels, MAX_RESERVED_LABELS_BIDIRECTIONAL);
-        self.status.clear();
+    fn clear(&mut self, max_labels: usize) {
+        clear_labels(&mut self.labels, max_labels);
+        self.status.clear_retaining(max_labels);
     }
 
     #[inline]
@@ -203,9 +202,19 @@ impl BidirectionalAStar {
     }
 
     /// Clears a search, keeping its storage (`Clear`).
-    pub(crate) fn clear(&mut self) {
-        self.fwd.clear();
-        self.rev.clear();
+    /// The labels and edge statuses both trees have room for (for tests).
+    #[cfg(test)]
+    pub(crate) fn retained(&self) -> usize {
+        [&self.fwd, &self.rev]
+            .iter()
+            .map(|tree| tree.labels.capacity() + tree.status.retained_edges())
+            .sum()
+    }
+
+    /// Clears the search, keeping room for `max_labels` labels and edges in each tree (`Clear`).
+    pub(crate) fn clear(&mut self, max_labels: usize) {
+        self.fwd.clear(max_labels);
+        self.rev.clear(max_labels);
         self.has_ferry = false;
         self.not_thru_pruning = true;
         self.pruning_disabled_at_origin = false;

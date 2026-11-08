@@ -42,7 +42,7 @@ use valhalla_proto::Api;
 use valhalla_proto::options::Action;
 use valhalla_proto::prost::Message;
 
-use crate::{Paths, Thor, ThorConfig, Workspace};
+use crate::{Paths, Retention, Thor, ThorConfig, Workspace};
 
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/oracle")
@@ -694,6 +694,70 @@ fn interrupts_long_searches() {
     assert!(
         interrupted >= 5 && finished >= 5,
         "{interrupted} {finished}"
+    );
+}
+
+/// A workspace gives back storage beyond its retention when trimmed,
+/// and a small retention changes no route.
+#[test]
+fn trimmed_workspaces_keep_only_their_retention() {
+    const KEEP: usize = 1000;
+    let dir = fixtures();
+    let tiles = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../valhalla-graphtile/fixtures/andorra-tiles");
+    let provider = DirectoryGraphTileProvider::new(tiles, NonZeroUsize::new(64).expect("64"));
+    let thor = Thor::new(ThorConfig::default(), provider);
+    let inputs = read_inputs(&dir.join("andorra-loki.tsv"));
+    let references = read_references(&dir.join("andorra-thor.txt"));
+    let now = Timestamp::from_second(1_794_116_280).expect("a time");
+    let mut workspace = Workspace::new(Retention {
+        bidirectional_labels: KEEP,
+        unidirectional_labels: KEEP,
+    });
+    let mut grew = 0;
+    let mut routes = 0;
+    for (id, text) in references.iter().take(300) {
+        let reference = parse_reference(text);
+        let Some(input) = inputs.get(id) else {
+            continue;
+        };
+        if input
+            .options
+            .as_ref()
+            .is_none_or(|o| o.action != Action::Route as i32)
+        {
+            continue;
+        }
+        let mut api = input.clone();
+        let ours = thor.route_at(&mut workspace, &mut api, now);
+        let mut report = Report::default();
+        compare_case(
+            thor.provider(),
+            id,
+            input,
+            &reference,
+            &ours,
+            &api,
+            &mut report,
+        );
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        routes += 1;
+        // Two bidirectional trees and two unidirectional searches, labels and edges each.
+        let bound = 2 * 2 * KEEP + 2 * 2 * KEEP;
+        if workspace.retained() > bound {
+            grew += 1;
+        }
+        workspace.trim();
+        assert!(
+            workspace.retained() <= bound,
+            "{id}: {}",
+            workspace.retained()
+        );
+    }
+    assert!(routes >= 100, "only {routes} routes");
+    assert!(
+        grew > 0,
+        "no search grew beyond the retention, so trimming went untested"
     );
 }
 
