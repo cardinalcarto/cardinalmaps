@@ -44,7 +44,7 @@ request ──► front ──► Loki ──► Thor ──► Odin ──► T
 | Sif | `valinor-sif` | edges, nodes, and costing options | costs, access, and filters |
 
 `valinor-router` chains the stages in process.
-`illuvatar-service`, `valinor-loki-service`, and the other service binaries wrap stages as ZeroMQ workers
+`illuvatar-service`, `valinor-loki-service`, `valinor-thor-service`, and the other service binaries wrap stages as ZeroMQ workers
 (via `valhalla-microservice`), which serves both the server deployment and offline mode.
 
 Front and Loki share a worker, as in mainline:
@@ -139,6 +139,50 @@ the float and double arithmetic of `midgard` (a node snap is an exact comparison
 the reach counts, and the double bucket queue of the exact reach expansion.
 Bounding circles skip edges only when a circle grown by 1 cm is out of reach,
 so that a different `cosf` can never make us skip an edge that mainline keeps.
+
+## Path search (Thor)
+
+`valinor-thor` is mainline's Thor for `route` requests, up to trip building
+(`thor_worker_t::route` and `route_action.cc`).
+
+- `Thor::route` scores Loki's candidates (`adjust_locations`: filtered candidates are used
+  only if nothing else is, with warning 215, and every distance becomes a score),
+  then routes each pair of locations with the algorithm mainline picks:
+  bidirectional A* by default; time-dependent forward A* when the origin has a time
+  (`depart_at`, `current`) and is within `max_timedep_distance` of the destination,
+  or when any origin and destination candidates are the same or connected edges;
+  time-dependent reverse A* when the destination has a time (`arrive_by`);
+  warnings 402 and 214 when a time is dropped for distance.
+  A failed search is retried with relaxed hierarchy limits, the filtered candidates,
+  destination-only edges, and no not-thru pruning (warning 401),
+  and so is a pedestrian route with a ferry.
+  A route that fails at a through location on a small island of the graph
+  is retried with only highly reachable candidates; then error 442.
+- Segments are joined into legs at through and via locations
+  (through locations continue on the edge they arrived on, without a U-turn),
+  with mainline's edge trimming and `leg_shape_index`es, and each location gets the time
+  the route reaches it (`DateTime::offset_date`, which is 27 seconds late and cut to the minute).
+  Thor picks each search's time zone from its location's candidate edges, as mainline does,
+  and passes it to Sif's `TimeInfo`.
+- The result is `Paths`: per route (the best, then alternates) and per leg, mainline's
+  `PathInfo` for each edge (elapsed and transition costs, mode, restriction),
+  the algorithms, the edge trimming, and the leg's locations as trip building sees them.
+  Trip building (mainline's `TripLegBuilder`) turns them into `TripLeg`s.
+- A `Workspace` keeps the searches' storage (labels, queues, edge status) between requests,
+  so the searches don't allocate as they go; a search can be interrupted
+  (`route_interruptible`, checked every 5000 iterations as in mainline).
+- `valinor-thor-service` wraps it as a ZeroMQ worker.
+
+The searches follow mainline step by step, because what decides between nearly equal paths
+is part of the result: the double bucket queue (unit buckets, last in first out within one),
+single precision costs and heuristics, the hierarchy limits used up in step by both directions,
+shortcuts taken in sync, the connection threshold (`threshold_delta`) and reach-based pruning,
+complex restrictions across the meeting point, and the recost of bidirectional paths.
+What isn't reproduced is container order that can't change a result
+(the alternates' sort among equal costs, hash tables).
+On the oracle corpora (see `tools/oracle/README.md`), every path, cost, error, warning,
+and location time matches mainline exactly.
+`optimized_route` (which needs mainline's `CostMatrix` and its `Optimizer`) is not here yet.
 
 ## The oracle
 
