@@ -1,0 +1,9 @@
+#!/bin/sh
+# Compiles thor.cc against the static libvalhalla in the dev image.
+set -e
+cd /w
+g++ -std=c++20 -O1 -w thor.cc -o thor \
+	$(pkg-config --cflags libvalhalla) \
+	/usr/local/lib/libvalhalla.a \
+	-lz -lprotobuf-lite -lprime_server -lzmq -lspatialite -lsqlite3 -lluajit-5.1 -lgeos_c -lcurl -lssl -lcrypto -ltiff /usr/lib/x86_64-linux-gnu/libgeotiff.so.5 -llz4 -lpthread 2>&1 | head -60
+ls -la thor
