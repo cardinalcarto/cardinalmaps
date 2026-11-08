@@ -1,14 +1,13 @@
 //! Costing options: parsing them from a request and filling in mainline's defaults.
 //!
-//! In mainline this lives in Sif (`sif::ParseCosting`, `ParseBaseCostOptions`,
-//! and each costing's `Parse*CostOptions`), but only the front calls it,
-//! so in Valinor it lives here, next to the rest of the request parsing.
-//! It depends on nothing but the protobuf types and [`JsonValue`],
-//! so the Sif crate can reuse it as is
+//! This is mainline's `sif::ParseCosting`, `ParseBaseCostOptions`,
+//! and each costing's `Parse*CostOptions`.
+//! The front (in `valinor-tyr`) calls it to build `options`,
+//! and the costings in this crate read the result
 //! (for example [`parse_costing`] with an empty document gives a costing's defaults).
 //!
 //! Every value is read the way mainline reads it
-//! (see [`crate::front::json`] for the conversions),
+//! (see [`crate::json`] for the conversions),
 //! and an out-of-range value is replaced by the default with a warning (code 500),
 //! as mainline's `JSON_PBF_RANGED_DEFAULT` macros do.
 //! Values already present in the [`Costing`] (from a PBF request) are kept
@@ -18,9 +17,9 @@ mod base;
 mod costings;
 
 pub use base::{DEFAULT_FLOW_MASK, RangedDefault, TIME_DEPENDENT_FLOW_MASK};
-pub(crate) use costings::parse_filter_action;
+pub use costings::parse_filter_action;
 
-use crate::front::json::JsonValue;
+use crate::json::JsonValue;
 use alloc::format;
 use alloc::vec::Vec;
 use valhalla_proto::costing::Type as CostingType;

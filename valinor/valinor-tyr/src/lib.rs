@@ -10,7 +10,7 @@
 
 extern crate alloc;
 
-pub mod costing_options;
+pub use valinor_sif::costing_options;
 pub mod front;
 pub mod tyr;
 

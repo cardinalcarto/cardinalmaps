@@ -1,9 +1,9 @@
 ---
-source: valinor-tyr/src/costing_options/tests.rs
+source: valinor-sif/src/costing_options/tests.rs
 expression: costing
 ---
 Costing {
-    r#type: Auto,
+    r#type: MotorScooter,
     has_options: Some(
         Options(
             Options {
@@ -47,7 +47,7 @@ Costing {
                 ),
                 has_destination_only_penalty: Some(
                     DestinationOnlyPenalty(
-                        600.0,
+                        120.0,
                     ),
                 ),
                 has_gate_cost: Some(
@@ -60,16 +60,8 @@ Costing {
                         300.0,
                     ),
                 ),
-                has_toll_booth_cost: Some(
-                    TollBoothCost(
-                        15.0,
-                    ),
-                ),
-                has_toll_booth_penalty: Some(
-                    TollBoothPenalty(
-                        0.0,
-                    ),
-                ),
+                has_toll_booth_cost: None,
+                has_toll_booth_penalty: None,
                 has_alley_penalty: Some(
                     AlleyPenalty(
                         5.0,
@@ -96,16 +88,8 @@ Costing {
                         0.5,
                     ),
                 ),
-                has_use_highways: Some(
-                    UseHighways(
-                        0.5,
-                    ),
-                ),
-                has_use_tolls: Some(
-                    UseTolls(
-                        0.5,
-                    ),
-                ),
+                has_use_highways: None,
+                has_use_tolls: None,
                 has_use_roads: None,
                 has_max_distance: None,
                 has_walking_speed: None,
@@ -115,11 +99,7 @@ Costing {
                 has_mode_factor: None,
                 has_walkway_factor: None,
                 has_sidewalk_factor: None,
-                has_alley_factor: Some(
-                    AlleyFactor(
-                        1.0,
-                    ),
-                ),
+                has_alley_factor: None,
                 has_driveway_factor: None,
                 has_driveway_penalty: None,
                 has_transit_start_end_max_distance: None,
@@ -127,11 +107,19 @@ Costing {
                 has_transport_type: None,
                 has_top_speed: Some(
                     TopSpeed(
-                        140.0,
+                        45.0,
                     ),
                 ),
-                has_use_hills: None,
-                has_use_primary: None,
+                has_use_hills: Some(
+                    UseHills(
+                        0.5,
+                    ),
+                ),
+                has_use_primary: Some(
+                    UsePrimary(
+                        0.5,
+                    ),
+                ),
                 has_use_trails: None,
                 has_low_class_penalty: None,
                 has_weight: Some(
@@ -168,16 +156,8 @@ Costing {
                 ),
                 has_bike_share_cost: None,
                 has_bike_share_penalty: None,
-                has_rail_ferry_cost: Some(
-                    RailFerryCost(
-                        300.0,
-                    ),
-                ),
-                has_use_rail_ferry: Some(
-                    UseRailFerry(
-                        0.4,
-                    ),
-                ),
+                has_rail_ferry_cost: None,
+                has_use_rail_ferry: None,
                 has_ignore_closures: Some(
                     IgnoreClosures(
                         false,
@@ -185,12 +165,12 @@ Costing {
                 ),
                 has_service_penalty: Some(
                     ServicePenalty(
-                        75.0,
+                        15.0,
                     ),
                 ),
                 has_use_tracks: Some(
                     UseTracks(
-                        0.0,
+                        0.5,
                     ),
                 ),
                 has_use_distance: Some(
@@ -218,11 +198,7 @@ Costing {
                         450.0,
                     ),
                 ),
-                has_restriction_probability: Some(
-                    RestrictionProbability(
-                        100,
-                    ),
-                ),
+                has_restriction_probability: None,
                 has_elevator_penalty: None,
                 has_hgv_no_access_penalty: None,
                 has_speed_penalty_factor: Some(
@@ -237,7 +213,7 @@ Costing {
     ),
     has_name: Some(
         Name(
-            "auto",
+            "motor_scooter",
         ),
     ),
     has_filter_closures: None,

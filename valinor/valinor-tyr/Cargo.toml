@@ -16,6 +16,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
+valinor-sif = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

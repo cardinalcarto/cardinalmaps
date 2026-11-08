@@ -1,9 +1,9 @@
 ---
-source: valinor-tyr/src/costing_options/tests.rs
+source: valinor-sif/src/costing_options/tests.rs
 expression: costing
 ---
 Costing {
-    r#type: Multimodal,
+    r#type: AutoPedestrian,
     has_options: None,
     has_name: None,
     has_filter_closures: None,

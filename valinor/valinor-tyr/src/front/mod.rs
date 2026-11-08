@@ -28,7 +28,7 @@
 //! and caps `alternates`.
 
 mod http;
-pub mod json;
+pub use valinor_sif::json;
 mod locations;
 mod options;
 mod values;

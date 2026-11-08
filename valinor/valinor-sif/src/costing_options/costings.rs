@@ -6,7 +6,7 @@ use crate::costing_options::base::{
     RangedDefault, flag, nonzero_f32, nonzero_u32, oneof, parse_base_options, ranged, ranged_oneof,
 };
 use crate::costing_options::costing_name;
-use crate::front::json::{JsonValue, double_to_u32};
+use crate::json::{JsonValue, double_to_u32};
 use alloc::string::String;
 use alloc::vec::Vec;
 use valhalla_proto::costing::HasName;
@@ -715,7 +715,7 @@ pub(crate) fn parse_transit(
 }
 
 /// Mainline's `FilterAction_Enum_Parse`.
-pub(crate) fn parse_filter_action(name: &str) -> Option<FilterAction> {
+pub fn parse_filter_action(name: &str) -> Option<FilterAction> {
     match name {
         "exclude" => Some(FilterAction::Exclude),
         "include" => Some(FilterAction::Include),

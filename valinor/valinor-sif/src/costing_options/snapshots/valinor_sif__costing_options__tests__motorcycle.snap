@@ -1,9 +1,9 @@
 ---
-source: valinor-tyr/src/costing_options/tests.rs
+source: valinor-sif/src/costing_options/tests.rs
 expression: costing
 ---
 Costing {
-    r#type: MotorScooter,
+    r#type: Motorcycle,
     has_options: Some(
         Options(
             Options {
@@ -47,7 +47,7 @@ Costing {
                 ),
                 has_destination_only_penalty: Some(
                     DestinationOnlyPenalty(
-                        120.0,
+                        600.0,
                     ),
                 ),
                 has_gate_cost: Some(
@@ -60,8 +60,16 @@ Costing {
                         300.0,
                     ),
                 ),
-                has_toll_booth_cost: None,
-                has_toll_booth_penalty: None,
+                has_toll_booth_cost: Some(
+                    TollBoothCost(
+                        15.0,
+                    ),
+                ),
+                has_toll_booth_penalty: Some(
+                    TollBoothPenalty(
+                        0.0,
+                    ),
+                ),
                 has_alley_penalty: Some(
                     AlleyPenalty(
                         5.0,
@@ -88,8 +96,16 @@ Costing {
                         0.5,
                     ),
                 ),
-                has_use_highways: None,
-                has_use_tolls: None,
+                has_use_highways: Some(
+                    UseHighways(
+                        0.5,
+                    ),
+                ),
+                has_use_tolls: Some(
+                    UseTolls(
+                        0.5,
+                    ),
+                ),
                 has_use_roads: None,
                 has_max_distance: None,
                 has_walking_speed: None,
@@ -107,20 +123,16 @@ Costing {
                 has_transport_type: None,
                 has_top_speed: Some(
                     TopSpeed(
-                        45.0,
+                        140.0,
                     ),
                 ),
-                has_use_hills: Some(
-                    UseHills(
-                        0.5,
+                has_use_hills: None,
+                has_use_primary: None,
+                has_use_trails: Some(
+                    UseTrails(
+                        0.0,
                     ),
                 ),
-                has_use_primary: Some(
-                    UsePrimary(
-                        0.5,
-                    ),
-                ),
-                has_use_trails: None,
                 has_low_class_penalty: None,
                 has_weight: Some(
                     Weight(
@@ -213,7 +225,7 @@ Costing {
     ),
     has_name: Some(
         Name(
-            "motor_scooter",
+            "motorcycle",
         ),
     ),
     has_filter_closures: None,

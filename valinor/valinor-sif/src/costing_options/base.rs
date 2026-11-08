@@ -1,7 +1,7 @@
 //! The options common to most costings (`ParseBaseCostOptions` in `src/sif/dynamiccost.cc`),
 //! and the helpers every costing's parser uses (the `JSON_PBF_*` macros in `sif/dynamiccost.h`).
 
-use crate::front::json::{FromJson, JsonValue};
+use crate::json::{FromJson, JsonValue};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;

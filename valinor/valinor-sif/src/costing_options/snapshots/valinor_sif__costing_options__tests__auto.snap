@@ -1,9 +1,9 @@
 ---
-source: valinor-tyr/src/costing_options/tests.rs
+source: valinor-sif/src/costing_options/tests.rs
 expression: costing
 ---
 Costing {
-    r#type: Taxi,
+    r#type: Auto,
     has_options: Some(
         Options(
             Options {
@@ -237,7 +237,7 @@ Costing {
     ),
     has_name: Some(
         Name(
-            "taxi",
+            "auto",
         ),
     ),
     has_filter_closures: None,

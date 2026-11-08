@@ -1,9 +1,9 @@
 ---
-source: valinor-tyr/src/costing_options/tests.rs
+source: valinor-sif/src/costing_options/tests.rs
 expression: costing
 ---
 Costing {
-    r#type: Truck,
+    r#type: Taxi,
     has_options: Some(
         Options(
             Options {
@@ -27,7 +27,7 @@ Costing {
                 exclude_cash_only_tolls: false,
                 exclude_edges: [],
                 fixed_speed: 0,
-                axle_count: 5,
+                axle_count: 0,
                 use_lit: 0.0,
                 disable_hierarchy_pruning: false,
                 ignore_non_vehicular_restrictions: false,
@@ -115,7 +115,11 @@ Costing {
                 has_mode_factor: None,
                 has_walkway_factor: None,
                 has_sidewalk_factor: None,
-                has_alley_factor: None,
+                has_alley_factor: Some(
+                    AlleyFactor(
+                        1.0,
+                    ),
+                ),
                 has_driveway_factor: None,
                 has_driveway_penalty: None,
                 has_transit_start_end_max_distance: None,
@@ -123,40 +127,32 @@ Costing {
                 has_transport_type: None,
                 has_top_speed: Some(
                     TopSpeed(
-                        120.0,
+                        140.0,
                     ),
                 ),
                 has_use_hills: None,
                 has_use_primary: None,
                 has_use_trails: None,
-                has_low_class_penalty: Some(
-                    LowClassPenalty(
-                        15.0,
-                    ),
-                ),
+                has_low_class_penalty: None,
                 has_weight: Some(
                     Weight(
-                        21.77,
+                        0.8,
                     ),
                 ),
-                has_axle_load: Some(
-                    AxleLoad(
-                        9.07,
-                    ),
-                ),
+                has_axle_load: None,
                 has_height: Some(
                     Height(
-                        4.11,
+                        1.6,
                     ),
                 ),
                 has_width: Some(
                     Width(
-                        2.6,
+                        1.9,
                     ),
                 ),
                 has_length: Some(
                     Length(
-                        21.64,
+                        2.7,
                     ),
                 ),
                 has_cycling_speed: None,
@@ -189,7 +185,7 @@ Costing {
                 ),
                 has_service_penalty: Some(
                     ServicePenalty(
-                        0.0,
+                        75.0,
                     ),
                 ),
                 has_use_tracks: Some(
@@ -204,7 +200,7 @@ Costing {
                 ),
                 has_use_living_streets: Some(
                     UseLivingStreets(
-                        0.0,
+                        0.1,
                     ),
                 ),
                 has_service_factor: Some(
@@ -222,30 +218,26 @@ Costing {
                         450.0,
                     ),
                 ),
-                has_restriction_probability: None,
-                has_elevator_penalty: None,
-                has_hgv_no_access_penalty: Some(
-                    HgvNoAccessPenalty(
-                        43200.0,
+                has_restriction_probability: Some(
+                    RestrictionProbability(
+                        100,
                     ),
                 ),
+                has_elevator_penalty: None,
+                has_hgv_no_access_penalty: None,
                 has_speed_penalty_factor: Some(
                     SpeedPenaltyFactor(
                         0.05,
                     ),
                 ),
                 has_multimodal_start_end_max_distance: None,
-                has_low_class_factor: Some(
-                    LowClassFactor(
-                        1.5,
-                    ),
-                ),
+                has_low_class_factor: None,
             },
         ),
     ),
     has_name: Some(
         Name(
-            "truck",
+            "taxi",
         ),
     ),
     has_filter_closures: None,

@@ -1,9 +1,9 @@
 ---
-source: valinor-tyr/src/costing_options/tests.rs
+source: valinor-sif/src/costing_options/tests.rs
 expression: costing
 ---
 Costing {
-    r#type: Pedestrian,
+    r#type: Bicycle,
     has_options: Some(
         Options(
             Options {
@@ -57,14 +57,14 @@ Costing {
                 ),
                 has_gate_penalty: Some(
                     GatePenalty(
-                        10.0,
+                        300.0,
                     ),
                 ),
                 has_toll_booth_cost: None,
                 has_toll_booth_penalty: None,
                 has_alley_penalty: Some(
                     AlleyPenalty(
-                        5.0,
+                        60.0,
                     ),
                 ),
                 has_country_crossing_cost: Some(
@@ -82,85 +82,45 @@ Costing {
                         300.0,
                     ),
                 ),
-                has_avoid_bad_surfaces: None,
+                has_avoid_bad_surfaces: Some(
+                    AvoidBadSurfaces(
+                        0.25,
+                    ),
+                ),
                 has_use_ferry: Some(
                     UseFerry(
-                        1.0,
+                        0.5,
                     ),
                 ),
                 has_use_highways: None,
                 has_use_tolls: None,
-                has_use_roads: None,
-                has_max_distance: Some(
-                    MaxDistance(
-                        100000,
+                has_use_roads: Some(
+                    UseRoads(
+                        0.25,
                     ),
                 ),
-                has_walking_speed: Some(
-                    WalkingSpeed(
-                        5.1,
-                    ),
-                ),
-                has_step_penalty: Some(
-                    StepPenalty(
-                        30.0,
-                    ),
-                ),
-                has_max_grade: Some(
-                    MaxGrade(
-                        90,
-                    ),
-                ),
-                has_max_hiking_difficulty: Some(
-                    MaxHikingDifficulty(
-                        1,
-                    ),
-                ),
-                has_mode_factor: Some(
-                    ModeFactor(
-                        1.5,
-                    ),
-                ),
-                has_walkway_factor: Some(
-                    WalkwayFactor(
-                        1.0,
-                    ),
-                ),
-                has_sidewalk_factor: Some(
-                    SidewalkFactor(
-                        1.0,
-                    ),
-                ),
-                has_alley_factor: Some(
-                    AlleyFactor(
-                        2.0,
-                    ),
-                ),
-                has_driveway_factor: Some(
-                    DrivewayFactor(
-                        5.0,
-                    ),
-                ),
+                has_max_distance: None,
+                has_walking_speed: None,
+                has_step_penalty: None,
+                has_max_grade: None,
+                has_max_hiking_difficulty: None,
+                has_mode_factor: None,
+                has_walkway_factor: None,
+                has_sidewalk_factor: None,
+                has_alley_factor: None,
+                has_driveway_factor: None,
                 has_driveway_penalty: None,
-                has_transit_start_end_max_distance: Some(
-                    TransitStartEndMaxDistance(
-                        2415,
-                    ),
-                ),
-                has_transit_transfer_max_distance: Some(
-                    TransitTransferMaxDistance(
-                        805,
-                    ),
-                ),
+                has_transit_start_end_max_distance: None,
+                has_transit_transfer_max_distance: None,
                 has_transport_type: Some(
                     TransportType(
-                        "foot",
+                        "hybrid",
                     ),
                 ),
                 has_top_speed: None,
                 has_use_hills: Some(
                     UseHills(
-                        0.5,
+                        0.25,
                     ),
                 ),
                 has_use_primary: None,
@@ -187,7 +147,11 @@ Costing {
                         2.7,
                     ),
                 ),
-                has_cycling_speed: None,
+                has_cycling_speed: Some(
+                    CyclingSpeed(
+                        18.0,
+                    ),
+                ),
                 has_use_bus: None,
                 has_use_rail: None,
                 has_use_transfers: None,
@@ -217,7 +181,7 @@ Costing {
                 ),
                 has_service_penalty: Some(
                     ServicePenalty(
-                        0.0,
+                        15.0,
                     ),
                 ),
                 has_use_tracks: Some(
@@ -232,7 +196,7 @@ Costing {
                 ),
                 has_use_living_streets: Some(
                     UseLivingStreets(
-                        0.6,
+                        0.5,
                     ),
                 ),
                 has_service_factor: Some(
@@ -247,33 +211,25 @@ Costing {
                 ),
                 has_private_access_penalty: Some(
                     PrivateAccessPenalty(
-                        600.0,
+                        450.0,
                     ),
                 ),
                 has_restriction_probability: None,
-                has_elevator_penalty: Some(
-                    ElevatorPenalty(
-                        5.0,
-                    ),
-                ),
+                has_elevator_penalty: None,
                 has_hgv_no_access_penalty: None,
                 has_speed_penalty_factor: Some(
                     SpeedPenaltyFactor(
                         0.05,
                     ),
                 ),
-                has_multimodal_start_end_max_distance: Some(
-                    MultimodalStartEndMaxDistance(
-                        2415,
-                    ),
-                ),
+                has_multimodal_start_end_max_distance: None,
                 has_low_class_factor: None,
             },
         ),
     ),
     has_name: Some(
         Name(
-            "pedestrian",
+            "bicycle",
         ),
     ),
     has_filter_closures: None,

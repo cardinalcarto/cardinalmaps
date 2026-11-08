@@ -1,9 +1,9 @@
 ---
-source: valinor-tyr/src/costing_options/tests.rs
+source: valinor-sif/src/costing_options/tests.rs
 expression: costing
 ---
 Costing {
-    r#type: Bicycle,
+    r#type: Truck,
     has_options: Some(
         Options(
             Options {
@@ -27,7 +27,7 @@ Costing {
                 exclude_cash_only_tolls: false,
                 exclude_edges: [],
                 fixed_speed: 0,
-                axle_count: 0,
+                axle_count: 5,
                 use_lit: 0.0,
                 disable_hierarchy_pruning: false,
                 ignore_non_vehicular_restrictions: false,
@@ -60,11 +60,19 @@ Costing {
                         300.0,
                     ),
                 ),
-                has_toll_booth_cost: None,
-                has_toll_booth_penalty: None,
+                has_toll_booth_cost: Some(
+                    TollBoothCost(
+                        15.0,
+                    ),
+                ),
+                has_toll_booth_penalty: Some(
+                    TollBoothPenalty(
+                        0.0,
+                    ),
+                ),
                 has_alley_penalty: Some(
                     AlleyPenalty(
-                        60.0,
+                        5.0,
                     ),
                 ),
                 has_country_crossing_cost: Some(
@@ -82,23 +90,23 @@ Costing {
                         300.0,
                     ),
                 ),
-                has_avoid_bad_surfaces: Some(
-                    AvoidBadSurfaces(
-                        0.25,
-                    ),
-                ),
+                has_avoid_bad_surfaces: None,
                 has_use_ferry: Some(
                     UseFerry(
                         0.5,
                     ),
                 ),
-                has_use_highways: None,
-                has_use_tolls: None,
-                has_use_roads: Some(
-                    UseRoads(
-                        0.25,
+                has_use_highways: Some(
+                    UseHighways(
+                        0.5,
                     ),
                 ),
+                has_use_tolls: Some(
+                    UseTolls(
+                        0.5,
+                    ),
+                ),
+                has_use_roads: None,
                 has_max_distance: None,
                 has_walking_speed: None,
                 has_step_penalty: None,
@@ -112,46 +120,46 @@ Costing {
                 has_driveway_penalty: None,
                 has_transit_start_end_max_distance: None,
                 has_transit_transfer_max_distance: None,
-                has_transport_type: Some(
-                    TransportType(
-                        "hybrid",
+                has_transport_type: None,
+                has_top_speed: Some(
+                    TopSpeed(
+                        120.0,
                     ),
                 ),
-                has_top_speed: None,
-                has_use_hills: Some(
-                    UseHills(
-                        0.25,
-                    ),
-                ),
+                has_use_hills: None,
                 has_use_primary: None,
                 has_use_trails: None,
-                has_low_class_penalty: None,
-                has_weight: Some(
-                    Weight(
-                        0.8,
+                has_low_class_penalty: Some(
+                    LowClassPenalty(
+                        15.0,
                     ),
                 ),
-                has_axle_load: None,
+                has_weight: Some(
+                    Weight(
+                        21.77,
+                    ),
+                ),
+                has_axle_load: Some(
+                    AxleLoad(
+                        9.07,
+                    ),
+                ),
                 has_height: Some(
                     Height(
-                        1.6,
+                        4.11,
                     ),
                 ),
                 has_width: Some(
                     Width(
-                        1.9,
+                        2.6,
                     ),
                 ),
                 has_length: Some(
                     Length(
-                        2.7,
+                        21.64,
                     ),
                 ),
-                has_cycling_speed: Some(
-                    CyclingSpeed(
-                        18.0,
-                    ),
-                ),
+                has_cycling_speed: None,
                 has_use_bus: None,
                 has_use_rail: None,
                 has_use_transfers: None,
@@ -162,18 +170,18 @@ Costing {
                         15,
                     ),
                 ),
-                has_bike_share_cost: Some(
-                    BikeShareCost(
-                        120.0,
+                has_bike_share_cost: None,
+                has_bike_share_penalty: None,
+                has_rail_ferry_cost: Some(
+                    RailFerryCost(
+                        300.0,
                     ),
                 ),
-                has_bike_share_penalty: Some(
-                    BikeSharePenalty(
-                        0.0,
+                has_use_rail_ferry: Some(
+                    UseRailFerry(
+                        0.4,
                     ),
                 ),
-                has_rail_ferry_cost: None,
-                has_use_rail_ferry: None,
                 has_ignore_closures: Some(
                     IgnoreClosures(
                         false,
@@ -181,12 +189,12 @@ Costing {
                 ),
                 has_service_penalty: Some(
                     ServicePenalty(
-                        15.0,
+                        0.0,
                     ),
                 ),
                 has_use_tracks: Some(
                     UseTracks(
-                        0.5,
+                        0.0,
                     ),
                 ),
                 has_use_distance: Some(
@@ -196,7 +204,7 @@ Costing {
                 ),
                 has_use_living_streets: Some(
                     UseLivingStreets(
-                        0.5,
+                        0.0,
                     ),
                 ),
                 has_service_factor: Some(
@@ -216,20 +224,28 @@ Costing {
                 ),
                 has_restriction_probability: None,
                 has_elevator_penalty: None,
-                has_hgv_no_access_penalty: None,
+                has_hgv_no_access_penalty: Some(
+                    HgvNoAccessPenalty(
+                        43200.0,
+                    ),
+                ),
                 has_speed_penalty_factor: Some(
                     SpeedPenaltyFactor(
                         0.05,
                     ),
                 ),
                 has_multimodal_start_end_max_distance: None,
-                has_low_class_factor: None,
+                has_low_class_factor: Some(
+                    LowClassFactor(
+                        1.5,
+                    ),
+                ),
             },
         ),
     ),
     has_name: Some(
         Name(
-            "bicycle",
+            "truck",
         ),
     ),
     has_filter_closures: None,

@@ -2557,6 +2557,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "valinor-sif"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "thiserror 2.0.21",
+ "valhalla-proto",
+ "valhalla-response",
+]
+
+[[package]]
 name = "valinor-tap"
 version = "0.1.0"
 dependencies = [
@@ -2580,6 +2590,7 @@ dependencies = [
  "thiserror 2.0.21",
  "valhalla-proto",
  "valhalla-response",
+ "valinor-sif",
 ]
 
 [[package]]

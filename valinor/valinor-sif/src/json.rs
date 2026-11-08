@@ -60,7 +60,8 @@ impl JsonNumber {
         clippy::cast_precision_loss,
         reason = "rapidjson converts 64-bit integers to doubles the same way"
     )]
-    pub(crate) fn as_f64(self) -> f64 {
+    #[inline]
+    pub fn as_f64(self) -> f64 {
         match self {
             JsonNumber::Unsigned(u) => u as f64,
             JsonNumber::Negative(i) => i as f64,
