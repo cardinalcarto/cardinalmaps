@@ -958,6 +958,855 @@ class PlacesCompanion extends UpdateCompanion<PlaceRow> {
   }
 }
 
+class $SavedListsTable extends SavedLists
+    with TableInfo<$SavedListsTable, SavedListRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SavedListsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _parentIdMeta = const VerificationMeta(
+    'parentId',
+  );
+  @override
+  late final GeneratedColumn<int> parentId = GeneratedColumn<int>(
+    'parent_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES saved_lists (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _noteMeta = const VerificationMeta('note');
+  @override
+  late final GeneratedColumn<String> note = GeneratedColumn<String>(
+    'note',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _positionMeta = const VerificationMeta(
+    'position',
+  );
+  @override
+  late final GeneratedColumn<int> position = GeneratedColumn<int>(
+    'position',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [id, parentId, name, note, position];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'saved_lists';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<SavedListRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('parent_id')) {
+      context.handle(
+        _parentIdMeta,
+        parentId.isAcceptableOrUnknown(data['parent_id']!, _parentIdMeta),
+      );
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    if (data.containsKey('note')) {
+      context.handle(
+        _noteMeta,
+        note.isAcceptableOrUnknown(data['note']!, _noteMeta),
+      );
+    }
+    if (data.containsKey('position')) {
+      context.handle(
+        _positionMeta,
+        position.isAcceptableOrUnknown(data['position']!, _positionMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_positionMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  SavedListRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SavedListRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      parentId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}parent_id'],
+      ),
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      note: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}note'],
+      ),
+      position: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}position'],
+      )!,
+    );
+  }
+
+  @override
+  $SavedListsTable createAlias(String alias) {
+    return $SavedListsTable(attachedDatabase, alias);
+  }
+}
+
+class SavedListRow extends DataClass implements Insertable<SavedListRow> {
+  final int id;
+
+  /// The list it's in; null at the top level.
+  final int? parentId;
+  final String name;
+  final String? note;
+
+  /// Its place among the lists with the same parent, lowest first.
+  final int position;
+  const SavedListRow({
+    required this.id,
+    this.parentId,
+    required this.name,
+    this.note,
+    required this.position,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    if (!nullToAbsent || parentId != null) {
+      map['parent_id'] = Variable<int>(parentId);
+    }
+    map['name'] = Variable<String>(name);
+    if (!nullToAbsent || note != null) {
+      map['note'] = Variable<String>(note);
+    }
+    map['position'] = Variable<int>(position);
+    return map;
+  }
+
+  SavedListsCompanion toCompanion(bool nullToAbsent) {
+    return SavedListsCompanion(
+      id: Value(id),
+      parentId: parentId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(parentId),
+      name: Value(name),
+      note: note == null && nullToAbsent ? const Value.absent() : Value(note),
+      position: Value(position),
+    );
+  }
+
+  factory SavedListRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SavedListRow(
+      id: serializer.fromJson<int>(json['id']),
+      parentId: serializer.fromJson<int?>(json['parentId']),
+      name: serializer.fromJson<String>(json['name']),
+      note: serializer.fromJson<String?>(json['note']),
+      position: serializer.fromJson<int>(json['position']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'parentId': serializer.toJson<int?>(parentId),
+      'name': serializer.toJson<String>(name),
+      'note': serializer.toJson<String?>(note),
+      'position': serializer.toJson<int>(position),
+    };
+  }
+
+  SavedListRow copyWith({
+    int? id,
+    Value<int?> parentId = const Value.absent(),
+    String? name,
+    Value<String?> note = const Value.absent(),
+    int? position,
+  }) => SavedListRow(
+    id: id ?? this.id,
+    parentId: parentId.present ? parentId.value : this.parentId,
+    name: name ?? this.name,
+    note: note.present ? note.value : this.note,
+    position: position ?? this.position,
+  );
+  SavedListRow copyWithCompanion(SavedListsCompanion data) {
+    return SavedListRow(
+      id: data.id.present ? data.id.value : this.id,
+      parentId: data.parentId.present ? data.parentId.value : this.parentId,
+      name: data.name.present ? data.name.value : this.name,
+      note: data.note.present ? data.note.value : this.note,
+      position: data.position.present ? data.position.value : this.position,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SavedListRow(')
+          ..write('id: $id, ')
+          ..write('parentId: $parentId, ')
+          ..write('name: $name, ')
+          ..write('note: $note, ')
+          ..write('position: $position')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, parentId, name, note, position);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SavedListRow &&
+          other.id == this.id &&
+          other.parentId == this.parentId &&
+          other.name == this.name &&
+          other.note == this.note &&
+          other.position == this.position);
+}
+
+class SavedListsCompanion extends UpdateCompanion<SavedListRow> {
+  final Value<int> id;
+  final Value<int?> parentId;
+  final Value<String> name;
+  final Value<String?> note;
+  final Value<int> position;
+  const SavedListsCompanion({
+    this.id = const Value.absent(),
+    this.parentId = const Value.absent(),
+    this.name = const Value.absent(),
+    this.note = const Value.absent(),
+    this.position = const Value.absent(),
+  });
+  SavedListsCompanion.insert({
+    this.id = const Value.absent(),
+    this.parentId = const Value.absent(),
+    required String name,
+    this.note = const Value.absent(),
+    required int position,
+  }) : name = Value(name),
+       position = Value(position);
+  static Insertable<SavedListRow> custom({
+    Expression<int>? id,
+    Expression<int>? parentId,
+    Expression<String>? name,
+    Expression<String>? note,
+    Expression<int>? position,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (parentId != null) 'parent_id': parentId,
+      if (name != null) 'name': name,
+      if (note != null) 'note': note,
+      if (position != null) 'position': position,
+    });
+  }
+
+  SavedListsCompanion copyWith({
+    Value<int>? id,
+    Value<int?>? parentId,
+    Value<String>? name,
+    Value<String?>? note,
+    Value<int>? position,
+  }) {
+    return SavedListsCompanion(
+      id: id ?? this.id,
+      parentId: parentId ?? this.parentId,
+      name: name ?? this.name,
+      note: note ?? this.note,
+      position: position ?? this.position,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (parentId.present) {
+      map['parent_id'] = Variable<int>(parentId.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (note.present) {
+      map['note'] = Variable<String>(note.value);
+    }
+    if (position.present) {
+      map['position'] = Variable<int>(position.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SavedListsCompanion(')
+          ..write('id: $id, ')
+          ..write('parentId: $parentId, ')
+          ..write('name: $name, ')
+          ..write('note: $note, ')
+          ..write('position: $position')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $SavedPlacesTable extends SavedPlaces
+    with TableInfo<$SavedPlacesTable, SavedPlaceRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SavedPlacesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _placeIdMeta = const VerificationMeta(
+    'placeId',
+  );
+  @override
+  late final GeneratedColumn<String> placeId = GeneratedColumn<String>(
+    'place_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES places (id)',
+    ),
+  );
+  static const VerificationMeta _listIdMeta = const VerificationMeta('listId');
+  @override
+  late final GeneratedColumn<int> listId = GeneratedColumn<int>(
+    'list_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES saved_lists (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _noteMeta = const VerificationMeta('note');
+  @override
+  late final GeneratedColumn<String> note = GeneratedColumn<String>(
+    'note',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _pinnedMeta = const VerificationMeta('pinned');
+  @override
+  late final GeneratedColumn<bool> pinned = GeneratedColumn<bool>(
+    'pinned',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("pinned" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _positionMeta = const VerificationMeta(
+    'position',
+  );
+  @override
+  late final GeneratedColumn<int> position = GeneratedColumn<int>(
+    'position',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _savedAtMeta = const VerificationMeta(
+    'savedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> savedAt = GeneratedColumn<DateTime>(
+    'saved_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    placeId,
+    listId,
+    name,
+    note,
+    pinned,
+    position,
+    savedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'saved_places';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<SavedPlaceRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('place_id')) {
+      context.handle(
+        _placeIdMeta,
+        placeId.isAcceptableOrUnknown(data['place_id']!, _placeIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_placeIdMeta);
+    }
+    if (data.containsKey('list_id')) {
+      context.handle(
+        _listIdMeta,
+        listId.isAcceptableOrUnknown(data['list_id']!, _listIdMeta),
+      );
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    }
+    if (data.containsKey('note')) {
+      context.handle(
+        _noteMeta,
+        note.isAcceptableOrUnknown(data['note']!, _noteMeta),
+      );
+    }
+    if (data.containsKey('pinned')) {
+      context.handle(
+        _pinnedMeta,
+        pinned.isAcceptableOrUnknown(data['pinned']!, _pinnedMeta),
+      );
+    }
+    if (data.containsKey('position')) {
+      context.handle(
+        _positionMeta,
+        position.isAcceptableOrUnknown(data['position']!, _positionMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_positionMeta);
+    }
+    if (data.containsKey('saved_at')) {
+      context.handle(
+        _savedAtMeta,
+        savedAt.isAcceptableOrUnknown(data['saved_at']!, _savedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_savedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  SavedPlaceRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SavedPlaceRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      placeId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}place_id'],
+      )!,
+      listId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}list_id'],
+      ),
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      ),
+      note: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}note'],
+      ),
+      pinned: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}pinned'],
+      )!,
+      position: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}position'],
+      )!,
+      savedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}saved_at'],
+      )!,
+    );
+  }
+
+  @override
+  $SavedPlacesTable createAlias(String alias) {
+    return $SavedPlacesTable(attachedDatabase, alias);
+  }
+}
+
+class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
+  final int id;
+  final String placeId;
+
+  /// The list it's in; null at the top level.
+  final int? listId;
+
+  /// The user's name for it, instead of the place's own.
+  final String? name;
+  final String? note;
+
+  /// Whether the place has a chip on the home sheet: the same in all its rows.
+  final bool pinned;
+
+  /// Its place among the places in the same list, lowest first.
+  final int position;
+  final DateTime savedAt;
+  const SavedPlaceRow({
+    required this.id,
+    required this.placeId,
+    this.listId,
+    this.name,
+    this.note,
+    required this.pinned,
+    required this.position,
+    required this.savedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['place_id'] = Variable<String>(placeId);
+    if (!nullToAbsent || listId != null) {
+      map['list_id'] = Variable<int>(listId);
+    }
+    if (!nullToAbsent || name != null) {
+      map['name'] = Variable<String>(name);
+    }
+    if (!nullToAbsent || note != null) {
+      map['note'] = Variable<String>(note);
+    }
+    map['pinned'] = Variable<bool>(pinned);
+    map['position'] = Variable<int>(position);
+    map['saved_at'] = Variable<DateTime>(savedAt);
+    return map;
+  }
+
+  SavedPlacesCompanion toCompanion(bool nullToAbsent) {
+    return SavedPlacesCompanion(
+      id: Value(id),
+      placeId: Value(placeId),
+      listId: listId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(listId),
+      name: name == null && nullToAbsent ? const Value.absent() : Value(name),
+      note: note == null && nullToAbsent ? const Value.absent() : Value(note),
+      pinned: Value(pinned),
+      position: Value(position),
+      savedAt: Value(savedAt),
+    );
+  }
+
+  factory SavedPlaceRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SavedPlaceRow(
+      id: serializer.fromJson<int>(json['id']),
+      placeId: serializer.fromJson<String>(json['placeId']),
+      listId: serializer.fromJson<int?>(json['listId']),
+      name: serializer.fromJson<String?>(json['name']),
+      note: serializer.fromJson<String?>(json['note']),
+      pinned: serializer.fromJson<bool>(json['pinned']),
+      position: serializer.fromJson<int>(json['position']),
+      savedAt: serializer.fromJson<DateTime>(json['savedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'placeId': serializer.toJson<String>(placeId),
+      'listId': serializer.toJson<int?>(listId),
+      'name': serializer.toJson<String?>(name),
+      'note': serializer.toJson<String?>(note),
+      'pinned': serializer.toJson<bool>(pinned),
+      'position': serializer.toJson<int>(position),
+      'savedAt': serializer.toJson<DateTime>(savedAt),
+    };
+  }
+
+  SavedPlaceRow copyWith({
+    int? id,
+    String? placeId,
+    Value<int?> listId = const Value.absent(),
+    Value<String?> name = const Value.absent(),
+    Value<String?> note = const Value.absent(),
+    bool? pinned,
+    int? position,
+    DateTime? savedAt,
+  }) => SavedPlaceRow(
+    id: id ?? this.id,
+    placeId: placeId ?? this.placeId,
+    listId: listId.present ? listId.value : this.listId,
+    name: name.present ? name.value : this.name,
+    note: note.present ? note.value : this.note,
+    pinned: pinned ?? this.pinned,
+    position: position ?? this.position,
+    savedAt: savedAt ?? this.savedAt,
+  );
+  SavedPlaceRow copyWithCompanion(SavedPlacesCompanion data) {
+    return SavedPlaceRow(
+      id: data.id.present ? data.id.value : this.id,
+      placeId: data.placeId.present ? data.placeId.value : this.placeId,
+      listId: data.listId.present ? data.listId.value : this.listId,
+      name: data.name.present ? data.name.value : this.name,
+      note: data.note.present ? data.note.value : this.note,
+      pinned: data.pinned.present ? data.pinned.value : this.pinned,
+      position: data.position.present ? data.position.value : this.position,
+      savedAt: data.savedAt.present ? data.savedAt.value : this.savedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SavedPlaceRow(')
+          ..write('id: $id, ')
+          ..write('placeId: $placeId, ')
+          ..write('listId: $listId, ')
+          ..write('name: $name, ')
+          ..write('note: $note, ')
+          ..write('pinned: $pinned, ')
+          ..write('position: $position, ')
+          ..write('savedAt: $savedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, placeId, listId, name, note, pinned, position, savedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SavedPlaceRow &&
+          other.id == this.id &&
+          other.placeId == this.placeId &&
+          other.listId == this.listId &&
+          other.name == this.name &&
+          other.note == this.note &&
+          other.pinned == this.pinned &&
+          other.position == this.position &&
+          other.savedAt == this.savedAt);
+}
+
+class SavedPlacesCompanion extends UpdateCompanion<SavedPlaceRow> {
+  final Value<int> id;
+  final Value<String> placeId;
+  final Value<int?> listId;
+  final Value<String?> name;
+  final Value<String?> note;
+  final Value<bool> pinned;
+  final Value<int> position;
+  final Value<DateTime> savedAt;
+  const SavedPlacesCompanion({
+    this.id = const Value.absent(),
+    this.placeId = const Value.absent(),
+    this.listId = const Value.absent(),
+    this.name = const Value.absent(),
+    this.note = const Value.absent(),
+    this.pinned = const Value.absent(),
+    this.position = const Value.absent(),
+    this.savedAt = const Value.absent(),
+  });
+  SavedPlacesCompanion.insert({
+    this.id = const Value.absent(),
+    required String placeId,
+    this.listId = const Value.absent(),
+    this.name = const Value.absent(),
+    this.note = const Value.absent(),
+    this.pinned = const Value.absent(),
+    required int position,
+    required DateTime savedAt,
+  }) : placeId = Value(placeId),
+       position = Value(position),
+       savedAt = Value(savedAt);
+  static Insertable<SavedPlaceRow> custom({
+    Expression<int>? id,
+    Expression<String>? placeId,
+    Expression<int>? listId,
+    Expression<String>? name,
+    Expression<String>? note,
+    Expression<bool>? pinned,
+    Expression<int>? position,
+    Expression<DateTime>? savedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (placeId != null) 'place_id': placeId,
+      if (listId != null) 'list_id': listId,
+      if (name != null) 'name': name,
+      if (note != null) 'note': note,
+      if (pinned != null) 'pinned': pinned,
+      if (position != null) 'position': position,
+      if (savedAt != null) 'saved_at': savedAt,
+    });
+  }
+
+  SavedPlacesCompanion copyWith({
+    Value<int>? id,
+    Value<String>? placeId,
+    Value<int?>? listId,
+    Value<String?>? name,
+    Value<String?>? note,
+    Value<bool>? pinned,
+    Value<int>? position,
+    Value<DateTime>? savedAt,
+  }) {
+    return SavedPlacesCompanion(
+      id: id ?? this.id,
+      placeId: placeId ?? this.placeId,
+      listId: listId ?? this.listId,
+      name: name ?? this.name,
+      note: note ?? this.note,
+      pinned: pinned ?? this.pinned,
+      position: position ?? this.position,
+      savedAt: savedAt ?? this.savedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (placeId.present) {
+      map['place_id'] = Variable<String>(placeId.value);
+    }
+    if (listId.present) {
+      map['list_id'] = Variable<int>(listId.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (note.present) {
+      map['note'] = Variable<String>(note.value);
+    }
+    if (pinned.present) {
+      map['pinned'] = Variable<bool>(pinned.value);
+    }
+    if (position.present) {
+      map['position'] = Variable<int>(position.value);
+    }
+    if (savedAt.present) {
+      map['saved_at'] = Variable<DateTime>(savedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SavedPlacesCompanion(')
+          ..write('id: $id, ')
+          ..write('placeId: $placeId, ')
+          ..write('listId: $listId, ')
+          ..write('name: $name, ')
+          ..write('note: $note, ')
+          ..write('pinned: $pinned, ')
+          ..write('position: $position, ')
+          ..write('savedAt: $savedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $SettingsTable extends Settings
     with TableInfo<$SettingsTable, SettingRow> {
   @override
@@ -1172,12 +2021,70 @@ abstract class _$CardinalDatabase extends GeneratedDatabase {
   _$CardinalDatabase(QueryExecutor e) : super(e);
   $CardinalDatabaseManager get managers => $CardinalDatabaseManager(this);
   late final $PlacesTable places = $PlacesTable(this);
+  late final $SavedListsTable savedLists = $SavedListsTable(this);
+  late final $SavedPlacesTable savedPlaces = $SavedPlacesTable(this);
+  late final Index savedPlacesOncePerList = Index(
+    'saved_places_once_per_list',
+    'CREATE UNIQUE INDEX saved_places_once_per_list ON saved_places (place_id, list_id)',
+  );
+  late final Index savedPlacesOnceAtTop = Index(
+    'saved_places_once_at_top',
+    'CREATE UNIQUE INDEX saved_places_once_at_top ON saved_places (place_id) WHERE list_id IS NULL',
+  );
+  late final Trigger savedListsNoCycleOnUpdate = Trigger(
+    'CREATE TRIGGER saved_lists_no_cycle_on_update BEFORE UPDATE OF parent_id ON saved_lists WHEN NEW.parent_id IS NOT NULL BEGIN SELECT RAISE (ABORT, \'a saved list cannot be inside itself\') WHERE EXISTS (WITH RECURSIVE up (id) AS (SELECT NEW.parent_id UNION SELECT l.parent_id FROM saved_lists AS l JOIN up ON l.id = up.id WHERE l.parent_id IS NOT NULL) SELECT 1 FROM up WHERE up.id = NEW.id);END',
+    'saved_lists_no_cycle_on_update',
+  );
+  late final Trigger savedListsNoCycleOnInsert = Trigger(
+    'CREATE TRIGGER saved_lists_no_cycle_on_insert BEFORE INSERT ON saved_lists WHEN NEW.parent_id IS NOT NULL AND NEW.parent_id = NEW.id BEGIN SELECT RAISE (ABORT, \'a saved list cannot be inside itself\');END',
+    'saved_lists_no_cycle_on_insert',
+  );
   late final $SettingsTable settings = $SettingsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
-  List<DatabaseSchemaEntity> get allSchemaEntities => [places, settings];
+  List<DatabaseSchemaEntity> get allSchemaEntities => [
+    places,
+    savedLists,
+    savedPlaces,
+    savedPlacesOncePerList,
+    savedPlacesOnceAtTop,
+    savedListsNoCycleOnUpdate,
+    savedListsNoCycleOnInsert,
+    settings,
+  ];
+  @override
+  StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'saved_lists',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('saved_lists', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'saved_lists',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('saved_places', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'saved_lists',
+        limitUpdateKind: UpdateKind.update,
+      ),
+      result: [],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'saved_lists',
+        limitUpdateKind: UpdateKind.insert,
+      ),
+      result: [],
+    ),
+  ]);
 }
 
 typedef $$PlacesTableCreateCompanionBuilder = PlacesCompanion Function({
@@ -1220,6 +2127,29 @@ typedef $$PlacesTableUpdateCompanionBuilder = PlacesCompanion Function({
   Value<DateTime> accessedAt,
   Value<int> rowid,
 });
+
+final class $$PlacesTableReferences
+    extends BaseReferences<_$CardinalDatabase, $PlacesTable, PlaceRow> {
+  $$PlacesTableReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static MultiTypedResultKey<$SavedPlacesTable, List<SavedPlaceRow>>
+  _savedPlacesRefsTable(_$CardinalDatabase db) => MultiTypedResultKey.fromTable(
+    db.savedPlaces,
+    aliasName: 'places__id__saved_places__place_id',
+  );
+
+  $$SavedPlacesTableProcessedTableManager get savedPlacesRefs {
+    final manager = $$SavedPlacesTableTableManager(
+      $_db,
+      $_db.savedPlaces,
+    ).filter((f) => f.placeId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_savedPlacesRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+}
 
 class $$PlacesTableFilterComposer
     extends Composer<_$CardinalDatabase, $PlacesTable> {
@@ -1314,6 +2244,31 @@ class $$PlacesTableFilterComposer
     column: $table.accessedAt,
     builder: (column) => ColumnFilters(column),
   );
+
+  Expression<bool> savedPlacesRefs(
+    Expression<bool> Function($$SavedPlacesTableFilterComposer f) f,
+  ) {
+    final $$SavedPlacesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.savedPlaces,
+      getReferencedColumn: (t) => t.placeId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$SavedPlacesTableFilterComposer(
+            $db: $db,
+            $table: $db.savedPlaces,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $$PlacesTableOrderingComposer
@@ -1474,6 +2429,31 @@ class $$PlacesTableAnnotationComposer
     column: $table.accessedAt,
     builder: (column) => column,
   );
+
+  Expression<T> savedPlacesRefs<T extends Object>(
+    Expression<T> Function($$SavedPlacesTableAnnotationComposer a) f,
+  ) {
+    final $$SavedPlacesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.savedPlaces,
+      getReferencedColumn: (t) => t.placeId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$SavedPlacesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.savedPlaces,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $$PlacesTableTableManager
@@ -1487,12 +2467,9 @@ class $$PlacesTableTableManager
           $$PlacesTableAnnotationComposer,
           $$PlacesTableCreateCompanionBuilder,
           $$PlacesTableUpdateCompanionBuilder,
-          (
-            PlaceRow,
-            BaseReferences<_$CardinalDatabase, $PlacesTable, PlaceRow>,
-          ),
+          (PlaceRow, $$PlacesTableReferences),
           PlaceRow,
-          PrefetchHooks Function()
+          PrefetchHooks Function({bool savedPlacesRefs})
         > {
   $$PlacesTableTableManager(_$CardinalDatabase db, $PlacesTable table)
     : super(
@@ -1589,15 +2566,40 @@ class $$PlacesTableTableManager
               .map(
                 (e) => (
                   e.readTable<$PlacesTable, PlaceRow>(table),
-                  BaseReferences<_$CardinalDatabase, $PlacesTable, PlaceRow>(
-                    db,
-                    table,
-                    e,
-                  ),
+                  $$PlacesTableReferences(db, table, e),
                 ),
               )
               .toList(),
-          prefetchHooksCallback: null,
+          prefetchHooksCallback: ({savedPlacesRefs = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [if (savedPlacesRefs) db.savedPlaces],
+              addJoins: null,
+              getPrefetchedDataCallback: (items) async {
+                return [
+                  if (savedPlacesRefs)
+                    await $_getPrefetchedDataByColumns<
+                      PlaceRow,
+                      $PlacesTable,
+                      SavedPlaceRow,
+                      $SavedPlacesTable
+                    >(
+                      currentTable: table,
+                      referencedTable: $$PlacesTableReferences
+                          ._savedPlacesRefsTable(db),
+                      managerFromTypedResult: (p0) => $$PlacesTableReferences(
+                        db,
+                        table,
+                        p0,
+                      ).savedPlacesRefs,
+                      currentColumn: 'id',
+                      referencedColumn: 'place_id',
+                      typedResults: items,
+                    ),
+                ];
+              },
+            );
+          },
         ),
       );
 }
@@ -1612,9 +2614,856 @@ typedef $$PlacesTableProcessedTableManager =
       $$PlacesTableAnnotationComposer,
       $$PlacesTableCreateCompanionBuilder,
       $$PlacesTableUpdateCompanionBuilder,
-      (PlaceRow, BaseReferences<_$CardinalDatabase, $PlacesTable, PlaceRow>),
+      (PlaceRow, $$PlacesTableReferences),
       PlaceRow,
-      PrefetchHooks Function()
+      PrefetchHooks Function({bool savedPlacesRefs})
+    >;
+typedef $$SavedListsTableCreateCompanionBuilder = SavedListsCompanion Function({
+  Value<int> id,
+  Value<int?> parentId,
+  required String name,
+  Value<String?> note,
+  required int position,
+});
+typedef $$SavedListsTableUpdateCompanionBuilder = SavedListsCompanion Function({
+  Value<int> id,
+  Value<int?> parentId,
+  Value<String> name,
+  Value<String?> note,
+  Value<int> position,
+});
+
+final class $$SavedListsTableReferences
+    extends BaseReferences<_$CardinalDatabase, $SavedListsTable, SavedListRow> {
+  $$SavedListsTableReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static $SavedListsTable _parentIdTable(_$CardinalDatabase db) =>
+      db.savedLists.createAlias('saved_lists__parent_id__saved_lists__id');
+
+  $$SavedListsTableProcessedTableManager? get parentId {
+    final $_column = $_itemColumn<int>('parent_id');
+    if ($_column == null) return null;
+    final manager = $$SavedListsTableTableManager(
+      $_db,
+      $_db.savedLists,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_parentIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static MultiTypedResultKey<$SavedPlacesTable, List<SavedPlaceRow>>
+  _savedPlacesRefsTable(_$CardinalDatabase db) => MultiTypedResultKey.fromTable(
+    db.savedPlaces,
+    aliasName: 'saved_lists__id__saved_places__list_id',
+  );
+
+  $$SavedPlacesTableProcessedTableManager get savedPlacesRefs {
+    final manager = $$SavedPlacesTableTableManager(
+      $_db,
+      $_db.savedPlaces,
+    ).filter((f) => f.listId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_savedPlacesRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+}
+
+class $$SavedListsTableFilterComposer
+    extends Composer<_$CardinalDatabase, $SavedListsTable> {
+  $$SavedListsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get note => $composableBuilder(
+    column: $table.note,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get position => $composableBuilder(
+    column: $table.position,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$SavedListsTableFilterComposer get parentId {
+    final $$SavedListsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.parentId,
+      referencedTable: $db.savedLists,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$SavedListsTableFilterComposer(
+            $db: $db,
+            $table: $db.savedLists,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  Expression<bool> savedPlacesRefs(
+    Expression<bool> Function($$SavedPlacesTableFilterComposer f) f,
+  ) {
+    final $$SavedPlacesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.savedPlaces,
+      getReferencedColumn: (t) => t.listId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$SavedPlacesTableFilterComposer(
+            $db: $db,
+            $table: $db.savedPlaces,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+}
+
+class $$SavedListsTableOrderingComposer
+    extends Composer<_$CardinalDatabase, $SavedListsTable> {
+  $$SavedListsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get note => $composableBuilder(
+    column: $table.note,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get position => $composableBuilder(
+    column: $table.position,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$SavedListsTableOrderingComposer get parentId {
+    final $$SavedListsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.parentId,
+      referencedTable: $db.savedLists,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$SavedListsTableOrderingComposer(
+            $db: $db,
+            $table: $db.savedLists,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$SavedListsTableAnnotationComposer
+    extends Composer<_$CardinalDatabase, $SavedListsTable> {
+  $$SavedListsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<String> get note =>
+      $composableBuilder(column: $table.note, builder: (column) => column);
+
+  GeneratedColumn<int> get position =>
+      $composableBuilder(column: $table.position, builder: (column) => column);
+
+  $$SavedListsTableAnnotationComposer get parentId {
+    final $$SavedListsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.parentId,
+      referencedTable: $db.savedLists,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$SavedListsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.savedLists,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  Expression<T> savedPlacesRefs<T extends Object>(
+    Expression<T> Function($$SavedPlacesTableAnnotationComposer a) f,
+  ) {
+    final $$SavedPlacesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.savedPlaces,
+      getReferencedColumn: (t) => t.listId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$SavedPlacesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.savedPlaces,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+}
+
+class $$SavedListsTableTableManager
+    extends
+        RootTableManager<
+          _$CardinalDatabase,
+          $SavedListsTable,
+          SavedListRow,
+          $$SavedListsTableFilterComposer,
+          $$SavedListsTableOrderingComposer,
+          $$SavedListsTableAnnotationComposer,
+          $$SavedListsTableCreateCompanionBuilder,
+          $$SavedListsTableUpdateCompanionBuilder,
+          (SavedListRow, $$SavedListsTableReferences),
+          SavedListRow,
+          PrefetchHooks Function({bool parentId, bool savedPlacesRefs})
+        > {
+  $$SavedListsTableTableManager(_$CardinalDatabase db, $SavedListsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SavedListsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SavedListsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SavedListsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int?> parentId = const Value.absent(),
+                Value<String> name = const Value.absent(),
+                Value<String?> note = const Value.absent(),
+                Value<int> position = const Value.absent(),
+              }) => SavedListsCompanion(
+                id: id,
+                parentId: parentId,
+                name: name,
+                note: note,
+                position: position,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int?> parentId = const Value.absent(),
+                required String name,
+                Value<String?> note = const Value.absent(),
+                required int position,
+              }) => SavedListsCompanion.insert(
+                id: id,
+                parentId: parentId,
+                name: name,
+                note: note,
+                position: position,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$SavedListsTable, SavedListRow>(table),
+                  $$SavedListsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({parentId = false, savedPlacesRefs = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [if (savedPlacesRefs) db.savedPlaces],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (parentId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.parentId,
+                        referencedTable: $$SavedListsTableReferences
+                            ._parentIdTable(db),
+                        referencedColumn: $$SavedListsTableReferences
+                            ._parentIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [
+                  if (savedPlacesRefs)
+                    await $_getPrefetchedDataByColumns<
+                      SavedListRow,
+                      $SavedListsTable,
+                      SavedPlaceRow,
+                      $SavedPlacesTable
+                    >(
+                      currentTable: table,
+                      referencedTable: $$SavedListsTableReferences
+                          ._savedPlacesRefsTable(db),
+                      managerFromTypedResult: (p0) =>
+                          $$SavedListsTableReferences(
+                            db,
+                            table,
+                            p0,
+                          ).savedPlacesRefs,
+                      currentColumn: 'id',
+                      referencedColumn: 'list_id',
+                      typedResults: items,
+                    ),
+                ];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$SavedListsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$CardinalDatabase,
+      $SavedListsTable,
+      SavedListRow,
+      $$SavedListsTableFilterComposer,
+      $$SavedListsTableOrderingComposer,
+      $$SavedListsTableAnnotationComposer,
+      $$SavedListsTableCreateCompanionBuilder,
+      $$SavedListsTableUpdateCompanionBuilder,
+      (SavedListRow, $$SavedListsTableReferences),
+      SavedListRow,
+      PrefetchHooks Function({bool parentId, bool savedPlacesRefs})
+    >;
+typedef $$SavedPlacesTableCreateCompanionBuilder =
+    SavedPlacesCompanion Function({
+      Value<int> id,
+      required String placeId,
+      Value<int?> listId,
+      Value<String?> name,
+      Value<String?> note,
+      Value<bool> pinned,
+      required int position,
+      required DateTime savedAt,
+    });
+typedef $$SavedPlacesTableUpdateCompanionBuilder =
+    SavedPlacesCompanion Function({
+      Value<int> id,
+      Value<String> placeId,
+      Value<int?> listId,
+      Value<String?> name,
+      Value<String?> note,
+      Value<bool> pinned,
+      Value<int> position,
+      Value<DateTime> savedAt,
+    });
+
+final class $$SavedPlacesTableReferences
+    extends
+        BaseReferences<_$CardinalDatabase, $SavedPlacesTable, SavedPlaceRow> {
+  $$SavedPlacesTableReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static $PlacesTable _placeIdTable(_$CardinalDatabase db) =>
+      db.places.createAlias('saved_places__place_id__places__id');
+
+  $$PlacesTableProcessedTableManager get placeId {
+    final $_column = $_itemColumn<String>('place_id')!;
+
+    final manager = $$PlacesTableTableManager(
+      $_db,
+      $_db.places,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_placeIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $SavedListsTable _listIdTable(_$CardinalDatabase db) =>
+      db.savedLists.createAlias('saved_places__list_id__saved_lists__id');
+
+  $$SavedListsTableProcessedTableManager? get listId {
+    final $_column = $_itemColumn<int>('list_id');
+    if ($_column == null) return null;
+    final manager = $$SavedListsTableTableManager(
+      $_db,
+      $_db.savedLists,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_listIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$SavedPlacesTableFilterComposer
+    extends Composer<_$CardinalDatabase, $SavedPlacesTable> {
+  $$SavedPlacesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get note => $composableBuilder(
+    column: $table.note,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get pinned => $composableBuilder(
+    column: $table.pinned,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get position => $composableBuilder(
+    column: $table.position,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get savedAt => $composableBuilder(
+    column: $table.savedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$PlacesTableFilterComposer get placeId {
+    final $$PlacesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.placeId,
+      referencedTable: $db.places,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlacesTableFilterComposer(
+            $db: $db,
+            $table: $db.places,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$SavedListsTableFilterComposer get listId {
+    final $$SavedListsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.listId,
+      referencedTable: $db.savedLists,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$SavedListsTableFilterComposer(
+            $db: $db,
+            $table: $db.savedLists,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$SavedPlacesTableOrderingComposer
+    extends Composer<_$CardinalDatabase, $SavedPlacesTable> {
+  $$SavedPlacesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get note => $composableBuilder(
+    column: $table.note,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get pinned => $composableBuilder(
+    column: $table.pinned,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get position => $composableBuilder(
+    column: $table.position,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get savedAt => $composableBuilder(
+    column: $table.savedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$PlacesTableOrderingComposer get placeId {
+    final $$PlacesTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.placeId,
+      referencedTable: $db.places,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlacesTableOrderingComposer(
+            $db: $db,
+            $table: $db.places,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$SavedListsTableOrderingComposer get listId {
+    final $$SavedListsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.listId,
+      referencedTable: $db.savedLists,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$SavedListsTableOrderingComposer(
+            $db: $db,
+            $table: $db.savedLists,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$SavedPlacesTableAnnotationComposer
+    extends Composer<_$CardinalDatabase, $SavedPlacesTable> {
+  $$SavedPlacesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<String> get note =>
+      $composableBuilder(column: $table.note, builder: (column) => column);
+
+  GeneratedColumn<bool> get pinned =>
+      $composableBuilder(column: $table.pinned, builder: (column) => column);
+
+  GeneratedColumn<int> get position =>
+      $composableBuilder(column: $table.position, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get savedAt =>
+      $composableBuilder(column: $table.savedAt, builder: (column) => column);
+
+  $$PlacesTableAnnotationComposer get placeId {
+    final $$PlacesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.placeId,
+      referencedTable: $db.places,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlacesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.places,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$SavedListsTableAnnotationComposer get listId {
+    final $$SavedListsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.listId,
+      referencedTable: $db.savedLists,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$SavedListsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.savedLists,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$SavedPlacesTableTableManager
+    extends
+        RootTableManager<
+          _$CardinalDatabase,
+          $SavedPlacesTable,
+          SavedPlaceRow,
+          $$SavedPlacesTableFilterComposer,
+          $$SavedPlacesTableOrderingComposer,
+          $$SavedPlacesTableAnnotationComposer,
+          $$SavedPlacesTableCreateCompanionBuilder,
+          $$SavedPlacesTableUpdateCompanionBuilder,
+          (SavedPlaceRow, $$SavedPlacesTableReferences),
+          SavedPlaceRow,
+          PrefetchHooks Function({bool placeId, bool listId})
+        > {
+  $$SavedPlacesTableTableManager(_$CardinalDatabase db, $SavedPlacesTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SavedPlacesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SavedPlacesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SavedPlacesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> placeId = const Value.absent(),
+                Value<int?> listId = const Value.absent(),
+                Value<String?> name = const Value.absent(),
+                Value<String?> note = const Value.absent(),
+                Value<bool> pinned = const Value.absent(),
+                Value<int> position = const Value.absent(),
+                Value<DateTime> savedAt = const Value.absent(),
+              }) => SavedPlacesCompanion(
+                id: id,
+                placeId: placeId,
+                listId: listId,
+                name: name,
+                note: note,
+                pinned: pinned,
+                position: position,
+                savedAt: savedAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required String placeId,
+                Value<int?> listId = const Value.absent(),
+                Value<String?> name = const Value.absent(),
+                Value<String?> note = const Value.absent(),
+                Value<bool> pinned = const Value.absent(),
+                required int position,
+                required DateTime savedAt,
+              }) => SavedPlacesCompanion.insert(
+                id: id,
+                placeId: placeId,
+                listId: listId,
+                name: name,
+                note: note,
+                pinned: pinned,
+                position: position,
+                savedAt: savedAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$SavedPlacesTable, SavedPlaceRow>(table),
+                  $$SavedPlacesTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({placeId = false, listId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (placeId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.placeId,
+                        referencedTable: $$SavedPlacesTableReferences
+                            ._placeIdTable(db),
+                        referencedColumn: $$SavedPlacesTableReferences
+                            ._placeIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+                    if (listId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.listId,
+                        referencedTable: $$SavedPlacesTableReferences
+                            ._listIdTable(db),
+                        referencedColumn: $$SavedPlacesTableReferences
+                            ._listIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$SavedPlacesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$CardinalDatabase,
+      $SavedPlacesTable,
+      SavedPlaceRow,
+      $$SavedPlacesTableFilterComposer,
+      $$SavedPlacesTableOrderingComposer,
+      $$SavedPlacesTableAnnotationComposer,
+      $$SavedPlacesTableCreateCompanionBuilder,
+      $$SavedPlacesTableUpdateCompanionBuilder,
+      (SavedPlaceRow, $$SavedPlacesTableReferences),
+      SavedPlaceRow,
+      PrefetchHooks Function({bool placeId, bool listId})
     >;
 typedef $$SettingsTableCreateCompanionBuilder = SettingsCompanion Function({
   required String key,
@@ -1762,6 +3611,10 @@ class $CardinalDatabaseManager {
   $CardinalDatabaseManager(this._db);
   $$PlacesTableTableManager get places =>
       $$PlacesTableTableManager(_db, _db.places);
+  $$SavedListsTableTableManager get savedLists =>
+      $$SavedListsTableTableManager(_db, _db.savedLists);
+  $$SavedPlacesTableTableManager get savedPlaces =>
+      $$SavedPlacesTableTableManager(_db, _db.savedPlaces);
   $$SettingsTableTableManager get settings =>
       $$SettingsTableTableManager(_db, _db.settings);
 }

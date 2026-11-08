@@ -56,12 +56,17 @@ class PlaceStore {
         .distinct();
   }
 
-  /// Deletes places that haven't been put or read in [age].
+  /// Deletes places that haven't been put or read in [age], unless they're saved.
   Future<int> prune({Duration age = const Duration(days: 30)}) {
     final cutoff = _now().subtract(age);
-    return (_db.delete(
-      _db.places,
-    )..where((p) => p.accessedAt.isSmallerThanValue(cutoff))).go();
+    final saved = _db.selectOnly(_db.savedPlaces)
+      ..addColumns([_db.savedPlaces.placeId]);
+    return (_db.delete(_db.places)..where(
+          (p) =>
+              p.accessedAt.isSmallerThanValue(cutoff) &
+              p.id.isNotInQuery(saved),
+        ))
+        .go();
   }
 
   SimpleSelectStatement<$PlacesTable, PlaceRow> _select(String id) =>

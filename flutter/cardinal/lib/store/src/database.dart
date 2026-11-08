@@ -52,7 +52,57 @@ class Settings extends Table {
   Set<Column> get primaryKey => {key};
 }
 
-@DriftDatabase(tables: [Places, Settings])
+/// A list of saved places, within another list or at the top level of Saved.
+///
+/// Its child lists and places go with it when it's deleted.
+@DataClassName('SavedListRow')
+class SavedLists extends Table {
+  IntColumn get id => integer().autoIncrement()();
+
+  /// The list it's in; null at the top level.
+  IntColumn get parentId => integer().nullable().references(
+    SavedLists,
+    #id,
+    onDelete: KeyAction.cascade,
+  )();
+  TextColumn get name => text()();
+  TextColumn get note => text().nullable()();
+
+  /// Its place among the lists with the same parent, lowest first.
+  IntColumn get position => integer()();
+}
+
+/// A place in a list, or at the top level of Saved: a place can be in several, once
+/// each (see `saved.drift`). What's known about the place itself is in [Places];
+/// `PlaceStore.prune` leaves saved places alone.
+@DataClassName('SavedPlaceRow')
+class SavedPlaces extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get placeId => text().references(Places, #id)();
+
+  /// The list it's in; null at the top level.
+  IntColumn get listId => integer().nullable().references(
+    SavedLists,
+    #id,
+    onDelete: KeyAction.cascade,
+  )();
+
+  /// The user's name for it, instead of the place's own.
+  TextColumn get name => text().nullable()();
+  TextColumn get note => text().nullable()();
+
+  /// Whether this copy has a chip on the home sheet.
+  BoolColumn get pinned => boolean().withDefault(const Constant(false))();
+
+  /// Its place among the places in the same list, lowest first.
+  IntColumn get position => integer()();
+  DateTimeColumn get savedAt => dateTime()();
+}
+
+@DriftDatabase(
+  tables: [Places, Settings, SavedLists, SavedPlaces],
+  include: {'saved.drift'},
+)
 class CardinalDatabase extends _$CardinalDatabase {
   CardinalDatabase(super.executor);
 
@@ -68,7 +118,7 @@ class CardinalDatabase extends _$CardinalDatabase {
       );
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -76,6 +126,25 @@ class CardinalDatabase extends _$CardinalDatabase {
       from1To2: (m, schema) =>
           m.addColumn(schema.places, schema.places.countryCode),
       from2To3: (m, schema) => m.createTable(schema.settings),
+      from3To4: (m, schema) async {
+        await m.createTable(schema.savedLists);
+        await m.createTable(schema.savedPlaces);
+      },
+      from4To5: (m, schema) async {
+        // A place can now be in several lists: rows get an ID of their own.
+        await m.alterTable(
+          TableMigration(
+            schema.savedPlaces,
+            newColumns: [schema.savedPlaces.id],
+          ),
+        );
+        await m.create(schema.savedPlacesOncePerList);
+        await m.create(schema.savedPlacesOnceAtTop);
+        await m.create(schema.savedListsNoCycleOnUpdate);
+        await m.create(schema.savedListsNoCycleOnInsert);
+      },
     ),
+    // Deleting a list takes what's in it along.
+    beforeOpen: (details) => customStatement('PRAGMA foreign_keys = ON'),
   );
 }

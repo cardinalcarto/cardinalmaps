@@ -34,6 +34,10 @@ flutter:
   uses-material-design: true
   assets:
     - assets/map/
+  fonts:
+    - family: CardinalIcons
+      fonts:
+        - asset: assets/fonts/CardinalIcons.ttf
 
 flutter_launcher_icons:
   image_path: assets/icon/icon.png

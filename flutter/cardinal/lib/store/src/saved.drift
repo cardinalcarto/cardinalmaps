@@ -1,0 +1,32 @@
+import 'database.dart';
+
+-- A place is in a list, or at the top level, at most once. Top level means a null list,
+-- which a unique index counts as different every time, so it has an index of its own.
+CREATE UNIQUE INDEX saved_places_once_per_list ON saved_places (place_id, list_id);
+CREATE UNIQUE INDEX saved_places_once_at_top ON saved_places (place_id)
+  WHERE list_id IS NULL;
+
+-- A list can't end up inside itself, however it's written: lists form a tree.
+CREATE TRIGGER saved_lists_no_cycle_on_update
+BEFORE UPDATE OF parent_id ON saved_lists
+WHEN NEW.parent_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'a saved list cannot be inside itself')
+  WHERE EXISTS (
+    WITH RECURSIVE up(id) AS (
+      SELECT NEW.parent_id
+      UNION
+      SELECT l.parent_id FROM saved_lists l JOIN up ON l.id = up.id
+      WHERE l.parent_id IS NOT NULL
+    )
+    SELECT 1 FROM up WHERE up.id = NEW.id
+  );
+END;
+
+-- Nothing can be inside a new list yet, except itself.
+CREATE TRIGGER saved_lists_no_cycle_on_insert
+BEFORE INSERT ON saved_lists
+WHEN NEW.parent_id IS NOT NULL AND NEW.parent_id = NEW.id
+BEGIN
+  SELECT RAISE(ABORT, 'a saved list cannot be inside itself');
+END;

@@ -16,6 +16,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../fakes/fake_map.dart';
 import '../fakes/fake_place_store.dart';
+import '../fakes/fake_saved_store.dart';
 import '../geocoder/geocoder_test.dart' show spaceNeedle;
 
 /// The app's sheet pages over a blank body instead of the map, which needs Flutter GPU.
@@ -29,7 +30,11 @@ Future<Store> _pumpApp(
     ..physicalSize = const Size(400, 800) * 2
     ..devicePixelRatio = 2;
   addTearDown(tester.view.reset);
-  final store = Store.withoutDatabase(places: FakePlaceStore());
+  final places = FakePlaceStore();
+  final store = Store.withoutDatabase(
+    places: places,
+    saved: FakeSavedStore(places),
+  );
   final geocoder = Geocoder(
     Uri.parse('http://localhost:3000'),
     client: MockClient((request) async {

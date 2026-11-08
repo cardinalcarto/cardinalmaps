@@ -56,7 +56,9 @@ class _SheetScrollPosition extends ScrollPositionWithSingleContext {
   @override
   void applyUserOffset(double delta) {
     // A positive delta is the finger moving down.
-    if (!isActive()) return super.applyUserOffset(delta);
+    if (!isActive() || !sheet.isDraggable) {
+      return super.applyUserOffset(delta);
+    }
     if (sheet.isTransitioning) return;
     if (delta < 0) {
       final rest = delta + sheet.dragBy(-delta);
@@ -87,7 +89,7 @@ class _SheetScrollPosition extends ScrollPositionWithSingleContext {
   @override
   void pointerScroll(double delta) {
     // A positive delta scrolls the content down, as raising the sheet would.
-    if (isActive() && !sheet.isTransitioning) {
+    if (isActive() && sheet.isDraggable && !sheet.isTransitioning) {
       if (delta > 0 && !sheet.isAtMax ||
           delta < 0 && _atTop && sheet.extent > sheet._min) {
         sheet._nudge(delta);

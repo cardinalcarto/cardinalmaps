@@ -2,15 +2,22 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
 
+import 'home/navigation_bar.dart';
+import 'home/stub_page.dart';
 import 'map/buttons.dart';
 import 'map/map.dart';
 import 'place/place_page.dart';
+import 'saved/saved_page.dart';
 import 'search/search_sheet.dart';
 import 'sheet/sheet.dart';
 
 /// Tells the sheet's pages when a page covers them and when it closes again, so the
 /// page under it can be as it was: see `SearchSheet`.
 final sheetPages = RouteObserver<PageRoute<Object?>>();
+
+/// Counts taps on the app bar's Search button on the search page, which is how
+/// `SearchSheet` hears of them.
+final searchRequests = ValueNotifier<int>(0);
 
 /// The location of a place's screen, `/place/<id>`, for a [Place](store/store.dart) ID.
 ///
@@ -34,6 +41,9 @@ void openPlaceFromMap(GoRouter router, String id) {
 
 /// The app's routes: sheet pages over the map.
 ///
+/// The app bar's pages are siblings: going to one replaces the one showing. Back on any
+/// but search goes to search, which has started over.
+///
 /// The app restores where it was (see `MainApp`): routes carry only IDs, and what they
 /// show is in the store, so restoring the location restores the screens.
 GoRouter appRouter(SparkleMapController map) => GoRouter(
@@ -47,26 +57,61 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
         body: SheetScaffold(
           body: CardinalMap(controller: map),
           floating: const MapButtons(),
+          bottomBar: const AppNavigationBar(),
           sheet: child,
         ),
       ),
-      routes: [
-        GoRoute(
-          path: '/',
-          // The search sheet decides its own focus: see `SearchSheet`.
-          pageBuilder: (context, state) =>
-              _page(state, const SearchSheet(), requestFocus: false),
-          routes: [
-            GoRoute(
-              path: 'place/:id',
-              pageBuilder: (context, state) =>
-                  _page(state, PlacePage(id: state.pathParameters['id']!)),
-            ),
-          ],
-        ),
-      ],
+      routes: sheetRoutes(),
     ),
   ],
+);
+
+/// The pages of the sheet.
+List<RouteBase> sheetRoutes() => [
+  GoRoute(
+    path: '/',
+    // The search sheet decides its own focus: see `SearchSheet`.
+    pageBuilder: (context, state) =>
+        _page(state, const SearchSheet(), requestFocus: false),
+    routes: [
+      GoRoute(
+        path: 'place/:id',
+        pageBuilder: (context, state) =>
+            _page(state, PlacePage(id: state.pathParameters['id']!)),
+      ),
+    ],
+  ),
+  GoRoute(
+    path: '/saved',
+    pageBuilder: (context, state) => _page(state, const SavedPage()),
+    routes: [
+      GoRoute(
+        path: ':listId',
+        pageBuilder: (context, state) => _page(
+          state,
+          SavedPage(listId: int.parse(state.pathParameters['listId']!)),
+        ),
+      ),
+    ],
+  ),
+  _topLevel('/nearby', const StubPage(title: 'Nearby places')),
+  _topLevel('/transit', const StubPage(title: 'Nearby transit')),
+  _topLevel('/offline', const StubPage(title: 'Offline maps')),
+];
+
+/// An app bar page other than search.
+GoRoute _topLevel(String path, Widget child) => GoRoute(
+  path: path,
+  pageBuilder: (context, state) => _page(
+    state,
+    PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) context.go('/');
+      },
+      child: child,
+    ),
+  ),
 );
 
 /// A sheet page for [state]'s route, restorable.
