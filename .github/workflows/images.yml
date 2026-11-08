@@ -9,6 +9,7 @@ on:
       - .github/workflows/images.yml
       - poi_service/**
       - airmail/**
+      - valinor/**
   workflow_dispatch:
 
 jobs:
@@ -23,8 +24,13 @@ jobs:
         include:
           - image: cardinal-poi-service
             context: poi_service
+            file: poi_service/Dockerfile
           - image: cardinal-airmail
             context: airmail
+            file: airmail/Dockerfile
+          - image: cardinal-valinor
+            context: valinor
+            file: valinor/Containerfile
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
@@ -43,6 +49,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
