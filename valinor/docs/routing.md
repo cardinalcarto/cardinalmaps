@@ -184,6 +184,42 @@ On the oracle corpora (see `tools/oracle/README.md`), every path, cost, error, w
 and location time matches mainline exactly.
 `optimized_route` (which needs mainline's `CostMatrix` and its `Optimizer`) is not here yet.
 
+## Trip building (Thor)
+
+`Thor::build_trip` is mainline's `TripLegBuilder` and the parts of `route_action.cc` that assemble
+the `trip`: a route per path (the best, then each alternate) and a `TripLeg` per leg.
+
+- Which attributes are written follows mainline's `AttributesController`: its defaults,
+  the request's `filters` (`include` and `exclude`; unknown names are ignored),
+  and `elevation_interval` for elevation. Ferrostar's `shape_attributes` filter gives
+  per-point times, lengths, speeds, and speed limits.
+- Each leg gets its locations (each keeping only the candidate edge the path uses,
+  with the projected point and side of street at the ends, and each intermediate location's
+  `leg_shape_index` and `distance_from_leg_origin`), a node per edge with the edge's attributes
+  and the edges that meet the path there (on every level the node connects to),
+  the shape with the partial edges at the ends and at intermediate locations trimmed,
+  level changes, admins, the bounding box, `osm_changeset`, the summary flags,
+  and `recostings`.
+- Trip building asks the costing only for edge speeds and travel types;
+  edge speeds by source come from `select_speed` without live traffic,
+  so faded speeds (which need live traffic) are never written.
+- Not here: landmarks (Valinor's tile builds have none), transit and bike share nodes,
+  incidents, and traffic cuts of the shape (none without live traffic).
+
+Mainline's arithmetic is followed step by step where it decides a value
+(single precision trim distances and lengths, the polyline's rounding, headings),
+and so are a few results that look odd but that Odin or clients see:
+a destination without intermediate locations before it gets the `leg_shape_index` and distance
+of the end of the leg's first edge (it is compared with each edge index, as intermediate
+locations are); an `arrive_by` intermediate location at a node gets the start of its edge;
+`edge.speed_type` is on by default (mainline's table lists it twice, and the first wins);
+a message mainline creates is created even when every field in it is filtered out
+(a sign, the cost of a node); and a shape point's time over the part of an edge
+with no length is 0 (mainline converts an infinite time to an integer, which gives 0 on x86-64;
+Ferrostar sums these into its annotations).
+On the oracle corpora (see `tools/oracle/README.md`), every trip matches mainline's exactly,
+apart from paths that tie at equal cost.
+
 ## The oracle
 
 Reference data comes from mainline 3.9.1 running in stages,
