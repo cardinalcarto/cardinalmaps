@@ -26,13 +26,28 @@
 //!
 //! Corrupt tile data is a different problem, which only hashing every tile detects
 //! (`TarballTileProvider::verify_tileset`); run that once after a download, not on every open.
+//!
+//! # Tile handles
+//!
+//! Every search asks for tiles over and over, from every thread at once,
+//! so the lookup must not take a lock (a shared LRU's mutex serialized all routing threads).
+//! A tarball tile is validated the first time it is asked for, and its handle is kept
+//! in a [`OnceLock`] of the tile index, which later lookups read without locking.
+//! The handle is a view of the memory map (the tile's bytes stay in the map,
+//! paged in and out by the operating system), so keeping one per tile used costs
+//! [`size_of::<MmapGraphTileHandle>()`] plus a reference count, about 500 bytes:
+//! some 100 MB if a long-running server has touched every tile of a planet,
+//! and a few megabytes for a device's regions.
+//! Directory tiles are read into memory, so the directory provider's own bounded cache
+//! keeps them (it locks, so directories are for development and tests, not for load).
 
 use core::fmt;
+use core::hash::{BuildHasherDefault, Hasher};
 use core::num::NonZeroUsize;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::UNIX_EPOCH;
 use thiserror::Error;
 use valhalla_graphtile::Access;
@@ -46,18 +61,11 @@ use valhalla_graphtile::graph_tile::{
     NodeInfo, NodeTransition, OpposingEdgeIndex, TileHash, TileSections,
 };
 use valhalla_graphtile::tile_provider::{
-    CachingTileProvider, DirectoryGraphTileProvider, GraphTileProvider, GraphTileProviderError,
-    TarballTileProvider,
+    DirectoryGraphTileProvider, GraphTileProvider, GraphTileProviderError, TarballTileProvider,
 };
 
 /// The most tiles of each set whose build ID [`TileSets::open`] reads (see the module docs).
 pub const BUILD_ID_SAMPLE: usize = 4096;
-
-/// How many tiles a directory set's own cache keeps.
-///
-/// The router's [`CachingTileProvider`] caches every set's tiles in front of it,
-/// so the directory provider's cache would only hold second copies of the same tiles.
-const DIRECTORY_CACHE: NonZeroUsize = NonZeroUsize::MIN;
 
 /// Why tile sets couldn't be opened.
 #[derive(Debug, Error)]
@@ -143,11 +151,53 @@ impl TileSet {
     }
 }
 
+/// A fast hasher for the tile index, which every tile lookup of every search goes through
+/// (std's `SipHash` was a sixth of a route's time).
+///
+/// The keys are tile IDs from the router's own files, not from requests,
+/// so the hash needn't resist collisions crafted by clients.
+#[derive(Default)]
+struct TileIdHasher(u64);
+
+impl Hasher for TileIdHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.write_u64(u64::from_le_bytes(word));
+        }
+    }
+
+    #[inline]
+    fn write_u64(&mut self, word: u64) {
+        // FxHash's step: mix the word in and multiply by an odd constant, so that every bit of
+        // the ID reaches the high bits that hashbrown's buckets read.
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+}
+
+/// Where a tile comes from, and its handle once a tarball tile has been validated.
+struct Slot {
+    set: usize,
+    handle: OnceLock<Arc<MmapGraphTileHandle>>,
+}
+
 /// Several tile sets as one [`GraphTileProvider`]; see the [module docs](self).
 pub struct TileSets {
     sets: Vec<TileSet>,
     /// The set that supplies each tile (by base ID).
-    index: HashMap<GraphId, usize>,
+    index: HashMap<GraphId, Slot, BuildHasherDefault<TileIdHasher>>,
     build_id: BuildId,
     last_modified: u32,
 }
@@ -155,16 +205,24 @@ pub struct TileSets {
 impl TileSets {
     /// Opens tile sets (`build_extract` tarballs or tile directories) as one provider,
     /// after checking that they come from one build (see the [module docs](self)).
+    /// Each tile directory keeps up to `directory_cache` tiles in memory.
+    ///
+    /// # Performance
+    ///
+    /// A tarball is memory-mapped, and only its index and the sampled headers are read.
     ///
     /// # Errors
     ///
     /// See [`OpenError`].
-    pub fn open<P: AsRef<Path>>(paths: &[P]) -> Result<Self, OpenError> {
+    pub fn open<P: AsRef<Path>>(
+        paths: &[P],
+        directory_cache: NonZeroUsize,
+    ) -> Result<Self, OpenError> {
         if paths.is_empty() {
             return Err(OpenError::NoTileSets);
         }
         let mut sets = Vec::with_capacity(paths.len());
-        let mut index = HashMap::new();
+        let mut index = HashMap::default();
         let mut first: Option<(&Path, GraphId, BuildId)> = None;
         let mut last_modified = 0;
         for (number, path) in paths.iter().enumerate() {
@@ -178,7 +236,7 @@ impl TileSets {
                 source,
             })?;
             let (set, mut ids) = if metadata.is_dir() {
-                let tiles = DirectoryGraphTileProvider::new(path.to_path_buf(), DIRECTORY_CACHE);
+                let tiles = DirectoryGraphTileProvider::new(path.to_path_buf(), directory_cache);
                 let ids = tiles.tile_ids().map_err(tiles_error)?;
                 (TileSet::Directory(tiles), ids)
             } else {
@@ -220,7 +278,10 @@ impl TileSets {
 
             for id in ids {
                 if let Entry::Vacant(entry) = index.entry(id) {
-                    entry.insert(number);
+                    entry.insert(Slot {
+                        set: number,
+                        handle: OnceLock::new(),
+                    });
                 }
             }
             last_modified = last_modified.max(modified_seconds(&metadata));
@@ -255,12 +316,29 @@ impl TileSets {
         self.last_modified
     }
 
-    fn set_of(&self, graph_id: GraphId) -> Result<&TileSet, GraphTileProviderError> {
+    /// The tile's handle: a tarball tile's from its slot (validated on first use),
+    /// a directory tile's from the directory's cache.
+    fn handle(&self, graph_id: GraphId) -> Result<TileHandle, GraphTileProviderError> {
         let base_id = graph_id.tile_base_id();
-        self.index
-            .get(&base_id)
-            .and_then(|&number| self.sets.get(number))
-            .ok_or(GraphTileProviderError::TileNotAvailable(base_id))
+        // Not `ok_or`: building (and dropping) the error on every hit is measurable here.
+        let Some(slot) = self.index.get(&base_id) else {
+            return Err(GraphTileProviderError::TileNotAvailable(base_id));
+        };
+        if let Some(handle) = slot.handle.get() {
+            return Ok(TileHandle::Mmap(handle.clone()));
+        }
+        match self.sets.get(slot.set) {
+            Some(TileSet::Tarball(tiles)) => {
+                let handle = tiles.get_handle_for_tile_containing(base_id)?;
+                // Two threads may validate the same tile at once; the first to finish keeps it.
+                Ok(TileHandle::Mmap(slot.handle.get_or_init(|| handle).clone()))
+            }
+            Some(TileSet::Directory(tiles)) => tiles
+                .get_handle_for_tile_containing(base_id)
+                .map(TileHandle::Owned),
+            // `open` only makes slots for the sets it keeps.
+            None => Err(GraphTileProviderError::TileNotAvailable(base_id)),
+        }
     }
 }
 
@@ -437,10 +515,7 @@ impl GraphTileProvider for TileSets {
     where
         F: FnOnce(&GraphTileView) -> T,
     {
-        match self.set_of(graph_id)? {
-            TileSet::Tarball(tiles) => tiles.with_tile_containing(graph_id, process),
-            TileSet::Directory(tiles) => tiles.with_tile_containing(graph_id, process),
-        }
+        Ok(process(self.handle(graph_id)?.view()))
     }
 
     #[inline]
@@ -448,14 +523,7 @@ impl GraphTileProvider for TileSets {
         &self,
         graph_id: GraphId,
     ) -> Result<Self::TileHandle, GraphTileProviderError> {
-        match self.set_of(graph_id)? {
-            TileSet::Tarball(tiles) => tiles
-                .get_handle_for_tile_containing(graph_id)
-                .map(TileHandle::Mmap),
-            TileSet::Directory(tiles) => tiles
-                .get_handle_for_tile_containing(graph_id)
-                .map(TileHandle::Owned),
-        }
+        self.handle(graph_id)
     }
 
     #[inline]
@@ -464,19 +532,19 @@ impl GraphTileProvider for TileSets {
     }
 }
 
-/// The router's tiles, shared by Loki and Thor: one cache in front of every set.
+/// The router's tiles, shared by Loki and Thor.
 #[derive(Clone)]
-pub struct SharedTiles(Arc<CachingTileProvider<TileSets>>);
+pub struct SharedTiles(Arc<TileSets>);
 
 impl SharedTiles {
-    pub(crate) fn new(sets: TileSets, cache_size: NonZeroUsize) -> Self {
-        Self(Arc::new(CachingTileProvider::new(sets, cache_size)))
+    pub(crate) fn new(sets: TileSets) -> Self {
+        Self(Arc::new(sets))
     }
 
     /// The tile sets.
     #[inline]
     pub fn sets(&self) -> &TileSets {
-        self.0.inner()
+        &self.0
     }
 }
 
@@ -517,6 +585,13 @@ mod tests {
         (0..count)
             .map(|tile| GraphId::try_from_components(2, tile, 0).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn kept_tarball_handles_are_small() {
+        // The module docs' estimate of what a validated tarball tile costs.
+        let size = size_of::<MmapGraphTileHandle>() + size_of::<Slot>() + size_of::<GraphId>();
+        assert!(size <= 600, "{size} bytes");
     }
 
     #[test]

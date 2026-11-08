@@ -79,10 +79,10 @@ impl Router {
     ///
     /// See [`OpenError`].
     pub fn open<P: AsRef<Path>>(config: RouterConfig, tile_sets: &[P]) -> Result<Self, OpenError> {
-        let sets = TileSets::open(tile_sets)?;
+        let sets = TileSets::open(tile_sets, config.tile_cache_size)?;
         let connectivity = ConnectivityMap::new(sets.tile_ids());
         let last_modified = sets.last_modified();
-        let tiles = SharedTiles::new(sets, config.tile_cache_size);
+        let tiles = SharedTiles::new(sets);
         Ok(Self {
             loki: Loki::new(config.loki, tiles.clone(), Some(connectivity))
                 .with_tileset_last_modified(last_modified),
