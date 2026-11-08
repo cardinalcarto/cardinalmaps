@@ -278,6 +278,54 @@ The Seattle build has a level 2 tile that only holds edge bins (2/792229),
 whose header corner mainline never sets;
 it is now a graph tile fixture (`valhalla-graphtile/fixtures/bin-only`).
 
+### Thor
+
+[`cpp/thor.cc`](cpp/thor.cc) runs mainline's own `thor_worker_t` (`route` and `optimized_route`)
+on the `ok` lines of the `loki` helper's output, which are the `Api` messages Loki sends to Thor,
+followed by `cleanup()`, as the worker does for each job.
+For each request it prints a summary: the error (code and message),
+or the warnings, each location's time after Thor (`date_time`, offset, and zone name),
+and, for each route and leg, the algorithms and the path edges
+(graph ID, the elapsed time and cost at the end of the edge, and the transition onto it,
+read back from the trip that `TripLegBuilder` made).
+[`thor-corpus.py`](thor-corpus.py) generates reproducible random route requests for it:
+auto, pedestrian (walking, hiking, wheelchair, and blind), and bicycle with their main options,
+two to five locations of every type, no time, `depart_at`, `arrive_by`, and `invariant` times
+(at several times of week), alternates, headings, exclude locations,
+`prioritize_bidirectional`, and pairs that can't be routed.
+
+`valinor-thor/fixtures/oracle` holds a sample of the Andorra corpus over the fixture tiles
+(every error and alternate, and every twelfth other case, with compact references),
+which the `oracle_andorra` test checks.
+Whole corpora, and other regions, are checked with the ignored `oracle_external` test,
+which also writes the sample (`VALINOR_THOR_FIXTURE`):
+
+```shell
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" valinor-valhalla-dev:3.9.1 /w/build-loki.sh
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" valinor-valhalla-dev:3.9.1 /w/build-thor.sh
+work=/mnt/maps/cardinal/valhalla-oracle/thor
+python3 -I tools/oracle/thor-corpus.py andorra 3000 11 > "$work/andorra-requests.tsv"
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" \
+  -v "$PWD/valhalla-graphtile/fixtures/andorra-tiles:/fx:ro,z" \
+  -v /mnt/maps/cardinal/valhalla-oracle/andorra-oracle:/cfg:ro,z -v "$work:/io:z" \
+  valinor-valhalla-dev:3.9.1 sh -c '/w/loki /cfg/valhalla.json /fx /io/andorra-requests.tsv \
+    > /io/andorra-loki.tsv && /w/thor /cfg/valhalla.json /fx /io/andorra-loki.tsv > /io/andorra-thor.tsv'
+VALINOR_THOR_ORACLE=$work/andorra VALINOR_THOR_TILES=valhalla-graphtile/fixtures/andorra-tiles \
+  VALINOR_THOR_CONFIG=/mnt/maps/cardinal/valhalla-oracle/andorra-oracle \
+  VALINOR_THOR_FIXTURE=valinor-thor/fixtures/oracle/andorra VALINOR_THOR_STRIDE=12 \
+  cargo test --release -p valinor-thor oracle_external -- --ignored --nocapture
+```
+
+The same goes for Seattle (`thor-corpus.py seattle 2000 12`, with the Seattle build's tiles
+and config) and for time-dependent costs over predicted speeds
+(`thor-corpus.py andorra 2000 13` on `andorra-predicted/tiles-predicted`,
+which is too large to commit).
+On these, every path, cost, error, warning, and location time matches mainline exactly:
+4110 legs and 87 errors in Andorra, 2678 legs and 81 errors with predicted speeds,
+and 2836 legs and 15 errors in Seattle, with 25, 8, and 36 requests with alternates.
+Two requests fail in mainline's trip building, after path search
+(`leg_shape_index not set for intermediate location`); the test lists them.
+
 ## Message fixtures
 
 [`copy-message-fixtures.sh`](copy-message-fixtures.sh) copies the captured

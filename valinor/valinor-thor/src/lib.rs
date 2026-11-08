@@ -46,6 +46,9 @@ mod search;
 mod time;
 mod unidirectional;
 
+#[cfg(test)]
+mod oracle_tests;
+
 pub use config::{ConfigError, HierarchyLimitsConfig, ThorConfig};
 pub use error::ThorError;
 pub use path::{EdgeTrim, EdgeTrimming, Leg, PathEdge, Paths, Route};

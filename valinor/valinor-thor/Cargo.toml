@@ -18,5 +18,8 @@ valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
 valinor-sif = { workspace = true }
 
+[dev-dependencies]
+base64 = { workspace = true }
+
 [lints]
 workspace = true
