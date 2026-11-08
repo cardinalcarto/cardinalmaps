@@ -5,7 +5,7 @@ use crate::interrupt::Interrupted;
 use http::header::{ACCESS_CONTROL_ALLOW_ORIGIN, CONNECTION, CONTENT_LENGTH, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue, StatusCode};
 use serde::Serialize;
-use valhalla_proto::{Api, Options};
+use valhalla_proto::Api;
 use valhalla_response::{ERROR_CONTENT_TYPE, ValhallaError};
 
 /// The `Content-Type` mainline uses for JSON responses.
@@ -100,26 +100,18 @@ impl WorkerResult {
     /// Runs a stage that passes its result on (see "Stage contract" in `docs/routing.md`),
     /// forwarding the `Api` it returns or answering the client with its error.
     ///
-    /// The stage consumes the request, but mainline serializes an error
-    /// for the request's format and includes the request's `info` in PBF errors,
-    /// so this keeps the action, format, and `info` aside before running the stage.
-    /// (Warnings the stage added before failing are lost with the request.)
+    /// The stage updates the request in place, as mainline's workers do,
+    /// so on failure the error is serialized from that same request:
+    /// its format decides the error body,
+    /// and its `info` (including any warnings the stage added before failing)
+    /// goes into PBF errors.
     pub fn from_stage(
-        request: Api,
-        stage: impl FnOnce(Api) -> Result<Api, ValhallaError>,
+        mut request: Api,
+        stage: impl FnOnce(&mut Api) -> Result<(), ValhallaError>,
     ) -> WorkerResult {
-        let mut error_request = Api {
-            options: request.options.as_ref().map(|options| Options {
-                action: options.action,
-                format: options.format,
-                ..Options::default()
-            }),
-            info: request.info.clone(),
-            ..Api::default()
-        };
-        match stage(request) {
-            Ok(api) => WorkerResult::forward(api),
-            Err(error) => WorkerResult::error(&error, &mut error_request),
+        match stage(&mut request) {
+            Ok(()) => WorkerResult::forward(request),
+            Err(error) => WorkerResult::error(&error, &mut request),
         }
     }
 }
@@ -194,6 +186,7 @@ pub(crate) fn serialize_http(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use valhalla_proto::Options;
     use zerocopy::transmute;
 
     const REQ_INFO_BYTES: [u8; 12] = [
@@ -244,9 +237,9 @@ mod tests {
 
     #[test]
     fn from_stage_forwards_success() {
-        let result = WorkerResult::from_stage(Api::default(), |mut api| {
+        let result = WorkerResult::from_stage(Api::default(), |api| {
             api.status = Some(valhalla_proto::Status::default());
-            Ok(api)
+            Ok(())
         });
         let WorkerResult::Forward(api) = result else {
             panic!("expected a forward");
@@ -271,7 +264,14 @@ mod tests {
             }),
             ..Default::default()
         };
-        let result = WorkerResult::from_stage(request, |_| {
+        let result = WorkerResult::from_stage(request, |api| {
+            // A warning added before failing must survive into the error response.
+            api.info.get_or_insert_with(Default::default).warnings.push(
+                valhalla_proto::CodedDescription {
+                    description: "from Thor".to_string(),
+                    code: 101,
+                },
+            );
             Err(ValhallaError::new(
                 valhalla_response::ErrorCode::NoPathFound,
             ))
@@ -289,6 +289,7 @@ mod tests {
             .info
             .expect("info");
         assert_eq!(info.warnings[0].description, "from Loki");
+        assert_eq!(info.warnings[1].description, "from Thor");
         assert_eq!(info.errors[0].code, 442);
         assert_eq!(info.statistics[0].key, "route.warn.thor.no_path");
     }

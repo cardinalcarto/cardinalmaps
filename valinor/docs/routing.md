@@ -47,10 +47,22 @@ request ──► front ──► Loki ──► Thor ──► Odin ──► T
 `illuvatar-service` and the other service binaries wrap stages as ZeroMQ workers
 (via `valhalla-microservice`), which serves both the server deployment and offline mode.
 
+Front and Loki share a worker, as in mainline:
+the HTTP server hands Loki's worker the raw HTTP request,
+which it parses into `options` (front) before correlating locations (Loki).
+So the front stage has no ZeroMQ boundary of its own,
+and the Loki worker needs its own entry point rather than `WorkerResult::from_stage`.
+The front stage's reference output is the `options` in the Loki→Thor capture.
+
 ### Stage contract
 
-- A stage is a synchronous function taking an `Api` message and returning
-  `Result<Api, ValhallaError>`.
+- A stage is a synchronous function that updates the request in place:
+  `fn(&mut Api) -> Result<(), ValhallaError>`.
+  This is what mainline's workers do,
+  and it means an error is serialized from the same request it happened in:
+  its format picks the error body,
+  and any warnings or statistics the stage added before failing are kept.
+  `WorkerResult::from_stage` adapts a stage to a ZeroMQ worker.
   Stages never use tokio or ZeroMQ; transports live in the wrappers.
 - `ValhallaError` carries mainline's numeric error code (for example 171,
   "No suitable edges near location"), the HTTP status, and the message.
