@@ -172,7 +172,15 @@ Besides the shared corpora, two corpora exist for it:
   since `pbf_field_selector` can only be set in a PBF request.
   That trip has Odin's in-place updates (turn lanes and short-edge headings).
 
-[`copy-illuvatar-fixtures.sh`](copy-illuvatar-fixtures.sh) copies the cases into `illuvatar/fixtures`:
+Rarer maneuvers and phrases (building entrances, levels, parking, bike share, every kind of sign,
+blind pedestrians, phoneme markup, very long lengths, and Odin's errors) come from hand-built trips
+in `illuvatar/src/synthetic.rs`.
+[`odin-synthetic.sh`](odin-synthetic.sh) writes them to `illuvatar/fixtures/synthetic`
+and runs them through mainline's own `DirectionsBuilder` with the `odin` helper in [`cpp/`](cpp)
+(build it first with `cpp/build.sh`, as above), so the references still come from mainline.
+
+[`copy-illuvatar-fixtures.sh`](copy-illuvatar-fixtures.sh) copies the captured cases into
+`illuvatar/fixtures`, keeping the synthetic cases:
 
 ```shell
 tools/oracle/copy-illuvatar-fixtures.sh /mnt/maps/cardinal/valhalla-oracle/captures <odin-captures-dir>

@@ -37,6 +37,8 @@ mod markup_formatter;
 mod narrative;
 mod signs;
 mod street_names;
+#[cfg(test)]
+mod synthetic;
 mod trip;
 mod turn;
 mod verbal_text_formatter;

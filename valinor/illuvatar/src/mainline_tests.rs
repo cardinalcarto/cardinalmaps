@@ -7,12 +7,13 @@
 //! everything must match exactly except lengths and times,
 //! which may differ by a relative 1e-6.
 
-use crate::narrate;
+use crate::{DEFAULT_PHONEME_FORMAT, MarkupFormatter, Odin};
 use std::fs;
 use std::path::{Path, PathBuf};
 use valhalla_proto::directions_leg::Maneuver;
 use valhalla_proto::prost::Message;
 use valhalla_proto::{Api, Directions, DirectionsLeg, Summary, Trip};
+use valhalla_response::ErrorCode;
 
 const FIXTURES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures");
 const RELATIVE_TOLERANCE: f64 = 1e-6;
@@ -257,9 +258,34 @@ fn directions_match_mainline() {
             .display()
             .to_string();
         let mut request = decode(&case.join("thor-odin.bin"));
-        let response = decode(&case.join("response.bin"));
+        // Synthetic cases ending in `_markup` were run with phoneme markup enabled.
+        let odin = if name.ends_with("_markup") {
+            Odin::new(MarkupFormatter::new(true, DEFAULT_PHONEME_FORMAT))
+        } else {
+            Odin::default()
+        };
+        let result = odin.narrate(&mut request);
+
+        // The synthetic references record mainline's exception message when Odin throws,
+        // which the worker reports wrapped in codes 202 and 299.
+        let response_bytes = fs::read(case.join("response.bin")).expect("response");
+        if let Some(what) = response_bytes.strip_prefix(b"error: ") {
+            let expected = format!(
+                "Unknown: Could not build directions for TripLeg: {}",
+                String::from_utf8_lossy(what)
+            );
+            match result {
+                Err(error)
+                    if error.code() == ErrorCode::OdinUnknown && error.message() == expected => {}
+                other => failures.push(format!(
+                    "{name}: expected the error {expected:?}, got {other:?}"
+                )),
+            }
+            continue;
+        }
+        let response = Api::decode(response_bytes.as_slice()).expect("response decodes");
         let expected = response.directions.clone().unwrap_or_default();
-        if let Err(error) = narrate(&mut request) {
+        if let Err(error) = result {
             failures.push(format!("{name}: {error}"));
             continue;
         }

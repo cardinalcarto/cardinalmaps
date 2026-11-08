@@ -1,8 +1,8 @@
 #!/bin/sh
-# Compiles the helpers (oracle.cc and records.cc) against the static libvalhalla in the dev image.
+# Compiles the helpers (oracle.cc, records.cc, and odin.cc) against the static libvalhalla in the dev image.
 set -e
 cd /w
-for prog in oracle records; do
+for prog in oracle records odin; do
 	g++ -std=c++20 -O1 -w "$prog.cc" -o "$prog" \
 		$(pkg-config --cflags libvalhalla) \
 		/usr/local/lib/libvalhalla.a \

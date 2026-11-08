@@ -21,8 +21,9 @@ if [ "$#" -eq 0 ]; then
   set -- /mnt/maps/cardinal/valhalla-oracle/captures
 fi
 
-rm -rf "$out"
+# Replace the captured cases, but keep the synthetic ones (see odin-synthetic.sh).
 mkdir -p "$out"
+find "$out" -mindepth 1 -maxdepth 1 ! -name synthetic -exec rm -rf {} +
 
 for captures in "$@"; do
   for case_dir in "$captures"/*/*; do
