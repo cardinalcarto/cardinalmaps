@@ -2575,6 +2575,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "valinor-loki-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "http",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "valhalla-graphtile",
+ "valhalla-microservice",
+ "valhalla-proto",
+ "valhalla-response",
+ "valinor-loki",
+]
+
+[[package]]
 name = "valinor-sif"
 version = "0.1.0"
 dependencies = [

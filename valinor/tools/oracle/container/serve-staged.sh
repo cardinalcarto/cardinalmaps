@@ -14,6 +14,7 @@
 # Usage: serve-staged.sh <config: valhalla.json built by build.sh> <port>
 #
 # With ODIN=illuvatar, no Odin worker is started; one outside the container serves odin_out.
+# With LOKI=valinor, no Loki worker is started; one outside the container serves loki_out.
 set -euo pipefail
 
 config="$1"
@@ -48,7 +49,9 @@ prime_httpd "tcp://*:$port" "$ipc/loki_in" "$ipc/loopback" "$ipc/interrupt" &
 for proxy in loki tap_thor thor tap_odin odin; do
 	prime_proxyd "$ipc/${proxy}_in" "$ipc/${proxy}_out" &
 done
-valhalla_loki_worker "$cfg_dir/loki.json" &
+if [ "${LOKI:-mainline}" = mainline ]; then
+	valhalla_loki_worker "$cfg_dir/loki.json" &
+fi
 valhalla_thor_worker "$cfg_dir/thor.json" &
 if [ "${ODIN:-mainline}" = mainline ]; then
 	valhalla_odin_worker "$cfg_dir/odin.json" &

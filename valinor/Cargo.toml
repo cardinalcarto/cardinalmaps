@@ -12,6 +12,7 @@ members = [
     "valinor-cli",
     "valinor-export-graph",
     "valinor-loki",
+    "valinor-loki-service",
     "valinor-sif",
     "valinor-tap",
     "valinor-tyr",
@@ -72,6 +73,7 @@ valhalla-graphtile = { path = "valhalla-graphtile" }
 valhalla-proto = { path = "valhalla-proto" }
 valhalla-microservice = { path = "valhalla-microservice" }
 valhalla-response = { path = "valhalla-response" }
+valinor-loki = { path = "valinor-loki" }
 valinor-sif = { path = "valinor-sif" }
 valinor-tyr = { path = "valinor-tyr" }
 walkdir = "2.5.0"

@@ -19,6 +19,10 @@
 #   ODIN=illuvatar
 #                runs illuvatar-service in place of mainline's Odin worker
 #                (build it with: cargo build --release -p illuvatar-service)
+#   LOKI=valinor
+#                runs valinor-loki-service in place of mainline's Loki worker,
+#                with the build's valhalla.json and tiles.tar
+#                (build it with: cargo build --release -p valinor-loki-service)
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -27,8 +31,10 @@ runtime="${CONTAINER:-podman}"
 tap="$here/../../target/release/valinor-tap"
 passthrough="$here/../../target/release/examples/passthrough"
 illuvatar="$here/../../target/release/illuvatar-service"
+valinor_loki="$here/../../target/release/valinor-loki-service"
 splice="${PASSTHROUGH:-}"
 odin="${ODIN:-mainline}"
+loki="${LOKI:-mainline}"
 case "$splice" in
 	"" | loki-thor | thor-odin) ;;
 	*)
@@ -40,6 +46,13 @@ case "$odin" in
 	mainline | illuvatar) ;;
 	*)
 		echo "ODIN must be mainline or illuvatar, not $odin" >&2
+		exit 1
+		;;
+esac
+case "$loki" in
+	mainline | valinor) ;;
+	*)
+		echo "LOKI must be mainline or valinor, not $loki" >&2
 		exit 1
 		;;
 esac
@@ -65,6 +78,10 @@ name="valinor-oracle-$port"
 	echo "missing $illuvatar; run: cargo build --release -p illuvatar-service" >&2
 	exit 1
 }
+[ "$loki" = mainline ] || [ -x "$valinor_loki" ] || {
+	echo "missing $valinor_loki; run: cargo build --release -p valinor-loki-service" >&2
+	exit 1
+}
 
 pids=()
 cleanup() {
@@ -81,6 +98,7 @@ trap cleanup EXIT INT TERM
 	-v "$build:/out:ro,z" \
 	-v "$ipc:/ipc:z" \
 	-e "ODIN=$odin" \
+	-e "LOKI=$loki" \
 	"$image" /oracle/serve-staged.sh /out/valhalla.json "$port" >/dev/null
 
 # Wait for the proxies the taps connect to.
@@ -102,6 +120,14 @@ boundary() {
 }
 boundary loki-thor "ipc://$ipc/tap_thor_out" "ipc://$ipc/thor_in"
 boundary thor-odin "ipc://$ipc/tap_odin_out" "ipc://$ipc/odin_in"
+if [ "$loki" = valinor ]; then
+	"$valinor_loki" --config "$build/valhalla.json" --tiles "$build/tiles.tar" \
+		--upstream-socket-endpoint "ipc://$ipc/loki_out" \
+		--downstream-socket-endpoint "ipc://$ipc/tap_thor_in" \
+		--loopback-socket-endpoint "ipc://$ipc/loopback" \
+		--interrupt-socket-endpoint "ipc://$ipc/interrupt" &
+	pids+=($!)
+fi
 if [ "$odin" = illuvatar ]; then
 	"$illuvatar" --upstream-socket-endpoint "ipc://$ipc/odin_out" \
 		--loopback-socket-endpoint "ipc://$ipc/loopback" \
@@ -118,7 +144,7 @@ curl -fs "localhost:$port/status" >/dev/null || {
 	"$runtime" logs "$name" >&2
 	exit 1
 }
-echo "ready: http://localhost:$port (captures in $capture${splice:+; passthrough at $splice}; odin: $odin)"
+echo "ready: http://localhost:$port (captures in $capture${splice:+; passthrough at $splice}; loki: $loki; odin: $odin)"
 
 # Exit (and clean up) if the container or either tap stops.
 "$runtime" wait "$name" >/dev/null &
