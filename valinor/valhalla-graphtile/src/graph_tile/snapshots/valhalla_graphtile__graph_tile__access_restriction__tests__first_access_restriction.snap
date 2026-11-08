@@ -1,0 +1,18 @@
+---
+source: valhalla-graphtile/src/graph_tile/access_restriction.rs
+expression: "tile.access_restrictions[0]"
+---
+AccessRestriction {
+    bitfield: AccessRestrictionBitField {
+        edge_index: U32(
+            1147,
+        ),
+        restriction_type: MaxWeight,
+        modes: U16(
+            8,
+        ),
+    },
+    value: U64(
+        350,
+    ),
+}

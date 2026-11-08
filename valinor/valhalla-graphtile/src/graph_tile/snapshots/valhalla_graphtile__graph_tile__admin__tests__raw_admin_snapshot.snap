@@ -1,0 +1,94 @@
+---
+source: valhalla-graphtile/src/graph_tile/admin.rs
+expression: tile.admins
+---
+[
+    Admin {
+        country_name_offset: U32(
+            1,
+        ),
+        principal_subdivision_offset: U32(
+            1,
+        ),
+        country_iso: [
+            0,
+            0,
+        ],
+        principal_subdivision_iso: [
+            0,
+            0,
+            0,
+        ],
+        _spare: [
+            0,
+            0,
+            0,
+        ],
+    },
+    Admin {
+        country_name_offset: U32(
+            6,
+        ),
+        principal_subdivision_offset: U32(
+            0,
+        ),
+        country_iso: [
+            65,
+            68,
+        ],
+        principal_subdivision_iso: [
+            0,
+            0,
+            0,
+        ],
+        _spare: [
+            0,
+            0,
+            0,
+        ],
+    },
+    Admin {
+        country_name_offset: U32(
+            72,
+        ),
+        principal_subdivision_offset: U32(
+            80,
+        ),
+        country_iso: [
+            69,
+            83,
+        ],
+        principal_subdivision_iso: [
+            67,
+            84,
+            0,
+        ],
+        _spare: [
+            0,
+            0,
+            0,
+        ],
+    },
+    Admin {
+        country_name_offset: U32(
+            851,
+        ),
+        principal_subdivision_offset: U32(
+            858,
+        ),
+        country_iso: [
+            70,
+            82,
+        ],
+        principal_subdivision_iso: [
+            79,
+            67,
+            67,
+        ],
+        _spare: [
+            0,
+            0,
+            0,
+        ],
+    },
+]

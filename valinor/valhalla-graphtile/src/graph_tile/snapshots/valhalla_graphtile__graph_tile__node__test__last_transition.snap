@@ -1,0 +1,10 @@
+---
+source: valhalla-graphtile/src/graph_tile/node.rs
+expression: tile.transitions.last().unwrap()
+---
+NodeTransition {
+    end_node_id: U64(
+        241430249650,
+    ),
+    up: 0,
+}

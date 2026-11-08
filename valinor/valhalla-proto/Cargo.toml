@@ -1,0 +1,28 @@
+[package]
+name = "valhalla-proto"
+description = "Valhalla protobuf message definitions"
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["protoc-vendored"]
+protoc-from-src = ["dep:protobuf-src"]
+protoc-vendored = ["dep:protoc-bin-vendored"]
+
+[dependencies]
+prost = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true }
+protobuf-src = { workspace = true, optional = true }
+protoc-bin-vendored = { workspace = true, optional = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+
+[lints]
+workspace = true

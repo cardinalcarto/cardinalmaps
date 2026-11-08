@@ -1,0 +1,66 @@
+---
+source: valhalla-graphtile/src/graph_tile/turn_lane.rs
+expression: tile.turn_lanes
+---
+[
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                1710,
+            ),
+        },
+        text_offset: U32(
+            702,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                1728,
+            ),
+        },
+        text_offset: U32(
+            726,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2403,
+            ),
+        },
+        text_offset: U32(
+            962,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2417,
+            ),
+        },
+        text_offset: U32(
+            962,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2719,
+            ),
+        },
+        text_offset: U32(
+            987,
+        ),
+    },
+    TurnLane {
+        edge_index: EdgeIndex {
+            edge_index: U32(
+                2814,
+            ),
+        },
+        text_offset: U32(
+            962,
+        ),
+    },
+]

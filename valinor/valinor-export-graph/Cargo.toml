@@ -1,0 +1,21 @@
+[package]
+name = "valinor-export-graph"
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+flatgeobuf = { workspace = true }
+geozero = { workspace = true }
+indicatif = { workspace = true }
+serde_json = { workspace = true }
+tracing-subscriber = { workspace = true }
+valhalla-graphtile = { workspace = true, features = ["serde"] }
+
+[lints]
+workspace = true

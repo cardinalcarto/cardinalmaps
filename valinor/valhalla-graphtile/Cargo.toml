@@ -1,0 +1,43 @@
+[package]
+name = "valhalla-graphtile"
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+serde = ["dep:serde", "nutype/serde"]
+
+[dependencies]
+tar = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+self_cell = { workspace = true }
+thiserror = { workspace = true }
+num-traits = { workspace = true }
+geo = { workspace = true }
+bitfield-struct = { workspace = true }
+bit-twiddling-helpers = { workspace = true }
+enumset = { workspace = true }
+integer-encoding = { workspace = true }
+lru = { workspace = true }
+memmap2 = { workspace = true }
+nutype = { workspace = true }
+num_enum = { workspace = true }
+tracing = { workspace = true }
+trig-const = { workspace = true }
+serde = { workspace = true, optional = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+proptest = { workspace = true }
+rand = { workspace = true }
+walkdir = { workspace = true }
+
+[lints]
+workspace = true
