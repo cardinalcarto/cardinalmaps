@@ -23,7 +23,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 mod builder;
 
-pub(super) use builder::GraphTileHeaderBuilder;
+pub(super) use builder::{GraphTileHeaderBuilder, HeaderPassthrough};
 
 /// Remaining variable offset slots for growth.
 /// See valhalla/baldr/graphtileheader.h for details.

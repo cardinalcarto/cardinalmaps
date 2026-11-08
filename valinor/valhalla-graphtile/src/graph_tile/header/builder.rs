@@ -13,6 +13,36 @@ use crate::{BIN_COUNT, GraphId};
 use chrono::{DateTime, Utc};
 use geo::Coord;
 
+/// Header fields that Valhalla carries through unchanged when it rewrites a tile.
+///
+/// Mainline's `GraphTileBuilder` copies the whole header of the tile it reads
+/// and only updates the counts and offsets,
+/// so the relative quality statistics and the spare word survive a rewrite.
+/// We do the same.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HeaderPassthrough {
+    /// The relative name quality (0-15).
+    pub name_quality: u8,
+    /// The relative speed quality (0-15).
+    pub speed_quality: u8,
+    /// The relative exit quality (0-15).
+    pub exit_quality: u8,
+    /// Valhalla's `spareword0_`.
+    pub spare_word: u64,
+}
+
+impl From<&GraphTileHeader> for HeaderPassthrough {
+    #[inline]
+    fn from(header: &GraphTileHeader) -> Self {
+        Self {
+            name_quality: header.bit_field_1.name_quality(),
+            speed_quality: header.bit_field_1.speed_quality(),
+            exit_quality: header.bit_field_1.exit_quality(),
+            spare_word: header._reserved_1.get(),
+        }
+    }
+}
+
 /// A builder struct that helps us build correct graph tile headers.
 ///
 /// This is not exposed in the public API by design at the moment,
@@ -36,6 +66,8 @@ pub(crate) struct GraphTileHeaderBuilder {
     /// NOTE: Valhalla doesn't typically set this when writing initial tiles.
     /// It sets them during a final validation step.
     pub density: u8,
+    /// Fields copied unchanged from the original tile.
+    pub passthrough: HeaderPassthrough,
     pub has_elevation: bool,
     pub has_ext_directed_edges: bool,
     pub sw_corner: Coord<f32>,
@@ -86,7 +118,10 @@ impl GraphTileHeaderBuilder {
                 field: "density".to_string(),
                 value: usize::from(self.density),
             })?
-            // NOTE: name_quality, speed_quality, and exit_quality intentionally omitted
+            // These are 4-bit fields read from a header, so masking never changes them.
+            .with_name_quality(self.passthrough.name_quality & 0xf)
+            .with_speed_quality(self.passthrough.speed_quality & 0xf)
+            .with_exit_quality(self.passthrough.exit_quality & 0xf)
             // Guaranteed to be 0 or 1 by the Rust standard
             .with_has_elevation(self.has_elevation.into())
             .with_has_ext_directed_edge(self.has_ext_directed_edges.into());
@@ -240,7 +275,7 @@ impl GraphTileHeaderBuilder {
             transit_record_bitfield,
             misc_counts_bit_field_one,
             misc_counts_bit_field_two,
-            _reserved_1: Default::default(),
+            _reserved_1: self.passthrough.spare_word.into(),
             checksum: self.checksum.into(),
             complex_restriction_forward_offset: u32::try_from(dst_base_offset)?.into(),
             complex_restriction_reverse_offset: u32::try_from(complex_reverse_restrictions_offset)?
@@ -256,5 +291,46 @@ impl GraphTileHeaderBuilder {
             bounding_circles_offset: u32::try_from(bounding_circles_offset)?.into(),
             _empty_slots: [0.into(); _],
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HeaderPassthrough;
+    use crate::graph_tile::handles::OwnedGraphTileHandle;
+    use crate::graph_tile::{GraphTile, GraphTileBuilder, TEST_GRAPH_TILE_L0};
+
+    #[test]
+    fn test_rewrite_keeps_quality_bits_and_spare_word() {
+        // They are zero in every fixture, so set them in a synthetic header.
+        let mut bytes = TEST_GRAPH_TILE_L0.borrow_owner().clone();
+        let mut word = [0u8; 8];
+        word.copy_from_slice(&bytes[0..8]);
+        // Name, speed, and exit quality are the 4-bit fields at bits 50, 54, and 58.
+        let word = u64::from_le_bytes(word) | (0x3 << 50) | (0x9 << 54) | (0xf << 58);
+        bytes[0..8].copy_from_slice(&word.to_le_bytes());
+        // Valhalla's spareword0_ is the 64-bit word at byte 80.
+        bytes[80..88].copy_from_slice(&0x0123_4567_89ab_cdef_u64.to_le_bytes());
+
+        let tile = OwnedGraphTileHandle::try_from(bytes).expect("still a valid tile");
+        let expected = HeaderPassthrough {
+            name_quality: 0x3,
+            speed_quality: 0x9,
+            exit_quality: 0xf,
+            spare_word: 0x0123_4567_89ab_cdef,
+        };
+        assert_eq!(HeaderPassthrough::from(tile.header()), expected);
+        // The neighboring fields are untouched.
+        assert_eq!(
+            tile.header().density(),
+            TEST_GRAPH_TILE_L0.header().density()
+        );
+        assert_eq!(tile.graph_id(), TEST_GRAPH_TILE_L0.graph_id());
+
+        let rewritten = GraphTileBuilder::from(&tile)
+            .into_bytes()
+            .expect("rewrite the tile");
+        let rewritten = OwnedGraphTileHandle::try_from(rewritten).expect("parse the rewrite");
+        assert_eq!(HeaderPassthrough::from(rewritten.header()), expected);
     }
 }

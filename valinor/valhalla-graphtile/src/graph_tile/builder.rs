@@ -14,7 +14,7 @@ use super::{
     TurnLane,
 };
 use crate::graph_tile::checksum::checksum;
-use crate::graph_tile::header::{GraphTileHeaderBuilder, VERSION_LEN};
+use crate::graph_tile::header::{GraphTileHeaderBuilder, HeaderPassthrough, VERSION_LEN};
 use crate::graph_tile::predicted_speeds::{
     BUCKETS_PER_WEEK, COEFFICIENT_COUNT, compress_speed_buckets, decode_base64_speed_coefficients,
 };
@@ -78,6 +78,8 @@ pub struct GraphTileBuilder<'a> {
     build_id: BuildId,
     /// The relative road density (0-15), kept from the original tile.
     density: u8,
+    /// Other header fields that mainline keeps when it rewrites a tile.
+    header_passthrough: HeaderPassthrough,
     /// Whether the edge info carries elevation, kept from the original tile.
     has_elevation: bool,
     /// The cumulative edge counts of each bin, kept from the original tile.
@@ -178,6 +180,7 @@ impl<'a> From<&'a OwnedGraphTileHandle> for GraphTileBuilder<'a> {
             create_date: header.create_date(),
             build_id: header.build_id(),
             density: header.density(),
+            header_passthrough: HeaderPassthrough::from(*header),
             has_elevation: header.has_elevation(),
             bin_offsets: header.bin_offsets.map(U32::get),
             nodes: Cow::Borrowed(nodes),
@@ -458,6 +461,7 @@ impl GraphTileBuilder<'_> {
             version: self.writer_version,
             graph_id: self.graph_id,
             density: self.density,
+            passthrough: self.header_passthrough,
             has_elevation: self.has_elevation,
             has_ext_directed_edges: !tile.ext_directed_edges.is_empty(),
             sw_corner: self.sw_corner,
