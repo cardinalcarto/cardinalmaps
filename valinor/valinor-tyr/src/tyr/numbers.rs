@@ -161,6 +161,7 @@ pub(crate) fn write_fixed(out: &mut String, value: f64, precision: usize) {
 
 /// Writes a value as `baldr::json::float_t` does: `std::defaultfloat` with precision 6,
 /// which is `printf("%g")`.
+#[allow(dead_code, reason = "no ported serializer writes `float_t` yet")]
 pub(crate) fn write_general(out: &mut String, value: f64) {
     const PRECISION: i64 = 6;
     if !value.is_finite() {
@@ -192,6 +193,7 @@ pub(crate) fn write_general(out: &mut String, value: f64) {
 }
 
 /// Drops trailing zeros after a decimal point, and the point itself if nothing is left.
+#[allow(dead_code, reason = "used by `write_general`")]
 fn strip_fraction_zeros(number: &str) -> &str {
     if number.contains('.') {
         number.trim_end_matches('0').trim_end_matches('.')

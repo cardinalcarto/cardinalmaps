@@ -6,20 +6,15 @@
 //! into the response body for the requested format.
 //! Errors are serialized by [`ValhallaError::serialize`] instead.
 
-// TODO(N5): drop these allows once the serializers that use the helpers land.
-#[allow(dead_code, reason = "used by the serializers that follow")]
-mod numbers;
-#[allow(dead_code, reason = "used by the serializers that follow")]
-mod polyline;
-#[allow(dead_code, reason = "used by the serializers that follow")]
-mod trip;
-#[allow(dead_code, reason = "used by the serializers that follow")]
-mod writer;
-
 mod gpx;
+mod numbers;
 mod openlr;
+mod osrm;
 mod pbf;
+mod polyline;
+mod trip;
 mod valhalla;
+mod writer;
 
 use valhalla_proto::Api;
 use valhalla_proto::options::Format;
@@ -71,7 +66,7 @@ pub fn serialize_directions(api: &mut Api) -> Result<Response, ValhallaError> {
         Ok(Format::Json) => valhalla::serialize(api),
         Ok(Format::Gpx) => gpx::serialize(api),
         Ok(Format::Pbf) => pbf::serialize(api),
-        Ok(Format::Osrm) => Err(unknown("this format's serializer is not implemented yet")),
+        Ok(Format::Osrm) => osrm::serialize(api).map(Response::json),
         Ok(Format::Geotiff | Format::Mvt) | Err(_) => {
             Err(unknown("the format has no route serializer"))
         }

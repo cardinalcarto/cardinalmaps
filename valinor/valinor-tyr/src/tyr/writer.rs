@@ -167,6 +167,7 @@ impl JsonWriter {
     }
 
     /// Writes a `baldr::json::float_t` (see [`super::numbers::write_general`]).
+    #[allow(dead_code, reason = "no ported serializer writes `float_t` yet")]
     pub(crate) fn general(&mut self, value: f64) -> &mut Self {
         self.prefix();
         write_general(&mut self.out, value);

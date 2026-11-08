@@ -10,6 +10,7 @@ rust-version.workspace = true
 
 [dependencies]
 http = { workspace = true }
+illuvatar = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -17,7 +18,6 @@ valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
 
 [dev-dependencies]
-illuvatar = { workspace = true }
 insta = { workspace = true }
 
 [lints]
