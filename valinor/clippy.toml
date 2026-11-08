@@ -1,1 +1,1 @@
-doc-valid-idents = ["ZeroMQ", "x86_64", ".."]
+doc-valid-idents = ["ZeroMQ", "FlatGeobuf", "PMTiles", "x86_64", ".."]

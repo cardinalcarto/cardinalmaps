@@ -23,6 +23,10 @@ mod writer;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each bool is an independent command-line flag"
+)]
 struct Cli {
     /// Path to the Valhalla graph tiles.
     ///
@@ -147,7 +151,7 @@ fn main() -> anyhow::Result<()> {
                 &mut writer,
                 tile,
                 *tile_id,
-                &progress_bar,
+                progress_bar.as_ref(),
                 &should_skip_edge,
                 cli.write_tippecanoe_properties,
             )
@@ -174,7 +178,7 @@ fn export_edges_for_tile(
     writer: &mut writer::StreamingEdgeWriter,
     tile: &GraphTileView,
     tile_id: GraphId,
-    progress_bar: &Option<ProgressBar>,
+    progress_bar: Option<&ProgressBar>,
     should_skip_edge: &impl Fn(&DirectedEdge, &Vec<Cow<str>>) -> bool,
     write_tippecanoe_properties: bool,
 ) -> anyhow::Result<()> {
@@ -183,7 +187,7 @@ fn export_edges_for_tile(
         let edge_id = tile_id.with_feature_index(index as u64)?;
         let edge = tile.get_directed_edge(edge_id)?;
 
-        progress_bar.as_ref().inspect(|bar| bar.inc(1));
+        progress_bar.inspect(|bar| bar.inc(1));
 
         // Skip certain edge types based on the config
         let edge_info = tile.get_edge_info(edge)?;
