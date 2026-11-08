@@ -1,0 +1,5 @@
+FROM ghcr.io/valhalla/valhalla:3.9.1
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    g++ pkg-config libprotobuf-dev libcurl4-openssl-dev libsqlite3-dev libspatialite-dev \
+    libluajit-5.1-dev libgeos-dev libssl-dev libtiff-dev liblz4-dev zlib1g-dev libboost-dev \
+    libzmq3-dev libczmq-dev && rm -rf /var/lib/apt/lists/*

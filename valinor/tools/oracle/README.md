@@ -42,3 +42,20 @@ since mainline derives it from all tile hashes in the set.
 
 The source extract is OpenStreetMap data from Geofabrik,
 © OpenStreetMap contributors, available under the Open Database License.
+
+## Linking against mainline (C++)
+
+[`cpp/`](cpp) holds a small C++ program that links mainline's `libvalhalla`
+to print reference values for tile fixtures (shortcut members, opposing edges, edge bins,
+bounding circles, edge info, and so on) straight from mainline's own readers.
+Extend it when a test needs a value mainline computes.
+
+```shell
+podman build -t valinor-valhalla-dev:3.9.1 tools/oracle/cpp
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" valinor-valhalla-dev:3.9.1 /w/build.sh
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" -v "$PWD/valhalla-graphtile/fixtures:/fx:ro,z" \
+  valinor-valhalla-dev:3.9.1 /w/oracle /fx/andorra-tiles
+```
+
+The Containerfile adds a compiler and development headers to the pinned image.
+(Its `FROM` line names the tag; keep it in step with [`valhalla-image`](valhalla-image).)
