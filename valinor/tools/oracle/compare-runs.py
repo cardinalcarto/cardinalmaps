@@ -8,8 +8,15 @@ except for the latency statistics that Loki and Thor record in `info`,
 which vary from run to run.
 Messages whose bytes differ are decoded with `protoc` to compare them field by field.
 
+Two options are for a run of a server without taps (such as valinor-server):
+
+    --responses-only   skips the Thor→Odin messages
+    --pbf              also compares PBF responses (status and decoded body), apart from
+                       `info.statistics`: their latencies vary, and Valinor's Thor records none
+
 Usage:
     compare-runs.py <baseline-out-dir> <other-out-dir> --protos <dir with the pinned .proto files>
+                    [--responses-only] [--pbf]
 """
 
 import argparse
@@ -21,6 +28,22 @@ from pathlib import Path
 
 # A latency statistic in protoc's text format: the key line, then its value line.
 LATENCY = re.compile(r'(key: "[^"]*latency_ms"\n\s*value: )[-0-9.e+]+')
+# A statistic in protoc's text format (statistics hold no nested messages).
+STATISTIC = re.compile(r"\n\s*statistics \{[^{}]*\}")
+
+
+def compare_pbf(protos: Path, baseline: Path, other: Path) -> str | None:
+    """Why two PBF responses differ (status or body, apart from statistics), or None."""
+    if not (other / "response.1.bin").exists():
+        return "missing"
+    if (baseline / "response.status").read_text().strip() != (other / "response.status").read_text().strip():
+        return "statuses differ"
+    a, b = baseline / "response.1.bin", other / "response.1.bin"
+    if a.read_bytes() == b.read_bytes():
+        return None
+    if STATISTIC.sub("", decode(protos, a)) != STATISTIC.sub("", decode(protos, b)):
+        return "PBF responses differ beyond statistics"
+    return None
 
 
 def thor_odin(case_dir: Path) -> Path | None:
@@ -48,10 +71,19 @@ def main() -> None:
     parser.add_argument("baseline", type=Path)
     parser.add_argument("other", type=Path)
     parser.add_argument("--protos", type=Path, required=True)
+    parser.add_argument("--responses-only", action="store_true", help="skip the Thor→Odin messages")
+    parser.add_argument("--pbf", action="store_true", help="also compare PBF responses")
     args = parser.parse_args()
 
     differences = []
-    responses = messages = identical = 0
+    responses = messages = identical = pbf_responses = 0
+    if args.pbf:
+        for response in sorted(args.baseline.glob("*/*/response.1.bin")):
+            relative = response.parent.relative_to(args.baseline)
+            why = compare_pbf(args.protos, response.parent, args.other / relative)
+            if why:
+                differences.append(f"{relative}: {why}")
+            pbf_responses += 1
     for response in sorted(args.baseline.glob("*/*/response.json")):
         case_dir = response.parent
         relative = case_dir.relative_to(args.baseline)
@@ -64,6 +96,8 @@ def main() -> None:
         if json.loads(response.read_text()) != json.loads(other_response.read_text()):
             differences.append(f"{relative}: responses differ")
         responses += 1
+        if args.responses_only:
+            continue
 
         a, b = thor_odin(case_dir), thor_odin(other_dir)
         if a is None or b is None:
@@ -82,7 +116,7 @@ def main() -> None:
     for difference in differences:
         print(difference)
     print(
-        f"compared {responses} responses and {messages} Thor→Odin messages "
+        f"compared {responses} responses, {pbf_responses} PBF responses, and {messages} Thor→Odin messages "
         f"({identical} byte-identical, the rest equal except for latency statistics): "
         f"{len(differences)} differences"
     )
