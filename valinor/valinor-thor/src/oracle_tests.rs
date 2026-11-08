@@ -696,3 +696,158 @@ fn interrupts_long_searches() {
         "{interrupted} {finished}"
     );
 }
+
+/// The reference a captured Thor→Odin message gives: its warnings, location times,
+/// and each leg's algorithms and edges (read back from the trip, as the `thor` helper does).
+fn reference_from_trip(api: &Api) -> Reference {
+    let mut r = Reference {
+        warnings: api
+            .info
+            .as_ref()
+            .map(|i| i.warnings.iter().map(|w| w.code).collect())
+            .unwrap_or_default(),
+        locations: api
+            .options
+            .as_ref()
+            .map(|o| {
+                o.locations
+                    .iter()
+                    .map(|l| {
+                        format!(
+                            "{}|{}|{}",
+                            l.date_time, l.time_zone_offset, l.time_zone_name
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        ..Reference::default()
+    };
+    for route in api.trip.iter().flat_map(|t| &t.routes) {
+        let mut legs = Vec::new();
+        for leg in &route.legs {
+            let costs = |n: &valhalla_proto::trip_leg::Node| {
+                n.cost.as_ref().map_or((0.0, 0.0, 0.0, 0.0), |c| {
+                    let e = c.elapsed_cost.unwrap_or_default();
+                    let t = c.transition_cost.unwrap_or_default();
+                    (e.cost, e.seconds, t.cost, t.seconds)
+                })
+            };
+            let edges = leg
+                .node
+                .windows(2)
+                .map(|w| {
+                    let (cost, secs, ..) = costs(&w[1]);
+                    let (.., tcost, tsecs) = costs(&w[0]);
+                    RefEdge {
+                        id: w[0].edge.as_ref().map_or(0, |e| e.id),
+                        cost: cost as f32,
+                        secs: secs as f32,
+                        transition: Some((tsecs as f32, tcost as f32)),
+                    }
+                })
+                .collect();
+            legs.push(RefLeg {
+                algorithms: leg.algorithms.clone(),
+                edges,
+            });
+        }
+        r.routes.push(legs);
+    }
+    r
+}
+
+/// Thor on the Loki→Thor messages captured from mainline in `valinor-tyr`'s fixtures
+/// (Ferrostar's requests among them, with typed waypoints and via locations),
+/// against the trips mainline made from them.
+///
+/// Warnings and location times are compared as Thor leaves them;
+/// the captured messages were serialized after Odin's and Thor's own additions,
+/// so only cases without later changes are compared on those.
+#[test]
+fn captured_routes() {
+    let captures =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../valinor-tyr/fixtures/captures/andorra");
+    let tiles = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../valhalla-graphtile/fixtures/andorra-tiles");
+    let provider = DirectoryGraphTileProvider::new(tiles, NonZeroUsize::new(64).expect("64"));
+    let thor = Thor::new(ThorConfig::default(), provider);
+    let mut workspace = Workspace::default();
+    let now = Timestamp::from_second(1_794_116_280).expect("a time");
+    let mut report = Report::default();
+    let mut cases: Vec<PathBuf> = std::fs::read_dir(&captures)
+        .expect("captures")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .collect();
+    cases.sort();
+    let mut via = false;
+    for case in cases {
+        let name = case
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // `current` times depend on when mainline ran.
+        if name.contains("current") {
+            continue;
+        }
+        for format in ["pbf", "json", "osrm"] {
+            let (Ok(input), Ok(output)) = (
+                std::fs::read(case.join(format).join("loki-thor.bin")),
+                std::fs::read(case.join(format).join("thor-odin.bin")),
+            ) else {
+                continue;
+            };
+            let input = Api::decode(input.as_slice()).expect("an Api");
+            let mut output = Api::decode(output.as_slice()).expect("an Api");
+            // The fixtures keep the trip once per case (see copy-tyr-fixtures.sh).
+            if output.trip.is_none()
+                && let Ok(trip) = std::fs::read(case.join("trip.bin"))
+            {
+                output.trip = Api::decode(trip.as_slice()).expect("an Api").trip;
+            }
+            // Other actions, and costings Sif doesn't have yet.
+            if input.options.as_ref().is_none_or(|o| {
+                o.action != Action::Route as i32
+                    || !matches!(
+                        valhalla_proto::costing::Type::try_from(o.costing_type),
+                        Ok(valhalla_proto::costing::Type::Auto
+                            | valhalla_proto::costing::Type::Pedestrian
+                            | valhalla_proto::costing::Type::Bicycle)
+                    )
+            }) {
+                break;
+            }
+            via = via
+                || input.options.as_ref().is_some_and(|o| {
+                    o.locations
+                        .iter()
+                        .any(|l| l.r#type == valhalla_proto::location::Type::KVia as i32)
+                });
+            let mut reference = reference_from_trip(&output);
+            let mut api = input.clone();
+            let ours = thor.route_at(&mut workspace, &mut api, now);
+            // Odin and trip building don't change these; Thor's warnings come last.
+            reference.warnings.truncate(
+                api.info
+                    .as_ref()
+                    .map_or(0, |i| i.warnings.len())
+                    .min(reference.warnings.len()),
+            );
+            compare_case(
+                thor.provider(),
+                &format!("{name}/{format}"),
+                &input,
+                &reference,
+                &ours,
+                &api,
+                &mut report,
+            );
+            break;
+        }
+    }
+    print_report("captured routes", &report);
+    assert!(via, "the captures should include a via location");
+    assert!(report.legs > 20);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+}
