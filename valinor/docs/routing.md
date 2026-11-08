@@ -44,7 +44,7 @@ request ──► front ──► Loki ──► Thor ──► Odin ──► T
 | Sif | `valinor-sif` | edges, nodes, and costing options | costs, access, and filters |
 
 `valinor-router` chains the stages in process.
-`illuvatar-service` and the other service binaries wrap stages as ZeroMQ workers
+`illuvatar-service`, `valinor-loki-service`, and the other service binaries wrap stages as ZeroMQ workers
 (via `valhalla-microservice`), which serves both the server deployment and offline mode.
 
 Front and Loki share a worker, as in mainline:
@@ -104,6 +104,41 @@ and the cost model that Loki and Thor call on their hot paths.
 Results match mainline bit for bit: see `tools/oracle/README.md` for the oracles
 (a C++ helper that runs mainline's costings, and the captured trips).
 
+## Location correlation (Loki)
+
+`valinor-loki` is mainline's Loki: the search for the edges near each location
+(`loki::Search`, with mainline's reach expansions) and the actions that check a request
+against the service limits before they search (route and centroid, locate,
+the matrix actions, the trace actions, and status).
+
+- `Loki` holds the configuration (`LokiConfig`, the Loki part of `valhalla.json`),
+  the tile provider, and the tile set's `ConnectivityMap` (for error 170).
+  Each action is a stage, `fn(&mut Api) -> Result<_, ValhallaError>`;
+  `/locate` returns its response body (serialized by `valinor_tyr::tyr::serialize_locate`).
+- `handle_http_request` is the worker's entry point: front and Loki share a worker,
+  so it parses the server's raw HTTP request (with `valinor-tyr`'s front) and then runs Loki.
+  `valinor-loki-service` wraps it as a ZeroMQ worker (with `valhalla-microservice`'s
+  `build_http`); an offline router can call it directly.
+- Thor gets each location's `correlation`: the candidate `edges` and the `filtered_edges`
+  (ruled out by heading, preferred side, or layer) as `PathEdge`s, with graph ID,
+  `percent_along` in the edge's direction, the correlated point, its distance,
+  side of street, `begin_node` and `end_node`, reach in both directions, heading, names,
+  and bounding circle. Exclude locations and polygons become the costing's `exclude_edges`.
+- Tiles are shared through `valhalla_graphtile::tile_provider::CachingTileProvider`,
+  a bounded, thread-safe cache of parsed tiles (no async runtime, so it runs on device),
+  which Thor can use too.
+- Costings Sif doesn't have yet, linear cost features (`cost_factor_lines`), isochrones,
+  expansion, heights, transit availability, tiles, and verbose status are error 107.
+
+Mainline's results depend on details that are reproduced on purpose
+(see the module docs of `search`, `reach`, and `worker`):
+the exact float and double arithmetic of `midgard`,
+the iteration order of libstdc++'s `std::sort` and unordered containers
+(`valinor_tyr::libstdcxx`), and of `ankerl::unordered_dense`,
+and the double bucket queue of the exact reach expansion.
+Bounding circles skip edges only when a circle grown by 1 cm is out of reach,
+so that a different `cosf` can never make us skip an edge that mainline keeps.
+
 ## The oracle
 
 Reference data comes from mainline 3.9.1 running in stages,
@@ -131,7 +166,7 @@ given the same input message at that boundary.
 | Stage | Must match exactly | Tolerances |
 |---|---|---|
 | Front | Every `options` field mainline sets, including defaults it fills in | None |
-| Loki | The set of candidate edges per location (graph id, side of street), and errors | `percent_along` within 1e-6; distances within 0.01 m; candidate order may differ only among equal distances |
+| Loki | The set of candidate edges per location (graph id, side of street), and errors | `percent_along` within 1e-6; distances within 0.01 m; candidate order may differ only among equal distances (in practice every field matches, including reach, headings, and order) |
 | Thor (path search) | Errors | Same edge sequence wherever costs are not tied. Otherwise the total cost must be within 0.1% of mainline's and never higher, with length and time within 0.5%. Alternates: same count, each meeting the same bounds. |
 | Thor (trip building) | Every `trip` field, given the same edge path | Floating point values within a relative 1e-6 |
 | Odin | Maneuver types, order, instruction strings, and verbal and banner instructions, given the same `trip` | Lengths and times within a relative 1e-6 |
@@ -146,7 +181,9 @@ Deliberate differences, each documented next to the test that covers it.
 
 | Behavior | Mainline 3.9.1 | Valinor | Why |
 |---|---|---|---|
-| Fractional levels (`kLevels` tagged values) | `decode_levels` divides by 10 for any positive precision, so 0.25 decodes as 2.5 and narrative reads "Level 1.5000000000" | Decodes `value / 10^precision` | Wrong floors break indoor routing and instructions; no client can depend on it. Lands with Loki, covering decoding, Loki's level filtering, and Odin's narrative. |
+| Fractional levels (`kLevels` tagged values) | `decode_levels` divides by 10 for any positive precision, so 0.25 decodes as 2.5, and narrative uses that 10 as the decimal places ("Level 1.5000000000") | Decodes `value / 10^precision` (`Levels::ranges`, so Loki's level filter too), and narrative uses the level's decimal places ("Level 1.5", "Level 0.25") | Wrong floors break indoor routing and instructions; no client can depend on it. Tested against mainline's own decoding in `valhalla-graphtile`'s `section_oracle` and in `illuvatar`'s `trip.rs`. |
+| Trace ends given as locations, closest to the end of an edge | `locations_from_shape` takes the side of the street from a segment that ends one past the end of the edge's shape: an out of bounds read, which varies between runs | Uses the edge's last segment | Undefined behavior can't be reproduced. The oracle test skips these sides (see `reads_past_end` in `valinor-loki`). |
+| Order of locations that tie in Loki's search | Groups of locations in the same bin are ordered by the address of the bin's tile in memory | Ordered by tile ID | Addresses can't be reproduced. The order only matters through the reach cache when several locations visit the same edges. |
 | OSRM approach voice alerts in miles | Passes kilometers to the alert, so a kilometer figure is announced as miles | Uses the request's units | A wrong spoken distance helps no one (Ferrostar plays these). |
 | PBF response content type | `application/json` (the format is read after `options` is cleared) | `application/x-protobuf` | Clients decoding PBF need the right type. |
 | Landmarks in tiles | `valhalla_add_landmarks` drops edge bins and bounding circles but keeps their header offsets | Landmarks are left out of builds; the reader rejects such tiles | See `tools/oracle/README.md`. |
