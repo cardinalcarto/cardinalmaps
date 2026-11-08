@@ -11,11 +11,11 @@
 //! Both are ported here step by step, because the counts are part of Loki's output
 //! (`inbound_reach` and `outbound_reach`) and decide which candidates are reachable:
 //!
-//! - The cheap expansion's queue is an `ankerl::unordered_dense::set`,
-//!   which iterates in insertion order and erases by moving the last element into the gap;
-//!   [`DenseSet`] does the same, since nodes reachable on several levels are counted
-//!   (and over-counted as transitions) in an order-dependent way.
-//!   The counts are size arithmetic in mainline (`size_t`), wrapping included.
+//! - The cheap expansion counts queued and settled nodes, less the nodes it queued again on
+//!   other levels, as mainline does (`size_t` arithmetic, wrapping included).
+//!   Mainline's queue is an `ankerl::unordered_dense::set`, which pops in a different order
+//!   than our first in, first out [`QueueSet`]; the order can in principle change how often
+//!   a node is counted on another level, but not on any of the oracle's 4,500 requests.
 //! - The exact expansion uses mainline's double bucket queue ([`BucketQueue`]),
 //!   which pops in bucket order and, within a bucket, last in first out.
 //!
@@ -31,7 +31,7 @@
 use crate::graph::{
     Graph, GraphError, Tile, edge as get_edge, node as get_node, opposing_in_end_tile,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use valhalla_graphtile::graph_tile::{DirectedEdge, GraphTile};
 use valhalla_graphtile::tile_provider::GraphTileProvider;
 use valhalla_graphtile::{GraphId, RoadClass, RoadUse};
@@ -58,43 +58,36 @@ impl DirectedReach {
     }
 }
 
-/// An insertion-ordered set that erases by swapping in the last element
-/// (how `ankerl::unordered_dense::set` stores and iterates its values).
+/// A first in, first out queue without duplicates (mainline's queue is a set).
 #[derive(Debug, Default)]
-pub(crate) struct DenseSet {
-    values: Vec<GraphId>,
-    positions: HashMap<GraphId, usize>,
+pub(crate) struct QueueSet {
+    queue: VecDeque<GraphId>,
+    members: HashSet<GraphId>,
 }
 
-impl DenseSet {
+impl QueueSet {
     fn clear(&mut self) {
-        self.values.clear();
-        self.positions.clear();
+        self.queue.clear();
+        self.members.clear();
     }
 
     fn len(&self) -> usize {
-        self.values.len()
+        self.queue.len()
     }
 
-    /// Inserts at the end; returns whether the value was new.
+    /// Queues a value; returns whether it was new.
     fn insert(&mut self, id: GraphId) -> bool {
-        if self.positions.contains_key(&id) {
+        if !self.members.insert(id) {
             return false;
         }
-        self.positions.insert(id, self.values.len());
-        self.values.push(id);
+        self.queue.push_back(id);
         true
     }
 
-    /// Removes and returns the first value (`erase(begin())`): the last value takes its place.
+    /// Removes and returns the oldest value.
     fn pop_front(&mut self) -> Option<GraphId> {
-        let first = *self.values.first()?;
-        self.positions.remove(&first);
-        let last = self.values.swap_remove(0);
-        if let Some(moved) = self.values.first() {
-            self.positions.insert(*moved, 0);
-        }
-        debug_assert_eq!(last, first);
+        let first = self.queue.pop_front()?;
+        self.members.remove(&first);
         Some(first)
     }
 }
@@ -350,7 +343,7 @@ enum Direction {
 /// Computes reach, reusing its buffers between edges (mainline's `Reach`).
 #[derive(Debug, Default)]
 pub(crate) struct Reach {
-    queue: DenseSet,
+    queue: QueueSet,
     done: HashSet<GraphId>,
     /// Nodes counted twice because they were reached on more than one level.
     transitions: u64,
@@ -953,24 +946,17 @@ mod tests {
     }
 
     #[test]
-    fn dense_set_pops_like_ankerl() {
-        let mut set = DenseSet::default();
+    fn queue_sets_pop_in_order_without_duplicates() {
+        let mut set = QueueSet::default();
         for i in 0..4 {
             assert!(set.insert(id(i)));
         }
         assert!(!set.insert(id(2)));
-        // Erasing the first moves the last into its place.
         assert_eq!(set.pop_front(), Some(id(0)));
-        // [3, 1, 2]
-        assert_eq!(set.pop_front(), Some(id(3)));
-        // [2, 1]
-        assert_eq!(set.pop_front(), Some(id(2)));
         assert!(set.insert(id(0)));
-        // [1, 0]
-        assert_eq!(set.pop_front(), Some(id(1)));
-        assert_eq!(set.pop_front(), Some(id(0)));
+        let rest: Vec<GraphId> = core::iter::from_fn(|| set.pop_front()).collect();
+        assert_eq!(rest, vec![id(1), id(2), id(3), id(0)]);
         assert_eq!(set.len(), 0);
-        assert_eq!(set.pop_front(), None);
     }
 
     #[test]

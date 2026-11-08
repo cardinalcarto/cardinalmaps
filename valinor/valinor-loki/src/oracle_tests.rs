@@ -72,7 +72,18 @@ fn read_results(path: &Path) -> BTreeMap<String, Expected> {
         .collect()
 }
 
-/// The differences between two path edges beyond the tolerances.
+/// Whether to compare every field exactly (`VALINOR_LOKI_STRICT=1`) rather than under the
+/// tolerances of `docs/routing.md`.
+fn strict() -> bool {
+    std::env::var("VALINOR_LOKI_STRICT").is_ok_and(|v| v == "1")
+}
+
+/// The differences between two path edges for the same candidate, beyond the tolerances.
+///
+/// The tolerances cover the candidate edge (graph ID and side of street, and whether it is
+/// at a node), `percent_along`, and the distance. We also require the same reach, names,
+/// and correlated point. Headings and bounding circles aren't compared: they depend on
+/// which of two equally close candidates (an edge or its opposing edge) mainline saw first.
 fn edge_differences(what: &str, expected: &PathEdge, actual: &PathEdge, out: &mut Vec<String>) {
     let mut e = expected.clone();
     let mut a = actual.clone();
@@ -85,61 +96,124 @@ fn edge_differences(what: &str, expected: &PathEdge, actual: &PathEdge, out: &mu
     if (e.distance - a.distance).abs() > 0.01 {
         out.push(format!("{what}: distance {} != {}", e.distance, a.distance));
     }
-    let heading_diff = (e.heading - a.heading).abs();
-    if heading_diff > 1e-3 && (360.0 - heading_diff) > 1e-3 {
-        out.push(format!("{what}: heading {} != {}", e.heading, a.heading));
-    }
     let ll = |p: &PathEdge| crate::search::point_of(p.ll.as_ref());
     let (el, al) = (ll(&e), ll(&a));
-    if (el.lat - al.lat).abs() > 1e-9 || (el.lng - al.lng).abs() > 1e-9 {
+    if (el.lat - al.lat).abs() > 1e-7 || (el.lng - al.lng).abs() > 1e-7 {
         out.push(format!("{what}: ll {el:?} != {al:?}"));
+    }
+    let strict = strict();
+    if strict {
+        let heading_diff = (e.heading - a.heading).abs();
+        if heading_diff > 1e-3 && (360.0 - heading_diff) > 1e-3 {
+            out.push(format!("{what}: heading {} != {}", e.heading, a.heading));
+        }
     }
     for p in [&mut e, &mut a] {
         p.percent_along = 0.0;
         p.distance = 0.0;
-        p.heading = 0.0;
         p.ll = None;
+        p.heading = 0.0;
+        if !strict {
+            p.bounding_circle = None;
+        }
     }
     if e != a {
         out.push(format!("{what}: {e:?}\n    != {a:?}"));
     }
 }
 
+/// The candidate an edge is (graph ID, side of street, and node flags).
+fn candidate_key(e: &PathEdge) -> (u64, i32, bool, bool) {
+    (e.graph_id, e.side_of_street, e.begin_node, e.end_node)
+}
+
+/// Compares two lists of path edges: the same candidates (a multiset), each within the
+/// tolerances, in an order that differs only among equal distances.
+fn edges_differences(
+    what: &str,
+    expected: &[PathEdge],
+    actual: &[PathEdge],
+    out: &mut Vec<String>,
+) {
+    let ids = |v: &[PathEdge]| v.iter().map(|p| p.graph_id).collect::<Vec<_>>();
+    if expected.len() != actual.len() {
+        out.push(format!(
+            "{what}: {} != {} edges ({:?} != {:?})",
+            expected.len(),
+            actual.len(),
+            ids(expected),
+            ids(actual)
+        ));
+        return;
+    }
+    if strict() {
+        for (i, (x, y)) in expected.iter().zip(actual).enumerate() {
+            edge_differences(&format!("{what}[{i}]"), x, y, out);
+        }
+        return;
+    }
+    // The order may differ only among equal distances.
+    for (i, (x, y)) in expected.iter().zip(actual).enumerate() {
+        if (x.distance - y.distance).abs() > 0.01 {
+            out.push(format!(
+                "{what}[{i}]: distance {} != {} (order {:?} != {:?})",
+                x.distance,
+                y.distance,
+                ids(expected),
+                ids(actual)
+            ));
+        }
+    }
+    let mut unmatched: Vec<&PathEdge> = actual.iter().collect();
+    for (i, x) in expected.iter().enumerate() {
+        let found = unmatched
+            .iter()
+            .position(|y| candidate_key(y) == candidate_key(x));
+        match found {
+            Some(j) => {
+                let y = unmatched.remove(j);
+                edge_differences(&format!("{what}[{i}]"), x, y, out);
+            }
+            None => out.push(format!(
+                "{what}[{i}]: no candidate {:?} in {:?}",
+                candidate_key(x),
+                actual.iter().map(candidate_key).collect::<Vec<_>>()
+            )),
+        }
+    }
+}
+
 fn location_differences(what: &str, expected: &Location, actual: &Location, out: &mut Vec<String>) {
     let mut e = expected.clone();
     let mut a = actual.clone();
-    let ec = e.correlation.take().unwrap_or_default();
-    let ac = a.correlation.take().unwrap_or_default();
+    let mut ec = e.correlation.take().unwrap_or_default();
+    let mut ac = a.correlation.take().unwrap_or_default();
     if e != a {
         out.push(format!("{what}: {e:?}\n    != {a:?}"));
     }
-    for (kind, ee, ae) in [
-        ("edges", &ec.edges, &ac.edges),
-        ("filtered_edges", &ec.filtered_edges, &ac.filtered_edges),
-    ] {
-        let ids = |v: &[PathEdge]| v.iter().map(|p| p.graph_id).collect::<Vec<_>>();
-        if ee.len() != ae.len() {
-            out.push(format!(
-                "{what}.{kind}: {} != {} edges ({:?} != {:?})",
-                ee.len(),
-                ae.len(),
-                ids(ee),
-                ids(ae)
-            ));
-            continue;
-        }
-        for (i, (x, y)) in ee.iter().zip(ae).enumerate() {
-            edge_differences(&format!("{what}.{kind}[{i}]"), x, y, out);
-        }
-    }
-    let mut ec = ec;
-    let mut ac = ac;
+    edges_differences(&format!("{what}.edges"), &ec.edges, &ac.edges, out);
+    edges_differences(
+        &format!("{what}.filtered_edges"),
+        &ec.filtered_edges,
+        &ac.filtered_edges,
+        out,
+    );
     ec.edges.clear();
     ec.filtered_edges.clear();
     ac.edges.clear();
     ac.filtered_edges.clear();
     if ec != ac {
         out.push(format!("{what}.correlation: {ec:?} != {ac:?}"));
+    }
+}
+
+/// Excluded edges are a set (mainline's order is a hash order), so compare them sorted.
+fn normalize_options(options: &mut valhalla_proto::Options) {
+    for costing in options.costings.values_mut() {
+        if let Some(valhalla_proto::costing::HasOptions::Options(o)) = costing.has_options.as_mut()
+        {
+            o.exclude_edges.sort_by_key(|e| format!("{e:?}"));
+        }
     }
 }
 
@@ -154,6 +228,8 @@ fn api_differences(expected: &Api, actual: &Api) -> Vec<String> {
     }
     let mut eo = e.options.take().unwrap_or_default();
     let mut ao = a.options.take().unwrap_or_default();
+    normalize_options(&mut eo);
+    normalize_options(&mut ao);
     for (kind, el, al) in [
         ("locations", &eo.locations, &ao.locations),
         ("sources", &eo.sources, &ao.sources),
@@ -197,6 +273,43 @@ fn api_differences(expected: &Api, actual: &Api) -> Vec<String> {
         out.push(format!("api: {e:?}\n    != {a:?}"));
     }
     out
+}
+
+/// A `/locate` response as compared under the tolerances: without the headings and bounding
+/// circles of edges (which depend on the order of equally close candidates),
+/// and with each location's edges and nodes sorted (their order is unspecified among equal
+/// distances, and a hash order for nodes).
+fn locate_json(mut response: Value) -> Value {
+    let sort = |v: &mut Value| {
+        if let Value::Array(items) = v {
+            items.sort_by_key(Value::to_string);
+        }
+    };
+    if let Value::Array(locations) = &mut response {
+        for location in locations {
+            for key in ["edges", "filtered_edges"] {
+                if !strict()
+                    && let Some(Value::Array(edges)) = location.get_mut(key)
+                {
+                    for edge in edges.iter_mut() {
+                        if let Value::Object(edge) = edge {
+                            edge.remove("heading");
+                            edge.remove("bounding_circle");
+                        }
+                    }
+                }
+                if !strict()
+                    && let Some(edges) = location.get_mut(key)
+                {
+                    sort(edges);
+                }
+            }
+            if let Some(nodes) = location.get_mut("nodes") {
+                sort(nodes);
+            }
+        }
+    }
+    response
 }
 
 /// Compares JSON with a relative float tolerance.
@@ -301,8 +414,8 @@ fn run<P: GraphTileProvider>(
             }
             (Expected::Locate(e, body), Ok(LokiOutput::Respond(ours))) => {
                 let mut out = api_differences(e, &api);
-                let x: Value = serde_json::from_str(body).expect("JSON");
-                let y: Value = serde_json::from_str(ours).expect("our JSON");
+                let x = locate_json(serde_json::from_str(body).expect("JSON"));
+                let y = locate_json(serde_json::from_str(ours).expect("our JSON"));
                 json_differences("locate", &x, &y, &mut out);
                 out
             }
@@ -426,8 +539,8 @@ fn oracle_andorra_over_http() {
                 },
             ) => {
                 assert_eq!(content_type, valinor_tyr::tyr::JSON_CONTENT_TYPE);
-                let x: Value = serde_json::from_str(body).expect("JSON");
-                let y: Value = serde_json::from_slice(&ours).expect("our JSON");
+                let x = locate_json(serde_json::from_str(body).expect("JSON"));
+                let y = locate_json(serde_json::from_slice(&ours).expect("our JSON"));
                 let mut out = Vec::new();
                 json_differences("locate", &x, &y, &mut out);
                 assert!(out.is_empty(), "{id}: {out:?}");

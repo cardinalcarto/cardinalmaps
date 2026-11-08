@@ -9,11 +9,11 @@
 //! # Node order
 //!
 //! Mainline collects the snapped nodes in a `std::unordered_set<uint64_t>`
-//! and writes them in its iteration order, which [`UnorderedSet`] reproduces.
+//! and writes them in its (unspecified) iteration order; we write them sorted by ID.
 
 use super::locate_verbose::{edge_verbose, node_verbose};
 use super::writer::JsonWriter;
-use crate::libstdcxx::UnorderedSet;
+use std::collections::BTreeSet;
 use valhalla_graphtile::GraphId;
 use valhalla_graphtile::graph_tile::{DirectedEdge, GraphTile};
 use valhalla_graphtile::tile_provider::{GraphTileProvider, GraphTileProviderError};
@@ -113,7 +113,7 @@ fn serialize_location<P: GraphTileProvider>(
     }
 
     // The nodes the location snapped to: the end nodes of its edges that end at the point.
-    let mut nodes = UnorderedSet::default();
+    let mut nodes = BTreeSet::new();
     for edge in correlation.edges.iter().filter(|e| e.end_node) {
         let id = GraphId::try_from_id(edge.graph_id).map_err(data)?;
         let end = provider
@@ -124,7 +124,7 @@ fn serialize_location<P: GraphTileProvider>(
         nodes.insert(end.value());
     }
     writer.key("nodes").start_array();
-    for node in nodes.iter() {
+    for &node in &nodes {
         let id = GraphId::try_from_id(node).map_err(data)?;
         let tile = provider.get_handle_for_tile_containing(id)?;
         let info = tile.get_node(id).map_err(data)?;

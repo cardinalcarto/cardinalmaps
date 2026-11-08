@@ -883,11 +883,12 @@ impl<P: GraphTileProvider, C: Costing> Handler<'_, P, C> {
             pp.unreachable.retain(|c| c.sq_distance <= closest);
             let mut candidates = core::mem::take(&mut pp.reachable);
             candidates.append(&mut pp.unreachable);
-            // Mainline's `std::sort`, whose order of equal distances matters (see `cpp_sort`).
-            crate::cpp_sort::sort(
-                &mut candidates,
-                &|a: &Candidate<Tile<P>>, b: &Candidate<Tile<P>>| a.sq_distance < b.sq_distance,
-            );
+            // Closest first. Mainline's `std::sort` isn't stable; we break ties by edge ID.
+            candidates.sort_by(|a, b| {
+                a.sq_distance
+                    .total_cmp(&b.sq_distance)
+                    .then(a.edge_id.value().cmp(&b.edge_id.value()))
+            });
             self.correlated_edges.clear();
             let correlation = location
                 .correlation
@@ -1277,56 +1278,22 @@ fn reach_i32(reach: u32) -> i32 {
     i32::try_from(reach).unwrap_or(i32::MAX)
 }
 
-/// Mainline's `std::sort` of the projections (see [`Projection::less`]).
-///
-/// The indexes are sorted and then applied, which moves the projections exactly as
-/// sorting them would (libstdc++'s moves depend only on the comparisons).
+/// Sorts the projections (see [`Projection::less`]); a stable sort, so groups keep their order.
 fn sort<T: GraphTile + Clone>(pps: &mut [Projection<T>]) {
-    let mut order: Vec<usize> = (0..pps.len()).collect();
-    crate::cpp_sort::sort(&mut order, &|&a: &usize, &b: &usize| pps[a].less(&pps[b]));
-    // Position `i` gets the projection at `order[i]`: follow each cycle, swapping.
-    let mut visited = vec![false; pps.len()];
-    for start in 0..pps.len() {
-        let mut j = start;
-        while !visited[j] {
-            visited[j] = true;
-            let k = order[j];
-            if k == start {
-                break;
-            }
-            pps.swap(j, k);
-            j = k;
+    pps.sort_by(|a, b| {
+        if a.less(b) {
+            core::cmp::Ordering::Less
+        } else if b.less(a) {
+            core::cmp::Ordering::Greater
+        } else {
+            core::cmp::Ordering::Equal
         }
-    }
+    });
 }
 
-/// libstdc++'s `std::partition` (the bidirectional version) of the projections,
-/// unfinished first; returns where the finished ones start.
+/// Moves the unfinished projections first (keeping their order);
+/// returns where the finished ones start.
 fn partition<T: GraphTile + Clone>(pps: &mut [Projection<T>]) -> usize {
-    let mut first = 0;
-    let mut last = pps.len();
-    loop {
-        loop {
-            if first == last {
-                return first;
-            }
-            if pps[first].has_bin() {
-                first += 1;
-            } else {
-                break;
-            }
-        }
-        last -= 1;
-        loop {
-            if first == last {
-                return first;
-            }
-            if pps[last].has_bin() {
-                break;
-            }
-            last -= 1;
-        }
-        pps.swap(first, last);
-        first += 1;
-    }
+    pps.sort_by_key(|pp| !pp.has_bin());
+    pps.iter().take_while(|pp| pp.has_bin()).count()
 }

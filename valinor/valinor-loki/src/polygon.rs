@@ -8,9 +8,11 @@
 //! is excluded if its shape crosses the ring or lies inside it.
 //! With `exclude_levels`, only edges on exactly one of the given levels are excluded.
 //!
-//! Mainline keeps the bins and the result in `std::unordered_map`s and `std::unordered_set`s,
-//! whose iteration order decides where the flood fill starts and the order of the excluded
-//! edges in the request; [`UnorderedMap`] and [`UnorderedSet`] reproduce libstdc++'s.
+//! Mainline keeps the bins and the result in unordered containers, so its order is
+//! unspecified; we iterate in key order, and return the excluded edges sorted by ID.
+//! The flood fill starts from the first interior bin found, so for a ring whose interior
+//! falls into several bin regions (which only very concave rings do), the region filled can
+//! differ from mainline's.
 //!
 //! # Bounding circles
 //!
@@ -31,7 +33,7 @@ use crate::search::{CIRCLE_MARGIN_METERS, point_of};
 use crate::tiles::{
     BINS_DIM, COLUMNS, ROWS, SUBDIVISION_SIZE, bin_bbox, bin_center, neighboring_bins,
 };
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use thiserror::Error;
 use valhalla_graphtile::GraphId;
 use valhalla_graphtile::graph_tile::GraphTile;
@@ -40,7 +42,6 @@ use valhalla_proto::Options;
 use valhalla_proto::lat_lng::{HasLat, HasLng};
 use valhalla_response::{ErrorCode, ValhallaError};
 use valinor_sif::{Costing, DisallowMask};
-use valinor_tyr::libstdcxx::{UnorderedMap, UnorderedSet, graph_id_hash};
 
 /// Meters to radians on mainline's sphere (`RAD_PER_METER`).
 const RAD_PER_METER: f64 = 1.0 / 6_378_160.187;
@@ -271,8 +272,62 @@ fn length(points: &[PointLL]) -> f64 {
     points.windows(2).map(|p| p[0].distance(p[1])).sum()
 }
 
-/// Bins by tile (mainline's `unordered_map<int32_t, unordered_set<unsigned short>>`).
-type Bins = UnorderedMap<UnorderedSet>;
+/// A map with integer keys, iterated in key order.
+#[derive(Debug)]
+struct Ordered<V>(BTreeMap<u64, V>);
+
+impl<V> Default for Ordered<V> {
+    fn default() -> Self {
+        Self(BTreeMap::new())
+    }
+}
+
+impl<V: Default> Ordered<V> {
+    fn entry(&mut self, key: u64) -> &mut V {
+        self.0.entry(key).or_default()
+    }
+}
+
+impl<V> Ordered<V> {
+    fn get(&self, key: u64) -> Option<&V> {
+        self.0.get(&key)
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (u64, &V)> + '_ {
+        self.0.iter().map(|(k, v)| (*k, v))
+    }
+}
+
+/// A set of integers, iterated in order.
+#[derive(Debug, Default)]
+struct KeySet(BTreeSet<u64>);
+
+impl KeySet {
+    fn insert(&mut self, key: u64) -> bool {
+        self.0.insert(key)
+    }
+
+    fn contains(&self, key: u64) -> bool {
+        self.0.contains(&key)
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = u64> + '_ {
+        self.0.iter().copied()
+    }
+}
+
+/// Bins by tile.
+type Bins = Ordered<KeySet>;
 
 /// A tile ID as `std::hash<int32_t>` hashes it (sign extended).
 fn tile_key(tile: i32) -> u64 {
@@ -404,7 +459,7 @@ fn circle_outside_bounds(center: PointLL, radius_sq: f32, bbox: &Aabb) -> bool {
 }
 
 /// The edges (and their opposing edges) inside the request's exclude polygons
-/// (mainline's `edges_in_rings`), in mainline's order.
+/// (mainline's `edges_in_rings`), sorted by ID.
 ///
 /// # Errors
 ///
@@ -490,8 +545,8 @@ pub(crate) fn edges_in_rings<P: GraphTileProvider, C: Costing>(
 
     // The bins each ring's boundary crosses, and the bins entirely inside it
     // (mainline's `bins_collector_t`: by tile, then by bin, the rings).
-    let mut intersected: UnorderedMap<UnorderedMap<Vec<usize>>> = UnorderedMap::default();
-    let mut contained: UnorderedMap<UnorderedMap<Vec<usize>>> = UnorderedMap::default();
+    let mut intersected: Ordered<Ordered<Vec<usize>>> = Ordered::default();
+    let mut contained: Ordered<Ordered<Vec<usize>>> = Ordered::default();
     for (ring_index, ring) in rings.iter().enumerate() {
         let boundary = intersect(&ring.points);
         for (tile, bins) in boundary.iter() {
@@ -541,9 +596,8 @@ pub(crate) fn edges_in_rings<P: GraphTileProvider, C: Costing>(
         }
     }
 
-    // Mainline's `std::unordered_set<GraphId>`.
-    let mut avoid = UnorderedSet::new(graph_id_hash);
-    let check = |avoid: &mut UnorderedSet,
+    let mut avoid = KeySet::default();
+    let check = |avoid: &mut KeySet,
                  (tile_index, bin): (i32, u16),
                  ring_indexes: &[usize],
                  intersect: bool|

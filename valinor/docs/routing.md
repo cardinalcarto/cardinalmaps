@@ -130,12 +130,13 @@ the matrix actions, the trace actions, and status).
 - Costings Sif doesn't have yet, linear cost features (`cost_factor_lines`), isochrones,
   expansion, heights, transit availability, tiles, and verbose status are error 107.
 
-Mainline's results depend on details that are reproduced on purpose
+Results are equivalent to mainline's, within the tolerances below,
+not byte for byte: where mainline's order is a container's (equal candidates after its
+`std::sort`, snapped nodes, excluded edges, its reach queue), ours is a deterministic one.
+What is reproduced on purpose is what decides the result
 (see the module docs of `search`, `reach`, and `worker`):
-the exact float and double arithmetic of `midgard`,
-the iteration order of libstdc++'s `std::sort` and unordered containers
-(`valinor_tyr::libstdcxx`), and of `ankerl::unordered_dense`,
-and the double bucket queue of the exact reach expansion.
+the float and double arithmetic of `midgard` (a node snap is an exact comparison),
+the reach counts, and the double bucket queue of the exact reach expansion.
 Bounding circles skip edges only when a circle grown by 1 cm is out of reach,
 so that a different `cosf` can never make us skip an edge that mainline keeps.
 

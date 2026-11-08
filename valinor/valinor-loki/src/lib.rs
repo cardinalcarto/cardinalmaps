@@ -34,7 +34,6 @@ extern crate alloc;
 
 mod config;
 mod connectivity;
-mod cpp_sort;
 mod geo;
 mod graph;
 mod http;

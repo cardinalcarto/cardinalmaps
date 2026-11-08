@@ -12,7 +12,6 @@ extern crate alloc;
 
 pub use valinor_sif::costing_options;
 pub mod front;
-pub mod libstdcxx;
 pub mod tyr;
 
 #[cfg(test)]
