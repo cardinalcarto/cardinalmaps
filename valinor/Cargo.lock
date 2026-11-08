@@ -1099,6 +1099,7 @@ dependencies = [
  "anyhow",
  "clap",
  "http",
+ "illuvatar",
  "insta",
  "serde_json",
  "tokio",
@@ -1107,6 +1108,7 @@ dependencies = [
  "valhalla-microservice",
  "valhalla-proto",
  "valhalla-response",
+ "valinor-tyr",
 ]
 
 [[package]]

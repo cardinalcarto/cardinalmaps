@@ -479,8 +479,15 @@ Two environment variables swap Valinor components into that chain:
   and the order of a request's excluded edges, which Loki doesn't reproduce),
   except for the costings Sif doesn't have yet (bus, taxi, truck, motorcycle, and motor scooter),
   which are error 107.
-  `illuvatar-service` doesn't narrate yet (it answers routes with error 107),
-  so `ODIN=illuvatar` can't complete a route end to end.
+- With `LOKI=valinor THOR=valinor ODIN=illuvatar`, mainline runs only httpd.
+  Compared with the same corpora served with mainline's Odin, every response matches
+  except miles requests in OSRM format. Those differ only in voice `announcement` text,
+  which is the documented approach-alert divergence:
+  - Andorra: 120 responses, 2 differences.
+  - Ferrostar: 7 responses, 1 difference.
+  - Odin Andorra: 82 responses, 17 differences.
+  - Seattle: 23 responses, 0 differences.
+  - Odin Seattle: 90 responses, 18 differences.
 
 [`check-passthrough.sh`](check-passthrough.sh) runs a corpus twice,
 once through plain staged mainline and once with the passthrough spliced in,
