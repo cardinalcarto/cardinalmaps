@@ -8,8 +8,9 @@
 //! is excluded if its shape crosses the ring or lies inside it.
 //! With `exclude_levels`, only edges on exactly one of the given levels are excluded.
 //!
-//! The result is a set (mainline's `std::unordered_set`), so its order is unspecified;
-//! [`edges_in_rings`] returns it sorted.
+//! Mainline keeps the bins and the result in `std::unordered_map`s and `std::unordered_set`s,
+//! whose iteration order decides where the flood fill starts and the order of the excluded
+//! edges in the request; [`UnorderedMap`] and [`UnorderedSet`] reproduce libstdc++'s.
 //!
 //! # Bounding circles
 //!
@@ -30,7 +31,7 @@ use crate::search::{CIRCLE_MARGIN_METERS, point_of};
 use crate::tiles::{
     BINS_DIM, COLUMNS, ROWS, SUBDIVISION_SIZE, bin_bbox, bin_center, neighboring_bins,
 };
-use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use thiserror::Error;
 use valhalla_graphtile::GraphId;
 use valhalla_graphtile::graph_tile::GraphTile;
@@ -39,6 +40,7 @@ use valhalla_proto::Options;
 use valhalla_proto::lat_lng::{HasLat, HasLng};
 use valhalla_response::{ErrorCode, ValhallaError};
 use valinor_sif::{Costing, DisallowMask};
+use valinor_tyr::libstdcxx::{UnorderedMap, UnorderedSet, graph_id_hash};
 
 /// Meters to radians on mainline's sphere (`RAD_PER_METER`).
 const RAD_PER_METER: f64 = 1.0 / 6_378_160.187;
@@ -269,8 +271,29 @@ fn length(points: &[PointLL]) -> f64 {
     points.windows(2).map(|p| p[0].distance(p[1])).sum()
 }
 
-/// Bins by tile, as (tile, bin) pairs.
-type Bins = BTreeSet<(i32, u16)>;
+/// Bins by tile (mainline's `unordered_map<int32_t, unordered_set<unsigned short>>`).
+type Bins = UnorderedMap<UnorderedSet>;
+
+/// A tile ID as `std::hash<int32_t>` hashes it (sign extended).
+fn tile_key(tile: i32) -> u64 {
+    i64::from(tile).cast_unsigned()
+}
+
+/// A tile ID back from its key.
+fn key_tile(key: u64) -> i32 {
+    i32::try_from(key.cast_signed()).unwrap_or(-1)
+}
+
+/// A bin from its key (bins are below 25).
+fn key_bin(key: u64) -> u16 {
+    u16::try_from(key).unwrap_or(u16::MAX)
+}
+
+/// Whether a tile's bin is in the set.
+fn has_bin(bins: &Bins, tile: i32, bin: u16) -> bool {
+    bins.get(tile_key(tile))
+        .is_some_and(|set| set.contains(u64::from(bin)))
+}
 
 /// Marks the bins a pixel is in (`set_pixel`); returns whether it is outside the grid.
 fn set_pixel(bins: &mut Bins, x: i32, y: i32) -> bool {
@@ -279,12 +302,8 @@ fn set_pixel(bins: &mut Bins, x: i32, y: i32) -> bool {
     }
     let tile = (y / BINS_DIM) * COLUMNS + x / BINS_DIM;
     let bin = (y % BINS_DIM) * BINS_DIM + x % BINS_DIM;
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "the bin is in 0..25"
-    )]
-    bins.insert((tile, bin as u16));
+    #[expect(clippy::cast_sign_loss, reason = "the bin is in 0..25")]
+    bins.entry(tile_key(tile)).insert(bin as u64);
     false
 }
 
@@ -328,7 +347,7 @@ fn bresenham_line(bins: &mut Bins, x0: f64, y0: f64, x1: f64, y1: f64) {
 
 /// The bins a ring's boundary crosses (`Tiles::Intersect` of a linestring).
 fn intersect(ring: &[PointLL]) -> Bins {
-    let mut bins = Bins::new();
+    let mut bins = Bins::default();
     let Some(front) = ring.first() else {
         return bins;
     };
@@ -385,7 +404,7 @@ fn circle_outside_bounds(center: PointLL, radius_sq: f32, bbox: &Aabb) -> bool {
 }
 
 /// The edges (and their opposing edges) inside the request's exclude polygons
-/// (mainline's `edges_in_rings`), sorted by ID.
+/// (mainline's `edges_in_rings`), in mainline's order.
 ///
 /// # Errors
 ///
@@ -469,30 +488,35 @@ pub(crate) fn edges_in_rings<P: GraphTileProvider, C: Costing>(
         )));
     }
 
-    // The bins each ring's boundary crosses, and the bins entirely inside it.
-    let mut intersected: BTreeMap<(i32, u16), Vec<usize>> = BTreeMap::new();
-    let mut contained: BTreeMap<(i32, u16), Vec<usize>> = BTreeMap::new();
+    // The bins each ring's boundary crosses, and the bins entirely inside it
+    // (mainline's `bins_collector_t`: by tile, then by bin, the rings).
+    let mut intersected: UnorderedMap<UnorderedMap<Vec<usize>>> = UnorderedMap::default();
+    let mut contained: UnorderedMap<UnorderedMap<Vec<usize>>> = UnorderedMap::default();
     for (ring_index, ring) in rings.iter().enumerate() {
         let boundary = intersect(&ring.points);
-        for &bin in &boundary {
-            intersected.entry(bin).or_default().push(ring_index);
+        for (tile, bins) in boundary.iter() {
+            for bin in bins.iter() {
+                intersected.entry(tile).entry(bin).push(ring_index);
+            }
         }
         // Flood fill from the first neighbor of a boundary bin that is inside the ring
         // (only the first area found is filled, as in mainline).
-        let start = boundary.iter().find_map(|&(tile, bin)| {
-            neighboring_bins(tile, bin, false)
-                .into_iter()
-                .find(|neighbor| {
-                    if boundary.contains(neighbor) {
-                        return false;
-                    }
-                    let bbox = bin_bbox(neighbor.0, neighbor.1);
-                    let center = PointLL::new(
-                        f64::midpoint(bbox.minx, bbox.maxx),
-                        f64::midpoint(bbox.miny, bbox.maxy),
-                    );
-                    point_in_poly(center, &ring.points)
-                })
+        let start = boundary.iter().find_map(|(tile, bins)| {
+            bins.iter().find_map(|bin| {
+                neighboring_bins(key_tile(tile), key_bin(bin), false)
+                    .into_iter()
+                    .find(|&(n_tile, n_bin)| {
+                        if has_bin(&boundary, n_tile, n_bin) {
+                            return false;
+                        }
+                        let bbox = bin_bbox(n_tile, n_bin);
+                        let center = PointLL::new(
+                            f64::midpoint(bbox.minx, bbox.maxx),
+                            f64::midpoint(bbox.miny, bbox.maxy),
+                        );
+                        point_in_poly(center, &ring.points)
+                    })
+            })
         });
         if let Some(start) = start {
             let mut processed = HashSet::from([start]);
@@ -500,12 +524,15 @@ pub(crate) fn edges_in_rings<P: GraphTileProvider, C: Costing>(
             let mut n = 0;
             while n < 1_000_000 {
                 n += 1;
-                let Some(bin) = queue.pop_front() else {
+                let Some((tile, bin)) = queue.pop_front() else {
                     break;
                 };
-                contained.entry(bin).or_default().push(ring_index);
-                for neighbor in neighboring_bins(bin.0, bin.1, true) {
-                    if !processed.insert(neighbor) || boundary.contains(&neighbor) {
+                contained
+                    .entry(tile_key(tile))
+                    .entry(u64::from(bin))
+                    .push(ring_index);
+                for neighbor in neighboring_bins(tile, bin, true) {
+                    if !processed.insert(neighbor) || has_bin(&boundary, neighbor.0, neighbor.1) {
                         continue;
                     }
                     queue.push_back(neighbor);
@@ -514,8 +541,9 @@ pub(crate) fn edges_in_rings<P: GraphTileProvider, C: Costing>(
         }
     }
 
-    let mut avoid: BTreeSet<u64> = BTreeSet::new();
-    let check = |avoid: &mut BTreeSet<u64>,
+    // Mainline's `std::unordered_set<GraphId>`.
+    let mut avoid = UnorderedSet::new(graph_id_hash);
+    let check = |avoid: &mut UnorderedSet,
                  (tile_index, bin): (i32, u16),
                  ring_indexes: &[usize],
                  intersect: bool|
@@ -534,7 +562,7 @@ pub(crate) fn edges_in_rings<P: GraphTileProvider, C: Costing>(
         let center = bin_center(tile_index, bin);
         let mut tile = bin_tile.clone();
         for (edge_index, &edge_id) in bin_tile.edges_in_bin(usize::from(bin)).iter().enumerate() {
-            if avoid.contains(&edge_id.value()) {
+            if avoid.contains(edge_id.value()) {
                 continue;
             }
             let mut radius = 0.0;
@@ -638,13 +666,19 @@ pub(crate) fn edges_in_rings<P: GraphTileProvider, C: Costing>(
         Ok(())
     };
 
-    for (bin, ring_indexes) in &contained {
-        check(&mut avoid, *bin, ring_indexes, false)?;
+    for (crossing, collector) in [(false, &contained), (true, &intersected)] {
+        for (tile, bins) in collector.iter() {
+            for (bin, ring_indexes) in bins.iter() {
+                check(
+                    &mut avoid,
+                    (key_tile(tile), key_bin(bin)),
+                    ring_indexes,
+                    crossing,
+                )?;
+            }
+        }
     }
-    for (bin, ring_indexes) in &intersected {
-        check(&mut avoid, *bin, ring_indexes, true)?;
-    }
-    Ok(avoid.into_iter().collect())
+    Ok(avoid.iter().collect())
 }
 
 /// Mainline's invalid graph ID (`kInvalidGraphId`).
@@ -705,6 +739,7 @@ mod tests {
         ];
         let bins = intersect(&ring);
         assert!(!bins.is_empty());
+        assert!(bins.iter().all(|(_, b)| !b.is_empty()));
         // Resampling keeps the ring's own points.
         let resampled = resample_spherical_polyline(&ring, 100.0);
         assert!(resampled.len() > ring.len());

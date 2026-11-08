@@ -9,10 +9,11 @@
 //! # Node order
 //!
 //! Mainline collects the snapped nodes in a `std::unordered_set<uint64_t>`
-//! and writes them in its iteration order, which [`LibstdcxxSet`] reproduces.
+//! and writes them in its iteration order, which [`UnorderedSet`] reproduces.
 
 use super::locate_verbose::{edge_verbose, node_verbose};
 use super::writer::JsonWriter;
+use crate::libstdcxx::UnorderedSet;
 use valhalla_graphtile::GraphId;
 use valhalla_graphtile::graph_tile::{DirectedEdge, GraphTile};
 use valhalla_graphtile::tile_provider::{GraphTileProvider, GraphTileProviderError};
@@ -53,106 +54,6 @@ pub(super) fn lat_lng(ll: Option<&LatLng>) -> (f64, f64) {
         None => 0.0,
     };
     (lat, lng)
-}
-
-/// The order in which libstdc++'s `std::unordered_set<uint64_t>` iterates its elements.
-///
-/// The hash of an integer is the integer itself, so an element's bucket is its value modulo
-/// the bucket count. The elements form one list: a new element goes first in its bucket,
-/// or, when its bucket is empty, at the front of the list.
-/// The first insertion makes 13 buckets; the table grows (to the next of libstdc++'s primes
-/// at least twice as large) when it would hold more elements than buckets, re-linking the
-/// elements in list order.
-#[derive(Debug, Default)]
-pub(super) struct LibstdcxxSet {
-    /// The elements in iteration order.
-    list: Vec<u64>,
-    buckets: u64,
-    next_resize: u64,
-}
-
-impl LibstdcxxSet {
-    /// libstdc++'s `_Prime_rehash_policy::_M_next_bkt`: the bucket count for at least `n`.
-    ///
-    /// The small sizes come from its `__fast_bkt` table; larger ones are the entries of its
-    /// prime list that a growing set reaches (measured with g++ 13), and beyond those
-    /// (more than 20,000 nodes, which a location never has) the next prime.
-    fn next_bucket_count(&mut self, n: u64) -> u64 {
-        const FAST: [u64; 14] = [2, 2, 2, 3, 5, 5, 7, 7, 11, 11, 11, 11, 13, 13];
-        const PRIMES: [u64; 10] = [29, 59, 127, 257, 541, 1109, 2357, 5087, 10273, 20753];
-        let count =
-            match usize::try_from(n).ok().and_then(|i| FAST.get(i)) {
-                Some(&count) => count,
-                None => PRIMES.iter().copied().find(|&p| p >= n).unwrap_or_else(|| {
-                    (n..n.saturating_mul(2)).find(|&c| is_prime(c)).unwrap_or(n)
-                }),
-            };
-        self.next_resize = count;
-        count
-    }
-
-    /// Inserts a value; returns whether it was new.
-    pub(super) fn insert(&mut self, value: u64) -> bool {
-        if self.list.contains(&value) {
-            return false;
-        }
-        let n_elt = self.list.len() as u64;
-        if n_elt + 1 > self.next_resize {
-            let min_buckets = (n_elt + 1).max(if self.next_resize == 0 { 11 } else { 0 });
-            if min_buckets >= self.buckets {
-                let wanted = (min_buckets + 1).max(self.buckets * 2);
-                let count = self.next_bucket_count(wanted);
-                self.rehash(count);
-            } else {
-                self.next_resize = self.buckets;
-            }
-        }
-        self.insert_node(value);
-        true
-    }
-
-    fn bucket(&self, value: u64) -> u64 {
-        value % self.buckets.max(1)
-    }
-
-    /// Links a new node first in its bucket (`_M_insert_bucket_begin`).
-    fn insert_node(&mut self, value: u64) {
-        let bucket = self.bucket(value);
-        match self.list.iter().position(|&v| self.bucket(v) == bucket) {
-            // After the bucket's "before" node, which is just before its first element.
-            Some(first) => self.list.insert(first, value),
-            None => self.list.insert(0, value),
-        }
-    }
-
-    /// Re-links every node into a new bucket array, in list order (`_M_rehash_aux`).
-    fn rehash(&mut self, buckets: u64) {
-        let old = core::mem::take(&mut self.list);
-        self.buckets = buckets;
-        // Each node goes first in its bucket, or at the front of the list, as on insertion.
-        for value in old {
-            self.insert_node(value);
-        }
-    }
-
-    /// The elements in iteration order.
-    pub(super) fn iter(&self) -> impl Iterator<Item = u64> + '_ {
-        self.list.iter().copied()
-    }
-}
-
-fn is_prime(n: u64) -> bool {
-    if n < 2 {
-        return false;
-    }
-    let mut d = 2;
-    while d * d <= n {
-        if n.is_multiple_of(d) {
-            return false;
-        }
-        d += 1;
-    }
-    true
 }
 
 /// Serializes the `/locate` response for a correlated request (`serializeLocate`).
@@ -212,7 +113,7 @@ fn serialize_location<P: GraphTileProvider>(
     }
 
     // The nodes the location snapped to: the end nodes of its edges that end at the point.
-    let mut nodes = LibstdcxxSet::default();
+    let mut nodes = UnorderedSet::default();
     for edge in correlation.edges.iter().filter(|e| e.end_node) {
         let id = GraphId::try_from_id(edge.graph_id).map_err(data)?;
         let end = provider
@@ -287,86 +188,4 @@ fn serialize_edge<P: GraphTileProvider>(
         Ok(())
     })();
     writer.end_object();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn small_sets_iterate_like_libstdcxx() {
-        // 13 buckets: values in empty buckets go to the front.
-        let mut set = LibstdcxxSet::default();
-        for v in [1, 2, 3] {
-            set.insert(v);
-        }
-        assert_eq!(set.iter().collect::<Vec<_>>(), vec![3, 2, 1]);
-        // 14 is in bucket 1, so it goes before 1.
-        set.insert(14);
-        assert_eq!(set.iter().collect::<Vec<_>>(), vec![3, 2, 14, 1]);
-        assert!(!set.insert(2));
-    }
-
-    #[test]
-    fn growing_sets_iterate_like_libstdcxx() {
-        // From g++ 13, which grows the table from 13 to 29 buckets at the 14th element.
-        let mut set = LibstdcxxSet::default();
-        let values = [
-            8_456_098_473,
-            5161,
-            99999,
-            12,
-            25,
-            38,
-            7_281_335_864,
-            1,
-            14,
-            27,
-            40,
-            53,
-            66,
-            79,
-            92,
-            105,
-            118,
-        ];
-        for v in values {
-            set.insert(v);
-        }
-        assert_eq!(
-            set.iter().collect::<Vec<_>>(),
-            vec![
-                118,
-                105,
-                92,
-                79,
-                8_456_098_473,
-                5161,
-                99999,
-                12,
-                25,
-                38,
-                7_281_335_864,
-                1,
-                14,
-                27,
-                40,
-                53,
-                66
-            ]
-        );
-    }
-
-    #[test]
-    fn growing_keeps_bucket_neighbors_together() {
-        let mut set = LibstdcxxSet::default();
-        for v in 0..20 {
-            set.insert(v);
-        }
-        let values: Vec<u64> = set.iter().collect();
-        assert_eq!(values.len(), 20);
-        let mut sorted = values.clone();
-        sorted.sort_unstable();
-        assert_eq!(sorted, (0..20).collect::<Vec<_>>());
-    }
 }

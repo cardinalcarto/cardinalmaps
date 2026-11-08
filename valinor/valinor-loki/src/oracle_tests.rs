@@ -27,10 +27,9 @@ use std::path::{Path, PathBuf};
 use valhalla_graphtile::tile_provider::{
     CachingTileProvider, DirectoryGraphTileProvider, GraphTileProvider, TarballTileProvider,
 };
-use valhalla_proto::costing::HasOptions;
 use valhalla_proto::options::Action;
 use valhalla_proto::prost::Message;
-use valhalla_proto::{Api, Location, Options, PathEdge};
+use valhalla_proto::{Api, Location, PathEdge};
 
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
@@ -144,15 +143,6 @@ fn location_differences(what: &str, expected: &Location, actual: &Location, out:
     }
 }
 
-/// Excluded edges are a set in mainline (for polygons), so compare them sorted.
-fn normalize_options(options: &mut Options) {
-    for costing in options.costings.values_mut() {
-        if let Some(HasOptions::Options(o)) = costing.has_options.as_mut() {
-            o.exclude_edges.sort_by_key(|e| format!("{e:?}"));
-        }
-    }
-}
-
 fn api_differences(expected: &Api, actual: &Api) -> Vec<String> {
     let mut out = Vec::new();
     let mut e = expected.clone();
@@ -164,8 +154,6 @@ fn api_differences(expected: &Api, actual: &Api) -> Vec<String> {
     }
     let mut eo = e.options.take().unwrap_or_default();
     let mut ao = a.options.take().unwrap_or_default();
-    normalize_options(&mut eo);
-    normalize_options(&mut ao);
     for (kind, el, al) in [
         ("locations", &eo.locations, &ao.locations),
         ("sources", &eo.sources, &ao.sources),
