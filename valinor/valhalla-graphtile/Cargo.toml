@@ -29,7 +29,6 @@ memmap2 = { workspace = true }
 nutype = { workspace = true }
 num_enum = { workspace = true }
 tracing = { workspace = true }
-trig-const = { workspace = true }
 serde = { workspace = true, optional = true }
 zerocopy = { workspace = true }
 zerocopy-derive = { workspace = true }

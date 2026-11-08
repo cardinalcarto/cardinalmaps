@@ -2384,12 +2384,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trig-const"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d21c8fb1ed2ef9c217e6b33705fcc43fa3200a6956a5c1f6e54e6a8aaaa8b667"
-
-[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2472,7 +2466,6 @@ dependencies = [
  "tar",
  "thiserror 2.0.21",
  "tracing",
- "trig-const",
  "walkdir",
  "zerocopy",
  "zerocopy-derive",
