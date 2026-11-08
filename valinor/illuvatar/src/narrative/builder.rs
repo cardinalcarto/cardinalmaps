@@ -848,23 +848,88 @@ fn bss_maneuver_prefix(bss_maneuver_type: i32) -> &'static str {
 /// Mainline's OSRM serializer builds these from each maneuver's verbal transition alert,
 /// using the request's language and units, and no phoneme markup.
 ///
+/// `distance` is in the request's units: kilometers, or miles.
+/// Note that mainline's OSRM serializer always passes kilometers here,
+/// so for requests in miles it announces the kilometer value as miles
+/// (a mainline bug; whether to reproduce it is the caller's choice).
+///
 /// # Errors
 ///
 /// [`OdinError::InvalidLanguageTag`] if the request's language has no dictionary,
 /// or a phrase or label error if its dictionary lacks what the alert needs.
 pub fn verbal_alert_approach_instruction(
     options: &Options,
-    distance_km: f32,
+    distance: f32,
     verbal_cue: &str,
 ) -> Result<String, OdinError> {
     let leg = TripLeg::default();
     let markup = MarkupFormatter::default();
     let builder = NarrativeBuilder::new(options, &leg, &markup)?;
     let subset = &builder.instructions().approach_verbal_alert;
-    let length = builder.form_distance(distance_km, subset)?;
+    let length = builder.form_distance(distance, subset)?;
     let instruction = subset
         .phrase(0)?
         .replace(tag::LENGTH, &length)
         .replace(tag::CURRENT_VERBAL_CUE, verbal_cue);
     Ok(builder.finish(instruction))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn options(language: &str, units: options::Units) -> Options {
+        Options {
+            units: units as i32,
+            has_language: Some(options::HasLanguage::Language(language.to_owned())),
+            ..Options::default()
+        }
+    }
+
+    /// Announcements from mainline's OSRM responses in the Andorra captures
+    /// (`auto_town` and `auto_catalan_miles`), with distances (in the request's units) that
+    /// round to them.
+    #[test]
+    fn approach_alerts_match_mainline_announcements() {
+        let km = options("en-US", options::Units::Kilometers);
+        assert_eq!(
+            verbal_alert_approach_instruction(&km, 0.5, "Turn left onto Travessera del Jardí.")
+                .unwrap(),
+            "In 500 meters, Turn left onto Travessera del Jardí."
+        );
+        assert_eq!(
+            verbal_alert_approach_instruction(&km, 0.052, "You will arrive at your destination.")
+                .unwrap(),
+            "In 50 meters, You will arrive at your destination."
+        );
+        let ca_miles = options("ca-ES", options::Units::Miles);
+        assert_eq!(
+            verbal_alert_approach_instruction(
+                &ca_miles,
+                0.5,
+                "Gira a l'esquerra cap a Travessera del Jardí."
+            )
+            .unwrap(),
+            "En mitja milla, Gira a l'esquerra cap a Travessera del Jardí."
+        );
+        assert_eq!(
+            verbal_alert_approach_instruction(&ca_miles, 0.057, "Arribaràs a la teva destinació.")
+                .unwrap(),
+            "En 300 peus, Arribaràs a la teva destinació."
+        );
+        assert_eq!(
+            verbal_alert_approach_instruction(&options("xx", options::Units::Miles), 1.0, ""),
+            Err(OdinError::InvalidLanguageTag)
+        );
+    }
+
+    #[test]
+    fn bike_share_prefixes() {
+        assert_eq!(bss_maneuver_prefix(BssManeuverType::KNoneAction as i32), "");
+        assert_eq!(
+            bss_maneuver_prefix(BssManeuverType::KRentBikeAtBikeShare as i32),
+            "Then rent a bike at BSS. "
+        );
+        assert_eq!(bss_maneuver_prefix(99), "");
+    }
 }
