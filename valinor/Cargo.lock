@@ -2632,6 +2632,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "valinor-thor-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "http",
+ "jiff",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "valhalla-graphtile",
+ "valhalla-microservice",
+ "valhalla-proto",
+ "valhalla-response",
+ "valinor-thor",
+]
+
+[[package]]
 name = "valinor-tyr"
 version = "0.1.0"
 dependencies = [

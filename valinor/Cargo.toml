@@ -16,6 +16,7 @@ members = [
     "valinor-sif",
     "valinor-tap",
     "valinor-thor",
+    "valinor-thor-service",
     "valinor-tyr",
 ]
 

@@ -23,6 +23,10 @@
 #                runs valinor-loki-service in place of mainline's Loki worker,
 #                with the build's valhalla.json and tiles.tar
 #                (build it with: cargo build --release -p valinor-loki-service)
+#   THOR=valinor
+#                runs valinor-thor-service in place of mainline's Thor worker,
+#                with the build's valhalla.json and tiles.tar
+#                (build it with: cargo build --release -p valinor-thor-service)
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -32,9 +36,11 @@ tap="$here/../../target/release/valinor-tap"
 passthrough="$here/../../target/release/examples/passthrough"
 illuvatar="$here/../../target/release/illuvatar-service"
 valinor_loki="$here/../../target/release/valinor-loki-service"
+valinor_thor="$here/../../target/release/valinor-thor-service"
 splice="${PASSTHROUGH:-}"
 odin="${ODIN:-mainline}"
 loki="${LOKI:-mainline}"
+thor="${THOR:-mainline}"
 case "$splice" in
 	"" | loki-thor | thor-odin) ;;
 	*)
@@ -53,6 +59,13 @@ case "$loki" in
 	mainline | valinor) ;;
 	*)
 		echo "LOKI must be mainline or valinor, not $loki" >&2
+		exit 1
+		;;
+esac
+case "$thor" in
+	mainline | valinor) ;;
+	*)
+		echo "THOR must be mainline or valinor, not $thor" >&2
 		exit 1
 		;;
 esac
@@ -82,6 +95,10 @@ name="valinor-oracle-$port"
 	echo "missing $valinor_loki; run: cargo build --release -p valinor-loki-service" >&2
 	exit 1
 }
+[ "$thor" = mainline ] || [ -x "$valinor_thor" ] || {
+	echo "missing $valinor_thor; run: cargo build --release -p valinor-thor-service" >&2
+	exit 1
+}
 
 pids=()
 cleanup() {
@@ -99,6 +116,7 @@ trap cleanup EXIT INT TERM
 	-v "$ipc:/ipc:z" \
 	-e "ODIN=$odin" \
 	-e "LOKI=$loki" \
+	-e "THOR=$thor" \
 	"$image" /oracle/serve-staged.sh /out/valhalla.json "$port" >/dev/null
 
 # Wait for the proxies the taps connect to.
@@ -128,6 +146,14 @@ if [ "$loki" = valinor ]; then
 		--interrupt-socket-endpoint "ipc://$ipc/interrupt" &
 	pids+=($!)
 fi
+if [ "$thor" = valinor ]; then
+	"$valinor_thor" --config "$build/valhalla.json" --tiles "$build/tiles.tar" \
+		--upstream-socket-endpoint "ipc://$ipc/thor_out" \
+		--downstream-socket-endpoint "ipc://$ipc/tap_odin_in" \
+		--loopback-socket-endpoint "ipc://$ipc/loopback" \
+		--interrupt-socket-endpoint "ipc://$ipc/interrupt" &
+	pids+=($!)
+fi
 if [ "$odin" = illuvatar ]; then
 	"$illuvatar" --upstream-socket-endpoint "ipc://$ipc/odin_out" \
 		--loopback-socket-endpoint "ipc://$ipc/loopback" \
@@ -144,7 +170,7 @@ curl -fs "localhost:$port/status" >/dev/null || {
 	"$runtime" logs "$name" >&2
 	exit 1
 }
-echo "ready: http://localhost:$port (captures in $capture${splice:+; passthrough at $splice}; loki: $loki; odin: $odin)"
+echo "ready: http://localhost:$port (captures in $capture${splice:+; passthrough at $splice}; loki: $loki; thor: $thor; odin: $odin)"
 
 # Exit (and clean up) if the container or either tap stops.
 "$runtime" wait "$name" >/dev/null &

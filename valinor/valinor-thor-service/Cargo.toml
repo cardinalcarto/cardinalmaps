@@ -1,0 +1,30 @@
+[package]
+name = "valinor-thor-service"
+description = "A Valhalla-compatible Thor worker (path search) for prime_server deployments."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+jiff = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+valhalla-graphtile = { workspace = true }
+valhalla-microservice = { workspace = true }
+valhalla-proto = { workspace = true }
+valhalla-response = { workspace = true }
+valinor-thor = { workspace = true }
+
+[dev-dependencies]
+base64 = { workspace = true }
+http = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

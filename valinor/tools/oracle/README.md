@@ -431,6 +431,10 @@ Two environment variables swap Valinor components into that chain:
   so it exercises the worker protocol (advertising, forwarding, and interrupts)
   and our message definitions against mainline.
 - `ODIN=illuvatar` runs `illuvatar-service` in place of mainline's Odin worker.
+- `THOR=valinor` runs `valinor-thor-service` in place of mainline's Thor worker,
+  with the build's `valhalla.json` and `tiles.tar`.
+  Until trip building is written it answers routes it finds with error 107,
+  so only its errors (such as 442) can be compared with mainline's end to end.
 
 [`check-passthrough.sh`](check-passthrough.sh) runs a corpus twice,
 once through plain staged mainline and once with the passthrough spliced in,
