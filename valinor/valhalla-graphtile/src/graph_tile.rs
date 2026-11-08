@@ -2090,21 +2090,33 @@ mod tests {
             }
             let _ = view.get_transitions(node).len();
         }
-        for (index, _) in view.directed_edges().iter().enumerate() {
-            // TODO: also call `get_edge_info` once `EdgeInfo::try_from` is panic-free.
-            // It currently slices past the end of the edge info for corrupt shape sizes.
+        for (index, edge) in view.directed_edges().iter().enumerate() {
+            if let Ok(edge_info) = view.get_edge_info(edge) {
+                let _ = (edge_info.way_id(), edge_info.decode_raw_shape::<f64>());
+                let _ = edge_info.names_and_types(true).count();
+            }
+            let edge_index = u32::try_from(index).expect("edge indexes fit in u32");
+            let _ = view.get_signs(edge_index, false);
+            let _ = view.get_signs_with_linguistics(edge_index, false);
+            let _ = view.get_turn_lanes(edge_index);
+            let _ = view.get_lane_connectivity(edge_index).len();
             let _ = view.get_predicted_speed(index, 0);
-            let _ = view.get_access_restrictions(
-                u32::try_from(index).expect("edge indexes fit in u32"),
-                EnumSet::all(),
-            );
+            let _ = view.get_access_restrictions(edge_index, EnumSet::all());
             let id = view
                 .graph_id()
-                .with_feature_index(index as u64)
+                .with_feature_index(u64::from(edge_index))
                 .expect("edge indexes fit in a graph ID");
             assert!(view.get_directed_edge(id).is_ok());
             let _ = view.get_opp_edge_index(id);
             let _ = view.get_ext_directed_edge(id);
+            for forward in [true, false] {
+                let _ = view
+                    .get_complex_restrictions(forward, id, EnumSet::all())
+                    .count();
+            }
+        }
+        for index in 0..=view.admins().len() {
+            let _ = view.get_admin_info(index);
         }
         let center = header.sw_corner();
         let _ = view
