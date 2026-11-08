@@ -251,7 +251,8 @@ impl RoadUse {
 
 /// Access permission by travel type.
 ///
-/// This is stored internally as a bit field.
+/// This is stored internally as a bit field,
+/// with the same bits as the `k*Access` constants in Valhalla's `baldr/graphconstants.h`.
 /// NOTE: While it is a 16-bit integer, the way it is stored in directed edges
 /// only allows for TWELVE bits to be used!
 #[derive(Debug, EnumSetType)]
@@ -269,7 +270,14 @@ pub enum Access {
     Wheelchair,
     Moped,
     Motorcycle,
-    GolfCart,
+    /// Bit 11 (2048), which has no travel mode.
+    ///
+    /// Valhalla 3.9.1 defines no constant for this bit,
+    /// but `kAllAccess` (4095) covers all 12 bits,
+    /// so the bit is set wherever Valhalla writes "all access".
+    /// Nothing in Valhalla grants or checks access by this bit alone.
+    /// (Valinor previously called it `GolfCart`, which no Valhalla release defines.)
+    Reserved,
     // NOTE: Only 12 bits are allowed to be used, so this enum cannot contain any more variants!
     // All = 4095,
 }
@@ -288,12 +296,15 @@ impl Access {
             Access::Wheelchair => 'w',
             Access::Moped => 'm',
             Access::Motorcycle => 'M',
-            Access::GolfCart => 'g',
+            Access::Reserved => 'r',
         }
     }
 }
 
 /// An enumeration set including all forms of vehicular access.
+///
+/// This matches `kVehicularAccess` in Valhalla 3.9.1 (1769):
+/// auto, truck, moped, motorcycle, taxi, bus, and HOV.
 pub const VEHICULAR_ACCESS: EnumSet<Access> = enum_set!(
     Access::Auto
         | Access::Truck
@@ -302,7 +313,6 @@ pub const VEHICULAR_ACCESS: EnumSet<Access> = enum_set!(
         | Access::Taxi
         | Access::Bus
         | Access::HOV
-        | Access::GolfCart
 );
 
 /// Bicycle network membership information.
@@ -401,7 +411,7 @@ mod tests {
     fn test_access_representation() {
         let set: EnumSet<Access> = EnumSet::from_repr(2048);
         assert_eq!(set.len(), 1);
-        assert!(set.contains(Access::GolfCart));
+        assert!(set.contains(Access::Reserved));
     }
 
     #[test]
@@ -409,5 +419,11 @@ mod tests {
         let set: EnumSet<Access> = EnumSet::all();
         assert_eq!(set.len(), 12);
         assert_eq!(set.as_repr(), 4095);
+    }
+
+    #[test]
+    fn test_vehicular_access_matches_mainline() {
+        // kVehicularAccess in Valhalla 3.9.1's baldr/graphconstants.h.
+        assert_eq!(crate::VEHICULAR_ACCESS.as_repr(), 1769);
     }
 }

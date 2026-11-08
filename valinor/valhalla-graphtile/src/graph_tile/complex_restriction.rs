@@ -427,7 +427,7 @@ pub(crate) mod tests {
         assert_eq!(r.to_graph_id().unwrap(), to);
         assert_eq!(r.vias(), &[via, from]);
         assert_eq!(r.restriction_type().unwrap(), RestrictionType::NoProbable);
-        assert_eq!(r.modes(), Access::Auto | Access::GolfCart);
+        assert_eq!(r.modes(), Access::Auto | Access::Reserved);
         assert_eq!(r.probability(), 42);
         assert_eq!(r.date_time(), Some(dt));
         assert!(all[1].date_time().is_none());

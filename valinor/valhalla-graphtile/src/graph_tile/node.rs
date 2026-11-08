@@ -714,8 +714,8 @@ mod test {
         assert!((f64::from(coord.x) - 1.443_632_1).abs() < 5e-6);
         assert!((f64::from(coord.y) - 42.495_322_5).abs() < 5e-6);
 
-        // Every mode except golf carts (access 2047 in Valhalla 3.9.1).
-        assert_eq!(node.access(), EnumSet::all() - Access::GolfCart);
+        // Every mode except the reserved bit (access 2047 in Valhalla 3.9.1).
+        assert_eq!(node.access(), EnumSet::all() - Access::Reserved);
 
         // The rest is cross-checked with Valhalla 3.9.1 (tools/oracle/cpp/records.cc).
         assert_eq!(node.edge_count(), 2);

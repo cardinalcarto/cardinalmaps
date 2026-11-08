@@ -1241,7 +1241,7 @@ mod tests {
             // This set includes one mode that matches every element in the fixture tile,
             // and another mode that matches none.
             for restriction in
-                tile.get_access_restrictions(edge_index, enum_set!(Access::Auto | Access::GolfCart))
+                tile.get_access_restrictions(edge_index, enum_set!(Access::Auto | Access::Reserved))
             {
                 found_partial_subset_count += 1;
                 assert_eq!(restriction.edge_index(), edge_index);
