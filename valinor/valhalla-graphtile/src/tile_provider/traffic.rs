@@ -315,9 +315,12 @@ impl TrafficTileProvider<true> {
 
 #[cfg(all(test, not(miri)))]
 mod tests {
+    use super::HEADER_SIZE;
     use crate::GraphId;
-    use crate::tile_provider::TrafficTileProvider;
-    use crate::traffic_tile::{SpeedValue, TrafficSpeed};
+    use crate::graph_tile::LookupError;
+    use crate::tile_provider::tarball::test_support::{TempFile, build_extract};
+    use crate::tile_provider::{GraphTileProviderError, TrafficTileProvider};
+    use crate::traffic_tile::{SpeedValue, TRAFFIC_TILE_VERSION, TrafficSpeed};
     use std::path::PathBuf;
 
     #[test]
@@ -358,12 +361,10 @@ mod tests {
             .join("fixtures")
             .join("andorra-traffic.tar");
 
-        // let tmp_path = PathBuf::from("/Users/ianthetechie/valhalla-docker/valhalla/traffic.tar");
-        let tmp_dir = option_env!("RUNNER_TEMP").unwrap_or("/tmp");
-        let tmp_path = PathBuf::from(tmp_dir).join("traffic-test-set-speed.tar");
-        std::fs::copy(fixture_path, &tmp_path).expect("Failed to copy");
+        // Work on a copy, so the fixture stays untouched
+        let tmp = TempFile::new(&std::fs::read(fixture_path).expect("Failed to read fixture"));
         let provider =
-            TrafficTileProvider::new_mutable(tmp_path).expect("Unable to init tile provider");
+            TrafficTileProvider::new_mutable(tmp.path()).expect("Unable to init tile provider");
         let graph_id =
             GraphId::try_from_components(0, 3015, 42).expect("Unable to create graph ID");
         let edge_speed = unsafe {
@@ -394,5 +395,131 @@ mod tests {
         };
         assert!(edge_speed.has_valid_speed());
         assert_eq!(edge_speed.overall_speed(), Some(DESIRED_SPEED));
+    }
+
+    /// Builds a traffic tile with the given header fields and room for `records` speeds.
+    fn traffic_tile(graph_id: GraphId, edge_count: u32, version: u32, records: usize) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&graph_id.value().to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes()); // last update
+        bytes.extend_from_slice(&edge_count.to_le_bytes());
+        bytes.extend_from_slice(&version.to_le_bytes());
+        bytes.extend_from_slice(&[0u8; 8]); // spare
+        assert_eq!(bytes.len(), HEADER_SIZE);
+        for i in 0..records {
+            // A recognizable value per record
+            bytes.extend_from_slice(&(i as u64 + 1).to_le_bytes());
+        }
+        bytes
+    }
+
+    fn tile_id() -> GraphId {
+        GraphId::try_from_components(2, 763_927, 0).expect("valid tile ID")
+    }
+
+    fn open(tile: Vec<u8>) -> (TempFile, TrafficTileProvider<false>) {
+        let file = TempFile::new(&build_extract(&[(tile_id(), tile)]));
+        let provider = TrafficTileProvider::new_readonly(file.path()).expect("valid extract");
+        (file, provider)
+    }
+
+    #[test]
+    fn reads_records_by_index() {
+        let (_file, provider) = open(traffic_tile(tile_id(), 3, TRAFFIC_TILE_VERSION, 3));
+        for i in 0..3u64 {
+            let edge = tile_id().with_feature_index(i).expect("valid ID");
+            // SAFETY: Nothing writes to the test file.
+            let speed = unsafe { provider.get_speeds_for_edge(edge) }.expect("record");
+            assert_eq!(speed.into_bits().get(), i + 1);
+        }
+    }
+
+    #[test]
+    fn out_of_range_edge_is_a_lookup_error() {
+        let (_file, provider) = open(traffic_tile(tile_id(), 3, TRAFFIC_TILE_VERSION, 3));
+        let edge = tile_id().with_feature_index(3).expect("valid ID");
+        // SAFETY: Nothing writes to the test file.
+        assert!(matches!(
+            unsafe { provider.get_speeds_for_edge(edge) },
+            Err(GraphTileProviderError::Lookup(LookupError::InvalidIndex))
+        ));
+    }
+
+    #[test]
+    fn missing_tile_is_not_available() {
+        let (_file, provider) = open(traffic_tile(tile_id(), 3, TRAFFIC_TILE_VERSION, 3));
+        let other = GraphId::try_from_components(2, 1, 0).expect("valid tile ID");
+        // SAFETY: Nothing writes to the test file.
+        assert!(matches!(
+            unsafe { provider.get_speeds_for_edge(other) },
+            Err(GraphTileProviderError::TileNotAvailable(id)) if id == other
+        ));
+    }
+
+    #[test]
+    fn unsupported_version_is_an_error() {
+        let (_file, provider) = open(traffic_tile(tile_id(), 3, TRAFFIC_TILE_VERSION + 1, 3));
+        // SAFETY: Nothing writes to the test file.
+        assert!(matches!(
+            unsafe { provider.get_speeds_for_edge(tile_id()) },
+            Err(GraphTileProviderError::UnsupportedTrafficTileVersion { version, .. })
+                if version == TRAFFIC_TILE_VERSION + 1
+        ));
+    }
+
+    #[test]
+    fn truncated_tiles_are_errors() {
+        // The header claims more edges than the tile has records for
+        let (_file, provider) = open(traffic_tile(tile_id(), 1_000_000, TRAFFIC_TILE_VERSION, 3));
+        let ok = tile_id().with_feature_index(2).expect("valid ID");
+        // SAFETY: Nothing writes to the test file.
+        unsafe { provider.get_speeds_for_edge(ok) }.expect("record within the tile");
+        let beyond = tile_id().with_feature_index(3).expect("valid ID");
+        // SAFETY: Nothing writes to the test file.
+        assert!(matches!(
+            unsafe { provider.get_speeds_for_edge(beyond) },
+            Err(GraphTileProviderError::TruncatedTrafficTile {
+                size: 56,
+                required: 64,
+                ..
+            })
+        ));
+
+        // Too small for a header
+        let (_file, provider) = open(vec![0u8; 16]);
+        // SAFETY: Nothing writes to the test file.
+        assert!(matches!(
+            unsafe { provider.get_speeds_for_edge(tile_id()) },
+            Err(GraphTileProviderError::TruncatedTrafficTile {
+                size: 16,
+                required: 32,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn writes_are_bounds_checked() {
+        let file = TempFile::new(&build_extract(&[(
+            tile_id(),
+            traffic_tile(tile_id(), 2, TRAFFIC_TILE_VERSION, 2),
+        )]));
+        let provider = TrafficTileProvider::new_mutable(file.path()).expect("valid extract");
+        let speed = TrafficSpeed::single_speed(SpeedValue::try_new(42).unwrap(), None);
+        let beyond = tile_id().with_feature_index(2).expect("valid ID");
+        // SAFETY: Only this provider writes to the test file.
+        assert!(unsafe { provider.update_speed_for_edge(beyond, speed) }.is_err());
+
+        let edge = tile_id().with_feature_index(1).expect("valid ID");
+        // SAFETY: Only this provider writes to the test file.
+        unsafe { provider.update_speed_for_edge(edge, speed) }.expect("record");
+        // SAFETY: Only this provider writes to the test file.
+        let read = unsafe { provider.get_speeds_for_edge(edge) }.expect("record");
+        assert_eq!(read.overall_speed(), Some(42));
+        // The neighboring record is untouched
+        let first = tile_id().with_feature_index(0).expect("valid ID");
+        // SAFETY: Only this provider writes to the test file.
+        let untouched = unsafe { provider.get_speeds_for_edge(first) }.expect("record");
+        assert_eq!(untouched.into_bits().get(), 1);
     }
 }
