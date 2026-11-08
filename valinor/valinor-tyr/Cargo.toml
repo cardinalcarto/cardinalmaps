@@ -15,5 +15,8 @@ thiserror = { workspace = true }
 valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
 
+[dev-dependencies]
+insta = { workspace = true }
+
 [lints]
 workspace = true

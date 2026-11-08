@@ -10,6 +10,8 @@
 
 extern crate alloc;
 
+pub mod costing_options;
+pub mod front;
 pub mod tyr;
 
 #[cfg(test)]

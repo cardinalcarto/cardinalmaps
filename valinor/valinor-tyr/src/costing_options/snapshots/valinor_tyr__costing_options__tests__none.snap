@@ -1,0 +1,14 @@
+---
+source: valinor-tyr/src/costing_options/tests.rs
+expression: costing
+---
+Costing {
+    r#type: None,
+    has_options: None,
+    has_name: Some(
+        Name(
+            "none",
+        ),
+    ),
+    has_filter_closures: None,
+}
