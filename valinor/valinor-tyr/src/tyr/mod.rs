@@ -16,6 +16,11 @@ mod trip;
 #[allow(dead_code, reason = "used by the serializers that follow")]
 mod writer;
 
+mod gpx;
+mod openlr;
+mod pbf;
+mod valhalla;
+
 use valhalla_proto::Api;
 use valhalla_proto::options::Format;
 use valhalla_response::{ErrorCode, ValhallaError};
@@ -26,6 +31,8 @@ pub const JSON_CONTENT_TYPE: &str = "application/json;charset=utf-8";
 pub const PBF_CONTENT_TYPE: &str = "application/x-protobuf";
 /// The `Content-Type` of GPX responses (mainline's `GPX_MIME`).
 pub const GPX_CONTENT_TYPE: &str = "application/gpx+xml;charset=utf-8";
+/// The `Content-Disposition` mainline sends with GPX responses (its `ATTACHMENT` header).
+pub const GPX_CONTENT_DISPOSITION: &str = "attachment; filename=route.gpx";
 
 /// A serialized response body and its `Content-Type`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,7 +44,6 @@ pub struct Response {
 }
 
 impl Response {
-    #[allow(dead_code, reason = "used by the serializers that follow")]
     fn json(body: String) -> Self {
         Self {
             content_type: JSON_CONTENT_TYPE,
@@ -62,9 +68,10 @@ impl Response {
 pub fn serialize_directions(api: &mut Api) -> Result<Response, ValhallaError> {
     let format = api.options.as_ref().map_or(0, |options| options.format);
     match Format::try_from(format) {
-        Ok(Format::Json | Format::Osrm | Format::Gpx | Format::Pbf) => {
-            Err(unknown("this format's serializer is not implemented yet"))
-        }
+        Ok(Format::Json) => valhalla::serialize(api),
+        Ok(Format::Gpx) => gpx::serialize(api),
+        Ok(Format::Pbf) => pbf::serialize(api),
+        Ok(Format::Osrm) => Err(unknown("this format's serializer is not implemented yet")),
         Ok(Format::Geotiff | Format::Mvt) | Err(_) => {
             Err(unknown("the format has no route serializer"))
         }
