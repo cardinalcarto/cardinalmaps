@@ -20,7 +20,8 @@ const WORKSPACES: NonZeroUsize = NonZeroUsize::new(2).unwrap();
 /// A search starts with room for this many labels anyway, so ordinary routes don't allocate
 /// as they go. After a longer search, the rest is given back as soon as the route finishes,
 /// rather than kept for the next one as mainline's server defaults (a million labels or more)
-/// would, so an idle router holds at most a few megabytes per workspace.
+/// would. A label is 72 bytes, so an idle workspace holds at most about 5 MB per search tree
+/// (20 MB across its two bidirectional trees and two time-dependent searches).
 /// This only bounds idle memory, not how far a search can go.
 const RETAINED_LABELS: usize = 1 << 16;
 
