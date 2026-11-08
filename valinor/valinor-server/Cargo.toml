@@ -1,0 +1,25 @@
+[package]
+name = "valinor-server"
+description = "A Valhalla-compatible HTTP routing server: valinor-router behind axum."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+axum = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true, features = ["net", "signal", "time"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+valinor-router = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tower = { workspace = true }
+
+[lints]
+workspace = true
