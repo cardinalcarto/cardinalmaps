@@ -18,8 +18,37 @@ use std::sync::Arc;
 use thiserror::Error;
 use zerocopy::FromBytes;
 
+/// An owned handle that can lend out a [`GraphTileView`] of its tile.
+///
+/// Every handle a [`GraphTileProvider`](crate::tile_provider::GraphTileProvider) in this crate
+/// returns implements this,
+/// so code that keeps handles (such as a cache) can still run
+/// [`with_tile_containing`](crate::tile_provider::GraphTileProvider::with_tile_containing)
+/// closures, which take a view.
 pub trait GraphTileHandle {
+    /// A view of the tile. Views are a handful of references, so this is cheap.
     fn tile_view(&'_ self) -> GraphTileView<'_>;
+}
+
+impl GraphTileHandle for OwnedGraphTileHandle {
+    #[inline]
+    fn tile_view(&'_ self) -> GraphTileView<'_> {
+        self.borrow_dependent().clone()
+    }
+}
+
+impl GraphTileHandle for MmapGraphTileHandle {
+    #[inline]
+    fn tile_view(&'_ self) -> GraphTileView<'_> {
+        self.borrow_dependent().clone()
+    }
+}
+
+impl<T: GraphTileHandle> GraphTileHandle for Arc<T> {
+    #[inline]
+    fn tile_view(&'_ self) -> GraphTileView<'_> {
+        T::tile_view(self)
+    }
 }
 
 self_cell! {

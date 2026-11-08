@@ -6,6 +6,7 @@
 //! - [`TarballTileProvider`] reads a memory-mapped tarball extract
 //!   (what production servers and mobile apps use).
 //! - [`DirectoryGraphTileProvider`] reads a directory of tile files.
+//! - [`CachingTileProvider`] keeps the tiles another provider has parsed (bounded and thread-safe).
 //! - [`TrafficTileProvider`] reads (and writes) live traffic tiles.
 //!   It does not implement [`GraphTileProvider`], since traffic tiles are not graph tiles.
 //!
@@ -26,6 +27,7 @@ use num_traits::FromPrimitive;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+mod caching;
 mod consistency;
 mod directory;
 mod error;
@@ -36,6 +38,7 @@ mod traffic;
 use crate::graph_tile::{
     DirectedEdge, GraphTile, GraphTileView, LookupError, NodeInfo, OpposingEdgeIndex,
 };
+pub use caching::CachingTileProvider;
 pub use consistency::{TileBuildIds, TileHashMismatch, TilesetVerification};
 pub use directory::DirectoryGraphTileProvider;
 pub use error::{
