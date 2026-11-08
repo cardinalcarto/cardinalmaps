@@ -18,6 +18,7 @@ also gets a decoded text version (`*.txt`) for humans and agents to read.
 Output layout:
     <out-dir>/<case>/<format>/request.json
     <out-dir>/<case>/<format>/response.json       (status code in response.status)
+    <out-dir>/<case>/pbf/response.1.bin           (PBF responses, errors included: a serialized Api)
     <out-dir>/<case>/<format>/loki-thor/*.bin     (raw frames; frame 1 is the Api message)
     <out-dir>/<case>/<format>/thor-odin/*.bin
 """
@@ -97,6 +98,10 @@ def main() -> None:
         variants = {"json": case["request"]}
         if action in ROUTE_LIKE:
             variants["osrm"] = {**case["request"], **OSRM_OPTIONS}
+            # Mainline's Odin builds directions and serializes the response in one process,
+            # so its `directions` output never crosses a tapped boundary.
+            # A PBF response carries it (with `info`), which makes it Odin's reference output.
+            variants["pbf"] = {**case["request"], "format": "pbf"}
 
         for fmt, request in variants.items():
             out = args.out_dir / case["name"] / fmt
@@ -109,11 +114,20 @@ def main() -> None:
             new = wait_for_quiet(args.tap_dir, before)
 
             (out / "request.json").write_text(json.dumps({"action": action, "request": request}, indent=2) + "\n")
-            try:
-                parsed = json.loads(body)
-            except json.JSONDecodeError:
-                sys.exit(f"{case['name']}/{fmt}: non-JSON response (status {status}): {body[:200]!r}")
-            (out / "response.json").write_text(json.dumps({"status": status, "body": parsed}, indent=2) + "\n")
+            if fmt == "pbf":
+                # PBF responses are a serialized `valhalla.Api`, errors included
+                # (those carry only `info`, with the error and its statistic).
+                (out / "response.status").write_text(f"{status}\n")
+                response = out / "response.1.bin"
+                response.write_bytes(body)
+                if args.protos:
+                    decode(args.protos, response)
+            else:
+                try:
+                    parsed = json.loads(body)
+                except json.JSONDecodeError:
+                    sys.exit(f"{case['name']}/{fmt}: non-JSON response (status {status}): {body[:200]!r}")
+                (out / "response.json").write_text(json.dumps({"status": status, "body": parsed}, indent=2) + "\n")
 
             for path in sorted(new):
                 tap = path.parent.name
