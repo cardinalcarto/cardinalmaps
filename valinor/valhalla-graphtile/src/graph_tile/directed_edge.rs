@@ -449,22 +449,23 @@ struct StopImpact {
 /// Stores either the stop impact or the transit line identifier.
 /// Since transit lines are schedule-based, they have no need for edge transition logic,
 /// so we can freely share this field.
-#[repr(C)]
+///
+/// Mainline declares a union; both of its members are the same four bytes,
+/// so this keeps the raw word and reads it as either.
+/// (Deriving `IntoBytes` for a union needs `--cfg zerocopy_derive_union_into_bytes`,
+/// which crates that depend on this one would all have to set,
+/// and which cargokit's Android builds override with their own `RUSTFLAGS`.)
+#[repr(transparent)]
 #[derive(FromBytes, IntoBytes, Immutable, Unaligned, Copy, Clone)]
-union StopOrLine {
-    stop_impact: StopImpact,
-    line_id: U32<LE>,
-}
+struct StopOrLine(U32<LE>);
 
 impl StopOrLine {
     const fn stop_impact(self) -> StopImpact {
-        // SAFETY: Both variants are four plain bytes, valid for any bit pattern.
-        unsafe { self.stop_impact }
+        StopImpact::from_bits(self.0)
     }
 
     const fn line_id(self) -> u32 {
-        // SAFETY: Both variants are four plain bytes, valid for any bit pattern.
-        unsafe { self.line_id.get() }
+        self.0.get()
     }
 }
 
