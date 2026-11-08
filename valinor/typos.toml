@@ -1,2 +1,6 @@
 [default.extend-words]
 raison = "raison"
+
+[files]
+# Mainline's narrative locales are translations, copied verbatim.
+extend-exclude = ["illuvatar/locales/*.json"]
