@@ -1,7 +1,5 @@
 #version 460 core
 
-#include <common.glsl>
-
 in vec4 v_color;
 in vec4 v_stroke_color;
 in vec2 v_extrude;

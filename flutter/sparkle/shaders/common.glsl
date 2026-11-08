@@ -1,4 +1,9 @@
-// Included by every shader. The `Draw` block matches `DrawUniforms` in
+// Included only by shaders that read something here: impellerc gives a block or sampler
+// that a shader declares but never uses binding 0, and still lists it in the shader's
+// reflection, which puts duplicate bindings in the pipeline's Vulkan descriptor set
+// layout, which Vulkan forbids.
+//
+// The `Draw` block matches `DrawUniforms` in
 // `crates/sparkle_flutter/src/render/view.rs` (std140), and `dem` is the DEM tile under the
 // drawn tile, as `sparkle::dem::DemData::to_rgba` makes it, border included (a 1x1
 // placeholder without terrain).

@@ -9,9 +9,6 @@
 // `extra[3]`: the horizon's y in normalized device coordinates on the plane,
 //     `sky-horizon-blend`, `atmosphere-blend`, the globe factor.
 
-#define SPARKLE_VERTEX
-#include <common.glsl>
-
 // A corner of the unit square, drawn as a strip over the viewport.
 in vec2 position;
 

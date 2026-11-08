@@ -4,9 +4,6 @@
 //
 // `extra[0].x`: `heatmap-opacity`; `.y`: the ramp's width in texels.
 
-#define SPARKLE_VERTEX
-#include <common.glsl>
-
 // A corner of the unit square, drawn as a strip.
 in vec2 position;
 

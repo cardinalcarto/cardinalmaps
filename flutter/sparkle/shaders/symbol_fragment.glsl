@@ -1,8 +1,6 @@
 // Text and icons, the fragment stage. Included by `symbol_text.frag` and
 // `symbol_icon.frag`, which define `IS_TEXT` for text.
 
-#include <common.glsl>
-
 uniform sampler2D atlas;
 
 in vec2 v_tex;

@@ -2,9 +2,6 @@
 // A fill-extrusion layer's offscreen image over the map; see
 // `fill_extrusion_composite.frag`.
 
-#define SPARKLE_VERTEX
-#include <common.glsl>
-
 // A corner of the unit square, drawn as a strip over the whole screen.
 in vec2 position;
 

@@ -1,6 +1,4 @@
 
-#include <common.glsl>
-
 uniform sampler2D image;
 
 const float MODE_DASH = 1.0;
