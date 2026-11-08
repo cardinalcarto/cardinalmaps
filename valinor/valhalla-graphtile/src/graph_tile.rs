@@ -64,10 +64,13 @@ pub use admin::Admin;
 pub use bounding_circle::{BoundingCircle, DiscretizedBoundingCircle};
 pub use builder::GraphTileBuilder;
 pub use checksum::{BuildId, TileHash, TileHasher};
-pub use directed_edge::{DirectedEdge, DirectedEdgeExt};
+pub use directed_edge::{
+    CycleLane, DirectedEdge, DirectedEdgeExt, HovType, LocalEdgeMask, SacScale, SpeedType,
+    TurnType, UnknownValueError,
+};
 pub use edge_info::EdgeInfo;
 pub use header::{GraphTileHeader, GraphTileHeaderError};
-pub use node::{NodeInfo, NodeTransition};
+pub use node::{IntersectionType, NodeInfo, NodeTransition, NodeType, Traversability};
 pub use sign::{Sign, SignType};
 pub use transit::{TransitDeparture, TransitRoute, TransitSchedule, TransitStop, TransitTransfer};
 pub use turn_lane::TurnLane;
