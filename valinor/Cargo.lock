@@ -2560,8 +2560,11 @@ dependencies = [
 name = "valinor-sif"
 version = "0.1.0"
 dependencies = [
+ "enumset",
  "insta",
+ "jiff",
  "thiserror 2.0.21",
+ "valhalla-graphtile",
  "valhalla-proto",
  "valhalla-response",
 ]

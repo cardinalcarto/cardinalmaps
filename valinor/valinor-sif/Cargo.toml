@@ -9,7 +9,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+enumset = { workspace = true }
+# Timed restrictions need the IANA time zone rules; see `src/datetime.rs`.
+jiff = { workspace = true }
 thiserror = { workspace = true }
+valhalla-graphtile = { workspace = true }
 valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
 

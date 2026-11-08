@@ -139,6 +139,70 @@ per tile and kind of line, plus a sample of the lines.
 When the test reports a difference, it writes Valinor's dump to a temporary file
 to diff against `sections.txt`.
 
+### Costing (Sif)
+
+[`cpp/sif.cc`](cpp/sif.cc) builds mainline's costings with its own option parsing and
+`CostFactory`, for each costing in
+[`valinor-sif/fixtures/oracle/costings.tsv`](../../valinor-sif/fixtures/oracle/costings.tsv)
+(31 option sets across auto, pedestrian, and bicycle, including Thor's bidirectional
+and multimodal settings), and dumps their results over a tile set:
+edge costs (without a time and at several times of week), Loki's edge and node filters,
+`Allowed` and `AllowedReverse` at several times, `TransitionCost` and `TransitionCostReverse`,
+`TurnType`, `Restricted` along matching and diverging paths for every complex restriction,
+and the A* factors and hierarchy limits.
+Each line holds the inputs and mainline's result (floats as bits),
+and the `oracle_tests` in `valinor-sif` repeat each call and compare exactly.
+A second mode dumps `is_conditional_active` for generated time domains,
+times, and time zones.
+[`sif-oracle.sh`](sif-oracle.sh) runs it; see the comments at the top of both files.
+
+```shell
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" valinor-valhalla-dev:3.9.1 /w/build-sif.sh
+tools/oracle/sif-oracle.sh costing valhalla-graphtile/fixtures/andorra-tiles \
+  valinor-sif/fixtures/oracle/andorra-sample.txt 5000 200 150
+tools/oracle/sif-oracle.sh costing valinor-sif/fixtures/seattle-tiles \
+  valinor-sif/fixtures/oracle/seattle-restrictions.txt 1000000000 1000000000 1 restrictions
+tools/oracle/sif-oracle.sh costing valinor-sif/fixtures/andorra-predicted-tiles \
+  valinor-sif/fixtures/oracle/andorra-predicted-sample.txt 1000000000 17 1000000000
+tools/oracle/sif-oracle.sh conditional valinor-sif/fixtures/oracle/conditional.txt 3000
+```
+
+The committed dumps are samples (the strides are the last arguments):
+the Andorra fixture tiles have no timed or local-traffic access restrictions
+for these costings, so `seattle-tiles` holds one level 0 tile from the Seattle build,
+whose timed access and complex restrictions are in `America/Los_Angeles`.
+Larger dumps (every edge and every 50th node of the fixture tiles is about 580 MB)
+are checked with the ignored test, in release mode:
+
+```shell
+tools/oracle/sif-oracle.sh costing valhalla-graphtile/fixtures/andorra-tiles /tmp/full.txt 50 1 1
+VALINOR_SIF_DUMP=/tmp/full.txt cargo test --release -p valinor-sif full_dump -- --ignored
+```
+
+`VALINOR_SIF_TILES` points the test at another tile set
+(the focus `elevators`, for example, checks the elevator level penalties in Seattle).
+
+#### Predicted speeds
+
+None of the oracle builds has predicted speeds on many edges,
+so `andorra-predicted-tiles` comes from the fixture tiles with generated, varied profiles
+(rush hours, flat, congested, faster than the edge, and noisy;
+see [`predicted-profiles.py`](predicted-profiles.py)),
+which `valinor-sif` checks at several times of week:
+
+```shell
+work=/mnt/maps/cardinal/valhalla-oracle/andorra-predicted
+mkdir -p "$work/csv" && cp -r valhalla-graphtile/fixtures/andorra-tiles "$work/tiles"
+cp /mnt/maps/cardinal/valhalla-oracle/andorra-oracle/valhalla.json "$work/"
+tools/oracle/sif-oracle.sh edges "$work/tiles" "$work/edges.tsv"
+podman run --rm -v "$PWD/tools/oracle:/oracle:ro,z" -v "$work:/work:z" \
+  valinor-valhalla-dev:3.9.1 python3 -I /oracle/predicted-profiles.py /work/edges.tsv /work/csv
+tools/oracle/build-tiles.sh predicted "$work" "$work/csv"
+```
+
+The committed tiles are `0/003/015` and `2/000/763/927` of `$work/tiles-predicted`.
+The profiles are a hash of each edge ID, so a rebuild gives the same tiles.
+
 The Containerfile adds a compiler and development headers to the pinned image.
 (Its `FROM` line names the tag; keep it in step with [`valhalla-image`](valhalla-image).)
 
