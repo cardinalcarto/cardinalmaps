@@ -2618,6 +2618,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "valinor-thor"
+version = "0.1.0"
+dependencies = [
+ "jiff",
+ "serde_json",
+ "thiserror 2.0.21",
+ "valhalla-graphtile",
+ "valhalla-proto",
+ "valhalla-response",
+ "valinor-sif",
+]
+
+[[package]]
 name = "valinor-tyr"
 version = "0.1.0"
 dependencies = [

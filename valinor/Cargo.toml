@@ -15,6 +15,7 @@ members = [
     "valinor-loki-service",
     "valinor-sif",
     "valinor-tap",
+    "valinor-thor",
     "valinor-tyr",
 ]
 
@@ -75,6 +76,7 @@ valhalla-microservice = { path = "valhalla-microservice" }
 valhalla-response = { path = "valhalla-response" }
 valinor-loki = { path = "valinor-loki" }
 valinor-sif = { path = "valinor-sif" }
+valinor-thor = { path = "valinor-thor" }
 valinor-tyr = { path = "valinor-tyr" }
 walkdir = "2.5.0"
 zerocopy = "0.8.63"

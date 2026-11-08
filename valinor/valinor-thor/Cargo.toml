@@ -1,0 +1,22 @@
+[package]
+name = "valinor-thor"
+description = "Valhalla-compatible path search (mainline's Thor): the best paths between correlated locations."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Location times are formatted in their time zones, as mainline's `DateTime::offset_date` does.
+jiff = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+valhalla-graphtile = { workspace = true }
+valhalla-proto = { workspace = true }
+valhalla-response = { workspace = true }
+valinor-sif = { workspace = true }
+
+[lints]
+workspace = true
