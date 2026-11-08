@@ -778,7 +778,8 @@ fn summary(
                 .get_mut(i)
                 .ok_or_else(|| unknown("a trip node has more recosts than the request has"))?;
             match recost.elapsed_cost {
-                Some(cost) if *time >= 0.0 => *time += cost.seconds,
+                // Mainline tests `time < 0`, so a NaN time keeps accumulating.
+                Some(cost) if (*time).is_nan() || *time >= 0.0 => *time += cost.seconds,
                 _ => *time = -1.0,
             }
         }
