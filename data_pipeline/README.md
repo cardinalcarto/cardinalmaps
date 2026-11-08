@@ -79,11 +79,10 @@ builds its tiles: with pedestrian areas, bounding circles, administrative areas
 (`routing-admins`) and time zones (`routing-timezones`, built once from the
 timezone-boundary-builder release the image names). There are no landmarks,
 since mainline's landmarks step makes tiles that route incorrectly (see
-`valinor/tools/oracle/README.md`), and no elevation, since Valhalla reads only
-its own `.hgt` tiles and the pipeline has none. The tiles are built in the
-`routing-tiles-work` cache volume, which is emptied afterwards: a planet's are
-many tens of gigabytes before they're packed into the tarball, which is about
-as large again.
+`valinor/tools/oracle/README.md`), and elevation only with `--gedtm` (below).
+The tiles are built in the `routing-tiles-work` cache volume, which is emptied
+afterwards: a planet's are many tens of gigabytes before they're packed into
+the tarball, which is about as large again.
 
 - `--speeds` sets `mjolnir.default_speeds_config`: default speeds by country or
   subdivision, density and road class, for edges without a `maxspeed`. Without
@@ -93,6 +92,58 @@ as large again.
   but the speeds were measured from Mapillary GPS traces matched to
   OpenStreetMap, under Mapillary's terms, so check that its terms suit your
   deployment before you use it.
+- `--gedtm` gives edges elevation (`additional_data.elevation`): heights along
+  them and their grades, which bicycle costing weighs (`use_hills`) and routes
+  and `trace_attributes` report (`elevation_interval`, `edge.mean_elevation`,
+  grades). It's where GDAL, in the build's container, reads
+  [GEDTM](https://zenodo.org/records/14900180) v1.2, the bare earth model the
+  topographic tiles use, from a server that answers range requests.
+  `--gedtm-service` is that server, if it's on this machine. Without
+  `--gedtm`, edges have no elevation. `build` takes both too.
+
+### Elevation
+
+Mainline Valhalla reads elevation only from its own `.hgt` tiles, 1x1 degree
+at 1 arc second. With `--gedtm`, the build stops before the elevation stage,
+cuts the cells under the graph tiles and in the extract's bounding box (from
+its header) out of GEDTM (`routing_elevation.py`), and finishes. The tiles are
+cut with the alignment and units of `topo_pipeline/scripts/tile_gedtm.sh`,
+which refuses any other layout than v1.2's, and are gzipped. Cells with no
+data, like open ocean, are skipped, as are cells outside GEDTM's 65S to 85N,
+whose edges get no elevation. They're cut into the `routing-tiles-work` cache
+volume beside the graph tiles and deleted with them. Only the build needs
+them: the tile builder samples them into each edge, so the release doesn't
+carry them, and `height` requests, which read `.hgt` tiles when they're
+served, aren't answered.
+
+GEDTM is one file of 432GB, and isn't passed in as a file: a file passed to
+Dagger is copied into the engine's store, and stays there until garbage
+collection reclaims it. Instead GDAL reads the blocks it needs over HTTP
+(`/vsicurl/`), from a server for the file on this machine, which the build
+reaches as host `gedtm`. Any file server that answers range requests will do,
+such as Caddy's, in rootless podman:
+
+```
+podman run -d --rm --name gedtm-http -p 127.0.0.1:8080:8080 \
+  -v /path/to/gedtm:/srv:ro,z docker.io/library/caddy:2.11.7-alpine \
+  caddy file-server --root /srv --listen :8080
+dagger -m data_pipeline api call routing-tiles --osm=./region.osm.pbf \
+  --gedtm=/vsicurl/http://gedtm:8080/gedtm_rf_m_30m_s_20060101_20151231_go_epsg.4326.3855_v1.2.tif \
+  --gedtm-service=tcp://localhost:8080 -o routing
+podman stop gedtm-http
+```
+
+The cut tiles are 6 to 16MB each. Washington's 47 (of 52 cells in its
+bounding box) are 0.55GB, cut in 10 seconds, beside 2.2GB of graph tiles. GEDTM
+has data in about 18,600 cells, so a planet's would be around 150 to 220GB,
+cut in about an hour, in the cache volume for the length of the build.
+
+The engine's cache keys a run on the URL, not on what's behind it, so after
+replacing the file behind the same URL, build with a different one, such as
+another port.
+
+GEDTM is under CC BY 4.0, so a deployment that shows routes' elevation needs
+to credit it; see "Data credit" in `topo_pipeline/README.md`.
 
 Routing tiles read the extract without POI identifiers, so `build` can reuse
 them from the engine's cache when only the POI database has changed.
