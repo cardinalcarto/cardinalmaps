@@ -1,9 +1,38 @@
 //! # Traffic tile support
 //!
 //! This module provides data structures for working with Valhalla live traffic tiles.
-//! These follow a different format from the routing graph.
+//! These follow a different format from the routing graph:
+//! a [`TrafficTileHeader`] followed by one [`TrafficSpeed`] per directed edge
+//! of the matching graph tile.
+//! This is the layout in mainline's `baldr/traffictile.h` (3.9.1).
+//!
+//! Live traffic is outside the scope of routing in Valinor:
+//! [`select_speed`](crate::graph_tile::predicted_speeds::select_speed)
+//! picks speeds as mainline does with no traffic tile.
+//! This module is kept for reading and writing traffic tiles for other Valhalla systems.
+//!
+//! ## Shared memory
+//!
+//! Traffic tiles are meant to be memory mapped and updated in place by another process
+//! while routers read them.
+//! The types here are plain values:
+//! [`TrafficSpeed`] is a `u64` bitfield (little endian) with no interior references,
+//! so reading one means copying its 8 bytes out of the map, once,
+//! with a volatile read, and then decoding the copy.
+//! The traffic tile provider ([`crate::tile_provider::TrafficTileProvider`])
+//! does exactly that, and documents the safety requirements of the memory map itself.
+//!
+//! Copying first is stronger than mainline,
+//! which reads each bitfield member straight from volatile memory,
+//! so a concurrent update can mix two versions of an edge's fields within one check.
+//! Neither guarantees a single atomic 64-bit read:
+//! [`TrafficSpeed`] has an alignment of 1 so that it can be read from any offset,
+//! which leaves the compiler free to split the read
+//! (in practice, the entries are 8-byte aligned in a tile and the read is a single load
+//! on 64-bit targets).
+//!
+//! Nothing in this module is `unsafe`, and none of it panics.
 
-use crate::traffic_tile::TrafficSpeedBuilderError::{SectionLengthExceedsEdge, TooManySegments};
 use bitfield_struct::bitfield;
 use nutype::nutype;
 #[cfg(feature = "serde")]
@@ -30,7 +59,7 @@ pub const MAX_CONGESTION_VAL: u8 = 63;
 
 /// The Valhalla traffic tile version.
 /// See the note on the `traffic_tile_version` field.
-/// In Valhalla, this is currently tied to the Valhalla major version.
+/// In Valhalla, this is the major version (`VALHALLA_VERSION_MAJOR`), which is 3 for 3.9.1.
 pub const TRAFFIC_TILE_VERSION: u32 = 3;
 
 /// The header for a traffic tile.
@@ -59,6 +88,7 @@ pub struct TrafficTileHeader {
 }
 
 impl TrafficTileHeader {
+    #[inline]
     pub fn directed_edge_count(&self) -> u32 {
         self.directed_edge_count.get()
     }
@@ -67,6 +97,8 @@ impl TrafficTileHeader {
     ///
     /// This is currently tied to the Valhalla major version number,
     /// and can be verified against [`TRAFFIC_TILE_VERSION`] to ensure that we understand the file.
+    /// (Mainline treats every edge of a tile with another version as having no live speed.)
+    #[inline]
     pub fn traffic_tile_version(&self) -> u32 {
         self.traffic_tile_version.get()
     }
@@ -96,6 +128,7 @@ impl SpeedValue {
     /// Converts the speed value in kph to the encoded format for storage in a traffic tile.
     ///
     /// The encoding uses 7 bits of precision and quantizes to a resolution of 2kph.
+    #[inline]
     pub const fn into_encoded_value(self) -> u8 {
         self.into_inner() >> 1
     }
@@ -115,6 +148,24 @@ impl SpeedValue {
 #[cfg_attr(feature = "serde", nutype(const_fn, derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize), validate(greater=0, less_or_equal=MAX_CONGESTION_VAL)))]
 #[cfg_attr(not(feature = "serde"), nutype(const_fn, derive(Copy, Clone, Eq, PartialEq, Debug), validate(greater=0, less_or_equal=MAX_CONGESTION_VAL)))]
 pub struct CongestionValue(u8);
+
+/// One of the (up to) three segments a [`TrafficSpeed`] divides an edge into.
+///
+/// Mainline calls these subsegments 0, 1, and 2.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TrafficSegment {
+    /// From the start of the edge to `breakpoint1`.
+    First,
+    /// From `breakpoint1` to `breakpoint2`.
+    Second,
+    /// From `breakpoint2` to the end of the edge.
+    Third,
+}
+
+impl TrafficSegment {
+    /// Every segment, in order along the edge.
+    pub const ALL: [Self; 3] = [Self::First, Self::Second, Self::Third];
+}
 
 /// The traffic conditions along a single segment in a traffic tile.
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
@@ -145,6 +196,10 @@ pub enum SegmentTrafficInfo {
 /// For long edges with variable traffic conditions (e.g., motorways),
 /// this structure allows breaking the edge up into 3 segments,
 /// each with their own speed and congestion info.
+///
+/// The accessors follow mainline's `TrafficSpeed` (`speed_valid`, `closed`, `get_overall_speed`).
+/// Segment-level accessors take a [`TrafficSegment`] rather than mainline's index,
+/// so there's no out-of-range case.
 #[bitfield(u64,
     repr = U64<LE>,
     from = bit_twiddling_helpers::conv_u64le::from_inner,
@@ -194,10 +249,11 @@ pub struct TrafficSpeed {
     _spare: u8,
 }
 
-// FIXME: These APIs are straight ports, but they kinda suck.
 impl TrafficSpeed {
     /// Returns true if the edge has valid speed information.
     /// NB: This information may indicate that the road is closed!
+    ///
+    /// This is mainline's `speed_valid`.
     #[inline]
     pub const fn has_valid_speed(&self) -> bool {
         self.breakpoint1() != 0 && self.overall_encoded_speed() != UNKNOWN_TRAFFIC_SPEED_RAW
@@ -215,27 +271,24 @@ impl TrafficSpeed {
         }
     }
 
-    /// Gets the traffic flow information for a segment within the tile.
-    /// Use this when traversing only part of the segment.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `segment_index` is greater than 2.
+    /// Gets the traffic flow information for a segment of the edge.
+    /// Use this when traversing only part of the edge.
     #[inline]
-    pub const fn segment_info(&self, segment_index: u8) -> SegmentTrafficInfo {
-        let (raw, breakpoint, congestion) = match segment_index {
-            0 => (
+    pub const fn segment_info(&self, segment: TrafficSegment) -> SegmentTrafficInfo {
+        let (raw, breakpoint, congestion) = match segment {
+            TrafficSegment::First => (
                 self.encoded_speed1(),
                 self.breakpoint1(),
                 self.congestion1(),
             ),
-            1 => (
+            TrafficSegment::Second => (
                 self.encoded_speed2(),
                 self.breakpoint2(),
                 self.congestion2(),
             ),
-            2 => (
+            TrafficSegment::Third => (
                 self.encoded_speed3(),
+                // The third segment runs to the end of the edge, if it exists.
                 if self.breakpoint2() != 0 && self.breakpoint2() != 255 {
                     255
                 } else {
@@ -243,7 +296,6 @@ impl TrafficSpeed {
                 },
                 self.congestion3(),
             ),
-            _ => panic!("Illegal segment index; must be less than 3"),
         };
 
         if breakpoint == 0 || raw == UNKNOWN_TRAFFIC_SPEED_RAW {
@@ -264,6 +316,7 @@ impl TrafficSpeed {
 
     /// Returns true if the edge is completely closed.
     ///
+    /// This is mainline's `closed()`.
     /// Note that this does not mean all segments are passable!
     /// See [`TrafficSpeed::is_segment_closed`] to get segment-level detail.
     ///
@@ -278,33 +331,34 @@ impl TrafficSpeed {
     ///
     /// Note that it may be partially closed, so check [`TrafficSpeed::is_completely_closed`] too!
     ///
-    /// # Panics
-    ///
-    /// Panics if `segment_index` is greater than 2.
+    /// This is mainline's `closed(subsegment)`,
+    /// except that a segment that doesn't exist (its starting breakpoint is 0 or 255)
+    /// is never closed here.
+    /// Mainline only asks about segments that exist
+    /// (in `TripLegBuilder`, the only caller), so the two agree wherever mainline looks.
     #[inline]
-    pub const fn is_segment_closed(&self, segment_index: u8) -> bool {
+    pub const fn is_segment_closed(&self, segment: TrafficSegment) -> bool {
         if !self.has_valid_speed() {
             return false;
         }
 
-        match segment_index {
-            0 => {
+        match segment {
+            TrafficSegment::First => {
                 self.encoded_speed1() == CLOSED_TRAFFIC_SPEED_RAW
                     || self.congestion1() == MAX_CONGESTION_VAL
             }
-            1 => {
+            TrafficSegment::Second => {
                 self.breakpoint1() < 255
                     && self.breakpoint1() > 0
                     && (self.encoded_speed2() == CLOSED_TRAFFIC_SPEED_RAW
                         || self.congestion2() == MAX_CONGESTION_VAL)
             }
-            2 => {
+            TrafficSegment::Third => {
                 self.breakpoint2() < 255
                     && self.breakpoint2() > 0
                     && (self.encoded_speed3() == CLOSED_TRAFFIC_SPEED_RAW
                         || self.congestion3() == MAX_CONGESTION_VAL)
             }
-            _ => panic!("Illegal segment index; must be less than 3"),
         }
     }
 
@@ -367,25 +421,24 @@ impl Serialize for TrafficSpeed {
         state.serialize_field("has_valid_speed", &self.has_valid_speed())?;
         state.serialize_field("is_completely_closed", &self.is_completely_closed())?;
         state.serialize_field("overall_speed", &self.overall_speed())?;
-        state.serialize_field("segment_info_0", &self.segment_info(0))?;
-        state.serialize_field("segment_info_1", &self.segment_info(1))?;
-        state.serialize_field("segment_info_2", &self.segment_info(2))?;
+        state.serialize_field("segment_info_0", &self.segment_info(TrafficSegment::First))?;
+        state.serialize_field("segment_info_1", &self.segment_info(TrafficSegment::Second))?;
+        state.serialize_field("segment_info_2", &self.segment_info(TrafficSegment::Third))?;
         state.serialize_field("has_incident_tile", &self.has_incidents())?;
 
         state.end()
     }
 }
 
-#[derive(Error, Debug)]
+/// An error building a [`TrafficSpeed`].
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum TrafficSpeedBuilderError {
-    #[error(
-        "At least one segment is required, but there were no segments in the traffic speed builder"
-    )]
+    #[error("build a traffic speed: no segments were added")]
     NoSegments,
-    #[error("Tried to add too many segments (the max is 3)")]
+    #[error("add a traffic speed segment: an edge has at most 3")]
     TooManySegments,
     #[error(
-        "Section lengths would total longer than the underlying edge: {current_length} (current length) + {new_section_length} (new length) > {edge_length} (edge length)"
+        "add a traffic speed segment of {new_section_length} m: with the {current_length} m added so far, the segments would be longer than the edge ({edge_length} m)"
     )]
     SectionLengthExceedsEdge {
         current_length: u32,
@@ -393,9 +446,23 @@ pub enum TrafficSpeedBuilderError {
         edge_length: u32,
     },
     #[error(
-        "Section lengths are shorter than the underlying edge; you should specify unknown regions explicitly"
+        "build a traffic speed: the segments cover {covered_length} m of the edge's {edge_length} m (add unknown segments for stretches with no data)"
     )]
-    IncompleteCoverage,
+    IncompleteCoverage {
+        covered_length: u32,
+        edge_length: u32,
+    },
+}
+
+/// One segment added to a [`TrafficSpeedBuilder`].
+#[derive(Copy, Clone, Debug)]
+struct SegmentSpec {
+    /// The speed in kph, [`CLOSED_TRAFFIC_SPEED_RAW`] for closed,
+    /// or [`UNKNOWN_TRAFFIC_SPEED_KPH`] for unknown.
+    /// (No [`SpeedValue`] can be either.)
+    speed_kph: u8,
+    congestion: u8,
+    length: u32,
 }
 
 /// An incremental builder interface for [`TrafficSpeed`].
@@ -425,34 +492,47 @@ pub enum TrafficSpeedBuilderError {
 /// ```
 pub struct TrafficSpeedBuilder {
     edge_length: u32,
-    // (speed, congestion, length) tuples
-    speeds: Vec<(u8, u8, u32)>,
+    segments: Vec<SegmentSpec>,
+    /// The total length of `segments`, which never exceeds `edge_length`.
+    current_length: u32,
 }
 
 impl TrafficSpeedBuilder {
     /// Constructs a new builder for an edge of the given length (in meters).
+    #[inline]
     pub fn with_edge_length(edge_length: u32) -> Self {
         Self {
             edge_length,
-            speeds: Vec::with_capacity(3),
+            segments: Vec::with_capacity(3),
+            current_length: 0,
         }
     }
 
-    fn test_can_add_segment_of_length(&self, length: u32) -> Result<(), TrafficSpeedBuilderError> {
-        if self.speeds.len() == 3 {
-            return Err(TooManySegments);
+    fn with_segment(
+        mut self,
+        speed_kph: u8,
+        congestion: u8,
+        length: u32,
+    ) -> Result<Self, TrafficSpeedBuilderError> {
+        if self.segments.len() == 3 {
+            return Err(TrafficSpeedBuilderError::TooManySegments);
         }
-
-        let current_length = self.current_length();
-        if current_length + length > self.edge_length {
-            return Err(SectionLengthExceedsEdge {
-                current_length,
+        let current_length = self
+            .current_length
+            .checked_add(length)
+            .filter(|&total| total <= self.edge_length)
+            .ok_or(TrafficSpeedBuilderError::SectionLengthExceedsEdge {
+                current_length: self.current_length,
                 new_section_length: length,
                 edge_length: self.edge_length,
-            });
-        }
-
-        Ok(())
+            })?;
+        self.segments.push(SegmentSpec {
+            speed_kph,
+            congestion,
+            length,
+        });
+        self.current_length = current_length;
+        Ok(self)
     }
 
     /// Adds a new segment to the builder with traffic flowing at some non-zero rate.
@@ -467,22 +547,18 @@ impl TrafficSpeedBuilder {
     ///
     /// - The `length` makes the accumulated total greater than the edge length
     /// - There are already 3 segments (Valhalla limit)
+    #[inline]
     pub fn with_speed_segment(
         self,
         speed: SpeedValue,
         congestion: Option<CongestionValue>,
         length: u32,
     ) -> Result<Self, TrafficSpeedBuilderError> {
-        self.test_can_add_segment_of_length(length)?;
-        let mut speeds = self.speeds;
-
         let congestion = match congestion {
             Some(value) => value.into_inner(),
             None => UNKNOWN_CONGESTION_VAL,
         };
-
-        speeds.push((speed.into_inner(), congestion, length));
-        Ok(Self { speeds, ..self })
+        self.with_segment(speed.into_inner(), congestion, length)
     }
 
     /// Adds a new segment to the builder where traffic is completely stationary or the road is closed.
@@ -493,111 +569,111 @@ impl TrafficSpeedBuilder {
     ///
     /// - The `length` makes the accumulated total greater than the edge length
     /// - There are already 3 segments (Valhalla limit)
+    #[inline]
     pub fn with_closed_segment(self, length: u32) -> Result<Self, TrafficSpeedBuilderError> {
-        self.test_can_add_segment_of_length(length)?;
-        let mut speeds = self.speeds;
-
-        speeds.push((CLOSED_TRAFFIC_SPEED_RAW, UNKNOWN_CONGESTION_VAL, length));
-        Ok(Self { speeds, ..self })
+        self.with_segment(CLOSED_TRAFFIC_SPEED_RAW, UNKNOWN_CONGESTION_VAL, length)
     }
 
+    /// Adds a new segment to the builder with no traffic data.
+    ///
+    /// # Errors
+    ///
+    /// This will fail under the following conditions:
+    ///
+    /// - The `length` makes the accumulated total greater than the edge length
+    /// - There are already 3 segments (Valhalla limit)
+    #[inline]
     pub fn with_unknown_segment(self, length: u32) -> Result<Self, TrafficSpeedBuilderError> {
-        self.test_can_add_segment_of_length(length)?;
-        let mut speeds = self.speeds;
-
-        speeds.push((UNKNOWN_TRAFFIC_SPEED_KPH, UNKNOWN_CONGESTION_VAL, length));
-        Ok(Self { speeds, ..self })
+        self.with_segment(UNKNOWN_TRAFFIC_SPEED_KPH, UNKNOWN_CONGESTION_VAL, length)
     }
 
     /// The length of segments added so far (in meters).
+    #[inline]
     pub fn current_length(&self) -> u32 {
-        self.speeds.iter().map(|(_, _, length)| length).sum()
+        self.current_length
     }
 
     /// Creates a [`TrafficSpeed`] from the builder.
+    ///
+    /// # Errors
+    ///
+    /// Fails if no segments were added,
+    /// or the segments don't cover the whole edge.
     pub fn build(self) -> Result<TrafficSpeed, TrafficSpeedBuilderError> {
-        if self.speeds.is_empty() {
+        if self.segments.is_empty() {
             return Err(TrafficSpeedBuilderError::NoSegments);
         }
 
-        let len = self.current_length();
-        if len < self.edge_length {
-            return Err(TrafficSpeedBuilderError::IncompleteCoverage);
+        if self.current_length < self.edge_length {
+            return Err(TrafficSpeedBuilderError::IncompleteCoverage {
+                covered_length: self.current_length,
+                edge_length: self.edge_length,
+            });
         }
 
-        // Compute a weighted average overall speed.
-        // The fold computes the numerator as the sum of `speed * len`,
-        // and the denominator as the total length covered.
+        // Compute a weighted average overall speed over the segments with known speeds
+        // (closed segments count as 0 kph).
+        // The numerator is at most 254 * 2^32, which fits in a u64.
         let (num, denom) = self
-            .speeds
+            .segments
             .iter()
-            .fold((0, 0), |(acc_s, acc_l), (speed, _, len)| {
-                if *speed == UNKNOWN_TRAFFIC_SPEED_KPH {
-                    // Don't accumulate unknown sections
-                    (acc_s, acc_l)
-                } else {
-                    (acc_s + (u32::from(*speed) * len), acc_l + len)
-                }
+            .filter(|segment| segment.speed_kph != UNKNOWN_TRAFFIC_SPEED_KPH)
+            .fold((0u64, 0u64), |(acc_s, acc_l), segment| {
+                (
+                    acc_s + u64::from(segment.speed_kph) * u64::from(segment.length),
+                    acc_l + u64::from(segment.length),
+                )
             });
 
-        if denom == 0 {
-            // This is a bit special; this can only happen if the entire area is marked as unknown.
-            // This is valid, so we return a blank speed tile.
+        let Some(overall_speed) = num.checked_div(denom) else {
+            // This can only happen if the entire edge is marked as unknown.
+            // This is valid, so we return a blank speed.
             return Ok(TrafficSpeed::default());
-        }
-
-        let overall_speed = (num / denom) as u8;
+        };
+        // A weighted average is no more than the largest speed averaged, which fits in a u8.
+        let overall_speed = u8::try_from(overall_speed).unwrap_or(MAX_TRAFFIC_SPEED_KPH);
 
         let mut result = TrafficSpeed::new().with_overall_encoded_speed(overall_speed >> 1);
 
-        // Loop over segments
-        let mut acc_seg_len = 0;
-        for (idx, (segment_speed, congestion, segment_len)) in self.speeds.into_iter().enumerate() {
-            acc_seg_len += segment_len;
-            let encoded_speed = segment_speed >> 1;
-
-            // breakpointN = acc_seg_len / self.edge_length.... but in the range 0-255!
-            let breakpoint = normalize_progress(acc_seg_len, self.edge_length);
-
-            match idx {
-                0 => {
-                    result = result
-                        .with_encoded_speed1(encoded_speed)
-                        .with_congestion1(congestion)
-                        .with_breakpoint1(breakpoint);
-                }
-                1 => {
-                    result = result
-                        .with_encoded_speed2(encoded_speed)
-                        .with_congestion2(congestion)
-                        .with_breakpoint2(breakpoint);
-                }
-                2 => {
-                    result = result
-                        .with_encoded_speed3(encoded_speed)
-                        .with_congestion3(congestion);
-                }
-                _ => unreachable!(
-                    "Should never hit this, as we ensure that builder methods fail when adding too many segments."
-                ),
-            }
+        // breakpointN is the progress along the edge at the end of segment N, scaled to 0-255.
+        let mut segments = self.segments.iter();
+        let mut end = 0;
+        if let Some(segment) = segments.next() {
+            end += segment.length;
+            result = result
+                .with_encoded_speed1(segment.speed_kph >> 1)
+                .with_congestion1(segment.congestion)
+                .with_breakpoint1(normalize_progress(end, self.edge_length));
+        }
+        if let Some(segment) = segments.next() {
+            end += segment.length;
+            result = result
+                .with_encoded_speed2(segment.speed_kph >> 1)
+                .with_congestion2(segment.congestion)
+                .with_breakpoint2(normalize_progress(end, self.edge_length));
+        }
+        if let Some(segment) = segments.next() {
+            // The third segment always ends at the end of the edge, so it has no breakpoint.
+            result = result
+                .with_encoded_speed3(segment.speed_kph >> 1)
+                .with_congestion3(segment.congestion);
         }
 
         Ok(result)
     }
 }
 
-/// Helper that normalizes progress along the edge into the range (0, 255).
+/// Scales progress along an edge (`pos` of `len` meters) to the range 0-255.
+///
+/// Progress beyond the end of the edge counts as the end,
+/// and a zero-length edge has no progress.
 #[inline]
 fn normalize_progress(pos: u32, len: u32) -> u8 {
-    assert!(pos <= len, "Invalid progress {pos} must be <= length {len}");
     if len == 0 {
-        // Prevent division by zero
         return 0;
     }
-
-    // Scale 0..len into 0..255
-    ((u64::from(pos) * 255) / u64::from(len)) as u8
+    let scaled = (u64::from(pos.min(len)) * 255) / u64::from(len);
+    u8::try_from(scaled).unwrap_or(u8::MAX)
 }
 
 #[cfg(test)]
@@ -619,16 +695,19 @@ mod test {
         assert_eq!(speed_as_u64.to_le_bytes(), speed_as_bytes);
 
         let mut x: u64 = 0;
-        let ptr = &mut x as *mut u64;
+        let ptr = &raw mut x;
 
+        // SAFETY: `ptr` points to a live, aligned, writable u64,
+        // and TrafficSpeed is 8 bytes with no invalid bit patterns and an alignment of 1,
+        // so reading one from the u64's storage is valid.
         let round_tripped_speed: TrafficSpeed = unsafe {
             // Explicit LE write
             core::ptr::write(ptr, speed_as_u64.to_le());
             // Simulates a read from the memory map
-            core::ptr::read_volatile(ptr as *const TrafficSpeed)
+            core::ptr::read_volatile(ptr.cast::<TrafficSpeed>())
         };
 
-        assert_eq!(round_tripped_speed.has_valid_speed(), true);
+        assert!(round_tripped_speed.has_valid_speed());
         assert_eq!(round_tripped_speed.overall_speed(), Some(DESIRED_SPEED));
         assert_eq!(round_tripped_speed.breakpoint1(), 255);
         assert_eq!(round_tripped_speed.has_incidents(), 1);
@@ -659,7 +738,7 @@ mod test {
         assert_eq!(speed.overall_speed(), Some(64));
 
         assert_eq!(
-            speed.segment_info(0),
+            speed.segment_info(TrafficSegment::First),
             SegmentTrafficInfo::Speed {
                 speed_kph: 42,
                 congestion: Some(12),
@@ -667,7 +746,7 @@ mod test {
             }
         );
         assert_eq!(
-            speed.segment_info(1),
+            speed.segment_info(TrafficSegment::Second),
             SegmentTrafficInfo::Speed {
                 speed_kph: 86,
                 congestion: Some(1),
@@ -675,16 +754,16 @@ mod test {
             }
         );
         assert_eq!(
-            speed.segment_info(2),
+            speed.segment_info(TrafficSegment::Third),
             SegmentTrafficInfo::NoData {
                 breakpoint: 0, // This segment doesn't exist
             }
         );
 
         // No segments are closed
-        assert!(!speed.is_segment_closed(0));
-        assert!(!speed.is_segment_closed(1));
-        assert!(!speed.is_segment_closed(2));
+        assert!(!speed.is_segment_closed(TrafficSegment::First));
+        assert!(!speed.is_segment_closed(TrafficSegment::Second));
+        assert!(!speed.is_segment_closed(TrafficSegment::Third));
 
         assert_eq!(speed.as_bytes(), &[160, 202, 10, 240, 247, 207, 4, 0]);
     }
@@ -709,7 +788,7 @@ mod test {
         assert_eq!(speed.overall_speed(), Some(20));
 
         assert_eq!(
-            speed.segment_info(0),
+            speed.segment_info(TrafficSegment::First),
             SegmentTrafficInfo::Speed {
                 speed_kph: 42,
                 congestion: Some(12),
@@ -717,20 +796,20 @@ mod test {
             }
         );
         assert_eq!(
-            speed.segment_info(1),
+            speed.segment_info(TrafficSegment::Second),
             SegmentTrafficInfo::Closed { breakpoint: 255 }
         );
         assert_eq!(
-            speed.segment_info(2),
+            speed.segment_info(TrafficSegment::Third),
             SegmentTrafficInfo::NoData {
                 breakpoint: 0, // This segment doesn't exist
             }
         );
 
         // The first segment is open, but the second segment (index 1) is closed
-        assert!(!speed.is_segment_closed(0));
-        assert!(speed.is_segment_closed(1));
-        assert!(!speed.is_segment_closed(2));
+        assert!(!speed.is_segment_closed(TrafficSegment::First));
+        assert!(speed.is_segment_closed(TrafficSegment::Second));
+        assert!(!speed.is_segment_closed(TrafficSegment::Third));
 
         assert_eq!(speed.as_bytes(), &[138, 10, 0, 240, 247, 207, 0, 0]);
     }
@@ -767,7 +846,7 @@ mod test {
         assert_eq!(speed.overall_speed(), Some(50));
 
         assert_eq!(
-            speed.segment_info(0),
+            speed.segment_info(TrafficSegment::First),
             SegmentTrafficInfo::Speed {
                 speed_kph: 42,
                 congestion: Some(12),
@@ -775,7 +854,7 @@ mod test {
             }
         );
         assert_eq!(
-            speed.segment_info(1),
+            speed.segment_info(TrafficSegment::Second),
             SegmentTrafficInfo::Speed {
                 speed_kph: 86,
                 congestion: Some(1),
@@ -783,7 +862,7 @@ mod test {
             }
         );
         assert_eq!(
-            speed.segment_info(2),
+            speed.segment_info(TrafficSegment::Third),
             SegmentTrafficInfo::Speed {
                 speed_kph: 34,
                 congestion: Some(47),
@@ -792,9 +871,9 @@ mod test {
         );
 
         // No segments are closed
-        assert!(!speed.is_segment_closed(0));
-        assert!(!speed.is_segment_closed(1));
-        assert!(!speed.is_segment_closed(2));
+        assert!(!speed.is_segment_closed(TrafficSegment::First));
+        assert!(!speed.is_segment_closed(TrafficSegment::Second));
+        assert!(!speed.is_segment_closed(TrafficSegment::Third));
 
         assert_eq!(speed.as_bytes(), &[153, 202, 42, 242, 247, 203, 4, 47]);
     }
@@ -822,11 +901,11 @@ mod test {
             .unwrap();
 
         assert_eq!(
-            speed.segment_info(0),
+            speed.segment_info(TrafficSegment::First),
             SegmentTrafficInfo::NoData { breakpoint: 127 }
         );
         assert_eq!(
-            speed.segment_info(1),
+            speed.segment_info(TrafficSegment::Second),
             SegmentTrafficInfo::Speed {
                 speed_kph: 42,
                 congestion: None,
@@ -834,7 +913,7 @@ mod test {
             }
         );
         assert_eq!(
-            speed.segment_info(2),
+            speed.segment_info(TrafficSegment::Third),
             SegmentTrafficInfo::NoData { breakpoint: 0 }
         );
     }
@@ -859,17 +938,120 @@ mod test {
         // This unit test documents the current, somewhat confusing behavior.
         assert!(speed.is_completely_closed());
         assert_eq!(
-            speed.segment_info(0),
+            speed.segment_info(TrafficSegment::First),
             SegmentTrafficInfo::NoData { breakpoint: 127 }
         );
         assert_eq!(
-            speed.segment_info(1),
+            speed.segment_info(TrafficSegment::Second),
             SegmentTrafficInfo::Closed { breakpoint: 255 }
         );
         assert_eq!(
-            speed.segment_info(2),
+            speed.segment_info(TrafficSegment::Third),
             SegmentTrafficInfo::NoData { breakpoint: 0 }
         );
+    }
+
+    #[test]
+    fn test_builder_errors() {
+        assert_eq!(
+            TrafficSpeedBuilder::with_edge_length(10).build(),
+            Err(TrafficSpeedBuilderError::NoSegments)
+        );
+        assert_eq!(
+            TrafficSpeedBuilder::with_edge_length(10)
+                .with_unknown_segment(4)
+                .unwrap()
+                .build(),
+            Err(TrafficSpeedBuilderError::IncompleteCoverage {
+                covered_length: 4,
+                edge_length: 10
+            })
+        );
+        assert_eq!(
+            TrafficSpeedBuilder::with_edge_length(10)
+                .with_closed_segment(4)
+                .unwrap()
+                .with_closed_segment(7)
+                .err(),
+            Some(TrafficSpeedBuilderError::SectionLengthExceedsEdge {
+                current_length: 4,
+                new_section_length: 7,
+                edge_length: 10
+            })
+        );
+        assert_eq!(
+            TrafficSpeedBuilder::with_edge_length(3)
+                .with_closed_segment(1)
+                .and_then(|b| b.with_closed_segment(1))
+                .and_then(|b| b.with_closed_segment(1))
+                .and_then(|b| b.with_closed_segment(0))
+                .err(),
+            Some(TrafficSpeedBuilderError::TooManySegments)
+        );
+    }
+
+    #[test]
+    fn test_builder_lengths_near_u32_max() {
+        // Lengths that would overflow a u32 sum are an error, not a panic.
+        let builder = TrafficSpeedBuilder::with_edge_length(u32::MAX)
+            .with_speed_segment(
+                SpeedValue::try_new(MAX_TRAFFIC_SPEED_KPH).unwrap(),
+                None,
+                u32::MAX,
+            )
+            .unwrap();
+        assert!(matches!(
+            builder.with_closed_segment(1),
+            Err(TrafficSpeedBuilderError::SectionLengthExceedsEdge { .. })
+        ));
+
+        // And the weighted average of the longest segments doesn't overflow.
+        let speed = TrafficSpeedBuilder::with_edge_length(u32::MAX)
+            .with_speed_segment(
+                SpeedValue::try_new(MAX_TRAFFIC_SPEED_KPH).unwrap(),
+                None,
+                u32::MAX - 1,
+            )
+            .unwrap()
+            .with_speed_segment(SpeedValue::try_new(MAX_TRAFFIC_SPEED_KPH).unwrap(), None, 1)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(speed.overall_speed(), Some(MAX_TRAFFIC_SPEED_KPH));
+        assert_eq!(
+            speed.segment_info(TrafficSegment::Second),
+            SegmentTrafficInfo::Speed {
+                speed_kph: MAX_TRAFFIC_SPEED_KPH,
+                congestion: None,
+                breakpoint: 255
+            }
+        );
+    }
+
+    #[test]
+    fn test_zero_length_edge() {
+        let speed = TrafficSpeedBuilder::with_edge_length(0)
+            .with_speed_segment(SpeedValue::try_new(42).unwrap(), None, 0)
+            .unwrap()
+            .build()
+            .unwrap();
+        // Nothing to average over, so there is no speed.
+        assert_eq!(speed, TrafficSpeed::default());
+        assert!(!speed.has_valid_speed());
+    }
+
+    #[test]
+    fn test_default_has_no_data() {
+        let speed = TrafficSpeed::default();
+        assert!(!speed.has_valid_speed());
+        assert!(!speed.is_completely_closed());
+        for segment in TrafficSegment::ALL {
+            assert!(!speed.is_segment_closed(segment));
+            assert!(matches!(
+                speed.segment_info(segment),
+                SegmentTrafficInfo::NoData { .. }
+            ));
+        }
     }
 
     proptest! {
@@ -881,6 +1063,33 @@ mod test {
         #[test]
         fn prop_progress_eq_nonzero_len_is_max(value in 1u32..) {
             assert_eq!(normalize_progress(value, value), 255);
+        }
+
+        #[test]
+        fn prop_progress_past_the_end_is_the_end(len in 1u32.., extra: u32) {
+            assert_eq!(normalize_progress(len.saturating_add(extra), len), 255);
+        }
+
+        /// Any bit pattern decodes without panicking.
+        #[test]
+        fn prop_any_bits_decode(bits: u64) {
+            let speed = TrafficSpeed::from_bits(bits.into());
+            for segment in TrafficSegment::ALL {
+                let _ = speed.segment_info(segment);
+                let _ = speed.is_segment_closed(segment);
+            }
+            assert_eq!(speed.overall_speed().is_some(), speed.has_valid_speed());
+            // The first segment is closed exactly when segment_info says so,
+            // unless it's closed by congestion alone.
+            if speed.has_valid_speed() && speed.congestion1() != MAX_CONGESTION_VAL {
+                assert_eq!(
+                    speed.is_segment_closed(TrafficSegment::First),
+                    matches!(
+                        speed.segment_info(TrafficSegment::First),
+                        SegmentTrafficInfo::Closed { .. }
+                    )
+                );
+            }
         }
     }
 }
