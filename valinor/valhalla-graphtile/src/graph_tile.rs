@@ -131,7 +131,9 @@ pub enum GraphTileDecodingError {
 pub enum GraphTileBuildError {
     #[error("{0}")]
     InvalidGraphId(#[from] InvalidGraphIdError),
-    #[error("Invalid version string: {0} does not fit into 16 bytes in UTF-8.")]
+    #[error(
+        "set the version string: {0:?} must be at most 15 bytes of UTF-8 without NUL (mainline reads it as a NUL-terminated string in 16 bytes)"
+    )]
     InvalidVersionString(String),
     #[error("Invalid index: {0}.")]
     InvalidIndex(String),
