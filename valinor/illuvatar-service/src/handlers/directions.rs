@@ -19,7 +19,8 @@ pub fn directions(request: &mut Api) -> WorkerResult {
     }
 }
 
-fn http_response(response: Response) -> WorkerResult {
+/// The worker's response for a serialized body.
+pub(super) fn http_response(response: Response) -> WorkerResult {
     let mut headers = HeaderMap::new();
     // The content types are constants, so they are always valid header values.
     headers.insert(

@@ -1,107 +1,33 @@
-//! The `/status` response, as mainline's `tyr::serializeStatus` writes it.
+//! The `/status` response, as mainline's `tyr::serializeStatus` writes it
+//! (see `valinor_tyr::tyr::serialize_status`).
 
-use http::StatusCode;
+use super::directions::http_response;
 use valhalla_microservice::WorkerResult;
-use valhalla_proto::options::Format;
-use valhalla_proto::prost::Message;
-use valhalla_proto::status::{
-    HasBbox, HasHasAdmins, HasHasLiveTraffic, HasHasTiles, HasHasTimezones, HasHasTransitTiles,
-    HasOsmChangeset,
-};
-use valhalla_proto::{Api, PbfFieldSelector};
-use valhalla_response::StatusResponse;
+use valhalla_proto::Api;
+use valinor_tyr::tyr::serialize_status;
 
 /// Serializes the status that Loki and Thor filled in, in the requested format.
 ///
 /// A missing `status` message is read as the default (proto3 semantics), as mainline does.
 pub fn status(request: &mut Api) -> WorkerResult {
-    let format = request.options.as_ref().map_or(0, |options| options.format);
-    if Format::try_from(format) == Ok(Format::Pbf) {
-        pbf_status(request)
-    } else {
-        json_status(request)
+    match serialize_status(request) {
+        Ok(response) => http_response(response),
+        Err(error) => WorkerResult::error(&error, request),
     }
-}
-
-/// The PBF response, as mainline's `tyr::serializePbf` writes it for the status action.
-///
-/// The response is the request's `Api` with every top-level field cleared
-/// except those the client selected with `pbf_field_selector`
-/// (only `status` by default) and `info`, which mainline never clears.
-fn pbf_status(request: &mut Api) -> WorkerResult {
-    let mut response = core::mem::take(request);
-    let selection = response
-        .options
-        .as_ref()
-        .and_then(|options| options.pbf_field_selector)
-        .unwrap_or(PbfFieldSelector {
-            status: true,
-            ..PbfFieldSelector::default()
-        });
-
-    if !selection.trip {
-        response.trip = None;
-    }
-    if !selection.directions {
-        response.directions = None;
-    }
-    if !selection.status {
-        response.status = None;
-    }
-    if !selection.options {
-        response.options = None;
-    }
-    if !selection.matrix {
-        response.matrix = None;
-    }
-    if !selection.isochrone {
-        response.isochrone = None;
-    }
-    if !selection.expansion {
-        response.expansion = None;
-    }
-
-    WorkerResult::pbf(StatusCode::OK, response.encode_to_vec())
-}
-
-fn json_status(request: &Api) -> WorkerResult {
-    let status = request.status.clone().unwrap_or_default();
-
-    let res = StatusResponse {
-        version: status.version,
-        tileset_last_modified: status.tileset_last_modified,
-        available_actions: status.available_actions,
-        has_tiles: status.has_has_tiles.map(|HasHasTiles::HasTiles(v)| v),
-        has_admins: status.has_has_admins.map(|HasHasAdmins::HasAdmins(v)| v),
-        has_timezones: status
-            .has_has_timezones
-            .map(|HasHasTimezones::HasTimezones(v)| v),
-        has_live_traffic: status
-            .has_has_live_traffic
-            .map(|HasHasLiveTraffic::HasLiveTraffic(v)| v),
-        has_transit_tiles: status
-            .has_has_transit_tiles
-            .map(|HasHasTransitTiles::HasTransitTiles(v)| v),
-        // Mainline reads a zero changeset as "none" and leaves it out.
-        osm_changeset: status
-            .has_osm_changeset
-            .map(|HasOsmChangeset::OsmChangeset(v)| v)
-            .filter(|&changeset| changeset != 0),
-        // Loki stores the bounding box as a `GeoJSON` string, which mainline embeds as JSON.
-        // If it somehow does not parse, mainline's RapidJSON document is null, so we write null.
-        bbox: status.has_bbox.map(|HasBbox::Bbox(bbox)| {
-            serde_json::from_str(&bbox).unwrap_or(serde_json::Value::Null)
-        }),
-    };
-
-    WorkerResult::json(StatusCode::OK, res)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http::StatusCode;
     use serde_json::json;
-    use valhalla_proto::{Info, Options, Status, Trip, options};
+    use valhalla_proto::prost::Message;
+    use valhalla_proto::status::{
+        HasBbox, HasHasAdmins, HasHasLiveTraffic, HasHasTiles, HasHasTimezones, HasHasTransitTiles,
+        HasOsmChangeset,
+    };
+    use valhalla_proto::{Info, Options, PbfFieldSelector, Status, Trip, options};
+    use valhalla_response::StatusResponse;
 
     // A status request from a 3.5.1 server, as Thor passed it to Odin.
     const STATUS_MESSAGE: &[u8] = &[
