@@ -83,11 +83,24 @@ async fn recv<S: SocketRecv>(socket: &mut S) -> Vec<Bytes> {
         .into_vec()
 }
 
+type ApiFn = Box<dyn Fn(Api, &Interrupt) -> WorkerResult + Send + Sync>;
+type HttpFn = Box<dyn Fn(&[u8], &Interrupt) -> WorkerResult + Send + Sync>;
+
+/// The worker function of a test service.
+enum TestWorker {
+    Api(ApiFn),
+    Http(HttpFn),
+}
+
 impl Harness {
     async fn start<F>(worker_fn: F, with_downstream: bool) -> Harness
     where
         F: Fn(Api, &Interrupt) -> WorkerResult + Send + Sync + 'static,
     {
+        Self::start_with(TestWorker::Api(Box::new(worker_fn)), with_downstream).await
+    }
+
+    async fn start_with(worker_fn: TestWorker, with_downstream: bool) -> Harness {
         let mut upstream = RouterSocket::new();
         let mut downstream = RouterSocket::new();
         let mut loopback = PullSocket::new();
@@ -97,13 +110,23 @@ impl Harness {
         let loopback_endpoint = bind(&mut loopback).await;
         let interrupt_endpoint = bind(&mut interrupts).await;
 
+        let stage = match worker_fn {
+            TestWorker::Api(_) => Stage::Thor,
+            TestWorker::Http(_) => Stage::Loki,
+        };
         let mut builder =
-            ValhallaMicroserviceBuilder::new(Stage::Thor, &upstream_endpoint, &loopback_endpoint)
+            ValhallaMicroserviceBuilder::new(stage, &upstream_endpoint, &loopback_endpoint)
                 .with_interrupt_endpoint(&interrupt_endpoint);
         if with_downstream {
             builder = builder.with_downstream_endpoint(&downstream_endpoint);
         }
-        let mut service = timeout(PATIENCE, builder.build(worker_fn))
+        let connecting = async {
+            match worker_fn {
+                TestWorker::Api(f) => builder.build(f).await,
+                TestWorker::Http(f) => builder.build_http(f).await,
+            }
+        };
+        let mut service = timeout(PATIENCE, connecting)
             .await
             .expect("connected in time")
             .expect("connected");
@@ -240,6 +263,54 @@ async fn sends_responses_to_the_loopback() {
          {\"code\":\"NoSegment\",\"message\":\"One of the supplied input coordinates could not snap to street segment.\"}"
     );
     harness.expect_advertisement().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_workers_get_the_raw_request() {
+    // A Loki-like worker: it gets the server's HTTP request as sent, and forwards an `Api`.
+    let mut harness = Harness::start_with(
+        TestWorker::Http(Box::new(|payload: &[u8], _: &Interrupt| {
+            assert_eq!(payload, b"GET /status HTTP/1.1\r\n\r\n");
+            let mut api = Api::default();
+            api.options.get_or_insert_default().action = options::Action::Status.into();
+            WorkerResult::forward(api)
+        })),
+        true,
+    )
+    .await;
+    let (info, _) = captured_job();
+    let request = Bytes::from_static(b"GET /status HTTP/1.1\r\n\r\n");
+    harness.send_job(&[info.clone(), request]).await;
+
+    assert_eq!(harness.outcome().await.expect("ok"), TickOutcome::Forwarded);
+    let frames = recv(&mut harness.downstream).await;
+    assert_eq!(frames[1], info);
+    let api = Api::decode(frames[2].clone()).expect("valid Api");
+    assert_eq!(
+        api.options.map(|o| o.action),
+        Some(options::Action::Status.into())
+    );
+    harness.expect_advertisement().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_workers_that_panic_answer_with_lokis_error() {
+    let mut harness = Harness::start_with(
+        TestWorker::Http(Box::new(|_: &[u8], _: &Interrupt| panic!("parse failure"))),
+        true,
+    )
+    .await;
+    let (info, _) = captured_job();
+    harness
+        .send_job(&[info, Bytes::from_static(b"not http")])
+        .await;
+    assert!(matches!(
+        harness.outcome().await,
+        Err(Error::WorkerPanicked { .. })
+    ));
+    let frames = recv(&mut harness.loopback).await;
+    let response = String::from_utf8(frames[1].to_vec()).expect("UTF-8");
+    assert!(response.ends_with("\"error_code\":199,\"error\":\"Unknown: parse failure\",\"status_code\":500,\"status\":\"Internal Server Error\"}"), "{response}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

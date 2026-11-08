@@ -57,8 +57,9 @@ Every message about a request starts with the server's 12-byte request info
   and worker functions can check during long work ([`Interrupt::check`]).
   Interrupted jobs send nothing.
 
-Workers receive `Api` messages, so this crate suits every stage after Loki
-(Loki receives raw HTTP requests from the server).
+Workers of every stage after Loki receive `Api` messages.
+Loki's worker receives the server's raw HTTP requests instead, which it parses itself;
+build it with `build_http` rather than `build`.
 [`Stage`] chooses which mainline service's internal errors to mirror
 when the payload cannot be decoded or the worker function panics.
 

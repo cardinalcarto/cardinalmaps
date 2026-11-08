@@ -30,10 +30,12 @@ const ADVERTISE_INTERVAL: Duration = Duration::from_secs(1);
 /// the service still answers the client, as mainline's services do,
 /// with the error that mainline's service of this kind would send.
 ///
-/// Loki is not here because it receives raw HTTP requests rather than `Api` messages,
-/// which this crate does not handle.
+/// Loki's jobs are raw HTTP requests rather than `Api` messages
+/// (see [`ValhallaMicroserviceBuilder::build_http`]), so it has no decode error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
+    /// Loki: anything unexpected is error 199.
+    Loki,
     /// Thor: undecodable input is error 401, and anything unexpected is error 499.
     Thor,
     /// Odin: every failure is error 299 (Odin wraps even its own coded errors as unknown).
@@ -43,6 +45,8 @@ pub enum Stage {
 impl Stage {
     fn decode_error(self) -> ValhallaError {
         match self {
+            // Loki doesn't decode its jobs; its parse failures come from the worker function.
+            Stage::Loki => ValhallaError::new(ErrorCode::LokiUnknown),
             Stage::Thor => ValhallaError::with_detail(
                 ErrorCode::ThorIntermediateParseFailed,
                 "Failed parsing pbf in Thor::Worker",
@@ -60,6 +64,7 @@ impl Stage {
 
     fn unknown_error(self, detail: &str) -> ValhallaError {
         match self {
+            Stage::Loki => ValhallaError::with_detail(ErrorCode::LokiUnknown, detail),
             Stage::Thor => ValhallaError::with_detail(ErrorCode::ThorUnknown, detail),
             Stage::Odin => ValhallaError::with_detail(ErrorCode::OdinUnknown, detail),
         }
@@ -135,13 +140,27 @@ impl<S: Socket + SocketSend + Send> Connection<S> {
     }
 }
 
+/// A worker function for `Api` jobs.
+type ApiWorker = dyn Fn(Api, &Interrupt) -> WorkerResult + Send + Sync;
+/// A worker function for raw HTTP jobs.
+type HttpWorker = dyn Fn(&[u8], &Interrupt) -> WorkerResult + Send + Sync;
+
+/// What a service's jobs are, and the function that handles them.
+#[derive(Clone)]
+enum WorkerFn {
+    /// Jobs are `Api` messages (every stage after Loki).
+    Api(Arc<ApiWorker>),
+    /// Jobs are the server's raw HTTP requests (Loki).
+    Http(Arc<HttpWorker>),
+}
+
 /// A Valhalla-compatible microservice (a `prime_server` worker).
 ///
 /// Each [`tick`](ValhallaMicroservice::tick) handles one job:
 /// it advertises to the upstream proxy, waits for a job,
 /// runs the worker function on a blocking thread,
 /// and sends the result where `prime_server`'s worker would.
-pub struct ValhallaMicroservice<F> {
+pub struct ValhallaMicroservice {
     /// The DEALER connected to the upstream proxy's worker side.
     ///
     /// In the standard Valhalla configuration,
@@ -159,13 +178,10 @@ pub struct ValhallaMicroservice<F> {
     interrupts: Option<InterruptListener>,
     stage: Stage,
     /// The worker function to be invoked for each job.
-    worker_fn: Arc<F>,
+    worker_fn: WorkerFn,
 }
 
-impl<F> ValhallaMicroservice<F>
-where
-    F: Fn(Api, &Interrupt) -> WorkerResult + Send + Sync + 'static,
-{
+impl ValhallaMicroservice {
     /// Runs one iteration of the worker loop.
     ///
     /// This advertises to the upstream proxy (again every second until a job arrives),
@@ -205,14 +221,17 @@ where
         let request_id = request_info.id();
         trace!("Handling request ID {request_id}");
 
-        let request = match Api::decode(payload) {
-            Ok(request) => request,
-            Err(source) => {
-                warn!("Request {request_id} has an invalid Api payload: {source}");
-                self.respond_with_error(&mut request_info, &self.stage.decode_error(), None)
-                    .await?;
-                return Err(InvalidMessage::Protobuf { request_id, source }.into());
-            }
+        let request = match &self.worker_fn {
+            WorkerFn::Api(_) => match Api::decode(payload) {
+                Ok(request) => Job::Api(request),
+                Err(source) => {
+                    warn!("Request {request_id} has an invalid Api payload: {source}");
+                    self.respond_with_error(&mut request_info, &self.stage.decode_error(), None)
+                        .await?;
+                    return Err(InvalidMessage::Protobuf { request_id, source }.into());
+                }
+            },
+            WorkerFn::Http(_) => Job::Http(payload),
         };
 
         let interrupt = Interrupt::new(
@@ -225,13 +244,26 @@ where
         }
 
         // Keep what an error response needs, since the worker consumes the request.
-        let options = request.options.as_ref().map(|options| Options {
-            action: options.action,
-            format: options.format,
-            ..Options::default()
-        });
-        let worker_fn = Arc::clone(&self.worker_fn);
-        let result = tokio::task::spawn_blocking(move || worker_fn(request, &interrupt)).await;
+        // (An HTTP job hasn't been parsed, so its error is in JSON.)
+        let options = match &request {
+            Job::Api(request) => request.options.as_ref().map(|options| Options {
+                action: options.action,
+                format: options.format,
+                ..Options::default()
+            }),
+            Job::Http(_) => None,
+        };
+        let worker_fn = self.worker_fn.clone();
+        let result = tokio::task::spawn_blocking(move || match (worker_fn, request) {
+            (WorkerFn::Api(f), Job::Api(request)) => f(request, &interrupt),
+            (WorkerFn::Http(f), Job::Http(payload)) => f(&payload, &interrupt),
+            // `request` was made to match `worker_fn` above.
+            _ => WorkerResult::error(
+                &ValhallaError::new(ErrorCode::LokiUnknown),
+                &mut Api::default(),
+            ),
+        })
+        .await;
 
         match result {
             Ok(WorkerResult::Forward(api)) => {
@@ -324,6 +356,16 @@ where
     }
 }
 
+/// A job's payload, decoded for the kind of worker function.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a job is moved once, onto the worker thread"
+)]
+enum Job {
+    Api(Api),
+    Http(Bytes),
+}
+
 fn panic_message(payload: Box<dyn Any + Send>) -> String {
     match payload.downcast::<String>() {
         Ok(message) => *message,
@@ -411,10 +453,30 @@ impl<'a> ValhallaMicroserviceBuilder<'a> {
     /// if a socket cannot be connected.
     /// zmq.rs keeps trying to connect to an endpoint that does not exist yet
     /// for up to its connect timeout (30 seconds by default) before giving up.
-    pub async fn build<F>(self, worker_fn: F) -> Result<ValhallaMicroservice<F>, Error>
+    pub async fn build<F>(self, worker_fn: F) -> Result<ValhallaMicroservice, Error>
     where
         F: Fn(Api, &Interrupt) -> WorkerResult + Send + Sync + 'static,
     {
+        self.connect(WorkerFn::Api(Arc::new(worker_fn))).await
+    }
+
+    /// Connects the sockets and builds a service whose jobs are raw HTTP requests,
+    /// as the server sends them to Loki (which parses them itself).
+    ///
+    /// The worker function gets each job's request bytes and an [`Interrupt`].
+    /// Otherwise this is [`build`](Self::build), with the same rules.
+    ///
+    /// # Errors
+    ///
+    /// As for [`build`](Self::build).
+    pub async fn build_http<F>(self, worker_fn: F) -> Result<ValhallaMicroservice, Error>
+    where
+        F: Fn(&[u8], &Interrupt) -> WorkerResult + Send + Sync + 'static,
+    {
+        self.connect(WorkerFn::Http(Arc::new(worker_fn))).await
+    }
+
+    async fn connect(self, worker_fn: WorkerFn) -> Result<ValhallaMicroservice, Error> {
         let upstream = Connection::connect(SocketRole::Upstream, self.upstream_endpoint).await?;
         let downstream = match self.downstream_endpoint {
             Some(endpoint) => Some(Connection::connect(SocketRole::Downstream, endpoint).await?),
@@ -432,7 +494,7 @@ impl<'a> ValhallaMicroserviceBuilder<'a> {
             loopback,
             interrupts,
             stage: self.stage,
-            worker_fn: Arc::new(worker_fn),
+            worker_fn,
         })
     }
 }
@@ -461,6 +523,14 @@ mod tests {
             error.message(),
             "Unknown: Failed to parse intermediate request format: Failed parsing pbf in Odin::Worker"
         );
+    }
+
+    #[test]
+    fn loki_errors_are_unknown() {
+        let error = Stage::Loki.unknown_error("boom");
+        assert_eq!(error.code(), ErrorCode::LokiUnknown);
+        assert_eq!(error.message(), "Unknown: boom");
+        assert_eq!(Stage::Loki.decode_error().code(), ErrorCode::LokiUnknown);
     }
 
     #[test]
