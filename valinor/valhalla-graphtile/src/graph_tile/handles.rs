@@ -15,6 +15,8 @@ use enumset::EnumSet;
 use memmap2::MmapRaw;
 use self_cell::self_cell;
 use std::sync::Arc;
+use thiserror::Error;
+use zerocopy::FromBytes;
 
 pub trait GraphTileHandle {
     fn tile_view(&'_ self) -> GraphTileView<'_>;
@@ -277,20 +279,24 @@ impl MmapGraphTileHandle {
     ///
     /// # Safety
     ///
-    /// See the documentation for [`MmapTilePointer::as_tile_bytes`] for safety conditions.
-    /// A valid pointer of the wrong length will result in a regular tile decoding error,
-    /// but other errors may produce unexpected results.
+    /// The mapped memory must not be mutated, truncated, or unmapped
+    /// for the lifetime of the handle.
+    /// (A range that does not fit in the map is read as an empty, invalid tile,
+    /// and invalid tile data is a regular decoding error.)
+    ///
+    /// # Errors
+    ///
+    /// Fails if the mapped bytes are not a valid graph tile
+    /// (see [`GraphTileView::try_from`]).
     ///
     /// # Performance
     ///
-    /// This does not perform any copies.
-    /// It does involve some bounds/length checking to ensure at least nominally correct
-    /// deserialization, but this overhead is minimal.
+    /// This does not perform any copies,
+    /// but it does validate the tile (see [`GraphTileView::try_from`]).
     pub unsafe fn try_from(tile_pointer: MmapTilePointer) -> Result<Self, GraphTileDecodingError> {
         MmapGraphTileHandle::try_new(tile_pointer, |ptr| {
-            // SAFETY: Assumes that the pointer is to a valid graph tile (not malformed, incorrect index, etc.).
-            // The backing memory is assumed to never be mutated during the lifetime of the returned slice.
-            // Additionally, we explicitly assume that the index and offsets describe a valid tile.
+            // SAFETY: The caller guarantees that the mapped memory is not mutated, truncated,
+            // or unmapped while the handle (which owns the pointer) is alive.
             let tile_bytes = unsafe { ptr.as_tile_bytes() };
             GraphTileView::try_from(tile_bytes)
         })
@@ -308,24 +314,95 @@ pub struct MmapTilePointer {
     pub(crate) offsets: TileOffset,
 }
 
+/// The ways in which a [`MmapTilePointer`] can fail to describe a usable range.
+///
+/// Tile providers check their ranges when they load the index,
+/// so these indicate a bug rather than corrupt data.
+/// They are errors rather than panics so that a bug can't take down an offline app.
+#[derive(Debug, Error, Copy, Clone, PartialEq, Eq)]
+pub enum MmapAccessError {
+    #[error(
+        "access {size} bytes at offset {offset}: the range runs past the end of the {map_len}-byte map"
+    )]
+    OutOfBounds {
+        offset: u64,
+        size: u32,
+        map_len: usize,
+    },
+    #[error("access a {size}-byte range as a {type_size}-byte value: the sizes differ")]
+    SizeMismatch { size: u32, type_size: usize },
+    #[error("access offset {offset} as a value aligned to {align} bytes: it is misaligned")]
+    Misaligned { offset: u64, align: usize },
+}
+
 impl MmapTilePointer {
+    /// The byte offset of the range within the map,
+    /// after checking that the whole range lies within the map.
+    #[inline]
+    fn checked_start(&self) -> Result<usize, MmapAccessError> {
+        let map_len = self.mmap.len();
+        let out_of_bounds = MmapAccessError::OutOfBounds {
+            offset: self.offsets.offset,
+            size: self.offsets.size,
+            map_len,
+        };
+        let start = usize::try_from(self.offsets.offset).map_err(|_| out_of_bounds)?;
+        let end = start
+            .checked_add(self.offsets.size as usize)
+            .ok_or(out_of_bounds)?;
+        if end > map_len {
+            return Err(out_of_bounds);
+        }
+        Ok(start)
+    }
+
+    /// The byte offset of the range within the map,
+    /// after checking that it holds exactly one naturally aligned `T`.
+    #[inline]
+    fn checked_value_start<T>(&self) -> Result<usize, MmapAccessError> {
+        if self.offsets.size as usize != size_of::<T>() {
+            return Err(MmapAccessError::SizeMismatch {
+                size: self.offsets.size,
+                type_size: size_of::<T>(),
+            });
+        }
+        let start = self.checked_start()?;
+        // The map itself is page aligned, so this is the alignment of the address.
+        if !(self.mmap.as_ptr() as usize + start).is_multiple_of(align_of::<T>()) {
+            return Err(MmapAccessError::Misaligned {
+                offset: self.offsets.offset,
+                align: align_of::<T>(),
+            });
+        }
+        Ok(start)
+    }
+
     /// Returns a slice view over the data mapped in memory.
+    ///
+    /// The range is checked against the length of the map,
+    /// and a range that does not fit returns an empty slice,
+    /// which every reader of tile data rejects as truncated.
+    /// (Tile providers check their ranges when they load the index,
+    /// so this only guards against bugs.)
     ///
     /// # Safety
     ///
     /// The backing memory map must not be mutated during the lifetime of the returned slice.
-    /// While some mutation of bytes may technically work, changing the values of memory underneath a slice
-    /// is undefined behavior in Rust.
+    /// While some mutation of bytes may technically work,
+    /// changing the values of memory underneath a slice is undefined behavior in Rust.
     ///
-    /// Truncating the file will cause SIGBUS or similar.
-    ///
-    /// Additionally, we explicitly assume that the index and offsets describe a valid memory range.
-    pub unsafe fn as_tile_bytes(&self) -> &[u8] {
+    /// Truncating the file after mapping it will cause SIGBUS or similar.
+    #[inline]
+    pub(crate) unsafe fn as_tile_bytes(&self) -> &[u8] {
+        let Ok(start) = self.checked_start() else {
+            return &[];
+        };
+        // SAFETY: The range lies within the map (checked above),
+        // so the pointer arithmetic stays within one allocation,
+        // and the caller guarantees that the memory is not mutated or unmapped
+        // while the slice is alive.
         unsafe {
-            // `as_ptr` assumes that the file has not been truncated, or else raises a SIGBUS.
-            let start_ptr = self.mmap.as_ptr().offset(self.offsets.offset as isize);
-            // Assumes the offset and size are valid.
-            core::slice::from_raw_parts(start_ptr, self.offsets.size as usize)
+            core::slice::from_raw_parts(self.mmap.as_ptr().add(start), self.offsets.size as usize)
         }
     }
 
@@ -333,10 +410,12 @@ impl MmapTilePointer {
     ///
     /// The instance of `T` is created from a _bitwise_ copy of the data.
     /// This uses [`core::ptr::read_volatile`] under the hood to make sure the I/O actually happens.
+    /// `T` must be [`FromBytes`], so every bit pattern is a valid `T`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the read is not naturally aligned (checked in an assertion).
+    /// Fails if the range is not exactly `size_of::<T>()` bytes,
+    /// does not lie within the map, or is not naturally aligned for `T`.
     ///
     /// # Safety
     ///
@@ -345,17 +424,10 @@ impl MmapTilePointer {
     /// though it may be *practically* acceptable on x86_64 for the places it's used
     /// (traffic tile access via a shared memory map).
     ///
-    /// There are a lot of things that can go wrong here.
     /// The following will likely result in a SIGBUS:
     ///
     /// - Truncating the memory mapped file.
     /// - Remapping or resizing the map.
-    ///
-    /// The following are also obviously unsafe and will cause either a panic or undefined behavior:
-    ///
-    /// - Trying to read a value where `size_of::<T>()` doesn't match the size of the pointer.
-    ///   We statically assert this, and if you fail to uphold this invariant, the program will panic.
-    /// - Reading an offset or size out of bounds.
     ///
     /// Finally, while this does force a volatile read,
     /// NO ATTEMPT IS MADE AT SYNCHRONIZATION!
@@ -375,29 +447,13 @@ impl MmapTilePointer {
     /// Concretely, this means that **writers must use a larger size integer type
     /// if fields can span across byte boundaries (as they do in traffic tiles)
     /// as the byte-level reads would permit tearing.**
-    pub unsafe fn read_volatile<T>(&self) -> T {
-        assert_eq!(
-            size_of::<T>(),
-            self.offsets
-                .size
-                .try_into()
-                .expect("u32 does not fit into usize... that's unexpected!"),
-            "You can't try an unsafe cast on a byte range of the wrong size!"
-        );
-        // SAFETY: Assumes that the offset is valid.
-        // The pointer arithmetic must never be greater than isize::MAX,
-        // which we satisfy implicitly as it is of type `u32` and we do not support
-        // any CPU with pointers smaller than 64-bits.
-        unsafe {
-            let ptr = self
-                .mmap
-                .as_ptr()
-                .add(self.offsets.offset as usize)
-                .cast::<T>();
-            assert!(ptr.is_aligned());
-
-            ptr.read_volatile()
-        }
+    #[inline]
+    pub(crate) unsafe fn read_volatile<T: FromBytes>(&self) -> Result<T, MmapAccessError> {
+        let start = self.checked_value_start::<T>()?;
+        // SAFETY: The range holds exactly one `T`, lies within the map, and is aligned for `T`
+        // (all checked above), and every bit pattern is a valid `T`.
+        // The caller upholds the conditions on concurrent writers described above.
+        Ok(unsafe { self.mmap.as_ptr().add(start).cast::<T>().read_volatile() })
     }
 
     /// Writes the value to the mapped range.
@@ -405,31 +461,31 @@ impl MmapTilePointer {
     /// This will fail to compile if lock-free atomics are not supported for the current target
     /// for types of `size_of::<T>()`.
     /// This is statically checked at compile time.
-    /// More on this later...
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// - If `self.offsets.size` does not match the size of type `T` (clearly incorrect).
-    /// - If the pointer is not aligned for type `T` (no major platform guarantees atomicity).
+    /// Fails if the range is not exactly `size_of::<T>()` bytes,
+    /// does not lie within the map, or is not naturally aligned for `T`
+    /// (no major platform guarantees atomicity for misaligned stores).
     ///
     /// # Safety
+    ///
+    /// The map must be writable.
     ///
     /// The following will likely result in a SIGBUS:
     ///
     /// - Truncating the memory mapped file.
     /// - Remapping or resizing the map.
     ///
-    /// The following are also obviously unsafe and will cause either a panic or undefined behavior:
-    ///
-    /// - Reading an offset or size out of bounds.
-    /// - Language specs indicate that unsynchronized concurrent reads and writes are UB.
-    ///   By making reads and writes volatile, we mitigate one source of uncertainty,
-    ///   instructing the compiler that it can never optimize these away.
-    ///   However, shared memory maps have NO inherent synchronization.
-    ///   The check for lock-free atomics on the target for this value size _typically_ indicates
-    ///   that loads and stores **to memory** are atomic for naturally aligned pointers.
-    ///   This implies nothing about _ordering_, but it does protect against torn writes.
-    pub unsafe fn write_volatile<T>(&self, value: T) {
+    /// Language specs indicate that unsynchronized concurrent reads and writes are UB.
+    /// By making reads and writes volatile, we mitigate one source of uncertainty,
+    /// instructing the compiler that it can never optimize these away.
+    /// However, shared memory maps have NO inherent synchronization.
+    /// The check for lock-free atomics on the target for this value size _typically_ indicates
+    /// that loads and stores **to memory** are atomic for naturally aligned pointers.
+    /// This implies nothing about _ordering_, but it does protect against torn writes.
+    #[inline]
+    pub(crate) unsafe fn write_volatile<T>(&self, value: T) -> Result<(), MmapAccessError> {
         const {
             let has_atomic = match size_of::<T>() {
                 1 => cfg!(target_has_atomic = "8"),
@@ -445,17 +501,77 @@ impl MmapTilePointer {
             );
         };
 
-        assert_eq!(self.offsets.size, size_of::<T>() as u32);
+        let start = self.checked_value_start::<T>()?;
+        // SAFETY: The range holds exactly one `T`, lies within the map, and is aligned for `T`
+        // (all checked above).
+        // The caller guarantees that the map is writable,
+        // and upholds the conditions on concurrent access described above.
         unsafe {
-            // SAFETY: Assumes that the offset is valid.
-            let ptr = self
-                .mmap
+            self.mmap
                 .as_mut_ptr()
-                .add(self.offsets.offset as usize)
-                .cast::<T>();
-            assert!(ptr.is_aligned());
+                .add(start)
+                .cast::<T>()
+                .write_volatile(value)
+        };
+        Ok(())
+    }
+}
 
-            ptr.write_volatile(value);
+#[cfg(all(test, not(miri)))]
+mod tests {
+    use super::*;
+    use memmap2::MmapOptions;
+
+    fn pointer(len: usize, offset: u64, size: u32) -> MmapTilePointer {
+        MmapTilePointer {
+            mmap: Arc::new(MmapOptions::new().len(len).map_anon().expect("map").into()),
+            offsets: TileOffset { offset, size },
+        }
+    }
+
+    #[test]
+    fn test_out_of_range_pointers_are_errors() {
+        // SAFETY: The anonymous maps are private to the test and never mutated concurrently.
+        unsafe {
+            assert_eq!(pointer(64, 0, 64).as_tile_bytes().len(), 64);
+            assert!(pointer(64, 1, 64).as_tile_bytes().is_empty());
+            assert!(pointer(64, u64::MAX, 1).as_tile_bytes().is_empty());
+
+            assert_eq!(pointer(64, 8, 8).read_volatile::<u64>(), Ok(0));
+            assert_eq!(pointer(64, 8, 8).write_volatile(7u64), Ok(()));
+            assert_eq!(
+                pointer(64, 4, 8).read_volatile::<u64>(),
+                Err(MmapAccessError::Misaligned {
+                    offset: 4,
+                    align: 8
+                })
+            );
+            assert_eq!(
+                pointer(64, 8, 4).read_volatile::<u64>(),
+                Err(MmapAccessError::SizeMismatch {
+                    size: 4,
+                    type_size: 8
+                })
+            );
+            assert_eq!(
+                pointer(64, 64, 8).write_volatile(1u64),
+                Err(MmapAccessError::OutOfBounds {
+                    offset: 64,
+                    size: 8,
+                    map_len: 64
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn test_write_then_read() {
+        let map = pointer(64, 16, 8);
+        // SAFETY: The anonymous map is private to the test and never mutated concurrently.
+        unsafe {
+            map.write_volatile(0x0123_4567_89ab_cdef_u64)
+                .expect("in range");
+            assert_eq!(map.read_volatile::<u64>(), Ok(0x0123_4567_89ab_cdef));
         }
     }
 }

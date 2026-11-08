@@ -17,6 +17,7 @@
 
 use crate::GraphId;
 use crate::graph_id::InvalidGraphIdError;
+use crate::graph_tile::handles::MmapAccessError;
 use crate::graph_tile::{GraphTileDecodingError, LookupError};
 use crate::tile_provider::tarball::{InvalidIndexBinError, InvalidTarballError};
 use thiserror::Error;
@@ -145,6 +146,11 @@ pub enum GraphTileProviderError {
     /// The parameters of a spatial search are not usable.
     #[error("search the graph: {0}")]
     InvalidSearch(#[from] InvalidSearchError),
+    /// A pointer into a memory map does not describe a usable range.
+    ///
+    /// Providers check their ranges up front, so this indicates a bug.
+    #[error("read the memory map: {0}")]
+    MmapAccess(#[from] MmapAccessError),
 }
 
 impl GraphTileProviderError {
@@ -166,7 +172,7 @@ impl GraphTileProviderError {
             | Self::UnsupportedTrafficTileVersion { .. }
             | Self::TruncatedTrafficTile { .. } => GraphTileProviderErrorKind::InvalidData,
             Self::InvalidSearch(_) => GraphTileProviderErrorKind::InvalidInput,
-            Self::PoisonedCacheLock => GraphTileProviderErrorKind::Internal,
+            Self::PoisonedCacheLock | Self::MmapAccess(_) => GraphTileProviderErrorKind::Internal,
         }
     }
 

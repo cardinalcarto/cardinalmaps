@@ -130,9 +130,9 @@ impl<const MUT: bool> TrafficTileProvider<MUT> {
 
         // SAFETY: The pointer was bounds-checked against the tile, which lies within the map,
         // and it is 8 bytes long and 8-byte aligned (see `get_pointer_for_edge`),
-        // so the size and alignment assertions in `read_volatile` hold.
+        // so the size and alignment checks in `read_volatile` pass.
         // Writers store whole records with aligned 64-bit stores, so the load cannot tear.
-        let raw: u64 = unsafe { speed_pointer.read_volatile() };
+        let raw: u64 = unsafe { speed_pointer.read_volatile()? };
         // The record is stored in little-endian byte order.
         Ok(TrafficSpeed::from_bits(U64::<LE>::new(u64::from_le(raw))))
     }
@@ -180,13 +180,13 @@ impl<const MUT: bool> TrafficTileProvider<MUT> {
 
         // SAFETY: The header lies within the tile (checked above),
         // which lies within the memory map (checked when the index was loaded).
-        // `TrafficTileHeader` has an alignment of 1, so the alignment assertion holds.
+        // `TrafficTileHeader` has an alignment of 1, so the alignment check passes.
         // TBH this probably isn't possible to make completely safe
         // given the current architecture of Valhalla and fundamental unsafety of shared memory maps.
         // However, Valhalla (at the time of this writing) has no mechanism for hot swapping
         // the underlying graph, which means we can assume the header will never change
         // for a given tile during the life of the program (the caller guarantees this).
-        let header: TrafficTileHeader = unsafe { header_pointer.read_volatile() };
+        let header: TrafficTileHeader = unsafe { header_pointer.read_volatile()? };
 
         let version = header.traffic_tile_version();
         if version != TRAFFIC_TILE_VERSION {
@@ -305,10 +305,10 @@ impl TrafficTileProvider<true> {
 
         // SAFETY: The pointer was bounds-checked against the tile, which lies within the map,
         // and it is 8 bytes long and 8-byte aligned (see `get_pointer_for_edge`),
-        // so the size and alignment assertions in `write_volatile` hold.
+        // so the size and alignment checks in `write_volatile` pass.
         // The map is writable, since `MUT` is true.
         // The record is stored in little-endian byte order.
-        unsafe { speed_pointer.write_volatile(speed.into_bits().get().to_le()) };
+        unsafe { speed_pointer.write_volatile(speed.into_bits().get().to_le())? };
         Ok(())
     }
 }
