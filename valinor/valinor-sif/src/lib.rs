@@ -35,9 +35,13 @@ mod dynamic;
 pub mod json;
 pub mod label;
 mod pedestrian;
+pub mod recost;
+pub mod time_info;
 
 #[cfg(test)]
 mod oracle_tests;
+#[cfg(test)]
+mod trip_tests;
 
 pub use auto::AutoCost;
 pub use bicycle::{BicycleCost, BicycleType};
@@ -49,3 +53,5 @@ pub use dynamic::{
 };
 pub use label::{EdgeLabel, Label, LabelState, LabelStore};
 pub use pedestrian::{PedestrianCost, PedestrianType};
+pub use recost::{RecostError, RecostedEdge, recost_forward};
+pub use time_info::TimeInfo;

@@ -182,6 +182,25 @@ VALINOR_SIF_DUMP=/tmp/full.txt cargo test --release -p valinor-sif full_dump -- 
 `VALINOR_SIF_TILES` points the test at another tile set
 (the focus `elevators`, for example, checks the elevator level penalties in Seattle).
 
+#### Captured trips
+
+The trips in the captures are a second reference:
+each node records the elapsed cost and time and the transition cost
+along the path mainline chose.
+`valinor-sif`'s trip tests recost each leg with `recost_forward`
+(splitting legs at through locations, as mainline does) and compare.
+The Andorra cases in `valinor-tyr/fixtures/captures` run against the fixture tiles;
+other capture sets run with the ignored test:
+
+```shell
+VALINOR_SIF_CAPTURES=/mnt/maps/cardinal/valhalla-oracle/captures/seattle \
+VALINOR_SIF_TILES=/mnt/maps/cardinal/valhalla-oracle/seattle/tiles \
+  cargo test --release -p valinor-sif captured_trips -- --ignored --nocapture
+```
+
+Paths from bidirectional searches, which mainline recosts too, must match exactly;
+see `trip_tests.rs` for the tolerances on time-dependent (unidirectional) searches.
+
 #### Predicted speeds
 
 None of the oracle builds has predicted speeds on many edges,

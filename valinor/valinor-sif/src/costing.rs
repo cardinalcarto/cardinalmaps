@@ -224,13 +224,19 @@ pub trait Costing {
     /// The cost of the fraction of an edge from `start` to `end`,
     /// with the user's cost factors over that fraction (mainline's `PartialEdgeCost`).
     ///
+    /// `factor_edge` is the edge whose user cost factors apply:
+    /// mainline passes the edge's ID when path search starts or ends on it,
+    /// and an invalid ID (`None`) when it recosts a path, which applies none.
+    ///
     /// # Errors
     ///
     /// As for [`edge_cost`](Self::edge_cost).
+    #[expect(clippy::too_many_arguments, reason = "mainline's signature")]
     fn partial_edge_cost<T: GraphTile>(
         &self,
         edge: &DirectedEdge,
         edge_id: GraphId,
+        factor_edge: Option<GraphId>,
         tile: &T,
         seconds_of_week: Option<u32>,
         start: f32,
@@ -425,12 +431,21 @@ impl Costing for AnyCosting {
         &self,
         edge: &DirectedEdge,
         edge_id: GraphId,
+        factor_edge: Option<GraphId>,
         tile: &T,
         seconds_of_week: Option<u32>,
         start: f32,
         end: f32,
     ) -> Result<EdgeCostResult, CostingError> {
-        dispatch!(self, c => c.partial_edge_cost(edge, edge_id, tile, seconds_of_week, start, end))
+        dispatch!(self, c => c.partial_edge_cost(
+            edge,
+            edge_id,
+            factor_edge,
+            tile,
+            seconds_of_week,
+            start,
+            end
+        ))
     }
 }
 
@@ -440,7 +455,7 @@ impl Costing for AnyCosting {
 pub(crate) fn partial_from_full(
     base: &DynamicCost,
     full: EdgeCostResult,
-    edge_id: GraphId,
+    factor_edge: Option<GraphId>,
     start: f32,
     end: f32,
 ) -> EdgeCostResult {
@@ -449,7 +464,7 @@ pub(crate) fn partial_from_full(
         clippy::cast_possible_truncation,
         reason = "mainline multiplies a Cost (floats) by the double factor converted to float"
     )]
-    let factor = base.partial_edge_factor(edge_id, start, end) as f32;
+    let factor = factor_edge.map_or(1.0, |id| base.partial_edge_factor(id, start, end)) as f32;
     EdgeCostResult {
         cost: full.cost * fraction * factor,
         flow_sources: full.flow_sources,

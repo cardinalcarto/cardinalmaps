@@ -6,6 +6,7 @@
 //   sif conditional <count>
 //   sif speeds <tile_dir> <tile_level> <tile_id>
 //   sif edges <tile_dir>
+//   sif timeinfo <date_time> <tz_index> [<seconds_offset> <next_tz_index>]...
 //
 // `costing` builds each costing in <options_file> (one per line: a name, a costing name, and
 // a JSON object of that costing's options, separated by tabs) with mainline's own option
@@ -44,6 +45,9 @@
 // each at several times in several time zones.
 //
 // `speeds` prints `GraphTile::GetSpeed` with `is_truck` set, for every edge of a tile.
+//
+// `timeinfo` prints `TimeInfo::make` for a local date and time in a time zone,
+// then `forward` and `reverse` by each offset into each next time zone.
 //
 // `edges` lists every edge of a tile set with its speed and use
 // (the input for `tools/oracle/predicted-profiles.py`).
@@ -484,6 +488,27 @@ int speeds_mode(const char* tile_dir, uint32_t level, uint32_t tile_index) {
   return 0;
 }
 
+void print_time_info(const char* what, const TimeInfo& ti) {
+  printf("%s\t%d\t%lu\t%lu\t%lu\t%lu\t%d\n", what, static_cast<int>(ti.valid),
+         static_cast<unsigned long>(ti.timezone_index), static_cast<unsigned long>(ti.local_time),
+         static_cast<unsigned long>(ti.second_of_week),
+         static_cast<unsigned long>(ti.seconds_from_now),
+         static_cast<int>(ti.negative_seconds_from_now));
+}
+
+int timeinfo_mode(int argc, char** argv) {
+  std::string date_time = argv[2];
+  TimeInfo ti = TimeInfo::make(date_time, std::stoi(argv[3]));
+  print_time_info("make", ti);
+  for (int i = 4; i + 1 < argc; i += 2) {
+    float offset = std::stof(argv[i]);
+    int tz = std::stoi(argv[i + 1]);
+    print_time_info("forward", ti.forward(offset, tz));
+    print_time_info("reverse", ti.reverse(offset, tz));
+  }
+  return 0;
+}
+
 int edges_mode(const char* tile_dir) {
   boost::property_tree::ptree pt;
   pt.put("tile_dir", tile_dir);
@@ -521,6 +546,8 @@ int main(int argc, char** argv) {
                         std::stoul(argv[6]));
   if (argc == 3 && strcmp(argv[1], "conditional") == 0)
     return conditional_mode(std::stoul(argv[2]));
+  if (argc >= 4 && strcmp(argv[1], "timeinfo") == 0)
+    return timeinfo_mode(argc, argv);
   if (argc == 3 && strcmp(argv[1], "edges") == 0)
     return edges_mode(argv[2]);
   if (argc == 5 && strcmp(argv[1], "speeds") == 0)
@@ -529,6 +556,7 @@ int main(int argc, char** argv) {
                   "<special_stride>\n"
                   "       sif conditional <count>\n"
                   "       sif speeds <tile_dir> <level> <tile_id>\n"
-                  "       sif edges <tile_dir>\n");
+                  "       sif edges <tile_dir>\n"
+                  "       sif timeinfo <date_time> <tz_index> [<offset> <next_tz_index>]...\n");
   return 2;
 }

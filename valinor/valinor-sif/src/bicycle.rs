@@ -631,14 +631,15 @@ impl Costing for BicycleCost {
     fn partial_edge_cost<T: GraphTile>(
         &self,
         edge: &DirectedEdge,
-        edge_id: GraphId,
+        _edge_id: GraphId,
+        factor_edge: Option<GraphId>,
         _tile: &T,
         _seconds_of_week: Option<u32>,
         start: f32,
         end: f32,
     ) -> Result<EdgeCostResult, CostingError> {
         let full = self.edge_cost_inner(edge, None);
-        Ok(partial_from_full(&self.base, full, edge_id, start, end))
+        Ok(partial_from_full(&self.base, full, factor_edge, start, end))
     }
 
     #[inline]
