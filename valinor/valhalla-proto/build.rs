@@ -1,12 +1,17 @@
 use std::io::Result;
 
-fn main() -> Result<()> {
-    assert!(
-        !(cfg!(feature = "protoc-from-src") && cfg!(feature = "protoc-vendored")),
-        "It looks like you've enabled both protoc-from-src and protoc-vendored at the same time. You probably want to pick just one.\n\n(Hint: did you forget to add default-features = false in your Cargo.toml?)"
-    );
+// The two protoc sources are mutually exclusive.
+// Checking this with `cfg` rather than a runtime assertion
+// turns the misconfiguration into a compile error that names the problem.
+#[cfg(all(feature = "protoc-from-src", feature = "protoc-vendored"))]
+compile_error!(
+    "It looks like you've enabled both protoc-from-src and protoc-vendored at the same time. You probably want to pick just one.\n\n(Hint: did you forget to add default-features = false in your Cargo.toml?)"
+);
 
+fn main() -> Result<()> {
     println!("cargo:rerun-if-env-changed=PROTOC");
+    // Watch the whole directory so that changes to imported files trigger a rebuild too.
+    println!("cargo:rerun-if-changed=proto");
     let mut config = prost_build::Config::new();
 
     #[cfg(feature = "protoc-from-src")]
