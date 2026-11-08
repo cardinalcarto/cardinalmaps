@@ -413,8 +413,14 @@ async fn reconnects_after_the_upstream_proxy_restarts() {
         &mut harness.upstream,
         RouterSocket::new(),
     ));
+    // zmq.rs closes the old listener in the background, so the address may be busy briefly.
     let endpoint = harness.upstream_endpoint.clone();
-    harness.upstream.bind(&endpoint).await.expect("rebind");
+    let mut attempts = 0;
+    while let Err(e) = harness.upstream.bind(&endpoint).await {
+        attempts += 1;
+        assert!(attempts < 100, "failed to rebind {endpoint}: {e}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     harness.worker = harness.expect_advertisement().await;
 
     let (info, api) = captured_job();
