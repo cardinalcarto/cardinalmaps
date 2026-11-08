@@ -11,13 +11,15 @@
 //! | `locate` | `locate` | [`Loki::locate`] |
 //! | `sources_to_targets`, `optimized_route` | `matrix` | [`Loki::matrix`] |
 //! | `trace_route`, `trace_attributes` | `trace` | [`Loki::trace`] |
+//! | `status` | `status` | [`Loki::status`] |
 //!
 //! Every action records its latency as a statistic (`<action>.info.loki.latency_ms`),
 //! even when it fails, as mainline's `measure_scope_time` does.
 //!
 //! # What isn't here
 //!
-//! - Isochrones, expansion, heights, transit availability, status, and tiles (error 107).
+//! - Isochrones, expansion, heights, transit availability, and tiles (error 107),
+//!   and verbose status where the server allows it (it needs the tile set's outline).
 //! - Costings Sif doesn't have yet, including the transit and combined ones
 //!   (`multimodal`, `transit`, `bikeshare`, and `auto_pedestrian`): error 107.
 //! - Linear cost features (`cost_factor_lines`): error 107.
@@ -48,7 +50,9 @@ use valhalla_proto::location::{
     HasMinimumReachability, HasNodeSnapTolerance, HasRadius, HasSearchCutoff, HasStreetSideCutoff,
     HasStreetSideMaxDistance, HasStreetSideTolerance, SideOfStreet,
 };
-use valhalla_proto::options::{Action, HasAlternates, HasBreakageDistance, HasGpsAccuracy};
+use valhalla_proto::options::{
+    Action, HasAlternates, HasBreakageDistance, HasGpsAccuracy, HasVerbose,
+};
 use valhalla_proto::options::{HasSearchRadius, HasTurnPenaltyFactor};
 use valhalla_proto::search_filter::{
     HasExcludeClosures, HasLevel, HasMaxRoadClass, HasMinRoadClass,
@@ -118,6 +122,7 @@ pub struct Loki<P> {
     config: LokiConfig,
     provider: P,
     connectivity: Option<ConnectivityMap>,
+    tileset_last_modified: u32,
 }
 
 /// The ll of a location as a point (`to_ll`).
@@ -317,7 +322,16 @@ impl<P: GraphTileProvider> Loki<P> {
             config,
             provider,
             connectivity,
+            tileset_last_modified: 0,
         }
+    }
+
+    /// Sets when the tile set was last modified, in seconds since the Unix epoch,
+    /// for `/status` (mainline reads the modification time of the tile extract or directory).
+    #[must_use]
+    pub fn with_tileset_last_modified(mut self, seconds: u32) -> Self {
+        self.tileset_last_modified = seconds;
+        self
     }
 
     /// The configuration.
@@ -357,6 +371,7 @@ impl<P: GraphTileProvider> Loki<P> {
             Action::TraceRoute | Action::TraceAttributes => {
                 self.trace(api).map(|()| LokiOutput::Forward)
             }
+            Action::Status => self.status(api).map(|()| LokiOutput::Forward),
             _ => Err(ErrorCode::NotImplemented.into()),
         }
     }
@@ -648,6 +663,40 @@ impl<P: GraphTileProvider> Loki<P> {
             Some(map) if !map.connected(locations) => Err(ErrorCode::UnconnectedRegions.into()),
             _ => Ok(()),
         }
+    }
+
+    /// Adds Loki's part of `/status` (mainline's `status` action): the version,
+    /// when the tile set was last modified, and the actions this Loki offers
+    /// (in mainline's order of actions, not the config's).
+    ///
+    /// # Errors
+    ///
+    /// 107 for a verbose status on a server that allows it
+    /// (mainline then adds the tile set's outline, which we don't build yet).
+    pub fn status(&self, api: &mut Api) -> Result<(), ValhallaError> {
+        let verbose = api
+            .options
+            .as_ref()
+            .is_some_and(|o| matches!(o.has_verbose, Some(HasVerbose::Verbose(true))));
+        if verbose && self.config.service_limits.allow_verbose_status {
+            return Err(ValhallaError::with_detail(
+                ErrorCode::NotImplemented,
+                "verbose status",
+            ));
+        }
+        let mut actions: Vec<Action> = self.config.actions.clone();
+        actions.sort_by_key(|a| *a as i32);
+        actions.dedup();
+        let status = api
+            .status
+            .get_or_insert_with(valhalla_proto::Status::default);
+        status.version = "3.9.1".to_string();
+        status.tileset_last_modified = self.tileset_last_modified;
+        status.available_actions = actions
+            .iter()
+            .map(|a| a.as_str_name().to_string())
+            .collect();
+        Ok(())
     }
 
     /// Correlates a route's locations (mainline's `route` action, for `route` and `centroid`).

@@ -150,6 +150,8 @@ pub struct ServiceLimits {
     pub max_distance_disable_hierarchy_culling: f32,
     /// Whether `exclude_bridges` and the other hard exclusions are allowed.
     pub allow_hard_exclusions: bool,
+    /// Whether `/status` may be verbose (`service_limits.status.allow_verbose`).
+    pub allow_verbose_status: bool,
     /// The shortest walk allowed at the ends of a multimodal route, in meters.
     pub min_multimodal_walking_distance: usize,
     /// The longest walk allowed at the ends of a multimodal route, in meters.
@@ -234,6 +236,7 @@ impl Default for ServiceLimits {
             max_exclude_polygons_vertices: 100,
             max_distance_disable_hierarchy_culling: 0.0,
             allow_hard_exclusions: false,
+            allow_verbose_status: false,
             min_multimodal_walking_distance: 1,
             max_multimodal_walking_distance: 10_000,
         }
@@ -401,6 +404,12 @@ impl LokiConfig {
         }
         if let Some(v) = get("allow_hard_exclusions").and_then(serde_json::Value::as_bool) {
             limits.allow_hard_exclusions = v;
+        }
+        if let Some(v) = get("status")
+            .and_then(|s| s.get("allow_verbose"))
+            .and_then(serde_json::Value::as_bool)
+        {
+            limits.allow_verbose_status = v;
         }
         if let Some(trace) = get("trace") {
             limits.trace = TraceLimits::deserialize(trace)?;
