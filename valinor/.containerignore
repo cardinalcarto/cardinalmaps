@@ -1,0 +1,4 @@
+# Local build output and editor state never belong in the image build context.
+target/
+**/target/
+.git
