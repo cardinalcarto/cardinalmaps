@@ -13,6 +13,8 @@
 //!   (`fn(&mut Api) -> Result<_, ValhallaError>`).
 //! - [`handle_http_request`] is the entry point of the worker that mainline's HTTP server
 //!   talks to: it parses the raw HTTP request with the front, then runs Loki.
+//!   [`handle_request`] does the same for a request an HTTP server has already split
+//!   (the in-process router's entry point).
 //! - [`search`] is the location search itself (mainline's `loki::Search`),
 //!   for locations that already have Loki's defaults ([`parse_location`]).
 //!
@@ -51,6 +53,6 @@ pub use config::{
 };
 pub use connectivity::ConnectivityMap;
 pub use graph::GraphError;
-pub use http::{HttpOutcome, HttpParseError, RawHttpRequest, handle_http_request};
+pub use http::{HttpOutcome, HttpParseError, RawHttpRequest, handle_http_request, handle_request};
 pub use search::{SearchError, search};
 pub use worker::{Loki, LokiOutput, parse_location};

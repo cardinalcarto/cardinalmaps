@@ -145,13 +145,12 @@ pub enum HttpOutcome {
 ///
 /// A request that isn't HTTP at all is error 199, as mainline reports the parser's exception.
 pub fn handle_http_request<P: GraphTileProvider>(loki: &Loki<P>, raw: &[u8]) -> HttpOutcome {
-    let mut api = Api::default();
     let request = match RawHttpRequest::parse(raw) {
         Ok(request) => request,
         Err(e) => {
             return HttpOutcome::Error {
                 error: ValhallaError::with_detail(ErrorCode::LokiUnknown, e.to_string()),
-                api: Box::new(api),
+                api: Box::default(),
             };
         }
     };
@@ -161,7 +160,20 @@ pub fn handle_http_request<P: GraphTileProvider>(loki: &Loki<P>, raw: &[u8]) -> 
         content_type: request.content_type,
         body: request.body,
     };
-    if let Err(error) = parse_http_request(&front, &mut api) {
+    handle_request(loki, &front)
+}
+
+/// Parses a request that an HTTP server has already split into its parts with the front,
+/// and runs Loki on it (what [`handle_http_request`] does after splitting the raw request).
+///
+/// This is the entry point for an in-process router, which gets its requests from its own
+/// HTTP server (or from an app) rather than as `prime_server`'s raw bytes.
+pub fn handle_request<P: GraphTileProvider>(
+    loki: &Loki<P>,
+    request: &HttpRequest<'_>,
+) -> HttpOutcome {
+    let mut api = Api::default();
+    if let Err(error) = parse_http_request(request, &mut api) {
         return HttpOutcome::Error {
             error,
             api: Box::new(api),
