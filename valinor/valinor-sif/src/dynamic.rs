@@ -1509,3 +1509,130 @@ fn ferry_preference(use_ferry: f32) -> (f32, f32) {
         (0.0, 1.5 - use_ferry)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AutoCost, Costing};
+    use valhalla_proto::{AvoidEdge, CostFactorEdge};
+
+    fn edge(index: u64) -> GraphId {
+        GraphId::try_from_components(2, 763_926, index).expect("id")
+    }
+
+    fn range(id: GraphId, factor: f64, start: f64, end: f64) -> CostFactorEdge {
+        CostFactorEdge {
+            id: id.value(),
+            factor,
+            start,
+            end,
+            ignore_access_restrictions: id == edge(1),
+        }
+    }
+
+    /// Auto costing with the given user cost factors and avoid edges.
+    fn costing(factors: Vec<CostFactorEdge>, avoid: Vec<AvoidEdge>) -> AutoCost {
+        let options = Options {
+            cost_factor_edges: factors,
+            exclude_edges: avoid,
+            ..Options::default()
+        };
+        AutoCost::new(&CostingProto {
+            has_options: Some(HasOptions::Options(options)),
+            ..CostingProto::default()
+        })
+    }
+
+    /// The factors follow mainline's `sort_and_find_smallest` and `PartialEdgeFactor`
+    /// (worked by hand from its formulas).
+    #[test]
+    fn user_cost_factors() {
+        let cost = costing(
+            vec![
+                // Out of order, as Loki may send them.
+                range(edge(1), 0.5, 0.75, 1.0),
+                range(edge(1), 2.0, 0.0, 0.5),
+                range(edge(2), 3.0, 0.0, 1.0),
+                // A factor of 0 avoids the edge from its start.
+                range(edge(3), 0.0, 0.4, 1.0),
+            ],
+            Vec::new(),
+        );
+        let b = cost.base();
+        // 0.5 * 2 + 0.25 * 0.5, plus the uncovered quarter at 1.
+        assert!((b.edge_factor(Some(edge(1))) - 1.375).abs() < 1e-12);
+        assert!((b.edge_factor(Some(edge(2))) - 3.0).abs() < 1e-12);
+        assert!((b.edge_factor(Some(edge(9))) - 1.0).abs() < 1e-12);
+        assert!((b.edge_factor(None) - 1.0).abs() < 1e-12);
+        assert!((b.min_linear_cost_factor - 0.5).abs() < 1e-12);
+        // Over 0.25 to 0.875: the first range covers 0.4 of it at 2.
+        // Mainline measures the second range to its own end (1.0), not the fraction's (0.875),
+        // so it also counts 0.4 at 0.5, leaving 0.2 at 1.
+        assert!((b.partial_edge_factor(edge(1), 0.25, 0.875) - 1.2).abs() < 1e-6);
+        assert!((b.partial_edge_factor(edge(1), 0.5, 0.5) - 1.0).abs() < 1e-12);
+        assert!((b.partial_edge_factor(edge(9), 0.0, 1.0) - 1.0).abs() < 1e-12);
+        assert!(b.ignores_restrictions(edge(1)));
+        assert!(!b.ignores_restrictions(edge(2)));
+        assert!(b.is_user_avoid_edge(edge(3)));
+        assert!(b.avoid_as_origin_edge(edge(3), 0.4));
+        assert!(!b.avoid_as_origin_edge(edge(3), 0.5));
+        assert!(b.avoid_as_destination_edge(edge(3), 0.5));
+        assert!(!b.avoid_as_destination_edge(edge(3), 0.3));
+        // The A* factor stays an underestimate.
+        let top = crate::cost::speed_factor(b.top_speed());
+        assert!((cost.astar_cost_factor() - top * 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn avoid_edges_keep_the_first_percent() {
+        let avoid = |id: GraphId, pct: f32| AvoidEdge {
+            has_id: Some(HasId::Id(id.value())),
+            has_percent_along: Some(HasPercentAlong::PercentAlong(pct)),
+        };
+        let mut cost = costing(Vec::new(), vec![avoid(edge(4), 0.25), avoid(edge(4), 0.75)]);
+        let b = cost.base_mut();
+        assert!(b.is_user_avoid_edge(edge(4)));
+        assert!(!b.is_user_avoid_edge(edge(5)));
+        assert!(b.avoid_as_origin_edge(edge(4), 0.25));
+        assert!(!b.avoid_as_origin_edge(edge(4), 0.5));
+        b.add_user_avoid_edges([(edge(5), 1.0), (edge(4), 1.0)]);
+        assert!(b.is_user_avoid_edge(edge(5)));
+        assert!(!b.avoid_as_origin_edge(edge(4), 0.5));
+    }
+
+    #[test]
+    fn hierarchy_limits_relax_like_mainline() {
+        let mut cost = costing(Vec::new(), Vec::new());
+        let b = cost.base_mut();
+        b.set_hierarchy_limits(vec![
+            HierarchyLimits {
+                up_transition_count: 0,
+                max_up_transitions: 0,
+                expand_within_dist: f32::MAX,
+            },
+            HierarchyLimits {
+                up_transition_count: 0,
+                max_up_transitions: 400,
+                expand_within_dist: 100_000.0,
+            },
+            HierarchyLimits {
+                up_transition_count: 0,
+                max_up_transitions: UNLIMITED_TRANSITIONS,
+                expand_within_dist: 0.0,
+            },
+        ]);
+        b.relax_hierarchy_limits(true);
+        let limits = b.hierarchy_limits();
+        assert_eq!(limits[0].max_up_transitions, 0);
+        assert_eq!(limits[1].max_up_transitions, 3200);
+        assert!((limits[1].expand_within_dist - 200_000.0).abs() < 1e-3);
+        assert_eq!(limits[2].max_up_transitions, UNLIMITED_TRANSITIONS);
+        b.relax_hierarchy_limits(false);
+        assert_eq!(b.hierarchy_limits()[1].max_up_transitions, 51_200);
+        let mut limits = b.hierarchy_limits()[1];
+        limits.up_transition_count = 51_201;
+        assert!(stop_expanding_bidirectional(&limits));
+        assert!(stop_expanding(&limits, 800_001.0));
+        assert!(!stop_expanding(&limits, 800_000.0));
+    }
+}

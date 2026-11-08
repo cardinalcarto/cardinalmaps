@@ -260,6 +260,16 @@ fn check_costing_dump(dump: &str, tile_dir: &Path) -> Report {
                 let actual = u8::from(cost.edge_filter(&edge, &*tile, mask)).to_string();
                 report.record(name, "F", line, f[3], &actual);
             }
+            "G" => {
+                let id = parse_id(f[1]);
+                let (tile, edge) = tiles.edge(id);
+                let time = TimeContext::new(f[2].parse().expect("time"), f[3].parse().expect("tz"));
+                let (mask, destonly) = cost
+                    .base()
+                    .exempted_access_restrictions(&edge, &*tile, id, time);
+                let actual = format!("{mask}\t{}", u8::from(destonly));
+                report.record(name, "G", line, &f[4..].join("\t"), &actual);
+            }
             "N" => {
                 let (_, node) = tiles.node(parse_id(f[1]));
                 let actual = u8::from(cost.node_allowed(&node)).to_string();

@@ -17,6 +17,8 @@
 //      divisible by <special_stride>), without a time
 //      and, for edges with flow speeds, at several times of week,
 //   F  Loki's edge filter (`Allowed(edge, tile, mask)`) for the same edges and several masks,
+//   G  `GetExemptedAccessRestrictions` (local traffic exemptions and destination-only)
+//      for every edge with access restrictions, at several times,
 //   N  the node filter (`Allowed(node)`) for every sampled node,
 //   A  `Allowed` and AR `AllowedReverse` for every pair of edges at every sampled node
 //      (every node index divisible by <node_stride>, plus every node with something
@@ -242,6 +244,18 @@ int costing_mode(const char* tile_dir,
       for (uint32_t i = 0; i < edge_count; ++i) {
         GraphId id(tile_id.tileid(), tile_id.level(), i);
         const DirectedEdge* e = tile->directededge(i);
+        if (e->access_restriction()) {
+          // In the time zone of the edge's end node, when it's in this tile.
+          uint32_t tz = e->endnode().tileid() == tile_id.tileid() &&
+                                e->endnode().level() == tile_id.level()
+                            ? tile->node(e->endnode())->timezone()
+                            : 0;
+          for (auto t : kTimes) {
+            bool destonly = false;
+            uint8_t mask = cost->GetExemptedAccessRestrictions(e, tile, id, t, tz, &destonly);
+            printf("G\t%s\t%lu\t%u\t%u\t%d\n", gid(id).c_str(), t, tz, mask, destonly);
+          }
+        }
         if (g_restrictions_only ||
             (i % edge_stride != 0 && !(special_edge(tile, id, e) && i % special_stride == 0)))
           continue;
