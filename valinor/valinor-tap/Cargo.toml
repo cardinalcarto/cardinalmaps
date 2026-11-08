@@ -1,0 +1,20 @@
+[package]
+name = "valinor-tap"
+description = "A pass-through Valhalla worker that records the messages flowing between two mainline services."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+zeromq = { workspace = true }
+
+[lints]
+workspace = true
