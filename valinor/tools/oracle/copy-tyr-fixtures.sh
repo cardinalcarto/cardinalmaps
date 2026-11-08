@@ -9,7 +9,9 @@
 #   trip.bin                 an Api holding only the Thor→Odin trip
 #                            (identical across formats; the script checks)
 #   directions.bin           an Api holding only Odin's directions, from the PBF response
-#   <format>/request.json    the HTTP request (action and body)
+#   <format>/request.json    the HTTP request (action and body; see capture.py for the
+#                            "http" record of cases that send one exact request)
+#   <format>/request.bin     the body of a PBF request (pbf_text cases)
 #   <format>/loki-thor.bin   the Loki→Thor Api (the front's reference options, plus Loki's additions)
 #   <format>/thor-odin.bin   the Thor→Odin Api without its trip (Tyr's options and info)
 #   <format>/response.json   the response, re-serialized compactly ({"status": …, "body": …})
@@ -86,6 +88,8 @@ for case in sorted(p for p in captures.glob("*/*") if p.is_dir()):
         fmt_out = dest / fmt_dir.name
         fmt_out.mkdir(parents=True)
         (fmt_out / "request.json").write_bytes((fmt_dir / "request.json").read_bytes())
+        if (fmt_dir / "request.bin").is_file():
+            (fmt_out / "request.bin").write_bytes((fmt_dir / "request.bin").read_bytes())
         if (fmt_dir / "loki-thor").is_dir():
             (fmt_out / "loki-thor.bin").write_bytes(frame(fmt_dir / "loki-thor"))
         if (fmt_dir / "thor-odin").is_dir():
@@ -102,8 +106,10 @@ for case in sorted(p for p in captures.glob("*/*") if p.is_dir()):
             (fmt_out / "response.bin").write_bytes(body)
             status = (fmt_dir / "response.status").read_text()
             (fmt_out / "response.status").write_text(status)
-            if status.strip() == "200":
-                (dest / "directions.bin").write_bytes(keep(body, {DIRECTIONS}))
+            directions = keep(body, {DIRECTIONS})
+            # A pbf_field_selector request may leave the directions out.
+            if status.strip() == "200" and directions:
+                (dest / "directions.bin").write_bytes(directions)
     if len(trips) > 1:
         sys.exit(f"{case}: the trip differs between formats")
     if trips:

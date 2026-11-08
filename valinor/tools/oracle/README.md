@@ -186,6 +186,38 @@ and runs them through mainline's own `DirectionsBuilder` with the `odin` helper 
 tools/oracle/copy-illuvatar-fixtures.sh /mnt/maps/cardinal/valhalla-oracle/captures <odin-captures-dir>
 ```
 
+## Valinor-tyr fixtures
+
+[`copy-tyr-fixtures.sh`](copy-tyr-fixtures.sh) copies whole captured cases
+(requests, stage messages, and responses) into `valinor-tyr/fixtures/captures`,
+keeping one trip and one set of directions per case to save space.
+Its fixtures currently come from a capture of the full corpora in
+`/mnt/maps/cardinal/valhalla-oracle/n5-captures`;
+the cases that are also in the shared captures matched them exactly,
+apart from latency statistics, so those files were left as they were.
+
+## Corpus cases
+
+[`capture.py`](capture.py) POSTs each case's `request` as JSON,
+once per format its action supports
+(JSON; for route-like actions, also OSRM format with Ferrostar's options, and PBF).
+A case can instead describe one exact HTTP request,
+which is sent once, into the format directory named by its `format` field
+(or by the request's `format`, or `pbf` for PBF bodies, or `json`):
+
+- `"method": "GET"` sends `GET /<action>?json=<url-encoded request>`;
+  any other method (such as `PUT`) sends the JSON body with that method.
+- `"query": {...}` appends url-encoded query parameters, in order.
+- `"raw_body": "..."` sends a body verbatim, for example malformed JSON.
+- `"pbf_text": "..."` is a `valhalla.Api` in protobuf text format,
+  encoded with `protoc` (so `--protos` is required)
+  and POSTed as `application/x-protobuf`.
+  The encoded body is saved as `request.bin`.
+
+The `request.json` of these cases records the exact request under `http`
+(its method, target, content type, and body, or `body_file` for PBF bodies),
+which the front's tests replay.
+
 ## Splicing in Valinor workers
 
 [`serve-staged.sh`](serve-staged.sh) runs mainline as separate processes,
