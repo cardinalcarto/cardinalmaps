@@ -225,7 +225,10 @@ def main():
         print(f"{len(cells) - len(covered)} of them outside GEDTM", flush=True)
     os.makedirs(out, exist_ok=True)
     written, total = 0, 0
-    with multiprocessing.Pool(jobs, initializer=_open, initargs=(source,)) as pool:
+    # Forked workers would share the connections that GDAL opened for
+    # check_layout, and read each other's responses.
+    context = multiprocessing.get_context("spawn")
+    with context.Pool(jobs, initializer=_open, initargs=(source,)) as pool:
         for size in pool.imap_unordered(cut, [(lon, lat, out) for lon, lat in covered]):
             if size:
                 written += 1

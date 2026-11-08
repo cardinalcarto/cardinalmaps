@@ -859,27 +859,11 @@ func (m *DataPipeline) RoutingTiles(
 		ctr = ctr.WithMountedFile("/input/default_speeds.json", speeds)
 		config = append(config, "--mjolnir-default-speeds-config", "/input/default_speeds.json")
 	}
-	ctr = ctr.
-		// Clear what an interrupted run left behind.
-		WithExec([]string{"sh", "-c", "rm -rf /work/* && mkdir -p /out /work/tiles"}).
-		WithExec(config, dagger.ContainerWithExecOpts{RedirectStdout: "/work/valhalla.json"})
-	buildTiles := []string{"valhalla_build_tiles", "-c", "/work/valhalla.json"}
-	if gedtm != "" {
-		// Elevation is the stage after restrictions; its tiles are cut once
-		// the graph tiles show which cells it needs.
-		ctr = ctr.
-			WithExec(append(buildTiles, "-e", "restrictions", "/input/input.osm.pbf")).
-			WithExec([]string{"python3", "-I", "/input/routing_elevation.py", gedtm, "/input/input.osm.pbf", "/work/tiles", "/work/elevation", fmt.Sprint(elevationJobs)}).
-			WithExec([]string{"du", "-sh", "/work/elevation"}).
-			WithExec(append(buildTiles, "-s", "elevation", "/input/input.osm.pbf"))
-	} else {
-		ctr = ctr.WithExec(append(buildTiles, "/input/input.osm.pbf"))
-	}
-	ctr, err = ctr.
-		WithExec([]string{"valhalla_build_extract", "-c", "/work/valhalla.json", "--overwrite"}).
-		WithExec([]string{"python3", "-I", "-c", routingConfigScript, "/work/valhalla.json", "/out/valhalla.json"}).
-		WithExec([]string{"sh", "-c", "rm -rf /work/*"}).
-		Sync(ctx)
+	// One exec does everything in the cache volume, since the engine caches
+	// each exec by its inputs, not by what the volume holds: a step that
+	// reran after a cached one would find the volume empty.
+	args := append([]string{"sh", "-c", routingTilesScript, "sh", gedtm, routingConfigScript}, config...)
+	ctr, err = ctr.WithExec(args).Sync(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -888,13 +872,43 @@ func (m *DataPipeline) RoutingTiles(
 		WithFile("valhalla.json", ctr.File("/out/valhalla.json")), nil
 }
 
+// Builds routing tiles in /work, given GEDTM's path (or nothing), the
+// configuration script below, and the valhalla_build_config command.
+// Elevation is the stage after restrictions; its tiles are cut once the graph
+// tiles show which cells it needs. Each cell cut from GEDTM reads around 50MB
+// of it, and 8 are cut at once.
+const routingTilesScript = `
+set -eu
+gedtm=$1 config_script=$2
+shift 2
+step() { echo "$(date -u +%H:%M:%S) $*"; }
+# Clear what an interrupted run left behind, and what this one leaves.
+rm -rf /work/*
+trap 'rm -rf /work/*' EXIT
+mkdir -p /out /work/tiles
+"$@" >/work/valhalla.json
+if [ -n "$gedtm" ]; then
+  step building tiles up to elevation
+  valhalla_build_tiles -c /work/valhalla.json -e restrictions /input/input.osm.pbf
+  step cutting elevation tiles
+  python3 -I /input/routing_elevation.py "$gedtm" /input/input.osm.pbf /work/tiles /work/elevation 8
+  du -sh /work/elevation /work/tiles
+  step adding elevation
+  valhalla_build_tiles -c /work/valhalla.json -s elevation /input/input.osm.pbf
+else
+  step building tiles
+  valhalla_build_tiles -c /work/valhalla.json /input/input.osm.pbf
+fi
+step packing tiles
+valhalla_build_extract -c /work/valhalla.json --overwrite
+python3 -I -c "$config_script" /work/valhalla.json /out/valhalla.json
+step done
+`
+
 // Cuts the elevation tiles that a build needs from GEDTM.
 //
 //go:embed routing_elevation.py
 var routingElevationScript string
-
-// How many cells are cut from GEDTM at once. Each one reads around 50MB of it.
-const elevationJobs = 8
 
 // Rewrites the build's valhalla.json into the one served with the tarball:
 // tile_extract is the tarball next to it, and the build's inputs are gone.
