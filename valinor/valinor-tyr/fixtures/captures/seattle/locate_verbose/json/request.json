@@ -1,0 +1,13 @@
+{
+  "action": "locate",
+  "request": {
+    "locations": [
+      {
+        "lat": 47.6097,
+        "lon": -122.3422
+      }
+    ],
+    "costing": "auto",
+    "verbose": true
+  }
+}

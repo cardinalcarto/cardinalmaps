@@ -1,0 +1,19 @@
+{
+  "action": "route",
+  "request": {
+    "locations": [
+      {
+        "lat": 47.6253,
+        "lon": -122.3222
+      },
+      {
+        "lat": 47.5596,
+        "lon": -122.2867
+      }
+    ],
+    "costing": "bicycle",
+    "format": "osrm",
+    "banner_instructions": true,
+    "voice_instructions": true
+  }
+}

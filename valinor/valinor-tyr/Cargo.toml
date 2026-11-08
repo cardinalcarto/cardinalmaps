@@ -1,0 +1,19 @@
+[package]
+name = "valinor-tyr"
+description = "Valhalla-compatible request parsing (the front) and response serialization (Tyr)."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+valhalla-proto = { workspace = true }
+valhalla-response = { workspace = true }
+
+[lints]
+workspace = true

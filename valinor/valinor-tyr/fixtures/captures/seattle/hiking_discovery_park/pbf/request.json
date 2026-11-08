@@ -1,0 +1,22 @@
+{
+  "action": "route",
+  "request": {
+    "locations": [
+      {
+        "lat": 47.6573,
+        "lon": -122.4057
+      },
+      {
+        "lat": 47.662,
+        "lon": -122.418
+      }
+    ],
+    "costing": "pedestrian",
+    "costing_options": {
+      "pedestrian": {
+        "max_hiking_difficulty": 3
+      }
+    },
+    "format": "pbf"
+  }
+}

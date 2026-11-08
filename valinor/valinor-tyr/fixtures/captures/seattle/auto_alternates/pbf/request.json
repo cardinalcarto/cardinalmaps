@@ -1,0 +1,18 @@
+{
+  "action": "route",
+  "request": {
+    "locations": [
+      {
+        "lat": 47.5596,
+        "lon": -122.2867
+      },
+      {
+        "lat": 47.6687,
+        "lon": -122.3846
+      }
+    ],
+    "costing": "auto",
+    "alternates": 2,
+    "format": "pbf"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "action": "route",
+  "request": {
+    "locations": [
+      {
+        "lat": 47.6097,
+        "lon": -122.3422
+      },
+      {
+        "lat": 47.6205,
+        "lon": -122.3493
+      }
+    ],
+    "costing": "pedestrian"
+  }
+}

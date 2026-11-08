@@ -2569,6 +2569,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "valinor-tyr"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "valhalla-proto",
+ "valhalla-response",
+]
+
+[[package]]
 name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -12,6 +12,7 @@ members = [
     "valinor-cli",
     "valinor-export-graph",
     "valinor-tap",
+    "valinor-tyr",
 ]
 
 [workspace.package]

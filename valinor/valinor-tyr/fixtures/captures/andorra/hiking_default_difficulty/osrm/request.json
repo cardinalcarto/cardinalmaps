@@ -1,0 +1,19 @@
+{
+  "action": "route",
+  "request": {
+    "locations": [
+      {
+        "lat": 42.572,
+        "lon": 1.4842
+      },
+      {
+        "lat": 42.5917,
+        "lon": 1.4469
+      }
+    ],
+    "costing": "pedestrian",
+    "format": "osrm",
+    "banner_instructions": true,
+    "voice_instructions": true
+  }
+}
