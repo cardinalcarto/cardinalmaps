@@ -109,3 +109,14 @@ given the same input message at that boundary.
 
 When a difference is a mainline bug, document it next to the test that covers it,
 and match mainline's behavior only if a client could depend on it.
+
+## Known divergences from mainline
+
+Deliberate differences, each documented next to the test that covers it.
+
+| Behavior | Mainline 3.9.1 | Valinor | Why |
+|---|---|---|---|
+| Fractional levels (`kLevels` tagged values) | `decode_levels` divides by 10 for any positive precision, so 0.25 decodes as 2.5 and narrative reads "Level 1.5000000000" | Decodes `value / 10^precision` | Wrong floors break indoor routing and instructions; no client can depend on it. Lands with Loki, covering decoding, Loki's level filtering, and Odin's narrative. |
+| OSRM approach voice alerts in miles | Passes kilometers to the alert, so a kilometer figure is announced as miles | Uses the request's units | A wrong spoken distance helps no one (Ferrostar plays these). |
+| PBF response content type | `application/json` (the format is read after `options` is cleared) | `application/x-protobuf` | Clients decoding PBF need the right type. |
+| Landmarks in tiles | `valhalla_add_landmarks` drops edge bins and bounding circles but keeps their header offsets | Landmarks are left out of builds; the reader rejects such tiles | See `tools/oracle/README.md`. |
