@@ -5,7 +5,9 @@ import 'package:material_ui/material_ui.dart';
 
 import '../config.dart';
 import '../store/store.dart';
+import '../saved/saved_layers_sheet.dart';
 import 'location.dart';
+import 'saved_layer.dart';
 import 'selection.dart';
 
 /// The map's style.
@@ -89,6 +91,7 @@ Future<Map<String, Object?>> styleFor(MapLayers layers) async {
     'units': layers.units.name,
     'winter': layers.winter,
   });
+  addSavedLayers(style);
   addSelectionLayers(style);
   addLocationLayers(style);
   return style;
@@ -123,11 +126,12 @@ class LayerButton extends StatelessWidget {
 
 /// Shows the layer picker, which stores each choice as it's made.
 Future<void> showLayerPicker(BuildContext context) {
-  final settings = StoreScope.of(context).settings;
+  final store = StoreScope.of(context);
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
-    builder: (context) => LayerPicker(settings: settings),
+    builder: (context) =>
+        LayerPicker(settings: store.settings, saved: store.saved),
   );
 }
 
@@ -135,9 +139,10 @@ Future<void> showLayerPicker(BuildContext context) {
 /// their settings stay put whichever is chosen, so nothing moves under a tap; choosing a
 /// style's setting chooses the style too.
 class LayerPicker extends StatefulWidget {
-  const LayerPicker({super.key, required this.settings});
+  const LayerPicker({super.key, required this.settings, required this.saved});
 
   final SettingsStore settings;
+  final SavedStore saved;
 
   @override
   State<LayerPicker> createState() => _LayerPickerState();
@@ -145,6 +150,7 @@ class LayerPicker extends StatefulWidget {
 
 class _LayerPickerState extends State<LayerPicker> {
   MapLayers? _layers;
+  late final Stream<SavedTree> _savedTree = widget.saved.watch();
 
   @override
   void initState() {
@@ -176,7 +182,10 @@ class _LayerPickerState extends State<LayerPicker> {
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         child: layers == null
             // As tall as the picker, so the sheet doesn't grow when the rows arrive.
-            ? const SizedBox(height: _titleHeight + 2 * _StyleRow.height + 8)
+            ? const SizedBox(
+                height:
+                    2 * _titleHeight + 3 * _StyleRow.height + 8 + _sectionGap,
+              )
             : Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -252,6 +261,39 @@ class _LayerPickerState extends State<LayerPicker> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: _sectionGap),
+                  SizedBox(
+                    height: _titleHeight,
+                    child: Padding(
+                      padding: const EdgeInsetsDirectional.only(start: 8),
+                      child: Align(
+                        alignment: AlignmentDirectional.topStart,
+                        child: Text(
+                          'Layers',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ),
+                  ),
+                  StreamBuilder(
+                    stream: _savedTree,
+                    builder: (context, snapshot) {
+                      final count = snapshot.data?.shownPlaces.length ?? 0;
+                      return _StyleRow(
+                        icon: Icons.star_border,
+                        label: 'Saved places',
+                        selected: false,
+                        onTap: () => showSavedLayersSheet(context),
+                        settings: [
+                          Text(
+                            count == 0 ? 'Off' : '$count on',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          const Icon(Icons.chevron_right),
+                        ],
+                      );
+                    },
+                  ),
                 ],
               ),
       ),
@@ -260,6 +302,7 @@ class _LayerPickerState extends State<LayerPicker> {
 }
 
 const _titleHeight = 36.0;
+const _sectionGap = 12.0;
 
 /// One of the picker's styles: outlined and tinted when it's chosen, with the style's
 /// settings at its end.

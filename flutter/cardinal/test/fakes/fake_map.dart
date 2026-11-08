@@ -35,7 +35,22 @@ class FakeMap extends SparkleMapController {
   void setPadding(EdgeInsets padding) {}
 
   @override
-  void setGeoJson(String source, Object geojson) => geoJson[source] = geojson;
+  void setGeoJson(String source, Object geojson) {
+    calls.add(source);
+    geoJson[source] = geojson;
+  }
+
+  /// The images [addImages] was given, in order.
+  final images = <SpriteImageInput>[];
+
+  /// What's happened in order: `images` for [addImages], the source for [setGeoJson].
+  final calls = <String>[];
+
+  @override
+  void addImages(List<SpriteImageInput> images) {
+    calls.add('images');
+    this.images.addAll(images);
+  }
 
   /// Without a map to draw, as if it had drawn everything at once.
   @override

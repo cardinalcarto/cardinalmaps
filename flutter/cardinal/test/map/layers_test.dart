@@ -3,6 +3,9 @@ import 'package:cardinal/store/store.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../fakes/fake_place_store.dart';
+import '../fakes/fake_saved_store.dart';
+
 Map<String, Object?> _state(Map<String, Object?> style) =>
     style['state']! as Map<String, Object?>;
 
@@ -57,7 +60,10 @@ void main() {
         home: Scaffold(
           body: Align(
             alignment: Alignment.bottomCenter,
-            child: LayerPicker(settings: settings),
+            child: LayerPicker(
+              settings: settings,
+              saved: FakeSavedStore(FakePlaceStore()),
+            ),
           ),
         ),
       ),

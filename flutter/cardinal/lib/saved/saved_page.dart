@@ -27,8 +27,8 @@ import 'saved_names.dart';
 /// | editing | a handle's dragged | the row moves among the lists, or the places |
 /// | editing | Move | a picker; once chosen, the selection moves, with Undo |
 /// | editing | Copy, only places selected | a picker; once chosen, they're there too, with Undo |
-/// | editing | Pin | the selected places are pinned, or if all are, unpinned |
-/// | editing | Edit details, one selected | its name and note |
+/// | editing | a place's pin | that copy's pinned, or unpinned |
+/// | editing | a row's pencil | its name, note and emoji |
 /// | editing | Delete | the selection goes, with its contents, with Undo |
 /// | editing | Done, or back | browsing |
 ///
@@ -174,32 +174,35 @@ class _SavedPageState extends State<SavedPage> {
     }
   }
 
-  Future<void> _togglePinned() async {
-    final places = _selection.whereType<SavedPlace>().toList();
-    await _store.setPinned([
-      for (final place in places) place.entryId,
-    ], !places.every((p) => p.pinned));
-  }
+  Future<void> _togglePinned(SavedPlace place) =>
+      _store.setPinned([place.entryId], !place.pinned);
 
-  Future<void> _editDetails() async {
-    final item = _selection.single;
-    final fields = await showDialog<({String name, String note})>(
-      context: context,
-      builder: (context) => EditItemDialog(
-        title: item is SavedList ? 'Edit list' : 'Edit place',
-        name: switch (item) {
-          SavedList(:final name) => name,
-          SavedPlace(:final customName) => customName ?? '',
-        },
-        note: item.note,
-        hint: switch (item) {
-          SavedList() => null,
-          SavedPlace(:final place) => placeTitle(place),
-        },
-      ),
-    );
+  Future<void> _editDetails(SavedItem item) async {
+    final fields =
+        await showDialog<({String name, String note, String? emoji})>(
+          context: context,
+          builder: (context) => EditItemDialog(
+            title: item is SavedList ? 'Edit list' : 'Edit place',
+            name: switch (item) {
+              SavedList(:final name) => name,
+              SavedPlace(:final customName) => customName ?? '',
+            },
+            note: item.note,
+            hint: switch (item) {
+              SavedList() => null,
+              SavedPlace(:final place) => placeTitle(place),
+            },
+            editsEmoji: item is SavedPlace,
+            emoji: item is SavedPlace ? item.emoji : null,
+          ),
+        );
     if (fields != null) {
-      await _store.edit(item, name: fields.name, note: fields.note);
+      await _store.edit(
+        item,
+        name: fields.name,
+        note: fields.note,
+        emoji: fields.emoji,
+      );
     }
   }
 
@@ -316,11 +319,6 @@ class _SavedPageState extends State<SavedPage> {
                 onCopy: selection.isEmpty || places.length != selection.length
                     ? null
                     : _copy,
-                pinLabel: places.isNotEmpty && places.every((p) => p.pinned)
-                    ? 'Unpin'
-                    : 'Pin',
-                onPin: places.isEmpty ? null : _togglePinned,
-                onEdit: selection.length == 1 ? _editDetails : null,
                 onDelete: selection.isEmpty ? null : _delete,
               ),
             ),
@@ -337,6 +335,8 @@ class _SavedPageState extends State<SavedPage> {
     selected: _selected.contains(item.key),
     count: item is SavedList ? _tree?.count(item.id) ?? 0 : 0,
     onTap: () => _editing ? _toggle(item) : _openItem(item),
+    onEdit: () => _editDetails(item),
+    onPin: item is SavedPlace ? () => _togglePinned(item) : null,
   );
 
   Widget _lifted(Widget child, int index, Animation<double> animation) =>
@@ -497,6 +497,8 @@ class _Row extends StatelessWidget {
     required this.selected,
     required this.count,
     required this.onTap,
+    required this.onEdit,
+    required this.onPin,
   });
 
   final SavedItem item;
@@ -505,6 +507,10 @@ class _Row extends StatelessWidget {
   final bool selected;
   final int count;
   final VoidCallback onTap;
+  final VoidCallback onEdit;
+
+  /// Null for a list: only places have pins.
+  final VoidCallback? onPin;
 
   @override
   Widget build(BuildContext context) {
@@ -526,11 +532,15 @@ class _Row extends StatelessWidget {
               visualDensity: VisualDensity.compact,
               onChanged: (_) => onTap(),
             )
-          : Icon(switch (item) {
-              SavedList() => Icons.folder_outlined,
-              SavedPlace(pinned: true) => Icons.push_pin,
-              SavedPlace() => Icons.place_outlined,
-            }),
+          : switch (item) {
+              SavedPlace(emoji: final emoji?) => Text(
+                emoji,
+                style: const TextStyle(fontSize: 20),
+              ),
+              SavedList() => const Icon(Icons.folder_outlined),
+              SavedPlace(pinned: true) => const Icon(Icons.push_pin),
+              SavedPlace() => const Icon(Icons.place_outlined),
+            },
       title: Text(
         savedName(item),
         maxLines: 1,
@@ -548,13 +558,41 @@ class _Row extends StatelessWidget {
               ),
             ),
       trailing: editing
-          ? ReorderableDragStartListener(
-              index: index,
-              child: const Padding(
-                padding: EdgeInsets.all(8),
-                child: Icon(Icons.drag_handle),
-              ),
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (item case final SavedPlace place)
+                  IconButton(
+                    tooltip: place.pinned ? 'Unpin' : 'Pin',
+                    isSelected: place.pinned,
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.push_pin_outlined),
+                    selectedIcon: const Icon(Icons.push_pin),
+                    style: IconButton.styleFrom(
+                      backgroundColor: place.pinned
+                          ? theme.colorScheme.secondaryContainer
+                          : null,
+                    ),
+                    onPressed: onPin,
+                  ),
+                IconButton(
+                  tooltip: 'Edit',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit_outlined),
+                  onPressed: onEdit,
+                ),
+                ReorderableDragStartListener(
+                  index: index,
+                  child: const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(Icons.drag_handle),
+                  ),
+                ),
+              ],
             )
+          // The emoji has taken the pin's place at the start of the row.
+          : item is SavedPlace && item.pinned && item.emoji != null
+          ? const Icon(Icons.push_pin, size: 16)
           : item is SavedList
           ? Row(
               mainAxisSize: MainAxisSize.min,
@@ -573,17 +611,11 @@ class _ActionBar extends StatelessWidget {
   const _ActionBar({
     required this.onMove,
     required this.onCopy,
-    required this.pinLabel,
-    required this.onPin,
-    required this.onEdit,
     required this.onDelete,
   });
 
   final VoidCallback? onMove;
   final VoidCallback? onCopy;
-  final String pinLabel;
-  final VoidCallback? onPin;
-  final VoidCallback? onEdit;
   final VoidCallback? onDelete;
 
   @override
@@ -613,8 +645,6 @@ class _ActionBar extends StatelessWidget {
         children: [
           action(Icons.drive_file_move_outlined, 'Move', onMove),
           action(Icons.content_copy, 'Copy', onCopy),
-          action(Icons.push_pin_outlined, pinLabel, onPin),
-          action(Icons.edit_outlined, 'Edit', onEdit),
           action(Icons.delete_outline, 'Delete', onDelete),
         ],
       ),

@@ -70,6 +70,10 @@ class SavedLists extends Table {
 
   /// Its place among the lists with the same parent, lowest first.
   IntColumn get position => integer()();
+
+  /// Whether it's on in the map's Saved Places layer, for as long as it's empty; after
+  /// that, it's on as much as what's in it is.
+  BoolColumn get shownOnMap => boolean().withDefault(const Constant(false))();
 }
 
 /// A place in a list, or at the top level of Saved: a place can be in several, once
@@ -97,6 +101,12 @@ class SavedPlaces extends Table {
   /// Its place among the places in the same list, lowest first.
   IntColumn get position => integer()();
   DateTimeColumn get savedAt => dateTime()();
+
+  /// The emoji it's marked with on the map, one grapheme.
+  TextColumn get emoji => text().nullable()();
+
+  /// Whether this copy is on in the map's Saved Places layer.
+  BoolColumn get shownOnMap => boolean().withDefault(const Constant(false))();
 }
 
 @DriftDatabase(
@@ -118,7 +128,7 @@ class CardinalDatabase extends _$CardinalDatabase {
       );
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -142,6 +152,11 @@ class CardinalDatabase extends _$CardinalDatabase {
         await m.create(schema.savedPlacesOnceAtTop);
         await m.create(schema.savedListsNoCycleOnUpdate);
         await m.create(schema.savedListsNoCycleOnInsert);
+      },
+      from5To6: (m, schema) async {
+        await m.addColumn(schema.savedLists, schema.savedLists.shownOnMap);
+        await m.addColumn(schema.savedPlaces, schema.savedPlaces.emoji);
+        await m.addColumn(schema.savedPlaces, schema.savedPlaces.shownOnMap);
       },
     ),
     // Deleting a list takes what's in it along.

@@ -216,6 +216,57 @@ impl ImageAtlas {
         atlas
     }
 
+    /// This atlas with `added` too, on new rows below what's there. What's there stays
+    /// where it is, so tiles already laid out against this atlas still draw from the
+    /// new one. Images with a name the atlas has already are left out.
+    pub fn with_images(&self, added: &[(String, SpriteImage)]) -> Self {
+        let mut added: Vec<_> = added
+            .iter()
+            .filter(|(name, _)| !self.images.contains_key(name))
+            .collect();
+        if added.is_empty() {
+            return self.clone();
+        }
+        added.sort_by(|a, b| b.1.height.cmp(&a.1.height).then_with(|| a.0.cmp(&b.0)));
+        let widest = added.iter().map(|(_, i)| i.width + 2 * PADDING).max();
+        let width = self.width.max(widest.unwrap_or(1).next_power_of_two());
+        let mut packer = ShelfPacker::new(width);
+        let placed: Vec<_> = added
+            .iter()
+            .map(|(_, i)| packer.add(i.width + 2 * PADDING, i.height + 2 * PADDING))
+            .collect();
+        let height = self.height + packer.height();
+        let mut pixels = vec![0; (width * height * 4) as usize];
+        let (old, new) = ((self.width * 4) as usize, (width * 4) as usize);
+        for row in 0..self.height as usize {
+            pixels[row * new..row * new + old]
+                .copy_from_slice(&self.pixels[row * old..(row + 1) * old]);
+        }
+        let mut images = self.images.clone();
+        for ((name, image), [x, y]) in added.into_iter().zip(placed) {
+            let (x, y) = (x + PADDING, y + self.height + PADDING);
+            for row in 0..image.height {
+                let src = (row * image.width * 4) as usize;
+                let dst = (((y + row) * width + x) * 4) as usize;
+                let len = image.width as usize * 4;
+                pixels[dst..dst + len].copy_from_slice(&image.pixels[src..src + len]);
+            }
+            images.insert(
+                name.clone(),
+                AtlasImage {
+                    rect: [x, y, image.width, image.height],
+                    meta: image.meta.clone(),
+                },
+            );
+        }
+        Self {
+            width,
+            height,
+            pixels,
+            images,
+        }
+    }
+
     pub fn get(&self, name: &str) -> Option<&AtlasImage> {
         self.images.get(name)
     }
@@ -365,6 +416,71 @@ pub(crate) mod tests {
                     "sdf": true},
         });
         (serde_json::to_vec(&index).unwrap(), png_bytes)
+    }
+
+    fn image(width: u32, height: u32, value: u8) -> SpriteImage {
+        SpriteImage {
+            pixels: vec![value; (width * height * 4) as usize],
+            width,
+            height,
+            meta: ImageMeta {
+                pixel_ratio: 2.0,
+                ..ImageMeta::default()
+            },
+        }
+    }
+
+    fn pixel(atlas: &ImageAtlas, x: u32, y: u32) -> u8 {
+        atlas.pixels[((y * atlas.width + x) * 4) as usize]
+    }
+
+    fn sheet(images: &[(&str, SpriteImage)]) -> SpriteSheet {
+        SpriteSheet {
+            images: images
+                .iter()
+                .map(|(name, image)| ((*name).to_owned(), image.clone()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn added_images_leave_the_others_where_they_are() {
+        let base = ImageAtlas::build([("default", &sheet(&[("old", image(8, 8, 7))]))]);
+        let old = base.get("old").unwrap().clone();
+        let more = base.with_images(&[
+            ("new".to_owned(), image(6, 4, 9)),
+            ("tall".to_owned(), image(4, 6, 5)),
+        ]);
+
+        assert_eq!(more.get("old").unwrap(), &old);
+        assert_eq!(pixel(&more, old.rect[0], old.rect[1]), 7);
+        let new = more.get("new").unwrap();
+        assert!(new.rect[1] >= base.height);
+        assert_eq!(new.meta.pixel_ratio, 2.0);
+        assert_eq!(pixel(&more, new.rect[0], new.rect[1]), 9);
+        let tall = more.get("tall").unwrap();
+        assert_eq!(pixel(&more, tall.rect[0], tall.rect[1]), 5);
+        assert_eq!(more.pixels.len(), (more.width * more.height * 4) as usize);
+    }
+
+    #[test]
+    fn adding_a_name_it_has_changes_nothing() {
+        let base = ImageAtlas::build([("default", &sheet(&[("old", image(8, 8, 7))]))]);
+        let same = base.with_images(&[("old".to_owned(), image(8, 8, 1))]);
+        assert_eq!((same.width, same.height), (base.width, base.height));
+        assert_eq!(same.pixels, base.pixels);
+    }
+
+    #[test]
+    fn images_can_go_in_an_empty_atlas_or_outgrow_a_narrow_one() {
+        let first = ImageAtlas::default().with_images(&[("a".to_owned(), image(30, 30, 3))]);
+        let a = first.get("a").unwrap().clone();
+        assert_eq!(pixel(&first, a.rect[0], a.rect[1]), 3);
+
+        let wider = first.with_images(&[("b".to_owned(), image(100, 10, 4))]);
+        assert_eq!(wider.get("a").unwrap(), &a);
+        assert_eq!(pixel(&wider, a.rect[0], a.rect[1]), 3);
+        assert!(wider.width >= 102);
     }
 
     #[test]

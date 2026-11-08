@@ -194,6 +194,100 @@ fn opacities(placer: &SymbolPlacer, bucket: &SymbolBucket, z: u8) -> Vec<f32> {
         .collect()
 }
 
+/// The labels, by index, in the order `triangles` draws them.
+fn drawn(triangles: &[u32], bucket: &SymbolBucket) -> Vec<usize> {
+    let mut order = Vec::new();
+    for vertex in triangles {
+        let label = bucket
+            .labels
+            .instances
+            .iter()
+            .position(|i| i.text_vertices.contains(vertex))
+            .unwrap();
+        if order.last() != Some(&label) {
+            order.push(label);
+        }
+    }
+    order
+}
+
+/// Which label won placement: the first of the bucket's that's still showing.
+fn placed_first_on_top(style: &Style, tile: &[u8]) -> Vec<usize> {
+    let bucket = build(style, 14, tile);
+    let mut placer = SymbolPlacer::new(0.0);
+    placer.update(0.0, &view(0.0), &[input(style, &bucket, 14, false)]);
+    drawn(
+        placer
+            .bucket(&key(14))
+            .unwrap()
+            .text_triangles
+            .as_ref()
+            .unwrap(),
+        &bucket,
+    )
+}
+
+#[test]
+fn what_wins_placement_draws_on_top() {
+    // Whichever is lower on the screen: it's placement that counts.
+    let tile = points(&[(2000, 2000, "a"), (2000, 2400, "b"), (2000, 1600, "c")]);
+    let style = style(json!({"text-size": 24, "text-allow-overlap": true}));
+    assert_eq!(placed_first_on_top(&style, &tile), [2, 1, 0]);
+}
+
+#[test]
+fn a_sort_key_decides_both_placement_and_what_is_on_top() {
+    let tile = points(&[(2000, 2000, "bb"), (2040, 2010, "a"), (2020, 2005, "ccc")]);
+    let keyed = style(json!({
+        "text-size": 24,
+        "text-allow-overlap": true,
+        "symbol-sort-key": ["length", ["get", "name"]],
+    }));
+    let bucket = build(&keyed, 14, &tile);
+    // Placed by key: lowest first.
+    let names: Vec<_> = bucket.labels.instances.iter().map(|i| i.sort_key).collect();
+    assert_eq!(names, [Some(1.0), Some(2.0), Some(3.0)]);
+    // So the lowest, placed first, is drawn last.
+    assert_eq!(placed_first_on_top(&keyed, &tile), [2, 1, 0]);
+}
+
+#[test]
+fn viewport_y_still_draws_lowest_on_top() {
+    let tile = points(&[(2000, 2000, "a"), (2000, 2400, "b"), (2000, 1600, "c")]);
+    let style = style(json!({
+        "text-size": 24,
+        "text-allow-overlap": true,
+        "symbol-z-order": "viewport-y",
+    }));
+    let bucket = build(&style, 14, &tile);
+    let mut placer = SymbolPlacer::new(0.0);
+    placer.update(0.0, &view(0.0), &[input(&style, &bucket, 14, false)]);
+    let order = drawn(
+        placer
+            .bucket(&key(14))
+            .unwrap()
+            .text_triangles
+            .as_ref()
+            .unwrap(),
+        &bucket,
+    );
+    let ys: Vec<_> = order
+        .iter()
+        .map(|&i| bucket.labels.instances[i].anchor[1])
+        .collect();
+    assert!(ys.is_sorted());
+}
+
+#[test]
+fn labels_that_cannot_overlap_keep_the_buckets_order() {
+    let tile = points(&[(2000, 2000, "a"), (3000, 3000, "b")]);
+    let style = style(json!({"text-size": 24}));
+    let bucket = build(&style, 14, &tile);
+    let mut placer = SymbolPlacer::new(0.0);
+    placer.update(0.0, &view(0.0), &[input(&style, &bucket, 14, false)]);
+    assert!(placer.bucket(&key(14)).unwrap().text_triangles.is_none());
+}
+
 #[test]
 fn overlapping_labels_collide() {
     let tile = points(&[(2000, 2000, "abc"), (2040, 2010, "abd"), (3000, 3000, "x")]);

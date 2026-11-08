@@ -1020,8 +1020,30 @@ class $SavedListsTable extends SavedLists
     type: DriftSqlType.int,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _shownOnMapMeta = const VerificationMeta(
+    'shownOnMap',
+  );
   @override
-  List<GeneratedColumn> get $columns => [id, parentId, name, note, position];
+  late final GeneratedColumn<bool> shownOnMap = GeneratedColumn<bool>(
+    'shown_on_map',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("shown_on_map" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    parentId,
+    name,
+    note,
+    position,
+    shownOnMap,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -1065,6 +1087,15 @@ class $SavedListsTable extends SavedLists
     } else if (isInserting) {
       context.missing(_positionMeta);
     }
+    if (data.containsKey('shown_on_map')) {
+      context.handle(
+        _shownOnMapMeta,
+        shownOnMap.isAcceptableOrUnknown(
+          data['shown_on_map']!,
+          _shownOnMapMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -1094,6 +1125,10 @@ class $SavedListsTable extends SavedLists
         DriftSqlType.int,
         data['${effectivePrefix}position'],
       )!,
+      shownOnMap: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}shown_on_map'],
+      )!,
     );
   }
 
@@ -1113,12 +1148,17 @@ class SavedListRow extends DataClass implements Insertable<SavedListRow> {
 
   /// Its place among the lists with the same parent, lowest first.
   final int position;
+
+  /// Whether it's on in the map's Saved Places layer, for as long as it's empty; after
+  /// that, it's on as much as what's in it is.
+  final bool shownOnMap;
   const SavedListRow({
     required this.id,
     this.parentId,
     required this.name,
     this.note,
     required this.position,
+    required this.shownOnMap,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1132,6 +1172,7 @@ class SavedListRow extends DataClass implements Insertable<SavedListRow> {
       map['note'] = Variable<String>(note);
     }
     map['position'] = Variable<int>(position);
+    map['shown_on_map'] = Variable<bool>(shownOnMap);
     return map;
   }
 
@@ -1144,6 +1185,7 @@ class SavedListRow extends DataClass implements Insertable<SavedListRow> {
       name: Value(name),
       note: note == null && nullToAbsent ? const Value.absent() : Value(note),
       position: Value(position),
+      shownOnMap: Value(shownOnMap),
     );
   }
 
@@ -1158,6 +1200,7 @@ class SavedListRow extends DataClass implements Insertable<SavedListRow> {
       name: serializer.fromJson<String>(json['name']),
       note: serializer.fromJson<String?>(json['note']),
       position: serializer.fromJson<int>(json['position']),
+      shownOnMap: serializer.fromJson<bool>(json['shownOnMap']),
     );
   }
   @override
@@ -1169,6 +1212,7 @@ class SavedListRow extends DataClass implements Insertable<SavedListRow> {
       'name': serializer.toJson<String>(name),
       'note': serializer.toJson<String?>(note),
       'position': serializer.toJson<int>(position),
+      'shownOnMap': serializer.toJson<bool>(shownOnMap),
     };
   }
 
@@ -1178,12 +1222,14 @@ class SavedListRow extends DataClass implements Insertable<SavedListRow> {
     String? name,
     Value<String?> note = const Value.absent(),
     int? position,
+    bool? shownOnMap,
   }) => SavedListRow(
     id: id ?? this.id,
     parentId: parentId.present ? parentId.value : this.parentId,
     name: name ?? this.name,
     note: note.present ? note.value : this.note,
     position: position ?? this.position,
+    shownOnMap: shownOnMap ?? this.shownOnMap,
   );
   SavedListRow copyWithCompanion(SavedListsCompanion data) {
     return SavedListRow(
@@ -1192,6 +1238,9 @@ class SavedListRow extends DataClass implements Insertable<SavedListRow> {
       name: data.name.present ? data.name.value : this.name,
       note: data.note.present ? data.note.value : this.note,
       position: data.position.present ? data.position.value : this.position,
+      shownOnMap: data.shownOnMap.present
+          ? data.shownOnMap.value
+          : this.shownOnMap,
     );
   }
 
@@ -1202,13 +1251,15 @@ class SavedListRow extends DataClass implements Insertable<SavedListRow> {
           ..write('parentId: $parentId, ')
           ..write('name: $name, ')
           ..write('note: $note, ')
-          ..write('position: $position')
+          ..write('position: $position, ')
+          ..write('shownOnMap: $shownOnMap')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, parentId, name, note, position);
+  int get hashCode =>
+      Object.hash(id, parentId, name, note, position, shownOnMap);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1217,7 +1268,8 @@ class SavedListRow extends DataClass implements Insertable<SavedListRow> {
           other.parentId == this.parentId &&
           other.name == this.name &&
           other.note == this.note &&
-          other.position == this.position);
+          other.position == this.position &&
+          other.shownOnMap == this.shownOnMap);
 }
 
 class SavedListsCompanion extends UpdateCompanion<SavedListRow> {
@@ -1226,12 +1278,14 @@ class SavedListsCompanion extends UpdateCompanion<SavedListRow> {
   final Value<String> name;
   final Value<String?> note;
   final Value<int> position;
+  final Value<bool> shownOnMap;
   const SavedListsCompanion({
     this.id = const Value.absent(),
     this.parentId = const Value.absent(),
     this.name = const Value.absent(),
     this.note = const Value.absent(),
     this.position = const Value.absent(),
+    this.shownOnMap = const Value.absent(),
   });
   SavedListsCompanion.insert({
     this.id = const Value.absent(),
@@ -1239,6 +1293,7 @@ class SavedListsCompanion extends UpdateCompanion<SavedListRow> {
     required String name,
     this.note = const Value.absent(),
     required int position,
+    this.shownOnMap = const Value.absent(),
   }) : name = Value(name),
        position = Value(position);
   static Insertable<SavedListRow> custom({
@@ -1247,6 +1302,7 @@ class SavedListsCompanion extends UpdateCompanion<SavedListRow> {
     Expression<String>? name,
     Expression<String>? note,
     Expression<int>? position,
+    Expression<bool>? shownOnMap,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -1254,6 +1310,7 @@ class SavedListsCompanion extends UpdateCompanion<SavedListRow> {
       if (name != null) 'name': name,
       if (note != null) 'note': note,
       if (position != null) 'position': position,
+      if (shownOnMap != null) 'shown_on_map': shownOnMap,
     });
   }
 
@@ -1263,6 +1320,7 @@ class SavedListsCompanion extends UpdateCompanion<SavedListRow> {
     Value<String>? name,
     Value<String?>? note,
     Value<int>? position,
+    Value<bool>? shownOnMap,
   }) {
     return SavedListsCompanion(
       id: id ?? this.id,
@@ -1270,6 +1328,7 @@ class SavedListsCompanion extends UpdateCompanion<SavedListRow> {
       name: name ?? this.name,
       note: note ?? this.note,
       position: position ?? this.position,
+      shownOnMap: shownOnMap ?? this.shownOnMap,
     );
   }
 
@@ -1291,6 +1350,9 @@ class SavedListsCompanion extends UpdateCompanion<SavedListRow> {
     if (position.present) {
       map['position'] = Variable<int>(position.value);
     }
+    if (shownOnMap.present) {
+      map['shown_on_map'] = Variable<bool>(shownOnMap.value);
+    }
     return map;
   }
 
@@ -1301,7 +1363,8 @@ class SavedListsCompanion extends UpdateCompanion<SavedListRow> {
           ..write('parentId: $parentId, ')
           ..write('name: $name, ')
           ..write('note: $note, ')
-          ..write('position: $position')
+          ..write('position: $position, ')
+          ..write('shownOnMap: $shownOnMap')
           ..write(')'))
         .toString();
   }
@@ -1405,6 +1468,30 @@ class $SavedPlacesTable extends SavedPlaces
     type: DriftSqlType.dateTime,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _emojiMeta = const VerificationMeta('emoji');
+  @override
+  late final GeneratedColumn<String> emoji = GeneratedColumn<String>(
+    'emoji',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _shownOnMapMeta = const VerificationMeta(
+    'shownOnMap',
+  );
+  @override
+  late final GeneratedColumn<bool> shownOnMap = GeneratedColumn<bool>(
+    'shown_on_map',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("shown_on_map" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -1415,6 +1502,8 @@ class $SavedPlacesTable extends SavedPlaces
     pinned,
     position,
     savedAt,
+    emoji,
+    shownOnMap,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1479,6 +1568,21 @@ class $SavedPlacesTable extends SavedPlaces
     } else if (isInserting) {
       context.missing(_savedAtMeta);
     }
+    if (data.containsKey('emoji')) {
+      context.handle(
+        _emojiMeta,
+        emoji.isAcceptableOrUnknown(data['emoji']!, _emojiMeta),
+      );
+    }
+    if (data.containsKey('shown_on_map')) {
+      context.handle(
+        _shownOnMapMeta,
+        shownOnMap.isAcceptableOrUnknown(
+          data['shown_on_map']!,
+          _shownOnMapMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -1520,6 +1624,14 @@ class $SavedPlacesTable extends SavedPlaces
         DriftSqlType.dateTime,
         data['${effectivePrefix}saved_at'],
       )!,
+      emoji: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}emoji'],
+      ),
+      shownOnMap: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}shown_on_map'],
+      )!,
     );
   }
 
@@ -1540,12 +1652,18 @@ class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
   final String? name;
   final String? note;
 
-  /// Whether the place has a chip on the home sheet: the same in all its rows.
+  /// Whether this copy has a chip on the home sheet.
   final bool pinned;
 
   /// Its place among the places in the same list, lowest first.
   final int position;
   final DateTime savedAt;
+
+  /// The emoji it's marked with on the map, one grapheme.
+  final String? emoji;
+
+  /// Whether this copy is on in the map's Saved Places layer.
+  final bool shownOnMap;
   const SavedPlaceRow({
     required this.id,
     required this.placeId,
@@ -1555,6 +1673,8 @@ class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
     required this.pinned,
     required this.position,
     required this.savedAt,
+    this.emoji,
+    required this.shownOnMap,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1573,6 +1693,10 @@ class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
     map['pinned'] = Variable<bool>(pinned);
     map['position'] = Variable<int>(position);
     map['saved_at'] = Variable<DateTime>(savedAt);
+    if (!nullToAbsent || emoji != null) {
+      map['emoji'] = Variable<String>(emoji);
+    }
+    map['shown_on_map'] = Variable<bool>(shownOnMap);
     return map;
   }
 
@@ -1588,6 +1712,10 @@ class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
       pinned: Value(pinned),
       position: Value(position),
       savedAt: Value(savedAt),
+      emoji: emoji == null && nullToAbsent
+          ? const Value.absent()
+          : Value(emoji),
+      shownOnMap: Value(shownOnMap),
     );
   }
 
@@ -1605,6 +1733,8 @@ class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
       pinned: serializer.fromJson<bool>(json['pinned']),
       position: serializer.fromJson<int>(json['position']),
       savedAt: serializer.fromJson<DateTime>(json['savedAt']),
+      emoji: serializer.fromJson<String?>(json['emoji']),
+      shownOnMap: serializer.fromJson<bool>(json['shownOnMap']),
     );
   }
   @override
@@ -1619,6 +1749,8 @@ class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
       'pinned': serializer.toJson<bool>(pinned),
       'position': serializer.toJson<int>(position),
       'savedAt': serializer.toJson<DateTime>(savedAt),
+      'emoji': serializer.toJson<String?>(emoji),
+      'shownOnMap': serializer.toJson<bool>(shownOnMap),
     };
   }
 
@@ -1631,6 +1763,8 @@ class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
     bool? pinned,
     int? position,
     DateTime? savedAt,
+    Value<String?> emoji = const Value.absent(),
+    bool? shownOnMap,
   }) => SavedPlaceRow(
     id: id ?? this.id,
     placeId: placeId ?? this.placeId,
@@ -1640,6 +1774,8 @@ class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
     pinned: pinned ?? this.pinned,
     position: position ?? this.position,
     savedAt: savedAt ?? this.savedAt,
+    emoji: emoji.present ? emoji.value : this.emoji,
+    shownOnMap: shownOnMap ?? this.shownOnMap,
   );
   SavedPlaceRow copyWithCompanion(SavedPlacesCompanion data) {
     return SavedPlaceRow(
@@ -1651,6 +1787,10 @@ class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
       pinned: data.pinned.present ? data.pinned.value : this.pinned,
       position: data.position.present ? data.position.value : this.position,
       savedAt: data.savedAt.present ? data.savedAt.value : this.savedAt,
+      emoji: data.emoji.present ? data.emoji.value : this.emoji,
+      shownOnMap: data.shownOnMap.present
+          ? data.shownOnMap.value
+          : this.shownOnMap,
     );
   }
 
@@ -1664,14 +1804,26 @@ class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
           ..write('note: $note, ')
           ..write('pinned: $pinned, ')
           ..write('position: $position, ')
-          ..write('savedAt: $savedAt')
+          ..write('savedAt: $savedAt, ')
+          ..write('emoji: $emoji, ')
+          ..write('shownOnMap: $shownOnMap')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, placeId, listId, name, note, pinned, position, savedAt);
+  int get hashCode => Object.hash(
+    id,
+    placeId,
+    listId,
+    name,
+    note,
+    pinned,
+    position,
+    savedAt,
+    emoji,
+    shownOnMap,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1683,7 +1835,9 @@ class SavedPlaceRow extends DataClass implements Insertable<SavedPlaceRow> {
           other.note == this.note &&
           other.pinned == this.pinned &&
           other.position == this.position &&
-          other.savedAt == this.savedAt);
+          other.savedAt == this.savedAt &&
+          other.emoji == this.emoji &&
+          other.shownOnMap == this.shownOnMap);
 }
 
 class SavedPlacesCompanion extends UpdateCompanion<SavedPlaceRow> {
@@ -1695,6 +1849,8 @@ class SavedPlacesCompanion extends UpdateCompanion<SavedPlaceRow> {
   final Value<bool> pinned;
   final Value<int> position;
   final Value<DateTime> savedAt;
+  final Value<String?> emoji;
+  final Value<bool> shownOnMap;
   const SavedPlacesCompanion({
     this.id = const Value.absent(),
     this.placeId = const Value.absent(),
@@ -1704,6 +1860,8 @@ class SavedPlacesCompanion extends UpdateCompanion<SavedPlaceRow> {
     this.pinned = const Value.absent(),
     this.position = const Value.absent(),
     this.savedAt = const Value.absent(),
+    this.emoji = const Value.absent(),
+    this.shownOnMap = const Value.absent(),
   });
   SavedPlacesCompanion.insert({
     this.id = const Value.absent(),
@@ -1714,6 +1872,8 @@ class SavedPlacesCompanion extends UpdateCompanion<SavedPlaceRow> {
     this.pinned = const Value.absent(),
     required int position,
     required DateTime savedAt,
+    this.emoji = const Value.absent(),
+    this.shownOnMap = const Value.absent(),
   }) : placeId = Value(placeId),
        position = Value(position),
        savedAt = Value(savedAt);
@@ -1726,6 +1886,8 @@ class SavedPlacesCompanion extends UpdateCompanion<SavedPlaceRow> {
     Expression<bool>? pinned,
     Expression<int>? position,
     Expression<DateTime>? savedAt,
+    Expression<String>? emoji,
+    Expression<bool>? shownOnMap,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -1736,6 +1898,8 @@ class SavedPlacesCompanion extends UpdateCompanion<SavedPlaceRow> {
       if (pinned != null) 'pinned': pinned,
       if (position != null) 'position': position,
       if (savedAt != null) 'saved_at': savedAt,
+      if (emoji != null) 'emoji': emoji,
+      if (shownOnMap != null) 'shown_on_map': shownOnMap,
     });
   }
 
@@ -1748,6 +1912,8 @@ class SavedPlacesCompanion extends UpdateCompanion<SavedPlaceRow> {
     Value<bool>? pinned,
     Value<int>? position,
     Value<DateTime>? savedAt,
+    Value<String?>? emoji,
+    Value<bool>? shownOnMap,
   }) {
     return SavedPlacesCompanion(
       id: id ?? this.id,
@@ -1758,6 +1924,8 @@ class SavedPlacesCompanion extends UpdateCompanion<SavedPlaceRow> {
       pinned: pinned ?? this.pinned,
       position: position ?? this.position,
       savedAt: savedAt ?? this.savedAt,
+      emoji: emoji ?? this.emoji,
+      shownOnMap: shownOnMap ?? this.shownOnMap,
     );
   }
 
@@ -1788,6 +1956,12 @@ class SavedPlacesCompanion extends UpdateCompanion<SavedPlaceRow> {
     if (savedAt.present) {
       map['saved_at'] = Variable<DateTime>(savedAt.value);
     }
+    if (emoji.present) {
+      map['emoji'] = Variable<String>(emoji.value);
+    }
+    if (shownOnMap.present) {
+      map['shown_on_map'] = Variable<bool>(shownOnMap.value);
+    }
     return map;
   }
 
@@ -1801,7 +1975,9 @@ class SavedPlacesCompanion extends UpdateCompanion<SavedPlaceRow> {
           ..write('note: $note, ')
           ..write('pinned: $pinned, ')
           ..write('position: $position, ')
-          ..write('savedAt: $savedAt')
+          ..write('savedAt: $savedAt, ')
+          ..write('emoji: $emoji, ')
+          ..write('shownOnMap: $shownOnMap')
           ..write(')'))
         .toString();
   }
@@ -2624,6 +2800,7 @@ typedef $$SavedListsTableCreateCompanionBuilder = SavedListsCompanion Function({
   required String name,
   Value<String?> note,
   required int position,
+  Value<bool> shownOnMap,
 });
 typedef $$SavedListsTableUpdateCompanionBuilder = SavedListsCompanion Function({
   Value<int> id,
@@ -2631,6 +2808,7 @@ typedef $$SavedListsTableUpdateCompanionBuilder = SavedListsCompanion Function({
   Value<String> name,
   Value<String?> note,
   Value<int> position,
+  Value<bool> shownOnMap,
 });
 
 final class $$SavedListsTableReferences
@@ -2699,6 +2877,11 @@ class $$SavedListsTableFilterComposer
 
   ColumnFilters<int> get position => $composableBuilder(
     column: $table.position,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get shownOnMap => $composableBuilder(
+    column: $table.shownOnMap,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2780,6 +2963,11 @@ class $$SavedListsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get shownOnMap => $composableBuilder(
+    column: $table.shownOnMap,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$SavedListsTableOrderingComposer get parentId {
     final $$SavedListsTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -2824,6 +3012,11 @@ class $$SavedListsTableAnnotationComposer
 
   GeneratedColumn<int> get position =>
       $composableBuilder(column: $table.position, builder: (column) => column);
+
+  GeneratedColumn<bool> get shownOnMap => $composableBuilder(
+    column: $table.shownOnMap,
+    builder: (column) => column,
+  );
 
   $$SavedListsTableAnnotationComposer get parentId {
     final $$SavedListsTableAnnotationComposer composer = $composerBuilder(
@@ -2907,12 +3100,14 @@ class $$SavedListsTableTableManager
                 Value<String> name = const Value.absent(),
                 Value<String?> note = const Value.absent(),
                 Value<int> position = const Value.absent(),
+                Value<bool> shownOnMap = const Value.absent(),
               }) => SavedListsCompanion(
                 id: id,
                 parentId: parentId,
                 name: name,
                 note: note,
                 position: position,
+                shownOnMap: shownOnMap,
               ),
           createCompanionCallback:
               ({
@@ -2921,12 +3116,14 @@ class $$SavedListsTableTableManager
                 required String name,
                 Value<String?> note = const Value.absent(),
                 required int position,
+                Value<bool> shownOnMap = const Value.absent(),
               }) => SavedListsCompanion.insert(
                 id: id,
                 parentId: parentId,
                 name: name,
                 note: note,
                 position: position,
+                shownOnMap: shownOnMap,
               ),
           withReferenceMapper: (p0) => p0
               .map(
@@ -3024,6 +3221,8 @@ typedef $$SavedPlacesTableCreateCompanionBuilder =
       Value<bool> pinned,
       required int position,
       required DateTime savedAt,
+      Value<String?> emoji,
+      Value<bool> shownOnMap,
     });
 typedef $$SavedPlacesTableUpdateCompanionBuilder =
     SavedPlacesCompanion Function({
@@ -3035,6 +3234,8 @@ typedef $$SavedPlacesTableUpdateCompanionBuilder =
       Value<bool> pinned,
       Value<int> position,
       Value<DateTime> savedAt,
+      Value<String?> emoji,
+      Value<bool> shownOnMap,
     });
 
 final class $$SavedPlacesTableReferences
@@ -3113,6 +3314,16 @@ class $$SavedPlacesTableFilterComposer
 
   ColumnFilters<DateTime> get savedAt => $composableBuilder(
     column: $table.savedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get emoji => $composableBuilder(
+    column: $table.emoji,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get shownOnMap => $composableBuilder(
+    column: $table.shownOnMap,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3202,6 +3413,16 @@ class $$SavedPlacesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get emoji => $composableBuilder(
+    column: $table.emoji,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get shownOnMap => $composableBuilder(
+    column: $table.shownOnMap,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$PlacesTableOrderingComposer get placeId {
     final $$PlacesTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -3275,6 +3496,14 @@ class $$SavedPlacesTableAnnotationComposer
 
   GeneratedColumn<DateTime> get savedAt =>
       $composableBuilder(column: $table.savedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get emoji =>
+      $composableBuilder(column: $table.emoji, builder: (column) => column);
+
+  GeneratedColumn<bool> get shownOnMap => $composableBuilder(
+    column: $table.shownOnMap,
+    builder: (column) => column,
+  );
 
   $$PlacesTableAnnotationComposer get placeId {
     final $$PlacesTableAnnotationComposer composer = $composerBuilder(
@@ -3359,6 +3588,8 @@ class $$SavedPlacesTableTableManager
                 Value<bool> pinned = const Value.absent(),
                 Value<int> position = const Value.absent(),
                 Value<DateTime> savedAt = const Value.absent(),
+                Value<String?> emoji = const Value.absent(),
+                Value<bool> shownOnMap = const Value.absent(),
               }) => SavedPlacesCompanion(
                 id: id,
                 placeId: placeId,
@@ -3368,6 +3599,8 @@ class $$SavedPlacesTableTableManager
                 pinned: pinned,
                 position: position,
                 savedAt: savedAt,
+                emoji: emoji,
+                shownOnMap: shownOnMap,
               ),
           createCompanionCallback:
               ({
@@ -3379,6 +3612,8 @@ class $$SavedPlacesTableTableManager
                 Value<bool> pinned = const Value.absent(),
                 required int position,
                 required DateTime savedAt,
+                Value<String?> emoji = const Value.absent(),
+                Value<bool> shownOnMap = const Value.absent(),
               }) => SavedPlacesCompanion.insert(
                 id: id,
                 placeId: placeId,
@@ -3388,6 +3623,8 @@ class $$SavedPlacesTableTableManager
                 pinned: pinned,
                 position: position,
                 savedAt: savedAt,
+                emoji: emoji,
+                shownOnMap: shownOnMap,
               ),
           withReferenceMapper: (p0) => p0
               .map(

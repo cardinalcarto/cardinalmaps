@@ -80,6 +80,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DeviceInfo dco_decode_device_info(dynamic raw);
 
   @protected
+  double dco_decode_f_32(dynamic raw);
+
+  @protected
   double dco_decode_f_64(dynamic raw);
 
   @protected
@@ -104,6 +107,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<(String, String)> dco_decode_list_record_string_string(dynamic raw);
 
   @protected
+  List<SpriteImageInput> dco_decode_list_sprite_image_input(dynamic raw);
+
+  @protected
   LngLat dco_decode_lng_lat(dynamic raw);
 
   @protected
@@ -120,6 +126,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (String, String) dco_decode_record_string_string(dynamic raw);
+
+  @protected
+  SpriteImageInput dco_decode_sprite_image_input(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
@@ -195,6 +204,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DeviceInfo sse_decode_device_info(SseDeserializer deserializer);
 
   @protected
+  double sse_decode_f_32(SseDeserializer deserializer);
+
+  @protected
   double sse_decode_f_64(SseDeserializer deserializer);
 
   @protected
@@ -223,6 +235,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<SpriteImageInput> sse_decode_list_sprite_image_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   LngLat sse_decode_lng_lat(SseDeserializer deserializer);
 
   @protected
@@ -243,6 +260,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (String, String) sse_decode_record_string_string(
     SseDeserializer deserializer,
   );
+
+  @protected
+  SpriteImageInput sse_decode_sprite_image_input(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -335,6 +355,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_device_info(DeviceInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_f_32(double self, SseSerializer serializer);
+
+  @protected
   void sse_encode_f_64(double self, SseSerializer serializer);
 
   @protected
@@ -368,6 +391,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_sprite_image_input(
+    List<SpriteImageInput> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_lng_lat(LngLat self, SseSerializer serializer);
 
   @protected
@@ -391,6 +420,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_record_string_string(
     (String, String) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sprite_image_input(
+    SpriteImageInput self,
     SseSerializer serializer,
   );
 

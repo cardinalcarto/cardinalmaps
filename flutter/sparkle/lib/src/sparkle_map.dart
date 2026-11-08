@@ -208,11 +208,28 @@ class SparkleMapController {
     _state!._requestFrame();
   }
 
+  /// Adds [images] to the map's sprite, for icons to use by name; a name it has already
+  /// keeps its image. Nothing on the map moves or is laid out again, so a layer showing
+  /// a new image for the first time needs its data set after this.
+  void addImages(List<rust.SpriteImageInput> images) {
+    for (final image in images) {
+      _images[image.name] = image;
+    }
+    final map = _map;
+    if (map == null) return;
+    map.addImages(images: images);
+    _state!._requestFrame();
+  }
+
+  /// The images [addImages] was given, for when the map is set up.
+  final _images = <String, rust.SpriteImageInput>{};
+
   void _attached(rust.SparkleMap map) {
     map.setPadding(padding: _mapPadding(_padding));
     if (_subject case (final w, final s, final e, final n, final zoom, final margin)?) {
       map.setSubject(west: w, south: s, east: e, north: n, maxZoom: zoom, margin: margin);
     }
+    if (_images.isNotEmpty) map.addImages(images: _images.values.toList());
     for (final MapEntry(key: source, value: text) in _pending.entries) {
       try {
         map.setGeojson(source: source, geojson: text);

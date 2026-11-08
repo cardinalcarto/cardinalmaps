@@ -13,6 +13,7 @@ use anyhow::{Context, Result, bail};
 use maplibre_expr::Value;
 use sparkle::geojson::GeoJsonIndex;
 use sparkle::query::{FeatureIndex, PointQuery, QueriedFeature};
+use sparkle::sprite::ImageAtlas;
 use sparkle::state::FeatureStates;
 use sparkle::style::{Source, StyleDiff};
 use sparkle::terrain::TerrainTiles;
@@ -462,6 +463,14 @@ impl<T> MapState<T> {
         for s in reprocess {
             self.reprocess(s, generation);
         }
+    }
+
+    /// Process tiles from now on with `images`, which must have what the current ones
+    /// have in the same places (see `ImageAtlas::with_images`). Tiles already loaded
+    /// stay as they are: a layer that needs a new image is drawn again by setting its
+    /// data.
+    pub fn set_images(&self, images: Arc<ImageAtlas>) {
+        self.loader.set_images(images);
     }
 
     /// Replace the data of the style's GeoJSON source `id` with `data`, a GeoJSON object.

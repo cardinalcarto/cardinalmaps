@@ -63,19 +63,22 @@ void main() {
     expect(names((await tree()).placesIn(null)), ['poi:2', 'poi:1']);
   });
 
-  test('moving goes on top of the destination, keeping its order', () async {
-    final food = await saved.createList('Food');
-    await saveAll(['poi:1', 'poi:2', 'poi:3']);
-    await saved.move([(await tree()).copiesOf('poi:3').single], food);
-    final t = await tree();
-    await saved.move([
-      t.copiesOf('poi:2').single,
-      t.copiesOf('poi:1').single,
-    ], food);
+  test(
+    'moving goes to the end of the destination, keeping its order',
+    () async {
+      final food = await saved.createList('Food');
+      await saveAll(['poi:1', 'poi:2', 'poi:3']);
+      await saved.move([(await tree()).copiesOf('poi:3').single], food);
+      final t = await tree();
+      await saved.move([
+        t.copiesOf('poi:2').single,
+        t.copiesOf('poi:1').single,
+      ], food);
 
-    expect(names((await tree()).placesIn(food)), ['poi:2', 'poi:1', 'poi:3']);
-    expect((await tree()).placesIn(null), isEmpty);
-  });
+      expect(names((await tree()).placesIn(food)), ['poi:3', 'poi:2', 'poi:1']);
+      expect((await tree()).placesIn(null), isEmpty);
+    },
+  );
 
   test('a list cannot go inside itself', () async {
     final a = await saved.createList('A');
@@ -352,6 +355,261 @@ void main() {
 
       await saved.setLocations('poi:1', {});
       expect((await tree()).copiesOf('poi:1'), isEmpty);
+    });
+  });
+
+  group('the map layer', () {
+    Future<(int, int)> foodAndItalian() async {
+      final food = await saved.createList('Food');
+      final italian = await saved.createList('Italian', parent: food);
+      await saveAll(['poi:1', 'poi:2']);
+      final t = await tree();
+      await saved.move([t.copiesOf('poi:1').single], food);
+      await saved.move([t.copiesOf('poi:2').single], italian);
+      return (food, italian);
+    }
+
+    test('starts with everything off', () async {
+      final (food, _) = await foodAndItalian();
+      final t = await tree();
+      expect(t.shownState(food), isFalse);
+      expect(t.shownPlaces, isEmpty);
+    });
+
+    test('ticking a list turns on all of it, at every level', () async {
+      final (food, italian) = await foodAndItalian();
+      await saved.setShown((await tree()).list(food)!, true);
+      final t = await tree();
+      expect(t.shownState(food), isTrue);
+      expect(t.shownState(italian), isTrue);
+      expect(
+        t.shownPlaces.map((p) => p.id),
+        unorderedEquals(['poi:1', 'poi:2']),
+      );
+
+      await saved.setShown(t.list(food)!, false);
+      expect((await tree()).shownPlaces, isEmpty);
+    });
+
+    test('one place turns its lists partly on, all the way up', () async {
+      final (food, italian) = await foodAndItalian();
+      await saved.createList('Bars', parent: food);
+      await saved.setShown((await tree()).copiesOf('poi:2').single, true);
+      final t = await tree();
+      expect(t.shownState(italian), isTrue);
+      expect(t.shownState(food), isNull);
+      expect(t.shownPlaces.single.id, 'poi:2');
+    });
+
+    test('top-level places are on or off one by one', () async {
+      await saveAll(['poi:1', 'poi:2']);
+      await saved.setShown((await tree()).copiesOf('poi:1').single, true);
+      expect((await tree()).shownPlaces.single.id, 'poi:1');
+    });
+
+    test('an empty list keeps its own state', () async {
+      final id = await saved.createList('Empty');
+      await saved.setShown((await tree()).list(id)!, true);
+      expect((await tree()).shownState(id), isTrue);
+    });
+
+    test('what is new starts on only if all of its list is', () async {
+      final (food, italian) = await foodAndItalian();
+      await saved.setShown((await tree()).list(italian)!, true);
+      await places.put(_place('poi:3'));
+      await saved.setLocations('poi:3', {italian, food});
+      final t = await tree();
+      expect(t.placesIn(italian).first.shownOnMap, isTrue);
+      expect(
+        t.copiesOf('poi:3').where((c) => c.parent == food).single.shownOnMap,
+        isFalse,
+      );
+      final nested = await saved.createList('Pizza', parent: italian);
+      expect((await tree()).shownState(nested), isTrue);
+    });
+
+    test(
+      'a place shows once, as a copy that is on, with an emoji if any',
+      () async {
+        final food = await saved.createList('Food');
+        final bars = await saved.createList('Bars');
+        await saveAll(['poi:1']);
+        await saved.setLocations('poi:1', {food, bars});
+        var t = await tree();
+        final inFood = t.placesIn(food).single;
+        final inBars = t.placesIn(bars).single;
+        await saved.edit(inBars, name: '', emoji: '🍺');
+        await saved.setShown(inFood, true);
+        expect((await tree()).shownPlaces.single.emoji, isNull);
+
+        t = await tree();
+        await saved.setShown(t.placesIn(bars).single, true);
+        expect((await tree()).shownPlaces.single.emoji, '🍺');
+      },
+    );
+
+    group('moving', () {
+      Future<int> shownList() async {
+        final id = await saved.createList('Shown');
+        await saved.setShown((await tree()).list(id)!, true);
+        return id;
+      }
+
+      test('into a list that is all on turns a place on', () async {
+        final shown = await shownList();
+        await saveAll(['poi:1']);
+        await saved.move([(await tree()).copiesOf('poi:1').single], shown);
+        final t = await tree();
+        expect(t.copiesOf('poi:1').single.shownOnMap, isTrue);
+        expect(t.shownState(shown), isTrue);
+      });
+
+      test('and undoing it turns the place off again', () async {
+        final shown = await shownList();
+        await saveAll(['poi:1']);
+        final undo = await saved.move([
+          (await tree()).copiesOf('poi:1').single,
+        ], shown);
+        await saved.restore(undo);
+        final copy = (await tree()).copiesOf('poi:1').single;
+        expect(copy.parent, isNull);
+        expect(copy.shownOnMap, isFalse);
+      });
+
+      test('a list brings what is inside it, and undo too', () async {
+        final shown = await shownList();
+        final food = await saved.createList('Food');
+        final italian = await saved.createList('Italian', parent: food);
+        await saveAll(['poi:1']);
+        await saved.move([(await tree()).copiesOf('poi:1').single], italian);
+
+        final undo = await saved.move([(await tree()).list(food)!], shown);
+        var t = await tree();
+        expect(t.shownState(shown), isTrue);
+        expect(t.copiesOf('poi:1').single.shownOnMap, isTrue);
+
+        await saved.restore(undo);
+        t = await tree();
+        expect(t.list(food)!.parent, isNull);
+        expect(t.shownState(food), isFalse);
+        expect(t.copiesOf('poi:1').single.shownOnMap, isFalse);
+      });
+
+      test('into a list that is off leaves a place as it was', () async {
+        final off = await saved.createList('Off');
+        await saveAll(['poi:1', 'poi:2']);
+        var t = await tree();
+        await saved.setShown(t.copiesOf('poi:1').single, true);
+        t = await tree();
+        await saved.move([
+          t.copiesOf('poi:1').single,
+          t.copiesOf('poi:2').single,
+        ], off);
+        t = await tree();
+        expect(t.copiesOf('poi:1').single.shownOnMap, isTrue);
+        expect(t.copiesOf('poi:2').single.shownOnMap, isFalse);
+      });
+
+      test('into a partly-on list leaves a place off', () async {
+        final mixed = await saved.createList('Mixed');
+        await saveAll(['poi:1', 'poi:2', 'poi:3']);
+        var t = await tree();
+        await saved.move([
+          t.copiesOf('poi:1').single,
+          t.copiesOf('poi:2').single,
+        ], mixed);
+        await saved.setShown((await tree()).copiesOf('poi:1').single, true);
+        await saved.move([(await tree()).copiesOf('poi:3').single], mixed);
+        t = await tree();
+        expect(t.shownState(mixed), isNull);
+        expect(t.copiesOf('poi:3').single.shownOnMap, isFalse);
+      });
+    });
+
+    test('places show in the order of Saved, every level opened', () async {
+      final a = await saved.createList('A');
+      final inner = await saved.createList('Inner', parent: a);
+      final b = await saved.createList('B');
+      // Newest on top, so saved last to come first at their level.
+      await saveAll(['top', 'in-b', 'in-a-2', 'in-a-1', 'in-inner']);
+      var t = await tree();
+      await saved.move([t.copiesOf('in-inner').single], inner);
+      await saved.move([t.copiesOf('in-a-2').single], a);
+      await saved.move([(await tree()).copiesOf('in-a-1').single], a);
+      await saved.move([(await tree()).copiesOf('in-b').single], b);
+      t = await tree();
+      for (final list in t.walk) {
+        await saved.setShown((await tree()).list(list.list.id)!, true);
+      }
+      await saved.setShown((await tree()).copiesOf('top').single, true);
+
+      expect((await tree()).shownPlaces.map((p) => p.id), [
+        'in-inner',
+        'in-a-2',
+        'in-a-1',
+        'in-b',
+        'top',
+      ]);
+    });
+
+    test('a reordered list changes the order', () async {
+      final a = await saved.createList('A');
+      final b = await saved.createList('B');
+      await saveAll(['one', 'two']);
+      var t = await tree();
+      await saved.move([t.copiesOf('one').single], a);
+      await saved.move([(await tree()).copiesOf('two').single], b);
+      t = await tree();
+      await saved.setShown(t.list(a)!, true);
+      await saved.setShown((await tree()).list(b)!, true);
+      await saved.reorderLists([b, a]);
+      expect((await tree()).shownPlaces.map((p) => p.id), ['two', 'one']);
+    });
+
+    test('copying and adding to a list go to its end too', () async {
+      final food = await saved.createList('Food');
+      await saveAll(['one', 'two', 'three']);
+      final t = await tree();
+      await saved.move([t.copiesOf('one').single], food);
+      await saved.copy([t.copiesOf('two').single], food);
+      await saved.setLocations('three', {null, food});
+      expect(names((await tree()).placesIn(food)), ['one', 'two', 'three']);
+    });
+
+    test('a newly saved place still goes on top of the top level', () async {
+      await saveAll(['one', 'two']);
+      expect(names((await tree()).placesIn(null)), ['two', 'one']);
+    });
+
+    test('moving several keeps the order they were selected in', () async {
+      final food = await saved.createList('Food');
+      await saveAll(['one', 'two']);
+      final t = await tree();
+      await saved.move([
+        t.copiesOf('two').single,
+        t.copiesOf('one').single,
+      ], food);
+      expect(names((await tree()).placesIn(food)), ['two', 'one']);
+    });
+
+    test('emoji travel with copies, and blank clears them', () async {
+      final food = await saved.createList('Food');
+      final bars = await saved.createList('Bars');
+      await saveAll(['poi:1']);
+      await saved.edit(
+        (await tree()).copiesOf('poi:1').single,
+        name: '',
+        emoji: '🍕',
+      );
+      await saved.copy([(await tree()).placesIn(null).single], food);
+      await saved.setLocations('poi:1', {null, food, bars});
+      final t = await tree();
+      expect(t.copiesOf('poi:1').map((c) => c.emoji), everyElement('🍕'));
+
+      await saved.edit(t.placesIn(food).single, name: '');
+      final after = await tree();
+      expect(after.placesIn(food).single.emoji, isNull);
+      expect(after.placesIn(bars).single.emoji, '🍕');
     });
   });
 

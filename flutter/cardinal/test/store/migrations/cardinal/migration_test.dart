@@ -38,7 +38,7 @@ void main() {
     }
   });
 
-  test('v5 keeps what was saved in v4', () async {
+  test('what was saved in v4 is kept', () async {
     final schema = await verifier.schemaAt(4);
     schema.rawDatabase.execute(
       "INSERT INTO places (id, kind, center_lon, center_lat, tags, updated_at, "
@@ -53,7 +53,7 @@ void main() {
     );
     final db = CardinalDatabase(schema.newConnection());
     addTearDown(db.close);
-    await verifier.migrateAndValidate(db, 5);
+    await verifier.migrateAndValidate(db, 6);
 
     final tree = await SavedStore(db).watch().first;
     final copy = tree.copiesOf('poi:1').single;
@@ -62,6 +62,27 @@ void main() {
     expect(copy.note, 'Back door');
     expect(copy.pinned, isTrue);
     expect(tree.list(7)!.name, 'Food');
+  });
+
+  test('v6 starts with everything off the map, and no emoji', () async {
+    final schema = await verifier.schemaAt(5);
+    schema.rawDatabase.execute(
+      "INSERT INTO places (id, kind, center_lon, center_lat, tags, updated_at, "
+      "accessed_at) VALUES ('poi:1', 'poi', 0, 0, '{}', 0, 0)",
+    );
+    schema.rawDatabase.execute(
+      "INSERT INTO saved_places (place_id, name, pinned, position, saved_at) "
+      "VALUES ('poi:1', 'Home', 1, 3, 0)",
+    );
+    final db = CardinalDatabase(schema.newConnection());
+    addTearDown(db.close);
+    await verifier.migrateAndValidate(db, 6);
+
+    final copy = (await SavedStore(db).watch().first).copiesOf('poi:1').single;
+    expect(copy.customName, 'Home');
+    expect(copy.pinned, isTrue);
+    expect(copy.emoji, null);
+    expect(copy.shownOnMap, isFalse);
   });
 
   // The following template shows how to write tests ensuring your migrations

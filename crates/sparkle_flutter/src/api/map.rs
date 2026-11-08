@@ -7,11 +7,24 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use flutter_rust_bridge::frb;
 
+use sparkle::sprite::{ImageMeta, SpriteImage};
 use sparkle_view::camera::Padding;
 
 use crate::app::{Button, MapView, Wake};
 use crate::frb_generated::StreamSink;
 use crate::gpu::{GpuInfo, Stream};
+
+/// An image to add to the map's sprite: see [`SparkleMap::add_images`].
+pub struct SpriteImageInput {
+    pub name: String,
+    /// RGBA, 8 bits per channel, premultiplied alpha, rows top down.
+    pub pixels: Vec<u8>,
+    /// In physical pixels.
+    pub width: u32,
+    pub height: u32,
+    /// Physical pixels per logical pixel.
+    pub pixel_ratio: f32,
+}
 
 /// What the device can do, as Flutter GPU reports it.
 pub struct DeviceInfo {
@@ -328,6 +341,31 @@ impl SparkleMap {
     #[frb(sync)]
     pub fn quick_zoom(&self, x: f64, y: f64, dy: f64) {
         self.view().quick_zoom([x, y], dy);
+    }
+
+    /// Add `images` to the sprite, for icons to use from now on, by name; a name it has
+    /// already keeps its image. Draw a frame after. A layer showing one of them for the
+    /// first time needs its data set after this.
+    #[frb(sync)]
+    pub fn add_images(&self, images: Vec<SpriteImageInput>) {
+        let images: Vec<_> = images
+            .into_iter()
+            .map(|image| {
+                (
+                    image.name,
+                    SpriteImage {
+                        pixels: image.pixels,
+                        width: image.width,
+                        height: image.height,
+                        meta: ImageMeta {
+                            pixel_ratio: image.pixel_ratio,
+                            ..ImageMeta::default()
+                        },
+                    },
+                )
+            })
+            .collect();
+        self.view().add_images(&images);
     }
 
     /// Replace the data of the style's GeoJSON source `source` with `geojson`, a GeoJSON

@@ -12,6 +12,11 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<SparkleMap>>
 abstract class SparkleMap implements RustOpaqueInterface {
+  /// Add `images` to the sprite, for icons to use from now on, by name; a name it has
+  /// already keeps its image. Draw a frame after. A layer showing one of them for the
+  /// first time needs its data set after this.
+  void addImages({required List<SpriteImageInput> images});
+
   /// Where the camera is: its center is the middle of the view less the padding.
   CameraState camera();
 
@@ -430,4 +435,46 @@ class MapPadding {
           right == other.right &&
           bottom == other.bottom &&
           left == other.left;
+}
+
+/// An image to add to the map's sprite: see [`SparkleMap::add_images`].
+class SpriteImageInput {
+  final String name;
+
+  /// RGBA, 8 bits per channel, premultiplied alpha, rows top down.
+  final Uint8List pixels;
+
+  /// In physical pixels.
+  final int width;
+  final int height;
+
+  /// Physical pixels per logical pixel.
+  final double pixelRatio;
+
+  const SpriteImageInput({
+    required this.name,
+    required this.pixels,
+    required this.width,
+    required this.height,
+    required this.pixelRatio,
+  });
+
+  @override
+  int get hashCode =>
+      name.hashCode ^
+      pixels.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      pixelRatio.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SpriteImageInput &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          pixels == other.pixels &&
+          width == other.width &&
+          height == other.height &&
+          pixelRatio == other.pixelRatio;
 }

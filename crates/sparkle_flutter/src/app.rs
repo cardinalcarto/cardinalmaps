@@ -12,6 +12,7 @@ use std::time::{Instant, SystemTime};
 use anyhow::{Result, bail};
 use maplibre_expr::Value;
 use sparkle::Style;
+use sparkle::sprite::{ImageAtlas, SpriteImage};
 use sparkle::style::StyleDiff;
 use sparkle::transition::Transitions;
 use sparkle_view::args::Args;
@@ -123,6 +124,8 @@ pub struct MapView {
     press: Option<[f64; 2]>,
     /// The labels the last click landed on, until they're taken.
     clicked: Vec<ClickedFeature>,
+    /// The sprite images tiles are laid out against.
+    images: Option<Arc<ImageAtlas>>,
     hovered: Option<Marked>,
     selected: Option<Marked>,
 }
@@ -154,6 +157,7 @@ impl MapView {
         if let Some(atlas) = &atlas {
             renderer.set_images(atlas);
         }
+        let images = atlas.clone();
         let (tx, messages) = mpsc::channel();
         let loader = TileLoader::spawn(
             LoaderConfig {
@@ -193,6 +197,7 @@ impl MapView {
             drag: None,
             press: None,
             clicked: Vec::new(),
+            images,
             hovered: None,
             selected: None,
         })
@@ -527,6 +532,21 @@ impl MapView {
         }
         self.subject = None;
         true
+    }
+
+    /// Add `added` to the sprite images, by name; a name it has already keeps its image.
+    /// Nothing already on the map moves or is laid out again.
+    pub fn add_images(&mut self, added: &[(String, SpriteImage)]) {
+        let atlas = Arc::new(
+            self.images
+                .as_deref()
+                .cloned()
+                .unwrap_or_default()
+                .with_images(added),
+        );
+        self.renderer.set_images(&atlas);
+        self.map.set_images(atlas.clone());
+        self.images = Some(atlas);
     }
 
     /// Replace the data of the style's GeoJSON source `source` with `geojson`, a GeoJSON
