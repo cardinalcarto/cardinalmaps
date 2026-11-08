@@ -77,6 +77,41 @@ const IMPERIAL_ALERT_CORRECTIONS: &[(&str, usize, usize, &str, &str)] = &[
         "In eine viertel Meile, Rechts auf Avinguda de Santa Coloma abbiegen.",
         "In 900 Fuß, Rechts auf Avinguda de Santa Coloma abbiegen.",
     ),
+    (
+        "andorra/ferrostar_pedestrian_german_miles/osrm",
+        0,
+        1,
+        "In 300 Fuß, Links auf Avinguda del Princep Benlloch abbiegen.",
+        "In 200 Fuß, Links auf Avinguda del Princep Benlloch abbiegen.",
+    ),
+    (
+        "andorra/ferrostar_pedestrian_german_miles/osrm",
+        1,
+        1,
+        "In 300 Fuß, Rechts halten auf Avinguda Meritxell.",
+        "In 200 Fuß, Rechts halten auf Avinguda Meritxell.",
+    ),
+    (
+        "andorra/ferrostar_pedestrian_german_miles/osrm",
+        5,
+        0,
+        "In 300 Fuß, Rechts auf Carrer Joan Cornella Panicello abbiegen.",
+        "In 200 Fuß, Rechts auf Carrer Joan Cornella Panicello abbiegen.",
+    ),
+    (
+        "andorra/ferrostar_pedestrian_german_miles/osrm",
+        7,
+        1,
+        "In 300 Fuß, Links auf Fußgängerübergang abbiegen.",
+        "In 200 Fuß, Links auf Fußgängerübergang abbiegen.",
+    ),
+    (
+        "andorra/ferrostar_pedestrian_german_miles/osrm",
+        8,
+        0,
+        "In 300 Fuß, Rechts auf Fußgängerübergang abbiegen.",
+        "In 200 Fuß, Rechts auf Fußgängerübergang abbiegen.",
+    ),
 ];
 
 /// Replaces mainline's miscomputed miles announcements with ours,

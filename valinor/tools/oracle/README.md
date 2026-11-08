@@ -334,6 +334,20 @@ apart from latency statistics, so those files were left as they were.
 Fifteen Andorra cases whose first capture missed the tapped messages
 were captured again (their responses were unchanged) and copied into that directory.
 
+The `ferrostar_*` cases come from `corpus/ferrostar-andorra.json`. Each sends the exact body
+Ferrostar's `ValhallaHttpRequestGenerator` builds:
+- the OSRM format with banner and voice instructions;
+- the `shape_attributes` filter that turns on annotations;
+- a `street_side_tolerance` (and sometimes a `heading`) on the start;
+- typed waypoints;
+- options merged on top.
+
+Every case is an exact request, so each is sent twice: once as is,
+and once as a `_pbf` copy with `format: pbf` for the directions.
+They were captured into `/mnt/maps/cardinal/valhalla-oracle/ferrostar/captures`.
+The `_pbf` copy's `pbf` directory was then moved into its case
+(`ferrostar/merged`), and the cases were copied in with this script's logic.
+
 ## Corpus cases
 
 [`capture.py`](capture.py) POSTs each case's `request` as JSON,

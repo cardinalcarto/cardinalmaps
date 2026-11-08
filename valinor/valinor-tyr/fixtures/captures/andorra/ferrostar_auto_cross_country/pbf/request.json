@@ -1,0 +1,36 @@
+{
+  "action": "route",
+  "request": {
+    "format": "pbf",
+    "filters": {
+      "action": "include",
+      "attributes": [
+        "shape_attributes.speed",
+        "shape_attributes.speed_limit",
+        "shape_attributes.time",
+        "shape_attributes.length"
+      ]
+    },
+    "banner_instructions": true,
+    "voice_instructions": true,
+    "costing": "auto",
+    "locations": [
+      {
+        "lat": 42.4637,
+        "lon": 1.4913,
+        "street_side_tolerance": 5
+      },
+      {
+        "lat": 42.5425,
+        "lon": 1.7333,
+        "type": "break"
+      }
+    ]
+  },
+  "http": {
+    "method": "POST",
+    "body": "{\"format\": \"pbf\", \"filters\": {\"action\": \"include\", \"attributes\": [\"shape_attributes.speed\", \"shape_attributes.speed_limit\", \"shape_attributes.time\", \"shape_attributes.length\"]}, \"banner_instructions\": true, \"voice_instructions\": true, \"costing\": \"auto\", \"locations\": [{\"lat\": 42.4637, \"lon\": 1.4913, \"street_side_tolerance\": 5}, {\"lat\": 42.5425, \"lon\": 1.7333, \"type\": \"break\"}]}",
+    "target": "/route",
+    "content_type": null
+  }
+}

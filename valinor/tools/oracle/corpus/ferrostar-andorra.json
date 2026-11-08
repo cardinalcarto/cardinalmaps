@@ -1,0 +1,483 @@
+{
+  "region": "andorra",
+  "cases": [
+    {
+      "name": "ferrostar_auto",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "osrm",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "auto",
+        "locations": [
+          {
+            "lat": 42.5078,
+            "lon": 1.5211,
+            "street_side_tolerance": 5,
+            "heading": 90
+          },
+          {
+            "lat": 42.5355,
+            "lon": 1.583,
+            "type": "break"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ferrostar_auto_pbf",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "pbf",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "auto",
+        "locations": [
+          {
+            "lat": 42.5078,
+            "lon": 1.5211,
+            "street_side_tolerance": 5,
+            "heading": 90
+          },
+          {
+            "lat": 42.5355,
+            "lon": 1.583,
+            "type": "break"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ferrostar_auto_cross_country",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "osrm",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "auto",
+        "locations": [
+          {
+            "lat": 42.4637,
+            "lon": 1.4913,
+            "street_side_tolerance": 5
+          },
+          {
+            "lat": 42.5425,
+            "lon": 1.7333,
+            "type": "break"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ferrostar_auto_cross_country_pbf",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "pbf",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "auto",
+        "locations": [
+          {
+            "lat": 42.4637,
+            "lon": 1.4913,
+            "street_side_tolerance": 5
+          },
+          {
+            "lat": 42.5425,
+            "lon": 1.7333,
+            "type": "break"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ferrostar_auto_via",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "osrm",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "auto",
+        "locations": [
+          {
+            "lat": 42.5078,
+            "lon": 1.5211,
+            "street_side_tolerance": 5
+          },
+          {
+            "lat": 42.5562,
+            "lon": 1.5331,
+            "type": "via"
+          },
+          {
+            "lat": 42.545,
+            "lon": 1.5148,
+            "type": "break"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ferrostar_auto_via_pbf",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "pbf",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "auto",
+        "locations": [
+          {
+            "lat": 42.5078,
+            "lon": 1.5211,
+            "street_side_tolerance": 5
+          },
+          {
+            "lat": 42.5562,
+            "lon": 1.5331,
+            "type": "via"
+          },
+          {
+            "lat": 42.545,
+            "lon": 1.5148,
+            "type": "break"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ferrostar_auto_no_uturns",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "osrm",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "auto",
+        "locations": [
+          {
+            "lat": 42.5078,
+            "lon": 1.5211,
+            "street_side_tolerance": 5
+          },
+          {
+            "lat": 42.5562,
+            "lon": 1.5331,
+            "type": "through"
+          },
+          {
+            "lat": 42.545,
+            "lon": 1.5148,
+            "type": "break_through",
+            "name": "Stop"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ferrostar_auto_no_uturns_pbf",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "pbf",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "auto",
+        "locations": [
+          {
+            "lat": 42.5078,
+            "lon": 1.5211,
+            "street_side_tolerance": 5
+          },
+          {
+            "lat": 42.5562,
+            "lon": 1.5331,
+            "type": "through"
+          },
+          {
+            "lat": 42.545,
+            "lon": 1.5148,
+            "type": "break_through",
+            "name": "Stop"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ferrostar_pedestrian_german_miles",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "osrm",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "pedestrian",
+        "locations": [
+          {
+            "lat": 42.5078,
+            "lon": 1.5211,
+            "street_side_tolerance": 5
+          },
+          {
+            "lat": 42.5099,
+            "lon": 1.5357,
+            "type": "break"
+          }
+        ],
+        "language": "de-DE",
+        "units": "miles"
+      }
+    },
+    {
+      "name": "ferrostar_pedestrian_german_miles_pbf",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "pbf",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "pedestrian",
+        "locations": [
+          {
+            "lat": 42.5078,
+            "lon": 1.5211,
+            "street_side_tolerance": 5
+          },
+          {
+            "lat": 42.5099,
+            "lon": 1.5357,
+            "type": "break"
+          }
+        ],
+        "language": "de-DE",
+        "units": "miles"
+      }
+    },
+    {
+      "name": "ferrostar_bicycle",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "osrm",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "bicycle",
+        "locations": [
+          {
+            "lat": 42.5078,
+            "lon": 1.5211,
+            "street_side_tolerance": 5,
+            "heading": 180
+          },
+          {
+            "lat": 42.5562,
+            "lon": 1.5331,
+            "type": "break"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ferrostar_bicycle_pbf",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "pbf",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "bicycle",
+        "locations": [
+          {
+            "lat": 42.5078,
+            "lon": 1.5211,
+            "street_side_tolerance": 5,
+            "heading": 180
+          },
+          {
+            "lat": 42.5562,
+            "lon": 1.5331,
+            "type": "break"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ferrostar_roundabout",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "osrm",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "auto",
+        "locations": [
+          {
+            "lat": 42.505,
+            "lon": 1.52,
+            "street_side_tolerance": 5
+          },
+          {
+            "lat": 42.505,
+            "lon": 1.515,
+            "type": "break"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ferrostar_roundabout_pbf",
+      "action": "route",
+      "method": "POST",
+      "request": {
+        "format": "pbf",
+        "filters": {
+          "action": "include",
+          "attributes": [
+            "shape_attributes.speed",
+            "shape_attributes.speed_limit",
+            "shape_attributes.time",
+            "shape_attributes.length"
+          ]
+        },
+        "banner_instructions": true,
+        "voice_instructions": true,
+        "costing": "auto",
+        "locations": [
+          {
+            "lat": 42.505,
+            "lon": 1.52,
+            "street_side_tolerance": 5
+          },
+          {
+            "lat": 42.505,
+            "lon": 1.515,
+            "type": "break"
+          }
+        ]
+      }
+    }
+  ]
+}
