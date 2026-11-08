@@ -226,6 +226,31 @@ impl<const CACHE: bool> TarballTileProvider<false, CACHE> {
         Ok(TileBuildIds::new(build_ids))
     }
 
+    /// The header of one tile (for example, to read its build ID),
+    /// without decoding the rest of the tile.
+    ///
+    /// # Performance
+    ///
+    /// This touches only the tile's first page,
+    /// so a sample of headers is cheap even from a planet extract that isn't in the page cache.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphTileProviderError::TileNotAvailable`] if the tile isn't in the tarball,
+    /// and otherwise fails as [`TarballTileProvider::check_build_ids`] does.
+    pub fn tile_header(
+        &self,
+        graph_id: GraphId,
+    ) -> Result<GraphTileHeader, GraphTileProviderError> {
+        let base_id = graph_id.tile_base_id();
+        let pointer = self.get_pointer_for_tile_containing(base_id)?;
+        // SAFETY: The pointer lies within the memory map (checked when the index was loaded).
+        // The backing memory must not be mutated while the slice is alive,
+        // which is the documented contract of this provider.
+        let bytes = unsafe { pointer.as_tile_bytes() };
+        read_header(base_id, bytes).cloned()
+    }
+
     /// Verifies every tile in the tarball against its hash,
     /// and recomputes the tileset build ID.
     ///
@@ -356,6 +381,33 @@ mod tests {
         .expect("valid extract");
         assert_eq!(immutable.check_build_ids().expect("headers"), build_ids);
         assert_eq!(immutable.verify_tileset().expect("tiles"), verification);
+    }
+
+    #[test]
+    fn reads_single_headers() {
+        let provider = TarballTileProvider::new_readonly(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("fixtures")
+                .join("andorra-tiles.tar"),
+        )
+        .expect("valid extract");
+        for id in fixture_tile_ids() {
+            // Any ID in the tile names it.
+            let header = provider
+                .tile_header(id.with_feature_index(3).expect("valid ID"))
+                .expect("a header");
+            assert_eq!(header.graph_id(), id);
+            assert_eq!(header.build_id(), FIXTURE_BUILD_ID);
+            let full = provider
+                .with_tile_containing(id, |tile| tile.header().clone())
+                .expect("tile");
+            assert_eq!(header, full);
+        }
+        let missing = GraphId::try_from_components(0, 3016, 0).expect("valid tile ID");
+        assert!(matches!(
+            provider.tile_header(missing),
+            Err(GraphTileProviderError::TileNotAvailable(id)) if id == missing
+        ));
     }
 
     #[test]
