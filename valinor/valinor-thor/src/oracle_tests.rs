@@ -634,3 +634,65 @@ fn oracle_external() {
         report.failures.len()
     );
 }
+
+/// Searches stop when interrupted, after mainline's 5000 iterations,
+/// and Thor can be used again afterwards.
+#[test]
+fn interrupts_long_searches() {
+    let dir = fixtures();
+    let tiles = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../valhalla-graphtile/fixtures/andorra-tiles");
+    let provider = DirectoryGraphTileProvider::new(tiles, NonZeroUsize::new(64).expect("64"));
+    let thor = Thor::new(ThorConfig::default(), provider);
+    let inputs = read_inputs(&dir.join("andorra-loki.tsv"));
+    let references = read_references(&dir.join("andorra-thor.txt"));
+    let now = Timestamp::from_second(1_794_116_280).expect("a time");
+    let mut workspace = Workspace::default();
+    let mut interrupted = 0;
+    let mut finished = 0;
+    for (id, text) in &references {
+        let reference = parse_reference(text);
+        let Some(input) = inputs.get(id) else {
+            continue;
+        };
+        if reference.error.is_some()
+            || input
+                .options
+                .as_ref()
+                .is_none_or(|o| o.action != Action::Route as i32)
+        {
+            continue;
+        }
+        let mut api = input.clone();
+        match thor.route_interruptible(&mut workspace, &mut api, now, &|| true) {
+            Err(e) => {
+                assert_eq!(e.code().code(), 499, "{id}");
+                assert!(e.message().contains("interrupted"), "{id}: {}", e.message());
+                interrupted += 1;
+            }
+            // Short searches finish before the first check.
+            Ok(_) => finished += 1,
+        }
+        // The same request runs to the end afterwards.
+        let mut api = input.clone();
+        let mut report = Report::default();
+        let ours = thor.route_at(&mut workspace, &mut api, now);
+        compare_case(
+            thor.provider(),
+            id,
+            input,
+            &reference,
+            &ours,
+            &api,
+            &mut report,
+        );
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        if interrupted >= 5 && finished >= 5 {
+            break;
+        }
+    }
+    assert!(
+        interrupted >= 5 && finished >= 5,
+        "{interrupted} {finished}"
+    );
+}

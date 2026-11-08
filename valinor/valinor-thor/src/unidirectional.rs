@@ -180,7 +180,9 @@ impl<const FORWARD: bool> UnidirectionalAStar<FORWARD> {
 
         let mut nc: u32 = 0;
         let mut best_path: BestPath = None;
+        let mut n = 0;
         loop {
+            ctx.check_interrupt(&mut n)?;
             let Some(predindex) = self.queue.pop(&self.labels) else {
                 return Ok(Vec::new());
             };

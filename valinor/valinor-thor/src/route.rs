@@ -300,6 +300,7 @@ pub(crate) struct ThorRoute<'a, P> {
     pub(crate) config: &'a ThorConfig,
     pub(crate) provider: &'a P,
     pub(crate) now: jiff::Timestamp,
+    pub(crate) interrupt: &'a dyn Fn() -> bool,
 }
 
 /// How a route is being put together (the variables `path_depart_at` and `path_arrive_by`
@@ -499,6 +500,7 @@ impl<P: GraphTileProvider> ThorRoute<'_, P> {
             provider: self.provider,
             costing,
             now: self.now,
+            interrupt: self.interrupt,
         };
         match algorithm {
             Algorithm::Bidirectional => {
@@ -1196,6 +1198,23 @@ impl<P: GraphTileProvider> Thor<P> {
         api: &mut Api,
         now: jiff::Timestamp,
     ) -> Result<Paths, ValhallaError> {
+        self.route_interruptible(workspace, api, now, &|| false)
+    }
+
+    /// [`Thor::route_at`], giving up when `interrupt` returns true
+    /// (it is called every 5000 search iterations, as mainline checks its interrupt).
+    ///
+    /// # Errors
+    ///
+    /// As for [`Thor::route`]; an interrupted search is error 499, which callers should
+    /// drop rather than send (mainline's workers send nothing for interrupted requests).
+    pub fn route_interruptible(
+        &self,
+        workspace: &mut Workspace,
+        api: &mut Api,
+        now: jiff::Timestamp,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<Paths, ValhallaError> {
         let options = api
             .options
             .as_ref()
@@ -1219,6 +1238,7 @@ impl<P: GraphTileProvider> Thor<P> {
             config: &self.config,
             provider: &self.provider,
             now,
+            interrupt,
         };
         if arrive_by {
             route.arrive_by(api, workspace, &mut costing, costing_name)

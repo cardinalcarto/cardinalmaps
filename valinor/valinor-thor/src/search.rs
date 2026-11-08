@@ -42,6 +42,29 @@ pub(crate) struct SearchContext<'a, P, C> {
     pub(crate) costing: &'a C,
     /// The current time, for `current` date and times.
     pub(crate) now: Timestamp,
+    /// Whether to give up (the client went away); checked every
+    /// [`INTERRUPT_INTERVAL`] iterations, as mainline does.
+    pub(crate) interrupt: &'a dyn Fn() -> bool,
+}
+
+/// How often searches check for an interrupt (`kInterruptIterationsInterval`).
+pub(crate) const INTERRUPT_INTERVAL: u32 = 5000;
+
+impl<P, C> SearchContext<'_, P, C> {
+    /// Counts an iteration, and fails if the search was interrupted
+    /// (checked every [`INTERRUPT_INTERVAL`] iterations).
+    ///
+    /// # Errors
+    ///
+    /// [`ThorError::Interrupted`] if the interrupt says to stop.
+    #[inline]
+    pub(crate) fn check_interrupt(&self, n: &mut u32) -> Result<(), ThorError> {
+        *n = n.wrapping_add(1);
+        if (*n).is_multiple_of(INTERRUPT_INTERVAL) && (self.interrupt)() {
+            return Err(ThorError::Interrupted);
+        }
+        Ok(())
+    }
 }
 
 impl<P: GraphTileProvider, C: Costing> SearchContext<'_, P, C> {

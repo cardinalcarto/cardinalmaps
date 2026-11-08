@@ -40,6 +40,9 @@ pub enum ThorError {
     /// (mainline's "Found no restrictions in tile even though edge-label.on_complex_rest() == true").
     #[error("find the complex restrictions ending on edge {0}: there are none")]
     MissingRestriction(GraphId),
+    /// The search was interrupted (the client gave up).
+    #[error("finish the search: it was interrupted")]
+    Interrupted,
     /// A label index points nowhere (mainline would read out of bounds).
     #[error("read label {0}: it does not exist")]
     DanglingLabel(u32),

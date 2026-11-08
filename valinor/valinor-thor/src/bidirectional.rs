@@ -309,7 +309,9 @@ impl BidirectionalAStar {
         let mut rev_pred = ThorLabel::empty(placeholder);
         let mut expand_forward = true;
         let mut expand_reverse = true;
+        let mut n = 0;
         loop {
+            ctx.check_interrupt(&mut n)?;
             if self.fwd.labels.len() + self.rev.labels.len() > self.iterations_threshold {
                 return self.form_path(ctx, options, origin, destination, &forward_time_info);
             }
