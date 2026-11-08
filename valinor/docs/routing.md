@@ -15,9 +15,10 @@ so changes to it should be deliberate and discussed.
   and the reference oracle all follow 3.9.1.
   Tiles are built by mainline's own tools; we do not write a tile builder.
 - **The same router on the server and offline.**
-  The server is an HTTP service.
-  Offline (on device), the same stage chain runs over ZeroMQ `ipc://` sockets.
-  There is no HTTP server on the device.
+  Both run the stage chain in process through `valinor-router`:
+  the server behind an HTTP service (axum),
+  and the app through flutter_rust_bridge (see [flutter-api.md](flutter-api.md)).
+  There is no HTTP server or ZeroMQ on the device.
 - **No panics on decoding paths.**
   Corrupt, truncated, or unexpected tile data is an error, never a crash.
   This matters most offline, where a bad download must not take the app down.
@@ -43,9 +44,10 @@ request ──► front ──► Loki ──► Thor ──► Odin ──► T
 | Tyr | `valinor-tyr` | `Api` with `directions` | serialized response |
 | Sif | `valinor-sif` | edges, nodes, and costing options | costs, access, and filters |
 
-`valinor-router` chains the stages in process.
-`illuvatar-service`, `valinor-loki-service`, `valinor-thor-service`, and the other service binaries wrap stages as ZeroMQ workers
-(via `valhalla-microservice`), which serves both the server deployment and offline mode.
+`valinor-router` chains the stages in process, for both the server and the app.
+`illuvatar-service`, `valinor-loki-service`, and `valinor-thor-service` wrap the same stages
+as ZeroMQ workers (via `valhalla-microservice`),
+so they can be spliced into mainline's staged chain for the oracle.
 
 Front and Loki share a worker, as in mainline:
 the HTTP server hands Loki's worker the raw HTTP request,
