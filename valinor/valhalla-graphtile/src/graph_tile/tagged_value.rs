@@ -420,13 +420,16 @@ impl<'a> Landmark<'a> {
 ///
 /// Levels are stored as integers scaled by `10^p`,
 /// where `p` is the largest number of decimal places among the tag's values.
-/// Mainline 3.9.1's `decode_levels` has a bug:
-/// it parses `p` as `int32_t prec_power = parse_varint(ptr) > 0`,
-/// so it divides by 10 whenever `p` is positive, even when `p` is 2 or more.
-/// A level of `0.25` thus decodes as `2.5`.
-/// Since routing (level filtering) and JSON output both use the decoded values,
-/// [`Levels::ranges`] and [`Levels::precision`] reproduce this;
-/// [`Levels::precision_exponent`] gives the stored `p`.
+///
+/// This is a deliberate divergence from mainline (see "Known divergences" in
+/// `docs/routing.md`). Mainline 3.9.1's `decode_levels` parses `p` as
+/// `int32_t prec_power = parse_varint(ptr) > 0`, so it divides by 10 whenever `p` is positive,
+/// even when `p` is 2 or more: a level of `0.25` decodes as `2.5`, which puts indoor locations
+/// and instructions on the wrong floor.
+/// [`Levels::ranges`] divides by `10^p` instead, and [`Levels::precision`] is `10^p`.
+/// Both agree with mainline for integer levels and levels with one decimal place.
+/// [`Levels::precision_exponent`] gives the stored `p`, and [`Levels::decimal_places`]
+/// how many decimal places to show.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Levels<'a> {
     /// The varint values (levels and separators).
@@ -460,11 +463,28 @@ impl<'a> Levels<'a> {
         self.precision_exponent
     }
 
-    /// The divisor mainline applies to the stored values:
-    /// 0 (meaning none) for integer levels, and 10 otherwise (see the [type docs](Levels)).
+    /// The divisor of the stored values: 0 (meaning none) for integer levels,
+    /// and `10^p` otherwise (see the [type docs](Levels); mainline always uses 10).
+    ///
+    /// Mainline also uses this as a number of decimal places when it writes levels as JSON.
+    /// It saturates for exponents of 10 or more, which no OSM level has.
     #[inline]
     pub const fn precision(&self) -> u32 {
-        if self.precision_exponent > 0 { 10 } else { 0 }
+        if self.precision_exponent > 0 {
+            10_u32.saturating_pow(self.precision_exponent.cast_unsigned())
+        } else {
+            0
+        }
+    }
+
+    /// How many decimal places the values have: `p`, or 0 for integer levels.
+    #[inline]
+    pub const fn decimal_places(&self) -> u32 {
+        if self.precision_exponent > 0 {
+            self.precision_exponent.cast_unsigned()
+        } else {
+            0
+        }
     }
 
     /// Iterates over the level ranges, with both ends inclusive,
@@ -696,16 +716,34 @@ pub(crate) mod tests {
         assert!(!levels.includes_level(15.0).unwrap());
     }
 
+    /// Fractional levels are a deliberate divergence from mainline (see [`Levels`]).
     #[test]
-    fn test_levels_precision_bug() {
+    fn test_fractional_levels() {
         // "0.5;1.25" has 2 decimal places, so it is stored as 50 and 125.
         let bytes = encode_levels(&[(50, 50), (125, 125)], 2);
         let levels = parse(&bytes).unwrap().levels().unwrap();
         assert_eq!(levels.precision_exponent(), 2);
-        // Mainline divides by 10, not 100.
-        assert_eq!(levels.precision(), 10);
+        assert_eq!(levels.decimal_places(), 2);
+        // Mainline divides by 10 (its precision is 10), which gives 5 and 12.5.
+        // (`section_oracle` checks this against mainline's own decoding.)
+        assert_eq!(levels.precision(), 100);
         let ranges = levels.ranges().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_eq!(ranges, vec![(5.0, 5.0), (12.5, 12.5)]);
+        assert_eq!(ranges, vec![(0.5, 0.5), (1.25, 1.25)]);
+        assert!(levels.includes_level(1.25).unwrap());
+        assert!(!levels.includes_level(12.5).unwrap());
+
+        // With one decimal place, mainline is right.
+        let bytes = encode_levels(&[(15, 15)], 1);
+        let levels = parse(&bytes).unwrap().levels().unwrap();
+        assert_eq!((levels.precision(), levels.decimal_places()), (10, 1));
+        let ranges = levels.ranges().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(ranges, vec![(1.5, 1.5)]);
+
+        // Absurd exponents saturate rather than overflow.
+        let bytes = encode_levels(&[(1, 1)], 40);
+        let levels = parse(&bytes).unwrap().levels().unwrap();
+        assert_eq!(levels.precision(), u32::MAX);
+        assert!(levels.ranges().all(|r| r.is_ok()));
     }
 
     #[test]

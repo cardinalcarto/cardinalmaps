@@ -362,12 +362,13 @@ impl EdgeExt for Edge {
             if tagged.r#type == tagged_value::Type::KLevelRef as i32 {
                 level_refs.push(String::from_utf8_lossy(&tagged.value).into_owned());
             } else if tagged.r#type == tagged_value::Type::KLevels as i32
-                && let Some((decoded, precision)) = decode_levels(&tagged.value)
+                && let Some((decoded, decimal_places)) = decode_levels(&tagged.value)
                 && let [(start, end)] = decoded.as_slice()
                 && start == end
             {
-                // Mainline formats the level as `std::fixed` with `precision` digits.
-                let digits = usize::try_from(precision).unwrap_or(usize::MAX);
+                // Mainline formats the level as `std::fixed`, with its (mistaken) precision of 10
+                // as the number of digits; we use the level's decimal places.
+                let digits = usize::try_from(decimal_places).unwrap_or(usize::MAX);
                 levels.push(format!("Level {:.*}", digits, f64::from(*start)));
             }
         }
@@ -404,15 +405,18 @@ const fn straight_delta(turn_degree: u32) -> u32 {
 
 /// Decodes a `kLevels` tagged value (`baldr::decode_levels`).
 ///
-/// Returns the level ranges and the precision mainline reports, or `None` if the value is malformed.
+/// Returns the level ranges and their number of decimal places,
+/// or `None` if the value is malformed.
 /// Mainline would read past the end of a malformed value;
 /// we treat it as having no levels instead.
 ///
-/// Mainline has a precedence bug here: `if (int32_t prec_power = parse_varint(ptr) > 0)`
-/// binds the *comparison* to `prec_power`, so the precision is 10 whenever the encoded power is
-/// positive, and 0 otherwise.
-/// Since the precision ends up in instruction text (as the number of decimal places),
-/// we reproduce it.
+/// This deliberately diverges from mainline for fractional levels
+/// (see "Known divergences" in `docs/routing.md`).
+/// Mainline has a precedence bug: `if (int32_t prec_power = parse_varint(ptr) > 0)`
+/// binds the *comparison* to `prec_power`, so it divides by 10 whenever the encoded power is
+/// positive (a level of 0.25, stored as 25, decodes as 2.5),
+/// and then writes the level with that 10 as the number of decimal places
+/// ("Level 2.5000000000"). We divide by `10^p` and write `p` decimal places ("Level 0.25").
 fn decode_levels(encoded: &[u8]) -> Option<(Vec<(f32, f32)>, u32)> {
     /// Mainline's `kLevelRangeSeparator`, compared as a float.
     const LEVEL_RANGE_SEPARATOR: f32 = 1_048_575.0;
@@ -423,8 +427,10 @@ fn decode_levels(encoded: &[u8]) -> Option<(Vec<(f32, f32)>, u32)> {
     if end > encoded.len() {
         return None;
     }
-    let precision: u32 = if parse_varint(encoded, &mut pos)? > 0 {
-        10
+    let power = parse_varint(encoded, &mut pos)?;
+    let decimal_places = power.max(0).cast_unsigned();
+    let precision: u32 = if power > 0 {
+        10_u32.saturating_pow(decimal_places)
     } else {
         0
     };
@@ -462,7 +468,7 @@ fn decode_levels(encoded: &[u8]) -> Option<(Vec<(f32, f32)>, u32)> {
             in_range = true;
         }
     }
-    Some((decoded, precision))
+    Some((decoded, decimal_places))
 }
 
 /// Parses one zigzag-encoded 7-bit varint (`parse_varint` in `edgeinfo.cc`).
@@ -1119,16 +1125,18 @@ mod tests {
         encoded
     }
 
+    /// Fractional levels are a deliberate divergence from mainline (see `decode_levels`).
     #[test]
-    fn decodes_levels_with_mainline_precision_bug() {
-        let (decoded, precision) = decode_levels(&levels(0, &[2])).unwrap();
+    fn decodes_fractional_levels() {
+        let (decoded, decimal_places) = decode_levels(&levels(0, &[2])).unwrap();
         assert_eq!(decoded, vec![(2.0, 2.0)]);
-        assert_eq!(precision, 0);
+        assert_eq!(decimal_places, 0);
 
-        // A precision power of 2 still yields a precision of 10.
-        let (decoded, precision) = decode_levels(&levels(2, &[150, 1_048_575, 20, 30])).unwrap();
-        assert_eq!(decoded, vec![(15.0, 15.0), (2.0, 3.0)]);
-        assert_eq!(precision, 10);
+        // Mainline divides these by 10 (giving 15 and 2 to 3); they have 2 decimal places.
+        let (decoded, decimal_places) =
+            decode_levels(&levels(2, &[150, 1_048_575, 20, 30])).unwrap();
+        assert_eq!(decoded, vec![(1.5, 1.5), (0.2, 0.3)]);
+        assert_eq!(decimal_places, 2);
 
         assert!(decode_levels(&[]).is_none());
         assert!(decode_levels(&[0x10, 0x00]).is_none(), "truncated");
@@ -1149,8 +1157,12 @@ mod tests {
         };
         assert_eq!(edge.level_refs(), vec!["Level -1".to_owned()]);
 
+        // Mainline writes "Level 1.5000000000" (with 10 decimal places) for this,
+        // and "Level 2.5000000000" for the next.
         edge.tagged_value[0].value = levels(1, &[15]);
-        assert_eq!(edge.level_refs(), vec!["Level 1.5000000000".to_owned()]);
+        assert_eq!(edge.level_refs(), vec!["Level 1.5".to_owned()]);
+        edge.tagged_value[0].value = levels(2, &[25]);
+        assert_eq!(edge.level_refs(), vec!["Level 0.25".to_owned()]);
 
         edge.tagged_value.push(TaggedValue {
             value: b"P1".to_vec(),

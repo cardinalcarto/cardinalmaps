@@ -577,6 +577,17 @@ fn unhex(s: &str) -> Vec<u8> {
         .collect()
 }
 
+/// Mainline's decoding of the levels of synthetic edge info 2 (stored as 25, and 175 to 250,
+/// with 2 decimal places), which divides by 10.
+const MAINLINE_FRACTIONAL_LEVELS: &str = "  levels precision=10: 2.5-2.5 17.5-25
+  includes_level: -2=0 -1=0 0=0 0.5=0 1=0 2.5=1 3=0 13=0 14=0 17.5=1 25=1
+";
+
+/// Ours, which divides by 100.
+const OUR_FRACTIONAL_LEVELS: &str = "  levels precision=100: 0.25-0.25 1.75-2.5
+  includes_level: -2=0 -1=0 0=0 0.5=0 1=0 2.5=1 3=0 13=0 14=0 17.5=0 25=0
+";
+
 #[test]
 fn test_synthetic_records_match_mainline() {
     let fixture =
@@ -614,7 +625,14 @@ fn test_synthetic_records_match_mainline() {
                 let mut ours = String::new();
                 dump_elevation(&mut ours, &ei, edge_infos, length.parse().unwrap());
                 dump_edge_info(&mut ours, &ei, edge_infos, 0);
-                assert_eq!(ours, expected_block(&mut lines), "edge info {edge_infos}");
+                let mut expected = expected_block(&mut lines);
+                if edge_infos == 2 {
+                    // Fractional levels are a deliberate divergence (see `Levels`):
+                    // these levels have 2 decimal places, which mainline divides by 10.
+                    assert!(expected.contains(MAINLINE_FRACTIONAL_LEVELS), "{expected}");
+                    expected = expected.replace(MAINLINE_FRACTIONAL_LEVELS, OUR_FRACTIONAL_LEVELS);
+                }
+                assert_eq!(ours, expected, "edge info {edge_infos}");
                 edge_infos += 1;
             }
             "restriction_bytes" => {
