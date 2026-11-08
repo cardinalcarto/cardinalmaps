@@ -140,7 +140,7 @@ impl GraphTile for OwnedGraphTileHandle {
     }
 
     #[inline]
-    fn bin_index_xy(&self, x: usize, y: usize) -> usize {
+    fn bin_index_xy(&self, x: usize, y: usize) -> Option<usize> {
         self.borrow_dependent().bin_index_xy(x, y)
     }
 
@@ -261,7 +261,7 @@ impl GraphTile for MmapGraphTileHandle {
     }
 
     #[inline]
-    fn bin_index_xy(&self, x: usize, y: usize) -> usize {
+    fn bin_index_xy(&self, x: usize, y: usize) -> Option<usize> {
         self.borrow_dependent().bin_index_xy(x, y)
     }
 

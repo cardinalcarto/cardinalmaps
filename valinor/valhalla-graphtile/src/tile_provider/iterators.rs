@@ -751,8 +751,10 @@ fn prefilter_edge_ids<T: GraphTile, N: CoordFloat + FromPrimitive + From<f32>>(
     let mut edge_ids: Vec<GraphId> = Vec::new();
     for bin_y in y_bins {
         for bin_x in x_bins.clone() {
-            let bin_index = tile.bin_index_xy(bin_x, bin_y);
-            edge_ids.extend(tile.edges_in_bin(bin_index));
+            // The bin ranges are clamped to the grid, so the index always exists.
+            if let Some(bin_index) = tile.bin_index_xy(bin_x, bin_y) {
+                edge_ids.extend(tile.edges_in_bin(bin_index));
+            }
         }
     }
 

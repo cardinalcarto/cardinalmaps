@@ -331,13 +331,8 @@ pub trait GraphTile {
     /// Every level uses the same 5x5 grid (Valhalla's `kBinsDim`),
     /// so this does not depend on the tile's data.
     ///
-    /// # Panics
-    ///
-    /// Panics if `x` or `y` is not less than the number of bins per side
-    /// (the square root of [`crate::BIN_COUNT`]).
-    /// This is a check on the caller's arguments, like slice indexing;
-    /// it never depends on tile data.
-    fn bin_index_xy(&self, x: usize, y: usize) -> usize;
+    /// Returns `None` if `x` or `y` is not less than [`crate::BINS_PER_SIDE`].
+    fn bin_index_xy(&self, x: usize, y: usize) -> Option<usize>;
 
     /// Returns an iterator over all nodes near a specified point,
     /// within this tile, including the approximate distance from the point.
@@ -609,7 +604,7 @@ where
     }
 
     #[inline]
-    fn bin_index_xy(&self, x: usize, y: usize) -> usize {
+    fn bin_index_xy(&self, x: usize, y: usize) -> Option<usize> {
         self.deref().bin_index_xy(x, y)
     }
 
@@ -846,13 +841,8 @@ impl GraphTile for GraphTileView<'_> {
     }
 
     #[inline]
-    fn bin_index_xy(&self, x: usize, y: usize) -> usize {
-        assert!(
-            x < crate::BINS_PER_SIDE && y < crate::BINS_PER_SIDE,
-            "bin coordinates ({x}, {y}) must each be less than {}",
-            crate::BINS_PER_SIDE
-        );
-        y * crate::BINS_PER_SIDE + x
+    fn bin_index_xy(&self, x: usize, y: usize) -> Option<usize> {
+        (x < crate::BINS_PER_SIDE && y < crate::BINS_PER_SIDE).then(|| y * crate::BINS_PER_SIDE + x)
     }
 
     // Variable-length sections
@@ -1314,14 +1304,14 @@ mod tests {
         // as in Valhalla (`row * kBinsDim + col`).
         let n = crate::BINS_PER_SIDE;
         assert_eq!(n, 5);
-        assert_eq!(l2_view.bin_index_xy(0, 0), 0);
-        assert_eq!(l2_view.bin_index_xy(n - 1, 0), 4);
-        assert_eq!(l2_view.bin_index_xy(0, n - 1), 20);
-        assert_eq!(l2_view.bin_index_xy(n - 1, n - 1), 24);
+        assert_eq!(l2_view.bin_index_xy(0, 0), Some(0));
+        assert_eq!(l2_view.bin_index_xy(n - 1, 0), Some(4));
+        assert_eq!(l2_view.bin_index_xy(0, n - 1), Some(20));
+        assert_eq!(l2_view.bin_index_xy(n - 1, n - 1), Some(24));
         let mut seen = [false; crate::BIN_COUNT];
         for y in 0..n {
             for x in 0..n {
-                let index = l0_view.bin_index_xy(x, y);
+                let index = l0_view.bin_index_xy(x, y).expect("in range");
                 assert!(!seen[index], "bin ({x}, {y})");
                 seen[index] = true;
             }
@@ -1329,10 +1319,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "bin coordinates (5, 0) must each be less than 5")]
     fn test_bin_index_xy_rejects_out_of_range_coordinates() {
         // Before this was fixed, (5, 0) aliased bin (0, 1).
-        TEST_GRAPH_TILE_L2.bin_index_xy(5, 0);
+        let tile = &*TEST_GRAPH_TILE_L2;
+        assert_eq!(tile.bin_index_xy(5, 0), None);
+        assert_eq!(tile.bin_index_xy(0, 5), None);
+        assert_eq!(tile.bin_index_xy(usize::MAX, usize::MAX), None);
     }
 
     #[test]
