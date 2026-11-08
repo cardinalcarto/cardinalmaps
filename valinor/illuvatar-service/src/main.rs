@@ -3,11 +3,11 @@
 use clap::Parser;
 use http::StatusCode;
 use serde_json::json;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
-use valhalla_microservice::{Error, ValhallaMicroserviceBuilder, WorkerResult};
+use valhalla_microservice::{Interrupt, Stage, ValhallaMicroserviceBuilder, WorkerResult};
 use valhalla_proto::Api;
 use valhalla_proto::options::Action;
 
@@ -37,8 +37,11 @@ async fn main() -> anyhow::Result<()> {
         // TODO: We should probably optionally add Sentry here (behind a feature flag).
         .init();
 
-    let service_builder =
-        ValhallaMicroserviceBuilder::new(upstream_socket_endpoint, loopback_socket_endpoint);
+    let service_builder = ValhallaMicroserviceBuilder::new(
+        Stage::Odin,
+        upstream_socket_endpoint,
+        loopback_socket_endpoint,
+    );
     let mut service = service_builder.build(handle_message).await?;
 
     info!(
@@ -51,27 +54,16 @@ async fn main() -> anyhow::Result<()> {
                 info!("Ctrl-C received; shutting down...");
                 return Ok(());
             }
-            message = service.tick() => match message {
-                Ok(()) => {
-                    // All good; carry on...
-                }
-                Err(Error::UpstreamShuttingDown) => {
-                    // Graceful shutdown path.
-                    info!("Upstream shutting down...");
-                    return Ok(());
-                }
-                Err(Error::InvalidMessage(e)) => {
-                    error!("{e}");
-                }
-                Err(Error::ZeroMq(e)) => {
-                    error!("{e}");
-                }
+            outcome = service.tick() => match outcome {
+                Ok(outcome) => debug!("{outcome:?}"),
+                // None of the errors leave the service unusable, so log them and carry on.
+                Err(e) => error!("{e}"),
             }
         }
     }
 }
 
-fn handle_message(req: Api) -> WorkerResult {
+fn handle_message(req: Api, _interrupt: &Interrupt) -> WorkerResult {
     let Some(options) = &req.options else {
         return WorkerResult::json(
             StatusCode::INTERNAL_SERVER_ERROR,

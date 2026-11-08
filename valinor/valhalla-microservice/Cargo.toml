@@ -10,19 +10,22 @@ rust-version.workspace = true
 [dependencies]
 bitfield-struct = { workspace = true }
 bit-twiddling-helpers = { workspace = true }
+bytes = { workspace = true }
 http = { workspace = true }
-itertools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
 valhalla-proto = { workspace = true }
+valhalla-response = { workspace = true }
 zerocopy = { workspace = true }
 zerocopy-derive = { workspace = true }
 zeromq = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
 
 [lints]
 workspace = true

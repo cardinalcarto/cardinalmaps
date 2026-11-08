@@ -1,10 +1,11 @@
 ---
 source: valhalla-microservice/src/result.rs
+assertion_line: 192
 expression: result_utf8
 ---
 HTTP/1.1 200 OK
 content-type: application/json;charset=utf-8
-content-length: 238
 access-control-allow-origin: *
+content-length: 238
 
 {"version":"3.5.1","tileset_last_modified":1756439278,"available_actions":["status","centroid","expansion","transit_available","trace_attributes","trace_route","isochrone","optimized_route","sources_to_targets","height","route","locate"]}

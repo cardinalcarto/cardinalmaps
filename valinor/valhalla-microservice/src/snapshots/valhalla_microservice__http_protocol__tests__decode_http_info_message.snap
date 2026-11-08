@@ -1,5 +1,6 @@
 ---
 source: valhalla-microservice/src/http_protocol.rs
+assertion_line: 156
 expression: parsed
 ---
 HttpRequestInfo {
@@ -17,7 +18,7 @@ HttpRequestInfo {
             0,
         ),
     },
-    _spare: U16(
+    _padding: U16(
         0,
     ),
 }
