@@ -39,6 +39,10 @@ let mut results = provider
         // Radius in meters
         25.0,
     )
+    // Fails up front for an invalid center or radius (e.g. NaN)
+    .expect("The search parameters are valid")
+    // Tiles that aren't in the tile set are skipped;
+    // other failures (I/O, corrupt data) are yielded as errors.
     .map(|result| result.map(|node_ref| (node_ref.graph_id(), node_ref.approx_distance())))
     .collect::<Result<Vec<(GraphId, f64)>, _>>()
     .expect("Something went wrong fetching tiles");

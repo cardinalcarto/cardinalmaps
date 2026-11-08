@@ -1,17 +1,18 @@
+//! # Directory tile provider
+//!
+//! Reads graph tiles from a directory tree of tile files,
+//! laid out the way Valhalla writes them (`mjolnir.tile_dir`).
+
 use crate::GraphId;
 use crate::graph_id::InvalidGraphIdError;
-use crate::graph_tile::{GraphTileBuildError, GraphTileBuilder};
+use crate::graph_tile::{GraphTile, GraphTileBuildError, GraphTileBuilder};
 use crate::graph_tile::{GraphTileView, handles::OwnedGraphTileHandle};
-use crate::spatial::bbox_with_center;
-use crate::tile_hierarchy::STANDARD_LEVELS;
 use crate::tile_provider::{GraphTileProvider, GraphTileProviderError, LockTable};
-use geo::{CoordFloat, Point};
+use core::num::NonZeroUsize;
 use lru::LruCache;
-use num_traits::FromPrimitive;
 use std::io::{ErrorKind, Write};
-use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::{fs::File, io::BufWriter};
 
 /// A graph tile provider that is backed by a directory of tiles.
@@ -22,6 +23,11 @@ use std::{fs::File, io::BufWriter};
 /// this includes an internal LRU cache.
 /// This is configurable with a max number of cached tiles.
 /// Any cached tiles will remain in memory.
+///
+/// # Missing tiles
+///
+/// A tile without a file is reported as [`GraphTileProviderError::TileNotAvailable`].
+/// Tile files are checked to contain the tile their path names.
 pub struct DirectoryGraphTileProvider {
     base_directory: PathBuf,
     lock_table: LockTable<GraphId>,
@@ -30,6 +36,9 @@ pub struct DirectoryGraphTileProvider {
 }
 
 impl DirectoryGraphTileProvider {
+    /// Creates a provider for the tiles in `base_directory`,
+    /// keeping up to `num_cached_tiles` decoded tiles in memory.
+    #[inline]
     pub fn new(base_directory: PathBuf, num_cached_tiles: NonZeroUsize) -> Self {
         DirectoryGraphTileProvider {
             base_directory,
@@ -45,7 +54,7 @@ impl DirectoryGraphTileProvider {
     ///
     /// The implementation takes the following steps to ensure data race safety:
     ///
-    /// - Acquires a lock at the start of the call, ensuring that calls to [`DirectoryGraphTileProvider::get_tile_containing`]
+    /// - Acquires a lock at the start of the call, ensuring that calls to [`GraphTileProvider::get_handle_for_tile_containing`]
     ///   block until this method exits.
     /// - Writes to a temporary file initially, so if anything goes wrong, the original file is not affected.
     ///   After successfully writing the temp file, it is atomically renamed on top of the original.
@@ -62,7 +71,7 @@ impl DirectoryGraphTileProvider {
     ///
     /// ## Edge cases
     ///
-    /// Once you have a handle to a graph tile from [`DirectoryGraphTileProvider::get_tile_containing`],
+    /// Once you have a handle to a graph tile from [`GraphTileProvider::get_handle_for_tile_containing`],
     /// the lock is freed and a writer may then proceed.
     /// Your handle will _not_ change or block writers,
     /// creating an opportunity for edge cases (especially if you plan to create a builder from this tile
@@ -92,12 +101,13 @@ impl DirectoryGraphTileProvider {
         let graph_id = graph_tile_builder.graph_id();
 
         let lock = self.lock_table.lock_for(graph_id);
-        let _guard = lock.lock();
+        // The lock guards no data, so a panic while holding it can't leave anything inconsistent.
+        let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
 
         let path = self.path_for_graph_id(graph_id)?;
 
         // Write to a temp file
-        let tmp_path = path.with_extension(".tmp");
+        let tmp_path = path.with_extension("tmp");
         let file = File::create(&tmp_path)?;
         let mut writer = BufWriter::new(file);
 
@@ -148,52 +158,65 @@ impl GraphTileProvider for DirectoryGraphTileProvider {
         &self,
         graph_id: GraphId,
     ) -> Result<Arc<OwnedGraphTileHandle>, GraphTileProviderError> {
-        let lock = self.lock_table.lock_for(graph_id);
-        let _guard = lock.lock();
-
-        // Build up the path from the base directory + tile ID components
         // TODO: Do we want to move the base ID check inside file_path?
         let base_graph_id = graph_id.tile_base_id();
+
+        let lock = self.lock_table.lock_for(base_graph_id);
+        // The lock guards no data, so a panic while holding it can't leave anything inconsistent.
+        let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
+
         let mut cache = self
             .lru_cache
             .lock()
-            .map_err(|e| GraphTileProviderError::PoisonedCacheLock(e.to_string()))?;
+            .map_err(|_| GraphTileProviderError::PoisonedCacheLock)?;
         let tile = cache
             .try_get_or_insert(base_graph_id, || {
+                // Build up the path from the base directory + tile ID components
                 let path = self.path_for_graph_id(base_graph_id)?;
                 // Open the file and read all bytes into a buffer
                 // NOTE: Does not handle compressed tiles
                 let data = std::fs::read(path).map_err(|e| match e.kind() {
-                    ErrorKind::NotFound => GraphTileProviderError::TileDoesNotExist,
-                    _ => GraphTileProviderError::IoError(e),
+                    ErrorKind::NotFound => GraphTileProviderError::TileNotAvailable(base_graph_id),
+                    _ => GraphTileProviderError::Io(e),
                 })?;
-                let tile = OwnedGraphTileHandle::try_from(data)?;
+                let tile = OwnedGraphTileHandle::try_from(data).map_err(|source| {
+                    GraphTileProviderError::InvalidTile {
+                        graph_id: base_graph_id,
+                        source,
+                    }
+                })?;
+                // A tile file in the wrong place would otherwise be silently used as another tile.
+                let actual = tile.header().graph_id().tile_base_id();
+                if actual != base_graph_id {
+                    return Err(GraphTileProviderError::TileIdMismatch {
+                        expected: base_graph_id,
+                        actual,
+                    });
+                }
                 Ok::<_, GraphTileProviderError>(Arc::new(tile))
             })
             .cloned()?;
 
-        // Construct a graph tile with the bytes
         Ok(tile)
     }
 
-    fn tiles_within_radius<N: CoordFloat + FromPrimitive>(
-        &self,
-        center: Point<N>,
-        radius: N,
-    ) -> Vec<GraphId> {
-        let mut out: Vec<GraphId> = Vec::new();
-
-        let (north, east, south, west) = bbox_with_center(center, radius);
-
-        for level in STANDARD_LEVELS.iter() {
-            for gid in level.tiles_intersecting_bbox(north, east, south, west) {
-                if self.get_handle_for_tile_containing(gid).is_ok() {
-                    out.push(gid);
-                }
-            }
+    /// Checks for the tile file in the directory.
+    ///
+    /// # Performance
+    ///
+    /// This needs a filesystem lookup (`stat`) for tiles that are not in the cache.
+    fn contains_tile(&self, graph_id: GraphId) -> Result<bool, GraphTileProviderError> {
+        let base_graph_id = graph_id.tile_base_id();
+        let cached = self
+            .lru_cache
+            .lock()
+            .map_err(|_| GraphTileProviderError::PoisonedCacheLock)?
+            .contains(&base_graph_id);
+        if cached {
+            return Ok(true);
         }
 
-        out
+        Ok(self.path_for_graph_id(base_graph_id)?.try_exists()?)
     }
 }
 
@@ -316,7 +339,7 @@ mod test {
         let provider = DirectoryGraphTileProvider::new(base, NonZeroUsize::new(1).unwrap());
 
         let base_id = GraphId::try_from_components(0, 3015, 0).unwrap();
-        provider.with_tile_containing_or_panic(base_id, |tile| {
+        provider.with_tile_containing(base_id, |tile| {
             let mut found_non_superseded_edge_with_shortcuts = false;
             let mut edges_inside_shortcuts = 0;
             let mut unique_shortcut_ids = HashSet::new();
@@ -391,7 +414,8 @@ mod test {
             // to ensure we don't accidentally break the get_shortcut method in a subtle way
             // so that some shortcuts aren't reported.
             assert_eq!(edges_inside_shortcuts, 2710);
-        });
+        })
+        .expect("Unable to get tile");
     }
 
     #[test]
@@ -406,8 +430,8 @@ mod test {
         let provider = DirectoryGraphTileProvider::new(base, NonZeroUsize::new(1).unwrap());
         let graph_ids = vec![
             GraphId::try_from_components(0, 3015, 0).expect("Unable to create graph ID"),
-            GraphId::try_from_components(1, 47701, 0).expect("Unable to create graph ID"),
-            GraphId::try_from_components(2, 762485, 0).expect("Unable to create graph ID"),
+            GraphId::try_from_components(1, 47_701, 0).expect("Unable to create graph ID"),
+            GraphId::try_from_components(2, 762_485, 0).expect("Unable to create graph ID"),
         ];
 
         for graph_id in graph_ids {
@@ -429,7 +453,7 @@ mod test {
                     assert!(
                         !edge.is_shortcut(),
                         "We never expect to see a shortcut at level 2"
-                    )
+                    );
                 }
 
                 assert!(

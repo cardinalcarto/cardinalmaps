@@ -1,8 +1,22 @@
 //! # Graph tile providers
 //!
-//! This module contains implementations for several graph tile providers.
-//! Note that there is currently no single generic trait for accessing tiles,
-//! due to the fundamental difference in how memory maps work vs file systems.
+//! This module contains implementations for several graph tile providers,
+//! which all implement the [`GraphTileProvider`] trait:
+//!
+//! - [`TarballTileProvider`] reads a memory-mapped tarball extract
+//!   (what production servers and mobile apps use).
+//! - [`DirectoryGraphTileProvider`] reads a directory of tile files.
+//! - [`TrafficTileProvider`] reads (and writes) live traffic tiles.
+//!   It does not implement [`GraphTileProvider`], since traffic tiles are not graph tiles.
+//!
+//! # Partial tile sets
+//!
+//! A tile set does not have to cover the world.
+//! A tile that is not in the set is reported as
+//! [`GraphTileProviderError::TileNotAvailable`],
+//! which callers should treat as a dead end rather than a failure
+//! (see [`TileAvailability`]).
+//! The spatial searches here skip missing tiles on their own.
 
 use crate::GraphId;
 use core::fmt::Display;
@@ -11,50 +25,34 @@ use geo::{CoordFloat, GeoFloat, Point};
 use num_traits::FromPrimitive;
 use std::sync::Arc;
 use std::sync::Mutex;
-use thiserror::Error;
 
 mod directory;
+mod error;
 mod iterators;
 mod tarball;
 mod traffic;
 
-use crate::graph_id::InvalidGraphIdError;
 use crate::graph_tile::{
-    DirectedEdge, GraphTile, GraphTileDecodingError, GraphTileView, LookupError, NodeInfo,
-    OpposingEdgeIndex,
+    DirectedEdge, GraphTile, GraphTileView, LookupError, NodeInfo, OpposingEdgeIndex,
 };
 pub use directory::DirectoryGraphTileProvider;
+pub use error::{
+    GraphTileProviderError, GraphTileProviderErrorKind, InvalidSearchError, TileAvailability,
+};
 pub use iterators::GraphSearchResult;
-use iterators::ResultsWithinRadius;
+use iterators::{ResultsWithinRadius, SearchArea, SearchItem};
 pub use tarball::{
-    InvalidIndexBinError, TarballTileProvider, TileIndexBinEntry, parse_index_bin,
-    serialize_index_bin,
+    InvalidIndexBinError, InvalidTarballError, TarballTileProvider, TileIndexBinEntry,
+    parse_index_bin, serialize_index_bin,
 };
 pub use traffic::TrafficTileProvider;
 
-#[derive(Debug, Error)]
-pub enum GraphTileProviderError {
-    #[error("This tile does not exist (ex: in your extract)")]
-    TileDoesNotExist,
-    #[error("Error fetching tile: {0}")]
-    TileFetchError(String),
-    #[error("Invalid graph ID: {0}")]
-    InvalidGraphId(#[from] InvalidGraphIdError),
-    #[error("IO Error: {0}")]
-    IoError(#[from] std::io::Error),
-    #[error("Decoding error: {0}")]
-    DecodingError(#[from] GraphTileDecodingError),
-    #[error("Graph tile lookup error: {0}")]
-    GraphTileLookupError(#[from] LookupError),
-    #[error("Cache lock is poisoned: {0}")]
-    PoisonedCacheLock(String),
-    #[error("Invalid tarball: {0}")]
-    InvalidTarball(String),
-    #[error("invalid index.bin: {0}")]
-    InvalidIndexBin(#[from] InvalidIndexBinError),
-    #[error("Unsupported tile version; this may or may not be compatible.")]
-    UnsupportedTileVersion,
-}
+/// The most edges that [`GraphTileProvider::get_shortcut`] walks before giving up.
+///
+/// The walk follows the edges inside a single shortcut,
+/// which are far fewer than this in any real graph.
+/// The bound only exists so that corrupt data cannot make the walk loop forever.
+const MAX_SHORTCUT_WALK: usize = 1 << 16;
 
 /// A generic trait for all graph tile providers.
 ///
@@ -62,6 +60,14 @@ pub enum GraphTileProviderError {
 /// (e.g., if a tile is loaded from a file on disk, from a memory map, etc.).
 /// Additionally, we get to define some pieces of shared logic that are provider-independent directly in the trait.
 /// Monomorphization of generics ensures this is performant (unless you go out of your way to erase types).
+///
+/// # Missing tiles
+///
+/// Every method that loads a tile returns [`GraphTileProviderError::TileNotAvailable`]
+/// when the tile is not part of the tile set.
+/// This is not a sign of corrupt data:
+/// a regional extract references tiles beyond its edge.
+/// Use [`TileAvailability::if_available`] to treat it as a dead end.
 pub trait GraphTileProvider {
     /// The tile handle type for owned handles.
     ///
@@ -79,8 +85,8 @@ pub trait GraphTileProvider {
     ///
     /// # Errors
     ///
-    /// This operation may fail for several reasons,
-    /// including the tile not existing, I/O errors, and more.
+    /// Returns [`GraphTileProviderError::TileNotAvailable`] if the tile is not in the tile set.
+    /// This operation may also fail for other reasons, including I/O errors and corrupt tiles.
     /// Refer to [`GraphTileProviderError`] for details.
     fn with_tile_containing<F, T>(
         &self,
@@ -93,7 +99,7 @@ pub trait GraphTileProvider {
     /// Gets a tile containing the given graph ID.
     ///
     /// The result is an owned handle to a graph tile,
-    /// which implements the [`GraphTile`](GraphTile) trait.
+    /// which implements the [`GraphTile`] trait.
     ///
     /// # Performance
     ///
@@ -102,46 +108,50 @@ pub trait GraphTileProvider {
     ///
     /// # Errors
     ///
-    /// This operation may fail for several reasons,
-    /// including the tile not existing, I/O errors, and more.
+    /// Returns [`GraphTileProviderError::TileNotAvailable`] if the tile is not in the tile set.
+    /// This operation may also fail for other reasons, including I/O errors and corrupt tiles.
     /// Refer to [`GraphTileProviderError`] for details.
     fn get_handle_for_tile_containing(
         &self,
         graph_id: GraphId,
     ) -> Result<Self::TileHandle, GraphTileProviderError>;
 
+    /// Does the tile set contain the tile that the given graph ID belongs to?
+    ///
+    /// This only checks for the presence of the tile, without loading or validating it,
+    /// so loading a tile that is present may still fail (for example, if it is corrupt).
+    ///
+    /// # Errors
+    ///
+    /// Implementations which need I/O to answer may fail with an I/O error.
+    fn contains_tile(&self, graph_id: GraphId) -> Result<bool, GraphTileProviderError>;
+
     /// Enumerate base tile Graph IDs across all hierarchy levels that intersect a circle around
-    /// `center` with radius `radius`.
+    /// `center` with radius `radius`,
+    /// and are present in the tile set (see [`GraphTileProvider::contains_tile`]).
     ///
-    /// Assumes that `center` is a valid geographic coordinate (lat+lon).
-    /// `radius` is specified in meters.
+    /// `center` is a WGS84 coordinate (longitude and latitude in degrees),
+    /// and `radius` is specified in meters.
     ///
-    /// # Implementation note
+    /// # Errors
     ///
-    /// All returned tiles MUST be accessible by the provider (callers are allowed to assume this).
-    fn tiles_within_radius<N: CoordFloat + FromPrimitive>(
+    /// Fails with [`GraphTileProviderError::InvalidSearch`] if `center` is not a valid coordinate
+    /// or `radius` is negative or not finite,
+    /// and with any error from [`GraphTileProvider::contains_tile`].
+    #[inline]
+    fn tiles_within_radius<N: CoordFloat + FromPrimitive + From<f32>>(
         &self,
         center: Point<N>,
         radius: N,
-    ) -> Vec<GraphId>;
-
-    /// Gets a tile containing the given graph ID, or else panics.
-    ///
-    /// This is an unfortunately necessary convenience,
-    /// since some use cases involve use in contexts where failure is not encodable
-    /// in the type signature.
-    ///
-    /// Uses [`GraphTileProvider::with_tile_containing`] under the hood.
-    ///
-    /// # Panics
-    ///
-    /// This will panic if the tile can't be loaded.
-    fn with_tile_containing_or_panic<F, T>(&self, graph_id: GraphId, process: F) -> T
-    where
-        F: FnOnce(&GraphTileView) -> T,
-    {
-        self.with_tile_containing(graph_id, process)
-            .expect("Should be able to get a tile for this node (either the trait impl is incorrect or a tile has invalid data)")
+    ) -> Result<Vec<GraphId>, GraphTileProviderError> {
+        let area = SearchArea::new(center, radius)?;
+        let mut tiles = Vec::new();
+        for tile_id in area.candidate_tiles() {
+            if self.contains_tile(tile_id)? {
+                tiles.push(tile_id);
+            }
+        }
+        Ok(tiles)
     }
 
     /// Returns the [`GraphId`] for an opposing edge.
@@ -157,7 +167,9 @@ pub trait GraphTileProvider {
     ///
     /// # Errors
     ///
-    /// This can fail if an underlying tile load fails (e.g., an I/O error),
+    /// This can fail if an underlying tile load fails
+    /// (including [`GraphTileProviderError::TileNotAvailable`]
+    /// when the opposing edge is outside of the extract),
     /// or the `OpposingEdgeIndex` points to an invalid edge (e.g., corrupt / invalid tiles).
     fn graph_id_for_opposing_edge_index<T: GraphTile>(
         &self,
@@ -167,21 +179,23 @@ pub trait GraphTileProvider {
         }: OpposingEdgeIndex,
         tile_hint: &T,
     ) -> Result<GraphId, GraphTileProviderError> {
+        // Widen before adding, so corrupt indexes can't overflow.
+        let opposing_edge_id = |tile_id: GraphId, node_edge_idx: u32| {
+            tile_id.with_feature_index(u64::from(node_edge_idx) + u64::from(opposing_edge_index))
+        };
+
         match tile_hint.get_node(end_node_id).map(NodeInfo::edge_index) {
             // Fast path: same tile
-            Ok(node_edge_idx) => Ok(tile_hint
-                .header()
-                .graph_id()
-                .with_feature_index(u64::from(node_edge_idx + opposing_edge_index))?),
+            Ok(node_edge_idx) => Ok(opposing_edge_id(
+                tile_hint.header().graph_id(),
+                node_edge_idx,
+            )?),
             // Slow path: fetch from another tile
             Err(LookupError::MismatchedBase) => self.with_tile_containing(end_node_id, |tile| {
                 let node_edge_idx = tile.get_node(end_node_id)?.edge_index();
-                Ok(tile
-                    .header()
-                    .graph_id()
-                    .with_feature_index(u64::from(node_edge_idx + opposing_edge_index))?)
+                Ok(opposing_edge_id(tile.header().graph_id(), node_edge_idx)?)
             })?,
-            Err(e) => Err(e)?,
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -196,7 +210,8 @@ pub trait GraphTileProvider {
     ///
     /// - Failing to fetch the tile containing the graph ID
     /// - The index within the tile being invalid
-    /// - Failing to fetch the tile containing the end node of the edge (or the end node therein)
+    /// - Failing to fetch the tile containing the end node of the edge (or the end node therein);
+    ///   at the edge of an extract, this is [`GraphTileProviderError::TileNotAvailable`]
     /// - Corrupt end node information in the tile
     ///
     /// # Performance
@@ -211,24 +226,15 @@ pub trait GraphTileProvider {
         // This code is ugly because we can't make a generic closure,
         // and we can't prove to the compiler that the tile type will always be the same.
         // Thus we have essentially the same logic twice.
-        let opp_edge_in_same_tile = tile_hint
-            .get_opp_edge_index(edge_id)
-            .map_err(GraphTileProviderError::from)
-            .and_then(|idx| {
-                // Construct an ID with the index set to the opposing edge
-                self.graph_id_for_opposing_edge_index(idx, tile_hint)
-            });
-
-        match opp_edge_in_same_tile {
-            // Fast path (opposide edge within this tile)
-            Ok(edge_id) => Ok(edge_id),
-            // Slow path (need to fetch an edge outside the tile)
-            Err(GraphTileProviderError::GraphTileLookupError(LookupError::MismatchedBase)) => self
-                .with_tile_containing(edge_id, |tile| {
-                    let idx = tile.get_opp_edge_index(edge_id)?;
-                    self.graph_id_for_opposing_edge_index(idx, tile)
-                })?,
-            e => e,
+        match tile_hint.get_opp_edge_index(edge_id) {
+            // Fast path (the edge is within this tile)
+            Ok(idx) => self.graph_id_for_opposing_edge_index(idx, tile_hint),
+            // Slow path (need to fetch the tile of the edge)
+            Err(LookupError::MismatchedBase) => self.with_tile_containing(edge_id, |tile| {
+                let idx = tile.get_opp_edge_index(edge_id)?;
+                self.graph_id_for_opposing_edge_index(idx, tile)
+            })?,
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -236,120 +242,45 @@ pub trait GraphTileProvider {
     ///
     /// `Ok(None)` indicates that either no shortcut was found for the provided edge,
     /// OR multiple shortcuts were found.
+    ///
+    /// This mirrors `GraphReader::GetShortcut` in Valhalla.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a tile along the way can't be loaded
+    /// (including [`GraphTileProviderError::TileNotAvailable`] at the edge of an extract),
+    /// or if the tile data is inconsistent.
     fn get_shortcut(&self, id: GraphId) -> Result<Option<GraphId>, GraphTileProviderError> {
         if id.level() >= 2 {
             // Shortcuts don't exist on these levels
             return Ok(None);
         }
 
-        // Helper to get the single continuing edge from a node, if uniquely determined.
-        // Also reports whether any shortcut edges were present at the node.
-        let find_continuing_edge =
-            |tile: &GraphTileView,
-             node: &NodeInfo,
-             skip_edge_index: u32|
-             -> Result<(Option<GraphId>, bool), GraphTileProviderError> {
-                let edges = tile.get_outbound_edges_from_node(node);
-
-                let mut candidate: Option<u32> = None; // store absolute index within tile
-                let mut saw_shortcut = false;
-                for (i, de) in edges.iter().enumerate() {
-                    let abs_index = node.edge_index() + (i as u32);
-                    if de.is_shortcut() {
-                        saw_shortcut = true;
-                    }
-                    if abs_index == skip_edge_index || !de.can_form_shortcut() {
-                        continue;
-                    }
-                    if candidate.is_some() {
-                        // More than one possible continuing edge
-                        return Ok((None, saw_shortcut));
-                    }
-                    candidate = Some(abs_index);
-                }
-
-                let cont = if let Some(idx) = candidate {
-                    Some(
-                        tile.header()
-                            .graph_id()
-                            .with_feature_index(u64::from(idx))?,
-                    )
-                } else {
-                    None
-                };
-                Ok((cont, saw_shortcut))
-            };
-
         self.with_tile_containing(id, |tile| {
-            if tile.get_directed_edge(id).map(DirectedEdge::is_shortcut)? {
+            if tile.get_directed_edge(id)?.is_shortcut() {
                 // If this edge is already a shortcut, return it as-is.
                 return Ok(Some(id));
             }
 
             // Walk backwards along the opposing directed edge until a shortcut beginning is found
             // or until ambiguity / boundary conditions are encountered.
+            // The initial case uses the opposing directed edge of the starting edge;
+            // later iterations use the continuing edge at the end node of the previous one.
             let first_de_id = self.get_opposing_edge_id(id, tile)?;
-            let mut cont_de_id: Option<GraphId> = Some(first_de_id);
-            let mut prev_node_id: Option<GraphId> = None;
+            let mut cont_de_id = first_de_id;
+            // Were there any shortcuts at the node where the current edge starts?
             let mut shortcut_at_node = false;
 
-            loop {
-                // Determine the continuing directed edge.
-                if let Some(node_id) = prev_node_id {
-                    // For all iterations beyond the first,
-                    // get the continuing directed edge.
-                    // The initial case will use the opposing directed edge
-                    // from the starting edge (see pre-loop code).
-                    let (opp_index, _) = self.with_tile_containing(
-                        cont_de_id.expect("continuing edge must exist"),
-                        |tile| {
-                            let de = tile.get_directed_edge(cont_de_id.unwrap())?;
-                            Ok::<_, GraphTileProviderError>((
-                                de.opposing_edge_index(),
-                                de.end_node_id(),
-                            ))
-                        },
-                    )??;
-
-                    let (next_cont, saw_short) = match tile.get_node(node_id) {
-                        Ok(node) => {
-                            // Fast path (stay within the same tile)
-                            let skip_edge_index = node.edge_index() + opp_index;
-                            find_continuing_edge(tile, node, skip_edge_index)?
-                        }
-                        Err(_) => {
-                            // Slow path (need to load another tile)
-                            self.with_tile_containing(node_id, |tile| {
-                                let node = tile.get_node(node_id)?;
-                                let skip_edge_index = node.edge_index() + opp_index;
-                                find_continuing_edge(tile, node, skip_edge_index)
-                            })??
-                        }
-                    };
-
-                    shortcut_at_node = saw_short;
-                    cont_de_id = next_cont;
-
-                    if cont_de_id == Some(first_de_id) {
-                        // Loop detected; no shortcut found
-                        return Ok(None);
-                    }
-                }
-
-                let Some(curr_cont_id) = cont_de_id else {
-                    // No clear continuing edge
-                    return Ok(None);
-                };
-
+            for _ in 0..MAX_SHORTCUT_WALK {
                 // The following is definitely not perfectly optimized, but it's "fast enough"
                 // as far as we can tell from some stress tests (there's a fairly reasonable fast path
                 // when everything is in the current tile, though it is not branch-free).
                 // Get end node of the continuing edge and its node info
-                let (end_node_id, opp_index) = match tile.get_directed_edge(curr_cont_id) {
+                let (end_node_id, opp_index) = match tile.get_directed_edge(cont_de_id) {
                     Ok(de) => (de.end_node_id(), de.opposing_edge_index()),
                     Err(LookupError::MismatchedBase) => {
-                        self.with_tile_containing(curr_cont_id, |tile| {
-                            let de = tile.get_directed_edge(curr_cont_id)?;
+                        self.with_tile_containing(cont_de_id, |tile| {
+                            let de = tile.get_directed_edge(cont_de_id)?;
                             Ok::<_, GraphTileProviderError>((
                                 de.end_node_id(),
                                 de.opposing_edge_index(),
@@ -370,8 +301,8 @@ pub trait GraphTileProvider {
                 };
 
                 // Construct the opposing edge id at the end node (the edge we "arrived on" at this node)
-                let arriving_edge_id =
-                    end_node_id.with_feature_index(u64::from(node_edge_index + opp_index))?;
+                let arriving_edge_index = u64::from(node_edge_index) + u64::from(opp_index);
+                let arriving_edge_id = end_node_id.with_feature_index(arriving_edge_index)?;
 
                 // Inspect the arriving edge to see if it is superseded (i.e., shortcut starts here)
                 let superseded_idx = match tile.get_directed_edge(arriving_edge_id) {
@@ -385,22 +316,43 @@ pub trait GraphTileProvider {
                     Err(e) => return Err(e.into()),
                 };
 
-                if superseded_idx.is_none() && shortcut_at_node {
+                if let Some(idx) = superseded_idx {
+                    // Calculate the shortcut index within the node's outbound edges
+                    let shortcut_abs_index = u64::from(node_edge_index) + u64::from(idx);
+                    return Ok(Some(end_node_id.with_feature_index(shortcut_abs_index)?));
+                }
+
+                if shortcut_at_node {
                     // Found a shortcut at the node, but it doesn't supersede the arriving edge.
                     // This implies we started outside a shortcut's internal edges.
                     return Ok(None);
                 }
 
-                if let Some(idx) = superseded_idx {
-                    // Calculate the shortcut index within the node's outbound edges
-                    let shortcut_abs_index = u64::from(node_edge_index + idx);
-                    let shortcut_id = end_node_id.with_feature_index(shortcut_abs_index)?;
-                    return Ok(Some(shortcut_id));
-                }
+                // Continue from the end node, skipping the edge we arrived on.
+                let (next_cont, saw_shortcut) = match tile.get_node(end_node_id) {
+                    // Fast path (stay within the same tile)
+                    Ok(node) => find_continuing_edge(tile, node, arriving_edge_index)?,
+                    // Slow path (need to load another tile)
+                    Err(LookupError::MismatchedBase) => {
+                        self.with_tile_containing(end_node_id, |tile| {
+                            let node = tile.get_node(end_node_id)?;
+                            find_continuing_edge(tile, node, arriving_edge_index)
+                        })??
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                shortcut_at_node = saw_shortcut;
 
-                // Prepare for next iteration: continue from this node
-                prev_node_id = Some(end_node_id);
+                match next_cont {
+                    // No clear continuing edge
+                    None => return Ok(None),
+                    // Loop detected; no shortcut found
+                    Some(next) if next == first_de_id => return Ok(None),
+                    Some(next) => cont_de_id = next,
+                }
             }
+
+            Err(GraphTileProviderError::UnterminatedShortcutWalk(id))
         })?
     }
 
@@ -410,6 +362,9 @@ pub trait GraphTileProvider {
     /// The distance returned (second tuple element) is approximate,
     /// but should be accurate to within 1 meter for radii of up to 20km.
     ///
+    /// Tiles that are not in the tile set are skipped
+    /// (nodes beyond the edge of an extract are not reported).
+    ///
     /// # Performance
     ///
     /// This method is designed to give results with as little overhead as possible:
@@ -420,38 +375,42 @@ pub trait GraphTileProvider {
     /// - Internally, an approximator is used to (very!) quickly weed out unrealistic candidates
     ///   before doing the heavier trigonometry.
     ///
+    /// This isn't intended to be used to get nodes over large distances;
+    /// the work grows with the area of the search.
+    ///
     /// # Errors
+    ///
+    /// Fails up front with [`GraphTileProviderError::InvalidSearch`]
+    /// if `center` is not a valid WGS84 coordinate
+    /// or `radius_in_meters` is negative or not finite.
     ///
     /// The iterator may yield error items if a visited tile could not be loaded
     /// (e.g., a filesystem error) or is corrupt (not a valid Valhalla graph tile).
-    ///
-    /// # Panics
-    ///
-    /// This isn't intended to be used to get nodes over large distances.
-    /// In debug builds, this will panic if `radius_in_meters` is larger than 20,000 (20km).
-    ///
-    /// Also panics if you provide non-finite floating point values (e.g., NaN or infinity).
     #[inline]
-    fn nodes_within_radius<N: CoordFloat + FromPrimitive, F: Fn(&NodeInfo) -> bool>(
+    fn nodes_within_radius<N: CoordFloat + FromPrimitive + From<f32>, F: Fn(&NodeInfo) -> bool>(
         &self,
         filter_predicate: F,
         center: Point<N>,
         radius_in_meters: N,
-    ) -> impl Iterator<
-        Item = Result<GraphSearchResult<NodeInfo, N, Self::TileHandle>, GraphTileProviderError>,
+    ) -> Result<
+        impl Iterator<Item = SearchItem<NodeInfo, N, Self::TileHandle>>,
+        GraphTileProviderError,
     >
     where
         Self: Sized,
     {
-        let tiles = self.tiles_within_radius(center, radius_in_meters);
-
-        ResultsWithinRadius::nodes(self, filter_predicate, center, radius_in_meters, tiles)
+        let area = SearchArea::new(center, radius_in_meters)?;
+        Ok(ResultsWithinRadius::new(self, filter_predicate, area))
     }
 
     /// Yields an iterator over all edges within a given radius of a point.
     ///
     /// No sorting or filtering of nodes is performed besides ensuring that they are close enough.
     ///
+    /// Tiles that are not in the tile set are skipped.
+    /// For an edge that leaves the extract,
+    /// the edge is reported but its opposing edge (which is in the missing tile) is not.
+    ///
     /// # Performance
     ///
     /// This method is designed to give results with as little overhead as possible:
@@ -462,39 +421,73 @@ pub trait GraphTileProvider {
     /// - Internally, an approximator is used to (very!) quickly weed out unrealistic candidates
     ///   before doing the heavier trigonometry.
     ///
+    /// This isn't intended to be used to get edges over large distances;
+    /// the work grows with the area of the search.
+    ///
     /// # Errors
+    ///
+    /// Fails up front with [`GraphTileProviderError::InvalidSearch`]
+    /// if `center` is not a valid WGS84 coordinate
+    /// or `radius_in_meters` is negative or not finite.
     ///
     /// The iterator may yield error items if a visited tile could not be loaded
     /// (e.g., a filesystem error) or is corrupt (not a valid Valhalla graph tile).
-    ///
-    /// # Panics
-    ///
-    /// This isn't intended to be used to get nodes over large distances.
-    /// In debug builds, this will panic if `radius_in_meters` is larger than 20,000 (20km).
-    ///
-    /// Also panics if you provide non-finite floating point values (e.g., NaN or infinity).
     #[inline]
     fn edges_within_radius<
-        N: GeoFloat + CoordFloat + FromPrimitive + Display,
+        N: GeoFloat + CoordFloat + FromPrimitive + From<f32> + Display,
         F: Fn(&DirectedEdge) -> bool,
     >(
         &self,
         filter_predicate: F,
         center: Point<N>,
         radius_in_meters: N,
-    ) -> impl Iterator<
-        Item = Result<GraphSearchResult<DirectedEdge, N, Self::TileHandle>, GraphTileProviderError>,
+    ) -> Result<
+        impl Iterator<Item = SearchItem<DirectedEdge, N, Self::TileHandle>>,
+        GraphTileProviderError,
     >
     where
         Self: Sized,
     {
-        let tiles = self.tiles_within_radius(center, radius_in_meters);
+        let area = SearchArea::new(center, radius_in_meters)?;
 
         // TODO: Decide if we want to return LITERALLY every edge or whether we should allow also getting just one of a pair.
         // Fetching opposing edges (current behavior) adds some overhead,
         // but the results are easier to understand.
-        ResultsWithinRadius::edges(self, filter_predicate, center, radius_in_meters, tiles)
+        Ok(ResultsWithinRadius::new(self, filter_predicate, area))
     }
+}
+
+/// Finds the single edge that continues a shortcut walk from a node, if it is uniquely determined.
+///
+/// `skip_edge_index` is the index (within the tile) of the edge that the walk arrived on.
+/// Also reports whether any shortcut edges leave the node.
+fn find_continuing_edge(
+    tile: &GraphTileView,
+    node: &NodeInfo,
+    skip_edge_index: u64,
+) -> Result<(Option<GraphId>, bool), GraphTileProviderError> {
+    let edges = tile.get_outbound_edges_from_node(node);
+
+    let mut candidate: Option<u64> = None; // absolute index within the tile
+    let mut saw_shortcut = false;
+    for (abs_index, de) in (u64::from(node.edge_index())..).zip(edges) {
+        if de.is_shortcut() {
+            saw_shortcut = true;
+        }
+        if abs_index == skip_edge_index || !de.can_form_shortcut() {
+            continue;
+        }
+        if candidate.is_some() {
+            // More than one possible continuing edge
+            return Ok((None, saw_shortcut));
+        }
+        candidate = Some(abs_index);
+    }
+
+    let cont = candidate
+        .map(|idx| tile.header().graph_id().with_feature_index(idx))
+        .transpose()?;
+    Ok((cont, saw_shortcut))
 }
 
 /// A keyed lock.
@@ -502,7 +495,7 @@ pub trait GraphTileProvider {
 /// This enables more granular locking than over an entire data structure.
 pub(crate) struct LockTable<K>(DashMap<K, Arc<Mutex<()>>>);
 
-impl<K: std::hash::Hash + Eq + Clone> LockTable<K> {
+impl<K: core::hash::Hash + Eq + Clone> LockTable<K> {
     pub fn new() -> Self {
         Self(DashMap::new())
     }
@@ -518,14 +511,25 @@ impl<K: std::hash::Hash + Eq + Clone> LockTable<K> {
 #[cfg(test)]
 mod tests {
     use crate::GraphId;
-    use crate::graph_tile::GraphTile;
+    use crate::graph_tile::{GraphTile, LookupError};
     use crate::tile_hierarchy::STANDARD_LEVELS;
-    use crate::tile_provider::{DirectoryGraphTileProvider, GraphTileProvider};
+    use crate::tile_provider::{
+        DirectoryGraphTileProvider, GraphTileProvider, GraphTileProviderError,
+        GraphTileProviderErrorKind, InvalidSearchError, TileAvailability,
+    };
     use geo::{Destination, HasDimensions, Haversine, LineString, Validation, coord, point};
     use rand::rngs::ThreadRng;
     use rand::{RngExt, rng};
     use std::num::NonZeroUsize;
     use std::path::PathBuf;
+    use zerocopy::IntoBytes;
+
+    fn fixture_provider() -> DirectoryGraphTileProvider {
+        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures")
+            .join("andorra-tiles");
+        DirectoryGraphTileProvider::new(base, NonZeroUsize::new(4).unwrap())
+    }
 
     #[test]
     fn haversine_antimeridian_wraps() {
@@ -541,63 +545,193 @@ mod tests {
     }
 
     #[test]
+    fn error_kinds() {
+        let missing = GraphId::try_from_components(2, 1, 0).unwrap();
+        let not_available = GraphTileProviderError::TileNotAvailable(missing);
+        assert!(not_available.is_not_available());
+        assert_eq!(
+            not_available.kind(),
+            GraphTileProviderErrorKind::NotAvailable
+        );
+
+        let lookup = GraphTileProviderError::Lookup(LookupError::InvalidIndex);
+        assert!(!lookup.is_not_available());
+        assert_eq!(lookup.kind(), GraphTileProviderErrorKind::InvalidData);
+
+        let io = GraphTileProviderError::Io(std::io::Error::other("boom"));
+        assert_eq!(io.kind(), GraphTileProviderErrorKind::Io);
+
+        let search = GraphTileProviderError::InvalidSearch(InvalidSearchError::InvalidRadius(-1.0));
+        assert_eq!(search.kind(), GraphTileProviderErrorKind::InvalidInput);
+
+        assert_eq!(
+            GraphTileProviderError::PoisonedCacheLock.kind(),
+            GraphTileProviderErrorKind::Internal
+        );
+    }
+
+    #[test]
+    fn if_available() {
+        let missing = GraphId::try_from_components(2, 1, 0).unwrap();
+        assert_eq!(
+            Ok::<_, GraphTileProviderError>(1).if_available().unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            Err::<u8, _>(GraphTileProviderError::TileNotAvailable(missing))
+                .if_available()
+                .unwrap(),
+            None
+        );
+        assert!(
+            Err::<u8, _>(GraphTileProviderError::Lookup(LookupError::InvalidIndex))
+                .if_available()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn missing_tile_is_not_available() {
+        let provider = fixture_provider();
+        // A tile in the Pacific ocean
+        let missing = GraphId::try_from_components(2, 1, 5).unwrap();
+        let Err(err) = provider.get_handle_for_tile_containing(missing) else {
+            panic!("The tile is not in the fixtures");
+        };
+        assert!(
+            matches!(err, GraphTileProviderError::TileNotAvailable(id) if id == missing.tile_base_id()),
+            "Unexpected error: {err:?}"
+        );
+        assert!(!provider.contains_tile(missing).unwrap());
+        assert!(
+            provider
+                .contains_tile(GraphId::try_from_components(2, 762_485, 3).unwrap())
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn tiles_within_radius_lists_present_tiles() {
+        let provider = fixture_provider();
+        // Andorra la Vella
+        let tiles = provider
+            .tiles_within_radius(point!(x: 1.5218, y: 42.5063), 5_000.0)
+            .expect("valid search");
+        assert!(!tiles.is_empty());
+        for tile in &tiles {
+            assert!(provider.contains_tile(*tile).unwrap());
+        }
+        // Every level is represented
+        for level in 0..=2 {
+            assert!(tiles.iter().any(|t| t.level() == level), "level {level}");
+        }
+
+        // Nowhere near the fixtures
+        assert_eq!(
+            provider
+                .tiles_within_radius(point!(x: -150.0, y: -40.0), 5_000.0)
+                .unwrap(),
+            vec![]
+        );
+    }
+
+    #[test]
+    fn searches_reject_invalid_parameters() {
+        let provider = fixture_provider();
+        for (center, radius) in [
+            (point!(x: f64::NAN, y: 42.5), 25.0),
+            (point!(x: 1.5, y: f64::INFINITY), 25.0),
+            (point!(x: 1.5, y: 42.5), f64::NAN),
+            (point!(x: 1.5, y: 42.5), f64::INFINITY),
+            (point!(x: 1.5, y: 42.5), -1.0),
+            (point!(x: 200.0, y: 42.5), 25.0),
+        ] {
+            assert!(matches!(
+                provider.nodes_within_radius(|_| true, center, radius),
+                Err(GraphTileProviderError::InvalidSearch(_))
+            ));
+            assert!(matches!(
+                provider.edges_within_radius(|_| true, center, radius),
+                Err(GraphTileProviderError::InvalidSearch(_))
+            ));
+            assert!(matches!(
+                provider.tiles_within_radius(center, radius),
+                Err(GraphTileProviderError::InvalidSearch(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn large_radius_does_not_panic() {
+        // The distance approximator asserts (in debug builds) that it is only used for short distances.
+        // Searches with large radii must still work.
+        let provider = fixture_provider();
+        let center = point!(x: 1.5218, y: 42.5063);
+        let edges = provider
+            .edges_within_radius(|_| true, center, 25_000.0)
+            .expect("valid search")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("search succeeds");
+        assert!(!edges.is_empty());
+        assert!(edges.iter().all(|e| e.approx_distance() <= 25_000.0));
+    }
+
+    #[test]
     fn test_nodes_within_radius() {
         let mut rng = rng();
 
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("fixtures")
-            .join("andorra-tiles");
-        let provider = DirectoryGraphTileProvider::new(base, NonZeroUsize::new(4).unwrap());
+        let provider = fixture_provider();
         let graph_id = GraphId::try_from_components(0, 3015, 0).expect("Unable to create graph ID");
-        provider.with_tile_containing_or_panic(graph_id, |tile_view| {
-            let sw = tile_view.header().sw_corner();
+        provider
+            .with_tile_containing(graph_id, |tile_view| {
+                let sw = tile_view.header().sw_corner();
 
-            for (idx, node) in tile_view.nodes().into_iter().enumerate().filter(|_| {
-                if cfg!(miri) {
-                    rng.random_bool(0.01)
-                } else {
-                    true
-                }
-            }) {
-                assert!(
-                    provider
+                for (idx, node) in tile_view.nodes().iter().enumerate().filter(|_| {
+                    if cfg!(miri) {
+                        rng.random_bool(0.01)
+                    } else {
+                        true
+                    }
+                }) {
+                    let expected_id = tile_view
+                        .header()
+                        .graph_id()
+                        .with_feature_index(idx as u64)
+                        .unwrap();
+                    let results = provider
                         .nodes_within_radius(|_| true, node.coordinate(sw).into(), 25.0)
-                        .any(|res| {
-                            match res {
-                                Ok(node_ref) => {
-                                    node_ref.graph_id()
-                                        == tile_view
-                                            .header()
-                                            .graph_id()
-                                            .with_feature_index(idx as u64)
-                                            .unwrap()
-                                        && node_ref.approx_distance() == 0.0
-                                }
-                                Err(e) => {
-                                    panic!("Error searching for nodes: {:?}", e);
-                                }
-                            }
+                        .expect("valid search")
+                        .collect::<Result<Vec<_>, _>>()
+                        .expect("Error searching for nodes");
+
+                    assert!(
+                        results.iter().any(|node_ref| {
+                            node_ref.graph_id() == expected_id
+                                && node_ref.approx_distance() == 0.0
+                                && node_ref.node_info().expect("node in tile").as_bytes()
+                                    == node.as_bytes()
                         }),
-                    "Expected to find a match for the node"
-                );
+                        "Expected to find a match for the node"
+                    );
 
-                assert!(
-                    provider
-                        .nodes_within_radius(|_| true, node.coordinate(sw).into(), 25.0)
-                        .all(|result| { result.unwrap().approx_distance() <= 25.0 }),
-                    "Expected all nodes to be within the search radius"
-                );
-            }
-        })
+                    assert!(
+                        results
+                            .iter()
+                            .all(|result| result.approx_distance() <= 25.0),
+                        "Expected all nodes to be within the search radius"
+                    );
+                }
+            })
+            .expect("Unable to get tile");
     }
 
     // Helper used by following tests
     fn sanity_check_edges_within_radius<T: GraphTileProvider>(
-        provider: T,
+        provider: &T,
         tile_id: GraphId,
         mut rng: ThreadRng,
     ) {
-        provider.with_tile_containing_or_panic(tile_id, |tile_view| {
+        provider.with_tile_containing(tile_id, |tile_view| {
             let sw = tile_view.header().sw_corner();
 
             for (idx, edge) in tile_view
@@ -625,7 +759,7 @@ mod tests {
                     node.coordinate(sw).into()
                 } else {
                     let level_info = &STANDARD_LEVELS[tile_view.header().graph_id().level() as usize];
-                    let tile_size = level_info.tiling_system.tile_size as f32;
+                    let tile_size = level_info.tiling_system.tile_size;
                     let ne = coord! { x: sw.x + tile_size, y: sw.y + tile_size };
 
                     let inside = shape_coords.iter().find(|c| c.x >= sw.x && c.x <= ne.x && c.y >= sw.y && c.y <= ne.y);
@@ -639,49 +773,43 @@ mod tests {
                     .with_feature_index(idx as u64)
                     .unwrap();
 
+                let results = provider
+                    .edges_within_radius(|_| true, query_point, 25.0)
+                    .expect("valid search")
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect("Error searching for edges");
+
                 // Expect to find this exact edge at near-zero distance (allow tiny numeric error)
                 assert!(
-                    provider
-                        .edges_within_radius(|_| true, query_point, 25.0)
-                        .any(|res| match res {
-                            Ok(edge_ref) => {
-                                edge_ref.approx_distance() <= 1.0 && edge_ref.graph_id() == graph_id
-                            }
-                            Err(e) => panic!("Error searching for edges: {:?}", e),
-                        }),
+                    results.iter().any(|edge_ref| {
+                        edge_ref.approx_distance() <= 1.0
+                            && edge_ref.graph_id() == graph_id
+                            && edge_ref.directed_edge().expect("edge in tile").as_bytes() == edge.as_bytes()
+                    }),
                     "Expected to find a match for the edge idx {graph_id}. edge = {edge:?} linestring = {ls:?} query_point = {query_point:?} sw = {sw:?}",
                 );
 
                 // All reported edges should be within the requested radius
                 assert!(
-                    provider
-                        .edges_within_radius(|_| true, query_point, 25.0)
-                        .all(|result| result.unwrap().approx_distance() <= 25.0),
+                    results.iter().all(|result| result.approx_distance() <= 25.0),
                     "Expected all edges to be within the search radius"
                 );
             }
         })
+        .expect("Unable to get tile");
     }
 
     #[test]
     fn test_edges_within_radius_level0() {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("fixtures")
-            .join("andorra-tiles");
-        let provider = DirectoryGraphTileProvider::new(base, NonZeroUsize::new(4).unwrap());
         let graph_id = GraphId::try_from_components(0, 3015, 0).expect("Unable to create graph ID");
-        sanity_check_edges_within_radius(provider, graph_id, rng());
+        sanity_check_edges_within_radius(&fixture_provider(), graph_id, rng());
     }
 
     #[test]
     fn test_edges_within_radius_level2() {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("fixtures")
-            .join("andorra-tiles");
-        let provider = DirectoryGraphTileProvider::new(base, NonZeroUsize::new(4).unwrap());
         // Use a known level 2 tile from fixtures to exercise edge bins path
         let graph_id =
-            GraphId::try_from_components(2, 762485, 0).expect("Unable to create graph ID");
-        sanity_check_edges_within_radius(provider, graph_id, rng());
+            GraphId::try_from_components(2, 762_485, 0).expect("Unable to create graph ID");
+        sanity_check_edges_within_radius(&fixture_provider(), graph_id, rng());
     }
 }

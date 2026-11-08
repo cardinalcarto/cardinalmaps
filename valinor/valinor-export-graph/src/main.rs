@@ -112,7 +112,7 @@ fn main() -> anyhow::Result<()> {
                     let tile_edge_count = tile.header().directed_edge_count() as usize;
                     edge_count += tile_edge_count;
                 }
-                Err(GraphTileProviderError::TileDoesNotExist) => {
+                Err(GraphTileProviderError::TileNotAvailable(_)) => {
                     // Ignore; not all tiles will exist for extracts
                 }
                 Err(e) => return Err(e.into()),
