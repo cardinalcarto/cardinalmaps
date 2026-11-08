@@ -6,7 +6,7 @@
 //!
 //! - [`costing_options`] parses a request's costing options and fills in mainline's defaults.
 //! - [`Costing`] is the interface Loki and Thor call (mainline's `DynamicCost`),
-//!   implemented by [`AutoCost`], [`PedestrianCost`], and [`BicycleCost`],
+//!   implemented by [`AutoCost`], [`PedestrianCost`], [`BicycleCost`], and [`NoCost`],
 //!   with [`AnyCosting`] to pick one at run time.
 //!   [`DynamicCost`] holds what they share, including complex restrictions
 //!   ([`DynamicCost::restricted`]) and hierarchy limits.
@@ -34,6 +34,7 @@ pub mod datetime;
 mod dynamic;
 pub mod json;
 pub mod label;
+mod nocost;
 mod pedestrian;
 pub mod recost;
 pub mod time_info;
@@ -54,6 +55,7 @@ pub use dynamic::{
     stop_expanding, stop_expanding_bidirectional,
 };
 pub use label::{EdgeLabel, Label, LabelState, LabelStore};
+pub use nocost::NoCost;
 pub use pedestrian::{PedestrianCost, PedestrianType};
 pub use recost::{RecostError, RecostedEdge, recost_forward};
 pub use time_info::TimeInfo;

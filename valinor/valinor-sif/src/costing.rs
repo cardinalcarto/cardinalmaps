@@ -17,6 +17,7 @@ use crate::bicycle::BicycleCost;
 use crate::cost::{Cost, InternalTurn};
 use crate::dynamic::{DisallowMask, DynamicCost, EdgeAccess, TimeContext};
 use crate::label::Label;
+use crate::nocost::NoCost;
 use crate::pedestrian::PedestrianCost;
 
 /// An error from a costing.
@@ -283,6 +284,8 @@ pub enum AnyCosting {
     Auto(AutoCost),
     Pedestrian(PedestrianCost),
     Bicycle(BicycleCost),
+    /// `"costing": "none"`, which Loki uses for `locate` without a costing.
+    None(NoCost),
 }
 
 impl AnyCosting {
@@ -298,6 +301,7 @@ impl AnyCosting {
             CostingType::Auto => Self::Auto(AutoCost::new(costing)),
             CostingType::Pedestrian => Self::Pedestrian(PedestrianCost::new(costing)),
             CostingType::Bicycle => Self::Bicycle(BicycleCost::new(costing)),
+            CostingType::None => Self::None(NoCost::new(costing)),
             other => return Err(CostingError::NotImplemented(other)),
         })
     }
@@ -310,6 +314,7 @@ macro_rules! dispatch {
             AnyCosting::Auto($c) => $call,
             AnyCosting::Pedestrian($c) => $call,
             AnyCosting::Bicycle($c) => $call,
+            AnyCosting::None($c) => $call,
         }
     };
 }
