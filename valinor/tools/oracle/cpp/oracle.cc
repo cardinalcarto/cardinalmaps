@@ -1,5 +1,9 @@
 // Prints mainline 3.9.1 reference values for the valhalla-graphtile fixtures.
-// Usage: oracle <tile_dir>
+// Usage:
+//   oracle <tile_dir>
+//       Values from the Andorra tiles (shortcuts, access restrictions, bins, circles, ...).
+//   oracle <tile_dir> speeds
+//       GraphTile::GetSpeed for edges of tile 0/3015 over flow masks, times, and truck flags.
 #include <valhalla/baldr/graphconstants.h>
 #include <valhalla/baldr/graphreader.h>
 #include <valhalla/baldr/tilehierarchy.h>
@@ -8,14 +12,91 @@
 #include <boost/property_tree/ptree.hpp>
 
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <set>
+#include <string>
+#include <vector>
 
 using namespace valhalla;
 using namespace valhalla::baldr;
 using namespace valhalla::midgard;
 
+namespace {
+
+// GetSpeed for a few edges of tile 0/3015, one line per call:
+//   speed <edge> <flow mask> <seconds> <is truck> <kph> <flow sources>
+int speeds(GraphReader& reader) {
+  auto tile = reader.GetGraphTile(GraphId(3015, 0, 0));
+  // Edges 0, 7, and 42 have the speeds in tools/oracle/predicted-speeds; edge 1 has none.
+  // (Edge 0 also has a truck speed, equal to its speed;
+  // no edge in this tile has a truck speed below its speed.)
+  const std::vector<uint32_t> edges = {0, 1, 7, 42};
+  for (uint32_t i : edges) {
+    const auto* de = tile->directededge(i);
+    printf("edge %u speed %u truck_speed %u free_flow %u constrained_flow %u predicted %d\n", i,
+           de->speed(), de->truck_speed(), de->free_flow_speed(), de->constrained_flow_speed(),
+           de->has_predicted_speed());
+  }
+  const uint64_t times[] = {0,
+                            1,
+                            299,
+                            300,
+                            25199,
+                            25200,
+                            25201,
+                            43200,
+                            68399,
+                            68400,
+                            68401,
+                            86399,
+                            86400,
+                            86400 + 25201,
+                            604799,
+                            604800,
+                            604801,
+                            604800 + 43200,
+                            kInvalidSecondsOfWeek - 1,
+                            kInvalidSecondsOfWeek,
+                            kInvalidSecondsOfWeek + 1,
+                            (1ull << 32) + 5,
+                            (1ull << 40) + 25201};
+  for (uint32_t i : edges) {
+    const auto* de = tile->directededge(i);
+    for (uint32_t mask = 0; mask < 16; ++mask) {
+      for (uint64_t t : times) {
+        for (int truck = 0; truck < 2; ++truck) {
+          uint8_t sources = 0;
+          uint32_t kph = tile->GetSpeed(de, mask, t, truck, &sources);
+          printf("speed %u %u %llu %d %u %u\n", i, mask, (unsigned long long)t, truck, kph,
+                 sources);
+        }
+      }
+    }
+  }
+  // Every bucket of the week, at a varying offset into the bucket, for the predicted edges.
+  for (uint32_t i : {7u, 42u}) {
+    const auto* de = tile->directededge(i);
+    for (uint64_t b = 0; b < kBucketsPerWeek; ++b) {
+      uint64_t t = b * kSpeedBucketSizeSeconds + (b * 97) % kSpeedBucketSizeSeconds;
+      uint8_t sources = 0;
+      uint32_t kph = tile->GetSpeed(de, kPredictedFlowMask, t, false, &sources);
+      printf("speed %u %u %llu %d %u %u\n", i, kPredictedFlowMask, (unsigned long long)t, 0, kph,
+             sources);
+    }
+  }
+  return 0;
+}
+
+} // namespace
+
 int main(int argc, char** argv) {
+  if (argc == 3 && strcmp(argv[2], "speeds") == 0) {
+    boost::property_tree::ptree pt;
+    pt.put("tile_dir", argv[1]);
+    GraphReader reader(pt);
+    return speeds(reader);
+  }
   boost::property_tree::ptree pt;
   pt.put("tile_dir", argv[1]);
   GraphReader reader(pt);

@@ -43,6 +43,31 @@ since mainline derives it from all tile hashes in the set.
 The source extract is OpenStreetMap data from Geofabrik,
 © OpenStreetMap contributors, available under the Open Database License.
 
+## Predicted speed references
+
+`valhalla-graphtile/fixtures/predicted-speeds-reference` holds mainline's values
+for the predicted speed codec and for speed selection:
+
+* `profiles.txt` and `decoded.bin` come from mainline's Python bindings
+  (`compress_speed_buckets`, `encode_compressed_speeds`, and `decompress_speed_bucket`)
+  via [`predicted-speeds-reference.py`](predicted-speeds-reference.py).
+  The input profiles come from a small integer generator
+  that the Valinor test reimplements, so they aren't stored.
+* `get-speed.txt` is `GraphTile::GetSpeed` on `andorra-tiles-with-traffic`,
+  from the C++ helper's `speeds` mode (below).
+
+```shell
+podman run --rm -v "$PWD/tools/oracle:/oracle:ro,z" \
+  -v "$PWD/valhalla-graphtile/fixtures/predicted-speeds-reference:/out:z" \
+  "$(cat tools/oracle/valhalla-image)" python3 -I /oracle/predicted-speeds-reference.py /out
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" -v "$PWD/valhalla-graphtile/fixtures:/fx:ro,z" \
+  valinor-valhalla-dev:3.9.1 /w/oracle /fx/andorra-tiles-with-traffic speeds \
+  > valhalla-graphtile/fixtures/predicted-speeds-reference/get-speed.txt
+```
+
+Mainline's float results depend on the platform's `cosf`,
+so Valinor's tests compare bit for bit only on Linux with glibc, as these were made.
+
 ## Linking against mainline (C++)
 
 [`cpp/`](cpp) holds a small C++ program that links mainline's `libvalhalla`
