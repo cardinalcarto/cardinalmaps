@@ -1371,6 +1371,15 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                     .insert(rider_index, AlertImpact::default());
                 compiled.push(no_service);
             }
+            // A rider at a platform must be able to find an alert naming its station.
+            let platforms: Vec<ScopedId> = alert
+                .informed_entity
+                .iter()
+                .filter_map(|selector| selector.stop_id.as_deref())
+                .flat_map(|stop_id| lookup.child_stops(&feed, stop_id))
+                .filter_map(|stop| lookup.stop_gtfs_id(&feed, stop))
+                .map(|name| ScopedId::new(&feed, name))
+                .collect();
             let details = AlertDetails {
                 feed: Some(feed),
                 entity_id,
@@ -1395,7 +1404,10 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 cause_detail: alert.cause_detail,
                 effect_detail: alert.effect_detail,
             };
-            self.rider.push_alert(details);
+            let index = self.rider.push_alert(details);
+            for platform in platforms {
+                self.rider.index_alert_at_stop(index, platform);
+            }
         }
         self.stats.no_service_alerts = compiled.len();
         compiled
@@ -1509,6 +1521,8 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 }
                 if !effect.stops_removed.is_empty() {
                     changed = true;
+                    self.rider
+                        .mark_stops_removed(key_of_trip, &effect.stops_removed);
                     for position in effect.stops_removed {
                         if let Some(event) = events.get_mut(position) {
                             event.rules = StopRules::SKIPPED;
@@ -1560,6 +1574,8 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                     self.rider.set_state(key_of_trip, TripState::NoService);
                     continue;
                 }
+                self.rider
+                    .mark_stops_removed(key_of_trip, &effect.stops_removed);
                 for position in effect.stops_removed {
                     if let Some(event) = resolved.events.get_mut(position) {
                         event.rules = StopRules::SKIPPED;
@@ -1628,6 +1644,8 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                         continue;
                     }
                     let mut events = trip.events;
+                    self.rider
+                        .mark_stops_removed(trip.key, &effect.stops_removed);
                     for position in effect.stops_removed {
                         if let Some(event) = events.get_mut(position) {
                             event.rules = StopRules::SKIPPED;
@@ -1968,12 +1986,11 @@ fn trip_details(
                 details.predicted_departure = prediction
                     .departure
                     .map(|time| clock.unix(time.into_inner()));
-                details.arrival_delay = details
-                    .arrival_delay
-                    .or_else(|| delay_of(prediction.arrival, scheduled.arrival));
-                details.departure_delay = details
-                    .departure_delay
-                    .or_else(|| delay_of(prediction.departure, scheduled.departure));
+                // The time routing used wins: a repair may have moved it from what the feed said.
+                details.arrival_delay =
+                    delay_of(prediction.arrival, scheduled.arrival).or(details.arrival_delay);
+                details.departure_delay =
+                    delay_of(prediction.departure, scheduled.departure).or(details.departure_delay);
                 details
             })
             .collect(),

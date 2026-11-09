@@ -26,6 +26,10 @@ pub struct StopTimeDetails {
     pub stop_id: Option<String>,
     /// How the stop relates to the schedule.
     pub relationship: Option<proto::trip_update::stop_time_update::ScheduleRelationship>,
+    /// Whether a `NO_SERVICE` alert took this stop out of the trip.
+    ///
+    /// `relationship` is then `SKIPPED`, so that this agrees with routing.
+    pub removed_by_alert: bool,
     /// The scheduled arrival, in POSIX seconds.
     pub scheduled_arrival: Option<i64>,
     /// The scheduled departure, in POSIX seconds.
@@ -276,6 +280,24 @@ impl RiderData {
         }
     }
 
+    /// Marks stops that an alert removed from a trip with real-time details.
+    pub(crate) fn mark_stops_removed(&mut self, key: TripKey, positions: &[usize]) {
+        let Some(&index) = self.trips_by_key.get(&key) else {
+            return;
+        };
+        let Some(trip) = self.trips.get_mut(index) else {
+            return;
+        };
+        for &position in positions {
+            let position = u32::try_from(position).ok();
+            if let Some(stop) = trip.stops.iter_mut().find(|s| s.position == position) {
+                stop.relationship =
+                    Some(proto::trip_update::stop_time_update::ScheduleRelationship::Skipped);
+                stop.removed_by_alert = true;
+            }
+        }
+    }
+
     pub(crate) fn push_vehicle(&mut self, vehicle: VehicleDetails) {
         let Some(feed) = vehicle.feed.clone() else {
             return;
@@ -330,6 +352,11 @@ impl RiderData {
         }
         self.alerts.push(alert);
         index
+    }
+
+    /// Also finds an alert from a stop it informs indirectly, as a station's platform.
+    pub(crate) fn index_alert_at_stop(&mut self, alert: usize, stop: ScopedId) {
+        push(&mut self.alerts_by_stop, stop, alert);
     }
 
     pub(crate) fn set_feeds(&mut self, feeds: Vec<FeedStatus>) {

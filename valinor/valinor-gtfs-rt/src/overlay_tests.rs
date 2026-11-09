@@ -1668,6 +1668,21 @@ fn identifiers_of_different_feeds_never_collide() {
 // Rider data.
 
 #[test]
+fn a_removal_keeps_rider_details_for_the_other_stops() {
+    let net = three_stop_net();
+    let overlay = run(
+        &net,
+        vec![
+            fresh(vec![update("t1", DATE_1, vec![delay_at(1, 60)])]),
+            alerts_feed(vec![no_service(vec![stop_selector("B")])]),
+        ],
+    );
+    let details = overlay.rider.trip_by_key(key(0)).expect("details");
+    assert!(details.stops[1].removed_by_alert);
+    assert!(!details.stops[0].removed_by_alert);
+}
+
+#[test]
 fn rider_data_is_kept_for_trips_stops_routes_and_vehicles() {
     let net = three_stop_net();
     let mut trip = update("t1", DATE_1, vec![delay_at(1, 30)]);
