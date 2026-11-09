@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::error::{QueryError, SearchError};
 use crate::ids::{Direction, Time};
-use crate::journey::{Journey, extract_journey};
+use crate::journey::{Journey, trace_journey};
 use crate::profile::{self, Profile};
 use crate::raptor::clock_of;
 use crate::raptor::labels::Labels;
@@ -95,13 +95,8 @@ impl<S: TransferSearch> SearchRun<'_, S> {
 
     /// The journey with this number of trips, if the search improved the target with that many.
     pub fn journey(&self, trips: u8) -> Option<Journey<S::Walk>> {
-        extract_journey(
-            self.query,
-            self.labels,
-            self.transfers,
-            self.direction,
-            trips,
-        )
+        trace_journey(self.query, self.labels, self.direction, trips)
+            .map(|journey| journey.resolve_walks(|parent| self.transfers.walk(parent)))
     }
 }
 

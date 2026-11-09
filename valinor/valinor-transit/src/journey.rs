@@ -2,7 +2,6 @@
 
 use crate::ids::{Direction, LaneRef, RouteId, Seconds, StopId, Time, TripKey};
 use crate::raptor::{LabelKind, Labels, TransitQuery};
-use crate::transfer::TransferSearch;
 
 /// A journey: one or more rides, joined by walks.
 ///
@@ -90,14 +89,49 @@ enum ChainStep<P> {
     },
 }
 
+impl<P: Copy> Journey<P> {
+    /// Turns each walk's handle into what `resolve` makes of it.
+    ///
+    /// Resolving a walk is the expensive part of reading a journey (on real tiles it rebuilds
+    /// the street path), so a caller decides whether a journey is useful before it does this.
+    pub(crate) fn resolve_walks<W>(self, resolve: impl Fn(P) -> W) -> Journey<W> {
+        Journey {
+            departure: self.departure,
+            arrival: self.arrival,
+            trips: self.trips,
+            legs: self
+                .legs
+                .into_iter()
+                .map(|leg| match leg {
+                    Leg::Access { stop, duration } => Leg::Access { stop, duration },
+                    Leg::Ride(ride) => Leg::Ride(ride),
+                    Leg::Transfer {
+                        from,
+                        to,
+                        duration,
+                        walk,
+                    } => Leg::Transfer {
+                        from,
+                        to,
+                        duration,
+                        walk: resolve(walk),
+                    },
+                    Leg::Egress { stop, duration } => Leg::Egress { stop, duration },
+                })
+                .collect(),
+        }
+    }
+}
+
 /// Reads the journey the labels hold for `trips`, if the search found one.
-pub(crate) fn extract_journey<S: TransferSearch>(
+///
+/// Its walks are still the transfer search's handles; see [`Journey::resolve_walks`].
+pub(crate) fn trace_journey<P: Copy>(
     query: &TransitQuery<'_>,
-    labels: &Labels<S::Parent>,
-    transfers: &S,
+    labels: &Labels<P>,
     direction: Direction,
     trips: u8,
-) -> Option<Journey<S::Walk>> {
+) -> Option<Journey<P>> {
     let target = labels.target(trips)?;
     if !target.improved {
         return None;
@@ -184,7 +218,7 @@ pub(crate) fn extract_journey<S: TransferSearch>(
                     from,
                     to,
                     duration: Seconds::try_new(duration.try_into().ok()?).ok()?,
-                    walk: transfers.walk(parent),
+                    walk: parent,
                 });
             }
         }

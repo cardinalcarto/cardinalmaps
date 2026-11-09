@@ -13,16 +13,23 @@ use crate::snapshot::Snapshot;
 use crate::stop_table::{RouteFilter, StopTable};
 use crate::testing::{
     Graph, Results, SyntheticSearch, TestNet, TestRoute, Triples, block_of, brute_force_profile,
-    check_journey, day_slot, oracle, routes_from_timetable, secs, t,
+    check_journey, day_slot, oracle, oracle_every_second, routes_from_timetable, secs, t,
 };
 use crate::timetable::{
-    ResolvedTrip, RouteAttributes, StopEvent, StopRules, StopTime, TimetableBuilder,
+    ResolvedBlock, ResolvedLane, ResolvedTrip, RouteAttributes, StopEvent, StopRules, StopTime,
+    TimetableBuilder,
 };
 use crate::{RouteId, Router, TripId};
 
-const MAX_TRIPS: u8 = 4;
-const WINDOW: (i32, i32) = (0, 30);
-const DAY_OFFSET: i32 = 20;
+const WINDOW: (i32, i32) = (0, 60);
+
+/// The largest and smallest clock shifts keep every generated time within a few hundred seconds
+/// of [`crate::TIME_LIMIT`], close enough to exercise it but not to cross it.
+const SHIFT_HIGH: i32 = crate::TIME_LIMIT - 700;
+const SHIFT_LOW: i32 = 500 - crate::TIME_LIMIT;
+
+/// The offsets a day may have: past and future days, around a window at zero.
+const DAY_OFFSETS: [i32; 5] = [-60, -30, 0, 20, 70];
 
 #[derive(Debug, Clone)]
 struct RawTrip {
@@ -31,7 +38,7 @@ struct RawTrip {
     hops: Vec<(u8, u8)>,
     /// `(pickup, drop_off)`, cycled along the route.
     rules: Vec<(bool, bool)>,
-    /// 0: day slot 0 only, 1: day slot 1 only, 2: both.
+    /// A bitmask of the day slots this trip runs on.
     days: u8,
 }
 
@@ -51,17 +58,22 @@ struct RawNet {
     access: Vec<Option<u8>>,
     egress: Vec<Option<u8>>,
     routes: Vec<RawRoute>,
+    /// One offset per service day.
+    day_offsets: Vec<i32>,
+    /// Added to every clock, to run a network near the limits of time.
+    shift: i32,
+    max_trips: u8,
 }
 
 fn raw_trip() -> impl Strategy<Value = RawTrip> {
     (
-        0_u8..45,
+        0_u8..90,
         prop::collection::vec((0_u8..10, 0_u8..4), 1..5),
         prop::collection::vec(
             (prop::bool::weighted(0.85), prop::bool::weighted(0.85)),
             1..5,
         ),
-        0_u8..3,
+        1_u8..8,
     )
         .prop_map(|(start, hops, rules, days)| RawTrip {
             start,
@@ -73,9 +85,10 @@ fn raw_trip() -> impl Strategy<Value = RawTrip> {
 
 fn raw_route() -> impl Strategy<Value = RawRoute> {
     (
-        prop::collection::vec(any::<u8>(), 2..6),
+        prop::collection::vec(any::<u8>(), 2..10),
         prop::bool::weighted(0.8),
-        prop::collection::vec(raw_trip(), 1..6),
+        // Up to 20 trips in a lane, so the binary search over rows has rows to search.
+        prop::collection::vec(raw_trip(), 1..20),
     )
         .prop_map(|(stops, bikes, trips)| RawRoute {
             stops,
@@ -94,9 +107,12 @@ fn raw_net() -> impl Strategy<Value = RawNet> {
         opt(),
         opt(),
         prop::collection::vec(raw_route(), 2..9),
+        prop::collection::vec(prop::sample::select(DAY_OFFSETS.to_vec()), 1..4),
+        prop_oneof![6 => Just(0), 1 => Just(SHIFT_HIGH), 1 => Just(SHIFT_LOW)],
+        1_u8..7,
     )
         .prop_map(
-            |(stop_count, min_change, stop_node, edges, access, egress, routes)| RawNet {
+            |(
                 stop_count,
                 min_change,
                 stop_node,
@@ -104,6 +120,20 @@ fn raw_net() -> impl Strategy<Value = RawNet> {
                 access,
                 egress,
                 routes,
+                day_offsets,
+                shift,
+                max_trips,
+            )| RawNet {
+                stop_count,
+                min_change,
+                stop_node,
+                edges,
+                access,
+                egress,
+                routes,
+                day_offsets,
+                shift,
+                max_trips,
             },
         )
 }
@@ -135,8 +165,10 @@ fn stop_of(raw: u8, stop_count: u8) -> usize {
 /// In an added route's raw stops: resolves to the overlay's first added stop.
 const FIRST_ADDED_STOP: u8 = 255;
 
-const DATE_0: u32 = 1;
-const DATE_1: u32 = 2;
+/// The date of a day slot.
+fn date_of(slot: usize) -> ServiceDate {
+    ServiceDate::new(u32::try_from(slot).expect("few days") + 1)
+}
 
 /// Builds a network from raw parts: stops `0..stop_count`, and the two service days.
 fn build_net(raw: &RawNet) -> TestNet {
@@ -148,15 +180,15 @@ fn build_net(raw: &RawNet) -> TestNet {
                 .expect("stop")
         })
         .collect();
-    let both = builder
-        .add_service([ServiceDate::new(DATE_0), ServiceDate::new(DATE_1)])
-        .expect("service");
-    let first_day = builder
-        .add_service([ServiceDate::new(DATE_0)])
-        .expect("service");
-    let second_day = builder
-        .add_service([ServiceDate::new(DATE_1)])
-        .expect("service");
+    // One calendar per subset of the (up to three) day slots.
+    let services: Vec<_> = (1_u8..8)
+        .map(|mask| {
+            let dates = (0..3)
+                .filter(move |slot| mask & (1 << slot) != 0)
+                .map(date_of);
+            builder.add_service(dates).expect("service")
+        })
+        .collect();
 
     let mut next_trip = 0;
     for route in &raw.routes {
@@ -172,11 +204,7 @@ fn build_net(raw: &RawNet) -> TestNet {
         };
         let pattern = builder.add_pattern(&stops, attributes).expect("pattern");
         for trip in &route.trips {
-            let service = match trip.days {
-                0 => first_day,
-                1 => second_day,
-                _ => both,
-            };
+            let service = services[usize::from(trip.days) - 1];
             let times = times_of(trip, stops.len())
                 .iter()
                 .enumerate()
@@ -193,16 +221,15 @@ fn build_net(raw: &RawNet) -> TestNet {
         }
     }
     let timetable = builder.build().expect("build");
-    let days = [
-        ServiceDay {
-            date: ServiceDate::new(DATE_0),
-            offset: t(0),
-        },
-        ServiceDay {
-            date: ServiceDate::new(DATE_1),
-            offset: t(DAY_OFFSET),
-        },
-    ];
+    let days: Vec<_> = raw
+        .day_offsets
+        .iter()
+        .enumerate()
+        .map(|(slot, &offset)| ServiceDay {
+            date: date_of(slot),
+            offset: t(offset + raw.shift),
+        })
+        .collect();
     let window = Arc::new(timetable.materialize(&days).expect("materialize"));
     let snapshot = Snapshot::schedule(Arc::clone(&window));
 
@@ -266,9 +293,13 @@ fn results_of(
 }
 
 /// `(departure, arrival, trips)` of a profile.
-fn profile_triples(router: &mut Router<SyntheticSearch>, query: &TransitQuery<'_>) -> Triples {
+fn profile_triples(
+    router: &mut Router<SyntheticSearch>,
+    query: &TransitQuery<'_>,
+    shift: i32,
+) -> Triples {
     let profile = router
-        .profile(query, t(WINDOW.0), t(WINDOW.1), &|| false)
+        .profile(query, t(WINDOW.0 + shift), t(WINDOW.1 + shift), &|| false)
         .expect("profile");
     let mut triples: Triples = profile
         .entries
@@ -280,24 +311,31 @@ fn profile_triples(router: &mut Router<SyntheticSearch>, query: &TransitQuery<'_
 }
 
 /// The checks every network must pass, base or overlaid.
-fn check_network(net: &TestNet, filter: RouteFilter) {
-    let query = net.query(MAX_TRIPS, filter);
+fn check_network(net: &TestNet, filter: RouteFilter, max_trips: u8, shift: i32) {
+    let query = net.query(max_trips, filter);
     let mut router = net.router();
+    let (earliest, latest) = (WINDOW.0 + shift, WINDOW.1 + shift);
 
-    // Every search time we test against the oracle.
-    for time in [WINDOW.0, WINDOW.0 + 7, WINDOW.1, WINDOW.1 + 20] {
-        let forward = results_of(&mut router, &query, Direction::Forward, time);
+    // The router against the oracle at every second of the window, not just at sampled times.
+    let runs = oracle_every_second(net, filter, earliest, latest, max_trips);
+    for (offset, expected) in runs.iter().enumerate() {
+        let time = earliest + i32::try_from(offset).expect("small window");
         assert_eq!(
-            forward,
-            oracle(net, filter, Direction::Forward, time, MAX_TRIPS),
+            &results_of(&mut router, &query, Direction::Forward, time),
+            expected,
             "forward search at {time}"
         );
+    }
+
+    // Every search time we test against the oracle.
+    for time in [earliest, earliest + 7, latest, latest + 20] {
+        let forward = results_of(&mut router, &query, Direction::Forward, time);
         // A backward search from every arrival must return the matching journey, mirrored.
         for &(trips, arrival) in &forward {
             let backward = results_of(&mut router, &query, Direction::Backward, arrival);
             assert_eq!(
                 backward,
-                oracle(net, filter, Direction::Backward, arrival, MAX_TRIPS),
+                oracle(net, filter, Direction::Backward, arrival, max_trips),
                 "backward search at {arrival}"
             );
             // The latest departure with at most `trips` trips is no earlier than `time`.
@@ -317,13 +355,16 @@ fn check_network(net: &TestNet, filter: RouteFilter) {
         check_extraction(net, &query, &mut router, time);
     }
 
-    // The profile equals brute force.
-    let profile = profile_triples(&mut router, &query);
-    let brute = brute_force_profile(&mut router, &query, WINDOW.0, WINDOW.1);
-    assert_eq!(profile, brute, "profile against brute force");
+    // The profile against brute force over the oracle.
+    let profile = profile_triples(&mut router, &query, shift);
+    assert_eq!(
+        profile,
+        brute_force_profile(&runs, earliest),
+        "profile against brute force"
+    );
 
     let result = router
-        .profile(&query, t(WINDOW.0), t(WINDOW.1), &|| false)
+        .profile(&query, t(earliest), t(latest), &|| false)
         .expect("profile");
     for entry in &result.entries {
         assert!(entry.journey.trips >= 1);
@@ -373,7 +414,8 @@ enum RawChange {
         day: u8,
         trip: u8,
         position: u8,
-        delay: u8,
+        /// Negative for an early trip.
+        delay: i8,
     },
     Skip {
         route: u8,
@@ -390,19 +432,31 @@ enum RawChange {
         route: u8,
         day: u8,
     },
+    /// Replaces the day's whole service, possibly on a day that had none,
+    /// and possibly with no service at all.
+    ReplaceDay {
+        route: u8,
+        day: u8,
+        trips: Vec<RawTrip>,
+    },
 }
 
 fn raw_change() -> impl Strategy<Value = RawChange> {
     prop_oneof![
-        (any::<u8>(), any::<u8>(), any::<u8>(), any::<u8>(), 1_u8..25).prop_map(
-            |(route, day, trip, position, delay)| RawChange::Delay {
+        (
+            any::<u8>(),
+            any::<u8>(),
+            any::<u8>(),
+            any::<u8>(),
+            -25_i8..26
+        )
+            .prop_map(|(route, day, trip, position, delay)| RawChange::Delay {
                 route,
                 day,
                 trip,
                 position,
                 delay
-            }
-        ),
+            }),
         (any::<u8>(), any::<u8>(), any::<u8>(), any::<u8>()).prop_map(
             |(route, day, trip, position)| RawChange::Skip {
                 route,
@@ -417,6 +471,12 @@ fn raw_change() -> impl Strategy<Value = RawChange> {
             trip
         }),
         (any::<u8>(), any::<u8>()).prop_map(|(route, day)| RawChange::RemoveService { route, day }),
+        (
+            any::<u8>(),
+            any::<u8>(),
+            prop::collection::vec(raw_trip(), 0..10)
+        )
+            .prop_map(|(route, day, trips)| RawChange::ReplaceDay { route, day, trips }),
     ]
 }
 
@@ -435,6 +495,8 @@ struct RawOverlay {
     changes: Vec<RawChange>,
     added_stops: Vec<RawOverlayStop>,
     added_route: Option<RawRoute>,
+    /// Build replaced blocks through `ResolvedBlock::from_lanes` instead of `from_trips`.
+    via_lanes: bool,
 }
 
 fn raw_overlay() -> impl Strategy<Value = RawOverlay> {
@@ -454,12 +516,16 @@ fn raw_overlay() -> impl Strategy<Value = RawOverlay> {
         prop::collection::vec(raw_change(), 0..8),
         prop::collection::vec(stop, 0..3),
         prop::option::of(raw_route()),
+        any::<bool>(),
     )
-        .prop_map(|(changes, added_stops, added_route)| RawOverlay {
-            changes,
-            added_stops,
-            added_route,
-        })
+        .prop_map(
+            |(changes, added_stops, added_route, via_lanes)| RawOverlay {
+                changes,
+                added_stops,
+                added_route,
+                via_lanes,
+            },
+        )
 }
 
 /// Applies an overlay's changes to a network, producing what a search must see.
@@ -472,8 +538,9 @@ fn apply_overlay(net: &TestNet, raw: &RawOverlay) -> TestNet {
     let mut routes: Vec<TestRoute> = net.routes.clone();
     let mut touched = vec![vec![false; day_count]; routes.len()];
     let mut removed = vec![vec![false; day_count]; routes.len()];
+    let mut next_replacement = 2_000_000_u32;
     for change in &raw.changes {
-        match *change {
+        match change.clone() {
             RawChange::Delay {
                 route,
                 day,
@@ -489,7 +556,14 @@ fn apply_overlay(net: &TestNet, raw: &RawOverlay) -> TestNet {
                 let trip_index = usize::from(trip) % trips.len();
                 let events = &mut trips[trip_index].events;
                 let from = usize::from(position) % events.len();
-                let delay = i32::from(delay);
+                // An early trip can't leave a stop before it reached the one before it.
+                let earliest_delay = match from.checked_sub(1) {
+                    Some(previous) => {
+                        events[previous].departure.into_inner() - events[from].arrival.into_inner()
+                    }
+                    None => i32::MIN,
+                };
+                let delay = i32::from(delay).max(earliest_delay);
                 for event in &mut events[from..] {
                     event.arrival = t(event.arrival.into_inner() + delay);
                     event.departure = t(event.departure.into_inner() + delay);
@@ -528,6 +602,23 @@ fn apply_overlay(net: &TestNet, raw: &RawOverlay) -> TestNet {
                 routes[r].days[d].clear();
                 removed[r][d] = true;
                 touched[r][d] = false;
+            }
+            RawChange::ReplaceDay { route, day, trips } => {
+                let (r, d) = index_of(route, day, routes.len(), day_count);
+                let offset = net.snapshot.days()[d].offset.into_inner();
+                let stop_count = routes[r].stops.len();
+                routes[r].days[d] = trips
+                    .iter()
+                    .map(|trip| {
+                        next_replacement += 1;
+                        ResolvedTrip {
+                            trip: TripId::new(next_replacement),
+                            events: events_of(trip, stop_count, offset),
+                        }
+                    })
+                    .collect();
+                removed[r][d] = false;
+                touched[r][d] = true;
             }
         }
     }
@@ -574,7 +665,11 @@ fn apply_overlay(net: &TestNet, raw: &RawOverlay) -> TestNet {
                 overlay.remove_service(route, slot).expect("remove");
             } else if changed {
                 overlay
-                    .replace_block(route, slot, &block_of(routes[r].days[d].clone()))
+                    .replace_block(
+                        route,
+                        slot,
+                        &block_of_raw(&routes[r].days[d], raw.via_lanes),
+                    )
                     .expect("replace");
             }
         }
@@ -603,19 +698,10 @@ fn apply_overlay(net: &TestNet, raw: &RawOverlay) -> TestNet {
         let mut next_trip = 1_000_000_u32;
         for trip in &added.trips {
             for (d, service_day) in net.snapshot.days().iter().enumerate() {
-                let runs = trip.days == 2 || usize::from(trip.days) == d;
-                if !runs {
+                if trip.days & (1 << d) == 0 {
                     continue;
                 }
-                let events = times_of(trip, stops.len())
-                    .iter()
-                    .enumerate()
-                    .map(|(position, &(arrival, departure))| StopEvent {
-                        arrival: t(arrival + service_day.offset.into_inner()),
-                        departure: t(departure + service_day.offset.into_inner()),
-                        rules: rules_at(trip, position),
-                    })
-                    .collect();
+                let events = events_of(trip, stops.len(), service_day.offset.into_inner());
                 days[d].push(ResolvedTrip {
                     trip: TripId::new(next_trip),
                     events,
@@ -667,14 +753,48 @@ fn apply_overlay(net: &TestNet, raw: &RawOverlay) -> TestNet {
     }
 }
 
+/// The events of a raw trip on a day whose window clock starts at `offset`.
+fn events_of(trip: &RawTrip, stop_count: usize, offset: i32) -> Vec<StopEvent> {
+    times_of(trip, stop_count)
+        .iter()
+        .enumerate()
+        .map(|(position, &(arrival, departure))| StopEvent {
+            arrival: t(arrival + offset),
+            departure: t(departure + offset),
+            rules: rules_at(trip, position),
+        })
+        .collect()
+}
+
+/// A block of these trips, through `from_trips` or else `from_lanes`,
+/// the latter with the extra empty lane that canceling every trip of a lane can leave.
+fn block_of_raw(trips: &[ResolvedTrip], via_lanes: bool) -> ResolvedBlock {
+    let block = block_of(trips.to_vec());
+    if !via_lanes {
+        return block;
+    }
+    let mut lanes: Vec<_> = block
+        .lanes()
+        .iter()
+        .map(|lane| ResolvedLane::new(lane.trips().to_vec()).expect("a lane is valid"))
+        .collect();
+    lanes.push(ResolvedLane::new(Vec::new()).expect("an emptied lane is accepted"));
+    ResolvedBlock::from_lanes(lanes)
+}
+
 fn index_of(route: u8, day: u8, routes: usize, days: usize) -> (usize, usize) {
     (usize::from(route) % routes, usize::from(day) % days)
 }
 
 /// Runs a network through the filters.
-fn check_both_filters(net: &TestNet) {
-    check_network(net, RouteFilter::ALL);
-    check_network(net, RouteFilter::requiring(RouteAttributes::BIKES_ALLOWED));
+fn check_both_filters(net: &TestNet, raw: &RawNet) {
+    check_network(net, RouteFilter::ALL, raw.max_trips, raw.shift);
+    check_network(
+        net,
+        RouteFilter::requiring(RouteAttributes::BIKES_ALLOWED),
+        raw.max_trips,
+        raw.shift,
+    );
 }
 
 proptest! {
@@ -687,7 +807,7 @@ proptest! {
     #[test]
     fn base_networks_match_oracle_and_brute_force(raw in raw_net()) {
         let net = build_net(&raw);
-        check_both_filters(&net);
+        check_both_filters(&net, &raw);
     }
 
     #[test]
@@ -697,7 +817,7 @@ proptest! {
     ) {
         let base = build_net(&raw);
         let net = apply_overlay(&base, &overlay);
-        check_both_filters(&net);
+        check_both_filters(&net, &raw);
     }
 
     /// An overlay adds stops, and a trip on an added route calls at them.
@@ -728,22 +848,37 @@ proptest! {
         route.stops[0] = FIRST_ADDED_STOP;
         overlay.added_route = Some(route);
         let net = apply_overlay(&base, &overlay);
-        check_both_filters(&net);
+        check_both_filters(&net, &raw);
     }
 
-    /// A query pinned to a snapshot keeps reading it after a new one is published.
+    /// One router serves snapshots of different sizes in turn, as a worker does when
+    /// overlays add stops and are replaced: its reused labels must not leak between them.
     #[test]
-    fn pinned_snapshots_stay_consistent(raw in raw_net(), overlay in raw_overlay()) {
+    fn reused_routers_match_fresh_ones_across_snapshots(
+        raw in raw_net(),
+        overlay in raw_overlay(),
+    ) {
         let base = build_net(&raw);
         let overlaid = apply_overlay(&base, &overlay);
-        let base_query = base.query(MAX_TRIPS, RouteFilter::ALL);
-        let overlaid_query = overlaid.query(MAX_TRIPS, RouteFilter::ALL);
-        let mut router = base.router();
-        let first = results_of(&mut router, &base_query, Direction::Forward, WINDOW.0);
-        let mut other = overlaid.router();
-        let _ = results_of(&mut other, &overlaid_query, Direction::Forward, WINDOW.0);
-        let again = results_of(&mut router, &base_query, Direction::Forward, WINDOW.0);
-        prop_assert_eq!(first, again);
+        let (earliest, latest) = (WINDOW.0 + raw.shift, WINDOW.1 + raw.shift);
+        let mut shared = base.router();
+        for net in [&overlaid, &base, &overlaid, &base] {
+            shared.transfers = SyntheticSearch::new(Arc::clone(&net.graph));
+            let query = net.query(raw.max_trips, RouteFilter::ALL);
+            let mut fresh = net.router();
+            prop_assert_eq!(
+                results_of(&mut shared, &query, Direction::Forward, earliest),
+                results_of(&mut fresh, &query, Direction::Forward, earliest)
+            );
+            prop_assert_eq!(
+                results_of(&mut shared, &query, Direction::Backward, latest + 40),
+                results_of(&mut fresh, &query, Direction::Backward, latest + 40)
+            );
+            prop_assert_eq!(
+                profile_triples(&mut shared, &query, raw.shift),
+                profile_triples(&mut fresh, &query, raw.shift)
+            );
+        }
     }
 }
 
@@ -765,10 +900,15 @@ fn generated_overlays_are_not_trivial() {
         let base = build_net(&raw);
         let net = apply_overlay(&base, &overlay);
         let base_stops = base.snapshot.stop_count();
-        let query = net.query(MAX_TRIPS, RouteFilter::ALL);
+        let query = net.query(raw.max_trips, RouteFilter::ALL);
         let mut router = net.router();
         let profile = router
-            .profile(&query, t(WINDOW.0), t(WINDOW.1), &|| false)
+            .profile(
+                &query,
+                t(WINDOW.0 + raw.shift),
+                t(WINDOW.1 + raw.shift),
+                &|| false,
+            )
             .expect("profile");
         let rides = || {
             profile.entries.iter().flat_map(|e| {
@@ -829,10 +969,15 @@ fn generated_networks_are_not_trivial() {
     for _ in 0..samples {
         let raw = strategy.new_tree(&mut runner).expect("sample").current();
         let net = build_net(&raw);
-        let query = net.query(MAX_TRIPS, RouteFilter::ALL);
+        let query = net.query(raw.max_trips, RouteFilter::ALL);
         let mut router = net.router();
         let profile = router
-            .profile(&query, t(WINDOW.0), t(WINDOW.1), &|| false)
+            .profile(
+                &query,
+                t(WINDOW.0 + raw.shift),
+                t(WINDOW.1 + raw.shift),
+                &|| false,
+            )
             .expect("profile");
         if !profile.entries.is_empty() {
             with_results += 1;

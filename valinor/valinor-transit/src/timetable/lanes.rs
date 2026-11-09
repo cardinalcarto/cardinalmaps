@@ -119,7 +119,11 @@ pub struct ResolvedBlock {
 
 impl ResolvedBlock {
     /// Takes lanes that are already split and validated.
-    pub fn from_lanes(lanes: Vec<ResolvedLane>) -> Self {
+    ///
+    /// A lane left with no trips, as when every trip in it is canceled, is dropped:
+    /// a block's lanes always have at least one trip, so an empty one can't reach an arena.
+    pub fn from_lanes(mut lanes: Vec<ResolvedLane>) -> Self {
+        lanes.retain(|lane| !lane.trips.is_empty());
         Self { lanes }
     }
 
@@ -281,6 +285,15 @@ mod tests {
             trip(2, &[10, 90], StopRules::REGULAR),
         ]);
         assert_eq!(err, Err(BuildError::LaneOvertakes { position: 1 }));
+    }
+
+    #[test]
+    fn empty_lanes_are_dropped_from_a_block() {
+        let lane = ResolvedLane::new(vec![trip(1, &[0, 100], StopRules::REGULAR)]).expect("valid");
+        let empty = ResolvedLane::new(Vec::new()).expect("a lane may have lost all of its trips");
+        let block = ResolvedBlock::from_lanes(vec![empty.clone(), lane, empty]);
+        assert_eq!(block.lanes().len(), 1);
+        assert_eq!(block.trip_count(), 1);
     }
 
     #[test]

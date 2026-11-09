@@ -284,8 +284,10 @@ impl<P: Copy> Labels<P> {
             origin_round: origin.0,
             origin_kind: origin.1,
         };
+        // A stop with no route to the target costs `INFINITY`, and adding that to a negative
+        // clock, as every backward search has, would land below `INFINITY`.
         let total = arrival + target_cost;
-        if total < self.best_target {
+        if target_cost < INFINITY && total < self.best_target {
             self.best_target = total;
             self.targets[usize::from(round)] = TargetCell {
                 time: total,
