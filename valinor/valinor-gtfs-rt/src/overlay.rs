@@ -614,17 +614,38 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         let mut updates = updates;
         // Trip identity, then time, so that the newest update of each run comes last.
         updates.sort_by(|(a_feed, a), (b_feed, b)| {
-            (a_feed, identity_key(&a.trip), a.timestamp).cmp(&(
-                b_feed,
-                identity_key(&b.trip),
-                b.timestamp,
-            ))
+            (a_feed, identity_key(a), newness(a)).cmp(&(b_feed, identity_key(b), newness(b)))
         });
+        let mut kept = Vec::with_capacity(updates.len());
         let mut iter = updates.into_iter().peekable();
         while let Some((feed, update)) = iter.next() {
-            if iter.peek().is_some_and(|(f, next)| {
-                f == &feed && identity_key(&next.trip) == identity_key(&update.trip)
-            }) {
+            if iter
+                .peek()
+                .is_some_and(|(f, next)| f == &feed && identity_key(next) == identity_key(&update))
+            {
+                self.stats.duplicate_trip_updates += 1;
+                continue;
+            }
+            kept.push((feed, update));
+        }
+
+        // One run can be spelled several ways, for instance with and without `start_time`,
+        // and applying more than one would run it twice or keep a canceled trip routable.
+        let runs: Vec<Option<(TripId, DaySlot)>> = kept
+            .iter()
+            .map(|(feed, update)| self.resolved_run(feed, update))
+            .collect();
+        let mut winners: HashMap<(TripId, DaySlot), usize> = HashMap::new();
+        for (index, run) in runs.iter().enumerate() {
+            let Some(run) = *run else { continue };
+            let current = winners.entry(run).or_insert(index);
+            if newness(&kept[index].1) >= newness(&kept[*current].1) {
+                *current = index;
+            }
+        }
+
+        for (index, (feed, update)) in kept.into_iter().enumerate() {
+            if runs[index].is_some_and(|run| winners.get(&run) != Some(&index)) {
                 self.stats.duplicate_trip_updates += 1;
                 continue;
             }
@@ -632,6 +653,26 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             self.apply_trip_update(&feed, &update)?;
         }
         Ok(())
+    }
+
+    /// The static run an update applies to, if it is about one.
+    ///
+    /// A `DUPLICATED` update names its template and creates a run of its own, so it has none.
+    fn resolved_run(&self, feed: &FeedId, update: &TripUpdate) -> Option<(TripId, DaySlot)> {
+        if update.trip.schedule_relationship() == TripRelationship::Duplicated {
+            return None;
+        }
+        let (trip_id, date, start_time) = effective_identity(&update.trip);
+        let reference = self
+            .resolve_trip(
+                feed,
+                trip_id?,
+                date.and_then(CalendarDate::parse),
+                start_time.and_then(parse_start_time),
+            )
+            .ok()
+            .flatten()?;
+        Some((reference.trip, reference.day))
     }
 
     // `ADDED` is deprecated in the specification, but feeds in the wild still send it.
@@ -1645,8 +1686,38 @@ fn effective_identity(trip: &TripDescriptor) -> (Option<&str>, Option<&str>, Opt
     }
 }
 
-fn identity_key(trip: &TripDescriptor) -> (Option<&str>, Option<&str>, Option<&str>) {
-    effective_identity(trip)
+/// One update's identity for deduplication, as it is spelled in the feed.
+///
+/// Copies of one template differ only in their `trip_properties`, so those count too.
+type IdentityKey<'a> = (
+    (Option<&'a str>, Option<&'a str>, Option<&'a str>),
+    Option<&'a str>,
+    Option<&'a str>,
+    Option<&'a str>,
+);
+
+fn identity_key(update: &TripUpdate) -> IdentityKey<'_> {
+    let properties = update.trip_properties.as_ref();
+    (
+        effective_identity(&update.trip),
+        properties.and_then(|p| p.trip_id.as_deref()),
+        properties.and_then(|p| p.start_date.as_deref()),
+        properties.and_then(|p| p.start_time.as_deref()),
+    )
+}
+
+/// Which of two updates for a run wins: the newer, and on a tie the one that removes the run.
+///
+/// A cancellation is what must not get lost: routing a rider onto a canceled trip is the
+/// costly error.
+fn newness(update: &TripUpdate) -> (u64, bool) {
+    (
+        update.timestamp.unwrap_or(0),
+        matches!(
+            update.trip.schedule_relationship(),
+            TripRelationship::Canceled | TripRelationship::Deleted
+        ),
+    )
 }
 
 fn valid_coordinates(latitude: f32, longitude: f32) -> bool {

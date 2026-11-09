@@ -1532,6 +1532,22 @@ fn the_newest_update_of_a_trip_wins() {
 }
 
 #[test]
+fn the_newest_update_of_a_run_wins_under_any_spelling() {
+    let net = three_stop_net();
+    let mut older = update("t1", DATE_1, vec![delay_at(1, 10)]);
+    older.timestamp = Some(5);
+    older.trip.start_time = Some("00:01:40".into());
+    let mut newer = update("t1", DATE_1, vec![delay_at(1, 40)]);
+    newer.timestamp = Some(9);
+    let overlay = run(&net, vec![fresh(vec![older, newer])]);
+    assert_eq!(overlay.stats.duplicate_trip_updates, 1);
+    assert_eq!(
+        arrivals_of(&overlay.snapshot, 0, TODAY, 0).map(|a| a[0]),
+        Some(window_seconds(TODAY, 140))
+    );
+}
+
+#[test]
 fn stop_sequences_need_not_be_consecutive() {
     let net = NetBuilder::new()
         .route_with(
