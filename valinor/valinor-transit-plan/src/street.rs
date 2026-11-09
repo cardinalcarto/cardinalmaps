@@ -24,6 +24,7 @@ use valhalla_proto::lat_lng::{HasLat, HasLng};
 use valhalla_proto::location::{HasMinimumReachability, HasSearchCutoff};
 use valhalla_proto::options::HasLanguage;
 use valhalla_proto::{Api, Costing as CostingProto, LatLng, Location, Options};
+use valhalla_response::ErrorCode;
 use valinor_gtfs::{LatLon, LoadedTimetable};
 use valinor_loki::{LokiConfig, parse_location, search as loki_search};
 use valinor_router::OpenError;
@@ -41,8 +42,8 @@ use valinor_walk::{
 
 use crate::error::{PlanError, StateError};
 use crate::plan::{
-    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, TransitRequest, TravelMode,
-    plan_pinned, validated_latest,
+    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, DirectSearch, TransitRequest,
+    TravelMode, plan_pinned, validated_latest,
 };
 use crate::response::{PlanResponse, VehicleUpdate, WalkManeuver, WalkPath, lower};
 use crate::state::{StateConfig, StopSnapper, TransitSnapshot, TransitState};
@@ -339,20 +340,20 @@ impl StreetSearch<'_, '_> {
         Ok(walk_path(leg))
     }
 
-    /// The direct trip's seconds, when a direct search could find one and is worth it.
-    fn direct_seconds(
+    /// How a direct search for the whole trip fares, when it is worth running.
+    fn direct(
         &mut self,
         origin: &Location,
         destination: &Location,
         from: LatLon,
         to: LatLon,
-    ) -> Option<Seconds> {
+    ) -> DirectSearch {
         let speed = match self.mode {
             TravelMode::Walking => WALKING_SPEED_MPS,
             TravelMode::Cycling => CYCLING_SPEED_MPS,
         };
         if approximate_meters(from, to) / speed > DIRECT_SEARCH_MAX_SECONDS {
-            return None;
+            return DirectSearch::NotSearched;
         }
         let mut options = self.options.clone();
         options.locations = vec![origin.clone(), destination.clone()];
@@ -360,23 +361,29 @@ impl StreetSearch<'_, '_> {
             options: Some(options),
             ..Api::default()
         };
-        let paths = self
-            .thor
-            .route_interruptible(self.workspace, &mut api, self.now, self.interrupt)
-            .ok()?;
-        let secs = paths
+        let paths =
+            match self
+                .thor
+                .route_interruptible(self.workspace, &mut api, self.now, self.interrupt)
+            {
+                Ok(paths) => paths,
+                Err(error) if error.code() == ErrorCode::NoPathFound => {
+                    return DirectSearch::NoRoute;
+                }
+                Err(error) => return DirectSearch::Failed(error.to_string()),
+            };
+        let Some(edge) = paths
             .routes
-            .first()?
-            .legs
-            .first()?
-            .edges
-            .last()?
-            .elapsed_cost
-            .secs;
+            .first()
+            .and_then(|route| route.legs.first())
+            .and_then(|leg| leg.edges.last())
+        else {
+            return DirectSearch::NoRoute;
+        };
         #[expect(clippy::cast_possible_truncation, reason = "a search's seconds")]
         #[expect(clippy::cast_sign_loss, reason = "elapsed seconds are positive")]
-        let secs = secs.ceil() as u32;
-        Seconds::try_new(secs).ok()
+        let seconds = edge.elapsed_cost.secs.ceil() as u32;
+        Seconds::try_new(seconds).map_or(DirectSearch::NotSearched, DirectSearch::Found)
     }
 }
 
@@ -493,8 +500,7 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
             // Interrupted: empty tables, and the profile reports the interrupt.
             _ => (StopTable::new(stop_count), StopTable::new(stop_count)),
         };
-        let direct =
-            self.direct_seconds(&origin, &destination, request.origin, request.destination);
+        let direct = self.direct(&origin, &destination, request.origin, request.destination);
         Ok(AccessEgressTables {
             access,
             egress,

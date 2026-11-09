@@ -18,6 +18,7 @@ serde_with = { workspace = true }
 thiserror = { workspace = true }
 valhalla-graphtile = { workspace = true }
 valhalla-proto = { workspace = true }
+valhalla-response = { workspace = true }
 valinor-gtfs = { path = "../valinor-gtfs", default-features = false }
 valinor-gtfs-rt = { path = "../valinor-gtfs-rt" }
 valinor-loki = { workspace = true }

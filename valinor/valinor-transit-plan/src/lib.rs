@@ -34,8 +34,8 @@ pub use error::{PlanError, StateError};
 pub use json::{JsonCoordinate, JsonResponse, PlanRequestBody};
 pub use lookup::CompiledLookup;
 pub use plan::{
-    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, MAX_DEPARTURE_WINDOW_SECONDS,
-    TransitOptions, TransitRequest, TravelMode, plan, plan_pinned,
+    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, DirectSearch,
+    MAX_DEPARTURE_WINDOW_SECONDS, TransitOptions, TransitRequest, TravelMode, plan, plan_pinned,
 };
 pub use response::{PlanResponse, StopMovedNotice, Vehicle, VehicleUpdate, WalkManeuver, WalkPath};
 pub use state::{

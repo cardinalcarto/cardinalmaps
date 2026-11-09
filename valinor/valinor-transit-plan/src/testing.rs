@@ -15,7 +15,9 @@ use valinor_transit::{
     TransferRequest, TransferSearch, TransferSink,
 };
 
-use crate::plan::{AccessEgressRequest, AccessEgressSearch, AccessEgressTables, TravelMode};
+use crate::plan::{
+    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, DirectSearch, TravelMode,
+};
 use crate::state::{StateConfig, StopLocation, TransitSnapshot, TransitState};
 
 pub(crate) const FEED: &str = "metro";
@@ -462,9 +464,14 @@ impl AccessEgressSearch for StraightLineAccess {
         Ok(AccessEgressTables {
             access: self.table(request.snapshot, request.origin, speed),
             egress: self.table(request.snapshot, request.destination, speed),
-            direct: self
-                .include_direct
-                .then(|| seconds_for(meters_between(request.origin, request.destination), speed)),
+            direct: if self.include_direct {
+                DirectSearch::Found(seconds_for(
+                    meters_between(request.origin, request.destination),
+                    speed,
+                ))
+            } else {
+                DirectSearch::NotSearched
+            },
         })
     }
 }

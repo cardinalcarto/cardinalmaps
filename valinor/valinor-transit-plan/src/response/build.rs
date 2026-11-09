@@ -10,15 +10,16 @@ use valinor_gtfs_rt::proto::trip_update::stop_time_update::ScheduleRelationship;
 use valinor_gtfs_rt::{
     FeedId, FeedKind, FeedStatus, ScopedId, StopTimeDetails, TripDetails, TripState,
 };
-use valinor_transit::{Leg, Profile, ProfileEntry, Ride, Seconds, StopEvent, StopId, StopRules};
+use valinor_transit::{Leg, Profile, ProfileEntry, Ride, StopEvent, StopId, StopRules};
 
-use crate::plan::{AccessEgressRequest, AccessEgressSearch, TransitRequest};
+use crate::plan::{AccessEgressRequest, AccessEgressSearch, DirectSearch, TransitRequest};
 use crate::response::alerts::{LegSelectorContext, LegStop, ServiceRun, leg_alerts};
 use crate::response::vehicle::{lower, vehicle_from};
 use crate::response::{
-    AccessEgressLeg, AgencyResponse, FeedReport, FeedState, Journey, JourneyLeg, LegAlert,
-    PlanResponse, RealtimeLevel, RealtimeStatus, RouteResponse, StopMovedNotice, StopRef,
-    StopVisit, TransferLeg, TransitLeg, TripResponse, Vehicle, WalkDurations, WalkPath, Window,
+    AccessEgressLeg, AgencyResponse, DirectResponse, FeedReport, FeedState, Journey, JourneyLeg,
+    LegAlert, NoJourneysReason, PlanResponse, RealtimeLevel, RealtimeStatus, RouteResponse,
+    StopMovedNotice, StopRef, StopVisit, TransferLeg, TransitLeg, TripResponse, Vehicle,
+    WalkDurations, WalkPath, Window,
 };
 use crate::state::TransitSnapshot;
 use crate::window::calendar_date;
@@ -27,9 +28,10 @@ pub(crate) fn build_response<A: AccessEgressSearch>(
     snapshot: &TransitSnapshot,
     request: &TransitRequest,
     profile: Profile<A::Walk>,
-    direct: Option<Seconds>,
+    direct: &DirectSearch,
     access_egress: &mut A,
 ) -> Result<PlanResponse, A::Error> {
+    let found = profile.entries.len();
     let mut builder = Builder {
         snapshot,
         request,
@@ -41,17 +43,44 @@ pub(crate) fn build_response<A: AccessEgressSearch>(
     for entry in profile.entries {
         // A journey no faster than going there directly only adds a wait.
         let duration = entry.arrival.into_inner() - entry.departure.into_inner();
-        if direct.is_some_and(|direct| i64::from(duration) > i64::from(direct.into_inner())) {
+        if let DirectSearch::Found(direct) = direct
+            && i64::from(duration) > i64::from(direct.into_inner())
+        {
             continue;
         }
         journeys.push(builder.journey(entry)?);
     }
+    let reason = match (journeys.is_empty(), found) {
+        (false, _) => None,
+        (true, 0) => Some(NoJourneysReason::NoService),
+        (true, _) => Some(NoJourneysReason::SlowerThanDirect),
+    };
+    Ok(assemble(snapshot, request, journeys, reason, direct))
+}
+
+/// A response with no journeys, for a query that found nothing to search.
+pub(crate) fn empty_response(
+    snapshot: &TransitSnapshot,
+    request: &TransitRequest,
+    reason: NoJourneysReason,
+    direct: &DirectSearch,
+) -> PlanResponse {
+    assemble(snapshot, request, Vec::new(), Some(reason), direct)
+}
+
+fn assemble(
+    snapshot: &TransitSnapshot,
+    request: &TransitRequest,
+    journeys: Vec<Journey>,
+    no_journeys_reason: Option<NoJourneysReason>,
+    direct: &DirectSearch,
+) -> PlanResponse {
     let feeds: Vec<FeedReport> = snapshot
         .feed_status_at(request.now)
         .iter()
         .map(feed_report)
         .collect();
-    Ok(PlanResponse {
+    PlanResponse {
         generated_at: request.now,
         window: Window {
             earliest: request.departure,
@@ -63,8 +92,29 @@ pub(crate) fn build_response<A: AccessEgressSearch>(
             feeds,
         },
         journeys,
-        direct_seconds: direct.map(Seconds::into_inner),
-    })
+        no_journeys_reason,
+        direct: direct_response(direct),
+    }
+}
+
+fn direct_response(direct: &DirectSearch) -> DirectResponse {
+    let status = match direct {
+        DirectSearch::Found(_) => "found",
+        DirectSearch::NoRoute => "no_route",
+        DirectSearch::NotSearched => "not_searched",
+        DirectSearch::Failed(_) => "failed",
+    };
+    DirectResponse {
+        status,
+        seconds: match direct {
+            DirectSearch::Found(seconds) => Some(seconds.into_inner()),
+            _ => None,
+        },
+        error: match direct {
+            DirectSearch::Failed(error) => Some(error.clone()),
+            _ => None,
+        },
+    }
 }
 
 /// Whether Ilúvatar can narrate this language.

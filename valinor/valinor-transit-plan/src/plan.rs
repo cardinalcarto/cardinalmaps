@@ -9,7 +9,7 @@ use valinor_transit::{
 };
 
 use crate::error::PlanError;
-use crate::response::{PlanResponse, WalkPath, build_response};
+use crate::response::{NoJourneysReason, PlanResponse, WalkPath, build_response, empty_response};
 use crate::state::{TransitSnapshot, TransitState};
 
 /// The longest departure window a query may ask for.
@@ -116,10 +116,22 @@ pub struct AccessEgressTables {
     pub access: StopTable,
     /// Seconds from each stop to the destination.
     pub egress: StopTable,
-    /// Seconds for the whole trip without riding transit, if a street search can do it.
-    ///
-    /// Journeys slower than this are removed from the response.
-    pub direct: Option<Seconds>,
+    /// How a direct trip without transit fared; journeys slower than it are removed.
+    pub direct: DirectSearch,
+}
+
+/// The outcome of a direct street search for the whole trip.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum DirectSearch {
+    /// Found: this many seconds.
+    Found(Seconds),
+    /// The search ran and the streets don't connect the two ends.
+    NoRoute,
+    /// The search didn't run, because it would take longer than transit could ever matter.
+    #[default]
+    NotSearched,
+    /// The search ran into a problem; the plan is still valid without the comparison.
+    Failed(String),
 }
 
 /// Computes access and egress tables, once per query, and expands walking legs for the response.
@@ -262,6 +274,18 @@ where
             interrupt,
         )
         .map_err(PlanError::AccessEgress)?;
+    if interrupt() {
+        // A search over empty tables would finish before ever checking the interrupt.
+        return Err(PlanError::Interrupted);
+    }
+    if tables.access.is_empty() || tables.egress.is_empty() {
+        let reason = if tables.access.is_empty() {
+            NoJourneysReason::NoAccess
+        } else {
+            NoJourneysReason::NoEgress
+        };
+        return Ok(empty_response(snapshot, request, reason, &tables.direct));
+    }
 
     let earliest = window_time(snapshot, request.departure)?;
     let latest = window_time(snapshot, latest_unix)?;
@@ -280,7 +304,7 @@ where
             other => PlanError::Search(other),
         })?;
 
-    build_response(snapshot, request, profile, tables.direct, access_egress)
+    build_response(snapshot, request, profile, &tables.direct, access_egress)
         .map_err(PlanError::AccessEgress)
 }
 

@@ -419,5 +419,8 @@ expression: "&response"
       ]
     }
   ],
-  "direct_seconds": 5933
+  "direct": {
+    "status": "found",
+    "seconds": 5933
+  }
 }

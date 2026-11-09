@@ -13,9 +13,9 @@ use crate::plan::{TransitOptions, TransitRequest, TravelMode, plan};
 use crate::response::{FeedState, JourneyLeg, PlanResponse, RealtimeLevel, TransitLeg};
 use crate::state::{FeedUpdate, IngestOutcome, TransitSnapshot, TransitState};
 use crate::testing::{
-    FEED, JUNE_15, JUNE_16, StraightLineAccess, StraightLineTransfers, alert_entity, delay_update,
-    encoded_feed, june_15, route_selector, route_stop_selector, stop_selector, synthetic_state,
-    vehicle_entity,
+    FEED, JUNE_15, JUNE_16, StraightLineAccess, StraightLineTransfers, StraightWalk, alert_entity,
+    delay_update, encoded_feed, june_15, route_selector, route_stop_selector, stop_selector,
+    synthetic_state, vehicle_entity,
 };
 use valinor_gtfs_rt::proto;
 
@@ -675,6 +675,39 @@ fn an_on_demand_window_serves_another_date_with_current_alerts() {
     );
 }
 
+/// Tables that are already empty must still surface an interrupt to the caller.
+#[test]
+fn an_interrupt_during_tables_is_reported_even_with_empty_tables() {
+    struct Empty;
+    impl crate::plan::AccessEgressSearch for Empty {
+        type Error = core::convert::Infallible;
+        type Walk = StraightWalk;
+        fn tables(
+            &mut self,
+            request: &crate::plan::AccessEgressRequest<'_>,
+            _: &dyn Fn() -> bool,
+        ) -> Result<crate::plan::AccessEgressTables, Self::Error> {
+            let count = request.snapshot.snapshot().stop_count();
+            Ok(crate::plan::AccessEgressTables {
+                access: valinor_transit::StopTable::new(count),
+                egress: valinor_transit::StopTable::new(count),
+                direct: crate::plan::DirectSearch::NotSearched,
+            })
+        }
+    }
+    let state = synthetic_state();
+    let snapshot = state.pin(june_15(8, 0)).expect("pin");
+    let mut router = Router::new(StraightLineTransfers::new(
+        snapshot.stop_locations(),
+        500.0,
+        1.33,
+    ));
+    let result = plan(&state, &mut router, &mut Empty, &morning_request(), &|| {
+        true
+    });
+    assert!(matches!(result, Err(PlanError::Interrupted)));
+}
+
 #[test]
 fn an_interrupted_query_reports_interrupted() {
     let state = synthetic_state();
@@ -1036,6 +1069,60 @@ fn journeys_slower_than_the_direct_trip_are_dropped() {
     )
     .expect("plan");
     assert!(response.journeys.is_empty());
+    assert_eq!(
+        response.no_journeys_reason,
+        Some(crate::response::NoJourneysReason::SlowerThanDirect)
+    );
+    assert_eq!(response.direct.status, "found");
+}
+
+#[test]
+fn empty_results_say_which_end_has_no_stops() {
+    let state = synthetic_state();
+    let far = LatLon {
+        lat: 47.0,
+        lon: -122.0,
+    };
+    let no_access = run(
+        &state,
+        &TransitRequest {
+            origin: far,
+            ..morning_request()
+        },
+    );
+    assert_eq!(
+        no_access.no_journeys_reason,
+        Some(crate::response::NoJourneysReason::NoAccess)
+    );
+    let no_egress = run(
+        &state,
+        &TransitRequest {
+            destination: far,
+            ..morning_request()
+        },
+    );
+    assert_eq!(
+        no_egress.no_journeys_reason,
+        Some(crate::response::NoJourneysReason::NoEgress)
+    );
+}
+
+#[test]
+fn a_window_with_no_service_says_so() {
+    let state = synthetic_state();
+    // Saturday: the calendar has no trips at all.
+    let saturday = june_15(24 * 5 + 8, 0);
+    let request = TransitRequest {
+        departure: saturday,
+        now: saturday - 60,
+        ..morning_request()
+    };
+    let response = run(&state, &request);
+    assert!(response.journeys.is_empty());
+    assert_eq!(
+        response.no_journeys_reason,
+        Some(crate::response::NoJourneysReason::NoService)
+    );
 }
 
 // --- Headway-based runs ---

@@ -13,7 +13,7 @@ mod vehicle;
 use serde::Serialize;
 use serde_with::skip_serializing_none;
 
-pub(crate) use build::{build_response, language_supported};
+pub(crate) use build::{build_response, empty_response, language_supported};
 pub(crate) use vehicle::lower;
 pub(crate) use vehicle::vehicle_update;
 
@@ -29,8 +29,36 @@ pub struct PlanResponse {
     pub realtime: RealtimeStatus,
     /// Every Pareto-optimal journey of the window, by departure then trips.
     pub journeys: Vec<Journey>,
-    /// How long the whole trip takes without transit, in seconds, when a street search found one.
-    pub direct_seconds: Option<u32>,
+    /// Why `journeys` is empty; absent when it isn't.
+    pub no_journeys_reason: Option<NoJourneysReason>,
+    /// How a direct trip without transit fared.
+    pub direct: DirectResponse,
+}
+
+/// Why a plan has no journeys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoJourneysReason {
+    /// No stop is within walking or cycling range of the origin.
+    NoAccess,
+    /// No stop is within walking or cycling range of the destination.
+    NoEgress,
+    /// Stops are in range at both ends, but no service connects them in the window.
+    NoService,
+    /// Transit was found, but every journey is slower than going there directly.
+    SlowerThanDirect,
+}
+
+/// How a direct street search for the whole trip fared.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DirectResponse {
+    /// `found`, `no_route`, `not_searched`, or `failed`.
+    pub status: &'static str,
+    /// How long the direct trip takes, in seconds, when one was found.
+    pub seconds: Option<u32>,
+    /// Why the search failed, when it did.
+    pub error: Option<String>,
 }
 
 /// The departure window of a query.

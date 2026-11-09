@@ -138,11 +138,11 @@ fn query_mode(
     let response = planner.plan(&request, "en-US", &|| false).unwrap();
     let elapsed = started.elapsed();
     println!(
-        "{name} ({:?}): {} journeys in {elapsed:?} ({:?}), direct {:?}s",
+        "{name} ({:?}): {} journeys in {elapsed:?} ({:?}), direct {:?}",
         mode,
         response.journeys.len(),
         response.realtime.level,
-        response.direct_seconds,
+        response.direct,
     );
     for journey in &response.journeys {
         let legs = transit_legs(journey);

@@ -51,6 +51,12 @@ impl StopTable {
         Ok(())
     }
 
+    /// Whether no stop is reachable.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.reachable.is_empty()
+    }
+
     /// How many stops the table has room for.
     #[inline]
     pub fn stop_count(&self) -> usize {

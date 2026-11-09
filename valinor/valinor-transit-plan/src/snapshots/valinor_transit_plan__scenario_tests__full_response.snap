@@ -798,5 +798,8 @@ expression: "&response"
         }
       ]
     }
-  ]
+  ],
+  "direct": {
+    "status": "not_searched"
+  }
 }
