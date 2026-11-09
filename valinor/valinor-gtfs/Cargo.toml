@@ -1,0 +1,47 @@
+[package]
+name = "valinor-gtfs"
+description = "Compiles static GTFS feeds into a single-file timetable for valinor-transit."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["compile"]
+# The compiler needs CSV and zip parsing and a time zone database; a device that only loads
+# compiled files does not.
+compile = ["dep:csv", "dep:zip", "dep:geo", "dep:clap", "dep:tracing-subscriber"]
+
+[dependencies]
+clap = { workspace = true, optional = true }
+crc32fast = { workspace = true }
+csv = { workspace = true, optional = true }
+geo = { workspace = true, optional = true }
+jiff = { workspace = true }
+memmap2 = { workspace = true }
+nutype = { workspace = true }
+self_cell = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, optional = true }
+valinor-transit = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
+zip = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[[bin]]
+name = "valinor-gtfs"
+path = "src/bin/valinor-gtfs.rs"
+required-features = ["compile"]
+
+[[example]]
+name = "measure"
+required-features = ["compile"]
+
+[lints]
+workspace = true
