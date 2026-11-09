@@ -581,8 +581,9 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
         else {
             return Ok(None);
         };
-        // The same search that filled the table, so it finds the same route. The extra second
-        // covers the rounding of the table's entry.
+        // The same search that filled the table, at the table's own bound, so it finds the same
+        // route. A shorter limit would be a different search: this search minimizes cost under a
+        // limit on seconds, so a limit that cuts off a label can change which route wins.
         self.mode_worker_transfer.bind(Arc::clone(
             request
                 .snapshot
@@ -590,18 +591,19 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
                 .ok_or(StreetError::NoSnaps)?
                 .for_mode(request.mode),
         ))?;
+        let max_seconds = request
+            .snapshot
+            .snaps()
+            .ok_or(StreetError::NoSnaps)?
+            .transfers_for_mode(request.mode)
+            .max_seconds();
         let seeds = self.mode_worker_transfer.stop_seeds(walk.from)?;
-        let stop_count = request.snapshot.snapshot().stop_count();
-        let table = self.mode_worker_transfer.compute(
-            stop_count,
-            &TableRequest {
-                side: AccessSide::Access,
-                seeds: &seeds,
-                max_seconds: walk.seconds.saturating_add(1),
-                interrupt: self.interrupt,
-            },
-        )?;
-        if table.is_none() {
+        if !self.mode_worker_transfer.search(&TableRequest {
+            side: AccessSide::Access,
+            seeds: &seeds,
+            max_seconds,
+            interrupt: self.interrupt,
+        })? {
             return Ok(None);
         }
         let Some(leg) = self.mode_worker_transfer.leg(walk.to) else {

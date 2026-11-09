@@ -133,7 +133,7 @@ fn entries_are_the_sif_route_and_rebuild_to_the_same_leg() {
                     &TableRequest {
                         side: AccessSide::Access,
                         seeds: &seeds,
-                        max_seconds: seconds + 1,
+                        max_seconds: RADIUS,
                         interrupt: &|| false,
                     },
                 )
