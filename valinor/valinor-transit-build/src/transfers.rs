@@ -277,7 +277,12 @@ fn run_mode(
     Ok(result)
 }
 
-pub(crate) fn costing_for(mode: TransferMode) -> Result<AnyCosting, BuildError> {
+/// The costing a mode's transfers use, the same defaults the planner uses.
+///
+/// # Errors
+///
+/// Only if the costing can't be built, which would be a bug.
+pub fn costing_for(mode: TransferMode) -> Result<AnyCosting, BuildError> {
     let mode_name = mode.as_str();
     let error = |reason: String| BuildError::Costing {
         mode: mode_name,

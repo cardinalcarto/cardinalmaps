@@ -195,6 +195,33 @@ and alerts with cause, effect, severity, active periods, URL, description, and w
 Each response states the age of its real-time data.
 Vehicles can be looked up by ID afterwards.
 
+## Offline build
+
+`valinor-transit-build` runs the offline stages, each a plain command with explicit
+input and output directories. They run only on a large machine; timetables and transfers are
+never built on a device.
+
+```text
+valinor-transit-build compile --input <fetch-output> --output <build-dir>
+valinor-transit-build transfers --compiled <build-dir> --street-tiles <tiles> --output <build-dir>
+```
+
+`compile` writes one timetable per feed to `timetables/`.
+A feed that fails is recorded in `compile.json` and doesn't stop the others;
+an unchanged archive (by SHA-256) is not recompiled.
+
+`transfers` loads the stop lists of all feeds and computes every walk with the same search as
+`TransferTable::build`. Results are tiled at zoom 12 by the stop the walk starts at,
+so a tile can walk to stops of any feed, and one mode's tiles are at
+`transfers/<mode>/12/<x>/<y>.bin.zst`.
+`manifest.json` lists the feeds in index order, with the tiles each feed's stops need,
+since clients choose which feeds to download.
+
+Stops are addressed as `(feed index, stop number)` where the feed index is the position
+in the manifest. A client decodes the tiles of its feeds, and
+`transfer_tile::assemble_transfer_table` gathers them into one `TransferTable` in the
+client's own stop numbering; walks to feeds it doesn't have are left out.
+
 ## Testing
 
 - The profile is compared on randomized synthetic networks against brute force:

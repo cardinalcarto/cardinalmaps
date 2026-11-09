@@ -371,6 +371,11 @@ impl StopAttachments {
         };
         let snaps = Arc::clone(&attachments.snaps);
         for stop in 0..snaps.stop_count() {
+            // Keys are graph IDs, so dense numbers are only needed for one stop at a time;
+            // forgetting them keeps a planet of stops under the dense numbering's limit.
+            if stop.is_multiple_of(4096) {
+                graph.forget_tiles();
+            }
             let stop_u = u32::try_from(stop).map_err(|_| WalkError::TooLarge)?;
             let Some(point) = snaps.point(StopId::new(stop_u)) else {
                 continue;
