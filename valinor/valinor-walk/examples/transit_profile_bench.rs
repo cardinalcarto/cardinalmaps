@@ -126,6 +126,8 @@ impl Counters {
 struct Timed {
     inner: Walk,
     counters: Counters,
+    /// A cap on every walk (`--walk-limit`), to measure what one buys.
+    fixed_cap: Option<u32>,
     /// Print one line per street search, to see which rounds carry the work.
     trace: bool,
     direction: Direction,
@@ -145,7 +147,8 @@ impl TransferSearch for Timed {
     }
 
     fn set_walk_limit(&mut self, limit: Option<u32>) {
-        self.inner.set_walk_limit(limit);
+        // A fixed cap outlives the bootstrap pass, which clears its own limit when it is done.
+        self.inner.set_walk_limit(limit.or(self.fixed_cap));
     }
 
     fn walk(&self, parent: WalkHandle) -> ResolvedWalk {
@@ -520,13 +523,11 @@ fn new_worker(
     tables.bind(snaps.clone())?;
     let mut search = WalkSearch::new(provider, costing.clone());
     search.set_own_seed_pruning(own_seed_pruning);
-    if let Some(limit) = std::env::args()
+    let walk_limit: Option<u32> = std::env::args()
         .skip_while(|arg| arg != "--walk-limit")
         .nth(1)
-        .and_then(|limit| limit.parse().ok())
-    {
-        search.set_walk_limit(Some(limit));
-    }
+        .and_then(|limit| limit.parse().ok());
+    search.set_walk_limit(walk_limit);
     search.bind(snaps.clone())?;
     let bind_ms = started.elapsed().as_secs_f64() * 1000.0;
     Ok((
@@ -535,6 +536,7 @@ fn new_worker(
             router: Router::new(Timed {
                 inner: search,
                 counters: Counters::default(),
+                fixed_cap: walk_limit,
                 trace: std::env::args().any(|arg| arg == "--trace"),
                 direction: Direction::Forward,
                 round: 0,
