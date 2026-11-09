@@ -10,9 +10,7 @@ use std::sync::Arc;
 
 use valinor_gtfs::{CompiledTimetable, TimetableSet, civil_date_of};
 use valinor_gtfs_rt::{CalendarDate, WindowDay};
-use valinor_transit::{
-    BaseWindow, ServiceDate, ServiceDay, Time, Timetable, WindowPart, materialize_parts,
-};
+use valinor_transit::{BaseWindow, ServiceDate, ServiceDay, Time, WindowPart, materialize_parts};
 
 use crate::error::StateError;
 
@@ -49,7 +47,6 @@ impl WindowData {
     /// Materializes the days `dates` of every file, in the order given.
     pub(crate) fn materialize(
         set: &TimetableSet,
-        timetables: &[Timetable],
         dates: Vec<ServiceDate>,
     ) -> Result<Self, StateError> {
         let uncovered = |date: ServiceDate| {
@@ -106,10 +103,9 @@ impl WindowData {
             .collect();
         let parts: Vec<WindowPart<'_>> = set
             .parts()
-            .zip(timetables)
             .zip(&offsets)
-            .map(|((part, timetable), offsets)| WindowPart {
-                timetable,
+            .map(|(part, offsets)| WindowPart {
+                timetable: part.compiled(),
                 first_trip: part.first_trip(),
                 day_offsets: offsets,
             })

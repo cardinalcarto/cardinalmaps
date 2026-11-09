@@ -366,6 +366,50 @@ mod tests {
         LoadedTimetable::from_bytes(feed(id, stops, patterns, trips)).expect("loads")
     }
 
+    /// A window read straight from a file matches one from its full in-memory copy.
+    #[test]
+    fn a_file_materializes_like_its_in_memory_copy() {
+        use crate::parse_service_date;
+        use valinor_transit::{ServiceDay, Time, TimetableSource};
+
+        let bytes = feed("feed", 8, 5, 3);
+        let compiled = crate::CompiledTimetable::parse(&bytes).expect("parses");
+        let timetable = compiled.to_timetable().expect("copies");
+        assert_eq!(
+            compiled.stop_count(),
+            TimetableSource::stop_count(&timetable)
+        );
+        assert_eq!(
+            TimetableSource::route_count(&compiled),
+            TimetableSource::route_count(&timetable)
+        );
+        let day = ServiceDay {
+            date: parse_service_date("20260615").expect("date"),
+            offset: Time::try_new(3_600).expect("in range"),
+        };
+        for raw in 0..u32::try_from(compiled.pattern_count()).expect("fits") {
+            let route = RouteId::new(raw);
+            assert_eq!(
+                compiled.resolved_trips_on(route, day.date, day.offset),
+                timetable.resolved_trips_on(route, day.date, day.offset)
+            );
+            assert_eq!(
+                compiled.route_stops_of(route),
+                TimetableSource::route_stops_of(&timetable, route)
+            );
+            assert_eq!(
+                compiled.route_attributes_of(route),
+                TimetableSource::route_attributes_of(&timetable, route)
+            );
+        }
+        for stop in 0..TimetableSource::stop_count(&compiled) {
+            assert_eq!(
+                TimetableSource::min_change(&compiled, stop),
+                TimetableSource::min_change(&timetable, stop)
+            );
+        }
+    }
+
     #[test]
     fn duplicate_feed_is_refused() {
         let error = TimetableSet::new(vec![loaded("a", 3, 2, 1), loaded("a", 4, 1, 1)])

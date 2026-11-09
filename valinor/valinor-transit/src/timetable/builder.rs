@@ -346,15 +346,97 @@ impl Timetable {
     }
 }
 
+/// Whatever a window can be materialized from: a [`Timetable`] on the heap, or a borrowed view.
+///
+/// Numbers are the source's own, from zero. [`materialize_parts`] offsets them.
+///
+/// # Performance
+///
+/// Everything here is on the cold path of building a window, not in the route scan.
+pub trait TimetableSource {
+    /// How many stops there are.
+    fn stop_count(&self) -> usize;
+
+    /// How many routes there are.
+    fn route_count(&self) -> usize;
+
+    /// The minimum change time at a stop, in seconds.
+    fn min_change(&self, stop: usize) -> i32;
+
+    /// The stop sequence of a route, in the source's numbering.
+    ///
+    /// # Errors
+    ///
+    /// If the route is unknown.
+    fn route_stops_of(&self, route: RouteId) -> Result<Vec<StopId>, BuildError>;
+
+    /// The attributes of a route.
+    ///
+    /// # Errors
+    ///
+    /// If the route is unknown.
+    fn route_attributes_of(&self, route: RouteId) -> Result<RouteAttributes, BuildError>;
+
+    /// The trips of a route that run on a date, resolved to times in a window
+    /// where that date starts at `offset` seconds.
+    ///
+    /// # Errors
+    ///
+    /// If a shifted time leaves the supported range, or the route is unknown.
+    fn resolved_trips_on(
+        &self,
+        route: RouteId,
+        date: ServiceDate,
+        offset: Time,
+    ) -> Result<Vec<ResolvedTrip>, BuildError>;
+}
+
+impl TimetableSource for Timetable {
+    fn stop_count(&self) -> usize {
+        self.min_change.len()
+    }
+
+    fn route_count(&self) -> usize {
+        self.routes.len()
+    }
+
+    fn min_change(&self, stop: usize) -> i32 {
+        self.min_change.get(stop).copied().unwrap_or(0)
+    }
+
+    fn route_stops_of(&self, route: RouteId) -> Result<Vec<StopId>, BuildError> {
+        self.routes
+            .get(route.index())
+            .map(|record| record.stops.clone())
+            .ok_or(BuildError::UnknownRoute(route))
+    }
+
+    fn route_attributes_of(&self, route: RouteId) -> Result<RouteAttributes, BuildError> {
+        self.routes
+            .get(route.index())
+            .map(|record| record.attributes)
+            .ok_or(BuildError::UnknownRoute(route))
+    }
+
+    fn resolved_trips_on(
+        &self,
+        route: RouteId,
+        date: ServiceDate,
+        offset: Time,
+    ) -> Result<Vec<ResolvedTrip>, BuildError> {
+        self.resolved_trips(route, date, offset)
+    }
+}
+
 /// One timetable of a window built from several, in that window's numbering.
 ///
 /// [`materialize_parts`] concatenates its stops and routes after those of the parts before it,
 /// so a part's stop number is its own plus the sum of the earlier parts' stops, and likewise for
 /// routes. Trips keep the numbers this part's caller gives them, offset by `first_trip`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct WindowPart<'a> {
     /// The part's own stops, routes, and trips, numbered from zero.
-    pub timetable: &'a Timetable,
+    pub timetable: &'a dyn TimetableSource,
     /// Added to each of this part's trip identifiers, so that parts can't collide.
     pub first_trip: u32,
     /// For each service day of the window, in slot order, where the day starts on the window's
@@ -401,11 +483,8 @@ pub fn materialize_parts(
         }
     }
 
-    let route_total: usize = parts.iter().map(|part| part.timetable.routes.len()).sum();
-    let stop_total: usize = parts
-        .iter()
-        .map(|part| part.timetable.min_change.len())
-        .sum();
+    let route_total: usize = parts.iter().map(|part| part.timetable.route_count()).sum();
+    let stop_total: usize = parts.iter().map(|part| part.timetable.stop_count()).sum();
     // Checked here so that the per-stop and per-route additions below can't overflow.
     offset_of(route_total)?;
     offset_of(stop_total)?;
@@ -419,14 +498,15 @@ pub fn materialize_parts(
     let mut stops = Vec::new();
     for part in parts {
         let timetable = part.timetable;
-        for (local_route, route) in timetable.routes.iter().enumerate() {
+        for local_route in 0..timetable.route_count() {
+            let local = RouteId::new(offset_of(local_route)?);
             let route_id = RouteId::new(route_base + offset_of(local_route)?);
-            attributes.push(route.attributes);
+            attributes.push(timetable.route_attributes_of(local)?);
             stops.clear();
             stops.extend(
-                route
-                    .stops
-                    .iter()
+                timetable
+                    .route_stops_of(local)?
+                    .into_iter()
                     .map(|stop| StopId::new(stop.into_inner() + stop_base)),
             );
             let stops_start = arena.push_stops(&stops)?;
@@ -437,11 +517,7 @@ pub fn materialize_parts(
                     directory.push(BlockRef::EMPTY);
                     continue;
                 };
-                let mut trips = timetable.resolved_trips(
-                    RouteId::new(offset_of(local_route)?),
-                    day.date,
-                    offset,
-                )?;
+                let mut trips = timetable.resolved_trips_on(local, day.date, offset)?;
                 for trip in &mut trips {
                     trip.trip = TripId::new(
                         trip.trip
@@ -464,9 +540,10 @@ pub fn materialize_parts(
                 });
             }
         }
-        min_change.extend_from_slice(&timetable.min_change);
-        stop_base += offset_of(timetable.min_change.len())?;
-        route_base += offset_of(timetable.routes.len())?;
+        let stop_count = timetable.stop_count();
+        min_change.extend((0..stop_count).map(|stop| timetable.min_change(stop)));
+        stop_base += offset_of(stop_count)?;
+        route_base += offset_of(timetable.route_count())?;
     }
 
     let index = StopRouteIndex::build(

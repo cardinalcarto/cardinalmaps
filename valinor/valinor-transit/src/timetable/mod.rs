@@ -13,7 +13,8 @@ mod window;
 pub use arena::ArenaUsage;
 pub(crate) use arena::{Arena, BlockRef, INFINITY, Lane, offset_of};
 pub use builder::{
-    PatternKey, StopKey, StopTime, Timetable, TimetableBuilder, WindowPart, materialize_parts,
+    PatternKey, StopKey, StopTime, Timetable, TimetableBuilder, TimetableSource, WindowPart,
+    materialize_parts,
 };
 pub use lanes::{ResolvedBlock, ResolvedLane, ResolvedTrip, StopEvent, StopRules};
 pub(crate) use window::RouteOccurrence;

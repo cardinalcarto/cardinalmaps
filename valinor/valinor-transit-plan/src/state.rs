@@ -44,7 +44,7 @@ use valinor_gtfs_rt::{
     DecodeError, FeedId, FeedInput, FeedKind, FeedStatus, NewStop, OverlayOptions, OverlayStats,
     RiderData, build_overlay,
 };
-use valinor_transit::{Snapshot, StopId, Timetable};
+use valinor_transit::{Snapshot, StopId};
 use valinor_walk::{SnappedStop, StopSnaps, TransferTable, WalkError};
 
 use crate::error::StateError;
@@ -234,8 +234,6 @@ pub struct StopLocation {
 pub(crate) struct TimetableData {
     /// Every loaded file, numbered as one.
     pub(crate) set: TimetableSet,
-    /// Each file's service, by the file's position in the set.
-    pub(crate) timetables: Vec<Timetable>,
     /// Every feed in the set.
     pub(crate) feeds: Vec<FeedId>,
 }
@@ -365,7 +363,7 @@ impl TransitState {
     ///
     /// # Performance
     ///
-    /// Copies every stop event into a [`Timetable`] once. A window is materialized on first use.
+    /// Checks every stop event once. A window is materialized on first use.
     ///
     /// # Errors
     ///
@@ -378,7 +376,8 @@ impl TransitState {
     ///
     /// # Performance
     ///
-    /// Copies every stop event of every file once. A window is materialized on first use.
+    /// Checks every stop event of every file once, in place.
+    /// A window is materialized on first use, from the memory-mapped files.
     ///
     /// # Errors
     ///
@@ -411,10 +410,9 @@ impl TransitState {
         config: StateConfig,
         snapper: Option<Box<dyn StopSnapper>>,
     ) -> Result<Self, StateError> {
-        let timetables = set
-            .parts()
-            .map(|part| part.compiled().to_timetable())
-            .collect::<Result<Vec<_>, _>>()?;
+        for part in set.parts() {
+            part.compiled().check_routable()?;
+        }
         let mut feeds = Vec::new();
         for (id, _) in set.feeds() {
             let feed = FeedId::new(id).map_err(|_| {
@@ -442,11 +440,7 @@ impl TransitState {
             }
         };
         Ok(Self {
-            data: Arc::new(TimetableData {
-                set,
-                timetables,
-                feeds,
-            }),
+            data: Arc::new(TimetableData { set, feeds }),
             config,
             current: RwLock::new(None),
             writer: Mutex::new(Writer::default()),
@@ -682,11 +676,7 @@ impl TransitState {
             writer.windows.insert(0, Arc::clone(&window));
             return Ok(window);
         }
-        let window = Arc::new(WindowData::materialize(
-            &self.data.set,
-            &self.data.timetables,
-            dates,
-        )?);
+        let window = Arc::new(WindowData::materialize(&self.data.set, dates)?);
         writer.windows.insert(0, Arc::clone(&window));
         writer.windows.truncate(WINDOW_CACHE_SIZE);
         Ok(window)

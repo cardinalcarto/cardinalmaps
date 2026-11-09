@@ -6,7 +6,7 @@
 use valinor_gtfs_rt::{
     FeedId, RouteInfo, ScheduledTrip, StaticLookup, TripQuery, TripRef, WindowDay,
 };
-use valinor_transit::{DaySlot, RouteId, StopId, Time};
+use valinor_transit::{DaySlot, RouteId, StopId, Time, TimetableSource};
 
 use crate::state::{TimetableData, TransitSnapshot};
 use crate::window::WindowData;
@@ -159,9 +159,6 @@ impl StaticLookup for CompiledLookup<'_> {
             return Vec::new();
         };
         let slot = usize::from(day.into_inner());
-        let Some(timetable) = self.data.timetables.get(part.index()) else {
-            return Vec::new();
-        };
         let Some(Some(part_day)) = self
             .window
             .part_days
@@ -174,7 +171,10 @@ impl StaticLookup for CompiledLookup<'_> {
         let Some(date) = self.window.dates.get(slot) else {
             return Vec::new();
         };
-        let Ok(trips) = timetable.resolved_trips(local, *date, part_day.offset) else {
+        let Ok(trips) = part
+            .compiled()
+            .resolved_trips_on(local, *date, part_day.offset)
+        else {
             return Vec::new();
         };
         let compiled = part.compiled();

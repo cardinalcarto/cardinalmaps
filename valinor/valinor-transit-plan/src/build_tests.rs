@@ -539,7 +539,10 @@ fn seattle_street_tiles(area: (f64, f64, f64, f64)) -> TempDir {
                 _ => 0.25,
             };
             let (row, col) = (id / 1440, id % 1440);
-            #[allow(clippy::cast_precision_loss, reason = "a tile's row and column are small")]
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a tile's row and column are small"
+            )]
             let (lat, lon) = (-90.0 + row as f64 * size, -180.0 + col as f64 * size);
             lat + size >= south && lat <= north && lon + size >= west && lon <= east
         })
@@ -590,6 +593,48 @@ fn a_downloaded_area_plans_on_partial_streets() {
         !response.journeys.is_empty(),
         "journeys exist within the area"
     );
+}
+
+/// Every Washington timetable reads the same, straight from its file, as from a heap copy.
+#[test]
+#[ignore = "needs the Washington build under /mnt/maps/cardinal/transit"]
+fn washington_files_materialize_like_their_in_memory_copies() {
+    use valinor_gtfs::parse_service_date;
+    use valinor_transit::{RouteId, Time, TimetableSource};
+
+    let dates: Vec<_> = ["20261109", "20261110", "20261111"]
+        .iter()
+        .map(|text| parse_service_date(text).expect("date"))
+        .collect();
+    let offset = Time::try_new(3_600).expect("in range");
+    let (mut files, mut routes, mut trips) = (0, 0, 0_usize);
+    for entry in fs::read_dir(Path::new(WASHINGTON).join("timetables")).expect("timetables") {
+        let path = entry.expect("entry").path();
+        // SAFETY: the Washington build's timetables are not modified while this test runs.
+        let loaded = unsafe { valinor_gtfs::LoadedTimetable::map(&path) }.expect("maps");
+        let compiled = loaded.timetable();
+        compiled.check_routable().expect("routable");
+        let copy = compiled.to_timetable().expect("copies");
+        files += 1;
+        for raw in 0..u32::try_from(compiled.pattern_count()).expect("fits") {
+            let route = RouteId::new(raw);
+            routes += 1;
+            for &date in &dates {
+                let from_file = compiled
+                    .resolved_trips_on(route, date, offset)
+                    .expect("reads");
+                assert_eq!(
+                    from_file,
+                    copy.resolved_trips(route, date, offset).expect("reads"),
+                    "{} route {raw}",
+                    path.display()
+                );
+                trips += from_file.len();
+            }
+        }
+    }
+    println!("compared {files} files, {routes} routes, {trips} scheduled trip-days");
+    assert_eq!(files, 26);
 }
 
 #[test]
