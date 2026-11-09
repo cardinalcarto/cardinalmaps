@@ -24,6 +24,8 @@ mod window;
 #[cfg(test)]
 mod e2e_tests;
 #[cfg(test)]
+mod review_tests;
+#[cfg(test)]
 mod scenario_tests;
 #[cfg(test)]
 mod street_tests;

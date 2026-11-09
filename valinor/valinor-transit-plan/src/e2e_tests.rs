@@ -18,6 +18,7 @@
     clippy::unwrap_used,
     clippy::cast_precision_loss,
     clippy::too_many_lines,
+    clippy::match_same_arms,
     reason = "reporting tests"
 )]
 

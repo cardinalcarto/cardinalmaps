@@ -317,3 +317,29 @@ async fn ingest_is_refused_without_a_configured_token() {
     let (status, ..) = send(&state, ingest_request(Some("x"), "alerts", "x")).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn review_ingest_reads_the_body_before_checking_the_token() {
+    let state = transit_state(Some("secret"));
+    let large = "x".repeat(2 << 20);
+    // No token at all: an unauthenticated client should get 401, not have its body buffered.
+    let (status, ..) = send(&state, ingest_request(None, "alerts", &large)).await;
+    println!("unauthenticated 2 MiB PUT: {status}");
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn review_an_empty_configured_token_refuses_ingest() {
+    let parsed = cli(&["--config", "c.json", "--transit-ingest-token", ""]);
+    println!("empty flag parses as {:?}", parsed.transit_ingest_token);
+    let state = transit_state(Some(""));
+    let request = Request::builder()
+        .method("PUT")
+        .uri("/transit/feeds/bus/alerts")
+        .header("authorization", "Bearer ")
+        .body(Body::from(""))
+        .unwrap();
+    let (status, ..) = send(&state, request).await;
+    println!("empty token, header 'Bearer ': {status}");
+    assert_ne!(status, StatusCode::OK);
+}
