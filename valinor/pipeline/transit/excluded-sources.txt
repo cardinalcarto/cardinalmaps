@@ -1,12 +1,7 @@
-# Transitous source names this pipeline never fetches: nationwide transit agencies.
+# Transitous source names this pipeline never fetches.
 #
 # One exact, case-sensitive source name per line, as written in Transitous's `feeds/*.json`.
 # A name applies in every region, for both static and real-time sources.
 # Matching sources are left out before anything is downloaded
-# and appear in `feeds.json` under `skipped` with the reason "nationwide agency".
+# and appear in `feeds.json` under `skipped` with the reason "excluded".
 # Nothing is inferred: a source that isn't listed here is fetched.
-
-Amtrak
-flixbus
-flixbus-horaires-theoriques-du-reseau-europeen-1
-Megabus

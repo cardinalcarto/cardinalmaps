@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 import fetch_feeds
-from fetch_feeds import NATIONWIDE_REASON, Resolution, ResolvedSource
+from fetch_feeds import EXCLUDED_REASON, Resolution, ResolvedSource
 
 # Stands in for Transitous's `fetch.py`, driven by the source name.
 FAKE_FETCH = """#!/usr/bin/env python3
@@ -56,7 +56,7 @@ class ClassifyTests(unittest.TestCase):
 
     def test_excluded_source_is_skipped_before_resolution(self):
         plan = self.classify([{"name": "Amtrak", "type": "http"}], excluded={"Amtrak"})
-        self.assertEqual(plan.skipped, [{"id": "r-Amtrak", "reason": NATIONWIDE_REASON}])
+        self.assertEqual(plan.skipped, [{"id": "r-Amtrak", "reason": EXCLUDED_REASON}])
         self.assertEqual(plan.static, [])
 
     def test_exclusion_wins_over_upstream_skip(self):
@@ -64,7 +64,7 @@ class ClassifyTests(unittest.TestCase):
             [{"name": "Amtrak", "type": "http", "skip": True, "skip-reason": "x"}],
             excluded={"Amtrak"},
         )
-        self.assertEqual(plan.skipped[0]["reason"], NATIONWIDE_REASON)
+        self.assertEqual(plan.skipped[0]["reason"], EXCLUDED_REASON)
 
     def test_exclusion_is_exact(self):
         plan = self.classify(
@@ -243,7 +243,7 @@ class StageTests(unittest.TestCase):
         self.assertEqual(
             manifest["skipped"],
             [
-                {"id": "r-Amtrak", "reason": NATIONWIDE_REASON},
+                {"id": "r-Amtrak", "reason": EXCLUDED_REASON},
                 {"id": "r-bad", "reason": "Error: Could not fetch bad: boom"},
                 {"id": "r-empty", "reason": "fetch.py produced no output"},
             ],

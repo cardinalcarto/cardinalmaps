@@ -43,9 +43,9 @@ Sources that need Transitous's encrypted keys or `use-feed-proxy` are skipped.
 
 ## Excluded agencies
 
-[`excluded-sources.txt`](excluded-sources.txt) lists Transitous source names to never fetch: nationwide agencies.
+[`excluded-sources.txt`](excluded-sources.txt) lists Transitous source names to never fetch.
 It is an exact, reviewable list, applied before anything is downloaded.
-Excluded sources appear in `skipped` with the reason "nationwide agency".
+Excluded sources appear in `skipped` with the reason "excluded".
 
 ## Output
 

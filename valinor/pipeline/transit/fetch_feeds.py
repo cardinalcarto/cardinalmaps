@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Protocol
 
-NATIONWIDE_REASON = "nationwide agency"
+EXCLUDED_REASON = "excluded"
 ENCRYPTED_SENTINEL = "AGE-ENCRYPTED:"
 GENERATIONS = ".generations"
 CURRENT = ".current"
@@ -193,7 +193,7 @@ def classify(
 
         # First, so that excluded sources never reach a resolver or a server.
         if name in excluded:
-            plan.skipped.append({"id": feed_id, "reason": NATIONWIDE_REASON})
+            plan.skipped.append({"id": feed_id, "reason": EXCLUDED_REASON})
             plan.excluded.append(StaticFeed(feed_id, region, name, entry, {}))
             continue
         if entry.get("skip"):
