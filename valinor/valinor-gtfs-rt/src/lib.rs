@@ -35,8 +35,8 @@ pub use feed::{
 };
 pub use lookup::{RouteInfo, ScheduledTrip, StaticLookup, TripQuery, TripRef, WindowDay};
 pub use overlay::{
-    AlertImpact, NewStop, OverlayError, OverlayOptions, OverlayStats, RealtimeOverlay,
-    build_overlay,
+    AlertImpact, DEFAULT_MAX_PREDICTION_OFFSET, NewStop, OverlayError, OverlayOptions,
+    OverlayStats, RealtimeOverlay, build_overlay,
 };
 pub use rider::{
     AlertDetails, InformedEntity, RiderData, StopTimeDetails, TripDetails, VehicleDetails,

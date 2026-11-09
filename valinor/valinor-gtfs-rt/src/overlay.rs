@@ -37,17 +37,27 @@ use crate::rider::{
 };
 use crate::states::TripState;
 
+/// The furthest, in seconds, a prediction may be from its schedule before it is ignored.
+///
+/// Absolute times in a feed are otherwise unchecked, so one bad timestamp could move a trip
+/// anywhere in the window. Real delays can reach hours, but not half a day:
+/// a trip that late is canceled, or replaced, in practice.
+pub const DEFAULT_MAX_PREDICTION_OFFSET: i64 = 12 * 3600;
+
 /// Choices the overlay leaves to the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OverlayOptions {
     /// The minimum change time at stops that exist only in real-time data.
     pub new_stop_min_change: Seconds,
+    /// See [`DEFAULT_MAX_PREDICTION_OFFSET`].
+    pub max_prediction_offset: i64,
 }
 
 impl Default for OverlayOptions {
     fn default() -> Self {
         Self {
             new_stop_min_change: Seconds::ZERO,
+            max_prediction_offset: DEFAULT_MAX_PREDICTION_OFFSET,
         }
     }
 }
@@ -185,6 +195,9 @@ pub struct RealtimeOverlay {
     pub stats: OverlayStats,
 }
 
+/// The latest a `DUPLICATED` trip's `start_time` may be, in seconds of its service day.
+const MAX_DUPLICATE_START_TIME: u32 = 3 * 86_400;
+
 /// Input a change pipeline carries for each feed's data.
 #[derive(Debug, Default)]
 struct FreshFeeds {
@@ -235,6 +248,7 @@ struct Context<'a, L: StaticLookup + ?Sized> {
     base: Arc<BaseWindow>,
     clocks: Vec<DayClock>,
     now: i64,
+    options: OverlayOptions,
     next_trip_id: u32,
     blocks: HashMap<(RouteId, DaySlot), Vec<ScheduledTrip>>,
     new_stops: HashMap<ScopedId, StopId>,
@@ -295,6 +309,7 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
         base,
         clocks,
         now,
+        options,
         next_trip_id: lookup.first_unused_trip_id(),
         blocks: HashMap::new(),
         new_stops: HashMap::new(),
@@ -564,6 +579,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             &scheduled.events,
             &scheduled.stop_sequences,
             &set.modifications,
+            self.options.max_prediction_offset,
             &resolve,
         ) {
             Ok(layout) => {
@@ -746,6 +762,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 events: &base_events,
                 sequences: &sequences,
                 stops: &stops,
+                max_offset: self.options.max_prediction_offset,
             },
             &update.stop_time_update,
             update.delay,
@@ -889,9 +906,13 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         let new_stops = &self.new_stops;
         let clocks = &self.clocks;
         let resolve = |id: &str| find_stop(lookup, new_stops, feed, id);
-        let Some(built) =
-            build_added_events(&update.stop_time_update, date_or_original, clocks, &resolve)
-        else {
+        let Some(built) = build_added_events(
+            &update.stop_time_update,
+            date_or_original,
+            clocks,
+            self.options.max_prediction_offset,
+            &resolve,
+        ) else {
             self.stats.invalid_added_trips += 1;
             self.push_unmatched(feed, trip_id, date, start_time, update);
             return Ok(());
@@ -966,7 +987,12 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             .start_date
             .as_deref()
             .and_then(CalendarDate::parse);
-        let new_time = properties.start_time.as_deref().and_then(parse_start_time);
+        // GTFS times stop short of this, so anything later is a nonsense start time.
+        let new_time = properties
+            .start_time
+            .as_deref()
+            .and_then(parse_start_time)
+            .filter(|&time| time <= MAX_DUPLICATE_START_TIME);
         // The template may run on the original date only, so try that first.
         let source_days = date
             .into_iter()
@@ -1027,6 +1053,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 events: &events,
                 sequences: &sequences,
                 stops: &stops,
+                max_offset: self.options.max_prediction_offset,
             },
             &update.stop_time_update,
             update.delay,
@@ -1576,11 +1603,13 @@ fn added_event_unix(event: Option<&StopTimeEvent>) -> Option<i64> {
 
 /// Builds an added trip's stops and events from its stop time updates.
 ///
-/// Every stop must be resolvable and timed, since nothing else defines this trip.
+/// Every stop must be resolvable and timed, since nothing else defines this trip,
+/// and within `max_offset` seconds of the two days its service day can reach.
 fn build_added_events(
     updates: &[StopTimeUpdate],
     date: Option<CalendarDate>,
     clocks: &[DayClock],
+    max_offset: i64,
     resolve: &dyn Fn(&str) -> Option<StopId>,
 ) -> Option<(Vec<StopId>, Vec<StopEvent>, DayClock)> {
     let mut stops = Vec::with_capacity(updates.len());
@@ -1619,6 +1648,12 @@ fn build_added_events(
             .copied()
             .find(|c| c.start_unix() <= first)?,
     };
+    if unix.iter().any(|&(arrival, departure)| {
+        !within_service_day(arrival, clock, max_offset)
+            || !within_service_day(departure, clock, max_offset)
+    }) {
+        return None;
+    }
     let mut arrivals: Vec<i64> = unix.iter().map(|&(a, _)| clock.window_seconds(a)).collect();
     let mut departures: Vec<i64> = unix.iter().map(|&(_, d)| clock.window_seconds(d)).collect();
     repair(&mut arrivals, &mut departures, Some(0));
@@ -1631,6 +1666,18 @@ fn build_added_events(
         });
     }
     Some((stops, events, clock))
+}
+
+/// Whether a POSIX time could belong to `clock`'s service day, within `max_offset` seconds.
+///
+/// GTFS times run past midnight, so a service day spans up to two calendar days.
+fn within_service_day(unix: i64, clock: DayClock, max_offset: i64) -> bool {
+    let from = clock.start_unix().saturating_sub(max_offset);
+    let to = clock
+        .start_unix()
+        .saturating_add(2 * 86_400)
+        .saturating_add(max_offset);
+    (from..=to).contains(&unix)
 }
 
 /// Seconds from the start of `clock`'s service day to a window time on it.

@@ -53,13 +53,15 @@ fn select(
 /// # Errors
 ///
 /// If a selector or a replacement stop can't be resolved, ranges overlap, too few stops remain,
-/// or a time falls out of range.
+/// a time falls out of range, or a time or delay is further than `max_offset` seconds from
+/// its reference.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn apply_modifications(
     stops: &[StopId],
     events: &[StopEvent],
     sequences: &[u32],
     modifications: &[Modification],
+    max_offset: i64,
     resolve_stop: &dyn Fn(&str) -> Option<StopId>,
 ) -> Result<ModifiedLayout, ModificationError> {
     // Stable: positions are unique except for equal starts, which are overlaps anyway.
@@ -107,7 +109,19 @@ pub(crate) fn apply_modifications(
         out_sequences.push(Some(sequences[position]));
     };
 
+    let within = |seconds: i32| i64::from(seconds).unsigned_abs() <= max_offset.unsigned_abs();
     for (start, end, modification) in ranges {
+        if !within(
+            modification
+                .propagated_modification_delay
+                .unwrap_or_default(),
+        ) || modification
+            .replacement_stops
+            .iter()
+            .any(|r| !within(r.travel_time_to_stop.unwrap_or_default()))
+        {
+            return Err(ModificationError::TimeOutOfRange);
+        }
         if start < cursor || end < start {
             return Err(ModificationError::Overlap);
         }
@@ -194,6 +208,8 @@ mod tests {
     use super::*;
     use crate::proto::ReplacementStop;
 
+    const MAX_OFFSET: i64 = 12 * 3600;
+
     fn t(seconds: i32) -> Time {
         Time::try_new(seconds).expect("in range")
     }
@@ -255,6 +271,7 @@ mod tests {
             &events(&[0, 100, 200, 300]),
             &[1, 2, 3, 4],
             &[detour],
+            MAX_OFFSET,
             &resolver,
         )
         .expect("valid");
@@ -275,6 +292,7 @@ mod tests {
             &events(&[100, 200]),
             &[1, 2],
             &[modification(1, Some(1), vec![replacement(-60, "99")])],
+            MAX_OFFSET,
             &resolver,
         )
         .expect("valid");
@@ -289,6 +307,7 @@ mod tests {
             &events(&[0, 100]),
             &[1, 2],
             &[modification(2, None, vec![replacement(40, "99")])],
+            MAX_OFFSET,
             &resolver,
         )
         .expect("valid");
@@ -306,6 +325,7 @@ mod tests {
             &events(&[0, 100, 200, 300]),
             &[1, 2, 3, 4],
             &[second, first],
+            MAX_OFFSET,
             &resolver,
         )
         .expect("valid");
@@ -323,6 +343,7 @@ mod tests {
                 modification(1, Some(2), vec![replacement(10, "91")]),
                 modification(2, Some(3), vec![replacement(10, "92")]),
             ],
+            MAX_OFFSET,
             &resolver,
         );
         assert_eq!(result, Err(ModificationError::Overlap));
@@ -336,6 +357,7 @@ mod tests {
             &trip.1,
             &[1, 2],
             &[modification(1, Some(1), vec![replacement(10, "nope")])],
+            MAX_OFFSET,
             &resolver,
         );
         assert_eq!(bad_stop, Err(ModificationError::UnknownReplacementStop));
@@ -344,9 +366,23 @@ mod tests {
             &trip.1,
             &[1, 2],
             &[modification(9, None, vec![])],
+            MAX_OFFSET,
             &resolver,
         );
         assert_eq!(bad_selector, Err(ModificationError::UnknownSelector));
+    }
+
+    #[test]
+    fn a_travel_time_past_the_limit_is_rejected() {
+        let result = apply_modifications(
+            &stops(&[10, 20]),
+            &events(&[0, 100]),
+            &[1, 2],
+            &[modification(2, Some(2), vec![replacement(1_000_000, "99")])],
+            MAX_OFFSET,
+            &resolver,
+        );
+        assert_eq!(result, Err(ModificationError::TimeOutOfRange));
     }
 
     #[test]
@@ -356,6 +392,7 @@ mod tests {
             &events(&[0, 100]),
             &[1, 2],
             &[modification(1, Some(2), vec![replacement(10, "99")])],
+            MAX_OFFSET,
             &resolver,
         );
         assert_eq!(result, Err(ModificationError::TooShort));

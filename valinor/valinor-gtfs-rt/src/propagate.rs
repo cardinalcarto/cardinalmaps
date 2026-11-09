@@ -4,7 +4,8 @@
 //! - `SKIPPED` affects only its own stop, and delays propagate across it.
 //! - `NO_DATA` clears the delay until the next update.
 //! - Stops before the first update keep their scheduled times.
-//! - The trip's overall `delay` is used only when no stop has timing.
+//! - The trip's overall `delay` applies from the start of the trip until the first stop's delay.
+//! - A prediction further from the schedule than the configured limit is ignored.
 //!
 //! Updates can disagree with the schedule or with one another,
 //! but the route scan requires times to move forward along each trip,
@@ -55,6 +56,8 @@ pub(crate) struct Trip<'a> {
     pub(crate) events: &'a [StopEvent],
     pub(crate) sequences: &'a [Option<u32>],
     pub(crate) stops: &'a [StopId],
+    /// How far a prediction may be from the schedule, in seconds, before it is ignored.
+    pub(crate) max_offset: i64,
 }
 
 /// Pairs stop time updates with the stop positions of a trip.
@@ -63,6 +66,7 @@ pub(crate) struct Trip<'a> {
 fn match_updates(
     trip: &Trip<'_>,
     updates: &[StopTimeUpdate],
+    clock: DayClock,
     resolve_stop: &dyn Fn(&str) -> Option<StopId>,
 ) -> (Vec<(usize, usize)>, u32) {
     let mut matched = Vec::with_capacity(updates.len());
@@ -78,12 +82,7 @@ fn match_updates(
                 .position(|&s| s == Some(sequence))
                 .map(|offset| cursor + offset)
         } else if let Some(stop_id) = update.stop_id.as_deref() {
-            resolve_stop(stop_id).and_then(|stop| {
-                let tail = trip.stops.get(cursor..).unwrap_or(&[]);
-                tail.iter()
-                    .position(|&s| s == stop)
-                    .map(|offset| cursor + offset)
-            })
+            resolve_stop(stop_id).and_then(|stop| visit_of(trip, stop, update, cursor, clock))
         } else {
             None
         };
@@ -98,14 +97,50 @@ fn match_updates(
     (matched, unmatched)
 }
 
+/// Picks which visit to `stop`, at or after `cursor`, a `stop_id`-only update means.
+///
+/// With one candidate there is nothing to decide. On a loop, the update's absolute time picks
+/// the nearest scheduled visit, as producers may have dropped earlier stops.
+/// A delay alone can't say which visit it means, so that update is ambiguous and matches nothing.
+fn visit_of(
+    trip: &Trip<'_>,
+    stop: StopId,
+    update: &StopTimeUpdate,
+    cursor: usize,
+    clock: DayClock,
+) -> Option<usize> {
+    let tail = trip.stops.get(cursor..).unwrap_or(&[]);
+    let mut visits = tail
+        .iter()
+        .enumerate()
+        .filter(|&(_, &s)| s == stop)
+        .map(|(offset, _)| cursor + offset);
+    let first = visits.next()?;
+    if !tail[first - cursor + 1..].contains(&stop) {
+        return Some(first);
+    }
+    let predicted = update
+        .arrival
+        .as_ref()
+        .or(update.departure.as_ref())
+        .and_then(|event| event.time)
+        .filter(|&time| time > 0)
+        .map(|time| clock.window_seconds(time))?;
+    core::iter::once(first)
+        .chain(visits)
+        .min_by_key(|&position| seconds_of(trip.events[position].arrival).abs_diff(predicted))
+}
+
 /// The window time an event gives, against the time scheduled for it.
 ///
 /// An absolute `time` is the prediction itself; `delay` is relative to the schedule.
 /// `time` of zero or less is the protobuf default or a data error, and counts as absent.
+/// A result too far from the schedule, or outside the window's range, is ignored and counted.
 fn event_seconds(
     event: Option<&StopTimeEvent>,
     scheduled: i64,
     clock: DayClock,
+    max_offset: i64,
     out_of_range: &mut u32,
 ) -> Option<i64> {
     let event = event?;
@@ -113,7 +148,7 @@ fn event_seconds(
         Some(time) => clock.window_seconds(time),
         None => scheduled.saturating_add(i64::from(event.delay?)),
     };
-    if window_time(seconds).is_err() {
+    if seconds.abs_diff(scheduled) > max_offset.unsigned_abs() || window_time(seconds).is_err() {
         *out_of_range += 1;
         return None;
     }
@@ -162,7 +197,7 @@ pub(crate) fn propagate(
     clock: DayClock,
     resolve_stop: &dyn Fn(&str) -> Option<StopId>,
 ) -> Result<Propagated, ()> {
-    let (matched, unmatched) = match_updates(trip, updates, resolve_stop);
+    let (matched, unmatched) = match_updates(trip, updates, clock, resolve_stop);
     let mut out_of_range = 0;
     let stops = trip.events.len();
     let mut arrivals: Vec<i64> = trip.events.iter().map(|e| seconds_of(e.arrival)).collect();
@@ -175,22 +210,14 @@ pub(crate) fn propagate(
     let mut known = vec![(false, false); stops];
     let mut predictions = vec![Prediction::default(); stops];
 
-    // Stop-level timing takes precedence; the trip's `delay` only stands in when there is none.
-    let has_stop_timing = matched.iter().any(|&(_, index)| {
-        matches!(
-            updates
-                .get(index)
-                .map(StopTimeUpdate::schedule_relationship),
-            Some(StopRelationship::Scheduled | StopRelationship::Unscheduled)
-        ) && updates
-            .get(index)
-            .is_some_and(|u| u.arrival.is_some() || u.departure.is_some())
+    // The trip's `delay` holds from the first stop until a stop gives its own.
+    let mut delay: Option<i64> = trip_delay.map(i64::from).filter(|delay| {
+        let in_bounds = delay.unsigned_abs() <= trip.max_offset.unsigned_abs();
+        if !in_bounds {
+            out_of_range += 1;
+        }
+        in_bounds
     });
-    let mut delay: Option<i64> = if has_stop_timing {
-        None
-    } else {
-        trip_delay.map(i64::from)
-    };
     let mut first_timed: Option<usize> = delay.map(|_| 0);
 
     let mut next = matched.iter().copied().peekable();
@@ -226,12 +253,14 @@ pub(crate) fn propagate(
                     update.arrival.as_ref(),
                     scheduled_arrival,
                     clock,
+                    trip.max_offset,
                     &mut out_of_range,
                 );
                 let departure_time = event_seconds(
                     update.departure.as_ref(),
                     scheduled_departure,
                     clock,
+                    trip.max_offset,
                     &mut out_of_range,
                 );
                 if let Some(time) = arrival_time {
@@ -351,6 +380,7 @@ mod tests {
     use crate::lookup::WindowDay;
 
     const DAY_START: i64 = 1_000_000;
+    const TEST_MAX_OFFSET: i64 = 12 * 3600;
 
     fn clock() -> DayClock {
         DayClock::new(
@@ -420,6 +450,7 @@ mod tests {
                 events,
                 sequences: &sequences,
                 stops: &stops,
+                max_offset: TEST_MAX_OFFSET,
             },
             updates,
             trip_delay,
@@ -490,10 +521,54 @@ mod tests {
     }
 
     #[test]
-    fn trip_delay_applies_only_without_stop_timing() {
+    fn trip_delay_applies_until_the_first_stop_with_a_delay() {
         let s = schedule(&[(0, 0), (100, 100)]);
         assert_eq!(arrivals(&run(&s, &[], Some(50))), vec![50, 150]);
-        assert_eq!(arrivals(&run(&s, &[delayed(2, 5)], Some(50))), vec![0, 105]);
+        assert_eq!(
+            arrivals(&run(&s, &[delayed(2, 5)], Some(50))),
+            vec![50, 105]
+        );
+    }
+
+    #[test]
+    fn a_trip_delay_past_the_limit_is_ignored() {
+        let s = schedule(&[(0, 0), (100, 100)]);
+        let p = run(&s, &[], Some(i32::MAX));
+        assert_eq!(p.out_of_range, 1);
+        assert_eq!(arrivals(&p), vec![0, 100]);
+    }
+
+    #[test]
+    fn a_prediction_past_the_limit_is_ignored() {
+        let s = schedule(&[(0, 0), (100, 100)]);
+        let far = StopTimeUpdate {
+            arrival: Some(StopTimeEvent {
+                time: Some(DAY_START + 100 + TEST_MAX_OFFSET + 1),
+                ..Default::default()
+            }),
+            ..stu(2)
+        };
+        let p = run(&s, &[far], None);
+        assert_eq!(p.out_of_range, 1);
+        assert_eq!(arrivals(&p), vec![0, 100]);
+    }
+
+    #[test]
+    fn a_prediction_at_the_limit_is_used() {
+        let s = schedule(&[(0, 0), (100, 100)]);
+        let far = StopTimeUpdate {
+            arrival: Some(StopTimeEvent {
+                time: Some(DAY_START + 100 + TEST_MAX_OFFSET),
+                ..Default::default()
+            }),
+            ..stu(2)
+        };
+        let p = run(&s, &[far], None);
+        assert_eq!(p.out_of_range, 0);
+        assert_eq!(
+            arrivals(&p)[1],
+            100 + i32::try_from(TEST_MAX_OFFSET).expect("small")
+        );
     }
 
     #[test]
@@ -514,8 +589,7 @@ mod tests {
         assert!(p.repaired > 0);
     }
 
-    #[test]
-    fn updates_match_the_right_visit_of_a_loop() {
+    fn loop_trip_run(updates: &[StopTimeUpdate]) -> Propagated {
         let s = schedule(&[(0, 0), (100, 100), (200, 200)]);
         let stops = [StopId::new(7), StopId::new(8), StopId::new(7)];
         let sequences = [Some(1), Some(2), Some(3)];
@@ -523,22 +597,53 @@ mod tests {
             events: &s,
             sequences: &sequences,
             stops: &stops,
+            max_offset: TEST_MAX_OFFSET,
         };
         let by_id = |id: &str| (id == "A").then_some(StopId::new(7));
-        let first = StopTimeUpdate {
+        propagate(&trip, updates, None, clock(), &by_id).expect("in range")
+    }
+
+    fn at_a(time: Option<i64>, delay: Option<i32>) -> StopTimeUpdate {
+        StopTimeUpdate {
             stop_id: Some("A".into()),
             arrival: Some(StopTimeEvent {
-                delay: Some(10),
+                delay,
+                time,
                 ..Default::default()
             }),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_stop_id_update_on_a_loop_finds_the_nearest_visit() {
+        let first = loop_trip_run(&[at_a(Some(DAY_START + 10), None)]);
+        assert_eq!(arrivals(&first), vec![10, 110, 210]);
+        let last = loop_trip_run(&[at_a(Some(DAY_START + 210), None)]);
+        assert_eq!(arrivals(&last), vec![0, 100, 210]);
+    }
+
+    #[test]
+    fn a_delay_alone_cannot_pick_a_visit_on_a_loop() {
+        let p = loop_trip_run(&[at_a(None, Some(10))]);
+        assert_eq!(p.unmatched, 1);
+        assert_eq!(arrivals(&p), vec![0, 100, 200]);
+    }
+
+    #[test]
+    fn a_stop_visited_once_needs_no_time_to_match() {
+        let s = schedule(&[(0, 0), (100, 100)]);
+        let stops = [StopId::new(7), StopId::new(8)];
+        let sequences = [Some(1), Some(2)];
+        let trip = Trip {
+            events: &s,
+            sequences: &sequences,
+            stops: &stops,
+            max_offset: TEST_MAX_OFFSET,
         };
-        let second = StopTimeUpdate {
-            stop_sequence: Some(3),
-            ..first.clone()
-        };
-        let p = propagate(&trip, &[first, second], None, clock(), &by_id).expect("in range");
-        assert_eq!(arrivals(&p), vec![10, 110, 210]);
+        let by_id = |id: &str| (id == "A").then_some(StopId::new(7));
+        let p = propagate(&trip, &[at_a(None, Some(10))], None, clock(), &by_id).expect("in range");
+        assert_eq!(arrivals(&p), vec![10, 110]);
     }
 
     #[test]

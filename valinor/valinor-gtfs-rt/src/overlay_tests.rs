@@ -406,6 +406,18 @@ fn assigned_stop_id_replaces_the_pattern() {
 }
 
 #[test]
+fn an_added_trip_at_an_absurd_time_is_unusable() {
+    let net = three_stop_net();
+    let far = unix_on_today(1_000_000);
+    let added = with_relationship(
+        timed_new_trip("extra", &[("A", far), ("B", far + 100)]),
+        Trip::New,
+    );
+    let overlay = run(&net, vec![fresh(vec![added])]);
+    assert_eq!(overlay.stats.invalid_added_trips, 1);
+}
+
+#[test]
 fn no_trip_to_added_lays_out_a_new_pattern() {
     let net = three_stop_net();
     let added = with_relationship(
