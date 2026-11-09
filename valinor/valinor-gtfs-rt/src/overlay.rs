@@ -277,6 +277,8 @@ struct Context<'a, L: StaticLookup + ?Sized> {
     lookup: &'a L,
     base: Arc<BaseWindow>,
     clocks: Vec<DayClock>,
+    /// Each feed's own day clocks, for feeds in a time zone other than the window's.
+    feed_clocks: HashMap<FeedId, Vec<DayClock>>,
     now: i64,
     options: OverlayOptions,
     next_trip_id: u32,
@@ -326,7 +328,16 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
 
     let mut statuses = Vec::with_capacity(feeds.len());
     let mut fresh = FreshFeeds::default();
+    let mut feed_clocks: HashMap<FeedId, Vec<DayClock>> = HashMap::new();
     for input in feeds {
+        feed_clocks.entry(input.feed.clone()).or_insert_with(|| {
+            clocks
+                .iter()
+                .map(|clock| {
+                    clock.at_feed_start(lookup.feed_day_start_unix(&input.feed, clock.slot))
+                })
+                .collect()
+        });
         let status = input.status(now);
         let stale = status.stale;
         statuses.push(status);
@@ -341,6 +352,7 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
         lookup,
         base,
         clocks,
+        feed_clocks,
         now,
         options,
         next_trip_id: lookup.first_unused_trip_id(),
@@ -423,8 +435,18 @@ fn find_stop<L: StaticLookup + ?Sized>(
 }
 
 impl<L: StaticLookup + ?Sized> Context<'_, L> {
-    fn clock_on(&self, date: CalendarDate) -> Option<DayClock> {
-        self.clocks.iter().copied().find(|c| c.date == date)
+    /// The feed's own day clocks; every feed in this build has them.
+    fn clocks_of(&self, feed: &FeedId) -> &[DayClock] {
+        self.feed_clocks
+            .get(feed)
+            .map_or(self.clocks.as_slice(), Vec::as_slice)
+    }
+
+    fn clock_on(&self, feed: &FeedId, date: CalendarDate) -> Option<DayClock> {
+        self.clocks_of(feed)
+            .iter()
+            .copied()
+            .find(|c| c.date == date)
     }
 
     fn trip_key(&self, trip: TripId, day: DaySlot) -> TripKey {
@@ -527,7 +549,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         start_time: Option<u32>,
     ) -> Result<Option<TripRef>, Resolution> {
         if let Some(date) = date {
-            if self.clock_on(date).is_none() {
+            if self.clock_on(feed, date).is_none() {
                 return Err(Resolution::OutsideWindow);
             }
             return Ok(self.lookup.trip(
@@ -541,7 +563,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         }
         // No date: of the days this trip runs, take the one whose run is closest to now.
         let mut best: Option<(i64, TripRef)> = None;
-        for clock in &self.clocks {
+        for clock in self.clocks_of(feed) {
             let Some(found) = self.lookup.trip(
                 feed,
                 &TripQuery {
@@ -576,7 +598,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 .service_dates
                 .iter()
                 .filter_map(|d| CalendarDate::parse(d))
-                .filter(|&date| self.clock_on(date).is_some())
+                .filter(|&date| self.clock_on(&feed, date).is_some())
                 .collect();
             let start_times: BTreeSet<Option<u32>> = if set.start_times.is_empty() {
                 BTreeSet::from([None])
@@ -618,7 +640,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         start_time: Option<u32>,
         set: &TripModifications,
     ) {
-        if self.clock_on(date).is_none() {
+        if self.clock_on(feed, date).is_none() {
             return;
         }
         let Some(found) = self.lookup.trip(
@@ -821,7 +843,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             return;
         }
 
-        let clock = self.clocks[usize::from(reference.day.into_inner())];
+        let clock = self.clocks_of(feed)[usize::from(reference.day.into_inner())];
         let lookup = self.lookup;
         let new_stops = &self.new_stops;
         let resolve = |id: &str| find_stop(lookup, new_stops, feed, id);
@@ -1032,12 +1054,13 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         // Some producers still mark a trip that exists in the static feed as `ADDED`;
         // treating any match as a replacement avoids running it twice.
         let date_or_original = date.or_else(|| {
-            original.map(|reference| self.clocks[usize::from(reference.day.into_inner())].date)
+            original
+                .map(|reference| self.clocks_of(feed)[usize::from(reference.day.into_inner())].date)
         });
 
         let lookup = self.lookup;
         let new_stops = &self.new_stops;
-        let clocks = &self.clocks;
+        let clocks = self.clocks_of(feed);
         let resolve = |id: &str| find_stop(lookup, new_stops, feed, id);
         let Some(built) = build_added_events(
             &update.stop_time_update,
@@ -1134,7 +1157,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         let source_days = date
             .into_iter()
             .chain(new_date)
-            .chain(self.clocks.iter().map(|c| c.date));
+            .chain(self.clocks_of(feed).iter().map(|c| c.date));
         let mut template = None;
         for day in source_days {
             if let Ok(Some(found)) = self.resolve_trip(feed, trip_id, Some(day), None) {
@@ -1147,7 +1170,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             self.push_unmatched(feed, trip_id, date, None, update);
             return Ok(());
         };
-        let target_clock = new_date.and_then(|d| self.clock_on(d));
+        let target_clock = new_date.and_then(|d| self.clock_on(feed, d));
         let Some(target_clock) = target_clock else {
             self.stats.invalid_added_trips += 1;
             self.push_unmatched(feed, trip_id, date, None, update);
@@ -1158,7 +1181,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             self.push_unmatched(feed, trip_id, date, None, update);
             return Ok(());
         };
-        let source_clock = self.clocks[usize::from(template.day.into_inner())];
+        let source_clock = self.clocks_of(feed)[usize::from(template.day.into_inner())];
         let first = scheduled.events.first().map(|e| e.departure.into_inner());
         // With no new start time the copy keeps the template's time of day.
         let shift = match (new_time, first) {
@@ -1367,12 +1390,16 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             let new_stops = &self.new_stops;
             let resolve = |id: &str| find_stop(lookup, new_stops, &feed, id);
             let rider_index = self.rider.alerts().len();
+            let clocks = self
+                .feed_clocks
+                .get(&feed)
+                .map_or(self.clocks.as_slice(), Vec::as_slice);
             if let Some(no_service) = compile_no_service(
                 &alert,
                 &feed,
                 rider_index,
                 lookup,
-                &self.clocks,
+                clocks,
                 &self.added_index,
                 &resolve,
                 &mut self.stats.invalid_selectors,
@@ -1487,8 +1514,10 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 .blocks
                 .remove(&key)
                 .unwrap_or_else(|| lookup.scheduled_block(route, day));
-            let clock = self.clocks[usize::from(day.into_inner())];
             let info = lookup.route_info(route);
+            let clock = info.map_or(self.clocks[usize::from(day.into_inner())], |info| {
+                self.clocks_of(info.feed)[usize::from(day.into_inner())]
+            });
             let stops = base.route_stops(route).unwrap_or(&[]);
             let relevant = block_alerts.get(&key).map_or(&[][..], Vec::as_slice);
 
@@ -1626,10 +1655,15 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         for ((stops, attributes), days) in added {
             let mut laid_out: Vec<(DaySlot, Vec<ResolvedTrip>, Vec<TripKey>)> = Vec::new();
             for (day, trips) in days {
-                let clock = self.clocks[usize::from(day.into_inner())];
+                let reference_clock = self.clocks[usize::from(day.into_inner())];
                 let mut resolved = Vec::with_capacity(trips.len());
                 let mut keys = Vec::with_capacity(trips.len());
                 for trip in trips {
+                    let clock = self
+                        .clocks_of(&trip.feed)
+                        .get(usize::from(day.into_inner()))
+                        .copied()
+                        .unwrap_or(reference_clock);
                     let info = trip.route_id.as_deref().and_then(|id| {
                         let pattern = lookup.route_patterns(&trip.feed, id).first().copied()?;
                         lookup.route_info(pattern)

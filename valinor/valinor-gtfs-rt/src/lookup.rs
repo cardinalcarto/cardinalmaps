@@ -92,6 +92,18 @@ pub trait StaticLookup {
     /// The days of the window in slot order, one per [`valinor_transit::BaseWindow::days`] entry.
     fn window_days(&self) -> &[WindowDay];
 
+    /// When `feed`'s own service day of slot `slot` starts, in POSIX seconds.
+    ///
+    /// Files loaded together can each have their own service-day clock, in different time zones:
+    /// the same date starts at a different instant in each. A lookup over one clock can use this
+    /// default, which is the day of [`Self::window_days`]; a feed that doesn't cover a date
+    /// may answer with that same value, since no trip of it can be found on that date anyway.
+    fn feed_day_start_unix(&self, _feed: &FeedId, slot: DaySlot) -> i64 {
+        self.window_days()
+            .get(usize::from(slot.into_inner()))
+            .map_or(0, |day| day.start_unix)
+    }
+
     /// Finds a trip of `feed` on one service day.
     ///
     /// Returns `None` when the trip doesn't exist or doesn't run on that date.
@@ -147,6 +159,20 @@ impl DayClock {
             slot,
             offset: i64::from(offset.into_inner()),
             start_unix: day.start_unix,
+        }
+    }
+
+    /// This clock moved to a feed whose service day starts at `start_unix` instead.
+    ///
+    /// The window's clock is unchanged: both the day's start and its offset move together,
+    /// so window times and POSIX times keep converting identically.
+    pub(crate) fn at_feed_start(self, start_unix: i64) -> Self {
+        Self {
+            offset: self
+                .offset
+                .saturating_add(start_unix.saturating_sub(self.start_unix)),
+            start_unix,
+            ..self
         }
     }
 
