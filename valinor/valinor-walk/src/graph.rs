@@ -296,6 +296,53 @@ pub struct GraphStats {
     pub bytes: usize,
 }
 
+/// How many tiles one page of a [`TileDirectory`] covers, as a power of two.
+const DIRECTORY_PAGE_BITS: usize = 8;
+const DIRECTORY_PAGE: usize = 1 << DIRECTORY_PAGE_BITS;
+
+/// `tile -> slot` for one hierarchy level, in pages so only touched regions cost memory.
+///
+/// A level's tile numbering covers the world; a device's regions touch a tiny part of it.
+#[derive(Debug)]
+struct TileDirectory {
+    tile_count: usize,
+    pages: Box<[Option<Box<[u32; DIRECTORY_PAGE]>>]>,
+}
+
+impl TileDirectory {
+    fn new(tile_count: usize) -> Self {
+        Self {
+            tile_count,
+            pages: vec![None; tile_count.div_ceil(DIRECTORY_PAGE)].into_boxed_slice(),
+        }
+    }
+
+    /// The slot of `tile`, [`NO_SLOT`] if it hasn't been looked for, or `None` if out of range.
+    #[inline]
+    fn get(&self, tile: usize) -> Option<u32> {
+        if tile >= self.tile_count {
+            return None;
+        }
+        Some(
+            self.pages[tile >> DIRECTORY_PAGE_BITS]
+                .as_ref()
+                .map_or(NO_SLOT, |page| page[tile & (DIRECTORY_PAGE - 1)]),
+        )
+    }
+
+    fn set(&mut self, tile: usize, slot: u32) {
+        let page = self.pages[tile >> DIRECTORY_PAGE_BITS]
+            .get_or_insert_with(|| Box::new([NO_SLOT; DIRECTORY_PAGE]));
+        page[tile & (DIRECTORY_PAGE - 1)] = slot;
+    }
+
+    fn bytes(&self) -> usize {
+        let allocated = self.pages.iter().flatten().count();
+        self.pages.len() * size_of::<Option<Box<[u32; DIRECTORY_PAGE]>>>()
+            + allocated * DIRECTORY_PAGE * size_of::<u32>()
+    }
+}
+
 /// The tile directory and memoized arcs.
 #[derive(Debug)]
 pub(crate) struct LazyGraph<P: GraphTileProvider, C> {
@@ -303,13 +350,15 @@ pub(crate) struct LazyGraph<P: GraphTileProvider, C> {
     pub(crate) costing: C,
     mode: TravelMode,
     /// `(level, tile) -> slot`, flat by level; the planet's tile counts are small.
-    directories: [Box<[u32]>; LEVELS],
+    directories: [TileDirectory; LEVELS],
     /// Tiles in the order they were first touched; dense bases increase along this.
     pub(crate) slots: Vec<TileSlot<P::TileHandle>>,
     node_total: u32,
     edge_total: u32,
     /// By dense node: the index of the node's first arc, [`UNREAD`], or [`NO_ARCS`].
     pub(crate) first_arc: Vec<u32>,
+    /// Whether [`Self::first_arc`] is kept: false for searches using dense numbers only.
+    keeps_arcs: bool,
     /// All arcs, each node's contiguous, in first-expansion order.
     pub(crate) arcs: Vec<HotArc>,
     pub(crate) cold_arcs: Vec<ColdArc>,
@@ -321,9 +370,8 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
     pub(crate) fn new(provider: P, costing: C) -> Self {
         let mode = costing.base().travel_mode();
         let levels = &*STANDARD_LEVELS;
-        let directories = [0, 1, 2].map(|level| {
-            vec![NO_SLOT; levels[level].tiling_system.tile_count() as usize].into_boxed_slice()
-        });
+        let directories = [0, 1, 2]
+            .map(|level| TileDirectory::new(levels[level].tiling_system.tile_count() as usize));
         Self {
             provider,
             costing,
@@ -333,9 +381,19 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
             node_total: 0,
             edge_total: 0,
             first_arc: Vec::new(),
+            keeps_arcs: true,
             arcs: Vec::new(),
             cold_arcs: Vec::new(),
             stats: GraphStats::default(),
+        }
+    }
+
+    /// A graph for searches that only need dense numbers, not memoized arcs:
+    /// it never pays for a per-node arc index, and [`Self::materialize`] must not be called.
+    pub(crate) fn numbering_only(provider: P, costing: C) -> Self {
+        Self {
+            keeps_arcs: false,
+            ..Self::new(provider, costing)
         }
     }
 
@@ -359,7 +417,11 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
             bytes: self.first_arc.capacity() * size_of::<u32>()
                 + self.arcs.capacity() * size_of::<HotArc>()
                 + self.cold_arcs.capacity() * size_of::<ColdArc>()
-                + self.directories.iter().map(|d| d.len() * 4).sum::<usize>(),
+                + self
+                    .directories
+                    .iter()
+                    .map(TileDirectory::bytes)
+                    .sum::<usize>(),
             ..self.stats
         }
     }
@@ -373,7 +435,7 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
     fn slot_of(&mut self, id: GraphId) -> Result<Option<u32>, WalkError> {
         let level = usize::from(id.level());
         let tile = usize::try_from(id.tile_id()).unwrap_or(usize::MAX);
-        let Some(&slot) = self.directories.get(level).and_then(|d| d.get(tile)) else {
+        let Some(slot) = self.directories.get(level).and_then(|d| d.get(tile)) else {
             return Ok(None);
         };
         match slot {
@@ -392,7 +454,7 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
         let handle = match self.provider.get_handle_for_tile_containing(id) {
             Ok(handle) => handle,
             Err(GraphTileProviderError::TileNotAvailable(_)) => {
-                self.directories[level][tile] = ABSENT_TILE;
+                self.directories[level].set(tile, ABSENT_TILE);
                 return Ok(None);
             }
             Err(e) => return Err(e.into()),
@@ -412,9 +474,11 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
             .checked_add(edge_count)
             .filter(|&total| total < NO_EDGE)
             .ok_or(WalkError::TooLarge)?;
-        self.first_arc.resize(self.node_total as usize, UNREAD);
+        if self.keeps_arcs {
+            self.first_arc.resize(self.node_total as usize, UNREAD);
+        }
         let slot = u32::try_from(self.slots.len()).map_err(|_| WalkError::TooLarge)?;
-        self.directories[level][tile] = slot;
+        self.directories[level].set(tile, slot);
         self.slots.push(TileSlot {
             base: id.tile_base_id(),
             handle,
@@ -483,7 +547,7 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
     pub(crate) fn known_dense_edge(&self, id: GraphId) -> Option<u32> {
         let level = usize::from(id.level());
         let tile = usize::try_from(id.tile_id()).ok()?;
-        let &slot = self.directories.get(level)?.get(tile)?;
+        let slot = self.directories.get(level)?.get(tile)?;
         if slot >= ABSENT_TILE {
             return None;
         }
@@ -746,6 +810,19 @@ pub(crate) struct EdgeDescription {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tile_directory_is_sparse() {
+        let mut directory = TileDirectory::new(1_000_000);
+        assert_eq!(directory.get(999_999), Some(NO_SLOT));
+        assert_eq!(directory.get(1_000_000), None, "past the end of the level");
+        directory.set(999_999, 7);
+        directory.set(0, 3);
+        assert_eq!(directory.get(999_999), Some(7));
+        assert_eq!(directory.get(0), Some(3));
+        assert_eq!(directory.get(1), Some(NO_SLOT));
+        assert!(directory.bytes() < 1_000_000 * size_of::<u32>() / 10);
+    }
 
     #[test]
     fn prefixes_split_the_whole_edge() {
