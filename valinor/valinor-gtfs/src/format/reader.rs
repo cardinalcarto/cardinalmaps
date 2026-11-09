@@ -410,6 +410,24 @@ impl<'a> CompiledTimetable<'a> {
         Some(i64::from(days) * 86_400 - i64::from(row.noon_offset.get()))
     }
 
+    /// The first and last date on which any calendar runs, or `None` for a feed with no service.
+    ///
+    /// # Performance
+    ///
+    /// Reads every calendar; meant for a compile report, not for queries.
+    pub fn service_date_range(&self) -> Option<(ServiceDate, ServiceDate)> {
+        let mut range: Option<(ServiceDate, ServiceDate)> = None;
+        for row in self.tables.services {
+            for date in self.service_dates(row) {
+                range = Some(match range {
+                    None => (date, date),
+                    Some((first, last)) => (first.min(date), last.max(date)),
+                });
+            }
+        }
+        range
+    }
+
     /// Whether a calendar runs on a date.
     ///
     /// An unknown service runs on no date.
