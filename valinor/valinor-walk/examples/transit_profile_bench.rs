@@ -52,9 +52,9 @@ use valinor_gtfs::{CompiledTimetable, FeedId, FeedInput, ZipSource, compile, par
 use valinor_router::tiles::TileSets;
 use valinor_sif::AnyCosting;
 use valinor_transit::{
-    DEFAULT_BOOTSTRAP_WALK_LIMIT, DaySlot, Direction, ProfileEntry, ProfileOptions, RouteFilter,
-    RouteId, Router, ServiceDate, Snapshot, StopId, StopTable, Time, TransferOutcome,
-    TransferRequest, TransferSearch, TransferSink, TransitQuery,
+    Clock, DEFAULT_BOOTSTRAP_WALK_LIMIT, DaySlot, Direction, ProfileEntry, ProfileOptions,
+    RouteFilter, RouteId, Router, ServiceDate, Snapshot, StopId, StopTable, Time, TransferArrival,
+    TransferOutcome, TransferRequest, TransferSearch, TransferSeed, TransferSink, TransitQuery,
 };
 use valinor_walk::{
     AccessSide, ResolvedWalk, SnapConfig, SnapPoint, StopSnaps, StopTables, TableRequest,
@@ -123,9 +123,193 @@ impl Counters {
 }
 
 /// A [`WalkSearch`] with timing.
+/// Walk radii a precomputed table might have, in seconds.
+const HORIZON_LIMITS: [i32; 4] = [300, 600, 900, 1800];
+
+/// How much of the street work a table of each radius could replace exactly.
+#[derive(Clone, Copy, Debug, Default)]
+struct HorizonStats {
+    searches: u64,
+    nanos: u64,
+    seeds: u64,
+    unbounded_nanos: u64,
+    /// By radius: searches whose every seed could use only the table, and their time.
+    whole_searches: [u64; 4],
+    whole_nanos: [u64; 4],
+    /// By radius: seeds with no useful walk longer than the radius.
+    seeds_within: [u64; 4],
+}
+
+impl HorizonStats {
+    fn add(&mut self, request: &TransferRequest<'_>, nanos: u64) {
+        self.searches += 1;
+        self.nanos += nanos;
+        self.seeds += request.seeds.len() as u64;
+        let bound = request.upper_bound.seconds();
+        if bound >= (1 << 30) {
+            self.unbounded_nanos += nanos;
+            return;
+        }
+        for (index, limit) in HORIZON_LIMITS.iter().enumerate() {
+            let within = request
+                .seeds
+                .iter()
+                .filter(|seed| bound - seed.clock.seconds() <= *limit)
+                .count();
+            self.seeds_within[index] += within as u64;
+            if within == request.seeds.len() {
+                self.whole_searches[index] += 1;
+                self.whole_nanos[index] += nanos;
+            }
+        }
+    }
+
+    fn print(&self, label: &str) {
+        let percent = |part: u64, whole: u64| 100.0 * part as f64 / whole.max(1) as f64;
+        println!(
+            "{label}: {} searches, {:.0} ms street, {:.1}% of the time in searches with no bound",
+            self.searches,
+            self.nanos as f64 / 1e6,
+            percent(self.unbounded_nanos, self.nanos),
+        );
+        println!("  radius  whole searches  their street time  seeds within radius");
+        for (index, limit) in HORIZON_LIMITS.iter().enumerate() {
+            println!(
+                "  {:>3} min {:>13.1}% {:>17.1}% {:>19.1}%",
+                limit / 60,
+                percent(self.whole_searches[index], self.searches),
+                percent(self.whole_nanos[index], self.nanos),
+                percent(self.seeds_within[index], self.seeds),
+            );
+        }
+    }
+}
+
+/// Discards what a shadow search reports; only its cost matters.
+struct Discard;
+
+impl TransferSink<WalkHandle> for Discard {
+    fn reach(&mut self, arrival: TransferArrival<WalkHandle>) {
+        core::hint::black_box(arrival.clock);
+    }
+}
+
+/// Stop-to-stop walks within a radius: `(other stop, seconds)` by stop.
+struct WalkTable {
+    out: Vec<Vec<(u32, i32)>>,
+    into: Vec<Vec<(u32, i32)>>,
+}
+
+/// What a precomputed table would cost, timed beside the real search so the results stay real.
+struct Shadow {
+    worker: Box<Worker>,
+    table: Arc<WalkTable>,
+    radius: i32,
+    /// Every seed uses only the table, as if transfers were capped at the radius.
+    table_only: bool,
+    best: Vec<i32>,
+    long: Vec<TransferSeed>,
+    nanos: u64,
+}
+
+impl Shadow {
+    fn run(&mut self, request: &TransferRequest<'_>) -> Result<(), WalkError> {
+        let started = Instant::now();
+        let table = match request.direction {
+            Direction::Forward => &self.table.out,
+            Direction::Backward => &self.table.into,
+        };
+        let bound = request.upper_bound.seconds();
+        self.best.fill(i32::MAX);
+        self.long.clear();
+        for seed in request.seeds {
+            if !self.table_only
+                && i64::from(bound) - i64::from(seed.clock.seconds()) > i64::from(self.radius)
+            {
+                self.long.push(*seed);
+                continue;
+            }
+            for &(stop, seconds) in &table[seed.stop.into_inner() as usize] {
+                let clock = seed.clock.seconds().saturating_add(seconds);
+                let slot = &mut self.best[stop as usize];
+                if clock < bound && clock < *slot {
+                    *slot = clock;
+                }
+            }
+        }
+        core::hint::black_box(&self.best);
+        if !self.long.is_empty() {
+            self.worker.router.transfers_mut().inner.search(
+                &TransferRequest {
+                    direction: request.direction,
+                    seeds: &self.long,
+                    upper_bound: request.upper_bound,
+                    change_margin: request.change_margin,
+                    interrupt: request.interrupt,
+                },
+                &mut Discard,
+            )?;
+        }
+        self.nanos += started.elapsed().as_nanos() as u64;
+        Ok(())
+    }
+}
+
+/// Collects a one-stop search's arrivals for the walk table.
+struct Collect(Vec<(u32, i32)>);
+
+impl TransferSink<WalkHandle> for Collect {
+    fn reach(&mut self, arrival: TransferArrival<WalkHandle>) {
+        self.0
+            .push((arrival.stop.into_inner(), arrival.clock.seconds()));
+    }
+}
+
+/// Walks from every stop to the stops within `radius` seconds.
+fn build_walk_table(
+    search: &mut Walk,
+    stops: usize,
+    radius: i32,
+) -> Result<WalkTable, Box<dyn Error>> {
+    let mut out = Vec::with_capacity(stops);
+    let mut into = vec![Vec::new(); stops];
+    for stop in 0..stops as u32 {
+        search.begin_run(Direction::Forward);
+        let mut sink = Collect(Vec::new());
+        let seeds = [TransferSeed {
+            stop: StopId::new(stop),
+            clock: Clock::new(0),
+        }];
+        search.search(
+            &TransferRequest {
+                direction: Direction::Forward,
+                seeds: &seeds,
+                upper_bound: Clock::new(radius),
+                change_margin: TransferRequest::REPORT_ALL,
+                interrupt: &|| false,
+            },
+            &mut sink,
+        )?;
+        let mut best: HashMap<u32, i32> = HashMap::new();
+        for (other, seconds) in sink.0 {
+            let slot = best.entry(other).or_insert(seconds);
+            *slot = (*slot).min(seconds);
+        }
+        let mut walks: Vec<(u32, i32)> = best.into_iter().collect();
+        walks.sort_unstable();
+        for &(other, seconds) in &walks {
+            into[other as usize].push((stop, seconds));
+        }
+        out.push(walks);
+    }
+    Ok(WalkTable { out, into })
+}
+
 struct Timed {
     inner: Walk,
     counters: Counters,
+    horizons: HorizonStats,
+    shadow: Option<Shadow>,
     /// A cap on every walk (`--walk-limit`), to measure what one buys.
     fixed_cap: Option<u32>,
     /// Print one line per street search, to see which rounds carry the work.
@@ -144,11 +328,28 @@ impl TransferSearch for Timed {
         self.direction = direction;
         self.round = 0;
         self.inner.begin_run(direction);
+        if let Some(shadow) = &mut self.shadow {
+            shadow
+                .worker
+                .router
+                .transfers_mut()
+                .inner
+                .begin_run(direction);
+        }
     }
 
     fn set_walk_limit(&mut self, limit: Option<u32>) {
         // A fixed cap outlives the bootstrap pass, which clears its own limit when it is done.
         self.inner.set_walk_limit(limit.or(self.fixed_cap));
+        if let Some(shadow) = &mut self.shadow {
+            let cap = limit.or(self.fixed_cap);
+            shadow
+                .worker
+                .router
+                .transfers_mut()
+                .inner
+                .set_walk_limit(cap);
+        }
     }
 
     fn walk(&self, parent: WalkHandle) -> ResolvedWalk {
@@ -163,6 +364,11 @@ impl TransferSearch for Timed {
         let started = Instant::now();
         let outcome = self.inner.search(request, sink);
         self.counters.street_nanos += started.elapsed().as_nanos() as u64;
+        self.horizons
+            .add(request, started.elapsed().as_nanos() as u64);
+        if let Some(shadow) = &mut self.shadow {
+            shadow.run(request)?;
+        }
         self.counters.searches += 1;
         self.counters.seeds += request.seeds.len() as u64;
         let stats = self.inner.last_search_stats();
@@ -549,6 +755,8 @@ fn new_worker(
             router: Router::new(Timed {
                 inner: search,
                 counters: Counters::default(),
+                horizons: HorizonStats::default(),
+                shadow: None,
                 fixed_cap: walk_limit,
                 trace: std::env::args().any(|arg| arg == "--trace"),
                 direction: Direction::Forward,
@@ -850,6 +1058,141 @@ fn report_cold(
     });
     row("every missed-it query ms", &|(_, run)| run.misses_ms);
     println!();
+    Ok(())
+}
+
+/// How to run the walk table experiment.
+struct TableMode {
+    radius: i32,
+    table_only: bool,
+    dump: Option<String>,
+}
+
+/// Times a table beside the real search: `(real ms, with the table ms)` per query.
+fn report_table(
+    fresh: FreshWorker<'_>,
+    worker: &mut Worker,
+    env: &Env,
+    samples: &[Sample],
+    mode: &TableMode,
+) -> Result<(), Box<dyn Error>> {
+    let stops = env.snapshot.stop_count();
+    let started = Instant::now();
+    let (mut builder, _) = fresh()?;
+    let table = build_walk_table(
+        &mut builder.router.transfers_mut().inner,
+        stops,
+        mode.radius,
+    )?;
+    let build_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let pairs: usize = table.out.iter().map(Vec::len).sum();
+    let mut counts: Vec<f64> = table.out.iter().map(|v| v.len() as f64).collect();
+    counts.sort_by(f64::total_cmp);
+    println!(
+        "radius {} min: built in {build_ms:.0} ms; {pairs} pairs, per stop p50 {:.0} p95 {:.0} max {:.0}; \
+         about {:.1} MB both directions at 8 bytes a walk",
+        mode.radius / 60,
+        percentile(&counts, 0.5),
+        percentile(&counts, 0.95),
+        percentile(&counts, 1.0),
+        pairs as f64 * 16.0 / 1e6,
+    );
+    let (shadow_worker, _) = fresh()?;
+    worker.router.transfers_mut().shadow = Some(Shadow {
+        worker: Box::new(shadow_worker),
+        table: Arc::new(table),
+        radius: mode.radius,
+        table_only: mode.table_only,
+        best: vec![i32::MAX; stops],
+        long: Vec::new(),
+        nanos: 0,
+    });
+    for sample in samples.iter().take(16) {
+        run_query(worker, env, *sample)?;
+    }
+
+    let mut dump = String::new();
+    let shadow_ms = |worker: &Worker| {
+        worker
+            .router
+            .transfers()
+            .shadow
+            .as_ref()
+            .map_or(0.0, |s| s.nanos as f64 / 1e6)
+    };
+    let (mut now_real, mut now_table, mut profile_real, mut profile_table) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (index, sample) in samples.iter().enumerate() {
+        let (access, egress) = walk_tables(worker, env, *sample)?;
+        let query = TransitQuery {
+            snapshot: env.snapshot.clone(),
+            access: &access,
+            egress: &egress,
+            filter: RouteFilter::ALL,
+            max_trips: env.max_trips,
+        };
+        let before_street = worker.router.transfers().counters.street_nanos;
+        let before_shadow = shadow_ms(worker);
+        let started = Instant::now();
+        let at = Time::try_new(env.day_start + sample.hour * 3600)?;
+        let now = worker
+            .router
+            .leave_at(&query, at, env.options, &|| false)
+            .map_err(|e| e.to_string())?;
+        // The shadow runs inside this span, so it comes out of the real time.
+        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+        let street = (worker.router.transfers().counters.street_nanos - before_street) as f64 / 1e6;
+        let shadow = shadow_ms(worker) - before_shadow;
+        let scan = elapsed - street - shadow;
+        now_real.push(scan + street);
+        now_table.push(scan + shadow);
+        write!(dump, "L {index}")?;
+        for e in &now.entries {
+            write!(
+                dump,
+                " {},{},{}",
+                e.departure.into_inner(),
+                e.arrival.into_inner(),
+                e.trips
+            )?;
+        }
+        dump.push('\n');
+
+        let before_shadow = shadow_ms(worker);
+        let (measure, triples) = run_query_with(worker, env, *sample, env.options)?;
+        let shadow = shadow_ms(worker) - before_shadow;
+        let scan = measure.total_ms - measure.tables_ms - measure.street_ms - shadow;
+        profile_real.push(scan + measure.street_ms);
+        profile_table.push(scan + shadow);
+        write!(dump, "P {index}")?;
+        for (d, a, k) in triples {
+            write!(dump, " {d},{a},{k}")?;
+        }
+        dump.push('\n');
+    }
+    let line = |name: &str, values: &mut Vec<f64>| {
+        values.sort_by(f64::total_cmp);
+        println!(
+            "  {name:<30} p50 {:>8.1} p95 {:>8.1} max {:>9.1}",
+            percentile(values, 0.5),
+            percentile(values, 0.95),
+            percentile(values, 1.0),
+        );
+    };
+    println!("search time without the tables, ms:");
+    line("leave now, real", &mut now_real);
+    line("leave now, with table", &mut now_table);
+    line("60-minute profile, real", &mut profile_real);
+    line("60-minute profile, with table", &mut profile_table);
+    println!(
+        "retained by the access/egress tables: {:.1} MB; by the real transfer search: {:.1} MB labels, {:.1} MB graph memo",
+        worker.tables.stats().bytes as f64 / 1e6,
+        worker.router.transfers().inner.working_memory_bytes() as f64 / 1e6,
+        worker.router.transfers().inner.graph_stats().bytes as f64 / 1e6,
+    );
+    if let Some(path) = &mode.dump {
+        std::fs::write(path, dump)?;
+    }
     Ok(())
 }
 
@@ -1304,6 +1647,48 @@ fn main() -> Result<(), Box<dyn Error>> {
             terminate_tables,
         )
     };
+    if flags.present("table-radius") {
+        return report_table(
+            &fresh,
+            &mut worker,
+            &env,
+            &samples,
+            &TableMode {
+                radius: flags.number("table-radius", 600),
+                table_only: flags.present("table-only"),
+                dump: flags.0.get("dump").cloned(),
+            },
+        );
+    }
+    if flags.present("horizons") {
+        worker.router.transfers_mut().horizons = HorizonStats::default();
+        for sample in &samples {
+            run_leave_now(&mut worker, &env, *sample)?;
+        }
+        worker
+            .router
+            .transfers()
+            .horizons
+            .print("leave now and every missed-it query");
+        worker.router.transfers_mut().horizons = HorizonStats::default();
+        for sample in &samples {
+            run_query(&mut worker, &env, *sample)?;
+        }
+        worker
+            .router
+            .transfers()
+            .horizons
+            .print("60-minute profiles");
+        println!(
+            "table stats: {} labels settled in the last query; {} tiles numbered by the table graph",
+            worker.tables.stats().labels_settled,
+            worker.tables.graph_tile_count(),
+        );
+        for (name, bytes) in worker.tables.memory_parts() {
+            println!("  {name:<16} {:>8.2} MB", bytes as f64 / 1e6);
+        }
+        return Ok(());
+    }
     if flags.present("named-only") {
         report_cold(&fresh, &env, &samples, &located)?;
         report_named(&mut worker, &env, &located)?;

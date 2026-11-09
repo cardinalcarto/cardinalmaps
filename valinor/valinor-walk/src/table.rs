@@ -970,6 +970,43 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         self.stats
     }
 
+    /// How many tiles this search's graph has given dense numbers to.
+    pub fn graph_tile_count(&self) -> usize {
+        self.graph.stats().tile_slots
+    }
+
+    /// Bytes retained by each part of this search, for finding what to shrink.
+    pub fn memory_parts(&self) -> Vec<(&'static str, usize)> {
+        vec![
+            ("labels", self.labels.capacity() * size_of::<TableLabel>()),
+            (
+                "edge_state",
+                self.edge_state.capacity() * size_of::<EdgeState>(),
+            ),
+            (
+                "edge_first_stop",
+                self.edge_first_stop.capacity() * size_of::<u32>(),
+            ),
+            (
+                "edge_stops",
+                self.edge_stops.capacity() * size_of::<EdgeStop>(),
+            ),
+            (
+                "attached_edges",
+                self.attached_edges.capacity() * size_of::<u32>(),
+            ),
+            (
+                "stop_best",
+                self.stop_best.capacity() * size_of::<StopBest>(),
+            ),
+            (
+                "stop_visits",
+                self.stop_visits.capacity() * size_of::<(u32, u8)>(),
+            ),
+            ("graph memo", self.graph.stats().bytes),
+        ]
+    }
+
     /// Follows a stop's best label to its leg, in real travel order.
     ///
     /// Returns `None` if the stop wasn't reached by the last [`compute`](Self::compute).
