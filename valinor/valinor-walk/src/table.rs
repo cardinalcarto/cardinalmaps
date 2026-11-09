@@ -975,6 +975,33 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         self.graph.stats().tile_slots
     }
 
+    /// The candidate edges of a walk that starts or ends at a bound stop: both ways along its edge.
+    ///
+    /// # Errors
+    ///
+    /// Fails on unreadable tiles.
+    pub fn stop_seeds(&mut self, stop: StopId) -> Result<Vec<TableSeed>, WalkError> {
+        let Some(point) = self.snaps.as_ref().and_then(|snaps| snaps.point(stop)) else {
+            return Ok(Vec::new());
+        };
+        let mut seeds = vec![TableSeed {
+            edge: point.edge,
+            percent_along: point.percent_along,
+            initial: 0.0,
+        }];
+        let Some(tile) = self.tile_handle(point.edge)? else {
+            return Ok(seeds);
+        };
+        if let Some((opposing, _, _)) = self.opposite_of(point.edge, &tile)? {
+            seeds.push(TableSeed {
+                edge: opposing,
+                percent_along: 1.0 - point.percent_along,
+                initial: 0.0,
+            });
+        }
+        Ok(seeds)
+    }
+
     /// Bytes retained by each part of this search, for finding what to shrink.
     pub fn memory_parts(&self) -> Vec<(&'static str, usize)> {
         vec![

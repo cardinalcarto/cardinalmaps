@@ -39,6 +39,10 @@ mod tile_tests;
 #[path = "review_tests.rs"]
 mod review_tests;
 
+#[cfg(test)]
+#[path = "transfers_tests.rs"]
+mod transfers_tests;
+
 /// The "no such thing" value of stops, labels, and arena entries.
 const NONE: u32 = u32::MAX;
 

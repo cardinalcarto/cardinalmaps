@@ -6,19 +6,22 @@ Read this together with [routing.md](routing.md) and `AGENTS.md`.
 
 The algorithm is the profile search of Wagner and Zündorf,
 "Public Transit Routing with Unrestricted Walking" (ATMOS 2017),
-over multimodal multicriteria RAPTOR (MCR).
+over multicriteria RAPTOR.
+Transfers are read from a table of walks between nearby stops, unlike that paper:
+searching the street network during a query cost too much time and memory (see "Transfers").
 
 ## Requirements
 
 - Profile queries: all journeys in a departure window,
   Pareto-optimal on arrival time and number of trips.
-- Unrestricted transfers on the Valhalla routing graph, with no transitive closure.
+- A leave-now query for the first answer, with the profile as the slower "more routes".
+- Transfers within a bound, each costed by Sif the way any route on the graph is.
 - GTFS-RT trip updates, vehicle positions, and service alerts.
 - The same router on the server and on the client.
   There is no tokio or network access in the routing crates.
   GTFS-RT reaches the router as optional bytes; without it, routing uses the schedule.
 - No panics while decoding a compiled timetable or GTFS-RT.
-- Target: p95 under 1 s for a 60-minute window across a metro region.
+- Target: p95 under 1 s for a first answer across a metro region.
 - Costing is generic over travel modes. It is never hardcoded to pedestrians.
 - Park and ride is deferred, but the access and egress design must admit it (below).
 
@@ -65,14 +68,15 @@ Costs differ by direction because the world is not flat.
 Each directed edge has exactly one cost, and both searches charge it.
 A backward search that moves from B to A charges the time of travelling A to B.
 
-Transfer costs are integer seconds per directed edge, rounded once,
-so that sums don't depend on the order of evaluation.
-Where a stop splits an edge, the two parts sum to the whole edge's seconds.
+Forward and backward searches read the same table entry for a directed pair of stops,
+so they agree by construction.
 
-Transfers search a node-based graph.
-A transition cost that depends on the pair of edges can't be charged exactly in both directions,
-so only costs that belong to a node or an edge are charged.
-Walking times are compared against Thor's to check what this loses.
+## Leave now
+
+A leave-now query runs one forward search at the requested time,
+then one backward search per arrival, limited to the number of trips that forward search used.
+Each result is the earliest arrival for that many trips and the latest departure that still makes it.
+"I missed it" is the same query, one second after the departure of the journey that was missed.
 
 ## Access, egress, and transfers
 
@@ -86,8 +90,23 @@ This replaces the paper's pruning at `t` in section 3.1.
 Entries slower than the direct journey in the query's mode are removed afterwards.
 
 Access reaches a first boarding directly, and egress leaves from the last alighting stop.
-Transfer search doesn't reach those tables, so the tables must cover every stop,
-and every search mirrors exactly: a journey is access, trips joined by walks, and egress.
+A journey is access, trips joined by walks, and egress.
+
+## Transfers
+
+A table holds, for each stop, the stops within a bound (15 minutes by default) for a travel mode.
+Each entry is one walk, found by the same edge-based Sif search as access and egress:
+the route minimizes Sif's cost, and the entry is that route's seconds.
+A cyclist's transfer takes the bike path the costing prefers, even when a busier road is quicker.
+
+A rider never walks twice in a row, so the table needs no closure.
+It stores only times; a transfer in a result is routed again with the same search to draw it.
+A table depends on stop positions and the street graph, not on the timetable,
+so a new real-time stop only needs its own walks added.
+
+The table bounds which journeys exist: a transfer past the bound isn't considered.
+Measured on King County Metro, about 91% of the profile entries of a 15-minute table match a search
+of the street network during the query, at about one hundredth of the search time.
 
 | Use case | Access | Transfers | Routes | Egress |
 |---|---|---|---|---|
@@ -135,7 +154,8 @@ An overlay is an immutable value built from GTFS-RT input and published as an `A
 It holds an arena of route blocks, the directory entries that point into it,
 and per-stop additions for new stop patterns.
 Stop IDs number base stops first and then an overlay's new stops.
-New stops are snapped to the street network when the overlay is built.
+New stops are snapped to the street network when the overlay is built,
+and their walks are added to the snapshot's transfer tables.
 
 Each changed route and service day gets a whole replacement block.
 If delays make trips overtake, the block is split into non-overtaking lanes,
@@ -181,6 +201,7 @@ Vehicles can be looked up by ID afterwards.
   forward MCR at every second of the window, reduced to Pareto-optimal journeys.
 - Forward and backward searches must agree on every journey,
   on networks with direction-dependent costs.
+- Transfer table entries must match what the same Sif search finds when a result is drawn.
 - Overlays are tested by the same comparison, including overtaking, skips, and cancellations.
 - Each trip state and transition has its own test.
 - Real feeds and captures live in `/mnt/maps/cardinal/transit`, never in git.

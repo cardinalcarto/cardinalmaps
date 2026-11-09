@@ -35,6 +35,9 @@ pub enum WalkError {
     /// A location wasn't correlated to any edge.
     #[error("correlate a location to any edge")]
     NoCandidates,
+    /// A thread building a transfer table panicked.
+    #[error("finish a transfer table: a worker thread panicked")]
+    WorkerPanicked,
     /// The graph grew past what its 32-bit dense indexes can address.
     #[error("index more than 2^31 nodes or edges")]
     TooLarge,

@@ -2,7 +2,7 @@
 //!
 //! [`StreetPlanner`] opens a tile set beside a [`TransitState`], keeps a pool of per-thread search
 //! workers, and answers requests with real walking and cycling legs:
-//! stop tables from [`valinor_walk::StopTables`], transfers from [`valinor_walk::WalkSearch`],
+//! stop tables from [`valinor_walk::StopTables`], transfers from [`valinor_walk::TableTransfers`],
 //! and shapes and instructions by converting through [`valinor_walk::paths`] to Thor's
 //! [`Paths`](valinor_thor::Paths), [`Thor::build_trip`](valinor_thor::Thor::build_trip), and
 //! Ilúvatar's narration.
@@ -34,10 +34,11 @@ use valinor_sif::json::JsonValue;
 use valinor_sif::{AnyCosting, TravelMode as SifMode};
 use valinor_thor::{Leg as ThorLeg, Retention, Thor, ThorConfig, Workspace};
 use valinor_transit::{Router, Seconds, StopId, StopTable};
-use valinor_walk::paths::{access_leg, route_paths, transfer_leg};
+use valinor_walk::paths::{access_leg, route_paths};
 use valinor_walk::{
-    AccessSide, ResolvedWalk, SnapConfig, SnappedStop, StopSnaps, StopTables, TableRequest,
-    TableSeed, WalkError, WalkSearch, snap_stop, snap_stops,
+    AccessSide, DEFAULT_TRANSFER_SECONDS, SnapConfig, SnappedStop, StopSnaps, StopTables,
+    TableRequest, TableSeed, TableTransfers, TableWalk, TransferTable, WalkError, snap_stop,
+    snap_stops,
 };
 
 use crate::error::{PlanError, StateError};
@@ -107,6 +108,12 @@ impl Default for ServiceLimits {
     }
 }
 
+/// The most threads building transfer tables by default.
+const MAX_DEFAULT_TRANSFER_BUILD_THREADS: NonZeroUsize = match NonZeroUsize::new(8) {
+    Some(threads) => threads,
+    None => NonZeroUsize::MIN,
+};
+
 /// Choices for a [`StreetPlanner`].
 #[derive(Debug, Clone, Copy)]
 pub struct StreetConfig {
@@ -120,6 +127,12 @@ pub struct StreetConfig {
     pub limits: ServiceLimits,
     /// How much of a Thor workspace a worker keeps between queries.
     pub retention: Retention,
+    /// The longest transfer between two stops on foot, in seconds.
+    pub max_walking_transfer_seconds: u32,
+    /// The longest transfer between two stops by bicycle, in seconds.
+    pub max_cycling_transfer_seconds: u32,
+    /// How many threads build the transfer tables; each holds its own search storage.
+    pub transfer_build_threads: NonZeroUsize,
 }
 
 impl Default for StreetConfig {
@@ -130,6 +143,11 @@ impl Default for StreetConfig {
             tile_cache_size: valinor_router::DEFAULT_TILE_CACHE_SIZE,
             limits: ServiceLimits::default(),
             retention: Retention::default(),
+            max_walking_transfer_seconds: DEFAULT_TRANSFER_SECONDS,
+            max_cycling_transfer_seconds: DEFAULT_TRANSFER_SECONDS,
+            transfer_build_threads: std::thread::available_parallelism()
+                .unwrap_or(NonZeroUsize::MIN)
+                .min(MAX_DEFAULT_TRANSFER_BUILD_THREADS),
         }
     }
 }
@@ -233,19 +251,22 @@ fn approximate_meters(a: LatLon, b: LatLon) -> f64 {
 
 /// One travel mode's search storage in one worker.
 struct ModeWorker<'a> {
-    router: Router<WalkSearch<&'a TileSets, AnyCosting>>,
-    /// Two, because a table only reconstructs legs from its most recent search.
+    router: Router<TableTransfers>,
+    /// Separate, because a table only reconstructs legs from its most recent search.
     access: StopTables<&'a TileSets, AnyCosting>,
     egress: StopTables<&'a TileSets, AnyCosting>,
+    /// Routes the transfers of a result.
+    transfer: StopTables<&'a TileSets, AnyCosting>,
     costing: AnyCosting,
 }
 
 impl<'a> ModeWorker<'a> {
     fn new(tiles: &'a TileSets, mode: TravelMode) -> Result<Self, StreetError> {
         Ok(Self {
-            router: Router::new(WalkSearch::new(tiles, any_costing(mode)?)),
+            router: Router::new(TableTransfers::empty()),
             access: StopTables::new(tiles, any_costing(mode)?),
             egress: StopTables::new(tiles, any_costing(mode)?),
+            transfer: StopTables::new(tiles, any_costing(mode)?),
             costing: any_costing(mode)?,
         })
     }
@@ -253,12 +274,12 @@ impl<'a> ModeWorker<'a> {
 
 impl ModeWorker<'_> {
     fn retained_bytes(&self) -> usize {
-        let transfers = self.router.transfers();
-        transfers
+        self.router
+            .transfers()
             .working_memory_bytes()
-            .saturating_add(transfers.graph_stats().bytes)
             .saturating_add(self.access.stats().bytes)
             .saturating_add(self.egress.stats().bytes)
+            .saturating_add(self.transfer.stats().bytes)
     }
 }
 
@@ -295,6 +316,7 @@ struct StreetSearch<'w, 'a> {
     mode: TravelMode,
     mode_worker_access: &'w mut StopTables<&'a TileSets, AnyCosting>,
     mode_worker_egress: &'w mut StopTables<&'a TileSets, AnyCosting>,
+    mode_worker_transfer: &'w mut StopTables<&'a TileSets, AnyCosting>,
     costing: &'w AnyCosting,
     thor: &'w Thor<&'a TileSets>,
     workspace: &'w mut Workspace,
@@ -450,7 +472,7 @@ fn non_empty(text: String) -> Option<String> {
 
 impl AccessEgressSearch for StreetSearch<'_, '_> {
     type Error = StreetError;
-    type Walk = ResolvedWalk;
+    type Walk = TableWalk;
 
     fn tables(
         &mut self,
@@ -561,7 +583,7 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
     fn transfer_path(
         &mut self,
         request: &AccessEgressRequest<'_>,
-        walk: &ResolvedWalk,
+        walk: &TableWalk,
         from: StopId,
         to: StopId,
     ) -> Result<Option<WalkPath>, StreetError> {
@@ -570,7 +592,33 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
         else {
             return Ok(None);
         };
-        let Some(thor_leg) = transfer_leg(walk, sif_mode(self.mode), 0, 1, start, end) else {
+        // The same search that filled the table, so it finds the same route. The extra second
+        // covers the rounding of the table's entry.
+        self.mode_worker_transfer.bind(Arc::clone(
+            request
+                .snapshot
+                .snaps()
+                .ok_or(StreetError::NoSnaps)?
+                .for_mode(request.mode),
+        ))?;
+        let seeds = self.mode_worker_transfer.stop_seeds(walk.from)?;
+        let stop_count = request.snapshot.snapshot().stop_count();
+        let table = self.mode_worker_transfer.compute(
+            stop_count,
+            &TableRequest {
+                side: AccessSide::Access,
+                seeds: &seeds,
+                max_seconds: walk.seconds.saturating_add(1),
+                interrupt: self.interrupt,
+            },
+        )?;
+        if table.is_none() {
+            return Ok(None);
+        }
+        let Some(leg) = self.mode_worker_transfer.leg(walk.to) else {
+            return Ok(None);
+        };
+        let Some(thor_leg) = access_leg(&leg, sif_mode(self.mode), 0, 1, start, end) else {
             return Ok(None);
         };
         self.build_path(thor_leg).map(Some)
@@ -627,6 +675,9 @@ self_cell!(
 struct TileSnapper {
     tiles: Arc<TileSets>,
     config: SnapConfig,
+    max_walking_transfer_seconds: u32,
+    max_cycling_transfer_seconds: u32,
+    transfer_build_threads: NonZeroUsize,
 }
 
 impl fmt::Debug for TileSnapper {
@@ -646,6 +697,35 @@ impl StopSnapper for TileSnapper {
         let tiles: &TileSets = &self.tiles;
         let costing = any_costing(mode).map_err(snap_setup_error)?;
         snap_stop(&tiles, &costing, &self.config, ll)
+    }
+
+    fn transfers(
+        &self,
+        mode: TravelMode,
+        snaps: &Arc<StopSnaps>,
+    ) -> Result<TransferTable, WalkError> {
+        let tiles: &TileSets = &self.tiles;
+        let costing = any_costing(mode).map_err(snap_setup_error)?;
+        let threads = self.transfer_build_threads;
+        let seconds = match mode {
+            TravelMode::Walking => self.max_walking_transfer_seconds,
+            TravelMode::Cycling => self.max_cycling_transfer_seconds,
+        };
+        TransferTable::build(&tiles, &costing, snaps, seconds, threads, &|| false)?
+            .ok_or(WalkError::NoCandidates)
+    }
+
+    fn add_transfers(
+        &self,
+        mode: TravelMode,
+        base: &TransferTable,
+        snaps: &Arc<StopSnaps>,
+        new_stops: &[StopId],
+    ) -> Result<TransferTable, WalkError> {
+        let tiles: &TileSets = &self.tiles;
+        let costing = any_costing(mode).map_err(snap_setup_error)?;
+        base.with_new_stops(&tiles, &costing, snaps, new_stops, &|| false)?
+            .ok_or(WalkError::NoCandidates)
     }
 }
 
@@ -692,7 +772,8 @@ impl StreetPlanner {
     ///
     /// # Performance
     ///
-    /// Snaps every stop for walking and for cycling, which is the slow part of opening.
+    /// Snaps every stop and precomputes the transfers between them, for walking and for cycling:
+    /// the slow part of opening.
     ///
     /// # Errors
     ///
@@ -706,6 +787,9 @@ impl StreetPlanner {
         let snapper = TileSnapper {
             tiles: Arc::clone(&tiles),
             config: config.snap,
+            max_walking_transfer_seconds: config.max_walking_transfer_seconds,
+            max_cycling_transfer_seconds: config.max_cycling_transfer_seconds,
+            transfer_build_threads: config.transfer_build_threads,
         };
         let state = TransitState::with_snapper(timetable, config.state, Box::new(snapper))?;
         let cell = Cell::new(tiles, |tiles| WorkerPool {
@@ -804,13 +888,13 @@ impl StreetPlanner {
         mode_worker
             .router
             .transfers_mut()
-            .bind(Arc::clone(snaps.for_mode(request.mode)))
-            .map_err(|error| PlanError::AccessEgress(StreetError::Walk(error)))?;
+            .bind(Arc::clone(snaps.transfers_for_mode(request.mode)));
 
         let ModeWorker {
             router,
             access,
             egress,
+            transfer,
             costing,
         } = mode_worker;
         let mut search = StreetSearch {
@@ -818,6 +902,7 @@ impl StreetPlanner {
             mode: request.mode,
             mode_worker_access: access,
             mode_worker_egress: egress,
+            mode_worker_transfer: transfer,
             costing,
             thor,
             workspace,

@@ -26,6 +26,7 @@ mod snap;
 mod table;
 
 pub mod paths;
+mod transfers;
 
 pub use error::WalkError;
 pub use graph::GraphStats;
@@ -37,3 +38,4 @@ pub use snap::{
 pub use table::{
     AccessEdge, AccessLeg, AccessSide, StopTables, TableRequest, TableSeed, TableStats,
 };
+pub use transfers::{DEFAULT_TRANSFER_SECONDS, TableTransfers, TableWalk, TransferTable};

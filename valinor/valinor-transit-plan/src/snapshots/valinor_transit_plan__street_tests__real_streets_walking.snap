@@ -21,11 +21,11 @@ expression: "&response"
       "trips": 2,
       "walking": {
         "access_seconds": 81,
-        "transfer_seconds": 356,
+        "transfer_seconds": 358,
         "egress_seconds": 75,
-        "total_seconds": 512
+        "total_seconds": 514
       },
-      "wait_seconds": 364,
+      "wait_seconds": 362,
       "legs": [
         {
           "type": "access",
@@ -176,9 +176,9 @@ expression: "&response"
         {
           "type": "transfer",
           "mode": "walking",
-          "duration_seconds": 356,
+          "duration_seconds": 358,
           "departure": 1781507280,
-          "arrival": 1781507636,
+          "arrival": 1781507638,
           "from": {
             "stop_id": "B",
             "name": "Meritxell",
@@ -195,18 +195,18 @@ expression: "&response"
           },
           "walk": {
             "distance_meters": 463.4,
-            "duration_seconds": 356.0,
-            "shape": "}zpapA{bt|AcAkd@Cy@S_Aa@u@e@c@o@OqAHmKh@oERGmCGcCqCL{@Ii@o@S}@gCN_C@CsAkAca@{@cZG}BOgHOaHOwGSqJYiOk@mXCa@Cg@_@{@e@Yi@WsCIqQg@D}BQAoGUuBi@mImFiAs@aHkE",
+            "duration_seconds": 358.3,
+            "shape": "}zpapA{bt|AcAkd@Cy@S_Aa@u@e@c@o@OqAHIyCGwB{Q|@qCL{@Ii@o@S}@gCN_C@CsAkAca@{@cZG}BOgHOaHOwGSqJYiOk@mXCa@Cg@_@{@e@Yi@WsCIqQg@D}BQAoGUuBi@mImFiAs@aHkE",
             "maneuvers": [
               {
                 "type": "start",
                 "instruction": "Walk east on the walkway.",
                 "verbal_pre_transition_instruction": "Walk east on the walkway.",
-                "verbal_post_transition_instruction": "Continue for 100 meters.",
-                "distance_meters": 101.2,
-                "duration_seconds": 79.0,
+                "verbal_post_transition_instruction": "Continue for 70 meters.",
+                "distance_meters": 67.2,
+                "duration_seconds": 54.4,
                 "begin_shape_index": 0,
-                "end_shape_index": 9
+                "end_shape_index": 7
               },
               {
                 "type": "right",
@@ -214,19 +214,19 @@ expression: "&response"
                 "verbal_pre_transition_instruction": "Turn right onto the crosswalk. Then, in 10 meters, Turn left onto the walkway.",
                 "verbal_post_transition_instruction": "Continue for 10 meters.",
                 "distance_meters": 11.0,
-                "duration_seconds": 8.0,
-                "begin_shape_index": 9,
-                "end_shape_index": 11
+                "duration_seconds": 8.8,
+                "begin_shape_index": 7,
+                "end_shape_index": 9
               },
               {
                 "type": "left",
                 "instruction": "Turn left onto the walkway.",
                 "verbal_pre_transition_instruction": "Turn left onto the walkway.",
-                "verbal_post_transition_instruction": "Continue for 30 meters.",
-                "distance_meters": 32.0,
-                "duration_seconds": 23.0,
-                "begin_shape_index": 11,
-                "end_shape_index": 17
+                "verbal_post_transition_instruction": "Continue for 70 meters.",
+                "distance_meters": 66.0,
+                "duration_seconds": 48.6,
+                "begin_shape_index": 9,
+                "end_shape_index": 16
               },
               {
                 "type": "right",
@@ -234,9 +234,9 @@ expression: "&response"
                 "verbal_pre_transition_instruction": "Turn right onto the walkway.",
                 "verbal_post_transition_instruction": "Continue for 200 meters.",
                 "distance_meters": 196.0,
-                "duration_seconds": 154.0,
-                "begin_shape_index": 17,
-                "end_shape_index": 28
+                "duration_seconds": 155.4,
+                "begin_shape_index": 16,
+                "end_shape_index": 27
               },
               {
                 "type": "left",
@@ -245,8 +245,8 @@ expression: "&response"
                 "verbal_post_transition_instruction": "Continue for 50 meters.",
                 "distance_meters": 51.0,
                 "duration_seconds": 36.0,
-                "begin_shape_index": 28,
-                "end_shape_index": 34
+                "begin_shape_index": 27,
+                "end_shape_index": 33
               },
               {
                 "type": "right",
@@ -254,9 +254,9 @@ expression: "&response"
                 "verbal_pre_transition_instruction": "Turn right onto the crosswalk. Then Turn left onto Carrer Francois Miterrand.",
                 "verbal_post_transition_instruction": "Continue for less than 10 meters.",
                 "distance_meters": 5.0,
-                "duration_seconds": 4.0,
-                "begin_shape_index": 34,
-                "end_shape_index": 35
+                "duration_seconds": 3.5,
+                "begin_shape_index": 33,
+                "end_shape_index": 34
               },
               {
                 "type": "left",
@@ -267,9 +267,9 @@ expression: "&response"
                   "Carrer Francois Miterrand"
                 ],
                 "distance_meters": 67.1,
-                "duration_seconds": 52.0,
-                "begin_shape_index": 35,
-                "end_shape_index": 41
+                "duration_seconds": 51.6,
+                "begin_shape_index": 34,
+                "end_shape_index": 40
               },
               {
                 "type": "destination",
@@ -277,8 +277,8 @@ expression: "&response"
                 "verbal_pre_transition_instruction": "You have arrived at your destination.",
                 "distance_meters": 0.0,
                 "duration_seconds": 0.0,
-                "begin_shape_index": 41,
-                "end_shape_index": 41
+                "begin_shape_index": 40,
+                "end_shape_index": 40
               }
             ]
           }
@@ -288,7 +288,7 @@ expression: "&response"
           "departure": 1781508000,
           "arrival": 1781508300,
           "duration_seconds": 300,
-          "wait_seconds": 364,
+          "wait_seconds": 362,
           "realtime": false,
           "route": {
             "route_id": "L2",

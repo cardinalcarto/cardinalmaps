@@ -58,7 +58,8 @@ use valinor_transit::{
 };
 use valinor_walk::{
     AccessSide, ResolvedWalk, SnapConfig, SnapPoint, StopSnaps, StopTables, TableRequest,
-    TableSeed, WalkError, WalkHandle, WalkSearch, snap_stops,
+    TableSeed, TableTransfers, TableWalk, TransferTable, WalkError, WalkHandle, WalkSearch,
+    snap_stops,
 };
 
 /// Measures live and peak heap bytes.
@@ -1196,6 +1197,180 @@ fn report_table(
     Ok(())
 }
 
+/// Runs real table-backed transfers: Sif-costed walks from a precomputed [`TransferTable`].
+fn report_sif_transfers(
+    worker: &mut Worker,
+    env: &Env,
+    samples: &[Sample],
+    located: &[Option<(f64, f64)>],
+    costing: &AnyCosting,
+    snaps: &Arc<StopSnaps>,
+    flags: &Flags,
+) -> Result<(), Box<dyn Error>> {
+    let radius: u32 = flags.number("sif-transfers", 900);
+    let started = Instant::now();
+    let table = TransferTable::build(
+        &env.provider,
+        costing,
+        snaps,
+        radius,
+        NonZeroUsize::new(16).ok_or("threads")?,
+        &|| false,
+    )?
+    .ok_or("interrupted")?;
+    println!(
+        "radius {} min: built in {:.2?}, {} walks, {:.1} MB",
+        radius / 60,
+        started.elapsed(),
+        table.walk_count(),
+        table.bytes() as f64 / 1e6
+    );
+    let mut router = Router::new(TableTransfers::new(Arc::new(table)));
+    let mut run = |worker: &mut Worker, sample: Sample| -> Result<_, Box<dyn Error>> {
+        let started = Instant::now();
+        let (access, egress) = walk_tables(worker, env, sample)?;
+        let tables_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let query = TransitQuery {
+            snapshot: env.snapshot.clone(),
+            access: &access,
+            egress: &egress,
+            filter: RouteFilter::ALL,
+            max_trips: env.max_trips,
+        };
+        let at = Time::try_new(env.day_start + sample.hour * 3600)?;
+        let started = Instant::now();
+        let now = router
+            .leave_at(&query, at, env.options, &|| false)
+            .map_err(|e| e.to_string())?;
+        let now_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let started = Instant::now();
+        let mut departures: Vec<i32> = now
+            .entries
+            .iter()
+            .map(|e| e.departure.into_inner())
+            .collect();
+        departures.sort_unstable();
+        departures.dedup();
+        for departure in departures {
+            router
+                .leave_at(&query, Time::try_new(departure + 1)?, env.options, &|| {
+                    false
+                })
+                .map_err(|e| e.to_string())?;
+        }
+        let misses_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let latest = Time::try_new(at.into_inner() + 3600)?;
+        let started = Instant::now();
+        let profile = router
+            .profile_with(&query, at, latest, env.options, &|| false)
+            .map_err(|e| e.to_string())?;
+        let profile_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let triples = |entries: &[ProfileEntry<TableWalk>]| -> Triples {
+            entries
+                .iter()
+                .map(|e| (e.departure.into_inner(), e.arrival.into_inner(), e.trips))
+                .collect()
+        };
+        Ok((
+            [tables_ms, now_ms, misses_ms, profile_ms],
+            triples(&now.entries),
+            triples(&profile.entries),
+        ))
+    };
+    for sample in samples.iter().take(8) {
+        run(worker, *sample)?;
+    }
+    let mut dump = String::new();
+    let mut times = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    for (index, sample) in samples.iter().enumerate() {
+        let (measured, now, profile) = run(worker, *sample)?;
+        for (slot, value) in times.iter_mut().zip(measured) {
+            slot.push(value);
+        }
+        for (tag, list) in [("L", now), ("P", profile)] {
+            write!(dump, "{tag} {index}")?;
+            for (d, a, k) in list {
+                write!(dump, " {d},{a},{k}")?;
+            }
+            dump.push('\n');
+        }
+    }
+    if let Some(path) = flags.0.get("dump") {
+        std::fs::write(path, dump)?;
+    }
+    println!(
+        "{:<30} {:>8} {:>8} {:>9}",
+        "ms over 64 trips", "p50", "p95", "max"
+    );
+    let names = ["tables", "leave now", "all missed-it", "60-minute profile"];
+    for (name, values) in names.iter().zip(times.iter_mut()) {
+        values.sort_by(f64::total_cmp);
+        println!(
+            "{name:<30} {:>8.2} {:>8.2} {:>9.2}",
+            percentile(values, 0.5),
+            percentile(values, 0.95),
+            percentile(values, 1.0)
+        );
+    }
+    for (name, from, to) in NAMED_TRIPS {
+        let (from, _) = nearest_stop(located, from).ok_or("no stop near the origin")?;
+        let (to, _) = nearest_stop(located, to).ok_or("no stop near the destination")?;
+        println!("{name}, median of {NAMED_REPEATS}:");
+        for (period, (period_name, hour)) in PERIODS.iter().enumerate() {
+            let sample = Sample {
+                from,
+                to,
+                period,
+                band: 0,
+                hour: *hour,
+            };
+            let mut runs = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+            let mut count = 0;
+            for _ in 0..NAMED_REPEATS {
+                let (measured, now, _) = run(worker, sample)?;
+                count = now.len();
+                for (slot, value) in runs.iter_mut().zip(measured) {
+                    slot.push(value);
+                }
+            }
+            let [tables, now, misses, profile] = runs.map(median);
+            println!(
+                "  {period_name} {hour:02}:00: tables {tables:.1}, leave now {now:.2} ({count} journeys), \
+                 all missed-it {misses:.2}, 60-minute profile {profile:.2} ms"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A varint, least significant group first.
+fn push_varint(out: &mut Vec<u8>, mut value: u32) {
+    while value >= 0x80 {
+        out.push((value & 0x7f) as u8 | 0x80);
+        value >>= 7;
+    }
+    out.push(value as u8);
+}
+
+/// A transfer table as a download would hold it: one direction, in three columns of varints.
+fn encode_transfers(table: &TransferTable) -> Vec<u8> {
+    let (mut counts, mut stops, mut seconds) = (Vec::new(), Vec::new(), Vec::new());
+    for from in 0..table.stop_count() as u32 {
+        let walks: Vec<_> = table.walks_from(StopId::new(from)).collect();
+        push_varint(&mut counts, walks.len() as u32);
+        let mut previous = 0;
+        for (stop, cost) in walks {
+            push_varint(&mut stops, stop.into_inner() - previous);
+            previous = stop.into_inner();
+            push_varint(&mut seconds, cost);
+        }
+    }
+    let mut out = counts;
+    out.extend(stops);
+    out.extend(seconds);
+    out
+}
+
 /// The stop nearest a point, and how far away it is in meters.
 fn nearest_stop(located: &[Option<(f64, f64)>], point: (f64, f64)) -> Option<(u32, f64)> {
     located
@@ -1647,6 +1822,84 @@ fn main() -> Result<(), Box<dyn Error>> {
             terminate_tables,
         )
     };
+    if flags.present("build-transfers") {
+        for mode in ["pedestrian", "bicycle"] {
+            let mode_costing = costing_named(mode)?;
+            let mode_snaps = Arc::new(snap_stops(
+                &provider,
+                &mode_costing,
+                &SnapConfig::default(),
+                provider.build_id(),
+                &stops,
+            )?);
+            for (radius, threads) in [(600, 16), (900, 16), (1200, 16)] {
+                let started = Instant::now();
+                let table = TransferTable::build(
+                    &provider,
+                    &mode_costing,
+                    &mode_snaps,
+                    radius,
+                    NonZeroUsize::new(threads).ok_or("threads")?,
+                    &|| false,
+                )?
+                .ok_or("interrupted")?;
+                println!(
+                    "{mode} {} min, {threads} threads: built in {:.2?}; {} walks, {:.1} per stop; {:.1} MB",
+                    radius / 60,
+                    started.elapsed(),
+                    table.walk_count(),
+                    table.walk_count() as f64 / table.stop_count().max(1) as f64,
+                    table.bytes() as f64 / 1e6,
+                );
+                if let Some(dir) = flags.0.get("transfer-files") {
+                    std::fs::write(
+                        format!("{dir}/{mode}-{}.bin", radius / 60),
+                        encode_transfers(&table),
+                    )?;
+                }
+                if mode == "pedestrian" && radius == 900 && threads == 16 {
+                    let (mut builder, _) = fresh()?;
+                    let node = build_walk_table(
+                        &mut builder.router.transfers_mut().inner,
+                        table.stop_count(),
+                        radius as i32,
+                    )?;
+                    let mut deltas = Vec::new();
+                    let mut only_node = 0_usize;
+                    for (from, walks) in node.out.iter().enumerate() {
+                        for &(to, seconds) in walks {
+                            match table.seconds(StopId::new(from as u32), StopId::new(to)) {
+                                Some(edge) => deltas.push(f64::from(edge as i32 - seconds)),
+                                None => only_node += 1,
+                            }
+                        }
+                    }
+                    deltas.sort_by(f64::total_cmp);
+                    println!(
+                        "  against node-based walks: {} pairs in both, {only_node} only node-based; \
+                         Sif minus node seconds p5 {:.0} p50 {:.0} p95 {:.0} max {:.0}",
+                        deltas.len(),
+                        percentile(&deltas, 0.05),
+                        percentile(&deltas, 0.5),
+                        percentile(&deltas, 0.95),
+                        percentile(&deltas, 1.0),
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
+    if flags.present("sif-transfers") {
+        return report_sif_transfers(
+            &mut worker,
+            &env,
+            &samples,
+            &located,
+            &costing,
+            &snaps,
+            &flags,
+        );
+    }
     if flags.present("table-radius") {
         return report_table(
             &fresh,

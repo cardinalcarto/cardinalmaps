@@ -35,6 +35,12 @@ const RETAINED_LABELS: usize = 1 << 16;
 /// How long a plan may run on a device before it is abandoned.
 const PLAN_DEADLINE: Duration = Duration::from_secs(30);
 
+/// How many threads build transfer tables on a device; each holds its own search storage.
+const TRANSFER_BUILD_THREADS: NonZeroUsize = match NonZeroUsize::new(2) {
+    Some(threads) => threads,
+    None => NonZeroUsize::MIN,
+};
+
 fn device_config() -> StreetConfig {
     StreetConfig {
         limits: ServiceLimits {
@@ -46,6 +52,7 @@ fn device_config() -> StreetConfig {
             bidirectional_labels: RETAINED_LABELS,
             unidirectional_labels: RETAINED_LABELS,
         },
+        transfer_build_threads: TRANSFER_BUILD_THREADS,
         ..StreetConfig::default()
     }
 }

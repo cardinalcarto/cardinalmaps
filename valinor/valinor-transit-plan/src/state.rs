@@ -45,7 +45,7 @@ use valinor_gtfs_rt::{
     RiderData, build_overlay,
 };
 use valinor_transit::{Snapshot, StopId, Timetable};
-use valinor_walk::{SnappedStop, StopSnaps, WalkError};
+use valinor_walk::{SnappedStop, StopSnaps, TransferTable, WalkError};
 
 use crate::error::StateError;
 use crate::lookup::CompiledLookup;
@@ -123,6 +123,30 @@ pub trait StopSnapper: core::fmt::Debug + Send + Sync {
     ///
     /// If a tile can't be read.
     fn snap_one(&self, mode: TravelMode, ll: (f64, f64)) -> Result<SnappedStop, WalkError>;
+
+    /// Precomputes the walks between nearby stops for a travel mode.
+    ///
+    /// # Errors
+    ///
+    /// If a tile can't be read, or the snaps are of a different build.
+    fn transfers(
+        &self,
+        mode: TravelMode,
+        snaps: &Arc<StopSnaps>,
+    ) -> Result<TransferTable, WalkError>;
+
+    /// A table that adds an overlay's new stops to `base`, for `snaps` that cover them.
+    ///
+    /// # Errors
+    ///
+    /// If a tile can't be read, or the snaps are of a different build.
+    fn add_transfers(
+        &self,
+        mode: TravelMode,
+        base: &TransferTable,
+        snaps: &Arc<StopSnaps>,
+        new_stops: &[StopId],
+    ) -> Result<TransferTable, WalkError>;
 }
 
 /// Each travel mode's snaps of a snapshot's stops.
@@ -130,6 +154,8 @@ pub trait StopSnapper: core::fmt::Debug + Send + Sync {
 pub struct ModeSnaps {
     walking: Arc<StopSnaps>,
     cycling: Arc<StopSnaps>,
+    walking_transfers: Arc<TransferTable>,
+    cycling_transfers: Arc<TransferTable>,
 }
 
 impl ModeSnaps {
@@ -138,6 +164,14 @@ impl ModeSnaps {
         match mode {
             TravelMode::Walking => &self.walking,
             TravelMode::Cycling => &self.cycling,
+        }
+    }
+
+    /// The precomputed walks between stops for a travel mode.
+    pub fn transfers_for_mode(&self, mode: TravelMode) -> &Arc<TransferTable> {
+        match mode {
+            TravelMode::Walking => &self.walking_transfers,
+            TravelMode::Cycling => &self.cycling_transfers,
         }
     }
 
@@ -156,9 +190,25 @@ impl ModeSnaps {
             walking.insert(stop.stop, snapper.snap_one(TravelMode::Walking, ll)?)?;
             cycling.insert(stop.stop, snapper.snap_one(TravelMode::Cycling, ll)?)?;
         }
+        let (walking, cycling) = (Arc::new(walking), Arc::new(cycling));
+        let stops: Vec<StopId> = new_stops.iter().map(|stop| stop.stop).collect();
+        let walking_transfers = snapper.add_transfers(
+            TravelMode::Walking,
+            &self.walking_transfers,
+            &walking,
+            &stops,
+        )?;
+        let cycling_transfers = snapper.add_transfers(
+            TravelMode::Cycling,
+            &self.cycling_transfers,
+            &cycling,
+            &stops,
+        )?;
         Ok(Self {
-            walking: Arc::new(walking),
-            cycling: Arc::new(cycling),
+            walking,
+            cycling,
+            walking_transfers: Arc::new(walking_transfers),
+            cycling_transfers: Arc::new(cycling_transfers),
         })
     }
 }
@@ -352,9 +402,15 @@ impl TransitState {
             None => None,
             Some(snapper) => {
                 let points = stop_points(loaded.timetable());
+                let walking = Arc::new(snapper.snap_all(TravelMode::Walking, &points)?);
+                let cycling = Arc::new(snapper.snap_all(TravelMode::Cycling, &points)?);
+                let walking_transfers = Arc::new(snapper.transfers(TravelMode::Walking, &walking)?);
+                let cycling_transfers = Arc::new(snapper.transfers(TravelMode::Cycling, &cycling)?);
                 Some(ModeSnaps {
-                    walking: Arc::new(snapper.snap_all(TravelMode::Walking, &points)?),
-                    cycling: Arc::new(snapper.snap_all(TravelMode::Cycling, &points)?),
+                    walking,
+                    cycling,
+                    walking_transfers,
+                    cycling_transfers,
                 })
             }
         };

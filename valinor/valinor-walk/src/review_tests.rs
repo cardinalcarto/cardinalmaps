@@ -99,7 +99,7 @@ fn point(edge: GraphId, percent_along: f32) -> SnapPoint {
     }
 }
 
-fn snaps_of<P: GraphTileProvider>(provider: &P, points: &[SnapPoint]) -> Arc<StopSnaps> {
+pub(super) fn snaps_of<P: GraphTileProvider>(provider: &P, points: &[SnapPoint]) -> Arc<StopSnaps> {
     let build = provider
         .with_tile_containing(points[0].edge, |t| t.header().build_id())
         .expect("tile");

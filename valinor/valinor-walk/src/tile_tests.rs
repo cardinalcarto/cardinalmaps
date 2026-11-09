@@ -30,7 +30,7 @@ fn andorra() -> DirectoryGraphTileProvider {
 }
 
 /// Costing with default options, as a request naming only the costing gets.
-pub(crate) fn costing_named(name: &str) -> AnyCosting {
+pub(super) fn costing_named(name: &str) -> AnyCosting {
     use valinor_sif::costing_options::{parse_costing, parse_costing_name};
     use valinor_sif::json::JsonValue;
     let doc = JsonValue::parse(b"{}").expect("empty document");
