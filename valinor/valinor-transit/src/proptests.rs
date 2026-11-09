@@ -797,7 +797,28 @@ fn triples_with(net: &TestNet, raw: &RawNet, known_journey_bounds: bool) -> Trip
             t(WINDOW.1 + raw.shift),
             crate::ProfileOptions {
                 known_journey_bounds,
+                bootstrap_walk_limit: known_journey_bounds.then_some(600),
             },
+            &|| false,
+        )
+        .expect("profile")
+        .entries
+        .iter()
+        .map(|e| (e.departure.into_inner(), e.arrival.into_inner(), e.trips))
+        .collect();
+    triples.sort_unstable();
+    triples
+}
+
+/// The default profile's `(departure, arrival, trips)` with a given trip limit.
+fn triples_for(net: &TestNet, raw: &RawNet, max_trips: u8) -> Triples {
+    let query = net.query(max_trips, RouteFilter::ALL);
+    let mut router = net.router();
+    let mut triples: Triples = router
+        .profile(
+            &query,
+            t(WINDOW.0 + raw.shift),
+            t(WINDOW.1 + raw.shift),
             &|| false,
         )
         .expect("profile")
@@ -979,6 +1000,33 @@ fn zero_second_seconds_constant_is_zero() {
 
 /// Guards against the generators drifting into trivial networks,
 /// where the comparisons above would pass while proving nothing.
+/// A walk after the last allowed round can't matter, so allowing one more trip
+/// must not change any entry that doesn't use it.
+#[test]
+fn skipping_the_final_rounds_walk_changes_nothing() {
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
+
+    let mut runner = TestRunner::deterministic();
+    let strategy = raw_net();
+    let mut compared = 0;
+    for _ in 0..600 {
+        let raw = strategy.new_tree(&mut runner).expect("sample").current();
+        if raw.max_trips >= crate::MAX_TRIPS {
+            continue;
+        }
+        let net = build_net(&raw);
+        let limited = triples_for(&net, &raw, raw.max_trips);
+        let larger: Triples = triples_for(&net, &raw, raw.max_trips + 1)
+            .into_iter()
+            .filter(|&(_, _, trips)| trips <= raw.max_trips)
+            .collect();
+        assert_eq!(limited, larger, "max_trips {}", raw.max_trips);
+        compared += 1;
+    }
+    assert!(compared > 100, "only {compared} networks compared");
+}
+
 #[test]
 fn known_journey_bounds_never_change_a_profile() {
     use proptest::strategy::ValueTree;

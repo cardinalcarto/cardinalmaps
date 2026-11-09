@@ -665,6 +665,10 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
         self.start_stamp();
     }
 
+    fn set_walk_limit(&mut self, limit: Option<u32>) {
+        Self::set_walk_limit(self, limit);
+    }
+
     fn walk(&self, parent: WalkHandle) -> ResolvedWalk {
         self.resolve(parent)
     }

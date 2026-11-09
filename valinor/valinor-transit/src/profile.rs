@@ -42,12 +42,22 @@ pub struct ProfileOptions {
     /// Bound each search with the journeys the profile already knows, and each backward search
     /// with the start of the window.
     pub known_journey_bounds: bool,
+    /// The walk limit of a bootstrap pass, in seconds, or `None` for no pass.
+    ///
+    /// A forward search at the end of the window, with walks this short, finds real journeys
+    /// that depart no earlier than any search of the profile, so they bound all of them.
+    /// Needs `known_journey_bounds`. The limit only decides how good those bounds are.
+    pub bootstrap_walk_limit: Option<u32>,
 }
+
+/// The default limit of a profile's bootstrap walks: 30 minutes.
+pub const DEFAULT_BOOTSTRAP_WALK_LIMIT: u32 = 1800;
 
 impl Default for ProfileOptions {
     fn default() -> Self {
         Self {
             known_journey_bounds: true,
+            bootstrap_walk_limit: Some(DEFAULT_BOOTSTRAP_WALK_LIMIT),
         }
     }
 }
@@ -138,7 +148,20 @@ pub(crate) fn run_profile<S: TransferSearch>(
     let mut known = KnownJourneys::default();
     let mut bounds = vec![INFINITY; usize::from(query.max_trips) + 1];
 
-    router.run_forward(query, earliest_seconds, &[], interrupt)?;
+    if options.known_journey_bounds
+        && let Some(limit) = options.bootstrap_walk_limit
+    {
+        router.transfers.set_walk_limit(Some(limit));
+        let outcome = router.run_forward(query, latest_seconds, &[], interrupt);
+        router.transfers.set_walk_limit(None);
+        outcome?;
+        for result in round_results(&router.forward, Direction::Forward) {
+            known.add(latest_seconds, result.time.into_inner(), result.trips);
+        }
+        known.forward_bounds(earliest_seconds, &mut bounds);
+    }
+
+    router.run_forward(query, earliest_seconds, &bounds, interrupt)?;
     push_arrivals(router, &mut queue, &mut seen_arrivals);
 
     while let Some(core::cmp::Reverse(arrival)) = queue.pop() {

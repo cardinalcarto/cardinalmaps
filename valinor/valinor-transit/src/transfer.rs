@@ -158,6 +158,12 @@ pub trait TransferSearch {
     /// Called once before each MCR search; handles from earlier searches may now be reused.
     fn begin_run(&mut self, direction: Direction);
 
+    /// Limits how far one walk may go, in seconds, until told otherwise.
+    ///
+    /// Used for a profile's bootstrap pass, whose journeys only bound the exact searches after
+    /// it. An implementation may ignore this, which only makes that pass more expensive.
+    fn set_walk_limit(&mut self, _limit: Option<u32>) {}
+
     /// Resolves a handle that is currently valid into an owned walk.
     fn walk(&self, parent: Self::Parent) -> Self::Walk;
 
