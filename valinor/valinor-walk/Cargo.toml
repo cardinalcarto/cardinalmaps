@@ -20,6 +20,7 @@ valinor-transit = { workspace = true }
 [dev-dependencies]
 valinor-router = { workspace = true }
 geo = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

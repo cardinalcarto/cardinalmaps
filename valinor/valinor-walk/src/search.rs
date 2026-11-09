@@ -19,6 +19,18 @@ use crate::queue::DialQueue;
 use crate::snap::StopSnaps;
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::too_many_lines,
+    clippy::needless_range_loop,
+    clippy::many_single_char_names,
+    clippy::similar_names,
+    reason = "tests, with small sizes and readable indexing"
+)]
 #[path = "tile_tests.rs"]
 mod tile_tests;
 
@@ -27,6 +39,9 @@ const NONE: u32 = u32::MAX;
 
 /// How many labels to settle between interrupt checks.
 const INTERRUPT_INTERVAL: u32 = 2048;
+
+/// How many arena entries a run keeps room for between runs (8 bytes each).
+const MAX_RETAINED_ARENA: usize = 1 << 22;
 
 /// Two tiers of a node's label, as bits in the low two bits of its stamp.
 const SETTLED_MASK: u32 = 3;
@@ -182,8 +197,14 @@ pub struct WalkSearch<P: GraphTileProvider, C: Costing> {
     snaps: Option<Arc<StopSnaps>>,
 
     labels: Vec<NodeLabel>,
-    /// `stamp` value of the current search, a multiple of 4.
+    /// `stamp` value of the labels currently in force, a multiple of 4.
+    ///
+    /// A new value per run with [`Self::set_run_pruning`] on (the default), per search otherwise.
     stamp_base: u32,
+    /// Whether labels carry over between the searches of one run; see [`Self::set_run_pruning`].
+    run_pruning: bool,
+    /// The stamp of the current search's stop labels.
+    stop_stamp: u32,
     /// By dense node: the first attachment, or [`NONE`].
     node_attach: Vec<u32>,
     attachments: Vec<Attachment>,
@@ -211,6 +232,8 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
             snaps: None,
             labels: Vec::new(),
             stamp_base: 4,
+            run_pruning: true,
+            stop_stamp: 1,
             node_attach: Vec::new(),
             attachments: Vec::new(),
             attached_nodes: Vec::new(),
@@ -234,6 +257,7 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
     /// # Errors
     ///
     /// Refuses `snaps` made on a different tile build, and fails on unreadable tiles.
+    #[expect(clippy::too_many_lines, reason = "one pass over the stops")]
     pub fn bind(&mut self, snaps: Arc<StopSnaps>) -> Result<(), WalkError> {
         if self.snaps.as_ref().is_some_and(|s| Arc::ptr_eq(s, &snaps)) {
             return Ok(());
@@ -384,6 +408,7 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
             + self.same_edge_stops.capacity() * size_of::<u32>()
     }
 
+    /// Forgets every node label.
     fn start_stamp(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
         if self.epoch == 0 || self.epoch >= (1 << 30) {
@@ -391,12 +416,22 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
             for label in &mut self.labels {
                 label.stamp = 0;
             }
-            for label in &mut self.stop_labels {
-                label.stamp = 0;
-            }
             self.epoch = 1;
         }
         self.stamp_base = self.epoch << 2;
+    }
+
+    /// Whether node labels stay between the searches of one [`begin_run`] (the default).
+    ///
+    /// With this on, a later round's walk is cut wherever a node already has two labels
+    /// from earlier rounds, no later than the new one and with sources distinct from it:
+    /// such a label can't reach a stop earlier than what was reported before,
+    /// and a walk label that isn't an improvement in an earlier round is not one now.
+    /// Turning it off makes every search start from nothing (for measurement).
+    ///
+    /// [`begin_run`]: valinor_transit::TransferSearch::begin_run
+    pub fn set_run_pruning(&mut self, enabled: bool) {
+        self.run_pruning = enabled;
     }
 }
 
@@ -442,16 +477,19 @@ fn relax(
         if clock < label.clock[0] {
             label.clock[0] = clock;
             label.parent[0] = push(arena);
+            label.stamp &= !1;
             queue.push(clock, node);
         }
         return;
     }
     if clock < label.clock[0] {
-        // The old best moves down a tier. It can't have been settled:
-        // a settled label's clock is at most the current one, so nothing beats it.
+        // The old best moves down a tier, along with whether it has been settled
+        // (it may have been, in an earlier round of the run).
         label.clock[1] = label.clock[0];
         label.source[1] = label.source[0];
         label.parent[1] = label.parent[0];
+        let was_settled = label.stamp & 1;
+        label.stamp = (label.stamp & !SETTLED_MASK) | (was_settled << 1);
         label.clock[0] = clock;
         label.source[0] = source;
         label.parent[0] = push(arena);
@@ -462,6 +500,7 @@ fn relax(
         if clock < label.clock[1] {
             label.clock[1] = clock;
             label.parent[1] = push(arena);
+            label.stamp &= !2;
             queue.push(clock, node);
         }
         return;
@@ -470,6 +509,7 @@ fn relax(
         label.clock[1] = clock;
         label.source[1] = source;
         label.parent[1] = push(arena);
+        label.stamp &= !2;
         queue.push(clock, node);
     }
 }
@@ -489,6 +529,11 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
     fn begin_run(&mut self, direction: Direction) {
         self.direction = direction;
         self.arena.clear();
+        // A rare long run shouldn't hold on to its peak (32 MB here, as Thor limits its labels).
+        if self.arena.capacity() > MAX_RETAINED_ARENA {
+            self.arena.shrink_to(MAX_RETAINED_ARENA);
+        }
+        self.start_stamp();
     }
 
     fn walk(&self, parent: WalkHandle) -> ResolvedWalk {
@@ -501,7 +546,16 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
         sink: &mut K,
     ) -> Result<TransferOutcome, WalkError> {
         let dir = usize::from(request.direction == Direction::Backward);
-        self.start_stamp();
+        if !self.run_pruning {
+            self.start_stamp();
+        }
+        self.stop_stamp = self.stop_stamp.wrapping_add(1);
+        if self.stop_stamp == 0 {
+            for label in &mut self.stop_labels {
+                label.stamp = 0;
+            }
+            self.stop_stamp = 1;
+        }
         self.stats = SearchStats::default();
         self.touched_stops.clear();
         self.ensure_node_arrays();
@@ -530,7 +584,7 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
             upper_bound,
         };
         for seed in request.seeds {
-            run.seed(seed.stop, seed.clock.seconds())?;
+            run.seed(seed.stop, seed.clock.seconds());
         }
         let outcome = run.settle_all(request)?;
         if outcome == TransferOutcome::Interrupted {
@@ -545,9 +599,9 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
 
 impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
     /// Starts labels at a seed: at the nodes it attaches to, and at other stops on its edge.
-    fn seed(&mut self, stop: StopId, clock: i32) -> Result<(), WalkError> {
+    fn seed(&mut self, stop: StopId, clock: i32) {
         if clock >= self.upper_bound {
-            return Ok(());
+            return;
         }
         let stop_index = stop.into_inner();
         let Some(attach) = self
@@ -557,7 +611,7 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
             .copied()
             .flatten()
         else {
-            return Ok(());
+            return;
         };
         self.search.ensure_node_arrays();
         // Leaving the stop: on a forward search the stop is left along each direction of its
@@ -589,7 +643,6 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
             }
         }
         self.direct_walks(stop_index, attach, clock);
-        Ok(())
     }
 
     /// Considers walks along the seed's own edge to the other stops on it.
@@ -762,7 +815,7 @@ fn update_stop<P: GraphTileProvider, C: Costing>(
     chain: u32,
     side: u8,
 ) {
-    let stamp = search.stamp_base;
+    let stamp = search.stop_stamp;
     let label = &mut search.stop_labels[stop as usize];
     if label.stamp != stamp {
         *label = StopLabel {

@@ -85,6 +85,8 @@ fn run_search<P: GraphTileProvider, C: Costing>(
     direction: Direction,
     upper_bound: i32,
 ) -> HashMap<u32, (i32, u32, WalkHandle)> {
+    // A new run each time: these searches are independent of one another.
+    search.begin_run(direction);
     let mut sink = Sink::default();
     let request = TransferRequest {
         direction,
@@ -931,4 +933,618 @@ fn access_legs_convert_to_thor_legs_with_a_shape() {
         .expect("build trip");
     let trip = api.trip.expect("trip");
     assert!(!trip.routes[0].legs[0].shape.is_empty());
+}
+
+// ------------------------------------------------------------------------------------------
+// Real data: King County Metro stops on Washington tiles. Run with `-- --ignored --nocapture`
+// in a release build, at low priority.
+// ------------------------------------------------------------------------------------------
+
+const KCM_ZIP: &str = "/mnt/maps/cardinal/transit/kcm/static/kcm-FAL26-161.2.zip";
+
+/// Splits a line of comma-separated values, honoring double quotes.
+fn csv_fields(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                field.push('"');
+                chars.next();
+            }
+            '"' => quoted = !quoted,
+            ',' if !quoted => fields.push(core::mem::take(&mut field)),
+            c => field.push(c),
+        }
+    }
+    fields.push(field);
+    fields
+}
+
+/// The boardable stops of King County Metro's feed, as `(lon, lat)`.
+fn kcm_stops() -> Vec<(f64, f64)> {
+    let output = std::process::Command::new("unzip")
+        .args(["-p", KCM_ZIP, "stops.txt"])
+        .output()
+        .expect("unzip");
+    assert!(output.status.success(), "unzip failed");
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut lines = text.lines();
+    let header = csv_fields(lines.next().expect("header").trim_start_matches('\u{feff}'));
+    let field = |name: &str| header.iter().position(|h| h == name).expect(name);
+    let (lat, lon) = (field("stop_lat"), field("stop_lon"));
+    let kind = header.iter().position(|h| h == "location_type");
+    lines
+        .filter_map(|line| {
+            let f = csv_fields(line);
+            let loc_type = kind.and_then(|k| f.get(k)).map_or("", String::as_str);
+            if !matches!(loc_type, "" | "0") {
+                return None;
+            }
+            Some((f[lon].parse().ok()?, f[lat].parse().ok()?))
+        })
+        .collect()
+}
+
+/// Washington tiles (as `TileSets`, the provider production uses) with King County Metro's
+/// stops snapped.
+fn wa_fixture(
+    costing: &AnyCosting,
+) -> (
+    &'static valinor_router::tiles::TileSets,
+    Arc<StopSnaps>,
+    Vec<(f64, f64)>,
+) {
+    let tile_sets = valinor_router::tiles::TileSets::open(
+        &[WA_TILES],
+        NonZeroUsize::new(1024).expect("nonzero"),
+    )
+    .expect("open tiles");
+    // The tests live for the whole process, and a provider is `Copy` through a reference.
+    let provider: &'static valinor_router::tiles::TileSets = Box::leak(Box::new(tile_sets));
+    let stops = kcm_stops();
+    let started = std::time::Instant::now();
+    let snaps = crate::snap_stops(
+        &provider,
+        costing,
+        &crate::SnapConfig::default(),
+        provider.build_id(),
+        &stops,
+    )
+    .expect("snap");
+    let unsnapped = snaps
+        .reports()
+        .iter()
+        .filter(|r| matches!(r, crate::SnapReport::Unsnapped(_)))
+        .count();
+    let disconnected = snaps
+        .reports()
+        .iter()
+        .filter(|r| matches!(r, crate::SnapReport::Disconnected(..)))
+        .count();
+    println!(
+        "snapped {} KCM stops in {:.2?}: {unsnapped} unsnapped, {disconnected} disconnected",
+        stops.len(),
+        started.elapsed()
+    );
+    (provider, Arc::new(snaps), stops)
+}
+
+#[test]
+#[ignore = "needs /mnt/maps/cardinal data"]
+fn king_county_forward_backward_agree_on_real_tiles() {
+    let costing = costing_named("pedestrian");
+    let (provider, snaps, _stops) = wa_fixture(&costing);
+    let mut search = WalkSearch::new(provider, costing);
+    search.bind(snaps.clone()).expect("bind");
+    let stop_count = snaps.stop_count() as u32;
+    let (mut checked, mut mismatches, mut missing) = (0u64, 0u64, 0u64);
+    let sources = [0u32, 500, 1000, 2000, 3000, 4000, 5000, 6000]
+        .into_iter()
+        .chain((0..stop_count).step_by(301));
+    for (i, u) in sources.enumerate() {
+        let u = u % stop_count;
+        if search.stops[u as usize].is_none() {
+            continue;
+        }
+        let seeds = [TransferSeed {
+            stop: StopId::new(u),
+            clock: Clock::new(0),
+        }];
+        let forward = run_search(&mut search, &seeds, Direction::Forward, 3600);
+        for (&v, &(clock, ..)) in forward.iter().filter(|(v, _)| *v % 13 == i as u32 % 13) {
+            let back = [TransferSeed {
+                stop: StopId::new(v),
+                clock: Clock::new(0),
+            }];
+            let backward = run_search(&mut search, &back, Direction::Backward, 3600 + 1);
+            checked += 1;
+            match backward.get(&u) {
+                Some(&(from_v, _, _)) => {
+                    if from_v != clock {
+                        mismatches += 1;
+                        if mismatches <= 20 {
+                            println!("mismatch {u} -> {v}: forward {clock}, backward {from_v}");
+                        }
+                    }
+                }
+                None => {
+                    missing += 1;
+                    if missing <= 20 {
+                        println!("missing mirror arrival {u} -> {v}: forward {clock}");
+                    }
+                }
+            }
+        }
+    }
+    println!(
+        "checked {checked} forward/backward pairs, {mismatches} mismatches, {missing} missing"
+    );
+    assert_eq!((mismatches, missing), (0, 0));
+    assert!(checked > 100);
+}
+
+/// Thor's pedestrian time for a route between two points, in seconds.
+fn thor_seconds(router: &valinor_router::Router, a: (f64, f64), b: (f64, f64)) -> Option<f64> {
+    let body = format!(
+        r#"{{"locations":[{{"lat":{},"lon":{}}},{{"lat":{},"lon":{}}}],"costing":"pedestrian"}}"#,
+        a.1, a.0, b.1, b.0
+    );
+    let response = router.route(body.as_bytes());
+    if response.status != 200 {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&response.body).ok()?;
+    json.get("trip")?.get("summary")?.get("time")?.as_f64()
+}
+
+/// Compares our integer transfer seconds with Thor's pedestrian routes on a sample of stop pairs.
+#[test]
+#[ignore = "needs /mnt/maps/cardinal data"]
+fn walking_times_compared_with_thor() {
+    let costing = costing_named("pedestrian");
+    let (provider, snaps, stops) = wa_fixture(&costing);
+    let mut search = WalkSearch::new(provider, costing);
+    search.bind(snaps.clone()).expect("bind");
+    let config = valinor_router::RouterConfig::default();
+    let router = valinor_router::Router::open(config, &[WA_TILES]).expect("router");
+    let stop_count = snaps.stop_count();
+    let mut diffs = Vec::new();
+    let mut ratios = Vec::new();
+    let mut failed = 0u32;
+    let mut sampled = 0u32;
+    let mut i = 0usize;
+    while diffs.len() < 400 && i < stop_count {
+        let u = ((i * 7919) % stop_count) as u32;
+        i += 37;
+        if search.stops[u as usize].is_none() {
+            continue;
+        }
+        let seeds = [TransferSeed {
+            stop: StopId::new(u),
+            clock: Clock::new(0),
+        }];
+        search.begin_run(Direction::Forward);
+        // Stops within a 25-minute walk, sampled to spread over distances.
+        let found = run_search(&mut search, &seeds, Direction::Forward, 1500);
+        let mut pairs: Vec<(u32, i32)> = found.iter().map(|(&v, &(c, ..))| (v, c)).collect();
+        pairs.sort_unstable();
+        for &(v, clock) in pairs.iter().step_by(pairs.len().max(1).div_ceil(6)) {
+            if clock < 60 {
+                continue;
+            }
+            sampled += 1;
+            let Some(thor) = thor_seconds(&router, stops[u as usize], stops[v as usize]) else {
+                failed += 1;
+                continue;
+            };
+            let ours = f64::from(clock);
+            diffs.push(ours - thor);
+            ratios.push(ours / thor);
+        }
+    }
+    diffs.sort_by(f64::total_cmp);
+    ratios.sort_by(f64::total_cmp);
+    let pct = |v: &[f64], p: f64| v[((v.len() - 1) as f64 * p) as usize];
+    println!(
+        "sampled {sampled} stop pairs (15 s to 25 min walks); Thor failed on {failed}; {} compared",
+        diffs.len()
+    );
+    println!(
+        "ours - Thor seconds: min {:.0}, p5 {:.1}, p25 {:.1}, median {:.1}, p75 {:.1}, p95 {:.1}, max {:.0}, mean {:.1}",
+        diffs[0],
+        pct(&diffs, 0.05),
+        pct(&diffs, 0.25),
+        pct(&diffs, 0.5),
+        pct(&diffs, 0.75),
+        pct(&diffs, 0.95),
+        diffs[diffs.len() - 1],
+        diffs.iter().sum::<f64>() / diffs.len() as f64,
+    );
+    println!(
+        "ours / Thor ratio: p5 {:.3}, p25 {:.3}, median {:.3}, p75 {:.3}, p95 {:.3}",
+        pct(&ratios, 0.05),
+        pct(&ratios, 0.25),
+        pct(&ratios, 0.5),
+        pct(&ratios, 0.75),
+        pct(&ratios, 0.95),
+    );
+}
+
+// ------------------------------------------------------------------------------------------
+// The benchmark for the 1 s p95 profile target. Noisy on a busy machine: see the output's
+// conditions line, and repeat it.
+// ------------------------------------------------------------------------------------------
+
+/// Median and p95 of a sample (destroys the order).
+fn median_p95(sample: &mut [f64]) -> (f64, f64) {
+    sample.sort_by(f64::total_cmp);
+    let n = sample.len();
+    (sample[n / 2], sample[((n as f64 - 1.0) * 0.95) as usize])
+}
+
+/// Deterministic pseudo-random subsets of stops (`seed` varies between repetitions).
+fn seed_sample(stop_count: usize, count: usize, seed: u64) -> Vec<u32> {
+    let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    let mut next = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let mut seen = vec![false; stop_count];
+    let mut ids = Vec::with_capacity(count);
+    while ids.len() < count.min(stop_count) {
+        let i = (next() as usize) % stop_count;
+        if !seen[i] {
+            seen[i] = true;
+            ids.push(i as u32);
+        }
+    }
+    ids
+}
+
+/// One benchmark row: the same search set `repeats` times, in both directions.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the row's parameters, for printing"
+)]
+fn bench_row<P: GraphTileProvider, C: Costing>(
+    search: &mut WalkSearch<P, C>,
+    stop_count: usize,
+    seed_count: usize,
+    bound: Option<i32>,
+    spread_secs: i32,
+    repeats: u32,
+    label: &str,
+    results: &mut String,
+) {
+    use std::fmt::Write as _;
+    let mut times_ms = Vec::with_capacity(repeats as usize);
+    let (mut settled, mut relaxed, mut labels, mut pops, mut arrivals, mut arena) =
+        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    let lookups_before = search.graph_stats().tile_lookups;
+    for repeat in 0..repeats {
+        let dir = if repeat % 2 == 0 {
+            Direction::Forward
+        } else {
+            Direction::Backward
+        };
+        let ids = seed_sample(
+            stop_count,
+            seed_count,
+            u64::from(repeat) * 1009 + seed_count as u64,
+        );
+        let seeds: Vec<TransferSeed> = ids
+            .iter()
+            .enumerate()
+            .map(|(i, &stop)| TransferSeed {
+                stop: StopId::new(stop),
+                clock: Clock::new(((i as i64 * 7919) % i64::from(spread_secs.max(1))) as i32),
+            })
+            .collect();
+        let min = seeds.iter().map(|s| s.clock.seconds()).min().unwrap_or(0);
+        let upper_bound = bound.map_or(i32::MAX / 2, |b| min + b);
+        let mut sink = Sink::default();
+        let request = TransferRequest {
+            direction: dir,
+            seeds: &seeds,
+            upper_bound: Clock::new(upper_bound),
+            interrupt: &|| false,
+        };
+        search.begin_run(dir);
+        let started = std::time::Instant::now();
+        search.search(&request, &mut sink).expect("search");
+        times_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        let s = search.last_search_stats();
+        settled += s.nodes_settled as f64;
+        labels += s.labels_settled as f64;
+        relaxed += s.arcs_relaxed as f64;
+        pops += s.pops as f64;
+        arrivals += s.arrivals as f64;
+        arena += s.arena_entries as f64;
+    }
+    let (median, p95) = median_p95(&mut times_ms);
+    let n = f64::from(repeats);
+    let lookups = search.graph_stats().tile_lookups - lookups_before;
+    let _ = writeln!(
+        results,
+        "| {label} | {seed_count} | {median:.2} | {p95:.2} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {lookups} |",
+        settled / n,
+        labels / n,
+        relaxed / n,
+        arrivals / n,
+        arena / n,
+    );
+    let _ = pops;
+}
+
+#[test]
+#[ignore = "needs /mnt/maps/cardinal data; run in release"]
+fn benchmark_king_county_multi_source_searches() {
+    let costing = costing_named("pedestrian");
+    let (provider, snaps, _stops) = wa_fixture(&costing);
+    let stop_count = snaps.stop_count();
+    let mut search = WalkSearch::new(provider, costing);
+    let bind_started = std::time::Instant::now();
+    search.bind(snaps.clone()).expect("bind");
+    println!(
+        "bind (attach {} stops): {:.2?}",
+        stop_count,
+        bind_started.elapsed()
+    );
+
+    // Cold: the very first search, which reads and costs every arc it reaches.
+    let cold_seeds: Vec<TransferSeed> = (0..stop_count as u32)
+        .step_by(100)
+        .map(|i| TransferSeed {
+            stop: StopId::new(i),
+            clock: Clock::new(0),
+        })
+        .collect();
+    let mut sink = Sink::default();
+    let request = TransferRequest {
+        direction: Direction::Forward,
+        seeds: &cold_seeds,
+        upper_bound: Clock::new(3600),
+        interrupt: &|| false,
+    };
+    search.begin_run(Direction::Forward);
+    let cold_started = std::time::Instant::now();
+    search.search(&request, &mut sink).expect("search");
+    println!(
+        "cold first search ({} seeds, 1 hour bound): {:.2?} ({:?})",
+        cold_seeds.len(),
+        cold_started.elapsed(),
+        search.last_search_stats()
+    );
+    println!("graph after warm-up: {:?}", search.graph_stats());
+
+    let mut table = String::from(
+        "| workload | seeds | median ms | p95 ms | nodes settled | labels settled | arcs relaxed | arrivals | arena entries | tile lookups |\n|---|---|---|---|---|---|---|---|---|---|\n",
+    );
+    for &(seeds, spread) in &[
+        (1usize, 0),
+        (10, 900),
+        (100, 1800),
+        (1000, 1800),
+        (stop_count, 3600),
+    ] {
+        for (label, bound) in [
+            ("no bound", None),
+            ("bound +30 min", Some(1800)),
+            ("bound +15 min", Some(900)),
+            ("bound +5 min", Some(300)),
+        ] {
+            bench_row(
+                &mut search,
+                stop_count,
+                seeds,
+                bound,
+                spread,
+                21,
+                label,
+                &mut table,
+            );
+        }
+    }
+    println!("{table}");
+    println!(
+        "working memory: {} MB labels/arena/attachments, graph memo: {:?}",
+        search.working_memory_bytes() / (1024 * 1024),
+        search.graph_stats()
+    );
+}
+
+/// A simulated MCR run: `rounds` successive multi-source searches over changing seed sets,
+/// with and without labels carrying over between rounds.
+fn bench_run_rounds<P: GraphTileProvider, C: Costing>(
+    search: &mut WalkSearch<P, C>,
+    stop_count: usize,
+    run_pruning: bool,
+    bound: Option<i32>,
+    repeats: u32,
+) -> (f64, f64, f64) {
+    let sizes = [200usize, 1000, 2000, 1500, 800, 300];
+    search.set_run_pruning(run_pruning);
+    let mut times = Vec::new();
+    let (mut settled, mut arena) = (0.0, 0.0);
+    for repeat in 0..repeats {
+        let dir = if repeat % 2 == 0 {
+            Direction::Forward
+        } else {
+            Direction::Backward
+        };
+        search.begin_run(dir);
+        let started = std::time::Instant::now();
+        let mut upper = bound.map_or(i32::MAX / 2, |b| b);
+        for (r, &size) in sizes.iter().enumerate() {
+            let size = size.min(stop_count);
+            let ids = seed_sample(stop_count, size, u64::from(repeat) * 91 + r as u64);
+            let seeds: Vec<TransferSeed> = ids
+                .iter()
+                .enumerate()
+                .map(|(i, &stop)| TransferSeed {
+                    stop: StopId::new(stop),
+                    clock: Clock::new(300 * r as i32 + ((i as i32 * 7919) % 1800)),
+                })
+                .collect();
+            let mut sink = Sink::default();
+            let request = TransferRequest {
+                direction: dir,
+                seeds: &seeds,
+                upper_bound: Clock::new(upper),
+                interrupt: &|| false,
+            };
+            search.search(&request, &mut sink).expect("search");
+            settled += search.last_search_stats().nodes_settled as f64;
+            arena = search.last_search_stats().arena_entries as f64;
+            // A route is found by the middle rounds: pretend the target tightens.
+            if bound.is_some() && r >= 2 {
+                upper = upper.min(300 * (r as i32 + 1) + 1800);
+            }
+        }
+        times.push(started.elapsed().as_secs_f64() * 1000.0);
+    }
+    let (median, _) = median_p95(&mut times);
+    search.set_run_pruning(true);
+    (median, settled / f64::from(repeats), arena)
+}
+
+#[test]
+#[ignore = "needs /mnt/maps/cardinal data; run in release"]
+fn benchmark_king_county_run_of_rounds() {
+    let costing = costing_named("pedestrian");
+    let (provider, snaps, _stops) = wa_fixture(&costing);
+    let stop_count = snaps.stop_count();
+    let mut search = WalkSearch::new(provider, costing);
+    search.bind(snaps).expect("bind");
+    for (name, bound) in [
+        ("no bound", None),
+        ("bound 1 h", Some(3600)),
+        ("bound 30 min", Some(1800)),
+    ] {
+        for run_pruning in [false, true] {
+            let (ms, settled, arena_last) =
+                bench_run_rounds(&mut search, stop_count, run_pruning, bound, 11);
+            println!(
+                "6-round run, {name}, run_pruning={run_pruning}: median {ms:.1} ms per run, \
+                 {settled:.0} nodes settled per run, {arena_last:.0} arena entries at the last round"
+            );
+        }
+    }
+    println!(
+        "working memory after runs: {} MB",
+        search.working_memory_bytes() / (1024 * 1024)
+    );
+}
+
+#[test]
+#[ignore = "needs /mnt/maps/cardinal data; run in release"]
+fn benchmark_king_county_access_tables() {
+    let costing = costing_named("pedestrian");
+    let (provider, snaps, stops) = wa_fixture(&costing);
+    let stop_count = snaps.stop_count();
+    let mut tables = StopTables::new(provider, costing.clone());
+    tables.bind(snaps.clone()).expect("bind");
+    let mut search_snaps = Vec::new();
+    for i in (0..stop_count).step_by(47) {
+        if snaps.point(StopId::new(i as u32)).is_some() {
+            search_snaps.push(snaps.point(StopId::new(i as u32)).expect("point"));
+        }
+    }
+    for (side, label) in [
+        (AccessSide::Access, "access"),
+        (AccessSide::Egress, "egress"),
+    ] {
+        let mut times = Vec::new();
+        let (mut reached, mut settled) = (0.0, 0.0);
+        for point in search_snaps.iter().take(60) {
+            let seeds = [TableSeed {
+                edge: point.edge,
+                percent_along: point.percent_along,
+                initial: 0.0,
+            }];
+            let request = TableRequest {
+                side,
+                seeds: &seeds,
+                max_seconds: 1800,
+                interrupt: &|| false,
+            };
+            let started = std::time::Instant::now();
+            tables.compute(stop_count, &request).expect("table");
+            times.push(started.elapsed().as_secs_f64() * 1000.0);
+            reached += tables.stats().stops_reached as f64;
+            settled += tables.stats().labels_settled as f64;
+        }
+        let n = times.len() as f64;
+        let (median, p95) = median_p95(&mut times);
+        println!(
+            "{label} table (30 min walk, {n:.0} origins): median {median:.1} ms, p95 {p95:.1} ms, mean labels settled {:.0}, mean stops reached {:.0}, memory {} MB",
+            settled / n,
+            reached / n,
+            tables.stats().bytes / (1024 * 1024)
+        );
+    }
+    let _ = stops;
+}
+
+#[test]
+fn run_pruning_keeps_every_improving_arrival_across_rounds() {
+    // Rounds of a run: each round's seeds are later than the last, so a walk
+    // reaching a stop no earlier than a previous round did can be dropped.
+    for dir in [Direction::Forward, Direction::Backward] {
+        let provider = andorra();
+        let points = random_stops(&provider, &ANDORRA_TILES, 250, 17);
+        let snaps = snaps_for(&provider, &points);
+        let mut pruned = WalkSearch::new(provider, pedestrian());
+        pruned.bind(snaps.clone()).expect("bind");
+        let provider = andorra();
+        let mut unpruned = WalkSearch::new(provider, pedestrian());
+        unpruned.set_run_pruning(false);
+        unpruned.bind(snaps).expect("bind");
+        pruned.begin_run(dir);
+        unpruned.begin_run(dir);
+
+        let (mut best_p, mut best_u) = (HashMap::<u32, i32>::new(), HashMap::<u32, i32>::new());
+        let rounds: [(&[u32], i32); 4] = [
+            (&[1, 2, 3, 4, 5], 1000),
+            (&[10, 11, 12], 400),
+            (&[20, 21, 22, 23], 2100),
+            (&[1, 30, 31], 0),
+        ];
+        for (ids, base) in rounds {
+            let seeds: Vec<TransferSeed> = ids
+                .iter()
+                .enumerate()
+                .map(|(i, &s)| TransferSeed {
+                    stop: StopId::new(s),
+                    clock: Clock::new(base + (i as i32) * 50),
+                })
+                .collect();
+            let request = TransferRequest {
+                direction: dir,
+                seeds: &seeds,
+                upper_bound: Clock::new(i32::MAX / 2),
+                interrupt: &|| false,
+            };
+            let mut sink_p = Sink::default();
+            let mut sink_u = Sink::default();
+            pruned.search(&request, &mut sink_p).expect("search");
+            unpruned.search(&request, &mut sink_u).expect("search");
+            // Keep the best seen so far for each stop, as a router's `board` does.
+            for (stop, (clock, ..)) in sink_p.best {
+                let e = best_p.entry(stop).or_insert(clock);
+                *e = (*e).min(clock);
+            }
+            for (stop, (clock, ..)) in sink_u.best {
+                let e = best_u.entry(stop).or_insert(clock);
+                *e = (*e).min(clock);
+            }
+            assert_eq!(best_p, best_u, "round at base {base}, {dir:?}");
+        }
+        assert!(!best_p.is_empty());
+    }
 }
