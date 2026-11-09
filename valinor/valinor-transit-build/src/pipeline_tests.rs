@@ -587,8 +587,8 @@ fn stops_with_no_street_are_reported_and_a_failed_feed_keeps_its_index() {
         2 + manifest.feeds[2].stats["walking"].unsnapped as u64
     );
 
-    let report_lines =
-        fs::read_to_string(output.path().join("unsnapped-walking.jsonl")).expect("report");
+    let report_lines = fs::read_to_string(output.path().join("transfers/unsnapped-walking.jsonl"))
+        .expect("report");
     assert!(report_lines.lines().any(|line| {
         let value: serde_json::Value = serde_json::from_str(line).expect("json");
         value["feed"] == "a-lost" && value["gtfs_stop_id"].as_str() != Some("")
@@ -608,7 +608,7 @@ fn the_transfer_stage_stops_cleanly_on_bad_input() {
         transfers::run(&transfer_options(empty.path(), output.path())),
         Err(BuildError::Read { .. })
     ));
-    assert!(!output.path().join("manifest.json").exists());
+    assert!(!output.path().join("transfers/manifest.json").exists());
 
     // Unreadable street tiles.
     let (_input, compiled, _report) = compiled_feeds(&[Feed {
@@ -630,8 +630,10 @@ fn the_transfer_stage_stops_cleanly_on_bad_input() {
     .expect("corrupt");
     let error = transfers::run(&transfer_options(compiled.path(), output.path()))
         .expect_err("corrupted timetable");
-    assert!(matches!(error, BuildError::Timetable { .. }), "{error}");
-    assert!(!output.path().join("manifest.json").exists());
+    assert!(
+        matches!(error, BuildError::TimetableChanged { .. }),
+        "{error}"
+    );
     assert!(!output.path().join("transfers").exists());
 }
 
@@ -662,4 +664,291 @@ fn a_rerun_replaces_what_an_earlier_run_published() {
         load_tiles(output.path(), &second, TransferMode::Walking).len(),
         second.tiles["walking"].len()
     );
+}
+
+fn rewrite_listing(input: &Path, edit: impl FnOnce(&mut serde_json::Value)) {
+    let mut listing: serde_json::Value =
+        serde_json::from_slice(&fs::read(input.join("feeds.json")).expect("read")).expect("parse");
+    edit(&mut listing);
+    fs::write(
+        input.join("feeds.json"),
+        serde_json::to_vec(&listing).expect("json"),
+    )
+    .expect("write");
+}
+
+/// `compile.rs` says a previous failure is kept "on unchanged input". This input did change:
+/// the bytes on disk now are the archive that `feeds.json` names.
+#[test]
+fn a_repaired_archive_is_compiled() {
+    let good = gtfs_zip(&grid(0.0, 16));
+    let input = input_dir(&[("good", good.clone())]);
+    let archive = input.path().join("feeds/good.gtfs.zip");
+    fs::write(&archive, b"half a download").expect("corrupt");
+    let output = tempfile::tempdir().expect("output");
+    let options = compile_options(input.path(), output.path());
+    let first = compile::run(&options).expect("compile");
+    assert!(matches!(
+        record(&first, "good").outcome,
+        FeedOutcome::Failed { .. }
+    ));
+    fs::write(&archive, &good).expect("repair");
+    let second = compile::run(&options).expect("resume");
+    assert_eq!(
+        record(&second, "good").outcome,
+        FeedOutcome::Compiled,
+        "reused = {}",
+        record(&second, "good").reused
+    );
+}
+
+/// A read error of the archive is recorded as a failure of the listed archive, and sticks.
+#[test]
+fn an_unreadable_archive_is_not_a_permanent_failure() {
+    let good = gtfs_zip(&grid(0.0, 16));
+    let input = input_dir(&[("good", good.clone())]);
+    let archive = input.path().join("feeds/good.gtfs.zip");
+    fs::remove_file(&archive).expect("remove");
+    let output = tempfile::tempdir().expect("output");
+    let options = compile_options(input.path(), output.path());
+    compile::run(&options).expect("compile");
+    fs::write(&archive, &good).expect("restore");
+    let second = compile::run(&options).expect("resume");
+    assert_eq!(record(&second, "good").outcome, FeedOutcome::Compiled);
+}
+
+/// A license correction upstream with the same archive must reach the manifest.
+#[test]
+fn reuse_keeps_current_metadata() {
+    let (input, output, first) = compiled_feeds(&[Feed {
+        id: "good",
+        stops: &grid(0.0, 16),
+    }]);
+    assert!(!record(&first, "good").reused);
+    rewrite_listing(input.path(), |listing| {
+        listing["feeds"][0]["license"] = serde_json::json!({"spdx": "CC-BY-4.0"});
+        listing["feeds"][0]["name"] = serde_json::json!("renamed");
+        listing["feeds"][0]["source"] = serde_json::json!({"name": "moved", "kind": "test"});
+    });
+    let second = compile::run(&compile_options(input.path(), output.path())).expect("resume");
+    let feed = record(&second, "good");
+    assert!(feed.reused);
+    assert_eq!(
+        (
+            feed.license.get().contains("CC-BY-4.0"),
+            feed.name.as_str(),
+            feed.source.get().contains("moved")
+        ),
+        (true, "renamed", true),
+        "license {} name {} source {}",
+        feed.license.get(),
+        feed.name,
+        feed.source.get()
+    );
+}
+
+/// `manifest_id` claims to cover "everything that decides what a stop address means".
+/// Stops renumbered with the same archive, as after a killed compile or a compiler change,
+/// must not produce tiles that a client can load against the old numbering.
+#[test]
+fn a_renumbered_timetable_is_refused() {
+    let stops = grid(0.0, 24);
+    let (_input, compiled, report) = compiled_feeds(&[Feed {
+        id: "good",
+        stops: &stops,
+    }]);
+    let output = tempfile::tempdir().expect("output");
+    let mut options = transfer_options(compiled.path(), output.path());
+    options.modes = vec![TransferMode::Walking];
+    transfers::run(&options).expect("first");
+
+    let mut reversed = stops.clone();
+    reversed.reverse();
+    let (_other_input, other, _) = compiled_feeds(&[Feed {
+        id: "good",
+        stops: &reversed,
+    }]);
+    let path = compiled.path().join("timetables/good.timetable");
+    fs::copy(other.path().join("timetables/good.timetable"), &path).expect("swap");
+
+    let second_out = tempfile::tempdir().expect("output");
+    let mut options = transfer_options(compiled.path(), second_out.path());
+    options.modes = vec![TransferMode::Walking];
+    let outcome = transfers::run(&options);
+    let on_disk = sha256_hex(&fs::read(&path).expect("read"));
+    let recorded = record(&report, "good")
+        .timetable_sha256
+        .clone()
+        .expect("sha");
+    assert_ne!(on_disk, recorded, "the test did swap the timetable");
+    assert!(matches!(outcome, Err(BuildError::TimetableChanged { .. })));
+}
+
+/// A failing stage leaves the published tiles, manifest, and reports as they were.
+#[test]
+fn a_failing_stage_changes_nothing_but_staging() {
+    let (_input, compiled, _) = compiled_feeds(&[Feed {
+        id: "good",
+        stops: &grid(0.0, 24),
+    }]);
+    let output = tempfile::tempdir().expect("output");
+    let mut options = transfer_options(compiled.path(), output.path());
+    options.modes = vec![TransferMode::Walking];
+    let first = transfers::run(&options).expect("first");
+    let report = output.path().join("transfers/unsnapped-walking.jsonl");
+    let earlier_report = fs::read(&report).expect("report");
+
+    // Blocks the retired directory's place, so the stage fails at publishing, its last step.
+    fs::write(output.path().join("transfers.replaced"), b"in the way").expect("write");
+    options.modes = TransferMode::ALL.to_vec();
+    assert!(transfers::run(&options).is_err());
+    assert_eq!(fs::read(&report).expect("report"), earlier_report);
+    let after = read_manifest(output.path()).expect("the manifest still reads");
+    assert_eq!(after.manifest_id, first.manifest_id);
+    assert!(!after.tiles.contains_key("cycling"));
+    assert!(!output.path().join("transfers/cycling").exists());
+}
+
+/// A later run that builds fewer modes leaves nothing of the mode it dropped.
+#[test]
+fn a_rerun_with_fewer_modes_leaves_no_stale_report() {
+    let (_input, compiled, _) = compiled_feeds(&[Feed {
+        id: "good",
+        stops: &grid(0.0, 24),
+    }]);
+    let output = tempfile::tempdir().expect("output");
+    let mut options = transfer_options(compiled.path(), output.path());
+    transfers::run(&options).expect("first");
+    assert!(
+        output
+            .path()
+            .join("transfers/unsnapped-cycling.jsonl")
+            .exists()
+    );
+    options.modes = vec![TransferMode::Walking];
+    let second = transfers::run(&options).expect("second");
+    assert!(!second.tiles.contains_key("cycling"));
+    assert!(
+        !output
+            .path()
+            .join("transfers/unsnapped-cycling.jsonl")
+            .exists(),
+        "a report for a mode this manifest doesn't have"
+    );
+    assert!(!output.path().join("transfers/cycling").exists());
+}
+
+/// One feed entirely outside the tile set, on its own batch: must be unsnapped, not fatal.
+#[test]
+fn a_batch_with_nothing_to_snap_is_not_fatal() {
+    let (_input, compiled, _) = compiled_feeds(&[Feed {
+        id: "lost",
+        stops: &[(10.0, 10.0), (10.0002, 10.0), (-45.0, 170.0)],
+    }]);
+    let output = tempfile::tempdir().expect("output");
+    let manifest = transfers::run(&transfer_options(compiled.path(), output.path()))
+        .expect("transfers failed on a feed outside the tile set");
+    assert_eq!(manifest.totals["walking"].unsnapped, 3);
+}
+
+/// A coordinate GTFS shouldn't have, if the compiler lets it through.
+#[test]
+fn a_bad_coordinate_does_not_stop_the_stage() {
+    let input = input_dir(&[(
+        "wild",
+        gtfs_zip(&[(95.0, 200.0), (42.5048, 1.5155), (42.5049, 1.5156)]),
+    )]);
+    let compiled = tempfile::tempdir().expect("compiled");
+    let report = compile::run(&compile_options(input.path(), compiled.path())).expect("compile");
+    eprintln!(
+        "wild: outcome {:?} stops {}",
+        record(&report, "wild").outcome,
+        record(&report, "wild").stops
+    );
+    if !matches!(record(&report, "wild").outcome, FeedOutcome::Compiled) {
+        return;
+    }
+    let output = tempfile::tempdir().expect("output");
+    let result = transfers::run(&transfer_options(compiled.path(), output.path()));
+    assert!(result.is_ok(), "{:?}", result.err());
+}
+
+/// The real Washington build: what a client assembles from tiles equals a fresh build over the
+/// same numbering, for every walk.
+#[test]
+#[ignore = "needs /mnt/maps/cardinal data"]
+fn real_tiles_equal_a_fresh_table() {
+    let root = Path::new("/mnt/maps/cardinal/transit/global/us-wa-2026-11-09");
+    let report = compile::CompileReport::read(root).expect("report");
+    let mut feeds = report.feeds.clone();
+    feeds.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+    let stops = StopList::load(root, &feeds, threads(8)).expect("stops");
+    let manifest = read_manifest(root).expect("manifest");
+    let tile_set = TileSets::open(
+        &[PathBuf::from(
+            "/mnt/maps/cardinal/routing-elevation-i2b/washington/tiles.tar",
+        )],
+        threads(64),
+    )
+    .expect("tiles");
+    for mode in TransferMode::ALL {
+        let entries = manifest.tiles.get(mode.as_str()).expect("tiles");
+        let dir = root.join("transfers");
+        let tiles: Vec<TransferTile> = entries
+            .iter()
+            .map(|e| {
+                decode_tile(
+                    &fs::read(tile_path(&dir, mode, e.x, e.y)).expect("read"),
+                    DecodeLimits::default(),
+                )
+                .expect("decode")
+            })
+            .collect();
+        let places = placements(&stops);
+        let (loaded, report) = assemble_transfer_table(
+            &LoadRequest {
+                mode,
+                manifest_id: u64::from_str_radix(&manifest.manifest_id, 16).expect("hex"),
+                max_seconds: BOUND,
+                local_stop_count: stops.len() as u32,
+                feeds: &places,
+            },
+            &tiles,
+        )
+        .expect("assemble");
+        assert_eq!(
+            report.walks_to_absent_feeds + report.walks_from_absent_feeds,
+            0
+        );
+        let coordinates: Vec<(f64, f64)> = stops
+            .coordinates
+            .iter()
+            .map(|c| c.unwrap_or((0.0, 0.0)))
+            .collect();
+        let costing = costing_for(mode).expect("costing");
+        let snaps = snap_stops(
+            &&tile_set,
+            &costing,
+            &SnapConfig::default(),
+            tile_set.build_id(),
+            &coordinates,
+        )
+        .expect("snap");
+        let built = TransferTable::build(
+            &&tile_set,
+            &costing,
+            &Arc::new(snaps),
+            BOUND,
+            threads(24),
+            &|| false,
+        )
+        .expect("build")
+        .expect("done");
+        eprintln!(
+            "{mode:?}: walks loaded {} built {}",
+            loaded.walk_count(),
+            built.walk_count()
+        );
+        assert_eq!(loaded, built, "{mode:?}");
+    }
 }

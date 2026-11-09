@@ -43,7 +43,7 @@ enum Stage {
         /// The street network: a `build_extract` tarball or a tile directory.
         #[arg(long)]
         street_tiles: PathBuf,
-        /// Where to write `transfers/` and `manifest.json`.
+        /// Where to publish `transfers/`, holding tiles, reports, and `manifest.json`.
         #[arg(long)]
         output: PathBuf,
         /// The bound for walking transfers, in seconds.

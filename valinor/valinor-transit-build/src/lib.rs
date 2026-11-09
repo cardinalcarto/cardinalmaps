@@ -25,11 +25,12 @@ use std::path::Path;
 
 use error::BuildError;
 
-/// Writes `bytes` to `path` under a temporary name, so a reader never sees half a file.
+/// Writes `bytes` to `path` under a temporary name, then renames it into place durably,
+/// so a reader never sees half a file, even after a power loss.
 ///
 /// # Errors
 ///
-/// If the file can't be written or renamed.
+/// If the file can't be written, synced, or renamed.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), BuildError> {
     let mut name = path
         .file_name()
@@ -40,8 +41,36 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), BuildError> {
         path: path.to_path_buf(),
         source,
     };
-    let mut file = fs::File::create(&partial).map_err(write_error)?;
-    file.write_all(bytes).map_err(write_error)?;
-    file.flush().map_err(write_error)?;
-    fs::rename(&partial, path).map_err(write_error)
+    write_synced(&partial, bytes).map_err(write_error)?;
+    fs::rename(&partial, path).map_err(write_error)?;
+    if let Some(parent) = path.parent() {
+        sync_dir(parent)?;
+    }
+    Ok(())
+}
+
+/// Writes a whole file and flushes it to the disk.
+///
+/// # Errors
+///
+/// If it can't be created, written, or synced.
+pub(crate) fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// Flushes a directory's entries to the disk, so a rename or new file in it survives a power loss.
+///
+/// # Errors
+///
+/// If it can't be opened or synced.
+pub(crate) fn sync_dir(path: &Path) -> Result<(), BuildError> {
+    let sync_error = |source| BuildError::Write {
+        path: path.to_path_buf(),
+        source,
+    };
+    fs::File::open(path)
+        .and_then(|dir| dir.sync_all())
+        .map_err(sync_error)
 }

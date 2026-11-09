@@ -159,7 +159,16 @@ struct EdgeStop {
     stop: u32,
     percent: f32,
     next: u32,
+    /// Which of the stop's two directed edges this is, as one bit of a visit mask.
+    side: u8,
 }
+
+/// The bit of a stop's visit mask for the directed edge it was snapped along.
+const SIDE_ALONG: u8 = 1;
+/// The bit of a stop's visit mask for the edge's opposing edge.
+const SIDE_OPPOSING: u8 = 2;
+/// A visit mask with both of a stop's directed edges settled.
+const SIDE_BOTH: u8 = SIDE_ALONG | SIDE_OPPOSING;
 
 /// No label for this directed edge in the current search.
 const UNSET: u32 = u32::MAX;
@@ -211,11 +220,10 @@ impl EdgeStates {
 
     /// Gives back storage beyond what this search used, unless that is small.
     fn trim(&mut self) {
-        trim(
-            &mut self.storage,
-            self.touched.len() * EDGE_PAGE,
-            RETAINED_EDGE_STATES,
-        );
+        // `trim` can't shrink below the length, and the storage keeps its length between searches.
+        let keep = (self.touched.len() * EDGE_PAGE).max(RETAINED_EDGE_STATES);
+        self.storage.truncate(keep);
+        trim(&mut self.storage, keep, RETAINED_EDGE_STATES);
     }
 
     #[inline]
@@ -392,24 +400,26 @@ impl StopAttachments {
             let Some(description) = graph.describe_edge(point.edge)? else {
                 continue;
             };
-            attachments.attach(point.edge.value(), stop_u, point.percent_along);
+            attachments.attach(point.edge.value(), stop_u, point.percent_along, SIDE_ALONG);
             attachments.attach(
                 description.opposing_id.value(),
                 stop_u,
                 1.0 - point.percent_along,
+                SIDE_OPPOSING,
             );
             attachments.attached_stops += 1;
         }
         Ok(attachments)
     }
 
-    fn attach(&mut self, edge: u64, stop: u32, percent: f32) {
+    fn attach(&mut self, edge: u64, stop: u32, percent: f32, side: u8) {
         let next = self.edges.get(edge);
         let index = u32::try_from(self.edge_stops.len()).unwrap_or(NONE);
         self.edge_stops.push(EdgeStop {
             stop,
             percent,
             next,
+            side,
         });
         self.edges.insert(edge, index);
     }
@@ -473,6 +483,18 @@ fn limit_secs(max_seconds: u32) -> f32 {
     #[expect(clippy::cast_precision_loss, reason = "a walk limit, far below 2^24")]
     let limit = max_seconds as f32;
     limit
+}
+
+/// Records one of a stop's directed edges settling this search, returning whether that was the
+/// second of its two.
+#[inline]
+fn note_visit(visits: &mut (u32, u8), epoch: u32, side: u8) -> bool {
+    if visits.0 != epoch {
+        *visits = (epoch, 0);
+    }
+    let before = visits.1;
+    visits.1 |= side;
+    before != SIDE_BOTH && visits.1 == SIDE_BOTH
 }
 
 /// `a - b`, in each component of a cost.
@@ -1086,18 +1108,15 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
 
     /// Notes that one of a stop's two directed edges has settled.
     ///
-    /// Apart from a seed's partial labels (which don't count here), each directed edge settles
-    /// once, and a stop's entry only changes when one of its two edges does.
-    /// Once both have, the entry is final, and when every stop's entry is final the search can stop.
-    fn visit_stop(&mut self, stop: u32) {
+    /// Apart from a seed's partial labels (which don't count here), a stop's entry only changes
+    /// when one of its two edges settles. A complex restriction can make an edge settle again,
+    /// always no cheaper than the first time, so an edge counts once however often it settles.
+    /// Once both have settled, the entry is final, and when every stop's is, the search can stop.
+    fn visit_stop(&mut self, stop: u32, side: u8) {
         let Some(visits) = self.stop_visits.get_mut(stop as usize) else {
             return;
         };
-        if visits.0 != self.epoch {
-            *visits = (self.epoch, 0);
-        }
-        visits.1 += 1;
-        if visits.1 == 2 {
+        if note_visit(visits, self.epoch, side) {
             self.stops_pending = self.stops_pending.saturating_sub(1);
         }
     }
@@ -1157,7 +1176,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             // A seed takes no edge status, so a later label can still come back around onto
             // the seed's edge and improve a stop on it: only a whole edge's one label counts.
             if label.inner.predecessor().is_some() {
-                self.visit_stop(entry.stop);
+                self.visit_stop(entry.stop, entry.side);
             }
             let inside = if forward {
                 begin <= entry.percent
@@ -1389,6 +1408,26 @@ mod sparse_tests {
         }
     }
 
+    /// An edge settled twice, as a complex restriction allows, is one edge.
+    #[test]
+    fn a_resettled_edge_counts_once_towards_a_stop() {
+        let mut visits = (0, 0);
+        assert!(!note_visit(&mut visits, 7, SIDE_ALONG));
+        assert!(
+            !note_visit(&mut visits, 7, SIDE_ALONG),
+            "the same edge again is not the stop's second"
+        );
+        assert!(note_visit(&mut visits, 7, SIDE_OPPOSING));
+        assert!(
+            !note_visit(&mut visits, 7, SIDE_ALONG),
+            "complete only once"
+        );
+        assert!(
+            !note_visit(&mut visits, 8, SIDE_OPPOSING),
+            "a new epoch starts over"
+        );
+    }
+
     #[test]
     fn edge_states_read_unset_past_their_range() {
         let mut states = EdgeStates::default();
@@ -1420,5 +1459,33 @@ mod sparse_tests {
         trim(&mut buffer, 100, 200);
         assert!(buffer.capacity() >= 200 && buffer.capacity() < 1000);
         assert_eq!(buffer.len(), 100);
+    }
+}
+
+#[cfg(test)]
+mod trim_tests {
+    use super::*;
+
+    /// After a large search the next, smaller one gives the storage back.
+    #[test]
+    fn trim_returns_edge_state_storage() {
+        let mut states = EdgeStates::default();
+        states.reset(1 << 28);
+        // A large query touches many pages.
+        for page in 0..200_000_u32 {
+            states.set(page << EDGE_PAGE_BITS, 7);
+        }
+        let grown = states.storage.capacity();
+        // The next, small, query.
+        states.reset(1 << 28);
+        states.trim();
+        states.set(0, 1);
+        states.trim();
+        let after = states.storage.capacity();
+        assert!(
+            after <= 2 * RETAINED_EDGE_STATES,
+            "kept {after} slots after trimming; it grew to {grown}",
+        );
+        assert_eq!(states.get(0), 1, "what is in use survives");
     }
 }

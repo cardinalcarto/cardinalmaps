@@ -11,7 +11,10 @@ use crate::compile::{FeedOutcome, FeedRecord};
 use crate::error::BuildError;
 use crate::write_atomic;
 
-/// The manifest's file name, in the output directory.
+/// Where everything a transfer stage publishes lives, relative to its output directory.
+pub const TRANSFERS_DIR: &str = "transfers";
+
+/// The manifest's file name in [`TRANSFERS_DIR`].
 pub const MANIFEST_FILE: &str = "manifest.json";
 
 /// How many of the SHA-256's bytes make up the manifest ID.
@@ -19,8 +22,9 @@ const MANIFEST_ID_BYTES: usize = 8;
 
 /// The fingerprint a tile carries, to tell whether it matches a manifest's numbering.
 ///
-/// Covers everything that decides what a stop address means, which is the sorted feeds' IDs and
-/// archives, and the street network's build (a walk is only meaningful on one graph).
+/// Covers everything that decides what a stop address means: each feed's ID, its archive,
+/// and the bytes of its compiled timetable (the stop numbering is the timetable's),
+/// and the street network's build (a walk is only meaningful on one graph).
 #[must_use]
 pub fn manifest_id(feeds: &[FeedRecord], build_id: u16) -> u64 {
     let mut hasher = Sha256::new();
@@ -29,6 +33,8 @@ pub fn manifest_id(feeds: &[FeedRecord], build_id: u16) -> u64 {
         hasher.update(feed.id.as_bytes());
         hasher.update(b"\t");
         hasher.update(feed.sha256.as_bytes());
+        hasher.update(b"\t");
+        hasher.update(feed.timetable_sha256.as_deref().unwrap_or("-").as_bytes());
         hasher.update(b"\n");
     }
     let digest = hasher.finalize();
@@ -160,18 +166,18 @@ pub struct Manifest {
     pub totals: BTreeMap<String, ModeTotals>,
 }
 
-/// The manifest's path in an output directory.
+/// The manifest's path under a published transfer stage's output directory.
 pub fn manifest_path(output: &Path) -> PathBuf {
-    output.join(MANIFEST_FILE)
+    output.join(TRANSFERS_DIR).join(MANIFEST_FILE)
 }
 
-/// Writes `manifest` under the output directory, replacing any older one atomically.
+/// Writes `manifest` into a staging directory, to be published with the tiles.
 ///
 /// # Errors
 ///
 /// If it can't be written.
-pub fn write_manifest(output: &Path, manifest: &Manifest) -> Result<(), BuildError> {
-    let path = manifest_path(output);
+pub fn write_manifest(staging: &Path, manifest: &Manifest) -> Result<(), BuildError> {
+    let path = staging.join(MANIFEST_FILE);
     let bytes = serde_json::to_vec_pretty(manifest).map_err(|source| BuildError::Json {
         path: path.clone(),
         source,
@@ -179,7 +185,7 @@ pub fn write_manifest(output: &Path, manifest: &Manifest) -> Result<(), BuildErr
     write_atomic(&path, &bytes)
 }
 
-/// Reads a manifest back.
+/// Reads the published manifest under a transfer stage's output directory.
 ///
 /// # Errors
 ///

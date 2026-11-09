@@ -100,7 +100,8 @@ the route minimizes Sif's cost, and the entry is that route's seconds.
 A cyclist's transfer takes the bike path the costing prefers, even when a busier road is quicker.
 
 A rider never walks twice in a row, so the table needs no closure.
-It stores only times; a transfer in a result is routed again with the same search to draw it.
+It stores only times; a transfer in a result is routed again with the same search to draw it,
+at the table's bound, since a shorter limit can change which route the cost-minimal search finds.
 A table depends on stop positions and the street graph, not on the timetable,
 so a new real-time stop only needs its own walks added.
 
@@ -214,8 +215,9 @@ an unchanged archive (by SHA-256) is not recompiled.
 `TransferTable::build`. Results are tiled at zoom 12 by the stop the walk starts at,
 so a tile can walk to stops of any feed, and one mode's tiles are at
 `transfers/<mode>/12/<x>/<y>.bin.zst`.
-`manifest.json` lists the feeds in index order, with the tiles each feed's stops need,
-since clients choose which feeds to download.
+`transfers/manifest.json` lists the feeds in index order, with the tiles each feed's stops need,
+since clients choose which feeds to download, and `transfers/unsnapped-<mode>.jsonl` the stops
+with no walks. A run is staged, and appears only by one rename when everything has succeeded.
 
 Stops are addressed as `(feed index, stop number)` where the feed index is the position
 in the manifest. A client decodes the tiles of its feeds, and

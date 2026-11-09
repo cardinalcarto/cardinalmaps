@@ -10,11 +10,13 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use sha2::{Digest, Sha256};
 use valinor_gtfs::CompiledTimetable;
 use valinor_transit::StopId;
 
 use crate::compile::{FeedOutcome, FeedRecord};
 use crate::error::BuildError;
+use crate::feeds::hex_digest;
 
 /// Where a stop is, if its feed gives a coordinate at all.
 pub type Coordinate = Option<(f64, f64)>;
@@ -143,6 +145,11 @@ fn load_feed(compiled: &Path, feed: &FeedRecord) -> Result<Vec<Coordinate>, Buil
     };
     let path = compiled.join(relative);
     let bytes = fs::read(&path).map_err(|source| BuildError::Read { path, source })?;
+    if feed.timetable_sha256.as_deref() != Some(hex_digest(&Sha256::digest(&bytes)).as_str()) {
+        return Err(BuildError::TimetableChanged {
+            feed: feed.id.clone(),
+        });
+    }
     let timetable = CompiledTimetable::parse(&bytes).map_err(|source| BuildError::Timetable {
         feed: feed.id.clone(),
         source: source.into(),

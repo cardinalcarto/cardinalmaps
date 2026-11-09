@@ -45,6 +45,9 @@ const TILES_PER_AXIS: u32 = 1 << TILE_ZOOM;
 /// The fixed part of a decompressed tile.
 const HEADER_LEN: usize = 40;
 
+/// How much of a tile to take from the zstd decoder at a time.
+const READ_CHUNK: usize = 64 * 1024;
+
 /// How large a decompressed tile may be, by default.
 ///
 /// The largest real tiles measured are far below this (see the build stage's report);
@@ -200,7 +203,11 @@ pub enum TileDecodeError {
     },
 }
 
-/// Bytes of one decoded tile, in columns so a phone doesn't pay for a pointer per row.
+/// A validated tile: its decompressed bytes and where its columns start.
+///
+/// Holding the bytes rather than decoded columns keeps a tile to what was decompressed,
+/// so [`DecodeLimits::max_decompressed_bytes`] bounds its memory, and validation allocates nothing.
+/// [`Self::rows`] decodes as it goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TransferTile {
     /// The tile's mode.
@@ -213,13 +220,12 @@ pub struct TransferTile {
     pub manifest_id: u64,
     /// The bound the tile was built with, in seconds.
     pub max_seconds: u32,
-    origin_feed: Vec<u32>,
-    origin_stop: Vec<u32>,
-    /// For each origin, the walk index just past its row.
-    row_end: Vec<u32>,
-    walk_feed: Vec<u32>,
-    walk_stop: Vec<u32>,
-    walk_seconds: Vec<u32>,
+    origins: u32,
+    walks: u32,
+    raw: Vec<u8>,
+    counts_start: usize,
+    walks_start: usize,
+    seconds_start: usize,
 }
 
 impl TransferTile {
@@ -236,190 +242,85 @@ impl TransferTile {
         max_seconds: u32,
         rows: &[TransferTileRow<'_>],
     ) -> Result<Self, TileEncodeError> {
-        let walk_count: usize = rows.iter().map(|row| row.walks.len()).sum();
-        let mut tile = Self {
-            mode,
-            x,
-            y,
-            manifest_id,
-            max_seconds,
-            origin_feed: Vec::with_capacity(rows.len()),
-            origin_stop: Vec::with_capacity(rows.len()),
-            row_end: Vec::with_capacity(rows.len()),
-            walk_feed: Vec::with_capacity(walk_count),
-            walk_stop: Vec::with_capacity(walk_count),
-            walk_seconds: Vec::with_capacity(walk_count),
-        };
-        for row in rows {
-            tile.origin_feed.push(row.feed);
-            tile.origin_stop.push(row.stop);
-            for walk in row.walks {
-                tile.walk_feed.push(walk.feed);
-                tile.walk_stop.push(walk.stop);
-                tile.walk_seconds.push(walk.seconds);
-            }
-            tile.row_end
-                .push(u32::try_from(tile.walk_feed.len()).map_err(|_| TileEncodeError::TooLarge)?);
-        }
-        tile.validate()?;
-        Ok(tile)
-    }
-
-    fn validate(&self) -> Result<(), TileDecodeError> {
-        fn invalid<T>(column: &'static str, reason: &'static str) -> Result<T, TileDecodeError> {
-            Err(TileDecodeError::InvalidValue { column, reason })
-        }
-        if self.x >= TILES_PER_AXIS || self.y >= TILES_PER_AXIS {
-            return invalid("tile", "beyond the zoom's range");
-        }
-        let lengths = [
-            self.origin_feed.len(),
-            self.origin_stop.len(),
-            self.row_end.len(),
-        ];
-        if lengths.iter().any(|&len| len != lengths[0]) {
-            return invalid("origins", "columns of different lengths");
-        }
-        if self.walk_stop.len() != self.walk_feed.len()
-            || self.walk_seconds.len() != self.walk_feed.len()
-        {
-            return invalid("walks", "columns of different lengths");
-        }
-        let mut row_start = 0_u32;
-        let mut previous_origin = None;
-        for (index, &row_end) in self.row_end.iter().enumerate() {
-            let (Some(&origin_feed), Some(&origin_stop)) =
-                (self.origin_feed.get(index), self.origin_stop.get(index))
-            else {
-                return invalid("origins", "columns of different lengths");
-            };
-            let origin = (origin_feed, origin_stop);
-            if previous_origin.is_some_and(|prior| prior >= origin) {
-                return invalid("origins", "not strictly increasing");
-            }
-            previous_origin = Some(origin);
-            if row_end <= row_start {
-                return invalid("walk counts", "an origin with no walks");
-            }
-            let Some(row) = self.row_range(row_start, row_end) else {
-                return invalid("walk counts", "a row past the end of the walks");
-            };
-            let mut previous_walk = None;
-            for walk in row {
-                let (Some(&feed), Some(&stop), Some(&seconds)) = (
-                    self.walk_feed.get(walk),
-                    self.walk_stop.get(walk),
-                    self.walk_seconds.get(walk),
-                ) else {
-                    return invalid("walks", "columns of different lengths");
-                };
-                if previous_walk.is_some_and(|prior| prior >= (feed, stop)) {
-                    return invalid("walks", "not strictly increasing within an origin");
-                }
-                previous_walk = Some((feed, stop));
-                if (feed, stop) == origin {
-                    return invalid("walks", "a stop walking to itself");
-                }
-                if seconds > self.max_seconds {
-                    return invalid("walks", "past the bound");
-                }
-            }
-            row_start = row_end;
-        }
-        if row_start as usize != self.walk_feed.len() {
-            return invalid("walk counts", "don't sum to the walk count");
-        }
-        Ok(())
-    }
-
-    fn row_range(&self, start: u32, end: u32) -> Option<core::ops::Range<usize>> {
-        let (start, end) = (start as usize, end as usize);
-        (start <= end && end <= self.walk_feed.len()).then_some(start..end)
-    }
-
-    /// How many origin stops this tile has.
-    #[inline]
-    pub fn origin_count(&self) -> usize {
-        self.origin_feed.len()
-    }
-
-    /// How many walks this tile has.
-    #[inline]
-    pub fn walk_count(&self) -> usize {
-        self.walk_feed.len()
-    }
-
-    /// The walks grouped by origin, sorted by `(feed, stop)`.
-    pub fn rows(&self) -> impl ExactSizeIterator<Item = (u32, u32, TileWalks<'_>)> + '_ {
-        // Validation guarantees the columns line up, so these lookups never fall back.
-        (0..self.origin_feed.len()).map(|index| {
-            let start = index
-                .checked_sub(1)
-                .and_then(|prior| self.row_end.get(prior))
-                .copied()
-                .unwrap_or(0) as usize;
-            let end = self.row_end.get(index).copied().unwrap_or(0) as usize;
-            (
-                self.origin_feed.get(index).copied().unwrap_or(0),
-                self.origin_stop.get(index).copied().unwrap_or(0),
-                TileWalks {
-                    tile: self,
-                    range: start..end,
-                },
-            )
-        })
-    }
-
-    /// Writes the uncompressed tile, ready for a zstd frame.
-    ///
-    /// # Errors
-    ///
-    /// Fails only if a count doesn't fit its field.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, TileEncodeError> {
-        self.validate()?;
-        let origins =
-            u32::try_from(self.origin_feed.len()).map_err(|_| TileEncodeError::TooLarge)?;
-        let walks = u32::try_from(self.walk_feed.len()).map_err(|_| TileEncodeError::TooLarge)?;
-        let mut out = Vec::with_capacity(HEADER_LEN + self.walk_feed.len() * 4);
+        let origins = u32::try_from(rows.len()).map_err(|_| TileEncodeError::TooLarge)?;
+        let walks = rows.iter().map(|row| row.walks.len()).sum::<usize>();
+        let walks = u32::try_from(walks).map_err(|_| TileEncodeError::TooLarge)?;
+        let mut out = Vec::with_capacity(HEADER_LEN + walks as usize * 4);
         out.extend_from_slice(&TILE_MAGIC);
         out.extend_from_slice(&TILE_FORMAT_VERSION.to_le_bytes());
-        out.push(self.mode.byte());
+        out.push(mode.byte());
         out.push(TILE_ZOOM);
-        out.extend_from_slice(&self.x.to_le_bytes());
-        out.extend_from_slice(&self.y.to_le_bytes());
-        out.extend_from_slice(&self.manifest_id.to_le_bytes());
-        out.extend_from_slice(&self.max_seconds.to_le_bytes());
+        out.extend_from_slice(&x.to_le_bytes());
+        out.extend_from_slice(&y.to_le_bytes());
+        out.extend_from_slice(&manifest_id.to_le_bytes());
+        out.extend_from_slice(&max_seconds.to_le_bytes());
         out.extend_from_slice(&origins.to_le_bytes());
         out.extend_from_slice(&walks.to_le_bytes());
         // The checksum goes last, so it lands in its place once the body is hashed.
         out.extend_from_slice(&[0; 4]);
-        write_keyed_deltas(&self.origin_feed, &self.origin_stop, &mut out);
-        let mut previous_end = 0;
-        for &end in &self.row_end {
-            write_varint(end - previous_end, &mut out);
-            previous_end = end;
+        let mut previous = None;
+        for row in rows {
+            write_keyed(&mut previous, row.feed, row.stop, &mut out);
         }
-        for (index, _) in self.row_end.iter().enumerate() {
-            let start = index
-                .checked_sub(1)
-                .and_then(|prior| self.row_end.get(prior))
-                .copied()
-                .unwrap_or(0) as usize;
-            let end = self.row_end.get(index).copied().unwrap_or(0) as usize;
-            write_keyed_deltas(
-                self.walk_feed.get(start..end).unwrap_or(&[]),
-                self.walk_stop.get(start..end).unwrap_or(&[]),
+        for row in rows {
+            write_varint(
+                u32::try_from(row.walks.len()).map_err(|_| TileEncodeError::TooLarge)?,
                 &mut out,
             );
         }
-        for &seconds in &self.walk_seconds {
-            write_varint(seconds, &mut out);
+        for row in rows {
+            let mut previous = None;
+            for walk in row.walks {
+                write_keyed(&mut previous, walk.feed, walk.stop, &mut out);
+            }
+        }
+        for row in rows {
+            for walk in row.walks {
+                write_varint(walk.seconds, &mut out);
+            }
         }
         let mut hasher = Hasher::new();
         hasher.update(&out);
         let crc = hasher.finalize();
         out[HEADER_LEN - 4..HEADER_LEN].copy_from_slice(&crc.to_le_bytes());
-        Ok(out)
+        // The same validation a decoder runs, so a tile that encodes is one that decodes.
+        Ok(Self::from_vec(out)?)
+    }
+
+    /// How many origin stops this tile has.
+    #[inline]
+    pub fn origin_count(&self) -> usize {
+        self.origins as usize
+    }
+
+    /// How many walks this tile has.
+    #[inline]
+    pub fn walk_count(&self) -> usize {
+        self.walks as usize
+    }
+
+    /// The walks grouped by origin, sorted by `(feed, stop)`.
+    pub fn rows(&self) -> TileRows<'_> {
+        let column = |start, end| self.raw.get(start..end).unwrap_or(&[]);
+        TileRows {
+            remaining: self.origins as usize,
+            origins: KeyedReader::new(column(HEADER_LEN, self.counts_start)),
+            counts: Cursor {
+                bytes: column(self.counts_start, self.walks_start),
+            },
+            walks: Cursor {
+                bytes: column(self.walks_start, self.seconds_start),
+            },
+            seconds: Cursor {
+                bytes: self.raw.get(self.seconds_start..).unwrap_or(&[]),
+            },
+        }
+    }
+
+    /// The uncompressed tile, ready for a zstd frame.
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.raw
     }
 
     /// Reads an uncompressed tile, validating every invariant the format promises.
@@ -428,27 +329,31 @@ impl TransferTile {
     ///
     /// Everything [`TileDecodeError`] names, never a panic.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, TileDecodeError> {
-        if bytes.len() < HEADER_LEN {
+        Self::from_vec(bytes.to_vec())
+    }
+
+    fn from_vec(raw: Vec<u8>) -> Result<Self, TileDecodeError> {
+        if raw.len() < HEADER_LEN {
             return Err(TileDecodeError::Truncated {
-                found: bytes.len(),
+                found: raw.len(),
                 expected: HEADER_LEN,
             });
         }
-        if bytes[..4] != TILE_MAGIC {
+        if raw[..4] != TILE_MAGIC {
             return Err(TileDecodeError::BadMagic);
         }
-        let version = le_u16(&bytes[4..6]);
+        let version = le_u16(&raw[4..6]);
         if version != TILE_FORMAT_VERSION {
             return Err(TileDecodeError::UnsupportedVersion {
                 found: version,
                 supported: TILE_FORMAT_VERSION,
             });
         }
-        let stored_crc = le_u32(&bytes[36..40]);
+        let stored_crc = le_u32(&raw[36..40]);
         let mut hasher = Hasher::new();
-        hasher.update(&bytes[..36]);
+        hasher.update(&raw[..36]);
         hasher.update(&[0; 4]);
-        hasher.update(&bytes[40..]);
+        hasher.update(&raw[40..]);
         let computed = hasher.finalize();
         if stored_crc != computed {
             return Err(TileDecodeError::ChecksumMismatch {
@@ -456,106 +361,207 @@ impl TransferTile {
                 computed,
             });
         }
-        let mode = TransferMode::from_byte(bytes[6]).ok_or(TileDecodeError::InvalidValue {
-            column: "header",
-            reason: "unknown mode",
-        })?;
-        if bytes[7] != TILE_ZOOM {
-            return Err(TileDecodeError::InvalidValue {
-                column: "header",
-                reason: "a zoom other than the format's",
-            });
+        let invalid = |column, reason| TileDecodeError::InvalidValue { column, reason };
+        let mode = TransferMode::from_byte(raw[6]).ok_or(invalid("header", "unknown mode"))?;
+        if raw[7] != TILE_ZOOM {
+            return Err(invalid("header", "a zoom other than the format's"));
         }
-        let origin_count = le_u32(&bytes[28..32]) as usize;
-        let walk_count = le_u32(&bytes[32..36]) as usize;
-        let mut cursor = Cursor {
-            bytes: &bytes[HEADER_LEN..],
-        };
-        // Each value is at least one byte, so a lying count can't reserve past the data.
-        let (origin_feed, origin_stop) = read_keyed_deltas(&mut cursor, origin_count, None)?;
-        let remaining = cursor.bytes.len();
-        let mut row_end = Vec::with_capacity(origin_count.min(remaining));
-        let mut total = 0_u64;
-        for _ in 0..origin_count {
-            total += u64::from(cursor.varint()?);
-            row_end.push(u32::try_from(total).map_err(|_| TileDecodeError::VarintOverflow)?);
+        let (x, y) = (le_u32(&raw[8..12]), le_u32(&raw[12..16]));
+        if x >= TILES_PER_AXIS || y >= TILES_PER_AXIS {
+            return Err(invalid("tile", "beyond the zoom's range"));
         }
-        if total != walk_count as u64 {
-            return Err(TileDecodeError::InvalidValue {
-                column: "walk counts",
-                reason: "don't sum to the walk count",
-            });
-        }
-        let reserve = walk_count.min(cursor.bytes.len());
-        let mut walk_feed = Vec::with_capacity(reserve);
-        let mut walk_stop = Vec::with_capacity(reserve);
-        let mut row_start = 0_usize;
-        for &row_end_value in &row_end {
-            let end = row_end_value as usize;
-            let count = end
-                .checked_sub(row_start)
-                .ok_or(TileDecodeError::InvalidValue {
-                    column: "walk counts",
-                    reason: "not increasing",
-                })?;
-            let (feeds, stops) = read_keyed_deltas(&mut cursor, count, Some(reserve))?;
-            walk_feed.extend(feeds);
-            walk_stop.extend(stops);
-            row_start = end;
-        }
-        let mut walk_seconds = Vec::with_capacity(reserve);
-        for _ in 0..walk_count {
-            walk_seconds.push(cursor.varint()?);
-        }
-        if !cursor.bytes.is_empty() {
-            return Err(TileDecodeError::TrailingData {
-                found: cursor.bytes.len(),
-            });
-        }
-        let tile = Self {
+        let max_seconds = le_u32(&raw[24..28]);
+        let origins = le_u32(&raw[28..32]);
+        let walks = le_u32(&raw[32..36]);
+        let columns = Columns::validate(&raw[HEADER_LEN..], origins, walks, max_seconds)?;
+        Ok(Self {
             mode,
-            x: le_u32(&bytes[8..12]),
-            y: le_u32(&bytes[12..16]),
-            manifest_id: u64::from_le_bytes(bytes[16..24].try_into().unwrap_or([0; 8])),
-            max_seconds: le_u32(&bytes[24..28]),
-            origin_feed,
-            origin_stop,
-            row_end,
-            walk_feed,
-            walk_stop,
-            walk_seconds,
-        };
-        tile.validate()?;
-        Ok(tile)
+            x,
+            y,
+            manifest_id: u64::from_le_bytes(raw[16..24].try_into().unwrap_or([0; 8])),
+            max_seconds,
+            origins,
+            walks,
+            counts_start: HEADER_LEN + columns.counts,
+            walks_start: HEADER_LEN + columns.walks,
+            seconds_start: HEADER_LEN + columns.seconds,
+            raw,
+        })
     }
 }
+
+/// Where a body's columns start, relative to the body.
+struct Columns {
+    counts: usize,
+    walks: usize,
+    seconds: usize,
+}
+
+impl Columns {
+    /// Checks every column of a tile body and finds its columns, allocating nothing.
+    ///
+    /// Each origin needs at least three bytes and each walk three more,
+    /// so a header claiming more than the body can hold fails before any column is read.
+    fn validate(
+        body: &[u8],
+        origins: u32,
+        walks: u32,
+        max_seconds: u32,
+    ) -> Result<Self, TileDecodeError> {
+        fn invalid<T>(column: &'static str, reason: &'static str) -> Result<T, TileDecodeError> {
+            Err(TileDecodeError::InvalidValue { column, reason })
+        }
+        let (origin_total, walk_total) = (u64::from(origins), u64::from(walks));
+        if (origin_total + walk_total).saturating_mul(3) > body.len() as u64 {
+            return invalid("header", "counts the body can't hold");
+        }
+        let consumed = |cursor: &Cursor<'_>| body.len() - cursor.bytes.len();
+
+        let mut origin_keys = KeyedReader::new(body);
+        let mut previous = None;
+        for _ in 0..origins {
+            let origin = origin_keys.next()?;
+            if previous.is_some_and(|prior| prior >= origin) {
+                return invalid("origins", "not strictly increasing");
+            }
+            previous = Some(origin);
+        }
+        let counts_start = consumed(&origin_keys.cursor);
+        let mut counts = Cursor {
+            bytes: origin_keys.cursor.bytes,
+        };
+        let mut total = 0_u64;
+        for _ in 0..origins {
+            let count = counts.varint()?;
+            if count == 0 {
+                return invalid("walk counts", "an origin with no walks");
+            }
+            total += u64::from(count);
+            if total > walk_total {
+                return invalid("walk counts", "don't sum to the walk count");
+            }
+        }
+        if total != walk_total {
+            return invalid("walk counts", "don't sum to the walk count");
+        }
+        let walks_start = consumed(&counts);
+
+        // Rows again, in step with their origins, now that the column ends are known.
+        let mut origin_keys = KeyedReader::new(body);
+        let mut row_counts = Cursor {
+            bytes: body.get(counts_start..).unwrap_or(&[]),
+        };
+        let mut walk_cursor = Cursor {
+            bytes: body.get(walks_start..).unwrap_or(&[]),
+        };
+        for _ in 0..origins {
+            let origin = origin_keys.next()?;
+            let mut row = KeyedReader::new(walk_cursor.bytes);
+            let mut previous_walk = None;
+            for _ in 0..row_counts.varint()? {
+                let walk = row.next()?;
+                if previous_walk.is_some_and(|prior| prior >= walk) {
+                    return invalid("walks", "not strictly increasing within an origin");
+                }
+                if walk == origin {
+                    return invalid("walks", "a stop walking to itself");
+                }
+                previous_walk = Some(walk);
+            }
+            walk_cursor = row.cursor;
+        }
+        let seconds_start = consumed(&walk_cursor);
+        for _ in 0..walks {
+            if walk_cursor.varint()? > max_seconds {
+                return invalid("walks", "past the bound");
+            }
+        }
+        if !walk_cursor.bytes.is_empty() {
+            return Err(TileDecodeError::TrailingData {
+                found: walk_cursor.bytes.len(),
+            });
+        }
+        Ok(Self {
+            counts: counts_start,
+            walks: walks_start,
+            seconds: seconds_start,
+        })
+    }
+}
+
+/// The rows of a [`TransferTile`], decoding as it goes.
+///
+/// A tile is validated when it is made, so the decodes here can't fail;
+/// a row that somehow did would simply end the iteration.
+#[derive(Clone, Debug)]
+pub struct TileRows<'a> {
+    remaining: usize,
+    origins: KeyedReader<'a>,
+    counts: Cursor<'a>,
+    walks: Cursor<'a>,
+    seconds: Cursor<'a>,
+}
+
+impl<'a> Iterator for TileRows<'a> {
+    type Item = (u32, u32, TileWalks<'a>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.remaining = self.remaining.checked_sub(1)?;
+        let (feed, stop) = self.origins.next().ok()?;
+        let count = self.counts.varint().ok()? as usize;
+        let row = TileWalks {
+            count,
+            walks: self.walks.clone(),
+            seconds: self.seconds.clone(),
+        };
+        for _ in 0..count {
+            self.walks.varint().ok()?;
+            self.walks.varint().ok()?;
+            self.seconds.varint().ok()?;
+        }
+        Some((feed, stop, row))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl ExactSizeIterator for TileRows<'_> {}
 
 /// The walks of one origin in a [`TransferTile`].
 #[derive(Clone, Debug)]
 pub struct TileWalks<'a> {
-    tile: &'a TransferTile,
-    range: core::ops::Range<usize>,
+    count: usize,
+    walks: Cursor<'a>,
+    seconds: Cursor<'a>,
 }
 
 impl TileWalks<'_> {
     /// How many walks this origin has.
     #[inline]
     pub fn len(&self) -> usize {
-        self.range.len()
+        self.count
     }
 
     /// Whether this origin has no walks; never so in a valid tile.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.range.is_empty()
+        self.count == 0
     }
 
     /// The walks, by increasing `(feed, stop)`.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = TileWalk> + '_ {
-        self.range.clone().map(|i| TileWalk {
-            feed: self.tile.walk_feed.get(i).copied().unwrap_or(0),
-            stop: self.tile.walk_stop.get(i).copied().unwrap_or(0),
-            seconds: self.tile.walk_seconds.get(i).copied().unwrap_or(0),
+        let mut keys = KeyedReader::new(self.walks.bytes);
+        let mut seconds = self.seconds.clone();
+        // Validation guarantees these decodes succeed, so the fallbacks are never used.
+        (0..self.count).map(move |_| {
+            let (feed, stop) = keys.next().unwrap_or((0, 0));
+            TileWalk {
+                feed,
+                stop,
+                seconds: seconds.varint().unwrap_or(0),
+            }
         })
     }
 }
@@ -570,13 +576,14 @@ impl TileWalks<'_> {
 ///
 /// # Performance
 ///
-/// Decompresses into one buffer and allocates columns proportional to the tile.
+/// Memory stays within a small multiple of the limit for any bytes: decompression is capped,
+/// and validation reads the tile without building columns.
 pub fn decode_tile(
     compressed: &[u8],
     limits: DecodeLimits,
 ) -> Result<TransferTile, TileDecodeError> {
     let raw = decompress_bounded(compressed, limits.max_decompressed_bytes)?;
-    TransferTile::from_bytes(&raw)
+    TransferTile::from_vec(raw)
 }
 
 fn decompress_bounded(compressed: &[u8], limit: usize) -> Result<Vec<u8>, TileDecodeError> {
@@ -587,13 +594,29 @@ fn decompress_bounded(compressed: &[u8], limit: usize) -> Result<Vec<u8>, TileDe
         .clamp(1 << 16, 128 * 1024 * 1024);
     let mut decoder = StreamingDecoder::new_with_max_window_size(&mut source, window)
         .map_err(|e| TileDecodeError::Decompress(e.to_string()))?;
-    let mut out = Vec::new();
-    let take_limit = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
-    Read::take(&mut decoder, take_limit)
-        .read_to_end(&mut out)
-        .map_err(|e| TileDecodeError::Decompress(e.to_string()))?;
-    if out.len() > limit {
+    // Fail on the frame's own claim, before decompressing a byte, when it makes one.
+    if decoder.decoder.content_size() > u64::try_from(limit).unwrap_or(u64::MAX) {
         return Err(TileDecodeError::TooLarge { limit });
+    }
+    let mut buffer = vec![0; READ_CHUNK];
+    let mut out: Vec<u8> = Vec::new();
+    loop {
+        let read = decoder
+            .read(&mut buffer)
+            .map_err(|e| TileDecodeError::Decompress(e.to_string()))?;
+        if read == 0 {
+            break;
+        }
+        let total = out.len() + read;
+        if total > limit {
+            return Err(TileDecodeError::TooLarge { limit });
+        }
+        if total > out.capacity() {
+            // Not `Vec`'s doubling, which could reach twice the limit.
+            let target = (out.capacity() * 2).max(total).max(READ_CHUNK).min(limit);
+            out.reserve_exact(target - out.len());
+        }
+        out.extend_from_slice(&buffer[..read]);
     }
     if !decoder.decoder.is_finished() {
         return Err(TileDecodeError::Decompress(
@@ -614,77 +637,30 @@ fn le_u32(bytes: &[u8]) -> u32 {
     u32::from_le_bytes(bytes.try_into().unwrap_or([0; 4]))
 }
 
-/// Writes `(key, value)` pairs sorted by key then value: keys as deltas, and values as a delta
-/// against the previous value of the same key, absolute when the key changes.
+/// Writes a `(key, value)` pair after the previous one: the key as a delta, and the value as a
+/// delta against the previous value of the same key, absolute when the key changes.
 ///
-/// A column resets at each row of walks; the origin columns are one long row.
-fn write_keyed_deltas(keys: &[u32], values: &[u32], out: &mut Vec<u8>) {
-    let mut previous = None;
-    for (&key, &value) in keys.iter().zip(values) {
-        match previous {
-            None => {
-                write_varint(key, out);
-                write_varint(value, out);
-            }
-            Some((prior_key, prior_value)) => {
-                write_varint(key - prior_key, out);
-                write_varint(
-                    if key == prior_key {
-                        value - prior_value
-                    } else {
-                        value
-                    },
-                    out,
-                );
-            }
+/// A decreasing pair wraps, so it can't be mistaken for an increasing one: the decoder's
+/// checked addition overflows and the tile is refused.
+fn write_keyed(previous: &mut Option<(u32, u32)>, key: u32, value: u32, out: &mut Vec<u8>) {
+    match *previous {
+        None => {
+            write_varint(key, out);
+            write_varint(value, out);
         }
-        previous = Some((key, value));
-    }
-}
-
-/// Reads what [`write_keyed_deltas`] wrote, without trusting `count`.
-fn read_keyed_deltas(
-    cursor: &mut Cursor<'_>,
-    count: usize,
-    reserve_hint: Option<usize>,
-) -> Result<(Vec<u32>, Vec<u32>), TileDecodeError> {
-    let reserve = count
-        .min(reserve_hint.unwrap_or(usize::MAX))
-        .min(cursor.bytes.len());
-    let mut keys = Vec::with_capacity(reserve);
-    let mut values = Vec::with_capacity(reserve);
-    let mut previous: Option<(u32, u32)> = None;
-    for _ in 0..count {
-        let key_delta = cursor.varint()?;
-        let value_part = cursor.varint()?;
-        let (key, value) = match previous {
-            None => (key_delta, value_part),
-            Some((prior_key, prior_value)) => {
-                let key =
-                    prior_key
-                        .checked_add(key_delta)
-                        .ok_or(TileDecodeError::InvalidValue {
-                            column: "feeds",
-                            reason: "delta past 32 bits",
-                        })?;
-                let value = if key == prior_key {
-                    prior_value
-                        .checked_add(value_part)
-                        .ok_or(TileDecodeError::InvalidValue {
-                            column: "stops",
-                            reason: "delta past 32 bits",
-                        })?
+        Some((prior_key, prior_value)) => {
+            write_varint(key.wrapping_sub(prior_key), out);
+            write_varint(
+                if key == prior_key {
+                    value.wrapping_sub(prior_value)
                 } else {
-                    value_part
-                };
-                (key, value)
-            }
-        };
-        keys.push(key);
-        values.push(value);
-        previous = Some((key, value));
+                    value
+                },
+                out,
+            );
+        }
     }
-    Ok((keys, values))
+    *previous = Some((key, value));
 }
 
 /// A little-endian base-128 varint.
@@ -703,6 +679,7 @@ fn write_varint(mut value: u32, out: &mut Vec<u8>) {
 }
 
 /// A bounded reader over a tile body.
+#[derive(Clone, Debug)]
 struct Cursor<'a> {
     bytes: &'a [u8],
 }
@@ -727,6 +704,52 @@ impl Cursor<'_> {
             }
             shift += 7;
         }
+    }
+}
+
+/// Reads what [`write_keyed`] wrote, one pair at a time.
+#[derive(Clone, Debug)]
+struct KeyedReader<'a> {
+    cursor: Cursor<'a>,
+    previous: Option<(u32, u32)>,
+}
+
+impl<'a> KeyedReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            cursor: Cursor { bytes },
+            previous: None,
+        }
+    }
+
+    fn next(&mut self) -> Result<(u32, u32), TileDecodeError> {
+        let key_delta = self.cursor.varint()?;
+        let value_part = self.cursor.varint()?;
+        let pair = match self.previous {
+            None => (key_delta, value_part),
+            Some((prior_key, prior_value)) => {
+                let key =
+                    prior_key
+                        .checked_add(key_delta)
+                        .ok_or(TileDecodeError::InvalidValue {
+                            column: "feeds",
+                            reason: "delta past 32 bits",
+                        })?;
+                let value = if key == prior_key {
+                    prior_value
+                        .checked_add(value_part)
+                        .ok_or(TileDecodeError::InvalidValue {
+                            column: "stops",
+                            reason: "delta past 32 bits",
+                        })?
+                } else {
+                    value_part
+                };
+                (key, value)
+            }
+        };
+        self.previous = Some(pair);
+        Ok(pair)
     }
 }
 
@@ -805,7 +828,7 @@ mod tests {
     #[test]
     fn a_tile_round_trips() {
         let tile = sample();
-        let bytes = tile.to_bytes().expect("encode");
+        let bytes = tile.as_bytes().to_vec();
         assert_eq!(TransferTile::from_bytes(&bytes).expect("decode"), tile);
         let decoded = decode_tile(&compress(&bytes), DecodeLimits::default()).expect("decode");
         assert_eq!(decoded, tile);
@@ -817,7 +840,7 @@ mod tests {
     /// The exact bytes of version 1, so a format change has to be deliberate.
     #[test]
     fn the_format_is_stable() {
-        let bytes = sample().to_bytes().expect("encode");
+        let bytes = sample().as_bytes().to_vec();
         let hex: Vec<String> = bytes
             .chunks(16)
             .map(|chunk| {
@@ -834,41 +857,61 @@ mod tests {
     #[test]
     fn an_empty_tile_round_trips() {
         let tile = build_tile(&[]);
-        let bytes = tile.to_bytes().expect("encode");
+        let bytes = tile.as_bytes().to_vec();
         assert_eq!(TransferTile::from_bytes(&bytes).expect("decode"), tile);
     }
 
-    fn tile_with(mutate: impl FnOnce(&mut TransferTile)) -> Result<Vec<u8>, TileEncodeError> {
-        let mut tile = sample();
-        mutate(&mut tile);
-        // `to_bytes` validates what `from_rows` would, so build by hand.
-        tile.to_bytes()
+    fn sample_with(
+        mutate: impl FnOnce(&mut Vec<(u32, u32, Vec<TileWalk>)>),
+    ) -> Result<TransferTile, TileEncodeError> {
+        let mut rows = sample_rows();
+        mutate(&mut rows);
+        let views: Vec<TransferTileRow<'_>> = rows
+            .iter()
+            .map(|(feed, stop, walks)| TransferTileRow {
+                feed: *feed,
+                stop: *stop,
+                walks,
+            })
+            .collect();
+        TransferTile::from_rows(
+            TransferMode::Cycling,
+            (656, 1422),
+            0xfeed_cafe_0123_4567,
+            900,
+            &views,
+        )
     }
 
     #[test]
     fn encoding_refuses_what_decoding_would_refuse() {
         // Origins out of order.
-        assert!(tile_with(|t| t.origin_stop[1] = 3).is_err());
+        assert!(sample_with(|rows| rows[1].1 = 3).is_err());
         // Walks out of order within a row.
         assert!(
-            tile_with(|t| {
-                t.walk_feed[1] = 0;
-                t.walk_stop[1] = 7;
+            sample_with(|rows| {
+                rows[0].2[1].feed = 0;
+                rows[0].2[1].stop = 7;
             })
             .is_err()
         );
         // A stop walking to itself.
         assert!(
-            tile_with(|t| {
-                t.walk_feed[0] = 0;
-                t.walk_stop[0] = 3;
+            sample_with(|rows| {
+                rows[0].2[0].feed = 0;
+                rows[0].2[0].stop = 3;
             })
             .is_err()
         );
         // Seconds over the bound.
-        assert!(tile_with(|t| t.walk_seconds[0] = 901).is_err());
+        assert!(sample_with(|rows| rows[0].2[0].seconds = 901).is_err());
+        // An origin with no walks.
+        assert!(sample_with(|rows| rows[0].2.clear()).is_err());
         // A tile beyond the zoom.
-        assert!(tile_with(|t| t.x = 4096).is_err());
+        let tile = sample();
+        assert!(
+            TransferTile::from_rows(tile.mode, (4096, tile.y), tile.manifest_id, 900, &[]).is_err()
+        );
     }
 
     #[test]
@@ -896,7 +939,7 @@ mod tests {
 
     #[test]
     fn trailing_bytes_after_a_frame_are_refused() {
-        let mut bytes = compress(&sample().to_bytes().expect("encode"));
+        let mut bytes = compress(sample().as_bytes());
         bytes.extend_from_slice(b"\0\0\0\0");
         let error = decode_tile(&bytes, DecodeLimits::default()).expect_err("trailing");
         assert_eq!(error, TileDecodeError::TrailingFrameData);
@@ -904,7 +947,7 @@ mod tests {
 
     #[test]
     fn a_frame_with_trailing_data_after_it_is_refused_even_if_valid_tile() {
-        let compressed = compress(&sample().to_bytes().expect("encode"));
+        let compressed = compress(sample().as_bytes());
         let mut twice = compressed.clone();
         twice.extend_from_slice(&compressed);
         assert!(decode_tile(&twice, DecodeLimits::default()).is_err());
@@ -963,7 +1006,7 @@ mod tests {
         #[test]
         fn any_valid_tile_round_trips(rows in rows_strategy()) {
             let tile = build_tile(&rows);
-            let bytes = tile.to_bytes().expect("encode");
+            let bytes = tile.as_bytes().to_vec();
             prop_assert_eq!(&TransferTile::from_bytes(&bytes).expect("decode"), &tile);
             let frame = compress(&bytes);
             prop_assert_eq!(decode_tile(&frame, DecodeLimits::default()).expect("frame"), tile);
@@ -973,7 +1016,7 @@ mod tests {
         #[test]
         fn truncated_bytes_are_errors(rows in rows_strategy(), cut in 0.0_f64..1.0) {
             let tile = build_tile(&rows);
-            let bytes = tile.to_bytes().expect("encode");
+            let bytes = tile.as_bytes().to_vec();
             #[expect(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss, reason = "test")]
             let at = ((bytes.len() as f64 * cut) as usize).min(bytes.len().saturating_sub(1));
             prop_assert!(TransferTile::from_bytes(&bytes[..at]).is_err());
@@ -991,7 +1034,7 @@ mod tests {
             mask in 1_u8..=255,
         ) {
             let tile = build_tile(&rows);
-            let mut bytes = tile.to_bytes().expect("encode");
+            let mut bytes = tile.as_bytes().to_vec();
             #[expect(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss, reason = "test")]
             let at = (bytes.len() as f64 * position) as usize % bytes.len().max(1);
             bytes[at] ^= mask;

@@ -14,7 +14,7 @@ mod load;
 
 pub use format::{
     DEFAULT_MAX_DECOMPRESSED_BYTES, DecodeLimits, TILE_FORMAT_VERSION, TILE_MAGIC, TILE_ZOOM,
-    TileDecodeError, TileEncodeError, TileWalk, TileWalks, TransferMode, TransferTile,
+    TileDecodeError, TileEncodeError, TileRows, TileWalk, TileWalks, TransferMode, TransferTile,
     TransferTileRow, decode_tile,
 };
 pub use load::{
