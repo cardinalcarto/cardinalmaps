@@ -20,6 +20,7 @@ members = [
     "valinor-thor",
     "valinor-thor-service",
     "valinor-transit",
+    "valinor-walk",
     "valinor-tyr",
 ]
 
@@ -84,6 +85,7 @@ valinor-loki = { path = "valinor-loki" }
 valinor-router = { path = "valinor-router" }
 valinor-sif = { path = "valinor-sif" }
 valinor-thor = { path = "valinor-thor" }
+valinor-transit = { path = "valinor-transit" }
 valinor-tyr = { path = "valinor-tyr" }
 walkdir = "2.5.0"
 zerocopy = "0.8.63"

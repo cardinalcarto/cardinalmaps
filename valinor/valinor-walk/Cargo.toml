@@ -1,0 +1,25 @@
+[package]
+name = "valinor-walk"
+description = "Street search over Valhalla routing tiles for real-time transit routing."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+valhalla-graphtile = { workspace = true }
+valhalla-proto = { workspace = true }
+valinor-loki = { workspace = true }
+valinor-sif = { workspace = true }
+valinor-thor = { workspace = true }
+valinor-transit = { workspace = true }
+
+[dev-dependencies]
+valinor-router = { workspace = true }
+geo = { workspace = true }
+
+[lints]
+workspace = true
