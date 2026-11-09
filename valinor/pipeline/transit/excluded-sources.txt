@@ -1,0 +1,11 @@
+# Transitous source names this pipeline never fetches: nationwide transit agencies.
+#
+# One exact, case-sensitive source name per line, as written in Transitous's `feeds/*.json`.
+# A name applies in every region, for both static and real-time sources.
+# Matching sources are left out before anything is downloaded
+# and appear in `feeds.json` under `skipped` with the reason "nationwide agency".
+# Nothing is inferred: a source that isn't listed here is fetched.
+
+Amtrak
+flixbus
+Megabus
