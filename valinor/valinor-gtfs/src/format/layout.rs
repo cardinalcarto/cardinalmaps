@@ -18,6 +18,9 @@ pub const MAGIC: [u8; 8] = *b"VLNRGTFS";
 /// The only format version this build reads.
 pub const FORMAT_VERSION: u32 = 1;
 
+/// The longest calendar a file may hold, in days (over a hundred years).
+pub(crate) const MAX_SERVICE_DAYS: u32 = 40_000;
+
 /// A reference that points at nothing, where a real value would index a table.
 pub(crate) const NONE: u32 = u32::MAX;
 

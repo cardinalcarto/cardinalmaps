@@ -10,12 +10,9 @@
 //! Letting two rows share a run would let a small file load as a very large timetable.
 
 use crate::error::DecodeError;
-use crate::format::layout::{NONE, PATTERN_BIKES_ALLOWED};
+use crate::format::layout::{MAX_SERVICE_DAYS, NONE, PATTERN_BIKES_ALLOWED};
 use crate::format::reader::Tables;
 use zerocopy::little_endian::U32;
-
-/// The longest calendar a file may hold (over a hundred years).
-const MAX_SERVICE_DAYS: u32 = 40_000;
 
 /// Maps a table's name and message to an error.
 fn fail(table: &'static str, reason: &'static str) -> DecodeError {

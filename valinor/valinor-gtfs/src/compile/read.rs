@@ -16,14 +16,11 @@ use crate::compile::source::GtfsSource;
 use crate::compile::table::{Table, field};
 use crate::compile::time::{parse_date, parse_time};
 use crate::error::CompileError;
-use crate::format::layout::DIRECTION_NONE;
+use crate::format::layout::{DIRECTION_NONE, MAX_SERVICE_DAYS};
 use crate::format::reader::service_date_of;
 
 /// The most runs one row of `frequencies.txt` may expand into.
 const MAX_FREQUENCY_RUNS: i32 = 200_000;
-
-/// The longest span of dates a calendar may cover (matches the file format's bound).
-const MAX_CALENDAR_DAYS: i32 = 40_000;
 
 pub(super) struct AgencyModel {
     pub(super) gtfs_id: u32,
@@ -316,8 +313,11 @@ fn read_calendars(
         let mut row = ByteRecord::new();
         while table.read(&mut row)? {
             let id = field(&row, Some(service));
+            if specs.contains_key(id) {
+                report.warn(|| format!("duplicate service_id {id:?}; keeping the first row"));
+                continue;
+            }
             let spec = specs.entry(id.to_owned()).or_default();
-            spec.weekdays = 0;
             for (bit, column) in days.iter().enumerate() {
                 if field(&row, Some(*column)) == "1" {
                     spec.weekdays |= 1 << bit;
@@ -387,22 +387,10 @@ fn expand_service(
 ) -> Result<ServiceModel, CompileError> {
     let mut dates = BTreeSet::new();
     if let (Some(start), Some(end)) = (spec.start, spec.end) {
-        let days = end
-            .since((jiff::Unit::Day, start))
-            .map_err(|error| CompileError::OutOfRange(error.to_string()))?
-            .get_days();
-        if days > MAX_CALENDAR_DAYS {
-            report.warn(|| format!("calendar {id:?} spans too many days; ignoring its range"));
-        } else if days >= 0 {
-            let mut day = start;
-            for _ in 0..=days {
-                let bit = day.weekday().to_monday_zero_offset();
-                if spec.weekdays & (1 << bit) != 0 {
-                    dates.insert(day);
-                }
-                let Ok(next) = day.tomorrow() else { break };
-                day = next;
-            }
+        if end < start {
+            report.warn(|| format!("calendar {id:?} ends before it starts, so it never runs"));
+        } else if spec.weekdays != 0 {
+            insert_regular_days(id, spec, start, end, &mut dates, report)?;
         }
     }
     dates.extend(spec.added.iter().copied());
@@ -415,6 +403,7 @@ fn expand_service(
         report.warn(|| format!("calendar {id:?} has {before_epoch} dates before 1970"));
         dates.retain(|day| day.year() >= 1970);
     }
+    fit_to_format(id, &mut dates, report)?;
     let gtfs_id = pool.intern(id);
 
     let (Some(first), Some(last)) = (dates.first(), dates.last()) else {
@@ -439,6 +428,72 @@ fn expand_service(
         day_count,
         bits,
     })
+}
+
+/// Adds the dates of a service's weekly pattern.
+///
+/// An open-ended range, such as one ending in `99991231`, is clamped to the longest span
+/// the format holds, so a feed's regular service survives it.
+fn insert_regular_days(
+    id: &str,
+    spec: &ServiceSpec,
+    start: Date,
+    end: Date,
+    dates: &mut BTreeSet<Date>,
+    report: &mut FeedReport,
+) -> Result<(), CompileError> {
+    let first = start.max(Date::constant(1970, 1, 1));
+    let span = jiff::Span::new()
+        .try_days(i64::from(MAX_SERVICE_DAYS - 1))
+        .map_err(|error| CompileError::OutOfRange(error.to_string()))?;
+    let last = first.checked_add(span).map_or(end, |limit| end.min(limit));
+    if last < end {
+        report.warn(|| format!("calendar {id:?} runs past {last}; ignoring the rest of its range"));
+    }
+    let mut day = first;
+    while day <= last {
+        if spec.weekdays & (1 << day.weekday().to_monday_zero_offset()) != 0 {
+            dates.insert(day);
+        }
+        let Ok(next) = day.tomorrow() else { break };
+        day = next;
+    }
+    Ok(())
+}
+
+/// Keeps a calendar within the span the format can hold.
+///
+/// When exceptions stretch a calendar further than that, the span with the most dates is kept
+/// (the earliest one if several tie), which keeps the bulk of the service over stray outliers.
+fn fit_to_format(
+    id: &str,
+    dates: &mut BTreeSet<Date>,
+    report: &mut FeedReport,
+) -> Result<(), CompileError> {
+    let numbers: Vec<u32> = dates
+        .iter()
+        .map(|day| day_number(*day))
+        .collect::<Result<_, _>>()?;
+    let (Some(first), Some(last)) = (numbers.first(), numbers.last()) else {
+        return Ok(());
+    };
+    if last - first < MAX_SERVICE_DAYS {
+        return Ok(());
+    }
+    let (mut left, mut best_start, mut best_len) = (0, 0, 0);
+    for (right, &day) in numbers.iter().enumerate() {
+        while day - numbers[left] >= MAX_SERVICE_DAYS {
+            left += 1;
+        }
+        if right - left + 1 > best_len {
+            (best_start, best_len) = (left, right - left + 1);
+        }
+    }
+    let (low, high) = (numbers[best_start], numbers[best_start + best_len - 1]);
+    dates.retain(|day| day_number(*day).is_ok_and(|number| (low..=high).contains(&number)));
+    let dropped = numbers.len() - best_len;
+    report.warn(|| format!("calendar {id:?} spans too many days; dropped {dropped} of its dates"));
+    Ok(())
 }
 
 fn day_number(date: Date) -> Result<u32, CompileError> {

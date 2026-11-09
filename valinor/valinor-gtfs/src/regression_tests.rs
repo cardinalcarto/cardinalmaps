@@ -1,5 +1,7 @@
 //! Regression tests for problems an independent review found.
 
+use core::fmt::Write as _;
+
 use valinor_transit::ServiceDate;
 use zerocopy::little_endian::U32;
 use zerocopy::{FromBytes, IntoBytes};
@@ -18,7 +20,6 @@ fn compile_one(source: impl GtfsSource + 'static) -> Result<CompiledOutput, Comp
     }])
 }
 
-#[expect(dead_code, reason = "used by the tests added with each fix")]
 fn d(text: &str) -> ServiceDate {
     parse_service_date(text).expect("date")
 }
@@ -268,4 +269,110 @@ fn child_stops_must_be_contiguous_and_complete() {
 fn compiled_files_satisfy_the_contiguity_rules() {
     let output = compile_one(feed_with_a_station()).expect("compile");
     CompiledTimetable::parse(&output.bytes).expect("parse");
+}
+
+#[test]
+fn a_calendar_stretched_past_the_format_limit_still_loads() {
+    let dates = "service_id,date,exception_type\nW,19800101,1\nW,20990101,1\nW,20260105,1\n";
+    let output = compile_one(minimal("UTC", CAL_HEADER, dates, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("a compiled file must load");
+    assert_eq!(view.active_trip_count(d("20260105")), 1);
+    assert!(
+        output.reports[0]
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("too many days")),
+        "{:?}",
+        output.reports[0].warnings,
+    );
+}
+
+/// The densest span survives a lone outlier, whichever side it is on.
+#[test]
+fn the_span_with_the_most_dates_is_kept() {
+    let mut rows = String::from("service_id,date,exception_type\nW,21500101,1\n");
+    for day in 1..=9 {
+        writeln!(rows, "W,2026010{day},1").expect("write");
+    }
+    let output = compile_one(minimal("UTC", CAL_HEADER, &rows, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    assert_eq!(view.active_trip_count(d("20260105")), 1);
+    assert_eq!(
+        view.active_trip_count(d("21500101")),
+        0,
+        "the lone outlier goes"
+    );
+
+    let mut rows = String::from("service_id,date,exception_type\nW,19800101,1\n");
+    for day in 1..=9 {
+        writeln!(rows, "W,2130010{day},1").expect("write");
+    }
+    let output = compile_one(minimal("UTC", CAL_HEADER, &rows, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    assert_eq!(view.active_trip_count(d("21300105")), 1);
+    assert_eq!(
+        view.active_trip_count(d("19800101")),
+        0,
+        "the lone outlier goes"
+    );
+}
+
+#[test]
+fn a_date_at_the_end_of_time_alongside_real_service_still_loads() {
+    let dates = "service_id,date,exception_type\nW,99991231,1\nW,20260105,1\n";
+    let output = compile_one(minimal("UTC", CAL_HEADER, dates, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("a compiled file must load");
+    assert_eq!(view.active_trip_count(d("20260105")), 1);
+}
+
+#[test]
+fn service_only_at_the_end_of_time_is_an_error() {
+    let dates = "service_id,date,exception_type\nW,99991231,1\n";
+    let result = compile_one(minimal("UTC", CAL_HEADER, dates, ST));
+    assert!(
+        matches!(result, Err(CompileError::OutOfRange(_))),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn an_open_ended_calendar_keeps_service_up_to_the_limit() {
+    let calendar = format!("{CAL_HEADER}W,1,1,1,1,1,1,1,20260101,99991231\n");
+    let output = compile_one(minimal("UTC", &calendar, NO_DATES, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    assert!(output.reports[0].warning_count >= 1);
+    assert_eq!(view.active_trip_count(d("20260105")), 1);
+    // 40,000 days from the start, inclusive of the first day.
+    let last = d("20260101").into_inner() + 39_999;
+    assert_eq!(view.active_trip_count(ServiceDate::new(last)), 1);
+    assert_eq!(view.active_trip_count(ServiceDate::new(last + 1)), 0);
+}
+
+#[test]
+fn a_calendar_starting_before_1970_keeps_its_recent_service() {
+    let calendar = format!("{CAL_HEADER}W,1,1,1,1,1,1,1,19000101,99991231\n");
+    let output = compile_one(minimal("UTC", &calendar, NO_DATES, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    assert_eq!(view.active_trip_count(d("20260105")), 1);
+}
+
+#[test]
+fn a_reversed_calendar_range_warns() {
+    let calendar = format!("{CAL_HEADER}W,1,1,1,1,1,1,1,20260201,20260101\n");
+    let output = compile_one(minimal("UTC", &calendar, NO_DATES, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    assert_eq!(view.active_trip_count(d("20260105")), 0);
+    assert!(output.reports[0].warning_count >= 1);
+}
+
+#[test]
+fn a_duplicate_calendar_row_warns_and_keeps_the_first() {
+    let calendar = format!(
+        "{CAL_HEADER}W,1,1,1,1,1,1,1,20260101,20260131\nW,1,1,1,1,1,1,1,20260201,20260228\n"
+    );
+    let output = compile_one(minimal("UTC", &calendar, NO_DATES, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    assert_eq!(output.reports[0].warning_count, 1);
+    assert!(view.service_active(0, d("20260110")));
+    assert!(!view.service_active(0, d("20260210")));
 }

@@ -95,8 +95,8 @@ pub(super) fn assemble(
         }
     }
 
-    let (first_date, last_date) = coverage(&feeds);
-    let mut zones = ZoneTable::new(first_date, last_date);
+    let (first_date, last_date) = coverage(&feeds)?;
+    let mut zones = ZoneTable::new(first_date, last_date)?;
     let tz = zones.zone(&time_zone, &mut pool)?;
     for feed in &feeds {
         for stop in &feed.stops {
@@ -381,7 +381,7 @@ struct FeedBases {
     service_base: u32,
 }
 
-fn coverage(feeds: &[FeedModel]) -> (Date, Date) {
+fn coverage(feeds: &[FeedModel]) -> Result<(Date, Date), CompileError> {
     let mut first = u32::MAX;
     let mut last = 0_u32;
     for feed in feeds {
@@ -399,10 +399,11 @@ fn coverage(feeds: &[FeedModel]) -> (Date, Date) {
     // Extend a little: a window around the edge of the feed still needs yesterday and tomorrow.
     let first = first.saturating_sub(2);
     let last = last.saturating_add(2);
-    let to_date = |days: u32| -> Date {
-        civil_date_of(ServiceDate::new(days)).unwrap_or(Date::constant(1970, 1, 1))
+    let to_date = |days: u32| {
+        civil_date_of(ServiceDate::new(days))
+            .map_err(|error| CompileError::OutOfRange(error.to_string()))
     };
-    (to_date(first), to_date(last))
+    Ok((to_date(first)?, to_date(last)?))
 }
 
 fn first_service_date(feed: &FeedModel) -> u32 {
@@ -489,19 +490,19 @@ struct ZoneTable {
 }
 
 impl ZoneTable {
-    fn new(first: Date, last: Date) -> Self {
+    fn new(first: Date, last: Date) -> Result<Self, CompileError> {
         // Service days can run up to a week past their date for the longest trips, and stop
         // times shift local display around them; the margin keeps those instants covered.
-        let start = date_as_unix(first) - 3 * 86_400;
-        let end = date_as_unix(last) + 10 * 86_400;
-        Self {
+        let start = date_as_unix(first)? - 3 * 86_400;
+        let end = date_as_unix(last)? + 10 * 86_400;
+        Ok(Self {
             start_unix: start,
             end_unix: end,
             by_name: HashMap::new(),
             rows: Vec::new(),
             transitions: Vec::new(),
             zones: Vec::new(),
-        }
+        })
     }
 
     fn time_zone(&self, index: u32) -> &TimeZone {
@@ -550,11 +551,12 @@ impl ZoneTable {
     }
 }
 
-fn date_as_unix(date: Date) -> i64 {
-    i64::from(
-        date.since((jiff::Unit::Day, Date::constant(1970, 1, 1)))
-            .map_or(0, |span| span.get_days()),
-    ) * 86_400
+fn date_as_unix(date: Date) -> Result<i64, CompileError> {
+    let days = date
+        .since((jiff::Unit::Day, Date::constant(1970, 1, 1)))
+        .map_err(|error| CompileError::OutOfRange(error.to_string()))?
+        .get_days();
+    Ok(i64::from(days) * 86_400)
 }
 
 /// Runs of the noon offset across the covered dates, plus a terminator row.
