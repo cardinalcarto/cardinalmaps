@@ -517,19 +517,17 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         }
         // A seed takes no edge status (as Thor's origin edges), so a route can come back
         // around onto its own edge to reach a stop behind the start on a one-way street.
-        self.push_seed(
-            TableLabel {
-                inner,
-                cost: partial.cost + Cost::new(seed.initial, seed.initial),
-                transition: Cost::ZERO,
-                real_edge: seed.edge,
-                dense_edge,
-                end_node: label_edge.end_node_id(),
-                span: (begin, end),
-                settled: false,
-                destonly_mask: access.destonly_access_restr_mask,
-            },
-        );
+        self.push_seed(TableLabel {
+            inner,
+            cost: partial.cost + Cost::new(seed.initial, seed.initial),
+            transition: Cost::ZERO,
+            real_edge: seed.edge,
+            dense_edge,
+            end_node: label_edge.end_node_id(),
+            span: (begin, end),
+            settled: false,
+            destonly_mask: access.destonly_access_restr_mask,
+        });
         Ok(())
     }
 
@@ -795,19 +793,17 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             return Ok(false);
         };
         self.ensure_edge_state();
-        self.push_label(
-            TableLabel {
-                inner,
-                cost,
-                transition,
-                real_edge: traversed_id,
-                dense_edge,
-                end_node: edge.end_node_id(),
-                span: (0.0, 1.0),
-                settled: false,
-                destonly_mask: access.destonly_access_restr_mask,
-            },
-        );
+        self.push_label(TableLabel {
+            inner,
+            cost,
+            transition,
+            real_edge: traversed_id,
+            dense_edge,
+            end_node: edge.end_node_id(),
+            span: (0.0, 1.0),
+            settled: false,
+            destonly_mask: access.destonly_access_restr_mask,
+        });
         Ok(true)
     }
 

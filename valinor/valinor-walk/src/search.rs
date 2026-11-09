@@ -34,6 +34,11 @@ use crate::snap::StopSnaps;
 #[path = "tile_tests.rs"]
 mod tile_tests;
 
+#[cfg(test)]
+#[allow(clippy::all, clippy::pedantic)]
+#[path = "review_tests.rs"]
+mod review_tests;
+
 /// The "no such thing" value of stops, labels, and arena entries.
 const NONE: u32 = u32::MAX;
 
@@ -707,11 +712,7 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
             };
             // A forward seed walks from the source; a backward search's seed is the
             // destination of the real walk.
-            let (from, to) = if dir == 0 {
-                (attach, v)
-            } else {
-                (v, attach)
-            };
+            let (from, to) = if dir == 0 { (attach, v) } else { (v, attach) };
             let cost = direct_between(from, to).cost;
             if cost == INF {
                 continue;
@@ -930,7 +931,10 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
                 (target, source)
             };
             let direct = direct_between(from, to);
-            #[expect(clippy::float_cmp, reason = "the same stored fraction, not a computed one")]
+            #[expect(
+                clippy::float_cmp,
+                reason = "the same stored fraction, not a computed one"
+            )]
             if direct.begin == direct.end {
                 // Co-located stops: a walk of no length has no edges.
                 return empty;
@@ -1058,7 +1062,10 @@ fn direct_between(from: StopAttach, to: StopAttach) -> DirectWalk {
 #[inline]
 fn direct_cost(weights: [u16; 2], real_from: f32, real_to: f32) -> u16 {
     // Going nowhere is free, whichever direction the edge may be walked.
-    #[expect(clippy::float_cmp, reason = "the same stored fraction, not a computed one")]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the same stored fraction, not a computed one"
+    )]
     if real_from == real_to {
         return 0;
     }

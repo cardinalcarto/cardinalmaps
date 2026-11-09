@@ -101,7 +101,7 @@ fn run_search<P: GraphTileProvider, C: Costing>(
 
 /// Snaps for stops placed along random pedestrian edges of a tile,
 /// from a deterministic generator (no Loki): stops on edges directly.
-fn random_stops<P: GraphTileProvider>(
+pub(crate) fn random_stops<P: GraphTileProvider>(
     provider: &P,
     tiles: &[u64],
     count: usize,
@@ -826,7 +826,7 @@ fn egress_tables_mirror_access_on_a_small_scale() {
     assert!(both > 50, "only {both} stops reached both ways");
 }
 
-fn pedestrian_options() -> valhalla_proto::Options {
+pub(crate) fn pedestrian_options() -> valhalla_proto::Options {
     use valhalla_proto::costing::Type as CostingType;
     use valinor_sif::costing_options::parse_costing;
     use valinor_sif::json::JsonValue;
