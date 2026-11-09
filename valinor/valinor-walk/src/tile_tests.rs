@@ -696,3 +696,239 @@ fn build_id_of_a_tile_set_is_read_from_a_tile() {
     let build = graph.build_id_of(id).expect("read").expect("present");
     assert_eq!(graph.build_id(), Some(build));
 }
+
+// ------------------------------------------------------------------------------------------
+// Access and egress tables, and conversion to Thor's paths.
+// ------------------------------------------------------------------------------------------
+
+use crate::table::{AccessSide, StopTables, TableRequest, TableSeed};
+
+fn access_table_for<P: GraphTileProvider, C: Costing>(
+    tables: &mut StopTables<P, C>,
+    side: AccessSide,
+    seed: SnapPoint,
+    stop_count: usize,
+) -> valinor_transit::StopTable {
+    let seeds = [TableSeed {
+        edge: seed.edge,
+        percent_along: seed.percent_along,
+        initial: 0.0,
+    }];
+    let request = TableRequest {
+        side,
+        seeds: &seeds,
+        max_seconds: 3600,
+        interrupt: &|| false,
+    };
+    tables
+        .compute(stop_count, &request)
+        .expect("table")
+        .expect("not interrupted")
+}
+
+/// Sets up a table over Andorra; the seed is the first random point.
+fn tables_fixture() -> (
+    StopTables<DirectoryGraphTileProvider, AnyCosting>,
+    Arc<StopSnaps>,
+    Vec<SnapPoint>,
+) {
+    let provider = andorra();
+    let mut points = random_stops(&provider, &ANDORRA_TILES, 300, 21);
+    // The first point is the query's location: somewhere Loki knows a person can walk.
+    points[0] = crate::snap_stop(
+        &provider,
+        &pedestrian(),
+        &crate::SnapConfig::default(),
+        (1.5218, 42.5063),
+    )
+    .expect("snap")
+    .result
+    .expect("a snap");
+    let snaps = snaps_for(&provider, &points);
+    let mut tables = StopTables::new(provider, pedestrian());
+    tables.bind(snaps.clone()).expect("bind");
+    (tables, snaps, points)
+}
+
+#[test]
+fn access_tables_reach_stops_and_legs_add_up() {
+    let (mut tables, snaps, points) = tables_fixture();
+    let table = access_table_for(
+        &mut tables,
+        AccessSide::Access,
+        points[0],
+        snaps.stop_count(),
+    );
+    let mut reached = 0;
+    for i in 0..snaps.stop_count() {
+        let stop = StopId::new(i as u32);
+        let Some(secs) = table.cost(stop) else {
+            continue;
+        };
+        reached += 1;
+        let leg = tables.leg(stop).expect("leg of a reached stop");
+        assert_eq!(leg.side, AccessSide::Access);
+        let total: f32 = leg
+            .edges
+            .iter()
+            .map(|e| e.transition.secs + e.traversal.secs)
+            .sum();
+        assert!(
+            (total - leg.secs).abs() < 0.05,
+            "edges sum {total} vs leg {}",
+            leg.secs
+        );
+        assert_eq!(secs.into_inner(), leg.secs.round() as u32);
+        // Access runs from the origin to the stop: the stop's edge comes last.
+        let last = leg.edges.last().expect("edges");
+        let point = points[i];
+        assert!(last.edge == point.edge || is_opposing_of(last.edge, point.edge));
+    }
+    assert!(reached > 50, "only {reached} stops reached");
+}
+
+/// Whether two directed edges are each other's opposing edges, in the Andorra fixture.
+fn is_opposing_of(a: GraphId, b: GraphId) -> bool {
+    let provider = andorra();
+    let mut graph: crate::graph::LazyGraph<_, AnyCosting> =
+        crate::graph::LazyGraph::new(provider, pedestrian());
+    let (Some(da), Some(db)) = (
+        graph.describe_edge(a).expect("a"),
+        graph.describe_edge(b).expect("b"),
+    ) else {
+        return false;
+    };
+    da.edge_dense == db.opposing_dense && da.opposing_dense == db.edge_dense
+}
+
+#[test]
+fn egress_tables_mirror_access_on_a_small_scale() {
+    let (mut tables, snaps, points) = tables_fixture();
+    let forward = access_table_for(
+        &mut tables,
+        AccessSide::Access,
+        points[0],
+        snaps.stop_count(),
+    );
+    let backward = access_table_for(
+        &mut tables,
+        AccessSide::Egress,
+        points[0],
+        snaps.stop_count(),
+    );
+    let mut both = 0;
+    for i in 0..snaps.stop_count() {
+        let stop = StopId::new(i as u32);
+        if let (Some(a), Some(b)) = (forward.cost(stop), backward.cost(stop)) {
+            both += 1;
+            // The two directions differ by hills and turns, but not by much.
+            let (a, b) = (f64::from(a.into_inner()), f64::from(b.into_inner()));
+            assert!(
+                (a - b).abs() <= 0.5 * a.max(b).max(60.0),
+                "access {a}s vs egress {b}s"
+            );
+        }
+    }
+    assert!(both > 50, "only {both} stops reached both ways");
+}
+
+fn pedestrian_options() -> valhalla_proto::Options {
+    use valhalla_proto::costing::Type as CostingType;
+    use valinor_sif::costing_options::parse_costing;
+    use valinor_sif::json::JsonValue;
+    let mut options = valhalla_proto::Options {
+        costing_type: CostingType::Pedestrian as i32,
+        ..Default::default()
+    };
+    let doc = JsonValue::parse(b"{}").expect("empty");
+    let mut proto = valhalla_proto::Costing::default();
+    parse_costing(
+        &doc,
+        "/none",
+        &mut proto,
+        &mut Vec::new(),
+        Some(CostingType::Pedestrian),
+    )
+    .expect("costing");
+    options
+        .costings
+        .insert(CostingType::Pedestrian as i32, proto);
+    options
+}
+
+#[test]
+fn walks_convert_to_thor_legs_with_a_shape() {
+    use crate::paths::{route_paths, transfer_leg};
+    let provider = andorra();
+    let points = random_stops(&provider, &ANDORRA_TILES, 100, 9);
+    let snaps = snaps_for(&provider, &points);
+    let mut search = WalkSearch::new(provider, pedestrian());
+    search.bind(snaps).expect("bind");
+    let seeds = make_seeds(&[0, 1, 2]);
+    search.begin_run(Direction::Forward);
+    let found = run_search(&mut search, &seeds, Direction::Forward, i32::MAX / 2);
+    let &(_, _, handle) = found
+        .values()
+        .find(|(_, _, h)| h.chain != NONE)
+        .expect("an arrival through the graph");
+    let walk = search.walk(handle);
+    assert!(walk.edges.len() >= 2);
+    let leg = transfer_leg(
+        &walk,
+        valinor_sif::TravelMode::Pedestrian,
+        0,
+        1,
+        (1.5, 42.5),
+        (1.51, 42.51),
+    )
+    .expect("a leg");
+    let paths = route_paths(vec![leg]);
+    let thor = valinor_thor::Thor::new(valinor_thor::ThorConfig::default(), andorra());
+    let mut api = valhalla_proto::Api {
+        options: Some(pedestrian_options()),
+        ..Default::default()
+    };
+    thor.build_trip(&mut api, &paths).expect("build trip");
+    let trip = api.trip.expect("trip");
+    assert_eq!(trip.routes[0].legs.len(), 1);
+    let trip_leg = &trip.routes[0].legs[0];
+    assert!(!trip_leg.shape.is_empty(), "no shape");
+    assert_eq!(trip_leg.node.len(), walk.edges.len() + 1);
+}
+
+#[test]
+fn access_legs_convert_to_thor_legs_with_a_shape() {
+    use crate::paths::{access_leg, route_paths};
+    let (mut tables, snaps, points) = tables_fixture();
+    let _ = access_table_for(
+        &mut tables,
+        AccessSide::Egress,
+        points[3],
+        snaps.stop_count(),
+    );
+    let leg = (0..snaps.stop_count())
+        .find_map(|i| {
+            tables
+                .leg(StopId::new(i as u32))
+                .filter(|l| l.edges.len() >= 3)
+        })
+        .expect("a long enough leg");
+    let thor_leg = access_leg(
+        &leg,
+        valinor_sif::TravelMode::Pedestrian,
+        0,
+        1,
+        (1.5, 42.5),
+        (1.51, 42.51),
+    )
+    .expect("a leg");
+    let thor = valinor_thor::Thor::new(valinor_thor::ThorConfig::default(), andorra());
+    let mut api = valhalla_proto::Api {
+        options: Some(pedestrian_options()),
+        ..Default::default()
+    };
+    thor.build_trip(&mut api, &route_paths(vec![thor_leg]))
+        .expect("build trip");
+    let trip = api.trip.expect("trip");
+    assert!(!trip.routes[0].legs[0].shape.is_empty());
+}

@@ -7,6 +7,10 @@
 //!   with multi-source seeds and the "smallest arrival from another seed" contract.
 //! - [`StopSnaps`] snaps stops to the street network with Loki, keyed by [`StopId`],
 //!   bound to the build of the tiles they were snapped on.
+//! - [`StopTables`] computes the access and egress stop tables of a query
+//!   with full edge-based Sif.
+//! - [`paths`] converts resolved walks and access or egress legs into Thor's [`Paths`],
+//!   so [`Thor::build_trip`](valinor_thor::Thor::build_trip) can produce shapes and instructions.
 //!
 //! There is no contraction and no preprocessing that depends on stops:
 //! real-time feeds can add stops at any time.
@@ -19,6 +23,9 @@ mod graph;
 mod queue;
 mod search;
 mod snap;
+mod table;
+
+pub mod paths;
 
 pub use error::WalkError;
 pub use graph::GraphStats;
@@ -26,4 +33,7 @@ pub use search::{ResolvedWalk, SearchStats, WalkHandle, WalkSearch};
 pub use snap::{
     SnapConfig, SnapFailure, SnapPoint, SnapQuality, SnapReport, SnappedStop, StopSnaps, snap_stop,
     snap_stops,
+};
+pub use table::{
+    AccessEdge, AccessLeg, AccessSide, StopTables, TableRequest, TableSeed, TableStats,
 };
