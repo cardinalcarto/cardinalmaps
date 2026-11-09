@@ -83,6 +83,9 @@ pub struct TransferRequest<'a> {
     /// Arrivals with `clock >= upper_bound` are useless to the router.
     ///
     /// The search should stop expanding beyond this; it is the target pruning bound.
+    /// A router must not raise it between the searches of one run (one [`TransferSearch::begin_run`]):
+    /// an implementation may carry labels across a run, and labels cut off under a lower bound
+    /// were never expanded past it.
     pub upper_bound: Clock,
     /// The largest minimum change time of any stop in the snapshot, in seconds.
     ///
@@ -123,6 +126,11 @@ pub enum TransferOutcome {
 /// with `source` being a seed that achieves it.
 /// If `v` is itself a seed, the report may be left out when that value is at least
 /// `v.clock + change_margin`, since such a walk can't improve boarding at `v`.
+///
+/// Within one run (one [`Self::begin_run`]), a search may report only what improves on
+/// the earlier rounds of that run: a walk that can't beat what an earlier round already reported,
+/// by that round's arrivals, may be left out. A router keeps the running minimum per stop,
+/// as `valinor-transit`'s does.
 ///
 /// `u ≠ v` is the part that isn't an ordinary multi-source search,
 /// and it is what stops a zero-length walk from bypassing a minimum change time.

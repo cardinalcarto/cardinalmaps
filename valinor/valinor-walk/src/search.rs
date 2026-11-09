@@ -34,6 +34,11 @@ use crate::snap::StopSnaps;
 #[path = "tile_tests.rs"]
 mod tile_tests;
 
+#[cfg(test)]
+#[allow(clippy::all, clippy::pedantic)]
+#[path = "review_tests.rs"]
+mod review_tests;
+
 /// The "no such thing" value of stops, labels, and arena entries.
 const NONE: u32 = u32::MAX;
 
@@ -121,12 +126,18 @@ struct StopAttach {
     into: [u16; 2],
     /// Walking from the stop to each node.
     from: [u16; 2],
-    /// The snapped edge's weight along it, and along its opposing edge.
-    weights: [u16; 2],
     /// The snapped edge and its opposing edge.
     edges: [u32; 2],
     /// The fraction along the snapped edge.
     percent: f32,
+    /// The fraction along the edge's canonical direction (the smaller dense edge number):
+    /// the one frame direct walks between stops are computed in, so that
+    /// forward and backward searches can't round them differently.
+    canon_percent: f32,
+    /// The weights along the canonical direction and its opposite.
+    canon_weights: [u16; 2],
+    /// The canonical direction and its opposite.
+    canon_edges: [u32; 2],
     /// The slice of `same_edge_stops` holding stops on the same (undirected) edge.
     group: (u32, u32),
 }
@@ -294,6 +305,9 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
         if self.snaps.as_ref().is_some_and(|s| Arc::ptr_eq(s, &snaps)) {
             return Ok(());
         }
+        // Until this finishes, the search holds no valid snaps: a failure below must not leave
+        // the old `Arc` in place, or binding it again would skip rebuilding what was cleared.
+        self.snaps = None;
         self.clear_attachments();
         let stop_count = snaps.stop_count();
         self.stops.clear();
@@ -331,15 +345,46 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
                 continue;
             };
             let w = edge.weights;
-            let into_tail = prefix(w.forward, point.percent_along);
-            let from_head = sub_weight(w.forward, into_tail);
-            let into_head = prefix(w.backward, 1.0 - point.percent_along);
-            let from_tail = sub_weight(w.backward, into_head);
+            // Each connector is split from its directed edge's whole cost.
+            // A connector of no length is free whichever way the edge may be walked:
+            // a stop at the end of a one-way edge can still step onto the node it is at.
+            let at_tail = point.percent_along <= 0.0;
+            let at_head = point.percent_along >= 1.0;
+            let forward_part = prefix(w.forward, point.percent_along);
+            let backward_part = prefix(w.backward, 1.0 - point.percent_along);
+            let into_tail = if at_tail { 0 } else { forward_part };
+            let from_head = if at_head {
+                0
+            } else {
+                sub_weight(w.forward, forward_part)
+            };
+            let into_head = if at_head { 0 } else { backward_part };
+            let from_tail = if at_tail {
+                0
+            } else {
+                sub_weight(w.backward, backward_part)
+            };
+            let at_end = [at_tail, at_head];
+            let flipped = edge.edge_dense > edge.opposing_dense;
             let attach = StopAttach {
+                canon_percent: if flipped {
+                    1.0 - point.percent_along
+                } else {
+                    point.percent_along
+                },
+                canon_weights: if flipped {
+                    [w.backward, w.forward]
+                } else {
+                    [w.forward, w.backward]
+                },
+                canon_edges: if flipped {
+                    [edge.opposing_dense, edge.edge_dense]
+                } else {
+                    [edge.edge_dense, edge.opposing_dense]
+                },
                 node: [edge.tail, edge.head],
                 into: [into_tail, into_head],
                 from: [from_tail, from_head],
-                weights: [w.forward, w.backward],
                 edges: [edge.edge_dense, edge.opposing_dense],
                 percent: point.percent_along,
                 group: (0, 0),
@@ -357,6 +402,11 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
                 .zip(attach.into.iter().zip(attach.from.iter()))
                 .enumerate()
             {
+                // A walk reaching a barrier node stops there, so a stop partway along the
+                // next edge can't be offered from it; only a stop at the node itself can.
+                if edge.barrier[side] && !at_end[side] {
+                    continue;
+                }
                 let attachment =
                     u32::try_from(self.attachments.len()).map_err(|_| WalkError::TooLarge)?;
                 self.attachments.push(Attachment {
@@ -689,10 +739,11 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
         for seed in request.seeds {
             run.seed(seed.stop, seed.clock.seconds());
         }
-        let outcome = run.settle_all(request)?;
-        if outcome == TransferOutcome::Interrupted {
-            self.queue.clear();
-            return Ok(outcome);
+        let outcome = run.settle_all(request);
+        if !matches!(outcome, Ok(TransferOutcome::Completed)) {
+            // Labels this search left unsettled can't dominate later rounds of the run.
+            self.start_stamp();
+            return outcome;
         }
         self.report(sink);
         self.stats.arena_entries = self.arena.len() as u64;
@@ -725,8 +776,7 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
         } else {
             attach.into
         };
-        for side in 0..2 {
-            let cost = leave[side];
+        for (side, (&cost, &node)) in leave.iter().zip(&attach.node).enumerate() {
             if cost == INF {
                 continue;
             }
@@ -739,7 +789,7 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
                     &mut self.search.arena,
                     self.search.stamp_base,
                     self.margin,
-                    attach.node[side],
+                    node,
                     at,
                     stop_index,
                     NONE,
@@ -764,20 +814,10 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
             let Some(v) = search.stops[other as usize] else {
                 continue;
             };
-            // In the frame of the source's edge: the fraction along it of the other stop.
-            let q = if v.edges[0] == attach.edges[0] {
-                v.percent
-            } else {
-                1.0 - v.percent
-            };
             // A forward seed walks from the source; a backward search's seed is the
-            // destination of the real walk. `real_from` and `real_to` are in real travel order.
-            let (real_from, real_to) = if dir == 0 {
-                (attach.percent, q)
-            } else {
-                (q, attach.percent)
-            };
-            let cost = direct_cost(attach.weights, real_from, real_to);
+            // destination of the real walk.
+            let (from, to) = if dir == 0 { (attach, v) } else { (v, attach) };
+            let cost = direct_between(from, to).cost;
             if cost == INF {
                 continue;
             }
@@ -979,6 +1019,10 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
     }
 
     /// Follows a handle to its walk, in real travel order.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the two directions, spelled out side by side"
+    )]
     fn resolve(&self, handle: WalkHandle) -> ResolvedWalk {
         let forward = self.direction == Direction::Forward;
         let dir = usize::from(!forward);
@@ -1008,12 +1052,20 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
             } else {
                 (target, source)
             };
-            let (begin, end, along, cost) = same_edge_walk(from, to);
+            let direct = direct_between(from, to);
+            #[expect(
+                clippy::float_cmp,
+                reason = "the same stored fraction, not a computed one"
+            )]
+            if direct.begin == direct.end {
+                // Co-located stops: a walk of no length has no edges.
+                return empty;
+            }
             return ResolvedWalk {
-                edges: self.graph.edge_id(along).into_iter().collect(),
-                edge_secs: vec![cost],
-                begin_percent: begin,
-                end_percent: end,
+                edges: self.graph.edge_id(direct.along).into_iter().collect(),
+                edge_secs: vec![direct.cost],
+                begin_percent: direct.begin,
+                end_percent: direct.end,
                 ..empty
             };
         }
@@ -1089,20 +1141,40 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
     }
 }
 
-/// The begin and end fractions, the directed edge, and the cost of a walk from stop `from` to
-/// stop `to` along their shared edge.
-fn same_edge_walk(from: StopAttach, to: StopAttach) -> (f32, f32, u32, u16) {
-    let q = if to.edges[0] == from.edges[0] {
-        to.percent
-    } else {
-        1.0 - to.percent
-    };
-    let p = from.percent;
-    let cost = direct_cost(from.weights, p, q);
+/// A walk along the edge two stops share.
+#[derive(Clone, Copy, Debug)]
+struct DirectWalk {
+    /// Where the walk starts along [`Self::along`].
+    begin: f32,
+    /// Where the walk ends along [`Self::along`].
+    end: f32,
+    /// The directed edge walked.
+    along: u32,
+    cost: u16,
+}
+
+/// The walk from stop `from` to stop `to` along their shared edge, in real travel order.
+///
+/// Computed in the edge's canonical frame, whichever direction the stops were snapped on,
+/// so a forward search and a backward search get the same integer.
+#[inline]
+fn direct_between(from: StopAttach, to: StopAttach) -> DirectWalk {
+    let (p, q) = (from.canon_percent, to.canon_percent);
+    let cost = direct_cost(from.canon_weights, p, q);
     if p <= q {
-        (p, q, from.edges[0], cost)
+        DirectWalk {
+            begin: p,
+            end: q,
+            along: from.canon_edges[0],
+            cost,
+        }
     } else {
-        (1.0 - p, 1.0 - q, from.edges[1], cost)
+        DirectWalk {
+            begin: 1.0 - p,
+            end: 1.0 - q,
+            along: from.canon_edges[1],
+            cost,
+        }
     }
 }
 
@@ -1111,7 +1183,15 @@ fn same_edge_walk(from: StopAttach, to: StopAttach) -> (f32, f32, u32, u16) {
 /// or [`INF`] if that direction isn't allowed.
 #[inline]
 fn direct_cost(weights: [u16; 2], real_from: f32, real_to: f32) -> u16 {
-    if real_from <= real_to {
+    // Going nowhere is free, whichever direction the edge may be walked.
+    #[expect(
+        clippy::float_cmp,
+        reason = "the same stored fraction, not a computed one"
+    )]
+    if real_from == real_to {
+        return 0;
+    }
+    if real_from < real_to {
         if weights[0] == INF {
             return INF;
         }
