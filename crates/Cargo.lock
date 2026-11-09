@@ -5011,6 +5011,7 @@ name = "valinor-walk"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
+ "memmap2",
  "ruzstd",
  "thiserror 2.0.21",
  "valhalla-graphtile",
@@ -5019,6 +5020,8 @@ dependencies = [
  "valinor-sif",
  "valinor-thor",
  "valinor-transit",
+ "zerocopy",
+ "zerocopy-derive",
 ]
 
 [[package]]
