@@ -148,6 +148,11 @@ impl BaseWindow {
             .get(start as usize..(start + length) as usize)
     }
 
+    /// The attributes of a route.
+    pub fn route_attributes(&self, route: RouteId) -> Option<RouteAttributes> {
+        self.attributes.get(route.index()).copied()
+    }
+
     /// How many stops the window numbers.
     pub fn stop_count(&self) -> usize {
         self.min_change.len()

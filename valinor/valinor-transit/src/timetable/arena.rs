@@ -80,6 +80,19 @@ impl BlockRef {
     pub(crate) const EMPTY: Self = Self { arena: 0, block: 0 };
 }
 
+/// How much an arena holds, for reporting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ArenaUsage {
+    /// Route-and-day blocks, not counting the empty block every arena starts with.
+    pub blocks: usize,
+    /// Lanes across those blocks.
+    pub lanes: usize,
+    /// Trip rows across those lanes.
+    pub trips: usize,
+    /// Bytes of block, lane, time, stop, rule, and trip storage.
+    pub bytes: usize,
+}
+
 /// A flat store of blocks: the base window has one, and an overlay has one.
 #[derive(Debug)]
 pub(crate) struct Arena {
@@ -101,6 +114,21 @@ impl Arena {
             stops: Vec::new(),
             rules: Vec::new(),
             trips: Vec::new(),
+        }
+    }
+
+    /// How much this arena holds.
+    pub(crate) fn usage(&self) -> ArenaUsage {
+        ArenaUsage {
+            blocks: self.blocks.len().saturating_sub(1),
+            lanes: self.lanes.len(),
+            trips: self.trips.len(),
+            bytes: size_of_val(self.blocks.as_slice())
+                + size_of_val(self.lanes.as_slice())
+                + size_of_val(self.times.as_slice())
+                + size_of_val(self.stops.as_slice())
+                + size_of_val(self.rules.as_slice())
+                + size_of_val(self.trips.as_slice()),
         }
     }
 

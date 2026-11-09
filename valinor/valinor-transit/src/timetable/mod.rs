@@ -10,6 +10,7 @@ mod builder;
 mod lanes;
 mod window;
 
+pub use arena::ArenaUsage;
 pub(crate) use arena::{Arena, BlockRef, INFINITY, Lane, offset_of};
 pub use builder::{PatternKey, StopKey, StopTime, Timetable, TimetableBuilder};
 pub use lanes::{ResolvedBlock, ResolvedLane, ResolvedTrip, StopEvent, StopRules};
