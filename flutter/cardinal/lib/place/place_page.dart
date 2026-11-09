@@ -234,7 +234,7 @@ class _PlacePageState extends State<PlacePage> with RouteAware {
     final isSaved = _copies.isNotEmpty;
     final subtitle = place == null ? null : placeSubtitle(place);
     return SheetContent(
-      anchors: const [SheetAnchor.section(_header), SheetAnchor.fraction(0.5)],
+      anchors: const [SheetAnchor.section(_header)],
       slivers: [
         SliverToBoxAdapter(
           child: SheetSection(
