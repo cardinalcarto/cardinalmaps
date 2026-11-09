@@ -267,6 +267,9 @@ struct AddedTrip {
     state: TripState,
 }
 
+/// The run a trip update applies to; see [`TripRef::headway_start`] for the last field.
+type ResolvedRun = (TripId, DaySlot, Option<u32>);
+
 /// One added pattern's service, by day.
 type AddedDays = BTreeMap<DaySlot, Vec<AddedTrip>>;
 
@@ -678,11 +681,14 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
 
         // One run can be spelled several ways, for instance with and without `start_time`,
         // and applying more than one would run it twice or keep a canceled trip routable.
-        let runs: Vec<Option<(TripId, DaySlot)>> = kept
+        //
+        // Runs of an `exact_times=0` trip are kept apart by the descriptor's `start_time`:
+        // two vehicles can resolve to one grid run, and neither's update may be lost.
+        let runs: Vec<Option<ResolvedRun>> = kept
             .iter()
             .map(|(feed, update)| self.resolved_run(feed, update))
             .collect();
-        let mut winners: HashMap<(TripId, DaySlot), usize> = HashMap::new();
+        let mut winners: HashMap<ResolvedRun, usize> = HashMap::new();
         for (index, run) in runs.iter().enumerate() {
             let Some(run) = *run else { continue };
             let current = winners.entry(run).or_insert(index);
@@ -691,13 +697,18 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             }
         }
 
-        for (index, (feed, update)) in kept.into_iter().enumerate() {
+        // Oldest first: when several vehicles share one grid run, the run routes on
+        // the newest of them, and that vehicle is the one `RiderData` finds by the run.
+        let mut order: Vec<usize> = (0..kept.len()).collect();
+        order.sort_by_key(|&index| newness(&kept[index].1));
+        for index in order {
             if runs[index].is_some_and(|run| winners.get(&run) != Some(&index)) {
                 self.stats.duplicate_trip_updates += 1;
                 continue;
             }
             self.stats.trip_updates += 1;
-            self.apply_trip_update(&feed, &update)?;
+            let (feed, update) = &kept[index];
+            self.apply_trip_update(feed, update)?;
         }
         Ok(())
     }
@@ -705,7 +716,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
     /// The static run an update applies to, if it is about one.
     ///
     /// A `DUPLICATED` update names its template and creates a run of its own, so it has none.
-    fn resolved_run(&self, feed: &FeedId, update: &TripUpdate) -> Option<(TripId, DaySlot)> {
+    fn resolved_run(&self, feed: &FeedId, update: &TripUpdate) -> Option<ResolvedRun> {
         if update.trip.schedule_relationship() == TripRelationship::Duplicated {
             return None;
         }
@@ -719,7 +730,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             )
             .ok()
             .flatten()?;
-        Some((reference.trip, reference.day))
+        Some((reference.trip, reference.day, reference.headway_start))
     }
 
     // `ADDED` is deprecated in the specification, but feeds in the wild still send it.
@@ -1326,6 +1337,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                     .and_then(|d| d.route_id.clone())
                     .or_else(|| reference.and_then(|r| route_id_of(self.lookup, r.route))),
                 start_date,
+                start_time,
                 trip_key,
                 latitude: position.map(|p| p.latitude),
                 longitude: position.map(|p| p.longitude),
@@ -1936,15 +1948,35 @@ fn vehicle_ref(vehicle: &proto::VehicleDescriptor) -> VehicleRef {
 
 fn informed_entity(selector: &proto::EntitySelector) -> InformedEntity {
     let trip = selector.trip.as_ref();
+    // A descriptor names one run only with a `trip_id`, or with route, direction, date, and
+    // start time together, which is how routing compiles it; anything less selects by route.
+    let names_run = trip.is_some_and(|t| {
+        t.trip_id.is_some()
+            || (t.route_id.is_some()
+                && t.direction_id.is_some()
+                && t.start_date.is_some()
+                && t.start_time.is_some())
+    });
     InformedEntity {
         agency_id: selector.agency_id.clone(),
-        route_id: selector.route_id.clone(),
+        // A descriptor's own route and direction count too, as they do for routing.
+        route_id: selector
+            .route_id
+            .clone()
+            .or_else(|| trip.and_then(|t| t.route_id.clone())),
         route_type: selector.route_type,
-        direction_id: selector.direction_id,
+        direction_id: selector
+            .direction_id
+            .or_else(|| trip.and_then(|t| t.direction_id)),
         trip_id: trip.and_then(|t| t.trip_id.clone()),
         trip_date: trip
+            .filter(|_| names_run)
             .and_then(|t| t.start_date.as_deref())
             .and_then(CalendarDate::parse),
+        trip_start_time: trip
+            .filter(|_| names_run)
+            .and_then(|t| t.start_time.as_deref())
+            .and_then(parse_start_time),
         stop_id: selector.stop_id.clone(),
     }
 }

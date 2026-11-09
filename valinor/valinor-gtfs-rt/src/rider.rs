@@ -115,6 +115,11 @@ pub struct VehicleDetails {
     pub route_id: Option<String>,
     /// The service date of its trip, when given.
     pub start_date: Option<CalendarDate>,
+    /// The start of its trip in seconds from the start of the day, when given.
+    ///
+    /// For `exact_times=0` frequency trips this, rather than [`Self::trip_key`], tells two
+    /// vehicles on the same trip apart: both can resolve to one headway-grid run.
+    pub start_time: Option<u32>,
     /// The vehicle's trip, when it matched the timetable.
     pub trip_key: Option<TripKey>,
     /// Latitude, in degrees.
@@ -160,6 +165,11 @@ pub struct InformedEntity {
     pub trip_id: Option<String>,
     /// Service date of the trip, when the selector named one.
     pub trip_date: Option<CalendarDate>,
+    /// Start of the trip in seconds from the start of its day, when the selector named one run.
+    ///
+    /// For a trip with its own schedule this is the descriptor's value; for a frequency trip
+    /// a selector with no `start_time` covers every run.
+    pub trip_start_time: Option<u32>,
     /// Stop.
     pub stop_id: Option<String>,
 }
@@ -215,6 +225,8 @@ pub struct RiderData {
     trips: Vec<TripDetails>,
     trip_index: HashMap<(ScopedId, Option<CalendarDate>, Option<u32>), usize>,
     trips_by_key: HashMap<TripKey, usize>,
+    /// Every update of a run, oldest first; more than one only for `exact_times=0` trips.
+    trips_of_key: HashMap<TripKey, Vec<usize>>,
     trips_by_route: HashMap<ScopedId, Vec<usize>>,
     /// `(trip index, stops index)` per stop.
     stop_times: HashMap<ScopedId, Vec<(usize, usize)>>,
@@ -248,6 +260,7 @@ impl RiderData {
         );
         if let Some(key) = trip.trip_key {
             self.trips_by_key.insert(key, index);
+            self.trips_of_key.entry(key).or_default().push(index);
         }
         if let Some(route) = trip.route_id.as_deref() {
             self.trips_by_route
@@ -377,6 +390,19 @@ impl RiderData {
     /// A trip's details by its identity in the timetable.
     pub fn trip_by_key(&self, key: TripKey) -> Option<&TripDetails> {
         self.trips_by_key.get(&key).and_then(|&i| self.trips.get(i))
+    }
+
+    /// Every update that resolved to a timetable run, oldest first.
+    ///
+    /// Each `exact_times=0` vehicle on the run has its own, told apart by
+    /// [`TripDetails::start_time`]; other runs have at most one.
+    pub fn trips_of_run(&self, key: TripKey) -> Vec<&TripDetails> {
+        self.trips_of_key
+            .get(&key)
+            .into_iter()
+            .flatten()
+            .filter_map(|&i| self.trips.get(i))
+            .collect()
     }
 
     /// All trips with real-time information.

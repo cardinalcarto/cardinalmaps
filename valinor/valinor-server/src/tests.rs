@@ -182,3 +182,164 @@ fn opens_the_configured_tiles() {
     // The config file doesn't exist.
     assert!(open(&given).is_err());
 }
+
+/// A small synthetic feed over the Andorra fixture, with service every day for years,
+/// so that the server's real clock always falls inside its coverage.
+fn transit_state(token: Option<&str>) -> Arc<app::AppState> {
+    let source = valinor_gtfs::InMemorySource::new()
+        .with(
+            "agency.txt",
+            "agency_name,agency_timezone,agency_url\nAndorra Bus,Europe/Andorra,https://b.test\n",
+        )
+        .with("routes.txt", "route_id,route_short_name,route_type\nL1,1,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_name,stop_lat,stop_lon\nA,Plaça,42.5078,1.5211\nB,Meritxell,42.5095,1.5345\n",
+        )
+        .with(
+            "calendar.txt",
+            "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n\
+             DAILY,1,1,1,1,1,1,1,20260101,20361231\n",
+        )
+        .with("trips.txt", "route_id,service_id,trip_id\nL1,DAILY,T1\n")
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nT1,09:00:00,09:00:00,A,1\nT1,09:08:00,09:08:00,B,2\n",
+        );
+    let compiled = valinor_gtfs::compile(vec![valinor_gtfs::FeedInput {
+        id: valinor_gtfs::FeedId::try_new("bus".to_owned()).unwrap(),
+        source: Box::new(source),
+    }])
+    .unwrap();
+    let timetable = valinor_gtfs::LoadedTimetable::from_bytes(compiled.bytes).unwrap();
+    let planner = valinor_transit_plan::StreetPlanner::open(
+        timetable,
+        &[fixtures().join("andorra-tiles.tar")],
+        valinor_transit_plan::StreetConfig::default(),
+    )
+    .unwrap();
+    let router = Router::open(
+        RouterConfig::default(),
+        &[fixtures().join("andorra-tiles.tar")],
+    )
+    .unwrap();
+    Arc::new(
+        app::AppState::new(router, 2, Duration::from_secs(30)).with_transit(Some(
+            transit::Transit::new(planner, token.map(str::to_owned)),
+        )),
+    )
+}
+
+const PLAN: &str =
+    r#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.5100,"lon":1.5350}}"#;
+
+#[tokio::test]
+async fn plans_transit_on_its_own_path() {
+    let state = transit_state(Some("secret"));
+    let (status, headers, body) = send(&state, request("POST", "/transit/plan", PLAN)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["content-type"], "application/json;charset=utf-8");
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert!(body["journeys"].is_array());
+    assert_eq!(body["realtime"]["level"], "schedule");
+
+    // Malformed plans are 400s in transit's own error format.
+    let (status, _, body) = send(&state, request("POST", "/transit/plan", "{nope")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["kind"], "invalid_request");
+
+    // Valhalla's paths still answer alongside it.
+    let (status, ..) = send(&state, request("GET", "/status", "")).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn transit_paths_are_unknown_when_it_is_not_configured() {
+    let state = state(1, Duration::from_secs(30));
+    let (status, ..) = send(&state, request("POST", "/transit/plan", PLAN)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn looks_up_vehicles_by_id() {
+    let state = transit_state(Some("secret"));
+    let (status, _, body) = send(
+        &state,
+        request("GET", "/transit/vehicle/bus/does-not-exist", ""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert!(body["vehicle"].is_null());
+}
+
+fn ingest_request(token: Option<&str>, kind: &str, body: &str) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method("PUT")
+        .uri(format!("/transit/feeds/bus/{kind}"));
+    if let Some(token) = token {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    builder.body(Body::from(body.to_owned())).unwrap()
+}
+
+#[tokio::test]
+async fn ingest_needs_the_shared_secret() {
+    let state = transit_state(Some("secret"));
+    let (status, ..) = send(&state, ingest_request(None, "alerts", "x")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, ..) = send(&state, ingest_request(Some("wrong"), "alerts", "x")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, ..) = send(&state, ingest_request(Some("secret"), "nonsense", "x")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Bytes that aren't GTFS-RT degrade to the schedule and are reported.
+    let (status, _, body) = send(
+        &state,
+        ingest_request(Some("secret"), "alerts", "not a feed"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["outcome"], "undecodable");
+
+    // An empty body clears the feed.
+    let (status, _, body) = send(&state, ingest_request(Some("secret"), "alerts", "")).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["outcome"], "cleared");
+}
+
+#[tokio::test]
+async fn ingest_is_refused_without_a_configured_token() {
+    let state = transit_state(None);
+    let (status, ..) = send(&state, ingest_request(Some("x"), "alerts", "x")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn review_ingest_reads_the_body_before_checking_the_token() {
+    let state = transit_state(Some("secret"));
+    let large = "x".repeat(2 << 20);
+    // No token at all: an unauthenticated client should get 401, not have its body buffered.
+    let (status, ..) = send(&state, ingest_request(None, "alerts", &large)).await;
+    println!("unauthenticated 2 MiB PUT: {status}");
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn review_an_empty_configured_token_refuses_ingest() {
+    let parsed = cli(&["--config", "c.json", "--transit-ingest-token", ""]);
+    println!("empty flag parses as {:?}", parsed.transit_ingest_token);
+    let state = transit_state(Some(""));
+    let request = Request::builder()
+        .method("PUT")
+        .uri("/transit/feeds/bus/alerts")
+        .header("authorization", "Bearer ")
+        .body(Body::from(""))
+        .unwrap();
+    let (status, ..) = send(&state, request).await;
+    println!("empty token, header 'Bearer ': {status}");
+    assert_ne!(status, StatusCode::OK);
+}

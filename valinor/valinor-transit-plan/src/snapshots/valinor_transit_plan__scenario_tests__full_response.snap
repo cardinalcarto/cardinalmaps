@@ -1,0 +1,805 @@
+---
+source: valinor-transit-plan/src/scenario_tests.rs
+expression: "&response"
+---
+{
+  "generated_at": 1781535015,
+  "window": {
+    "earliest": 1781535300,
+    "latest": 1781538900
+  },
+  "realtime": {
+    "level": "realtime",
+    "built_at": 1781535015,
+    "feeds": [
+      {
+        "feed": "metro",
+        "kind": "trip_updates",
+        "state": "applied",
+        "age_seconds": 15,
+        "header_timestamp": 1781535000,
+        "stale_after_seconds": 300,
+        "entities_dropped": 0
+      },
+      {
+        "feed": "metro",
+        "kind": "vehicle_positions",
+        "state": "applied",
+        "age_seconds": 15,
+        "header_timestamp": 1781535000,
+        "stale_after_seconds": 300,
+        "entities_dropped": 0
+      },
+      {
+        "feed": "metro",
+        "kind": "alerts",
+        "state": "applied",
+        "age_seconds": 15,
+        "header_timestamp": 1781535000,
+        "stale_after_seconds": 1800,
+        "entities_dropped": 0
+      }
+    ]
+  },
+  "journeys": [
+    {
+      "departure": 1781535708,
+      "arrival": 1781539212,
+      "duration_seconds": 3504,
+      "trips": 2,
+      "walking": {
+        "access_seconds": 42,
+        "transfer_seconds": 34,
+        "egress_seconds": 12,
+        "total_seconds": 88
+      },
+      "wait_seconds": 1046,
+      "legs": [
+        {
+          "type": "access",
+          "mode": "walking",
+          "duration_seconds": 42,
+          "departure": 1781535708,
+          "arrival": 1781535750,
+          "stop": {
+            "stop_id": "S1",
+            "name": "Alpha",
+            "code": "101",
+            "latitude": 47.6,
+            "longitude": -122.33,
+            "wheelchair_boarding": "yes",
+            "time_zone": "America/Los_Angeles"
+          },
+          "stop_moved": [
+            {
+              "walk_end": "end",
+              "stop_id": "S1",
+              "name": "Alpha",
+              "header": [
+                {
+                  "text": "Stop relocated",
+                  "language": "en"
+                },
+                {
+                  "text": "Parada reubicada",
+                  "language": "es"
+                }
+              ],
+              "description": [
+                {
+                  "text": "The temporary stop is on Pine St just east of the old one.",
+                  "language": "en"
+                }
+              ],
+              "url": [
+                {
+                  "text": "https://m.test/alert",
+                  "language": "en"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "transit",
+          "departure": 1781535750,
+          "arrival": 1781536920,
+          "duration_seconds": 1170,
+          "wait_seconds": 0,
+          "delay_seconds": 120,
+          "realtime": true,
+          "route": {
+            "route_id": "R1",
+            "short_name": "1",
+            "long_name": "First Avenue",
+            "description": "Crosstown",
+            "route_type": 3,
+            "color": "FDB71A",
+            "text_color": "000000",
+            "url": "https://m.test/1"
+          },
+          "agency": {
+            "agency_id": "MT",
+            "name": "Metro",
+            "url": "https://m.test",
+            "phone": "555-1000",
+            "fare_url": "https://m.test/fare"
+          },
+          "trip": {
+            "feed": "metro",
+            "trip_id": "T1",
+            "start_date": "20260615",
+            "headsign": "Northbound",
+            "direction_id": 0,
+            "block_id": "B1",
+            "wheelchair_accessible": "yes",
+            "bikes_allowed": "no",
+            "realtime_state": "stop_skipped"
+          },
+          "stops": [
+            {
+              "stop_id": "S1",
+              "name": "Alpha",
+              "code": "101",
+              "latitude": 47.6,
+              "longitude": -122.33,
+              "wheelchair_boarding": "yes",
+              "time_zone": "America/Los_Angeles",
+              "stop_sequence": 10,
+              "arrival": 1781535720,
+              "departure": 1781535750,
+              "scheduled_arrival": 1781535600,
+              "scheduled_departure": 1781535630,
+              "predicted_arrival": 1781535720,
+              "predicted_departure": 1781535750,
+              "arrival_delay_seconds": 120,
+              "departure_delay_seconds": 120,
+              "arrival_uncertainty_seconds": 30,
+              "schedule_relationship": "scheduled",
+              "skipped": false,
+              "removed_by_alert": false,
+              "utc_offset_seconds": -25200
+            },
+            {
+              "stop_id": "S2",
+              "name": "Beta",
+              "code": "102",
+              "latitude": 47.61,
+              "longitude": -122.33,
+              "wheelchair_boarding": "no",
+              "time_zone": "America/Los_Angeles",
+              "stop_sequence": 20,
+              "arrival": 1781536320,
+              "departure": 1781536320,
+              "scheduled_arrival": 1781536200,
+              "scheduled_departure": 1781536200,
+              "predicted_arrival": 1781536320,
+              "predicted_departure": 1781536320,
+              "arrival_delay_seconds": 120,
+              "departure_delay_seconds": 120,
+              "approximate": true,
+              "skipped": false,
+              "removed_by_alert": false,
+              "headsign": "Via Beta",
+              "utc_offset_seconds": -25200
+            },
+            {
+              "stop_id": "S3",
+              "name": "Gamma",
+              "code": "103",
+              "latitude": 47.62,
+              "longitude": -122.33,
+              "time_zone": "America/Los_Angeles",
+              "stop_sequence": 30,
+              "arrival": 1781536920,
+              "departure": 1781536920,
+              "scheduled_arrival": 1781536800,
+              "scheduled_departure": 1781536800,
+              "predicted_arrival": 1781536920,
+              "predicted_departure": 1781536920,
+              "arrival_delay_seconds": 120,
+              "departure_delay_seconds": 120,
+              "skipped": false,
+              "removed_by_alert": false,
+              "utc_offset_seconds": -25200
+            }
+          ],
+          "shape": "_wgxyA~wlihFowHvQowHwQ_pR?",
+          "vehicle": {
+            "feed": "metro",
+            "id": "7033",
+            "label": "Bus 7033",
+            "trip_id": "T1",
+            "route_id": "R1",
+            "latitude": 47.605,
+            "longitude": -122.33,
+            "bearing": 90.0,
+            "speed_meters_per_second": 11.5,
+            "current_stop": {
+              "stop_id": "S2",
+              "name": "Beta"
+            },
+            "current_stop_sequence": 20,
+            "occupancy": "many_seats_available",
+            "congestion": "running_smoothly",
+            "timestamp": 1781535000
+          },
+          "alerts": [
+            {
+              "feed": "metro",
+              "id": "a1",
+              "cause": "construction",
+              "effect": "stop_moved",
+              "severity": "warning",
+              "active_periods": [
+                {
+                  "start": 1700000000,
+                  "end": 1900000000
+                }
+              ],
+              "communication_periods": [],
+              "impact_periods": [],
+              "header": [
+                {
+                  "text": "Stop relocated",
+                  "language": "en"
+                },
+                {
+                  "text": "Parada reubicada",
+                  "language": "es"
+                }
+              ],
+              "description": [
+                {
+                  "text": "The temporary stop is on Pine St just east of the old one.",
+                  "language": "en"
+                }
+              ],
+              "url": [
+                {
+                  "text": "https://m.test/alert",
+                  "language": "en"
+                }
+              ],
+              "tts_header": [],
+              "tts_description": [],
+              "cause_detail": [],
+              "effect_detail": [],
+              "image": [],
+              "image_alternative_text": [],
+              "informed": [
+                {
+                  "route_id": "R1",
+                  "stop_id": "S1"
+                }
+              ],
+              "moved_stops": [
+                {
+                  "role": "boarding",
+                  "stop_id": "S1",
+                  "name": "Alpha"
+                }
+              ]
+            },
+            {
+              "feed": "metro",
+              "id": "a2",
+              "cause": "construction",
+              "effect": "detour",
+              "severity": "warning",
+              "active_periods": [
+                {
+                  "start": 1700000000,
+                  "end": 1900000000
+                }
+              ],
+              "communication_periods": [],
+              "impact_periods": [],
+              "header": [
+                {
+                  "text": "Stop relocated",
+                  "language": "en"
+                },
+                {
+                  "text": "Parada reubicada",
+                  "language": "es"
+                }
+              ],
+              "description": [
+                {
+                  "text": "The temporary stop is on Pine St just east of the old one.",
+                  "language": "en"
+                }
+              ],
+              "url": [
+                {
+                  "text": "https://m.test/alert",
+                  "language": "en"
+                }
+              ],
+              "tts_header": [],
+              "tts_description": [],
+              "cause_detail": [],
+              "effect_detail": [],
+              "image": [],
+              "image_alternative_text": [],
+              "informed": [
+                {
+                  "route_id": "R1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "transfer",
+          "mode": "walking",
+          "duration_seconds": 34,
+          "departure": 1781536920,
+          "arrival": 1781536954,
+          "from": {
+            "stop_id": "S3",
+            "name": "Gamma",
+            "code": "103",
+            "latitude": 47.62,
+            "longitude": -122.33,
+            "time_zone": "America/Los_Angeles"
+          },
+          "to": {
+            "stop_id": "S5",
+            "name": "Epsilon",
+            "code": "105",
+            "latitude": 47.6204,
+            "longitude": -122.33,
+            "time_zone": "America/Los_Angeles"
+          }
+        },
+        {
+          "type": "transit",
+          "departure": 1781538000,
+          "arrival": 1781539200,
+          "duration_seconds": 1200,
+          "wait_seconds": 1046,
+          "realtime": false,
+          "route": {
+            "route_id": "R2",
+            "short_name": "2",
+            "long_name": "Second Avenue",
+            "route_type": 3,
+            "color": "112233",
+            "text_color": "FFFFFF"
+          },
+          "agency": {
+            "agency_id": "MT",
+            "name": "Metro",
+            "url": "https://m.test",
+            "phone": "555-1000",
+            "fare_url": "https://m.test/fare"
+          },
+          "trip": {
+            "feed": "metro",
+            "trip_id": "T3",
+            "start_date": "20260615",
+            "headsign": "Eastbound",
+            "direction_id": 1,
+            "wheelchair_accessible": "no"
+          },
+          "stops": [
+            {
+              "stop_id": "S5",
+              "name": "Epsilon",
+              "code": "105",
+              "latitude": 47.6204,
+              "longitude": -122.33,
+              "time_zone": "America/Los_Angeles",
+              "stop_sequence": 1,
+              "arrival": 1781538000,
+              "departure": 1781538000,
+              "scheduled_arrival": 1781538000,
+              "scheduled_departure": 1781538000,
+              "skipped": false,
+              "removed_by_alert": false,
+              "utc_offset_seconds": -25200
+            },
+            {
+              "stop_id": "S6",
+              "name": "Zeta",
+              "code": "106",
+              "latitude": 47.6204,
+              "longitude": -122.31,
+              "time_zone": "America/Los_Angeles",
+              "stop_sequence": 2,
+              "arrival": 1781539200,
+              "departure": 1781539200,
+              "scheduled_arrival": 1781539200,
+              "scheduled_departure": 1781539200,
+              "skipped": false,
+              "removed_by_alert": false,
+              "utc_offset_seconds": -25200
+            }
+          ],
+          "alerts": []
+        },
+        {
+          "type": "egress",
+          "mode": "walking",
+          "duration_seconds": 12,
+          "departure": 1781539200,
+          "arrival": 1781539212,
+          "stop": {
+            "stop_id": "S6",
+            "name": "Zeta",
+            "code": "106",
+            "latitude": 47.6204,
+            "longitude": -122.31,
+            "time_zone": "America/Los_Angeles"
+          }
+        }
+      ]
+    },
+    {
+      "departure": 1781537388,
+      "arrival": 1781541012,
+      "duration_seconds": 3624,
+      "trips": 2,
+      "walking": {
+        "access_seconds": 42,
+        "transfer_seconds": 34,
+        "egress_seconds": 12,
+        "total_seconds": 88
+      },
+      "wait_seconds": 1166,
+      "legs": [
+        {
+          "type": "access",
+          "mode": "walking",
+          "duration_seconds": 42,
+          "departure": 1781537388,
+          "arrival": 1781537430,
+          "stop": {
+            "stop_id": "S1",
+            "name": "Alpha",
+            "code": "101",
+            "latitude": 47.6,
+            "longitude": -122.33,
+            "wheelchair_boarding": "yes",
+            "time_zone": "America/Los_Angeles"
+          },
+          "stop_moved": [
+            {
+              "walk_end": "end",
+              "stop_id": "S1",
+              "name": "Alpha",
+              "header": [
+                {
+                  "text": "Stop relocated",
+                  "language": "en"
+                },
+                {
+                  "text": "Parada reubicada",
+                  "language": "es"
+                }
+              ],
+              "description": [
+                {
+                  "text": "The temporary stop is on Pine St just east of the old one.",
+                  "language": "en"
+                }
+              ],
+              "url": [
+                {
+                  "text": "https://m.test/alert",
+                  "language": "en"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "transit",
+          "departure": 1781537430,
+          "arrival": 1781538600,
+          "duration_seconds": 1170,
+          "wait_seconds": 0,
+          "realtime": false,
+          "route": {
+            "route_id": "R1",
+            "short_name": "1",
+            "long_name": "First Avenue",
+            "description": "Crosstown",
+            "route_type": 3,
+            "color": "FDB71A",
+            "text_color": "000000",
+            "url": "https://m.test/1"
+          },
+          "agency": {
+            "agency_id": "MT",
+            "name": "Metro",
+            "url": "https://m.test",
+            "phone": "555-1000",
+            "fare_url": "https://m.test/fare"
+          },
+          "trip": {
+            "feed": "metro",
+            "trip_id": "T2",
+            "start_date": "20260615",
+            "headsign": "Northbound",
+            "direction_id": 0,
+            "block_id": "B1",
+            "wheelchair_accessible": "yes",
+            "bikes_allowed": "no",
+            "realtime_state": "stop_skipped"
+          },
+          "stops": [
+            {
+              "stop_id": "S1",
+              "name": "Alpha",
+              "code": "101",
+              "latitude": 47.6,
+              "longitude": -122.33,
+              "wheelchair_boarding": "yes",
+              "time_zone": "America/Los_Angeles",
+              "stop_sequence": 10,
+              "arrival": 1781537400,
+              "departure": 1781537430,
+              "scheduled_arrival": 1781537400,
+              "scheduled_departure": 1781537430,
+              "skipped": false,
+              "removed_by_alert": false,
+              "utc_offset_seconds": -25200
+            },
+            {
+              "stop_id": "S2",
+              "name": "Beta",
+              "code": "102",
+              "latitude": 47.61,
+              "longitude": -122.33,
+              "wheelchair_boarding": "no",
+              "time_zone": "America/Los_Angeles",
+              "stop_sequence": 20,
+              "arrival": 1781538000,
+              "departure": 1781538000,
+              "scheduled_arrival": 1781538000,
+              "scheduled_departure": 1781538000,
+              "approximate": true,
+              "skipped": false,
+              "removed_by_alert": false,
+              "headsign": "Via Beta",
+              "utc_offset_seconds": -25200
+            },
+            {
+              "stop_id": "S3",
+              "name": "Gamma",
+              "code": "103",
+              "latitude": 47.62,
+              "longitude": -122.33,
+              "time_zone": "America/Los_Angeles",
+              "stop_sequence": 30,
+              "arrival": 1781538600,
+              "departure": 1781538600,
+              "scheduled_arrival": 1781538600,
+              "scheduled_departure": 1781538600,
+              "skipped": false,
+              "removed_by_alert": false,
+              "utc_offset_seconds": -25200
+            }
+          ],
+          "shape": "_wgxyA~wlihFowHvQowHwQ_pR?",
+          "alerts": [
+            {
+              "feed": "metro",
+              "id": "a1",
+              "cause": "construction",
+              "effect": "stop_moved",
+              "severity": "warning",
+              "active_periods": [
+                {
+                  "start": 1700000000,
+                  "end": 1900000000
+                }
+              ],
+              "communication_periods": [],
+              "impact_periods": [],
+              "header": [
+                {
+                  "text": "Stop relocated",
+                  "language": "en"
+                },
+                {
+                  "text": "Parada reubicada",
+                  "language": "es"
+                }
+              ],
+              "description": [
+                {
+                  "text": "The temporary stop is on Pine St just east of the old one.",
+                  "language": "en"
+                }
+              ],
+              "url": [
+                {
+                  "text": "https://m.test/alert",
+                  "language": "en"
+                }
+              ],
+              "tts_header": [],
+              "tts_description": [],
+              "cause_detail": [],
+              "effect_detail": [],
+              "image": [],
+              "image_alternative_text": [],
+              "informed": [
+                {
+                  "route_id": "R1",
+                  "stop_id": "S1"
+                }
+              ],
+              "moved_stops": [
+                {
+                  "role": "boarding",
+                  "stop_id": "S1",
+                  "name": "Alpha"
+                }
+              ]
+            },
+            {
+              "feed": "metro",
+              "id": "a2",
+              "cause": "construction",
+              "effect": "detour",
+              "severity": "warning",
+              "active_periods": [
+                {
+                  "start": 1700000000,
+                  "end": 1900000000
+                }
+              ],
+              "communication_periods": [],
+              "impact_periods": [],
+              "header": [
+                {
+                  "text": "Stop relocated",
+                  "language": "en"
+                },
+                {
+                  "text": "Parada reubicada",
+                  "language": "es"
+                }
+              ],
+              "description": [
+                {
+                  "text": "The temporary stop is on Pine St just east of the old one.",
+                  "language": "en"
+                }
+              ],
+              "url": [
+                {
+                  "text": "https://m.test/alert",
+                  "language": "en"
+                }
+              ],
+              "tts_header": [],
+              "tts_description": [],
+              "cause_detail": [],
+              "effect_detail": [],
+              "image": [],
+              "image_alternative_text": [],
+              "informed": [
+                {
+                  "route_id": "R1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "transfer",
+          "mode": "walking",
+          "duration_seconds": 34,
+          "departure": 1781538600,
+          "arrival": 1781538634,
+          "from": {
+            "stop_id": "S3",
+            "name": "Gamma",
+            "code": "103",
+            "latitude": 47.62,
+            "longitude": -122.33,
+            "time_zone": "America/Los_Angeles"
+          },
+          "to": {
+            "stop_id": "S5",
+            "name": "Epsilon",
+            "code": "105",
+            "latitude": 47.6204,
+            "longitude": -122.33,
+            "time_zone": "America/Los_Angeles"
+          }
+        },
+        {
+          "type": "transit",
+          "departure": 1781539800,
+          "arrival": 1781541000,
+          "duration_seconds": 1200,
+          "wait_seconds": 1166,
+          "realtime": false,
+          "route": {
+            "route_id": "R2",
+            "short_name": "2",
+            "long_name": "Second Avenue",
+            "route_type": 3,
+            "color": "112233",
+            "text_color": "FFFFFF"
+          },
+          "agency": {
+            "agency_id": "MT",
+            "name": "Metro",
+            "url": "https://m.test",
+            "phone": "555-1000",
+            "fare_url": "https://m.test/fare"
+          },
+          "trip": {
+            "feed": "metro",
+            "trip_id": "T4",
+            "start_date": "20260615",
+            "headsign": "Eastbound",
+            "direction_id": 1,
+            "wheelchair_accessible": "no"
+          },
+          "stops": [
+            {
+              "stop_id": "S5",
+              "name": "Epsilon",
+              "code": "105",
+              "latitude": 47.6204,
+              "longitude": -122.33,
+              "time_zone": "America/Los_Angeles",
+              "stop_sequence": 1,
+              "arrival": 1781539800,
+              "departure": 1781539800,
+              "scheduled_arrival": 1781539800,
+              "scheduled_departure": 1781539800,
+              "skipped": false,
+              "removed_by_alert": false,
+              "utc_offset_seconds": -25200
+            },
+            {
+              "stop_id": "S6",
+              "name": "Zeta",
+              "code": "106",
+              "latitude": 47.6204,
+              "longitude": -122.31,
+              "time_zone": "America/Los_Angeles",
+              "stop_sequence": 2,
+              "arrival": 1781541000,
+              "departure": 1781541000,
+              "scheduled_arrival": 1781541000,
+              "scheduled_departure": 1781541000,
+              "skipped": false,
+              "removed_by_alert": false,
+              "utc_offset_seconds": -25200
+            }
+          ],
+          "alerts": []
+        },
+        {
+          "type": "egress",
+          "mode": "walking",
+          "duration_seconds": 12,
+          "departure": 1781541000,
+          "arrival": 1781541012,
+          "stop": {
+            "stop_id": "S6",
+            "name": "Zeta",
+            "code": "106",
+            "latitude": 47.6204,
+            "longitude": -122.31,
+            "time_zone": "America/Los_Angeles"
+          }
+        }
+      ]
+    }
+  ],
+  "direct": {
+    "status": "not_searched"
+  }
+}

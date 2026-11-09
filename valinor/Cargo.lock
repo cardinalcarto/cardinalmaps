@@ -2930,12 +2930,16 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "serde",
  "serde_json",
  "tokio",
  "tower",
  "tracing",
  "tracing-subscriber",
+ "valinor-gtfs",
+ "valinor-gtfs-rt",
  "valinor-router",
+ "valinor-transit-plan",
 ]
 
 [[package]]
@@ -3006,6 +3010,33 @@ dependencies = [
  "nutype",
  "proptest",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "valinor-transit-plan"
+version = "0.1.0"
+dependencies = [
+ "illuvatar",
+ "insta",
+ "jiff",
+ "proptest",
+ "prost",
+ "self_cell",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.21",
+ "valhalla-graphtile",
+ "valhalla-proto",
+ "valhalla-response",
+ "valinor-gtfs",
+ "valinor-gtfs-rt",
+ "valinor-loki",
+ "valinor-router",
+ "valinor-sif",
+ "valinor-thor",
+ "valinor-transit",
+ "valinor-walk",
 ]
 
 [[package]]

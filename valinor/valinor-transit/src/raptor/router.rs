@@ -144,6 +144,11 @@ impl<S: TransferSearch> Router<S> {
         &self.transfers
     }
 
+    /// The transfer search, to bind it to the stops of a query's snapshot before searching.
+    pub fn transfers_mut(&mut self) -> &mut S {
+        &mut self.transfers
+    }
+
     /// Runs a forward search departing at or after `departure`.
     ///
     /// The journeys it finds use at least one trip, and at most `query.max_trips`.

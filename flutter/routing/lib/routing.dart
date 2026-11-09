@@ -19,6 +19,7 @@ export 'src/rust/api/directions.dart'
         DirectionsRoute,
         DirectionsStep;
 export 'src/rust/api/router.dart'
+export 'src/rust/api/transit.dart';
     show OfflineRouter, OpenError, OpenErrorKind, RouterResponse;
 
 /// Loads the native router. Call once (it is safe to call again) before opening one.
