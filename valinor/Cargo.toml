@@ -11,6 +11,7 @@ members = [
     "valhalla-response",
     "valinor-cli",
     "valinor-export-graph",
+    "valinor-gtfs",
     "valinor-loki",
     "valinor-loki-service",
     "valinor-router",
@@ -41,6 +42,8 @@ bit-twiddling-helpers = { path = "bit-twiddling-helpers" }
 bytes = "1.12.1"
 chrono = "0.4.45"
 clap = { version = "4.6.7", features = ["derive", "env"] }
+crc32fast = "1.5.4"
+csv = "1.4.0"
 dashmap = "6.2.1"
 enumset = "1.1.15"
 flatgeobuf = { version = "6.0.1", default-features = false }
@@ -84,11 +87,13 @@ valinor-loki = { path = "valinor-loki" }
 valinor-router = { path = "valinor-router" }
 valinor-sif = { path = "valinor-sif" }
 valinor-thor = { path = "valinor-thor" }
+valinor-transit = { path = "valinor-transit" }
 valinor-tyr = { path = "valinor-tyr" }
 walkdir = "2.5.0"
 zerocopy = "0.8.63"
 zerocopy-derive = "0.8.63"
 zeromq = "0.7.0"
+zip = { version = "9.5.0", default-features = false, features = ["deflate"] }
 
 [profile.dev.package]
 insta.opt-level = 3
