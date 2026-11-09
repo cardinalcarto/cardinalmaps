@@ -298,6 +298,13 @@ Transit has its own endpoint and JSON, separate from Valhalla's `Api` and `multi
 Walking and cycling legs are built from the search's parent pointers through Thor's `Paths` and
 `build_trip`, and narrated by Ilúvatar.
 
+Every stop and every leg, in every response and for every mode, carries `accessibility`:
+`accessible`, `inaccessible`, or `unknown`.
+A stop's is its GTFS `wheelchair_boarding`, a child's empty value inheriting its parent station's.
+A transit leg's covers its trip and its boarding and alighting stops: `inaccessible` if any says so,
+`accessible` if all do, otherwise `unknown`. A walk or ride to a stop states what's known of it:
+`accessible` for a leg a wheelchair search routed on streets that allow one, and `unknown` otherwise.
+
 Transit legs carry everything a rider may want, each field optional where feeds may omit it:
 scheduled and predicted times, delay, schedule relationship, route names and colors, agency details,
 headsign and stop headsigns, every intermediate stop, shape, accessibility and bike flags,

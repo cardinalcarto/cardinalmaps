@@ -49,7 +49,9 @@ pub use plan::{
     AccessEgressRequest, AccessEgressSearch, AccessEgressTables, DirectSearch,
     MAX_DEPARTURE_WINDOW_SECONDS, TransitOptions, TransitRequest, TravelMode, plan, plan_pinned,
 };
-pub use response::{PlanResponse, StopMovedNotice, Vehicle, VehicleUpdate, WalkManeuver, WalkPath};
+pub use response::{
+    Accessibility, PlanResponse, StopMovedNotice, Vehicle, VehicleUpdate, WalkManeuver, WalkPath,
+};
 pub use state::{
     FeedUpdate, IngestAndRefresh, IngestOutcome, ModeSnaps, StateConfig, StopLocation, StopSnapper,
     TransitSnapshot, TransitState,

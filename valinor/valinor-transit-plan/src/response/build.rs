@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use valinor_gtfs::{
-    Accessibility, AgencyInfo, GtfsRoute, LatLon, RouteInfo, StopInfo, TimetablePart, TimetableSet,
-    TripInfo,
+    Accessibility as GtfsAccessibility, AgencyInfo, GtfsRoute, LatLon, RouteInfo, StopInfo,
+    TimetablePart, TimetableSet, TripInfo,
 };
 use valinor_gtfs_rt::proto::alert::Effect;
 use valinor_gtfs_rt::proto::trip_update::stop_time_update::ScheduleRelationship;
@@ -13,14 +13,16 @@ use valinor_gtfs_rt::{
 };
 use valinor_transit::{Leg, Profile, ProfileEntry, Ride, StopEvent, StopId, StopRules};
 
-use crate::plan::{AccessEgressRequest, AccessEgressSearch, DirectSearch, TransitRequest};
+use crate::plan::{
+    AccessEgressRequest, AccessEgressSearch, DirectSearch, TransitRequest, TravelMode,
+};
 use crate::response::alerts::{LegSelectorContext, LegStop, ServiceRun, leg_alerts};
 use crate::response::vehicle::{lower, vehicle_from};
 use crate::response::{
-    AccessEgressLeg, AgencyResponse, DirectResponse, FeedReport, FeedState, Journey, JourneyLeg,
-    LegAlert, NoJourneysReason, PlanResponse, RealtimeLevel, RealtimeStatus, RouteResponse,
-    StopMovedNotice, StopRef, StopVisit, TransferLeg, TransitLeg, TripResponse, Vehicle,
-    WalkDurations, WalkPath, Window,
+    AccessEgressLeg, Accessibility, AgencyResponse, DirectResponse, FeedReport, FeedState, Journey,
+    JourneyLeg, LegAlert, NoJourneysReason, PlanResponse, RealtimeLevel, RealtimeStatus,
+    RouteResponse, StopMovedNotice, StopRef, StopVisit, TransferLeg, TransitLeg, TripResponse,
+    Vehicle, WalkDurations, WalkPath, Window,
 };
 use crate::state::TransitSnapshot;
 use crate::window::calendar_date;
@@ -243,11 +245,26 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         Ok(path)
     }
 
+    /// What is known about a walking or cycling leg: a wheelchair search routes on streets
+    /// that allow a wheelchair; a search on foot or by bicycle says nothing about access.
+    fn walking_accessibility(&self) -> Accessibility {
+        if self.request.mode == TravelMode::Wheelchair {
+            Accessibility::Accessible
+        } else {
+            Accessibility::Unknown
+        }
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one linear assembly of a journey's legs"
+    )]
     fn journey(&mut self, entry: ProfileEntry<A::Walk>) -> Result<Journey, A::Error> {
         let origin = self.origin();
         let departure = origin + i64::from(entry.departure.into_inner());
         let arrival = origin + i64::from(entry.arrival.into_inner());
         let mode = self.request.mode.name();
+        let walking_accessibility = self.walking_accessibility();
         let mut legs = Vec::with_capacity(entry.journey.legs.len());
         let mut clock = departure;
         let (mut access, mut transfers, mut egress, mut waiting) = (0_i64, 0_i64, 0_i64, 0_i64);
@@ -259,6 +276,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     let walk = self.access_path(stop)?;
                     legs.push(JourneyLeg::Access(AccessEgressLeg {
                         mode,
+                        accessibility: walking_accessibility,
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
@@ -302,6 +320,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     };
                     legs.push(JourneyLeg::Transfer(Box::new(TransferLeg {
                         mode,
+                        accessibility: walking_accessibility,
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
@@ -318,6 +337,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     let walk = self.egress_path(stop)?;
                     legs.push(JourneyLeg::Egress(AccessEgressLeg {
                         mode,
+                        accessibility: walking_accessibility,
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
@@ -354,6 +374,19 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         }
         let new = self.snapshot.new_stops.iter().find(|s| s.stop == stop);
         StopRef {
+            accessibility: new.map_or(Accessibility::Unknown, |s| {
+                match s.details.wheelchair_boarding() {
+                    valinor_gtfs_rt::proto::stop::WheelchairBoarding::Available => {
+                        Accessibility::Accessible
+                    }
+                    valinor_gtfs_rt::proto::stop::WheelchairBoarding::NotAvailable => {
+                        Accessibility::Inaccessible
+                    }
+                    valinor_gtfs_rt::proto::stop::WheelchairBoarding::Unknown => {
+                        Accessibility::Unknown
+                    }
+                }
+            }),
             feed: new.map(|s| s.id.feed.to_string()),
             stop_id: new.map_or_else(|| stop.to_string(), |s| s.id.id.to_string()),
             name: new.and_then(new_stop_name),
@@ -377,6 +410,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             .parent_station
             .and_then(|id| part.compiled().location(id));
         StopRef {
+            accessibility: accessibility_of(info.wheelchair_boarding),
             feed: Some(info.feed.to_owned()),
             stop_id: info.gtfs_id.to_owned(),
             name: info.name.map(str::to_owned),
@@ -530,7 +564,12 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             .any(|s| s.predicted_arrival.is_some() || s.predicted_departure.is_some());
         let delay_seconds = stops.first().and_then(|s| s.departure_delay_seconds);
 
+        let accessibility = leg_accessibility(
+            static_trip.map(|info| accessibility_of(info.wheelchair_accessible)),
+            &stops,
+        );
         TransitLeg {
+            accessibility,
             departure: board_unix,
             arrival: alight_unix,
             duration_seconds: alight_unix - board_unix,
@@ -935,11 +974,42 @@ fn trip_response(
     }
 }
 
-fn accessibility(value: Accessibility) -> Option<&'static str> {
+fn accessibility(value: GtfsAccessibility) -> Option<&'static str> {
     match value {
-        Accessibility::Unknown => None,
-        Accessibility::Yes => Some("yes"),
-        Accessibility::No => Some("no"),
+        GtfsAccessibility::Unknown => None,
+        GtfsAccessibility::Yes => Some("yes"),
+        GtfsAccessibility::No => Some("no"),
+    }
+}
+
+fn accessibility_of(value: GtfsAccessibility) -> Accessibility {
+    match value {
+        GtfsAccessibility::Unknown => Accessibility::Unknown,
+        GtfsAccessibility::Yes => Accessibility::Accessible,
+        GtfsAccessibility::No => Accessibility::Inaccessible,
+    }
+}
+
+/// A transit leg's accessibility: its trip's and its boarding and alighting stops'.
+fn leg_accessibility(trip: Option<Accessibility>, stops: &[StopVisit]) -> Accessibility {
+    let parts = trip
+        .into_iter()
+        .chain(stops.first().map(|visit| visit.stop.accessibility))
+        .chain(stops.last().map(|visit| visit.stop.accessibility));
+    let mut all_accessible = true;
+    let mut seen_any = false;
+    for part in parts {
+        seen_any = true;
+        match part {
+            Accessibility::Inaccessible => return Accessibility::Inaccessible,
+            Accessibility::Unknown => all_accessible = false,
+            Accessibility::Accessible => {}
+        }
+    }
+    if seen_any && all_accessible {
+        Accessibility::Accessible
+    } else {
+        Accessibility::Unknown
     }
 }
 

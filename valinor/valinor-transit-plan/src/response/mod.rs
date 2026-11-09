@@ -35,6 +35,20 @@ pub struct PlanResponse {
     pub direct: DirectResponse,
 }
 
+/// What is known about whether a stop or leg is accessible to a rider in a wheelchair.
+///
+/// This is the app's one field for accessibility, on every stop and every leg.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Accessibility {
+    /// The feed says it is accessible, or a wheelchair search routed it on streets.
+    Accessible,
+    /// The feed says it is not accessible.
+    Inaccessible,
+    /// Nothing says either way.
+    Unknown,
+}
+
 /// Why a plan has no journeys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -178,8 +192,10 @@ pub enum JourneyLeg {
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AccessEgressLeg {
-    /// `walking` or `cycling`.
+    /// `walking`, `cycling`, or `wheelchair`.
     pub mode: &'static str,
+    /// What is known about accessibility on this leg.
+    pub accessibility: Accessibility,
     /// How long the leg takes.
     pub duration_seconds: i64,
     /// When the leg starts, in POSIX seconds.
@@ -199,8 +215,10 @@ pub struct AccessEgressLeg {
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TransferLeg {
-    /// `walking` or `cycling`.
+    /// `walking`, `cycling`, or `wheelchair`.
     pub mode: &'static str,
+    /// What is known about accessibility on this leg.
+    pub accessibility: Accessibility,
     /// How long the leg takes.
     pub duration_seconds: i64,
     /// When the leg starts, in POSIX seconds.
@@ -280,6 +298,9 @@ pub struct WalkManeuver {
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TransitLeg {
+    /// Whether the trip and both of its boarding and alighting stops are accessible:
+    /// `inaccessible` if any says no, `accessible` if all say yes, and otherwise `unknown`.
+    pub accessibility: Accessibility,
     /// When the trip leaves the boarding stop, as routing used it, in POSIX seconds.
     pub departure: i64,
     /// When the trip reaches the alighting stop, as routing used it, in POSIX seconds.
@@ -391,6 +412,8 @@ pub struct TripResponse {
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StopRef {
+    /// Whether a rider in a wheelchair can use this stop.
+    pub accessibility: Accessibility,
     /// The feed this stop belongs to; a `stop_id` is only unique within its feed.
     pub feed: Option<String>,
     /// `stop_id`.

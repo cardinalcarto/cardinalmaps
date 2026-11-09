@@ -1238,6 +1238,73 @@ fn a_wheelchair_query_avoids_an_inaccessible_stop_and_uses_unknown_ones() {
 }
 
 #[test]
+fn every_stop_and_leg_reports_accessibility() {
+    use crate::response::Accessibility;
+    let state = wheelchair_state();
+    let request = |mode| TransitRequest {
+        mode,
+        options: TransitOptions {
+            max_trips: 3,
+            ..TransitOptions::default()
+        },
+        ..morning_request()
+    };
+    let wheelchair = run(&state, &request(TravelMode::Wheelchair));
+    let journey = wheelchair
+        .journeys
+        .iter()
+        .find(|journey| {
+            transit_legs(journey)
+                .iter()
+                .any(|leg| leg.trip.trip_id == "T3")
+        })
+        .expect("T3 journey");
+    // T3 runs ORG (accessible) to GOOD (unknown), so the leg is unknown; the access is on streets
+    // routed for a wheelchair, so it's accessible.
+    let JourneyLeg::Access(access) = &journey.legs[0] else {
+        panic!("access first");
+    };
+    assert_eq!(access.accessibility, Accessibility::Accessible);
+    let leg = transit_legs(journey)[0];
+    assert_eq!(leg.accessibility, Accessibility::Unknown);
+    let visits: Vec<_> = leg
+        .stops
+        .iter()
+        .map(|visit| (visit.stop.stop_id.as_str(), visit.stop.accessibility))
+        .collect();
+    assert_eq!(
+        visits,
+        vec![
+            ("ORG", Accessibility::Accessible),
+            ("GOOD", Accessibility::Unknown)
+        ]
+    );
+
+    let walking = run(&state, &request(TravelMode::Walking));
+    let journey = walking
+        .journeys
+        .iter()
+        .find(|journey| {
+            transit_legs(journey)
+                .iter()
+                .any(|leg| leg.trip.trip_id == "T5")
+        })
+        .expect("T5 journey");
+    // T5 is marked inaccessible, so the leg is, whatever its stops are; a walk is unknown.
+    let leg = transit_legs(journey)
+        .into_iter()
+        .find(|leg| leg.trip.trip_id == "T5")
+        .expect("T5");
+    assert_eq!(leg.accessibility, Accessibility::Inaccessible);
+    let JourneyLeg::Access(access) = &journey.legs[0] else {
+        panic!("access first");
+    };
+    assert_eq!(access.accessibility, Accessibility::Unknown);
+    let body = serde_json::to_value(&walking.journeys).expect("json");
+    assert!(body[0]["legs"][0]["accessibility"].is_string());
+}
+
+#[test]
 fn a_cycling_query_only_rides_routes_that_allow_bikes() {
     let state = synthetic_state();
     let request = TransitRequest {

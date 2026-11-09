@@ -30,10 +30,12 @@ expression: "&response"
         {
           "type": "access",
           "mode": "walking",
+          "accessibility": "unknown",
           "duration_seconds": 81,
           "departure": 1781506719,
           "arrival": 1781506800,
           "stop": {
+            "accessibility": "unknown",
             "feed": "andorra",
             "stop_id": "A",
             "name": "Plaça",
@@ -119,6 +121,7 @@ expression: "&response"
         },
         {
           "type": "transit",
+          "accessibility": "unknown",
           "departure": 1781506800,
           "arrival": 1781507280,
           "duration_seconds": 480,
@@ -142,6 +145,7 @@ expression: "&response"
           },
           "stops": [
             {
+              "accessibility": "unknown",
               "feed": "andorra",
               "stop_id": "A",
               "name": "Plaça",
@@ -158,6 +162,7 @@ expression: "&response"
               "utc_offset_seconds": 7200
             },
             {
+              "accessibility": "unknown",
               "feed": "andorra",
               "stop_id": "B",
               "name": "Meritxell",
@@ -179,10 +184,12 @@ expression: "&response"
         {
           "type": "transfer",
           "mode": "walking",
+          "accessibility": "unknown",
           "duration_seconds": 358,
           "departure": 1781507280,
           "arrival": 1781507638,
           "from": {
+            "accessibility": "unknown",
             "feed": "andorra",
             "stop_id": "B",
             "name": "Meritxell",
@@ -191,6 +198,7 @@ expression: "&response"
             "time_zone": "Europe/Andorra"
           },
           "to": {
+            "accessibility": "unknown",
             "feed": "andorra",
             "stop_id": "C",
             "name": "Caldea",
@@ -290,6 +298,7 @@ expression: "&response"
         },
         {
           "type": "transit",
+          "accessibility": "unknown",
           "departure": 1781508000,
           "arrival": 1781508300,
           "duration_seconds": 300,
@@ -313,6 +322,7 @@ expression: "&response"
           },
           "stops": [
             {
+              "accessibility": "unknown",
               "feed": "andorra",
               "stop_id": "C",
               "name": "Caldea",
@@ -329,6 +339,7 @@ expression: "&response"
               "utc_offset_seconds": 7200
             },
             {
+              "accessibility": "unknown",
               "feed": "andorra",
               "stop_id": "D",
               "name": "Encamp",
@@ -350,10 +361,12 @@ expression: "&response"
         {
           "type": "egress",
           "mode": "walking",
+          "accessibility": "unknown",
           "duration_seconds": 75,
           "departure": 1781508300,
           "arrival": 1781508375,
           "stop": {
+            "accessibility": "unknown",
             "feed": "andorra",
             "stop_id": "D",
             "name": "Encamp",
