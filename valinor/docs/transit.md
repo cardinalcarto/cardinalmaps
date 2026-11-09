@@ -100,10 +100,18 @@ the route minimizes Sif's cost, and the entry is that route's seconds.
 A cyclist's transfer takes the bike path the costing prefers, even when a busier road is quicker.
 
 A rider never walks twice in a row, so the table needs no closure.
-It stores only times; a transfer in a result is routed again with the same search to draw it,
-at the table's bound, since a shorter limit can change which route the cost-minimal search finds.
+It stores only times; a transfer in a result is routed again with the same search to draw it.
 A table depends on stop positions and the street graph, not on the timetable,
 so a new real-time stop only needs its own walks added.
+
+Sif's cost and seconds are different quantities, so a walk's cheapest route can take longer than
+a bound while a costlier route fits. The table search never drops a label for exceeding its time
+limit: it keeps expanding in cost order, over-limit labels included,
+and stops only when no queued label is still within the limit (and one last edge's cost past that,
+so an over-limit route that's cheaper to a stop than a tabled one can still knock it out).
+A stop whose cheapest route exceeds the limit is left out, rather than taking a costlier one.
+Every settled edge then has its true cheapest route, so the results don't depend on the limit
+or on the search's direction, and a draw at the walk's own seconds finds the same route as the table.
 
 The table bounds which journeys exist: a transfer past the bound isn't considered.
 Measured on King County Metro, about 91% of the profile entries of a 15-minute table match a search
@@ -202,7 +210,10 @@ It holds an arena of route blocks, the directory entries that point into it,
 and per-stop additions for new stop patterns.
 Stop IDs number base stops first and then an overlay's new stops.
 New stops are snapped to the street network when the overlay is built,
-and their walks are added to the snapshot's transfer tables.
+and their walks are added to the snapshot's transfer tables by two searches per new stop:
+forward from it for walks leaving it, and backward from it for walks from every other stop into
+it, with the same costing as the full build. A transfer drawn for a result is routed by the search
+that found it, so a walk from a base stop to a new stop is drawn with that backward search.
 
 Each changed route and service day gets a whole replacement block.
 If delays make trips overtake, the block is split into non-overtaking lanes,

@@ -10,6 +10,25 @@
 //! Seeds carry an initial cost and may come from several candidate edges of a location.
 //! A future park-and-ride layer would seed this search from the parking edges reached by an
 //! earlier layer's table, each with [`TableSeed::initial`] set to the time already spent.
+//!
+//! # The time limit
+//!
+//! The search minimizes Sif's cost, and [`TableRequest::max_seconds`] limits seconds, which are
+//! a different quantity: an edge's route can be cheaper and still slower.
+//! So a stop's entry is the cheapest route to it, whatever that route's seconds are,
+//! and the limit only decides whether that entry is reported.
+//! The search never drops a label for being over the limit. It keeps expanding in cost order,
+//! expanding over-limit labels too, so that every settled edge has its true cheapest route,
+//! and it runs exactly the prefix of the same search with no limit at all.
+//! A stop whose cheapest route exceeds the limit is left out, even if a costlier route fits:
+//! such a route is an artifact of the limit, not one Sif would choose.
+//! The results therefore depend on neither the search's direction nor the exact limit.
+//! The limit is on the whole seconds an entry reports, as [`StopTables::reached_stops`] rounds them,
+//! so a walk's entry is always within a limit set to its own whole seconds.
+//!
+//! The search stops as soon as no queued label can lead to a route within the limit:
+//! seconds never decrease along a route, so nothing left can yield one.
+//! See [`StopTables::search`] for why that, with a small allowance past it, is exact.
 
 use core::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -54,7 +73,10 @@ pub struct TableRequest<'a> {
     pub side: AccessSide,
     /// The candidate edges of the location.
     pub seeds: &'a [TableSeed],
-    /// The longest walk to consider, in seconds; stops beyond it are left out of the table.
+    /// The longest walk to report, in whole seconds, compared with an entry's rounded seconds.
+    ///
+    /// A stop is left out when its cheapest route, not merely some route, is over this limit;
+    /// see the [module documentation](self).
     pub max_seconds: u32,
     /// Asks the search to stop.
     pub interrupt: &'a dyn Fn() -> bool,
@@ -461,6 +483,31 @@ struct StopBest {
     percent: f32,
 }
 
+/// A queue entry: a label's index, and whether this entry counts as within the limit.
+///
+/// The index is in the upper bits, so that entries tie-break on the index and never on whether
+/// they are within the limit: the search order must not depend on the limit.
+/// A label index can't use the top bit anyway, since [`SETTLED`] takes it in the edge states.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct QueueEntry(u32);
+
+impl QueueEntry {
+    #[inline]
+    fn new(index: u32, within: bool) -> Self {
+        Self((index << 1) | u32::from(within))
+    }
+
+    #[inline]
+    fn index(self) -> u32 {
+        self.0 >> 1
+    }
+
+    #[inline]
+    fn within(self) -> bool {
+        self.0 & 1 != 0
+    }
+}
+
 /// A queue key: the sort cost, with `total_cmp` order.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Key(f32);
@@ -485,6 +532,15 @@ fn limit_secs(max_seconds: u32) -> f32 {
     #[expect(clippy::cast_precision_loss, reason = "a walk limit, far below 2^24")]
     let limit = max_seconds as f32;
     limit
+}
+
+/// Whether a route of `secs` seconds is within a limit, as its entry would report it.
+///
+/// Entries are whole seconds, so a limit is a limit on whole seconds: this is the rounding
+/// of [`StopTables::reached_stops`], and a limit of an entry's own seconds always admits it.
+#[inline]
+fn secs_within(secs: f32, limit: f32) -> bool {
+    secs.round() <= limit
 }
 
 /// Records one of a stop's directed edges settling this search, returning whether that was the
@@ -525,7 +581,15 @@ pub struct StopTables<P: GraphTileProvider, C: Costing> {
     labels: Vec<TableLabel>,
     edge_states: EdgeStates,
     epoch: u32,
-    queue: BinaryHeap<Reverse<(Key, u32)>>,
+    queue: BinaryHeap<Reverse<(Key, QueueEntry)>>,
+    /// Queue entries whose label can still lead to a reported entry (see `Self::counts_within`).
+    ///
+    /// Stale entries stay counted until popped, which only runs the search a little longer.
+    within_queued: u64,
+    /// No queued label can improve a stop's entry once the queue's smallest key reaches this.
+    horizon: f32,
+    /// The limit of the current search, in seconds.
+    limit: f32,
     stop_best: Vec<StopBest>,
     /// `(epoch, number of the stop's two directed edges settled so far)`.
     stop_visits: Vec<(u32, u8)>,
@@ -547,6 +611,9 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             edge_states: EdgeStates::default(),
             epoch: 0,
             queue: BinaryHeap::new(),
+            within_queued: 0,
+            horizon: f32::NEG_INFINITY,
+            limit: 0.0,
             stop_best: Vec::new(),
             stop_visits: Vec::new(),
             stops_pending: 0,
@@ -650,6 +717,33 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     ///
     /// Returns `Ok(false)` if `request.interrupt` asks to stop.
     ///
+    /// The search ends when nothing queued can change a reported entry.
+    /// A label counts as within the limit if it can still lead to something the table reports:
+    /// its route is within the limit at the start of its edge, and also at the end of its edge
+    /// or has a stop on it.
+    /// An uncounted label is still expanded when it is popped; it just can't keep the search alive.
+    ///
+    /// 1. While any queued label is within the limit, keep going. Labels pop in cost order and
+    ///    none is dropped, so every settled edge has its true cheapest route,
+    ///    and a settled edge whose route is over the limit still blocks costlier routes
+    ///    from taking over its stops, as it must.
+    /// 2. Once no label is within the limit, any route extended from the queue is over the limit
+    ///    at the start of its next edge, since seconds never decrease along a route.
+    ///    An edge not yet settled thus has a cheapest route over the limit at its start.
+    /// 3. One trap remains: a stop on two directed edges. Its entry can come from one edge
+    ///    while the other, still queued, is the cheaper way to the stop, over the limit.
+    ///    Stopping at step 2 would report the costlier route, an artifact.
+    ///    So the search also continues until the queue's smallest key reaches the `horizon`:
+    ///    every label on one of a stop's edges that could improve that stop's entry costs less,
+    ///    at its edge's end, than the entry plus that edge's whole cost.
+    ///
+    /// A seed's partial label is judged the same way, from its seed's seconds.
+    /// A stop on a seed's edge is reached either by that partial label or, later, by a whole
+    /// edge's label that came around; the `horizon` covers both.
+    ///
+    /// An early exit when every stop has both of its directed edges settled stays exact,
+    /// since a settled edge's label is final and a stop's entry is the cheapest of its two.
+    ///
     /// # Performance
     ///
     /// Like [`Self::compute`], but allocates nothing proportional to the stop count.
@@ -659,6 +753,9 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     /// Fails on unreadable tiles or a costing error.
     pub fn search(&mut self, request: &TableRequest<'_>) -> Result<bool, WalkError> {
         self.side = request.side;
+        self.limit = limit_secs(request.max_seconds);
+        self.within_queued = 0;
+        self.horizon = f32::NEG_INFINITY;
         self.epoch = self.epoch.wrapping_add(1);
         if self.epoch == 0 {
             self.stop_best.iter_mut().for_each(|s| s.stamp = 0);
@@ -681,7 +778,21 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             self.add_seed(seed, request)?;
         }
         let mut since_check = 0;
-        while let Some(Reverse((_, index))) = self.queue.pop() {
+        loop {
+            if self.within_queued == 0
+                && self
+                    .queue
+                    .peek()
+                    .is_none_or(|Reverse((Key(key), _))| *key >= self.horizon)
+            {
+                break;
+            }
+            let Some(Reverse((_, entry))) = self.queue.pop() else {
+                break;
+            };
+            if entry.within() {
+                self.within_queued -= 1;
+            }
             since_check += 1;
             if since_check >= INTERRUPT_INTERVAL {
                 since_check = 0;
@@ -689,7 +800,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                     return Ok(false);
                 }
             }
-            self.settle(index, request)?;
+            self.settle(entry.index())?;
             if self.terminate_when_stops_settled && self.stops_pending == 0 {
                 self.stats.terminated_early = true;
                 break;
@@ -711,7 +822,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         self.touched_stops.iter().filter_map(|&stop| {
             let best = self.stop_best.get(stop as usize)?;
             let secs = best.secs.round();
-            if secs < 0.0 || !secs.is_finite() {
+            if secs < 0.0 || !secs.is_finite() || !secs_within(best.secs, self.limit) {
                 return None;
             }
             #[expect(
@@ -829,30 +940,59 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             return Ok(());
         };
         self.ensure_edge_state();
-        if seed.initial > limit_secs(request.max_seconds) {
-            return Ok(());
-        }
+        // A seed over the limit stays queued, uncounted: it can't lead to a route within the
+        // limit, but a cheaper route from it still decides what the stops near it report.
+        let within = self.counts_within(seed.initial, seed.initial + partial.cost.secs, seed.edge);
         // A seed takes no edge status (as Thor's origin edges), so a route can come back
         // around onto its own edge to reach a stop behind the start on a one-way street.
-        self.push_seed(TableLabel {
-            inner,
-            cost: partial.cost + Cost::new(seed.initial, seed.initial),
-            transition: Cost::ZERO,
-            real_edge: seed.edge,
-            dense_edge,
-            end_node: label_edge.end_node_id(),
-            span: (begin, end),
-            settled: false,
-            destonly_mask: access.destonly_access_restr_mask,
-        });
+        self.push_seed(
+            TableLabel {
+                inner,
+                cost: partial.cost + Cost::new(seed.initial, seed.initial),
+                transition: Cost::ZERO,
+                real_edge: seed.edge,
+                dense_edge,
+                end_node: label_edge.end_node_id(),
+                span: (begin, end),
+                settled: false,
+                destonly_mask: access.destonly_access_restr_mask,
+            },
+            within,
+        );
         Ok(())
+    }
+
+    /// Whether a label with these seconds can still lead to a reported entry.
+    ///
+    /// Over the limit at the start of its edge, no. Within it at both ends, yes: routes go on
+    /// from it. Within at the start only, then only a stop partway along this edge can be
+    /// within the limit, so the edge must have one. Such a label is usually a long or heavily
+    /// penalized edge (a ferry, for one), and letting it keep the search alive would expand
+    /// everything cheaper for nothing. It stays in the queue either way, so the order of
+    /// settling, and so what is reported, doesn't change.
+    fn counts_within(&self, at_start: f32, at_end: f32, real_edge: GraphId) -> bool {
+        secs_within(at_start, self.limit)
+            && (secs_within(at_end, self.limit)
+                || self
+                    .attachments
+                    .as_ref()
+                    .is_some_and(|a| a.edges.get(real_edge.value()) != NONE))
+    }
+
+    /// Queues a label, counting it if it is within the limit (see [`Self::counts_within`]).
+    fn enqueue(&mut self, label_cost: f32, index: u32, within: bool) {
+        if within {
+            self.within_queued += 1;
+        }
+        self.queue
+            .push(Reverse((Key(label_cost), QueueEntry::new(index, within))));
     }
 
     /// Adds or improves the label of a directed edge in the queue.
     ///
-    /// The caller has checked the limit at the start of the edge: a stop partway along an edge
-    /// can be within it even when the far end of the edge isn't.
-    fn push_label(&mut self, label: TableLabel) {
+    /// `within` is whether its route is within the limit at the start of its edge:
+    /// a stop partway along an edge can be within it even when the far end of the edge isn't.
+    fn push_label(&mut self, label: TableLabel, within: bool) {
         let state = self.edge_states.get(label.dense_edge);
         if state != UNSET {
             if state & SETTLED != 0 {
@@ -863,25 +1003,25 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             };
             if label.cost.cost < existing.cost.cost {
                 *existing = label;
-                self.queue.push(Reverse((Key(label.cost.cost), state)));
+                self.enqueue(label.cost.cost, state, within);
             }
             return;
         }
         let index = u32::try_from(self.labels.len()).unwrap_or(NONE);
         self.edge_states.set(label.dense_edge, index);
         self.labels.push(label);
-        self.queue.push(Reverse((Key(label.cost.cost), index)));
+        self.enqueue(label.cost.cost, index, within);
     }
 
     /// Queues a seed's label, which has no edge status.
-    fn push_seed(&mut self, label: TableLabel) {
+    fn push_seed(&mut self, label: TableLabel, within: bool) {
         let index = u32::try_from(self.labels.len()).unwrap_or(NONE);
         self.labels.push(label);
-        self.queue.push(Reverse((Key(label.cost.cost), index)));
+        self.enqueue(label.cost.cost, index, within);
     }
 
     /// Settles a label, reaches the stops on its edge, and expands from its far node.
-    fn settle(&mut self, index: u32, request: &TableRequest<'_>) -> Result<(), WalkError> {
+    fn settle(&mut self, index: u32) -> Result<(), WalkError> {
         let Some(label) = self.labels.get(index as usize).copied() else {
             return Ok(());
         };
@@ -899,7 +1039,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             stored.settled = true;
         }
         self.stats.labels_settled += 1;
-        self.reach_stops(index, &label, request.max_seconds)?;
+        self.reach_stops(index, &label)?;
 
         let forward = self.side == AccessSide::Access;
         let Some(node_tile) = self.tile_handle(label.end_node)? else {
@@ -927,9 +1067,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 uturn = Some(edge_id);
                 continue;
             }
-            expanded |= self.expand(
-                &label, index, node, edge_id, edge, &node_tile, forward, request,
-            )?;
+            expanded |= self.expand(&label, index, node, edge_id, edge, &node_tile, forward)?;
         }
         for transition in node_tile.get_transitions(node) {
             let end = transition.corresponding_end_node_id();
@@ -957,7 +1095,6 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                     edge,
                     &trans_tile,
                     forward,
-                    request,
                 )?;
             }
         }
@@ -968,9 +1105,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 .map_err(|e| WalkError::Lookup(uturn_id, e))?;
             let mut deadend = label;
             deadend.inner.set_deadend(true);
-            self.expand(
-                &deadend, index, node, uturn_id, edge, &node_tile, forward, request,
-            )?;
+            self.expand(&deadend, index, node, uturn_id, edge, &node_tile, forward)?;
         }
         Ok(())
     }
@@ -990,7 +1125,6 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         edge: &DirectedEdge,
         tile: &P::TileHandle,
         forward: bool,
-        request: &TableRequest<'_>,
     ) -> Result<bool, WalkError> {
         if edge.is_shortcut() {
             return Ok(false);
@@ -1077,11 +1211,11 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 access.edge_destonly,
             )?
         };
+        // Seconds at the start of the edge, as a stop partway along it may still be within the
+        // limit; the label is expanded whichever way this comes out (see `Self::search`).
         let at_start = pred.cost + transition;
-        if at_start.secs > limit_secs(request.max_seconds) {
-            return Ok(true);
-        }
         let cost = at_start + edge_cost.cost;
+        let within = self.counts_within(at_start.secs, cost.secs, traversed_id);
         let inner = EdgeLabel::new(
             edge_id,
             edge,
@@ -1097,17 +1231,20 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             return Ok(false);
         };
         self.ensure_edge_state();
-        self.push_label(TableLabel {
-            inner,
-            cost,
-            transition,
-            real_edge: traversed_id,
-            dense_edge,
-            end_node: edge.end_node_id(),
-            span: (0.0, 1.0),
-            settled: false,
-            destonly_mask: access.destonly_access_restr_mask,
-        });
+        self.push_label(
+            TableLabel {
+                inner,
+                cost,
+                transition,
+                real_edge: traversed_id,
+                dense_edge,
+                end_node: edge.end_node_id(),
+                span: (0.0, 1.0),
+                settled: false,
+                destonly_mask: access.destonly_access_restr_mask,
+            },
+            within,
+        );
         Ok(true)
     }
 
@@ -1134,13 +1271,38 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         })
     }
 
-    /// Offers the stops attached to a settled label's real edge.
-    fn reach_stops(
+    /// How much a route that could still improve a stop on this edge can cost past that stop:
+    /// at most the whole of the edge, in either direction.
+    fn tail_bound(
         &mut self,
-        index: u32,
-        label: &TableLabel,
-        max_seconds: u32,
-    ) -> Result<(), WalkError> {
+        real_edge: GraphId,
+        tile: &P::TileHandle,
+        edge: &DirectedEdge,
+    ) -> Result<f32, WalkError> {
+        let along = self
+            .graph
+            .costing
+            .edge_cost(edge, real_edge, tile, None)?
+            .cost
+            .cost;
+        let opposing = match self.opposite_of(real_edge, tile)? {
+            Some((opp_id, opp_tile, opp_edge)) => {
+                self.graph
+                    .costing
+                    .edge_cost(&opp_edge, opp_id, &opp_tile, None)?
+                    .cost
+                    .cost
+            }
+            None => 0.0,
+        };
+        Ok(along.max(opposing))
+    }
+
+    /// Offers the stops attached to a settled label's real edge.
+    ///
+    /// A stop's entry is its cheapest offer, whatever its seconds: a costlier route that fits
+    /// must not replace a cheaper one that doesn't (see the [module documentation](self)).
+    fn reach_stops(&mut self, index: u32, label: &TableLabel) -> Result<(), WalkError> {
         let Some(attachments) = self.attachments.clone() else {
             return Ok(());
         };
@@ -1210,9 +1372,6 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 )?
                 .cost;
             let cost = sub_cost(label.cost, whole) + part;
-            if cost.secs > limit_secs(max_seconds) {
-                continue;
-            }
             let best = &mut self.stop_best[entry.stop as usize];
             if best.stamp != self.epoch || cost.cost < best.key {
                 if best.stamp != self.epoch {
@@ -1225,6 +1384,17 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                     label: index,
                     percent: entry.percent,
                 };
+                // An entry within the limit might be beaten through the stop's other edge by
+                // a route the rest of the search would still settle; see `Self::search`.
+                if secs_within(cost.secs, self.limit)
+                    && self
+                        .stop_visits
+                        .get(entry.stop as usize)
+                        .is_none_or(|visits| visits.0 != self.epoch || visits.1 != SIDE_BOTH)
+                {
+                    let tail = self.tail_bound(label.real_edge, &tile, edge)?;
+                    self.horizon = self.horizon.max(cost.cost + tail);
+                }
             }
         }
         Ok(())
@@ -1232,7 +1402,8 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
 
     /// Whether a search ends as soon as every attached stop has its final entry (the default).
     ///
-    /// Turning this off floods the whole network, for measurement.
+    /// Turning this off runs the search until nothing within the limit is queued, for measurement.
+    /// The results are the same either way: only the search's length differs.
     pub fn set_terminate_when_stops_settled(&mut self, enabled: bool) {
         self.terminate_when_stops_settled = enabled;
     }
@@ -1308,10 +1479,11 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
 
     /// Follows a stop's best label to its leg, in real travel order.
     ///
-    /// Returns `None` if the stop wasn't reached by the last [`compute`](Self::compute).
+    /// Returns `None` if the stop wasn't reached by the last search,
+    /// or its cheapest route exceeds the limit (so it isn't in [`Self::reached_stops`]).
     pub fn leg(&self, stop: StopId) -> Option<AccessLeg> {
         let best = self.stop_best.get(stop.into_inner() as usize)?;
-        if best.stamp != self.epoch {
+        if best.stamp != self.epoch || !secs_within(best.secs, self.limit) {
             return None;
         }
         // Search order: from the seed to the stop's edge.

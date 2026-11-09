@@ -239,7 +239,49 @@ fn table_has_no_walk(transfers: &TableTransfers, from: u32, to: u32) -> bool {
         .is_none()
 }
 
-/// Adding stops to a base table gives what building all of them at once does.
+/// The walks of a full build, with each base stop's walk into a new stop replaced by what
+/// that new stop's backward search finds, as `with_new_stops` gives them.
+fn expected_with_new_stops(
+    provider: &&TileSets,
+    costing: &AnyCosting,
+    all: &Arc<StopSnaps>,
+    full: &TransferTable,
+    new_stops: &[StopId],
+) -> Vec<(u32, u32, u32)> {
+    let is_new = |stop: u32| new_stops.iter().any(|new| new.into_inner() == stop);
+    let mut tables = StopTables::new(*provider, costing.clone());
+    tables.bind(Arc::clone(all)).expect("bind");
+    let mut walks: Vec<(u32, u32, u32)> = pairs(full)
+        .into_iter()
+        .filter(|&(from, to, _)| is_new(from) || !is_new(to))
+        .collect();
+    for &stop in new_stops {
+        let seeds = tables.stop_seeds(stop).expect("seeds");
+        if seeds.is_empty() {
+            continue;
+        }
+        assert!(
+            tables
+                .search(&TableRequest {
+                    side: AccessSide::Egress,
+                    seeds: &seeds,
+                    max_seconds: RADIUS,
+                    interrupt: &|| false,
+                })
+                .expect("search")
+        );
+        for hop in sorted_walks_from(&tables, stop) {
+            if !is_new(hop.stop) {
+                walks.push((hop.stop, stop.into_inner(), hop.seconds));
+            }
+        }
+    }
+    walks.sort_unstable();
+    walks
+}
+
+/// Adding stops to a base table gives the walks of a full build, with walks into a new stop
+/// from that new stop's backward search.
 #[test]
 fn adding_stops_matches_building_with_them() {
     let sets = andorra();
@@ -248,8 +290,9 @@ fn adding_stops_matches_building_with_them() {
     let points = random_stops(&provider, &TILES, 90, 19);
     let all = snaps_of(&provider, &points);
     let base = snaps_of(&provider, &points[..80]);
-    let expected = built(&provider, &costing, &all, 1);
+    let full = built(&provider, &costing, &all, 1);
     let new_stops: Vec<StopId> = (80..90).map(StopId::new).collect();
+    let expected = expected_with_new_stops(&provider, &costing, &all, &full, &new_stops);
     let grown = built(&provider, &costing, &base, 1)
         .with_new_stops(&provider, &costing, &all, &new_stops, &|| false)
         .expect("grow")
@@ -259,7 +302,7 @@ fn adding_stops_matches_building_with_them() {
         walks.sort_unstable();
         walks
     };
-    assert_eq!(sorted(&grown), sorted(&expected));
+    assert_eq!(sorted(&grown), expected);
     assert_eq!(grown.stop_count(), 90);
 
     // The same, adding to a table that is memory-mapped.
@@ -278,13 +321,141 @@ fn adding_stops_matches_building_with_them() {
         .expect("grow")
         .expect("not interrupted");
     assert_eq!(grown_mapped, grown);
-    assert_eq!(sorted(&grown_mapped), sorted(&expected));
+    assert_eq!(sorted(&grown_mapped), expected);
     assert_eq!(
         mapped.bytes(),
         0,
         "the mapped table's walks aren't on the heap"
     );
-    assert!(grown_mapped.bytes() < expected.bytes());
+    assert!(grown_mapped.bytes() < full.bytes());
+}
+
+/// A walk into a new stop records that it came from a backward search,
+/// and drawing it that way gives the walk's seconds; every other walk is forward.
+#[test]
+fn a_walk_into_a_new_stop_is_found_and_drawn_backward() {
+    let sets = andorra();
+    let provider = &sets;
+    for name in ["pedestrian", "bicycle"] {
+        let costing = costing_named(name);
+        let points = random_stops(&provider, &TILES, 90, 41);
+        let all = snaps_of(&provider, &points);
+        let base = snaps_of(&provider, &points[..80]);
+        let new_stops: Vec<StopId> = (80..90).map(StopId::new).collect();
+        let grown = Arc::new(
+            built(&provider, &costing, &base, 1)
+                .with_new_stops(&provider, &costing, &all, &new_stops, &|| false)
+                .expect("grow")
+                .expect("not interrupted"),
+        );
+        let mut draw = StopTables::new(provider, costing.clone());
+        draw.bind(Arc::clone(&all)).expect("bind");
+        let mut drawn_backward = 0;
+        let mut transfers = TableTransfers::new(Arc::clone(&grown));
+        for from in 0..80_u32 {
+            let reached = search(
+                &mut transfers,
+                Direction::Forward,
+                &[seed(from, 0)],
+                i32::MAX,
+            );
+            for (to, arrival) in reached {
+                let walk = arrival.parent;
+                assert_eq!(walk.from.into_inner(), from);
+                if to < 80 {
+                    assert_eq!(walk.search, AccessSide::Access, "{name}: {from}->{to}");
+                    continue;
+                }
+                assert_eq!(walk.search, AccessSide::Egress, "{name}: {from}->{to}");
+                let seeds = draw.stop_seeds(walk.to).expect("seeds");
+                assert!(
+                    draw.search(&TableRequest {
+                        side: AccessSide::Egress,
+                        seeds: &seeds,
+                        max_seconds: walk.seconds,
+                        interrupt: &|| false,
+                    })
+                    .expect("draw")
+                );
+                let leg = draw.leg(walk.from).expect("drawn");
+                assert_eq!(
+                    leg.secs.round() as u32,
+                    walk.seconds,
+                    "{name}: {from}->{to}"
+                );
+                drawn_backward += 1;
+            }
+        }
+        assert!(drawn_backward > 0, "{name}: no walk came into a new stop");
+    }
+}
+
+/// A search's results at any limit are the unbounded search's results within that limit,
+/// route for route: nothing a limit does changes which route wins.
+#[test]
+fn a_tables_results_do_not_depend_on_its_limit() {
+    let sets = andorra();
+    let provider = &sets;
+    let mut limited_out = 0;
+    for name in ["pedestrian", "bicycle"] {
+        let costing = costing_named(name);
+        let points = random_stops(&provider, &TILES, 90, 43);
+        let snaps = snaps_of(&provider, &points);
+        let mut wide = StopTables::new(provider, costing.clone());
+        wide.bind(Arc::clone(&snaps)).expect("bind");
+        let mut narrow = StopTables::new(provider, costing.clone());
+        narrow.bind(Arc::clone(&snaps)).expect("bind");
+        for side in [AccessSide::Access, AccessSide::Egress] {
+            for origin in (0..90_u32).step_by(7) {
+                let stop = StopId::new(origin);
+                let seeds = wide.stop_seeds(stop).expect("seeds");
+                if seeds.is_empty() {
+                    continue;
+                }
+                let run = |tables: &mut StopTables<&TileSets, AnyCosting>, limit: u32| {
+                    assert!(
+                        tables
+                            .search(&TableRequest {
+                                side,
+                                seeds: &seeds,
+                                max_seconds: limit,
+                                interrupt: &|| false,
+                            })
+                            .expect("search")
+                    );
+                };
+                run(&mut wide, 7200);
+                let full: HashMap<StopId, (u32, Vec<_>)> = wide
+                    .reached_stops()
+                    .map(|(to, secs)| {
+                        let leg = wide.leg(to).expect("leg");
+                        (to, (secs.into_inner(), leg.edges))
+                    })
+                    .collect();
+                for limit in [30, 60, 120, 240, 480, 900, 1800, 3600] {
+                    run(&mut narrow, limit);
+                    let got: HashMap<StopId, (u32, Vec<_>)> = narrow
+                        .reached_stops()
+                        .map(|(to, secs)| {
+                            let leg = narrow.leg(to).expect("leg");
+                            (to, (secs.into_inner(), leg.edges))
+                        })
+                        .collect();
+                    limited_out += full.len() - got.len();
+                    let expected: HashMap<StopId, (u32, Vec<_>)> = full
+                        .iter()
+                        .filter(|(_, (secs, _))| *secs <= limit)
+                        .map(|(stop, value)| (*stop, value.clone()))
+                        .collect();
+                    assert_eq!(got, expected, "{name} {side:?} from {origin} at {limit}");
+                }
+            }
+        }
+    }
+    assert!(
+        limited_out > 0,
+        "no limit changed anything, so this tested nothing"
+    );
 }
 
 #[test]

@@ -587,9 +587,9 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
         else {
             return Ok(None);
         };
-        // The same search that filled the table, at the table's own bound, so it finds the same
-        // route. A shorter limit would be a different search: this search minimizes cost under a
-        // limit on seconds, so a limit that cuts off a label can change which route wins.
+        // The search that found this walk, so the drawn route matches its seconds: a walk from a
+        // base stop to a GTFS-RT new stop was found by a backward search from the new stop.
+        // The walk's own seconds are enough of a limit: results don't depend on the limit.
         self.mode_worker_transfer.bind(Arc::clone(
             request
                 .snapshot
@@ -597,22 +597,20 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
                 .ok_or(StreetError::NoSnaps)?
                 .for_mode(request.mode),
         ))?;
-        let max_seconds = request
-            .snapshot
-            .snaps()
-            .ok_or(StreetError::NoSnaps)?
-            .transfers_for_mode(request.mode)
-            .max_seconds();
-        let seeds = self.mode_worker_transfer.stop_seeds(walk.from)?;
+        let (seed_stop, target_stop) = match walk.search {
+            AccessSide::Access => (walk.from, walk.to),
+            AccessSide::Egress => (walk.to, walk.from),
+        };
+        let seeds = self.mode_worker_transfer.stop_seeds(seed_stop)?;
         if !self.mode_worker_transfer.search(&TableRequest {
-            side: AccessSide::Access,
+            side: walk.search,
             seeds: &seeds,
-            max_seconds,
+            max_seconds: walk.seconds,
             interrupt: self.interrupt,
         })? {
             return Ok(None);
         }
-        let Some(leg) = self.mode_worker_transfer.leg(walk.to) else {
+        let Some(leg) = self.mode_worker_transfer.leg(target_stop) else {
             return Ok(None);
         };
         let Some(thor_leg) = access_leg(&leg, sif_mode(self.mode), 0, 1, start, end) else {

@@ -7,11 +7,13 @@
 //!
 //! Forward and backward searches read the same entry for a directed pair of stops,
 //! so they agree by construction.
-//! The table holds only times; a transfer that ends up in a result is routed again to draw it,
-//! at the table's own bound: a shorter limit is a different search, whose cost-minimal route
-//! can be a different one, or be cut off where the table's wasn't.
+//! The table holds only times; a transfer that ends up in a result is routed again to draw it.
+//! The table search's results don't depend on its time limit (see [`crate::table`]),
+//! so a draw limited to the walk's own seconds finds the same route as the table's own search.
+//! A walk from a GTFS-RT new stop's backward search is drawn with that same backward search;
+//! [`TableWalk::search`] records which search found a walk.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::num::NonZeroUsize;
 use std::path::Path;
@@ -32,23 +34,6 @@ use crate::table::{AccessSide, StopTables, TableRequest};
 
 /// The default bound on a transfer, in seconds.
 pub const DEFAULT_TRANSFER_SECONDS: u32 = 900;
-
-/// How fast a walk can possibly go, in meters per second: Sif's largest edge speed, 252 km/h.
-///
-/// Costing has no faster edge, including ferries, which are charged at the edge's own speed.
-/// Far above what a walk reaches in practice, so a straight-line radius from it is conservative.
-const MAX_SPEED_METERS_PER_SECOND: f64 = 70.0;
-
-/// The spherical distance between two `(longitude, latitude)` points, a little under the ground's.
-fn great_circle_meters(a: (f64, f64), b: (f64, f64)) -> f64 {
-    /// A little under the mean radius, so the distance is never overestimated into an exclusion.
-    const EARTH_RADIUS_METERS: f64 = 6_335_000.0;
-    let (lat_a, lat_b) = (a.1.to_radians(), b.1.to_radians());
-    let half_lat = (lat_b - lat_a) / 2.0;
-    let half_lon = (b.0 - a.0).to_radians() / 2.0;
-    let h = half_lat.sin().powi(2) + lat_a.cos() * lat_b.cos() * half_lon.sin().powi(2);
-    2.0 * EARTH_RADIUS_METERS * h.sqrt().min(1.0).asin()
-}
 
 /// A walk to or from another stop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,6 +135,21 @@ struct SideTable {
     out: BTreeMap<u32, Vec<Hop>>,
     /// As `out`, for walks read backward.
     into: BTreeMap<u32, Vec<Hop>>,
+    /// The new stops added so far, to tell which walks came from a backward search.
+    new_stops: BTreeSet<u32>,
+}
+
+impl SideTable {
+    /// Which search found a side walk: one from a base stop to a new stop came from the new
+    /// stop's backward search, and any other from the new stop's forward search.
+    #[inline]
+    fn found_by(&self, from: u32, to: u32) -> AccessSide {
+        if self.new_stops.contains(&to) && !self.new_stops.contains(&from) {
+            AccessSide::Egress
+        } else {
+            AccessSide::Access
+        }
+    }
 }
 
 /// Every stop's walks to the stops within a bound, in both directions of lookup.
@@ -233,16 +233,17 @@ impl TransferTable {
     /// This table with an overlay's new stops added, for `snaps` that cover them.
     ///
     /// Base-to-base walks are kept as they are, in storage that is shared, not copied.
-    /// A walk to or from a new stop is found by the same forward search as [`Self::build`],
-    /// so a base stop's walk to a new stop is drawn exactly as it was tabled.
-    /// Those base stops are every one within the straight-line distance a rider could
-    /// possibly cover in the bound. New walks live in a small side table.
+    /// Each new stop runs one forward search from it, for walks from the new stop,
+    /// and one backward search from it, for walks from every other stop into the new one.
+    /// New walks live in a small side table.
+    /// Forward and backward Sif searches can settle on different routes (a tie, or a difference
+    /// in costing), so a walk found backward is drawn backward, by [`TableWalk::search`],
+    /// and a base-to-new walk won't always be the same as a full build's forward search.
     /// Returns `Ok(None)` if `interrupt` asks to stop.
     ///
     /// # Performance
     ///
-    /// Runs one search for each new stop and each base stop in range,
-    /// which in a metro area can be most of them. New stops are rare.
+    /// Two searches per new stop, however many stops the table has.
     ///
     /// # Errors
     ///
@@ -261,26 +262,26 @@ impl TransferTable {
     {
         let stop_count = snaps.stop_count().max(self.stop_count);
         let mut added: BTreeMap<u32, Vec<Hop>> = BTreeMap::new();
-        let is_new: std::collections::HashSet<u32> =
-            new_stops.iter().map(|s| s.into_inner()).collect();
+        let is_new: BTreeSet<u32> = new_stops.iter().map(|s| s.into_inner()).collect();
         let mut tables = StopTables::new(provider.clone(), costing.clone());
         tables.bind(Arc::clone(snaps))?;
         for &stop in new_stops {
-            let Some(hops) = self.walks_of(&mut tables, stop, interrupt)? else {
+            let new_stop = stop.into_inner();
+            let Some(out) = self.walks_around(&mut tables, stop, AccessSide::Access, interrupt)?
+            else {
                 return Ok(None);
             };
-            added.entry(stop.into_inner()).or_default().extend(hops);
-        }
-        for from in self.base_stops_in_reach(snaps, new_stops, &is_new, stop_count)? {
-            let Some(hops) = self.walks_of(&mut tables, from, interrupt)? else {
+            added.entry(new_stop).or_default().extend(out);
+            let Some(into) = self.walks_around(&mut tables, stop, AccessSide::Egress, interrupt)?
+            else {
                 return Ok(None);
             };
-            let new_hops: Vec<Hop> = hops
-                .into_iter()
-                .filter(|hop| is_new.contains(&hop.stop))
-                .collect();
-            if !new_hops.is_empty() {
-                added.entry(from.into_inner()).or_default().extend(new_hops);
+            // A walk between two new stops is the one the forward search of its origin found.
+            for hop in into.into_iter().filter(|hop| !is_new.contains(&hop.stop)) {
+                added.entry(hop.stop).or_default().push(Hop {
+                    stop: new_stop,
+                    seconds: hop.seconds,
+                });
             }
         }
         for hops in added.values_mut() {
@@ -288,6 +289,7 @@ impl TransferTable {
             hops.sort_unstable_by_key(|hop| hop.stop);
         }
         let mut side = self.side.as_deref().cloned().unwrap_or_default();
+        side.new_stops.extend(is_new);
         for (from, hops) in added {
             for &hop in &hops {
                 side.into.entry(hop.stop).or_default().push(Hop {
@@ -305,62 +307,31 @@ impl TransferTable {
         }))
     }
 
-    /// The walks a forward search finds from `from`, the way [`Self::build`] finds them.
-    fn walks_of<P, C>(
+    /// The walks a search from `stop` finds: forward (into other stops) or backward (from them).
+    fn walks_around<P, C>(
         &self,
         tables: &mut StopTables<P, C>,
-        from: StopId,
+        stop: StopId,
+        side: AccessSide,
         interrupt: &(dyn Fn() -> bool + Sync),
     ) -> Result<Option<Vec<Hop>>, WalkError>
     where
         P: GraphTileProvider,
         C: Costing,
     {
-        let seeds = tables.stop_seeds(from)?;
+        let seeds = tables.stop_seeds(stop)?;
         if seeds.is_empty() {
             return Ok(Some(Vec::new()));
         }
         if !tables.search(&TableRequest {
-            side: AccessSide::Access,
+            side,
             seeds: &seeds,
             max_seconds: self.max_seconds,
             interrupt: &|| interrupt(),
         })? {
             return Ok(None);
         }
-        Ok(Some(sorted_walks_from(tables, from)))
-    }
-
-    /// Base stops close enough to a new stop that a search from them might reach it.
-    fn base_stops_in_reach(
-        &self,
-        snaps: &StopSnaps,
-        new_stops: &[StopId],
-        is_new: &std::collections::HashSet<u32>,
-        stop_count: usize,
-    ) -> Result<Vec<StopId>, WalkError> {
-        let targets: Vec<(f64, f64)> = new_stops
-            .iter()
-            .filter_map(|&stop| snaps.point(stop).map(|point| point.point))
-            .collect();
-        let radius = f64::from(self.max_seconds) * MAX_SPEED_METERS_PER_SECOND;
-        let mut in_reach = Vec::new();
-        for stop in 0..stop_count {
-            let id = u32::try_from(stop).map_err(|_| WalkError::TooLarge)?;
-            if is_new.contains(&id) {
-                continue;
-            }
-            let Some(point) = snaps.point(StopId::new(id)) else {
-                continue;
-            };
-            if targets
-                .iter()
-                .any(|&target| great_circle_meters(point.point, target) <= radius)
-            {
-                in_reach.push(StopId::new(id));
-            }
-        }
-        Ok(in_reach)
+        Ok(Some(sorted_walks_from(tables, stop)))
     }
 
     /// Builds a table from walks already sorted by `(from, to)`, for loading precomputed tiles.
@@ -664,6 +635,13 @@ pub struct TableWalk {
     pub to: StopId,
     /// Its seconds in the table.
     pub seconds: u32,
+    /// Which search found this walk, and so how to draw it:
+    /// [`AccessSide::Access`] forward from `from`, or [`AccessSide::Egress`] backward from `to`.
+    ///
+    /// Forward and backward Sif searches can settle on different routes between the same stops,
+    /// so a walk must be drawn the way its time was computed. Base table walks are all forward;
+    /// a walk from a base stop to a GTFS-RT new stop comes from that new stop's backward search.
+    pub search: AccessSide,
 }
 
 /// A [`TransferSearch`] that reads a [`TransferTable`].
@@ -753,60 +731,72 @@ impl TransferSearch for TableTransfers {
         } else {
             table.incoming_columns()
         };
-        let side = table
-            .side
-            .as_deref()
-            .map(|side| if forward { &side.out } else { &side.into });
+        let side_table = table.side.as_deref();
+        let side = side_table.map(|side| if forward { &side.out } else { &side.into });
         let bound = request.upper_bound.seconds();
         let limit = self.limit;
         let epoch = self.epoch;
         let (stamps, best) = (&mut self.stamps, &mut self.best);
-        let mut visit = |source: StopId, clock: Clock, hop_stop: u32, hop_seconds: u32| {
-            if hop_seconds > limit {
-                return;
-            }
-            let Ok(cost) = i32::try_from(hop_seconds) else {
-                return;
+        let mut visit =
+            |source: StopId, clock: Clock, hop_stop: u32, hop_seconds: u32, from_side| {
+                if hop_seconds > limit {
+                    return;
+                }
+                let Ok(cost) = i32::try_from(hop_seconds) else {
+                    return;
+                };
+                let reached = clock.seconds().saturating_add(cost);
+                if reached >= bound {
+                    return;
+                }
+                let at = hop_stop as usize;
+                let (Some(stamp), Some(best)) = (stamps.get_mut(at), best.get_mut(at)) else {
+                    return;
+                };
+                if *stamp == epoch && *best <= reached {
+                    return;
+                }
+                *stamp = epoch;
+                *best = reached;
+                let stop = StopId::new(hop_stop);
+                let (from, to) = if forward {
+                    (source, stop)
+                } else {
+                    (stop, source)
+                };
+                let search = match side_table {
+                    Some(side_table) if from_side => {
+                        side_table.found_by(from.into_inner(), to.into_inner())
+                    }
+                    _ => AccessSide::Access,
+                };
+                sink.reach(TransferArrival {
+                    stop,
+                    source,
+                    clock: Clock::new(reached),
+                    parent: TableWalk {
+                        from,
+                        to,
+                        seconds: hop_seconds,
+                        search,
+                    },
+                });
             };
-            let reached = clock.seconds().saturating_add(cost);
-            if reached >= bound {
-                return;
-            }
-            let at = hop_stop as usize;
-            let (Some(stamp), Some(best)) = (stamps.get_mut(at), best.get_mut(at)) else {
-                return;
-            };
-            if *stamp == epoch && *best <= reached {
-                return;
-            }
-            *stamp = epoch;
-            *best = reached;
-            let stop = StopId::new(hop_stop);
-            let (from, to) = if forward {
-                (source, stop)
-            } else {
-                (stop, source)
-            };
-            sink.reach(TransferArrival {
-                stop,
-                source,
-                clock: Clock::new(reached),
-                parent: TableWalk {
-                    from,
-                    to,
-                    seconds: hop_seconds,
-                },
-            });
-        };
         for seed in request.seeds {
             let source = seed.stop.into_inner();
             let (stops, seconds) = rows.of(source as usize);
             for (stop, second) in stops.iter().zip(seconds) {
-                visit(seed.stop, seed.clock, stop.get(), u32::from(second.get()));
+                visit(
+                    seed.stop,
+                    seed.clock,
+                    stop.get(),
+                    u32::from(second.get()),
+                    false,
+                );
             }
             if let Some(extra) = side.and_then(|side| side.get(&source)) {
                 for hop in extra {
-                    visit(seed.stop, seed.clock, hop.stop, hop.seconds);
+                    visit(seed.stop, seed.clock, hop.stop, hop.seconds, true);
                 }
             }
         }

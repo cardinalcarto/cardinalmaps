@@ -514,7 +514,8 @@ fn a_stop_within_the_limit_on_an_edge_ending_beyond_it_is_kept() {
         if leg.end_percent >= 0.8 || last.traversal.secs < 1.0 || leg.edges.len() < 2 {
             continue;
         }
-        let limit = leg.secs.ceil() as u32 + 1;
+        // The stop's own whole seconds: the limit is on the entry, so this admits it exactly.
+        let limit = leg.secs.round() as u32;
         let table = tables
             .compute(
                 snaps.stop_count(),
