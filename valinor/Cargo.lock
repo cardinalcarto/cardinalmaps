@@ -3035,6 +3035,7 @@ dependencies = [
  "thiserror 2.0.21",
  "valhalla-graphtile",
  "valhalla-proto",
+ "valinor-gtfs",
  "valinor-loki",
  "valinor-router",
  "valinor-sif",
