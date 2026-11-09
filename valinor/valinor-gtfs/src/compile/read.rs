@@ -261,11 +261,11 @@ fn read_agencies(
             report.warn(|| format!("duplicate agency_id {gtfs_id:?}"));
         }
         agencies.push(AgencyModel {
-            gtfs_id: pool.intern(gtfs_id),
-            name: pool.intern(field(&row, Some(name))),
-            url: pool.intern(field(&row, url)),
-            phone: pool.intern(field(&row, phone)),
-            fare_url: pool.intern(field(&row, fare_url)),
+            gtfs_id: pool.intern(gtfs_id)?,
+            name: pool.intern(field(&row, Some(name)))?,
+            url: pool.intern(field(&row, url))?,
+            phone: pool.intern(field(&row, phone))?,
+            fare_url: pool.intern(field(&row, fare_url))?,
             timezone: zone.to_owned(),
         });
     }
@@ -407,7 +407,7 @@ fn expand_service(
         dates.retain(|day| day.year() >= 1970);
     }
     fit_to_format(id, &mut dates, report)?;
-    let gtfs_id = pool.intern(id);
+    let gtfs_id = pool.intern(id)?;
 
     let (Some(first), Some(last)) = (dates.first(), dates.last()) else {
         return Ok(ServiceModel {
@@ -552,12 +552,12 @@ fn read_routes(
         let index = index_of(routes.len(), "routes")?;
         ids.insert(gtfs_id.to_owned(), index);
         routes.push(RouteModel {
-            gtfs_id: pool.intern(gtfs_id),
+            gtfs_id: pool.intern(gtfs_id)?,
             agency,
-            short_name: pool.intern(field(&row, short)),
-            long_name: pool.intern(field(&row, long)),
-            desc: pool.intern(field(&row, desc)),
-            url: pool.intern(field(&row, url)),
+            short_name: pool.intern(field(&row, short))?,
+            long_name: pool.intern(field(&row, long))?,
+            desc: pool.intern(field(&row, desc))?,
+            url: pool.intern(field(&row, url))?,
             route_type: kind,
             color: parse_color(field(&row, color)),
             text_color: parse_color(field(&row, text_color)),
@@ -643,10 +643,10 @@ fn read_stops(
         };
         rows.push(StopRow {
             model: StopModel {
-                gtfs_id: pool.intern(gtfs_id),
-                name: pool.intern(field(&record, name)),
-                code: pool.intern(field(&record, code)),
-                platform: pool.intern(field(&record, platform)),
+                gtfs_id: pool.intern(gtfs_id)?,
+                name: pool.intern(field(&record, name))?,
+                code: pool.intern(field(&record, code))?,
+                platform: pool.intern(field(&record, platform))?,
                 coordinate,
                 parent: None,
                 timezone: field(&record, zone).to_owned(),
@@ -878,7 +878,7 @@ fn read_shapes(
                 });
             }
         }
-        let gtfs_id = pool.intern(&id);
+        let gtfs_id = pool.intern(&id)?;
         let index = index_of(index, "shapes")?;
         shapes.insert(
             id,
@@ -969,7 +969,7 @@ fn read_version(
     };
     let mut row = ByteRecord::new();
     if table.read(&mut row, report)? {
-        return Ok(pool.intern(field(&row, Some(version))));
+        return pool.intern(field(&row, Some(version)));
     }
     Ok(0)
 }
@@ -1074,12 +1074,12 @@ fn read_trips(
                 _ => DIRECTION_NONE,
             };
             headers.push(TripHeader {
-                gtfs_id: pool.intern(id),
+                gtfs_id: pool.intern(id)?,
                 route,
                 service,
                 shape,
-                headsign: pool.intern(field(&row, headsign)),
-                block: pool.intern(field(&row, block)),
+                headsign: pool.intern(field(&row, headsign))?,
+                block: pool.intern(field(&row, block))?,
                 bikes: tri_state(field(&row, bikes)),
                 wheelchair: tri_state(field(&row, wheelchair)),
                 direction,
@@ -1150,7 +1150,7 @@ fn read_trips(
                 departure,
                 pickup: rule_type(field(&row, pickup)),
                 drop_off: rule_type(field(&row, drop_off)),
-                headsign: pool.intern(stop_headsign),
+                headsign: pool.intern(stop_headsign)?,
                 shape_dist: field(&row, dist)
                     .parse::<f32>()
                     .ok()

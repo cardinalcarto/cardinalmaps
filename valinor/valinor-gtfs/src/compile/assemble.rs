@@ -35,34 +35,25 @@ pub(crate) struct StringPool {
 
 impl StringPool {
     pub(crate) fn new() -> Self {
-        let mut pool = Self {
-            index: HashMap::new(),
+        // Index zero is the empty string, which absent fields point at.
+        Self {
+            index: HashMap::from([(String::new(), 0)]),
             data: String::new(),
-            offsets: vec![0],
-        };
-        // Index zero must be the empty string, which absent fields point at.
-        pool.intern_inner("");
-        pool
+            offsets: vec![0, 0],
+        }
     }
 
     /// The index of `text` in the pool, adding it if new.
-    pub(crate) fn intern(&mut self, text: &str) -> u32 {
-        if text.is_empty() {
-            return 0;
-        }
-        self.intern_inner(text)
-    }
-
-    fn intern_inner(&mut self, text: &str) -> u32 {
+    pub(crate) fn intern(&mut self, text: &str) -> Result<u32, CompileError> {
         if let Some(&index) = self.index.get(text) {
-            return index;
+            return Ok(index);
         }
-        let index = u32::try_from(self.offsets.len() - 1).unwrap_or(NONE);
+        let index = table_index(self.offsets.len() - 1, "strings")?;
+        let end = table_index(self.data.len() + text.len(), "strings")?;
         self.data.push_str(text);
-        self.offsets
-            .push(u32::try_from(self.data.len()).unwrap_or(NONE));
+        self.offsets.push(end);
         self.index.insert(text.to_owned(), index);
-        index
+        Ok(index)
     }
 
     fn get(&self, index: u32) -> &str {
@@ -124,7 +115,7 @@ pub(super) fn assemble(
         let route_base = table_index(routes.len(), "routes")?;
         let service_base = table_index(services_table.len(), "services")?;
         feed_rows.push(FeedRow {
-            id: U32::new(pool.intern(&feed.id)),
+            id: U32::new(pool.intern(&feed.id)?),
             version: U32::new(feed.version),
             zone: U32::new(tz),
             first_service_date: U32::new(first_service_date(feed)),
@@ -232,7 +223,7 @@ pub(super) fn assemble(
     let mut route_patterns_table: Vec<U32> = Vec::new();
     for (route_index_value, route) in routes.iter_mut().enumerate() {
         let list = route_pattern_lists
-            .get(&(u32::try_from(route_index_value).unwrap_or(NONE)))
+            .get(&table_index(route_index_value, "routes")?)
             .map_or(&[][..], Vec::as_slice);
         route.patterns_start = U32::new(
             u32::try_from(route_patterns_table.len())
@@ -262,7 +253,7 @@ pub(super) fn assemble(
         stop_index.push(IdIndexRow {
             feed: stop.feed,
             id: stop.gtfs_id,
-            row: U32::new(u32::try_from(row).unwrap_or(NONE)),
+            row: U32::new(table_index(row, "stops")?),
         });
     }
 
@@ -274,7 +265,7 @@ pub(super) fn assemble(
         route_index.push(IdIndexRow {
             feed: route.feed,
             id: route.gtfs_id,
-            row: U32::new(u32::try_from(index).unwrap_or(NONE)),
+            row: U32::new(table_index(index, "routes")?),
         });
     }
     sort_index(&mut route_index, &pool);
@@ -332,7 +323,7 @@ fn build_shape_tables(feeds: &[FeedModel]) -> Result<ShapeTables, CompileError> 
     let mut shape_points = Vec::new();
     let mut shape_bases = Vec::with_capacity(feeds.len());
     for (feed_index, feed) in feeds.iter().enumerate() {
-        shape_bases.push(u32::try_from(shapes_table.len()).unwrap_or(NONE));
+        shape_bases.push(table_index(shapes_table.len(), "shapes")?);
         for shape in &feed.shapes {
             let points_start = u32::try_from(shape_points.len())
                 .map_err(|_| CompileError::TableTooLarge("shape points"))?;
@@ -344,7 +335,7 @@ fn build_shape_tables(feeds: &[FeedModel]) -> Result<ShapeTables, CompileError> 
                 });
             }
             shapes_table.push(ShapeRow {
-                feed: U32::new(u32::try_from(feed_index).unwrap_or(NONE)),
+                feed: U32::new(table_index(feed_index, "feeds")?),
                 gtfs_id: U32::new(shape.gtfs_id),
                 points_start: U32::new(points_start),
                 point_count: U32::new(
@@ -541,7 +532,7 @@ impl ZoneTable {
             .map_err(|_| CompileError::TableTooLarge("zone transitions"))?;
 
         self.rows.push(ZoneRow {
-            name: U32::new(pool.intern(name)),
+            name: U32::new(pool.intern(name)?),
             transitions_start: U32::new(transitions_start),
             transition_count: U32::new(transition_count),
         });
@@ -711,7 +702,7 @@ fn number_stops(
             RouteAttributes::NONE
         };
         let key = builder.add_pattern(&keys, attributes)?;
-        for (position, &trip_index) in pattern.trips.iter().enumerate() {
+        for &trip_index in &pattern.trips {
             let trip = &feeds[pattern.feed].trips[trip_index];
             let mut times = Vec::with_capacity(trip.times.len());
             for (index, (arrival, departure)) in trip.times.iter().enumerate() {
@@ -721,8 +712,8 @@ fn number_stops(
                     rules: stop_rules(trip.rules[index]),
                 });
             }
-            let id = TripId::new(u32::try_from(position).unwrap_or(0));
-            builder.add_trip(key, id, ServiceId::new(0), times)?;
+            // Numbering stops doesn't read trip identifiers.
+            builder.add_trip(key, TripId::new(0), ServiceId::new(0), times)?;
         }
     }
 
@@ -977,9 +968,9 @@ fn build_stop_rows(
                 .by_name
                 .get(stop.timezone.as_str())
                 .copied()
-                .unwrap_or(0);
+                .ok_or_else(|| CompileError::UnknownTimeZone(stop.timezone.clone()))?;
             rows[location] = StopRow {
-                feed: U32::new(u32::try_from(feed_index).unwrap_or(NONE)),
+                feed: U32::new(table_index(feed_index, "feeds")?),
                 gtfs_id: U32::new(stop.gtfs_id),
                 name: U32::new(stop.name),
                 code: U32::new(stop.code),
@@ -1014,4 +1005,28 @@ fn build_stop_rows(
         children.extend(list.iter().map(|&value| U32::new(value)));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_table_past_u32_is_an_error() {
+        assert_eq!(table_index(7, "t").expect("fits"), 7);
+        assert!(matches!(
+            table_index(1 << 32, "t"),
+            Err(CompileError::TableTooLarge("t"))
+        ));
+    }
+
+    #[test]
+    fn the_empty_string_is_index_zero() {
+        let mut pool = StringPool::new();
+        assert_eq!(pool.intern("").expect("intern"), 0);
+        assert_eq!(pool.intern("a").expect("intern"), 1);
+        assert_eq!(pool.intern("a").expect("intern"), 1);
+        assert_eq!(pool.get(1), "a");
+        assert_eq!(pool.get(0), "");
+    }
 }
