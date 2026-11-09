@@ -1649,6 +1649,132 @@ fn compare_final_round(
     Ok(())
 }
 
+/// Times access and egress `StopTables` alone, per query, and what they retain, as the plan
+/// layer holds them: one for access and one for egress.
+#[allow(clippy::too_many_arguments, reason = "a reporting tool")]
+fn report_stop_tables(
+    provider: Provider,
+    costing: &AnyCosting,
+    snaps: &Arc<StopSnaps>,
+    env: &Env,
+    samples: &[Sample],
+    cold: usize,
+    warmup: usize,
+    dump: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    type Tables = StopTables<Provider, AnyCosting>;
+    let stop_count = env.snapshot.stop_count();
+    let bound = || -> Result<(Tables, Tables, f64), Box<dyn Error>> {
+        let (mut access, mut egress) = (
+            StopTables::new(provider, costing.clone()),
+            StopTables::new(provider, costing.clone()),
+        );
+        let started = Instant::now();
+        access.bind(snaps.clone())?;
+        egress.bind(snaps.clone())?;
+        Ok((access, egress, started.elapsed().as_secs_f64() * 1000.0))
+    };
+    let compute = |access: &mut Tables,
+                   egress: &mut Tables,
+                   sample: Sample|
+     -> Result<(StopTable, StopTable, f64), Box<dyn Error>> {
+        let origin = seeds_at(env.provider, worker_point(env, sample.from)?)?;
+        let target = seeds_at(env.provider, worker_point(env, sample.to)?)?;
+        let request = |side, seeds| TableRequest {
+            side,
+            seeds,
+            max_seconds: env.max_walk,
+            interrupt: &|| false,
+        };
+        let started = Instant::now();
+        let a = access
+            .compute(stop_count, &request(AccessSide::Access, &origin))?
+            .ok_or("interrupted")?;
+        let e = egress
+            .compute(stop_count, &request(AccessSide::Egress, &target))?
+            .ok_or("interrupted")?;
+        Ok((a, e, started.elapsed().as_secs_f64() * 1000.0))
+    };
+    let total =
+        |tables: &Tables| -> usize { tables.memory_parts().iter().map(|(_, bytes)| bytes).sum() };
+
+    let mut cold_ms = Vec::new();
+    let mut bind_ms = Vec::new();
+    for sample in samples.iter().take(cold) {
+        let (mut access, mut egress, bind) = bound()?;
+        bind_ms.push(bind);
+        let (_, _, ms) = compute(&mut access, &mut egress, *sample)?;
+        cold_ms.push(ms);
+    }
+
+    let (mut access, mut egress, _) = bound()?;
+    for sample in samples.iter().take(warmup) {
+        compute(&mut access, &mut egress, *sample)?;
+    }
+    let mut out = dump
+        .map(|path| std::fs::File::create(path).map(std::io::BufWriter::new))
+        .transpose()?;
+    let mut warm_ms = Vec::new();
+    let mut labels = 0u64;
+    let mut peak = 0usize;
+    for (query, sample) in samples.iter().enumerate() {
+        let (a, e, ms) = compute(&mut access, &mut egress, *sample)?;
+        warm_ms.push(ms);
+        labels += access.stats().labels_settled + egress.stats().labels_settled;
+        peak = peak.max(total(&access)).max(total(&egress));
+        if let Some(out) = out.as_mut() {
+            use std::hash::{Hash, Hasher};
+            use std::io::Write as _;
+            for (name, table, tables) in [("a", &a, &access), ("e", &e, &egress)] {
+                for index in 0..stop_count {
+                    let stop = StopId::new(index as u32);
+                    let Some(cost) = table.cost(stop) else {
+                        continue;
+                    };
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    format!("{:?}", tables.leg(stop)).hash(&mut hasher);
+                    writeln!(
+                        out,
+                        "{query} {name} {index} {} {:016x}",
+                        cost.into_inner(),
+                        hasher.finish()
+                    )?;
+                }
+            }
+        }
+    }
+    if let Some(mut out) = out {
+        use std::io::Write as _;
+        out.flush()?;
+    }
+    warm_ms.sort_by(f64::total_cmp);
+    cold_ms.sort_by(f64::total_cmp);
+    println!(
+        "tables: warm n={} p50 {:.1} p95 {:.1} max {:.1} ms; cold n={} p50 {:.1} p95 {:.1} ms; \
+         bind {:.1} ms; labels settled per query {:.0}",
+        warm_ms.len(),
+        percentile(&warm_ms, 0.5),
+        percentile(&warm_ms, 0.95),
+        warm_ms.last().copied().unwrap_or(f64::NAN),
+        cold_ms.len(),
+        percentile(&cold_ms, 0.5),
+        percentile(&cold_ms, 0.95),
+        bind_ms.iter().sum::<f64>() / bind_ms.len().max(1) as f64,
+        labels as f64 / warm_ms.len() as f64,
+    );
+    for (label, tables) in [("access", &access), ("egress", &egress)] {
+        println!("retained by {label}: {:.2} MB", total(tables) as f64 / 1e6);
+        for (name, bytes) in tables.memory_parts() {
+            println!("  {name:<16} {:>8.2} MB", bytes as f64 / 1e6);
+        }
+    }
+    println!(
+        "peak retained by one StopTables across queries: {:.2} MB",
+        peak as f64 / 1e6
+    );
+    Ok(())
+}
+
 static SNAP_POINTS: std::sync::OnceLock<Vec<Option<SnapPoint>>> = std::sync::OnceLock::new();
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -1695,7 +1821,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         started.elapsed()
     );
 
-    let costing = costing_named("pedestrian")?;
+    let costing_name = flags.string("costing", "pedestrian");
+    let costing = costing_named(&costing_name)?;
     let tile_sets = TileSets::open(&[tiles.as_str()], NonZeroUsize::new(1024).ok_or("nonzero")?)?;
     let provider: Provider = Box::leak(Box::new(tile_sets));
 
@@ -1765,6 +1892,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     if flags.present("compare") {
         return compare_configurations(&env, provider, &costing, &snaps, &samples);
+    }
+
+    if flags.present("tables-report") {
+        return report_stop_tables(
+            provider,
+            &costing,
+            &snaps,
+            &env,
+            &samples,
+            cold,
+            warmup,
+            flags.0.get("dump-tables").map(String::as_str),
+        );
     }
 
     let canary_sample = samples[0];
