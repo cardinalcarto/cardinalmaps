@@ -115,3 +115,35 @@ The ZeroMQ workers remain for splicing stages into the mainline oracle.
 1. **Cancellation.** Ferrostar may supersede a reroute while it is still running.
    Loki doesn't check interrupts yet, and offline routes over region-sized graphs should be fast,
    so v1 has no cancellation. Adding a cancel token to `route` later is a compatible change.
+
+## Public transit on the device
+
+Transit planning runs through `api::transit::OfflineTransit`, beside the router above:
+
+```rust
+impl OfflineTransit {
+    /// A compiled timetable (from `valinor-gtfs`) over the same tile sets.
+    /// Takes a few seconds: every stop is snapped for walking and for cycling.
+    pub fn open(timetable: String, tile_sets: Vec<String>) -> Result<OfflineTransit, TransitOpenError>;
+
+    /// JSON request bytes (the body of the server's `POST /transit/plan`),
+    /// with whatever GTFS-RT bytes the app holds, per feed.
+    pub fn plan(&self, request: Vec<u8>, feeds: Vec<TransitFeed>) -> TransitResponse;
+
+    /// A vehicle's latest state, as the server's vehicle lookup returns it.
+    pub fn vehicle(&self, feed: String, id: String) -> TransitResponse;
+}
+```
+
+- The app fetches GTFS-RT itself and passes the bytes in;
+  the routing crates never reach the network, and a feed that doesn't decode degrades to the
+  schedule and is reported in the response.
+  A feed omitted from a call stays as it was until it ages out.
+- Requests and responses are the server's JSON, from `valinor-transit-plan`.
+  A response has `journeys`, each with access, transit, transfer, and egress legs;
+  walking and cycling legs carry a `walk` with a polyline6 `shape`, distance, duration,
+  and `maneuvers`, and each response states every feed's age in `realtime`.
+- A walking leg next to a moved stop has `stop_moved`: `STOP_MOVED` alerts give the
+  temporary location only as prose, so show that text beside the walk.
+  The transit leg's alert also names the affected stop in `moved_stops`.
+- Not `#[frb(sync)]`: planning runs on flutter_rust_bridge's worker pool.

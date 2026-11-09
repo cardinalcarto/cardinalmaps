@@ -10,11 +10,15 @@ crate-type = ["cdylib", "staticlib", "lib"]
 [dependencies]
 ferrostar = { version = "0.59.0", default-features = false, features = ["std"] }
 flutter_rust_bridge = "=2.13.0"
+valinor-gtfs = { path = "../../valinor/valinor-gtfs", default-features = false }
+valinor-gtfs-rt = { path = "../../valinor/valinor-gtfs-rt" }
 valinor-router = { version = "0.1.0", path = "../../valinor/valinor-router" }
+valinor-transit-plan = { path = "../../valinor/valinor-transit-plan" }
 valinor-thor = { version = "0.1.0", path = "../../valinor/valinor-thor" }
 
 [dev-dependencies]
 serde_json = "1"
+valinor-gtfs = { path = "../../valinor/valinor-gtfs" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
