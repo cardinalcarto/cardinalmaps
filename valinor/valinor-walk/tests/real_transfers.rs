@@ -383,8 +383,7 @@ fn forward_and_backward_agree_on_real_streets() {
     }
 }
 
-/// The table entry's route, drawn again: the same search at the table's bound,
-/// and at the walk's own seconds, since the search's result doesn't depend on the limit.
+/// The table entry's route, drawn again by a search stopped at its target.
 #[test]
 #[ignore = "needs /mnt/maps/cardinal data"]
 fn a_draw_is_the_tables_route_on_real_streets() {
@@ -399,7 +398,7 @@ fn a_draw_is_the_tables_route_on_real_streets() {
         table_search.bind(Arc::clone(&snaps)).expect("bind");
         draw.bind(Arc::clone(&snaps)).expect("bind");
         let (mut checked, mut missing, mut secs_off, mut edges_off) = (0, 0, 0, 0);
-        let (mut at_bound, mut at_walk) = (0.0_f64, 0.0_f64);
+        let mut drawing = 0.0_f64;
         for from in 0..snaps.stop_count() as u32 {
             let from_id = StopId::new(from);
             let seeds = table_search.stop_seeds(from_id).expect("seeds");
@@ -419,45 +418,33 @@ fn a_draw_is_the_tables_route_on_real_streets() {
                 .map(|(to, s)| (to, s.into_inner()))
                 .collect();
             for (i, (to, seconds)) in reached.into_iter().enumerate() {
-                // Bicycles reach many more stops, and each pair costs two full searches.
+                // Bicycles reach many more stops.
                 if i % (if name == "bicycle" { 27 } else { 9 }) != 0 {
                     continue;
                 }
                 let leg = table_search.leg(to).expect("table leg");
-                for (bound_search, max_seconds) in [(true, 900), (false, seconds)] {
-                    let started = Instant::now();
-                    let limited = TableRequest {
-                        max_seconds,
-                        ..request
-                    };
-                    assert!(draw.search(&limited).expect("draw"));
-                    let elapsed = started.elapsed().as_secs_f64();
-                    if bound_search {
-                        at_bound += elapsed;
-                    } else {
-                        at_walk += elapsed;
-                    }
-                    checked += 1;
-                    let Some(drawn) = draw.leg(to) else {
-                        missing += 1;
-                        continue;
-                    };
-                    if drawn.secs.round() as u32 != seconds {
-                        secs_off += 1;
-                    }
-                    let a: Vec<_> = leg.edges.iter().map(|e| e.edge).collect();
-                    let b: Vec<_> = drawn.edges.iter().map(|e| e.edge).collect();
-                    if a != b {
-                        edges_off += 1;
-                    }
+                let started = Instant::now();
+                assert!(draw.search_to_stop(&request, to).expect("draw"));
+                drawing += started.elapsed().as_secs_f64();
+                checked += 1;
+                let Some(drawn) = draw.leg(to) else {
+                    missing += 1;
+                    continue;
+                };
+                if drawn.secs.round() as u32 != seconds {
+                    secs_off += 1;
+                }
+                let a: Vec<_> = leg.edges.iter().map(|e| e.edge).collect();
+                let b: Vec<_> = drawn.edges.iter().map(|e| e.edge).collect();
+                if a != b {
+                    edges_off += 1;
                 }
             }
         }
-        let per = |total: f64| 2000.0 * total / checked.max(1) as f64;
         eprintln!(
-            "{name}: draws {checked}, not drawn {missing}, seconds differ {secs_off},              route differs {edges_off}; per draw {:.2} ms at the bound, {:.2} ms at the walk's              own seconds",
-            per(at_bound),
-            per(at_walk)
+            "{name}: draws {checked}, not drawn {missing}, seconds differ {secs_off}, \
+             route differs {edges_off}; per draw {:.2} ms",
+            1000.0 * drawing / checked.max(1) as f64
         );
         assert_eq!((missing, secs_off, edges_off), (0, 0, 0), "{name}");
     }
@@ -584,6 +571,7 @@ fn table_search_costs_on_real_streets() {
             ("access", AccessSide::Access, false),
             ("egress", AccessSide::Egress, false),
             ("transfer", AccessSide::Access, true),
+            ("draw", AccessSide::Access, true),
         ];
         for limit in [900_u32, 1800] {
             for &(kind, side, at_stop) in &sides {
@@ -594,17 +582,28 @@ fn table_search_costs_on_real_streets() {
                            q: &(Vec<TableSeed>, Vec<TableSeed>)|
                  -> (f64, u64, usize, bool) {
                     let seeds = seeds_of(q);
+                    let request = TableRequest {
+                        side,
+                        seeds: &seeds,
+                        max_seconds: limit,
+                        interrupt: &|| false,
+                    };
+                    let target = (kind == "draw").then(|| {
+                        assert!(tables.search(&request).expect("table"));
+                        let mut reached: Vec<_> = tables.reached_stops().collect();
+                        reached.sort_by_key(|&(_, secs)| secs.into_inner());
+                        reached.get(reached.len() / 2).map(|&(stop, _)| stop)
+                    });
+                    if target == Some(None) {
+                        return (0.0, 0, 0, false);
+                    }
                     let started = Instant::now();
-                    assert!(
-                        tables
-                            .search(&TableRequest {
-                                side,
-                                seeds: &seeds,
-                                max_seconds: limit,
-                                interrupt: &|| false,
-                            })
-                            .expect("search")
-                    );
+                    match target.flatten() {
+                        Some(stop) => {
+                            assert!(tables.search_to_stop(&request, stop).expect("draw"));
+                        }
+                        None => assert!(tables.search(&request).expect("search")),
+                    }
                     let ms = started.elapsed().as_secs_f64() * 1000.0;
                     (
                         ms,
@@ -687,7 +686,7 @@ fn new_stop_cost_on_real_streets() {
 #[test]
 #[ignore = "needs TRANSFER_DIFF_BEFORE and TRANSFER_DIFF_AFTER"]
 fn transfer_build_differences() {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::HashMap;
     use valinor_walk::transfer_tile::{DecodeLimits, TransferMode, decode_tile};
     let before = PathBuf::from(std::env::var("TRANSFER_DIFF_BEFORE").expect("before"));
     let after = PathBuf::from(std::env::var("TRANSFER_DIFF_AFTER").expect("after"));
@@ -710,51 +709,51 @@ fn transfer_build_differences() {
         }
         walks
     }
+    fn band(seconds: u32) -> usize {
+        match seconds {
+            0..=299 => 0,
+            300..=599 => 1,
+            600..=889 => 2,
+            _ => 3,
+        }
+    }
+    const BANDS: [&str; 4] = ["<5min", "5-10min", "10-14.8min", ">=14.8min"];
     for mode in [TransferMode::Walking, TransferMode::Cycling] {
         let b = load(&before, mode);
         let a = load(&after, mode);
-        let (mut same, mut lost, mut gained, mut faster, mut slower) = (0_u64, 0, 0, 0, 0);
-        let mut delta_hist: BTreeMap<i32, u64> = BTreeMap::new();
-        let mut gained_at_bound = 0_u64;
-        let mut lost_at_bound = 0_u64;
+        let (mut same, mut lost, mut gained, mut down, mut up) =
+            ([0_u64; 4], [0_u64; 4], [0_u64; 4], [0_u64; 4], [0_u64; 4]);
+        let mut short_lost = Vec::new();
         for (key, &seconds) in &b {
+            let at = band(seconds);
             match a.get(key) {
                 None => {
-                    lost += 1;
-                    lost_at_bound += u64::from(seconds >= 890);
-                }
-                Some(&now) if now == seconds => same += 1,
-                Some(&now) => {
-                    let delta = now as i32 - seconds as i32;
-                    if delta < 0 {
-                        faster += 1;
-                    } else {
-                        slower += 1;
+                    lost[at] += 1;
+                    if at == 0 {
+                        short_lost.push((*key, seconds));
                     }
-                    let bucket = match delta.abs() {
-                        0..=1 => delta.signum(),
-                        2..=5 => 5 * delta.signum(),
-                        6..=30 => 30 * delta.signum(),
-                        31..=120 => 120 * delta.signum(),
-                        _ => 9999 * delta.signum(),
-                    };
-                    *delta_hist.entry(bucket).or_default() += 1;
                 }
+                Some(&now) if now == seconds => same[at] += 1,
+                Some(&now) if now < seconds => down[at] += 1,
+                Some(_) => up[at] += 1,
             }
         }
         for (key, &seconds) in &a {
             if !b.contains_key(key) {
-                gained += 1;
-                gained_at_bound += u64::from(seconds >= 890);
+                gained[band(seconds)] += 1;
             }
         }
+        eprintln!("{}: before {} after {}", mode.as_str(), b.len(), a.len());
+        for (i, name) in BANDS.iter().enumerate() {
+            eprintln!(
+                "  {name}: same {} lost {} gained {} seconds down {} up {}",
+                same[i], lost[i], gained[i], down[i], up[i]
+            );
+        }
+        short_lost.sort_unstable();
         eprintln!(
-            "{}: before {} after {}; same {same}, lost {lost} (at the bound {lost_at_bound}), \
-             gained {gained} (at the bound {gained_at_bound}), seconds down {faster}, up {slower}; \
-             change histogram {delta_hist:?}",
-            mode.as_str(),
-            b.len(),
-            a.len()
+            "  lost under 5 minutes: {:?}",
+            &short_lost[..short_lost.len().min(20)]
         );
     }
 }
