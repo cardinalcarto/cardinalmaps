@@ -142,7 +142,6 @@ pub fn assemble_transfer_table<'a>(
             return Err(TileLoadError::HeaderMismatch);
         }
         report.tiles += 1;
-        walks.reserve(tile.walk_count());
         for (origin_feed, origin_stop, row) in tile.rows() {
             let Some(origin_placement) = placement_of(&feeds, origin_feed) else {
                 report.walks_from_absent_feeds += row.len();

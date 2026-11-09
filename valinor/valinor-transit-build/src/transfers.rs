@@ -517,9 +517,9 @@ fn build_tile(
         context.max_seconds,
         &rows_view,
     )?;
-    let raw = tile.to_bytes()?;
+    let raw = tile.as_bytes();
     let compressed =
-        zstd::bulk::compress(&raw, context.options.zstd_level).map_err(BuildError::Compress)?;
+        zstd::bulk::compress(raw, context.options.zstd_level).map_err(BuildError::Compress)?;
     let path = tile_path(context.staging, context.mode, job.x, job.y);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| BuildError::Write {
