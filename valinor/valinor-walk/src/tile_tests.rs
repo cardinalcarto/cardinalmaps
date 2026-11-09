@@ -92,6 +92,7 @@ fn run_search<P: GraphTileProvider, C: Costing>(
         direction,
         seeds,
         upper_bound: Clock::new(upper_bound),
+        change_margin: TransferRequest::REPORT_ALL,
         interrupt: &|| false,
     };
     let outcome = search.search(&request, &mut sink).expect("search");
@@ -478,6 +479,7 @@ fn interrupts_stop_the_search() {
         direction: Direction::Forward,
         seeds: &seeds,
         upper_bound: Clock::new(i32::MAX / 2),
+        change_margin: TransferRequest::REPORT_ALL,
         interrupt: &|| true,
     };
     let outcome = search.search(&request, &mut sink).expect("search");
@@ -1252,6 +1254,7 @@ fn bench_row<P: GraphTileProvider, C: Costing>(
             direction: dir,
             seeds: &seeds,
             upper_bound: Clock::new(upper_bound),
+            change_margin: TransferRequest::REPORT_ALL,
             interrupt: &|| false,
         };
         search.begin_run(dir);
@@ -1309,6 +1312,7 @@ fn benchmark_king_county_multi_source_searches() {
         direction: Direction::Forward,
         seeds: &cold_seeds,
         upper_bound: Clock::new(3600),
+        change_margin: TransferRequest::REPORT_ALL,
         interrupt: &|| false,
     };
     search.begin_run(Direction::Forward);
@@ -1396,6 +1400,7 @@ fn bench_run_rounds<P: GraphTileProvider, C: Costing>(
                 direction: dir,
                 seeds: &seeds,
                 upper_bound: Clock::new(upper),
+                change_margin: TransferRequest::REPORT_ALL,
                 interrupt: &|| false,
             };
             search.search(&request, &mut sink).expect("search");
@@ -1528,6 +1533,7 @@ fn run_pruning_keeps_every_improving_arrival_across_rounds() {
                 direction: dir,
                 seeds: &seeds,
                 upper_bound: Clock::new(i32::MAX / 2),
+                change_margin: TransferRequest::REPORT_ALL,
                 interrupt: &|| false,
             };
             let mut sink_p = Sink::default();
@@ -1546,5 +1552,78 @@ fn run_pruning_keeps_every_improving_arrival_across_rounds() {
             assert_eq!(best_p, best_u, "round at base {base}, {dir:?}");
         }
         assert!(!best_p.is_empty());
+    }
+}
+
+/// Replays rounds of a run, keeping each stop's boarding clock as a router's `board` does,
+/// with seeds able to board again after their own minimum change time.
+fn board_clocks_of_rounds<P: GraphTileProvider, C: Costing>(
+    search: &mut WalkSearch<P, C>,
+    dir: Direction,
+    margin: i32,
+    change: i32,
+    rounds: &[(Vec<u32>, i32)],
+) -> HashMap<u32, i32> {
+    search.begin_run(dir);
+    let mut board = HashMap::<u32, i32>::new();
+    for (ids, base) in rounds {
+        let seeds: Vec<TransferSeed> = ids
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| TransferSeed {
+                stop: StopId::new(s),
+                clock: Clock::new(base + (i as i32) * 37),
+            })
+            .collect();
+        for seed in &seeds {
+            let at = seed.clock.seconds() + change;
+            let entry = board.entry(seed.stop.into_inner()).or_insert(at);
+            *entry = (*entry).min(at);
+        }
+        let request = TransferRequest {
+            direction: dir,
+            seeds: &seeds,
+            upper_bound: Clock::new(i32::MAX / 2),
+            change_margin: margin,
+            interrupt: &|| false,
+        };
+        let mut sink = Sink::default();
+        search.search(&request, &mut sink).expect("search");
+        for (stop, (clock, ..)) in sink.best {
+            let entry = board.entry(stop).or_insert(clock);
+            *entry = (*entry).min(clock);
+        }
+    }
+    board
+}
+
+#[test]
+fn the_change_margin_never_changes_what_can_be_boarded() {
+    let rounds: Vec<(Vec<u32>, i32)> = vec![
+        ((0..80).step_by(3).collect(), 1000),
+        ((1..120).step_by(5).collect(), 700),
+        ((2..200).step_by(7).collect(), 1900),
+        ((40..60).collect(), 300),
+    ];
+    for dir in [Direction::Forward, Direction::Backward] {
+        for change in [0, 45, 300] {
+            let provider = andorra();
+            let points = random_stops(&provider, &ANDORRA_TILES, 250, 29);
+            let snaps = snaps_for(&provider, &points);
+            let mut pruned = WalkSearch::new(andorra(), pedestrian());
+            pruned.bind(snaps.clone()).expect("bind");
+            let mut reference = WalkSearch::new(andorra(), pedestrian());
+            reference.set_own_seed_pruning(false);
+            reference.bind(snaps).expect("bind");
+            let got = board_clocks_of_rounds(&mut pruned, dir, change, change, &rounds);
+            let expected = board_clocks_of_rounds(
+                &mut reference,
+                dir,
+                TransferRequest::REPORT_ALL,
+                change,
+                &rounds,
+            );
+            assert_eq!(got, expected, "{dir:?}, change {change}");
+        }
     }
 }

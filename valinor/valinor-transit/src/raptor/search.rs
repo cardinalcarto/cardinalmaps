@@ -129,8 +129,16 @@ pub(super) fn run<const BACK: bool, S: TransferSearch>(
             .get(usize::from(round) + 1)
             .copied()
             .unwrap_or(INFINITY);
-        let outcome = run_transfers(labels, round, direction, walk_bound, transfers, interrupt)
-            .map_err(SearchError::Transfer)?;
+        let outcome = run_transfers(
+            labels,
+            round,
+            direction,
+            walk_bound,
+            snapshot.max_min_change,
+            transfers,
+            interrupt,
+        )
+        .map_err(SearchError::Transfer)?;
         if outcome == TransferOutcome::Interrupted {
             return Err(SearchError::Interrupted);
         }
@@ -210,6 +218,7 @@ fn run_transfers<S: TransferSearch>(
     round: u8,
     direction: Direction,
     walk_bound: i32,
+    change_margin: i32,
     transfers: &mut S,
     interrupt: &dyn Fn() -> bool,
 ) -> Result<TransferOutcome, S::Error> {
@@ -234,6 +243,7 @@ fn run_transfers<S: TransferSearch>(
         direction,
         seeds: &seeds,
         upper_bound: Clock(labels.best_target.min(walk_bound)),
+        change_margin,
         interrupt,
     };
     let mut sink = LabelSink { labels, round };

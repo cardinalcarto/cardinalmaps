@@ -23,6 +23,8 @@ pub struct Snapshot {
     pub(crate) attributes: Vec<RouteAttributes>,
     /// Per stop, base stops first and then the overlay's.
     pub(crate) min_change: Vec<i32>,
+    /// The largest of [`Self::min_change`], or zero with no stops.
+    pub(crate) max_min_change: i32,
     /// `(start, length)` of each added route's stops in the overlay arena.
     pub(crate) added_route_stops: Vec<(u32, u32)>,
 }
@@ -34,6 +36,7 @@ impl Snapshot {
             directory: base.directory.clone(),
             attributes: base.attributes.clone(),
             min_change: base.min_change.clone(),
+            max_min_change: base.min_change.iter().copied().max().unwrap_or(0),
             overlay_arena: Arena::new(),
             additions: StopRouteIndex::default(),
             added_route_stops: Vec::new(),

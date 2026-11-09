@@ -203,6 +203,8 @@ pub struct WalkSearch<P: GraphTileProvider, C: Costing> {
     stamp_base: u32,
     /// Whether labels carry over between the searches of one run; see [`Self::set_run_pruning`].
     run_pruning: bool,
+    /// Whether to use the request's change margin; see [`Self::set_own_seed_pruning`].
+    own_seed_pruning: bool,
     /// The stamp of the current search's stop labels.
     stop_stamp: u32,
     /// By dense node: the first attachment, or [`NONE`].
@@ -233,6 +235,7 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
             labels: Vec::new(),
             stamp_base: 4,
             run_pruning: true,
+            own_seed_pruning: true,
             stop_stamp: 1,
             node_attach: Vec::new(),
             attachments: Vec::new(),
@@ -433,6 +436,17 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
     pub fn set_run_pruning(&mut self, enabled: bool) {
         self.run_pruning = enabled;
     }
+
+    /// Whether a node's second label is kept only when a seed could need it (the default).
+    ///
+    /// The second label exists so a stop can be reached from another seed than itself.
+    /// A walk to a seed's own stop only helps if it arrives before that seed's clock plus the
+    /// request's change margin, so a second label that far behind the first can go.
+    /// In particular, a timetable with no minimum change times needs no second labels at all.
+    /// Turning this off keeps every label, for measurement.
+    pub fn set_own_seed_pruning(&mut self, enabled: bool) {
+        self.own_seed_pruning = enabled;
+    }
 }
 
 /// `whole - part` of an edge's weight, respecting [`INF`].
@@ -452,6 +466,7 @@ fn relax(
     queue: &mut DialQueue,
     arena: &mut Vec<ArenaEntry>,
     stamp_base: u32,
+    margin: i32,
     node: u32,
     clock: i32,
     source: u32,
@@ -484,16 +499,27 @@ fn relax(
     }
     if clock < label.clock[0] {
         // The old best moves down a tier, along with whether it has been settled
-        // (it may have been, in an earlier round of the run).
-        label.clock[1] = label.clock[0];
-        label.source[1] = label.source[0];
-        label.parent[1] = label.parent[0];
-        let was_settled = label.stamp & 1;
-        label.stamp = (label.stamp & !SETTLED_MASK) | (was_settled << 1);
+        // (it may have been, in an earlier round of the run),
+        // unless it is too far behind to matter; see `WalkSearch::set_own_seed_pruning`.
+        if label.clock[0] < clock.saturating_add(margin) {
+            label.clock[1] = label.clock[0];
+            label.source[1] = label.source[0];
+            label.parent[1] = label.parent[0];
+            let was_settled = label.stamp & 1;
+            label.stamp = (label.stamp & !SETTLED_MASK) | (was_settled << 1);
+        } else {
+            label.clock[1] = i32::MAX;
+            label.source[1] = NONE;
+            label.parent[1] = NONE;
+            label.stamp &= !SETTLED_MASK;
+        }
         label.clock[0] = clock;
         label.source[0] = source;
         label.parent[0] = push(arena);
         queue.push(clock, node);
+        return;
+    }
+    if clock >= label.clock[0].saturating_add(margin) {
         return;
     }
     if source == label.source[1] {
@@ -519,6 +545,7 @@ struct Run<'a, P: GraphTileProvider, C: Costing> {
     search: &'a mut WalkSearch<P, C>,
     dir: usize,
     upper_bound: i32,
+    margin: i32,
 }
 
 impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
@@ -560,6 +587,7 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
         self.touched_stops.clear();
         self.ensure_node_arrays();
         let upper_bound = request.upper_bound.seconds();
+        let own_seed_pruning = self.own_seed_pruning;
 
         // The buckets must span every clock from the earliest seed until the bound,
         // or until the latest seed plus a longest edge.
@@ -582,6 +610,11 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
             search: self,
             dir,
             upper_bound,
+            margin: if own_seed_pruning {
+                request.change_margin
+            } else {
+                TransferRequest::REPORT_ALL
+            },
         };
         for seed in request.seeds {
             run.seed(seed.stop, seed.clock.seconds());
@@ -634,6 +667,7 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
                     &mut self.search.queue,
                     &mut self.search.arena,
                     self.search.stamp_base,
+                    self.margin,
                     attach.node[side],
                     at,
                     stop_index,
@@ -746,6 +780,7 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
                                 &mut search.queue,
                                 &mut search.arena,
                                 search.stamp_base,
+                                self.margin,
                                 arc.head(),
                                 next,
                                 source,

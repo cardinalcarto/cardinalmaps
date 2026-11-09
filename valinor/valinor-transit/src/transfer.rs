@@ -84,9 +84,21 @@ pub struct TransferRequest<'a> {
     ///
     /// The search should stop expanding beyond this; it is the target pruning bound.
     pub upper_bound: Clock,
+    /// The largest minimum change time of any stop in the snapshot, in seconds.
+    ///
+    /// A walk reaching a seed's own stop `v` at or after `v`'s clock plus this margin
+    /// can't improve `v`, because boarding there after the trip already costs no more,
+    /// so the search may leave such arrivals unreported.
+    /// [`Self::REPORT_ALL`] asks for every arrival of the contract on [`TransferSearch`].
+    pub change_margin: i32,
     /// Whether the caller wants this search to stop.
     /// Check it periodically and return [`TransferOutcome::Interrupted`].
     pub interrupt: &'a dyn Fn() -> bool,
+}
+
+impl TransferRequest<'_> {
+    /// A [`Self::change_margin`] that makes the search report every arrival.
+    pub const REPORT_ALL: i32 = i32::MAX;
 }
 
 /// How a transfer search ended.
@@ -109,6 +121,8 @@ pub enum TransferOutcome {
 /// For every stop `v` and every seed `u ≠ v` whose `u.clock + distance(u → v)` is below
 /// `upper_bound`, the search reports the smallest such value over all seeds `u ≠ v`,
 /// with `source` being a seed that achieves it.
+/// If `v` is itself a seed, the report may be left out when that value is at least
+/// `v.clock + change_margin`, since such a walk can't improve boarding at `v`.
 ///
 /// `u ≠ v` is the part that isn't an ordinary multi-source search,
 /// and it is what stops a zero-length walk from bypassing a minimum change time.
