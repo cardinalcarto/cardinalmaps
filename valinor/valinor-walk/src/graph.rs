@@ -564,6 +564,11 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
             .dense_edge(opposing_id)?
             .ok_or(WalkError::SnappedEdgeMissing(edge_id))?;
         let tail = opposing.end_node_id();
+        let tail_node = tile.get_node(tail).ok();
+        let barrier = [
+            tail_node.is_some_and(|n| !self.costing.node_allowed(n)),
+            !self.costing.node_allowed(end_node),
+        ];
         let tail_dense = self
             .dense_node(tail)?
             .ok_or(WalkError::SnappedEdgeMissing(edge_id))?;
@@ -575,6 +580,7 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
             opposing_dense: opp_dense,
             tail: tail_dense,
             head,
+            barrier,
             weights: Weights { forward, backward },
         }))
     }
@@ -728,6 +734,8 @@ pub(crate) struct EdgeDescription {
     pub(crate) opposing_dense: u32,
     pub(crate) tail: u32,
     pub(crate) head: u32,
+    /// Whether the tail and the head can't be passed through (a barrier for this costing).
+    pub(crate) barrier: [bool; 2],
     pub(crate) weights: Weights,
 }
 

@@ -327,6 +327,7 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
             } else {
                 sub_weight(w.backward, backward_part)
             };
+            let at_end = [at_tail, at_head];
             let flipped = edge.edge_dense > edge.opposing_dense;
             let attach = StopAttach {
                 canon_percent: if flipped {
@@ -364,6 +365,11 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
                 .zip(attach.into.iter().zip(attach.from.iter()))
                 .enumerate()
             {
+                // A walk reaching a barrier node stops there, so a stop partway along the
+                // next edge can't be offered from it; only a stop at the node itself can.
+                if edge.barrier[side] && !at_end[side] {
+                    continue;
+                }
                 let attachment =
                     u32::try_from(self.attachments.len()).map_err(|_| WalkError::TooLarge)?;
                 self.attachments.push(Attachment {
