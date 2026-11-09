@@ -299,7 +299,7 @@ fn costing_named(name: &str) -> Result<AnyCosting, Box<dyn Error>> {
         Some(costing_type),
     )
     .map_err(|e| format!("{e:?}"))?;
-    Ok(AnyCosting::new(&proto).map_err(|e| format!("{e:?}"))?)
+    AnyCosting::new(&proto).map_err(|e| format!("{e:?}").into())
 }
 
 fn haversine_km(a: (f64, f64), b: (f64, f64)) -> f64 {
@@ -330,13 +330,13 @@ fn opposing_edge<P: GraphTileProvider>(
 }
 
 /// A point's seeds: its edge and the opposing edge, as a Loki correlation of a location has.
-fn seeds_at(provider: &Provider, point: SnapPoint) -> Result<Vec<TableSeed>, Box<dyn Error>> {
+fn seeds_at(provider: Provider, point: SnapPoint) -> Result<Vec<TableSeed>, Box<dyn Error>> {
     let mut seeds = vec![TableSeed {
         edge: point.edge,
         percent_along: point.percent_along,
         initial: 0.0,
     }];
-    if let Some(opposing) = opposing_edge(provider, point.edge)? {
+    if let Some(opposing) = opposing_edge(&provider, point.edge)? {
         seeds.push(TableSeed {
             edge: opposing,
             percent_along: 1.0 - point.percent_along,
@@ -560,10 +560,9 @@ fn run_query_with(
     sample: Sample,
     options: ProfileOptions,
 ) -> Result<(Measure, Triples), Box<dyn Error>> {
-    let snaps_point =
-        |stop: u32| -> Result<SnapPoint, Box<dyn Error>> { Ok(worker_point(env, stop)?) };
-    let origin = seeds_at(&env.provider, snaps_point(sample.from)?)?;
-    let target = seeds_at(&env.provider, snaps_point(sample.to)?)?;
+    let snaps_point = |stop: u32| -> Result<SnapPoint, Box<dyn Error>> { worker_point(env, stop) };
+    let origin = seeds_at(env.provider, snaps_point(sample.from)?)?;
+    let target = seeds_at(env.provider, snaps_point(sample.to)?)?;
 
     let started = Instant::now();
     let before = worker.router.transfers().counters;
@@ -623,8 +622,8 @@ fn run_query_with(
 /// Times the two tables of a query with a full flood: a constant workload across code changes,
 /// for spotting how fast the machine is running while measuring.
 fn run_table_canary(worker: &mut Worker, env: &Env, sample: Sample) -> Result<f64, Box<dyn Error>> {
-    let origin = seeds_at(&env.provider, worker_point(env, sample.from)?)?;
-    let target = seeds_at(&env.provider, worker_point(env, sample.to)?)?;
+    let origin = seeds_at(env.provider, worker_point(env, sample.from)?)?;
+    let target = seeds_at(env.provider, worker_point(env, sample.to)?)?;
     let stop_count = env.snapshot.stop_count();
     let started = Instant::now();
     for (seeds, side) in [(&origin, AccessSide::Access), (&target, AccessSide::Egress)] {
