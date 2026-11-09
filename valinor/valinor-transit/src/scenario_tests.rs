@@ -25,7 +25,7 @@ fn arrivals(net: &TestNet, departure: i32) -> Vec<(u8, i32)> {
         .map(|&(trips, _)| run.journey(trips).expect("journey"))
         .collect();
     for journey in &journeys {
-        check_journey(net, router.transfers(), journey);
+        check_journey(net, journey);
     }
     results
 }
@@ -496,12 +496,12 @@ fn journey_is_recorded_leg_by_leg() {
     let journey = run.journey(2).expect("journey");
     assert_eq!(journey.departure, t(95));
     assert_eq!(journey.arrival, t(407));
-    check_journey(&net, router.transfers(), &journey);
+    check_journey(&net, &journey);
     let backward = {
         let run = router.backward(&query, t(407), &|| false).expect("search");
         run.journey(2).expect("journey")
     };
-    check_journey(&net, router.transfers(), &backward);
+    check_journey(&net, &backward);
     let compact = |j: &Journey<_>| {
         j.legs
             .iter()

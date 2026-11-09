@@ -76,13 +76,14 @@ pub struct RoundResult {
 
 /// A finished search, from which journeys can be read.
 #[derive(Debug)]
-pub struct SearchRun<'r, P: Copy> {
+pub struct SearchRun<'r, S: TransferSearch> {
     query: &'r TransitQuery<'r>,
-    labels: &'r Labels<P>,
+    labels: &'r Labels<S::Parent>,
+    transfers: &'r S,
     direction: Direction,
 }
 
-impl<P: Copy> SearchRun<'_, P> {
+impl<S: TransferSearch> SearchRun<'_, S> {
     /// The trip counts at which the search improved on the target.
     ///
     /// # Performance
@@ -93,8 +94,14 @@ impl<P: Copy> SearchRun<'_, P> {
     }
 
     /// The journey with this number of trips, if the search improved the target with that many.
-    pub fn journey(&self, trips: u8) -> Option<Journey<P>> {
-        extract_journey(self.query, self.labels, self.direction, trips)
+    pub fn journey(&self, trips: u8) -> Option<Journey<S::Walk>> {
+        extract_journey(
+            self.query,
+            self.labels,
+            self.transfers,
+            self.direction,
+            trips,
+        )
     }
 }
 
@@ -154,7 +161,7 @@ impl<S: TransferSearch> Router<S> {
         query: &'r TransitQuery<'r>,
         departure: Time,
         interrupt: &dyn Fn() -> bool,
-    ) -> Result<SearchRun<'r, S::Parent>, SearchError<S::Error>> {
+    ) -> Result<SearchRun<'r, S>, SearchError<S::Error>> {
         query.validate()?;
         search::run::<false, S>(
             &query.input(Direction::Forward),
@@ -166,6 +173,7 @@ impl<S: TransferSearch> Router<S> {
         Ok(SearchRun {
             query,
             labels: &self.forward,
+            transfers: &self.transfers,
             direction: Direction::Forward,
         })
     }
@@ -183,7 +191,7 @@ impl<S: TransferSearch> Router<S> {
         query: &'r TransitQuery<'r>,
         arrival: Time,
         interrupt: &dyn Fn() -> bool,
-    ) -> Result<SearchRun<'r, S::Parent>, SearchError<S::Error>> {
+    ) -> Result<SearchRun<'r, S>, SearchError<S::Error>> {
         query.validate()?;
         search::run::<true, S>(
             &query.input(Direction::Backward),
@@ -195,6 +203,7 @@ impl<S: TransferSearch> Router<S> {
         Ok(SearchRun {
             query,
             labels: &self.backward,
+            transfers: &self.transfers,
             direction: Direction::Backward,
         })
     }
@@ -210,7 +219,7 @@ impl<S: TransferSearch> Router<S> {
         earliest: Time,
         latest: Time,
         interrupt: &dyn Fn() -> bool,
-    ) -> Result<Profile<S::Parent>, SearchError<S::Error>> {
+    ) -> Result<Profile<S::Walk>, SearchError<S::Error>> {
         query.validate()?;
         if earliest > latest {
             return Err(QueryError::EmptyWindow.into());

@@ -17,7 +17,7 @@ use crate::transfer::TransferSearch;
 
 /// One Pareto-optimal way to make the journey.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProfileEntry<P> {
+pub struct ProfileEntry<W> {
     /// When the rider leaves the origin.
     pub departure: Time,
     /// When the rider reaches the target.
@@ -25,14 +25,14 @@ pub struct ProfileEntry<P> {
     /// How many trips it uses.
     pub trips: u8,
     /// The journey.
-    pub journey: Journey<P>,
+    pub journey: Journey<W>,
 }
 
 /// All Pareto-optimal journeys of a window, by departure then trips.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Profile<P> {
+pub struct Profile<W> {
     /// The entries, by increasing departure, then trips.
-    pub entries: Vec<ProfileEntry<P>>,
+    pub entries: Vec<ProfileEntry<W>>,
 }
 
 pub(crate) fn run_profile<S: TransferSearch>(
@@ -41,7 +41,7 @@ pub(crate) fn run_profile<S: TransferSearch>(
     earliest: Time,
     latest: Time,
     interrupt: &dyn Fn() -> bool,
-) -> Result<Profile<S::Parent>, SearchError<S::Error>> {
+) -> Result<Profile<S::Walk>, SearchError<S::Error>> {
     let earliest_seconds = earliest.into_inner();
     let latest_seconds = latest.into_inner();
 
@@ -58,9 +58,13 @@ pub(crate) fn run_profile<S: TransferSearch>(
 
         let mut departures = Vec::new();
         for result in round_results(&router.backward, Direction::Backward) {
-            let Some(journey) =
-                extract_journey(query, &router.backward, Direction::Backward, result.trips)
-            else {
+            let Some(journey) = extract_journey(
+                query,
+                &router.backward,
+                &router.transfers,
+                Direction::Backward,
+                result.trips,
+            ) else {
                 continue;
             };
             let departure = journey.departure.into_inner();
@@ -105,11 +109,11 @@ fn push_arrivals<S: TransferSearch>(
 /// Keeps the entries no other entry beats on departure, arrival, and trips.
 ///
 /// A later departure, an earlier arrival, and fewer trips are each better.
-pub(crate) fn pareto_reduce<P>(mut entries: Vec<ProfileEntry<P>>) -> Vec<ProfileEntry<P>> {
+pub(crate) fn pareto_reduce<W>(mut entries: Vec<ProfileEntry<W>>) -> Vec<ProfileEntry<W>> {
     // Every possible dominator of an entry sorts before it.
     entries.sort_by_key(|e| (core::cmp::Reverse(e.departure), e.arrival, e.trips));
 
-    let mut kept: Vec<ProfileEntry<P>> = Vec::new();
+    let mut kept: Vec<ProfileEntry<W>> = Vec::new();
     let mut best_arrival_by_trips: Vec<Option<Time>> = Vec::new();
     for entry in entries {
         let trips = usize::from(entry.trips);

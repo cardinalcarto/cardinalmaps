@@ -149,10 +149,15 @@ impl SyntheticSearch {
 
 impl TransferSearch for SyntheticSearch {
     type Parent = TraceId;
+    type Walk = Vec<u32>;
     type Error = Infallible;
 
     fn begin_run(&mut self, _direction: Direction) {
         self.trace.clear();
+    }
+
+    fn walk(&self, parent: TraceId) -> Vec<u32> {
+        self.path(parent)
     }
 
     fn search<K: TransferSink<TraceId>>(
@@ -425,7 +430,7 @@ pub(crate) fn oracle(
 }
 
 /// Checks a journey against the network's definition, leg by leg.
-pub(crate) fn check_journey(net: &TestNet, search: &SyntheticSearch, journey: &Journey<TraceId>) {
+pub(crate) fn check_journey(net: &TestNet, journey: &Journey<Vec<u32>>) {
     let mut legs = journey.legs.iter();
     let Some(Leg::Access {
         stop: access_stop,
@@ -504,7 +509,7 @@ pub(crate) fn check_journey(net: &TestNet, search: &SyntheticSearch, journey: &J
                 from,
                 to,
                 duration,
-                parent,
+                walk,
             } => {
                 assert_ne!(from, to, "walks join different stops");
                 assert_eq!(*from, position_stop);
@@ -513,9 +518,8 @@ pub(crate) fn check_journey(net: &TestNet, search: &SyntheticSearch, journey: &J
                     duration.as_i32(),
                     "walk costs the shortest path"
                 );
-                let path = search.path(*parent);
-                let first = *path.first().expect("non-empty path");
-                let last = *path.last().expect("non-empty path");
+                let first = *walk.first().expect("non-empty path");
+                let last = *walk.last().expect("non-empty path");
                 let (from_node, to_node) = (
                     net.graph.stop_node[from.index()],
                     net.graph.stop_node[to.index()],

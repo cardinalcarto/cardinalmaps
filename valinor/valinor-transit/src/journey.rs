@@ -2,10 +2,13 @@
 
 use crate::ids::{Direction, LaneRef, RouteId, Seconds, StopId, Time, TripKey};
 use crate::raptor::{LabelKind, Labels, TransitQuery};
+use crate::transfer::TransferSearch;
 
 /// A journey: one or more rides, joined by walks.
+///
+/// `W` is the transfer search's [`TransferSearch::Walk`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Journey<P> {
+pub struct Journey<W> {
     /// When the rider leaves the origin.
     pub departure: Time,
     /// When the rider reaches the target.
@@ -13,12 +16,12 @@ pub struct Journey<P> {
     /// How many trips it uses.
     pub trips: u8,
     /// The legs in travel order.
-    pub legs: Vec<Leg<P>>,
+    pub legs: Vec<Leg<W>>,
 }
 
 /// One leg of a journey.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Leg<P> {
+pub enum Leg<W> {
     /// From the origin to the first stop.
     Access {
         /// The stop reached.
@@ -36,8 +39,8 @@ pub enum Leg<P> {
         to: StopId,
         /// How long the walk took.
         duration: Seconds,
-        /// The transfer search's handle for the walk; see [`crate::TransferSearch`].
-        parent: P,
+        /// The walk, resolved by the transfer search.
+        walk: W,
     },
     /// From the last stop to the target.
     Egress {
@@ -88,12 +91,13 @@ enum ChainStep<P> {
 }
 
 /// Reads the journey the labels hold for `trips`, if the search found one.
-pub(crate) fn extract_journey<P: Copy>(
+pub(crate) fn extract_journey<S: TransferSearch>(
     query: &TransitQuery<'_>,
-    labels: &Labels<P>,
+    labels: &Labels<S::Parent>,
+    transfers: &S,
     direction: Direction,
     trips: u8,
-) -> Option<Journey<P>> {
+) -> Option<Journey<S::Walk>> {
     let target = labels.target(trips)?;
     if !target.improved {
         return None;
@@ -135,7 +139,8 @@ pub(crate) fn extract_journey<P: Copy>(
     }
     let seed_stop = StopId::new(u32::try_from(stop).ok()?);
 
-    // The chain runs target to seed: journey order forward, reversed... by direction.
+    // The chain runs from the search's target to its seed: travel order when searching backward,
+    // reversed when searching forward.
     if direction == Direction::Forward {
         chain.reverse();
     }
@@ -179,7 +184,7 @@ pub(crate) fn extract_journey<P: Copy>(
                     from,
                     to,
                     duration: Seconds::try_new(duration.try_into().ok()?).ok()?,
-                    parent,
+                    walk: transfers.walk(parent),
                 });
             }
         }

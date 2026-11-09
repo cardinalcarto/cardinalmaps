@@ -331,6 +331,8 @@ fn check_network(net: &TestNet, filter: RouteFilter) {
         assert_eq!(entry.departure, entry.journey.departure);
         assert_eq!(entry.arrival, entry.journey.arrival);
         assert_eq!(entry.trips, entry.journey.trips);
+        // Walks were resolved when the entry was found, so later searches can't invalidate them.
+        check_journey(net, &entry.journey);
     }
 }
 
@@ -354,7 +356,7 @@ fn check_extraction(
             (results, journeys)
         };
         for (result, journey) in results.iter().zip(&journeys) {
-            check_journey(net, router.transfers(), journey);
+            check_journey(net, journey);
             match d {
                 Direction::Forward => assert_eq!(result.time, journey.arrival),
                 Direction::Backward => assert_eq!(result.time, journey.departure),

@@ -113,14 +113,21 @@ pub enum TransferOutcome {
 /// [`Self::Parent`] is the implementation's own handle for reconstructing a walk.
 /// Each handle returned while an MCR search is running stays valid until the next
 /// [`Self::begin_run`] call, so a search may keep them in an arena it clears at that point.
+/// Journeys hold no handles: extraction resolves each one with [`Self::walk`] right away,
+/// so a journey outlives the searches of its profile.
 pub trait TransferSearch {
     /// A handle for reconstructing a walk.
     type Parent: Copy;
+    /// A walk resolved from its handle, which owns everything needed to expand it later.
+    type Walk: Clone;
     /// A failure of the search itself (for example, a tile that can't be read).
     type Error: core::error::Error + 'static;
 
     /// Called once before each MCR search; handles from earlier searches may now be reused.
     fn begin_run(&mut self, direction: Direction);
+
+    /// Resolves a handle that is currently valid into an owned walk.
+    fn walk(&self, parent: Self::Parent) -> Self::Walk;
 
     /// Runs one multi-source search, reporting arrivals to `sink`.
     ///
