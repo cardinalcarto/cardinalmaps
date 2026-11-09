@@ -160,10 +160,7 @@ impl Snapshot {
         let times = grid.get((row as usize + 1) * stride..(row as usize + 2) * stride)?;
         let rules = arena.lane_rules(record);
         let mut events = Vec::with_capacity(record.stop_count as usize);
-        for (pair, &rule) in times.chunks_exact(2).zip(rules) {
-            let [arrival, departure] = *pair else {
-                return None;
-            };
+        for (&[arrival, departure], &rule) in times.as_chunks::<2>().0.iter().zip(rules) {
             events.push(StopEvent {
                 arrival: Time::try_new(arrival).ok()?,
                 departure: Time::try_new(departure).ok()?,
