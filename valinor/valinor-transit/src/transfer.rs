@@ -18,6 +18,16 @@ use crate::ids::{Direction, Seconds, StopId};
 pub struct Clock(pub(crate) i32);
 
 impl Clock {
+    /// A clock at `seconds`.
+    ///
+    /// For a [`TransferSearch`] implementation to report arrivals it computed itself,
+    /// and for callers building a request by hand; `valinor-transit` otherwise makes clocks
+    /// from query times.
+    #[inline]
+    pub const fn new(seconds: i32) -> Self {
+        Self(seconds)
+    }
+
     /// This clock advanced by `cost`.
     #[inline]
     #[must_use]

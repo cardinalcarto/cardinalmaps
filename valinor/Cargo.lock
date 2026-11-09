@@ -3027,6 +3027,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "valinor-walk"
+version = "0.1.0"
+dependencies = [
+ "geo",
+ "serde_json",
+ "thiserror 2.0.21",
+ "valhalla-graphtile",
+ "valhalla-proto",
+ "valinor-loki",
+ "valinor-router",
+ "valinor-sif",
+ "valinor-thor",
+ "valinor-transit",
+]
+
+[[package]]
 name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
