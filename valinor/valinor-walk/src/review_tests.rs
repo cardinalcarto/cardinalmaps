@@ -80,6 +80,7 @@ fn round<P: GraphTileProvider, C: Costing>(
         direction: dir,
         seeds,
         upper_bound: Clock::new(ub),
+        change_margin: TransferRequest::REPORT_ALL,
         interrupt: &|| false,
     };
     assert_eq!(
@@ -324,6 +325,7 @@ fn the_queue_is_usable_after_a_search_error() {
         direction: Direction::Forward,
         seeds: &seeds,
         upper_bound: Clock::new(i32::MAX / 2),
+        change_margin: TransferRequest::REPORT_ALL,
         interrupt: &|| false,
     };
     let result = search.search(&req, &mut sink);

@@ -92,6 +92,7 @@ fn run_search<P: GraphTileProvider, C: Costing>(
         direction,
         seeds,
         upper_bound: Clock::new(upper_bound),
+        change_margin: TransferRequest::REPORT_ALL,
         interrupt: &|| false,
     };
     let outcome = search.search(&request, &mut sink).expect("search");
@@ -469,6 +470,7 @@ fn interrupts_stop_the_search() {
         direction: Direction::Forward,
         seeds: &seeds,
         upper_bound: Clock::new(i32::MAX / 2),
+        change_margin: TransferRequest::REPORT_ALL,
         interrupt: &|| true,
     };
     let outcome = search.search(&request, &mut sink).expect("search");
@@ -1241,6 +1243,7 @@ fn bench_row<P: GraphTileProvider, C: Costing>(
             direction: dir,
             seeds: &seeds,
             upper_bound: Clock::new(upper_bound),
+            change_margin: TransferRequest::REPORT_ALL,
             interrupt: &|| false,
         };
         search.begin_run(dir);
@@ -1298,6 +1301,7 @@ fn benchmark_king_county_multi_source_searches() {
         direction: Direction::Forward,
         seeds: &cold_seeds,
         upper_bound: Clock::new(3600),
+        change_margin: TransferRequest::REPORT_ALL,
         interrupt: &|| false,
     };
     search.begin_run(Direction::Forward);
@@ -1385,6 +1389,7 @@ fn bench_run_rounds<P: GraphTileProvider, C: Costing>(
                 direction: dir,
                 seeds: &seeds,
                 upper_bound: Clock::new(upper),
+                change_margin: TransferRequest::REPORT_ALL,
                 interrupt: &|| false,
             };
             search.search(&request, &mut sink).expect("search");
@@ -1517,6 +1522,7 @@ fn run_pruning_keeps_every_improving_arrival_across_rounds() {
                 direction: dir,
                 seeds: &seeds,
                 upper_bound: Clock::new(i32::MAX / 2),
+                change_margin: TransferRequest::REPORT_ALL,
                 interrupt: &|| false,
             };
             let mut sink_p = Sink::default();
@@ -1536,4 +1542,170 @@ fn run_pruning_keeps_every_improving_arrival_across_rounds() {
         }
         assert!(!best_p.is_empty());
     }
+}
+
+/// Replays rounds of a run, keeping each stop's boarding clock as a router's `board` does,
+/// with seeds able to board again after their own minimum change time.
+fn board_clocks_of_rounds<P: GraphTileProvider, C: Costing>(
+    search: &mut WalkSearch<P, C>,
+    dir: Direction,
+    margin: i32,
+    change: i32,
+    rounds: &[(Vec<u32>, i32)],
+) -> HashMap<u32, i32> {
+    search.begin_run(dir);
+    let mut board = HashMap::<u32, i32>::new();
+    for (ids, base) in rounds {
+        let seeds: Vec<TransferSeed> = ids
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| TransferSeed {
+                stop: StopId::new(s),
+                clock: Clock::new(base + (i as i32) * 37),
+            })
+            .collect();
+        for seed in &seeds {
+            let at = seed.clock.seconds() + change;
+            let entry = board.entry(seed.stop.into_inner()).or_insert(at);
+            *entry = (*entry).min(at);
+        }
+        let request = TransferRequest {
+            direction: dir,
+            seeds: &seeds,
+            upper_bound: Clock::new(i32::MAX / 2),
+            change_margin: margin,
+            interrupt: &|| false,
+        };
+        let mut sink = Sink::default();
+        search.search(&request, &mut sink).expect("search");
+        for (stop, (clock, ..)) in sink.best {
+            let entry = board.entry(stop).or_insert(clock);
+            *entry = (*entry).min(clock);
+        }
+    }
+    board
+}
+
+#[test]
+fn the_change_margin_never_changes_what_can_be_boarded() {
+    let rounds: Vec<(Vec<u32>, i32)> = vec![
+        ((0..80).step_by(3).collect(), 1000),
+        ((1..120).step_by(5).collect(), 700),
+        ((2..200).step_by(7).collect(), 1900),
+        ((40..60).collect(), 300),
+    ];
+    for dir in [Direction::Forward, Direction::Backward] {
+        for change in [0, 45, 300] {
+            let provider = andorra();
+            let points = random_stops(&provider, &ANDORRA_TILES, 250, 29);
+            let snaps = snaps_for(&provider, &points);
+            let mut pruned = WalkSearch::new(andorra(), pedestrian());
+            pruned.bind(snaps.clone()).expect("bind");
+            let mut reference = WalkSearch::new(andorra(), pedestrian());
+            reference.set_own_seed_pruning(false);
+            reference.bind(snaps).expect("bind");
+            let got = board_clocks_of_rounds(&mut pruned, dir, change, change, &rounds);
+            let expected = board_clocks_of_rounds(
+                &mut reference,
+                dir,
+                TransferRequest::REPORT_ALL,
+                change,
+                &rounds,
+            );
+            assert_eq!(got, expected, "{dir:?}, change {change}");
+        }
+    }
+}
+
+/// Compares a search that ends once every stop is final with a full flood, on every entry.
+fn check_ending_early_changes_no_entry(costing: AnyCosting) -> u32 {
+    let provider = andorra();
+    let mut points = random_stops(&provider, &ANDORRA_TILES, 300, 21);
+    points[0] = crate::snap_stop(
+        &provider,
+        &pedestrian(),
+        &crate::SnapConfig::default(),
+        (1.5218, 42.5063),
+    )
+    .expect("snap")
+    .result
+    .expect("a snap");
+    let snaps = snaps_for(&provider, &points);
+    let stop_count = snaps.stop_count();
+    let mut probe = StopTables::new(andorra(), costing.clone());
+    probe.bind(snaps).expect("bind");
+    let from_origin = access_table_for(&mut probe, AccessSide::Access, points[0], stop_count);
+    let to_origin = access_table_for(&mut probe, AccessSide::Egress, points[0], stop_count);
+    let reached: Vec<SnapPoint> = (0..stop_count)
+        .filter(|&i| {
+            let stop = StopId::new(i as u32);
+            from_origin.cost(stop).is_some() && to_origin.cost(stop).is_some()
+        })
+        .map(|i| points[i])
+        .collect();
+    // Stops on each origin's own edge, in front of it and behind it. A seed's partial label
+    // settles first, and on a one-way edge only a walk coming back around reaches those behind.
+    let origins: Vec<SnapPoint> = reached
+        .iter()
+        .step_by((reached.len() / 40).max(1))
+        .copied()
+        .collect();
+    let mut kept = reached;
+    for origin in &origins {
+        for percent_along in [0.02, 0.2, 0.5, 0.8, 0.98] {
+            kept.push(SnapPoint {
+                percent_along,
+                ..*origin
+            });
+        }
+    }
+    let snaps = snaps_for(&provider, &kept);
+    let count = snaps.stop_count();
+    let mut early = StopTables::new(andorra(), costing.clone());
+    early.bind(snaps.clone()).expect("bind");
+    let mut full = StopTables::new(andorra(), costing);
+    full.set_terminate_when_stops_settled(false);
+    full.bind(snaps).expect("bind");
+
+    let mut ended_early = 0;
+    for side in [AccessSide::Access, AccessSide::Egress] {
+        for origin in &origins {
+            let seeds = [TableSeed {
+                edge: origin.edge,
+                percent_along: origin.percent_along,
+                initial: 0.0,
+            }];
+            let request = TableRequest {
+                side,
+                seeds: &seeds,
+                max_seconds: 86_400,
+                interrupt: &|| false,
+            };
+            let got = early
+                .compute(count, &request)
+                .expect("table")
+                .expect("finished");
+            let expected = full
+                .compute(count, &request)
+                .expect("table")
+                .expect("finished");
+            ended_early += u32::from(early.stats().terminated_early);
+            for i in 0..count {
+                let stop = StopId::new(i as u32);
+                assert_eq!(got.cost(stop), expected.cost(stop), "{side:?}, stop {i}");
+            }
+        }
+    }
+    ended_early
+}
+
+#[test]
+fn ending_a_table_search_early_changes_no_entry() {
+    let walking = check_ending_early_changes_no_entry(pedestrian());
+    let cycling = check_ending_early_changes_no_entry(bicycle());
+    println!("ended early: {walking} walking, {cycling} cycling");
+    assert!(
+        walking > 0,
+        "no walking search ended early, so this tested nothing"
+    );
 }

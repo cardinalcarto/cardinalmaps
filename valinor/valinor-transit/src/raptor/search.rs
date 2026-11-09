@@ -6,7 +6,7 @@ use crate::raptor::labels::Labels;
 use crate::raptor::scan::scan_lane;
 use crate::snapshot::Snapshot;
 use crate::stop_table::{RouteFilter, StopTable};
-use crate::timetable::RouteOccurrence;
+use crate::timetable::{INFINITY, RouteOccurrence};
 use crate::transfer::{
     Clock, TransferArrival, TransferOutcome, TransferRequest, TransferSearch, TransferSeed,
     TransferSink,
@@ -27,6 +27,11 @@ pub(super) struct SearchInput<'a> {
     /// The table leading to the search's target: egress when forward, access when backward.
     pub(super) target: &'a StopTable,
     pub(super) max_trips: u8,
+    /// Per round, an exclusive bound on the target's clock, or an empty slice for none.
+    ///
+    /// Each entry must be above the clock the search would report for that many trips:
+    /// see [`crate::profile`] for where such bounds come from.
+    pub(super) bounds: &'a [i32],
 }
 
 /// Runs one search at clock `start`, leaving its labels for journey extraction.
@@ -56,6 +61,7 @@ pub(super) fn run<const BACK: bool, S: TransferSearch>(
     let day_count = snapshot.days().len();
     let target_costs = input.target.costs();
     let mut scans = 0_u32;
+    let mut previous_upper_bound = INFINITY;
 
     for round in 1..=input.max_trips {
         if labels.marked.is_empty() {
@@ -63,6 +69,9 @@ pub(super) fn run<const BACK: bool, S: TransferSearch>(
         }
         if interrupt() {
             return Err(SearchError::Interrupted);
+        }
+        if let Some(&bound) = input.bounds.get(usize::from(round)) {
+            labels.best_target = labels.best_target.min(bound);
         }
         collect_routes::<BACK, _>(snapshot, input.filter, labels);
 
@@ -110,8 +119,36 @@ pub(super) fn run<const BACK: bool, S: TransferSearch>(
         labels.touched_routes = routes;
 
         labels.commit_trips(round, &snapshot.min_change);
-        let outcome = run_transfers(labels, round, direction, transfers, interrupt)
-            .map_err(SearchError::Transfer)?;
+        // A walk after round `r` only serves boardings of round `r + 1`, so the final round
+        // walks nowhere useful, and an earlier one is bounded as the next round is.
+        if round == input.max_trips {
+            labels.improved.clear();
+            break;
+        }
+        let walk_bound = input
+            .bounds
+            .get(usize::from(round) + 1)
+            .copied()
+            .unwrap_or(INFINITY);
+        // A transfer search carries node labels between the rounds of a run,
+        // which is only sound if this never rises: `best_target` only falls,
+        // and the bounds of a profile are non-increasing by round.
+        let upper_bound = labels.best_target.min(walk_bound);
+        debug_assert!(
+            upper_bound <= previous_upper_bound,
+            "a walk bound rose within a run"
+        );
+        previous_upper_bound = upper_bound;
+        let outcome = run_transfers(
+            labels,
+            round,
+            direction,
+            walk_bound,
+            snapshot.max_min_change,
+            transfers,
+            interrupt,
+        )
+        .map_err(SearchError::Transfer)?;
         if outcome == TransferOutcome::Interrupted {
             return Err(SearchError::Interrupted);
         }
@@ -190,6 +227,8 @@ fn run_transfers<S: TransferSearch>(
     labels: &mut Labels<S::Parent>,
     round: u8,
     direction: Direction,
+    walk_bound: i32,
+    change_margin: i32,
     transfers: &mut S,
     interrupt: &dyn Fn() -> bool,
 ) -> Result<TransferOutcome, S::Error> {
@@ -213,7 +252,8 @@ fn run_transfers<S: TransferSearch>(
     let request = TransferRequest {
         direction,
         seeds: &seeds,
-        upper_bound: Clock(labels.best_target),
+        upper_bound: Clock(labels.best_target.min(walk_bound)),
+        change_margin,
         interrupt,
     };
     let mut sink = LabelSink { labels, round };

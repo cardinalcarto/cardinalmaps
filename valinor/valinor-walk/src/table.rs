@@ -69,6 +69,8 @@ pub struct TableStats {
     pub stops_reached: u64,
     /// Bytes retained by the search's arrays.
     pub bytes: usize,
+    /// Whether the search stopped because every attached stop's entry was final.
+    pub terminated_early: bool,
 }
 
 /// One edge of a leg, in real travel order.
@@ -233,6 +235,13 @@ pub struct StopTables<P: GraphTileProvider, C: Costing> {
     epoch: u32,
     queue: BinaryHeap<Reverse<(Key, u32)>>,
     stop_best: Vec<StopBest>,
+    /// `(epoch, number of the stop's two directed edges settled so far)`.
+    stop_visits: Vec<(u32, u8)>,
+    /// How many stops were attached to edges by [`Self::bind`].
+    attached_stops: usize,
+    /// How many stops still have a directed edge left to settle in this search.
+    stops_pending: usize,
+    terminate_when_stops_settled: bool,
     touched_stops: Vec<u32>,
     side: AccessSide,
     stats: TableStats,
@@ -252,6 +261,10 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             epoch: 0,
             queue: BinaryHeap::new(),
             stop_best: Vec::new(),
+            stop_visits: Vec::new(),
+            attached_stops: 0,
+            stops_pending: 0,
+            terminate_when_stops_settled: true,
             touched_stops: Vec::new(),
             side: AccessSide::Access,
             stats: TableStats::default(),
@@ -287,6 +300,9 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 percent: 0.0,
             },
         );
+        self.stop_visits.clear();
+        self.stop_visits.resize(snaps.stop_count(), (0, 0));
+        self.attached_stops = 0;
         for stop in 0..snaps.stop_count() {
             let stop_u = u32::try_from(stop).map_err(|_| WalkError::TooLarge)?;
             let Some(point) = snaps.point(StopId::new(stop_u)) else {
@@ -311,6 +327,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 stop_u,
                 1.0 - point.percent_along,
             );
+            self.attached_stops += 1;
         }
         self.snaps = Some(snaps);
         Ok(())
@@ -352,12 +369,14 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         if self.epoch == 0 {
             self.edge_state.iter_mut().for_each(|e| e.stamp = 0);
             self.stop_best.iter_mut().for_each(|s| s.stamp = 0);
+            self.stop_visits.fill((0, 0));
             self.epoch = 1;
         }
         self.labels.clear();
         self.queue.clear();
         self.touched_stops.clear();
         self.stats = TableStats::default();
+        self.stops_pending = self.attached_stops;
         self.ensure_edge_state();
 
         for &seed in request.seeds {
@@ -373,6 +392,10 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 }
             }
             self.settle(index, request)?;
+            if self.terminate_when_stops_settled && self.stops_pending == 0 {
+                self.stats.terminated_early = true;
+                break;
+            }
         }
         self.stats.bytes = self.labels.capacity() * size_of::<TableLabel>()
             + self.edge_state.capacity() * size_of::<EdgeState>()
@@ -807,6 +830,24 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         Ok(true)
     }
 
+    /// Notes that one of a stop's two directed edges has settled.
+    ///
+    /// Apart from a seed's partial labels (which don't count here), each directed edge settles
+    /// once, and a stop's entry only changes when one of its two edges does.
+    /// Once both have, the entry is final, and when every stop's entry is final the search can stop.
+    fn visit_stop(&mut self, stop: u32) {
+        let Some(visits) = self.stop_visits.get_mut(stop as usize) else {
+            return;
+        };
+        if visits.0 != self.epoch {
+            *visits = (self.epoch, 0);
+        }
+        visits.1 += 1;
+        if visits.1 == 2 {
+            self.stops_pending = self.stops_pending.saturating_sub(1);
+        }
+    }
+
     /// Whether a directed edge is already settled in this search.
     fn is_permanent(&self, id: GraphId) -> bool {
         self.graph.known_dense_edge(id).is_some_and(|dense| {
@@ -865,6 +906,11 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 break;
             };
             at = entry.next;
+            // A seed takes no edge status, so a later label can still come back around onto
+            // the seed's edge and improve a stop on it: only a whole edge's one label counts.
+            if label.inner.predecessor().is_some() {
+                self.visit_stop(entry.stop);
+            }
             let inside = if forward {
                 begin <= entry.percent
             } else {
@@ -910,6 +956,13 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             }
         }
         Ok(())
+    }
+
+    /// Whether a search ends as soon as every attached stop has its final entry (the default).
+    ///
+    /// Turning this off floods the whole network, for measurement.
+    pub fn set_terminate_when_stops_settled(&mut self, enabled: bool) {
+        self.terminate_when_stops_settled = enabled;
     }
 
     /// What the last search did.

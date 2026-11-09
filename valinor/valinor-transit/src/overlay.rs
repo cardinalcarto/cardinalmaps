@@ -163,6 +163,7 @@ impl OverlayBuilder {
             additions,
             directory: self.directory,
             attributes: self.attributes,
+            max_min_change: self.min_change.iter().copied().max().unwrap_or(0),
             min_change: self.min_change,
             added_route_stops,
         }))

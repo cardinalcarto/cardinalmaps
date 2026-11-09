@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::error::{QueryError, SearchError};
 use crate::ids::{Direction, Time};
 use crate::journey::{Journey, trace_journey};
-use crate::profile::{self, Profile};
+use crate::profile::{self, Profile, ProfileOptions};
 use crate::raptor::clock_of;
 use crate::raptor::labels::Labels;
 use crate::raptor::search::{self, MAX_TRIPS, SearchInput};
@@ -48,7 +48,7 @@ impl TransitQuery<'_> {
         Ok(())
     }
 
-    fn input(&self, direction: Direction) -> SearchInput<'_> {
+    fn input<'b>(&'b self, direction: Direction, bounds: &'b [i32]) -> SearchInput<'b> {
         let (seeding, target) = match direction {
             Direction::Forward => (self.access, self.egress),
             Direction::Backward => (self.egress, self.access),
@@ -59,6 +59,7 @@ impl TransitQuery<'_> {
             seeding,
             target,
             max_trips: self.max_trips,
+            bounds,
         }
     }
 }
@@ -164,7 +165,7 @@ impl<S: TransferSearch> Router<S> {
     ) -> Result<SearchRun<'r, S>, SearchError<S::Error>> {
         query.validate()?;
         search::run::<false, S>(
-            &query.input(Direction::Forward),
+            &query.input(Direction::Forward, &[]),
             &mut self.forward,
             departure.into_inner(),
             &mut self.transfers,
@@ -194,7 +195,7 @@ impl<S: TransferSearch> Router<S> {
     ) -> Result<SearchRun<'r, S>, SearchError<S::Error>> {
         query.validate()?;
         search::run::<true, S>(
-            &query.input(Direction::Backward),
+            &query.input(Direction::Backward, &[]),
             &mut self.backward,
             clock_of::<true>(arrival.into_inner()),
             &mut self.transfers,
@@ -224,17 +225,46 @@ impl<S: TransferSearch> Router<S> {
         if earliest > latest {
             return Err(QueryError::EmptyWindow.into());
         }
-        profile::run_profile(self, query, earliest, latest, interrupt)
+        self.profile_with(
+            query,
+            earliest,
+            latest,
+            ProfileOptions::default(),
+            interrupt,
+        )
+    }
+
+    /// [`Self::profile`], with its optional prunings chosen explicitly.
+    ///
+    /// Each option leaves every search's results unchanged; they exist to measure and test that.
+    ///
+    /// # Errors
+    ///
+    /// If the query or window is invalid, `interrupt` asks to stop, or a transfer search fails.
+    pub fn profile_with(
+        &mut self,
+        query: &TransitQuery<'_>,
+        earliest: Time,
+        latest: Time,
+        options: ProfileOptions,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<Profile<S::Walk>, SearchError<S::Error>> {
+        query.validate()?;
+        if earliest > latest {
+            return Err(QueryError::EmptyWindow.into());
+        }
+        profile::run_profile(self, query, earliest, latest, options, interrupt)
     }
 
     pub(crate) fn run_forward(
         &mut self,
         query: &TransitQuery<'_>,
         departure: i32,
+        bounds: &[i32],
         interrupt: &dyn Fn() -> bool,
     ) -> Result<(), SearchError<S::Error>> {
         search::run::<false, S>(
-            &query.input(Direction::Forward),
+            &query.input(Direction::Forward, bounds),
             &mut self.forward,
             departure,
             &mut self.transfers,
@@ -246,10 +276,11 @@ impl<S: TransferSearch> Router<S> {
         &mut self,
         query: &TransitQuery<'_>,
         arrival: i32,
+        bounds: &[i32],
         interrupt: &dyn Fn() -> bool,
     ) -> Result<(), SearchError<S::Error>> {
         search::run::<true, S>(
-            &query.input(Direction::Backward),
+            &query.input(Direction::Backward, bounds),
             &mut self.backward,
             clock_of::<true>(arrival),
             &mut self.transfers,

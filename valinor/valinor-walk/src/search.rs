@@ -51,23 +51,43 @@ const MAX_RETAINED_ARENA: usize = 1 << 22;
 /// Two tiers of a node's label, as bits in the low two bits of its stamp.
 const SETTLED_MASK: u32 = 3;
 
-/// The two best labels of a node, with distinct sources: tier 0 is the best.
+/// A node's best label, with the stamp every lookup reads: tier 0 of two.
+///
+/// This is what the settle loop's cache misses are made of, so it is kept to 16 bytes:
+/// tier 1 is in a separate [`SecondLabel`] array, which a timetable with no minimum change
+/// times never touches at all.
 #[derive(Clone, Copy, Debug)]
-#[repr(C, align(32))]
+#[repr(C)]
 struct NodeLabel {
     /// The epoch the labels belong to, shifted left by 2, with a settled bit per tier.
     stamp: u32,
-    clock: [i32; 2],
-    source: [u32; 2],
-    /// The arena entry of how each tier was reached.
-    parent: [u32; 2],
+    clock: i32,
+    source: u32,
+    /// The arena entry of how the label was reached.
+    parent: u32,
 }
 
 const UNLABELED: NodeLabel = NodeLabel {
     stamp: 0,
-    clock: [i32::MAX; 2],
-    source: [NONE; 2],
-    parent: [NONE; 2],
+    clock: i32::MAX,
+    source: NONE,
+    parent: NONE,
+};
+
+/// A node's second-best label, with a different source from its first: tier 1.
+///
+/// Valid only while the node's [`NodeLabel::stamp`] is current.
+#[derive(Clone, Copy, Debug)]
+struct SecondLabel {
+    clock: i32,
+    source: u32,
+    parent: u32,
+}
+
+const NO_SECOND: SecondLabel = SecondLabel {
+    clock: i32::MAX,
+    source: NONE,
+    parent: NONE,
 };
 
 /// One way a label was reached, in the run's arena.
@@ -208,12 +228,20 @@ pub struct WalkSearch<P: GraphTileProvider, C: Costing> {
     snaps: Option<Arc<StopSnaps>>,
 
     labels: Vec<NodeLabel>,
+    /// Tier 1 of the labels; empty until a search with a change margin needs it.
+    second: Vec<SecondLabel>,
     /// `stamp` value of the labels currently in force, a multiple of 4.
     ///
     /// A new value per run with [`Self::set_run_pruning`] on (the default), per search otherwise.
     stamp_base: u32,
     /// Whether labels carry over between the searches of one run; see [`Self::set_run_pruning`].
     run_pruning: bool,
+    /// Whether to use the request's change margin; see [`Self::set_own_seed_pruning`].
+    own_seed_pruning: bool,
+    /// The longest walk from one seed, in seconds; see [`Self::set_walk_limit`].
+    walk_limit: Option<u32>,
+    /// By stop: the clock of its latest seeding, read only with a walk limit.
+    seed_clocks: Vec<i32>,
     /// The stamp of the current search's stop labels.
     stop_stamp: u32,
     /// By dense node: the first attachment, or [`NONE`].
@@ -242,8 +270,12 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
             graph: LazyGraph::new(provider, costing),
             snaps: None,
             labels: Vec::new(),
+            second: Vec::new(),
             stamp_base: 4,
             run_pruning: true,
+            own_seed_pruning: true,
+            walk_limit: None,
+            seed_clocks: Vec::new(),
             stop_stamp: 1,
             node_attach: Vec::new(),
             attachments: Vec::new(),
@@ -435,6 +467,9 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
         if self.node_attach.len() < nodes {
             self.node_attach.resize(nodes, NONE);
             self.labels.resize(nodes, UNLABELED);
+            if !self.second.is_empty() {
+                self.second.resize(nodes, NO_SECOND);
+            }
         }
     }
 
@@ -451,6 +486,7 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
     /// Bytes retained by this search's label, queue, and arena arrays.
     pub fn working_memory_bytes(&self) -> usize {
         self.labels.capacity() * size_of::<NodeLabel>()
+            + self.second.capacity() * size_of::<SecondLabel>()
             + self.node_attach.capacity() * size_of::<u32>()
             + self.attachments.capacity() * size_of::<Attachment>()
             + self.arena.capacity() * size_of::<ArenaEntry>()
@@ -483,6 +519,26 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
     pub fn set_run_pruning(&mut self, enabled: bool) {
         self.run_pruning = enabled;
     }
+
+    /// Limits how far a single walk may go, in seconds, or `None` (the default) for no limit.
+    ///
+    /// **This changes which journeys exist**: walking is meant to be unrestricted,
+    /// and a limited search can miss the best journey. It is here to measure what a cap
+    /// would buy, and nothing in this crate turns it on.
+    pub fn set_walk_limit(&mut self, limit: Option<u32>) {
+        self.walk_limit = limit;
+    }
+
+    /// Whether a node's second label is kept only when a seed could need it (the default).
+    ///
+    /// The second label exists so a stop can be reached from another seed than itself.
+    /// A walk to a seed's own stop only helps if it arrives before that seed's clock plus the
+    /// request's change margin, so a second label that far behind the first can go.
+    /// In particular, a timetable with no minimum change times needs no second labels at all.
+    /// Turning this off keeps every label, for measurement.
+    pub fn set_own_seed_pruning(&mut self, enabled: bool) {
+        self.own_seed_pruning = enabled;
+    }
 }
 
 /// `whole - part` of an edge's weight, respecting [`INF`].
@@ -491,7 +547,7 @@ const fn sub_weight(whole: u16, part: u16) -> u16 {
     if whole == INF { INF } else { whole - part }
 }
 
-/// Adds a seed's stop or node labels straight into the arrays of [`WalkSearch`].
+/// Adds a label to a node, in the flat arrays of [`WalkSearch`].
 ///
 /// Reported separately from the settle loop because a seed's connector is a real walk
 /// on the seed's own edge, not an arc of the graph.
@@ -499,9 +555,11 @@ const fn sub_weight(whole: u16, part: u16) -> u16 {
 #[expect(clippy::too_many_arguments, reason = "the flat arrays of one search")]
 fn relax(
     labels: &mut [NodeLabel],
+    second: &mut [SecondLabel],
     queue: &mut DialQueue,
     arena: &mut Vec<ArenaEntry>,
     stamp_base: u32,
+    margin: i32,
     node: u32,
     clock: i32,
     source: u32,
@@ -516,49 +574,69 @@ fn relax(
     if label.stamp & !SETTLED_MASK != stamp_base {
         *label = NodeLabel {
             stamp: stamp_base,
-            clock: [clock, i32::MAX],
-            source: [source, NONE],
-            parent: [push(arena), NONE],
+            clock,
+            source,
+            parent: push(arena),
         };
+        if let Some(tier) = second.get_mut(node as usize) {
+            *tier = NO_SECOND;
+        }
         queue.push(clock, node);
         return;
     }
-    if source == label.source[0] {
-        if clock < label.clock[0] {
-            label.clock[0] = clock;
-            label.parent[0] = push(arena);
+    if source == label.source {
+        if clock < label.clock {
+            label.clock = clock;
+            label.parent = push(arena);
             label.stamp &= !1;
             queue.push(clock, node);
         }
         return;
     }
-    if clock < label.clock[0] {
+    if clock < label.clock {
         // The old best moves down a tier, along with whether it has been settled
-        // (it may have been, in an earlier round of the run).
-        label.clock[1] = label.clock[0];
-        label.source[1] = label.source[0];
-        label.parent[1] = label.parent[0];
-        let was_settled = label.stamp & 1;
-        label.stamp = (label.stamp & !SETTLED_MASK) | (was_settled << 1);
-        label.clock[0] = clock;
-        label.source[0] = source;
-        label.parent[0] = push(arena);
+        // (it may have been, in an earlier round of the run),
+        // unless it is too far behind to matter; see `WalkSearch::set_own_seed_pruning`.
+        let keep_old = label.clock < clock.saturating_add(margin);
+        if keep_old && let Some(tier) = second.get_mut(node as usize) {
+            *tier = SecondLabel {
+                clock: label.clock,
+                source: label.source,
+                parent: label.parent,
+            };
+            let was_settled = label.stamp & 1;
+            label.stamp = (label.stamp & !SETTLED_MASK) | (was_settled << 1);
+        } else {
+            if let Some(tier) = second.get_mut(node as usize) {
+                *tier = NO_SECOND;
+            }
+            label.stamp &= !SETTLED_MASK;
+        }
+        label.clock = clock;
+        label.source = source;
+        label.parent = push(arena);
         queue.push(clock, node);
         return;
     }
-    if source == label.source[1] {
-        if clock < label.clock[1] {
-            label.clock[1] = clock;
-            label.parent[1] = push(arena);
+    if clock >= label.clock.saturating_add(margin) {
+        return;
+    }
+    let Some(tier) = second.get_mut(node as usize) else {
+        return;
+    };
+    if source == tier.source {
+        if clock < tier.clock {
+            tier.clock = clock;
+            tier.parent = push(arena);
             label.stamp &= !2;
             queue.push(clock, node);
         }
         return;
     }
-    if clock < label.clock[1] {
-        label.clock[1] = clock;
-        label.source[1] = source;
-        label.parent[1] = push(arena);
+    if clock < tier.clock {
+        tier.clock = clock;
+        tier.source = source;
+        tier.parent = push(arena);
         label.stamp &= !2;
         queue.push(clock, node);
     }
@@ -569,6 +647,7 @@ struct Run<'a, P: GraphTileProvider, C: Costing> {
     search: &'a mut WalkSearch<P, C>,
     dir: usize,
     upper_bound: i32,
+    margin: i32,
 }
 
 impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
@@ -610,6 +689,12 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
         self.touched_stops.clear();
         self.ensure_node_arrays();
         let upper_bound = request.upper_bound.seconds();
+        if self.own_seed_pruning && request.change_margin == 0 {
+            // A timetable with no minimum change times never needs tier 1 at all.
+        } else if self.second.len() < self.labels.len() {
+            self.second.resize(self.labels.len(), NO_SECOND);
+        }
+        let own_seed_pruning = self.own_seed_pruning;
 
         // The buckets must span every clock from the earliest seed until the bound,
         // or until the latest seed plus a longest edge.
@@ -632,7 +717,25 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
             search: self,
             dir,
             upper_bound,
+            margin: if own_seed_pruning {
+                request.change_margin
+            } else {
+                TransferRequest::REPORT_ALL
+            },
         };
+        if run.search.walk_limit.is_some() {
+            let stops = run.search.stops.len();
+            run.search.seed_clocks.resize(stops, i32::MAX);
+            for seed in request.seeds {
+                if let Some(slot) = run
+                    .search
+                    .seed_clocks
+                    .get_mut(seed.stop.into_inner() as usize)
+                {
+                    *slot = seed.clock.seconds();
+                }
+            }
+        }
         for seed in request.seeds {
             run.seed(seed.stop, seed.clock.seconds());
         }
@@ -681,9 +784,11 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
             if at < self.upper_bound {
                 relax(
                     &mut self.search.labels,
+                    &mut self.search.second,
                     &mut self.search.queue,
                     &mut self.search.arena,
                     self.search.stamp_base,
+                    self.margin,
                     node,
                     at,
                     stop_index,
@@ -743,15 +848,19 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
             let label = search.labels[node as usize];
             let mut settled = [(0i32, 0u32, 0u32); 2];
             let mut count = 0;
-            for tier in 0..2 {
-                if label.clock[tier] == clock && stamp & (1 << tier) == 0 {
-                    settled[count] = (clock, label.source[tier], label.parent[tier]);
-                    count += 1;
-                    search.labels[node as usize].stamp |= 1 << tier;
-                    if tier == 0 {
-                        search.stats.nodes_settled += 1;
-                    }
-                }
+            if label.clock == clock && stamp & 1 == 0 {
+                settled[count] = (clock, label.source, label.parent);
+                count += 1;
+                search.labels[node as usize].stamp |= 1;
+                search.stats.nodes_settled += 1;
+            }
+            if let Some(tier) = search.second.get(node as usize)
+                && tier.clock == clock
+                && stamp & 2 == 0
+            {
+                settled[count] = (clock, tier.source, tier.parent);
+                count += 1;
+                search.labels[node as usize].stamp |= 2;
             }
             if count == 0 {
                 continue;
@@ -772,20 +881,30 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
                     continue;
                 }
             }
+            // Worked out once per settled label: most searches have no limit to apply.
+            let mut limits = [self.upper_bound; 2];
+            if let Some(limit) = search.walk_limit {
+                for (slot, &(_, source, _)) in limits.iter_mut().zip(&settled[..count]) {
+                    let seed = search.seed_clocks[source as usize];
+                    *slot = self.upper_bound.min(seed.saturating_add_unsigned(limit));
+                }
+            }
             let mut index = first as usize;
             loop {
                 let arc = search.graph.arcs[index];
                 search.stats.arcs_relaxed += 1;
                 let weight = arc.secs[self.dir];
                 if weight != INF {
-                    for &(at, source, parent) in &settled[..count] {
+                    for (&(at, source, parent), &limit) in settled[..count].iter().zip(&limits) {
                         let next = at.saturating_add(i32::from(weight));
-                        if next < self.upper_bound {
+                        if next < limit {
                             relax(
                                 &mut search.labels,
+                                &mut search.second,
                                 &mut search.queue,
                                 &mut search.arena,
                                 search.stamp_base,
+                                self.margin,
                                 arc.head(),
                                 next,
                                 source,
