@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-use crate::decode::DecodedFeed;
+use crate::decode::{DecodeError, DecodedFeed};
 
 /// The default age, in seconds, past which a trip-update or vehicle feed is stale.
 pub const DEFAULT_REALTIME_STALE_AFTER: i64 = 5 * 60;
@@ -110,8 +110,11 @@ pub struct FeedInput {
     pub feed: FeedId,
     /// What the message carries.
     pub kind: FeedKind,
-    /// The decoded message.
-    pub decoded: DecodedFeed,
+    /// The decoded message, or why it couldn't be decoded.
+    ///
+    /// A feed that fails to decode still goes to the builder:
+    /// it has no effect on routing, but its [`FeedStatus`] says why.
+    pub decoded: Result<DecodedFeed, DecodeError>,
     /// When this client received the message, in POSIX seconds, if it knows.
     ///
     /// Age is taken from the feed header when it has a timestamp, and from this otherwise.
@@ -126,31 +129,54 @@ impl FeedInput {
         Self {
             feed,
             kind,
-            decoded,
+            decoded: Ok(decoded),
             received_at: None,
             stale_after: kind.default_stale_after(),
         }
     }
 
-    /// The moment the message's data is from: its header time, else its receipt time.
-    fn as_of(&self) -> Option<i64> {
-        self.decoded.timestamp().or(self.received_at)
+    /// Decodes `bytes`, keeping any failure so that it can be reported rather than lost.
+    pub fn from_bytes(feed: FeedId, kind: FeedKind, bytes: &[u8]) -> Self {
+        Self {
+            feed,
+            kind,
+            decoded: DecodedFeed::decode(bytes),
+            received_at: None,
+            stale_after: kind.default_stale_after(),
+        }
     }
 
-    /// Reports the message's age at `now`, and whether it is past its limit.
+    /// The feed header's timestamp, if the message decoded and has one.
+    fn header_timestamp(&self) -> Option<i64> {
+        self.decoded.as_ref().ok().and_then(DecodedFeed::timestamp)
+    }
+
+    /// Reports the message's age at `now`, and whether it can be used.
     ///
-    /// A message with no time at all has no age and counts as stale,
-    /// since nothing says that it is current.
+    /// A message with no time at all has no age and counts as stale, since nothing says it is
+    /// current. So does one dated further ahead of `now` than its limit allows: that is a
+    /// broken clock rather than a small skew, and it would otherwise never go stale.
     pub(crate) fn status(&self, now: i64) -> FeedStatus {
-        let as_of = self.as_of();
-        let age = as_of.map(|time| now.saturating_sub(time));
+        let header_timestamp = self.header_timestamp();
+        let age = header_timestamp
+            .or(self.received_at)
+            .map(|time| now.saturating_sub(time));
+        let error = self.decoded.as_ref().err().cloned();
         FeedStatus {
             feed: self.feed.clone(),
             kind: self.kind,
-            header_timestamp: self.decoded.timestamp(),
+            header_timestamp,
             age,
             stale_after: self.stale_after,
-            stale: age.is_none_or(|age| age > self.stale_after),
+            stale: error.is_some()
+                || age.is_none_or(|age| {
+                    age > self.stale_after || age < self.stale_after.saturating_neg()
+                }),
+            entities_dropped: self
+                .decoded
+                .as_ref()
+                .map_or(0, DecodedFeed::dropped_entities),
+            error,
         }
     }
 }
@@ -168,12 +194,16 @@ pub struct FeedStatus {
     pub header_timestamp: Option<i64>,
     /// The message's age in seconds at `now`; `None` when the message carried no time at all.
     ///
-    /// May be negative if the feed's clock is ahead of ours.
+    /// Negative if the feed's clock is ahead of ours.
     pub age: Option<i64>,
     /// The limit this message was held to.
     pub stale_after: i64,
-    /// Whether the message was stale and so had no effect on the overlay.
+    /// Whether the message was stale or undecodable, and so had no effect on the overlay.
     pub stale: bool,
+    /// Why the message couldn't be decoded, if it couldn't.
+    pub error: Option<DecodeError>,
+    /// How many entities were dropped while decoding, for being empty or oversized.
+    pub entities_dropped: usize,
 }
 
 #[cfg(test)]
@@ -228,9 +258,28 @@ mod tests {
     }
 
     #[test]
-    fn a_feed_from_the_future_is_not_stale() {
+    fn a_small_clock_skew_is_not_stale() {
+        let status = input(Some(1_030), None).status(1_000);
+        assert_eq!(status.age, Some(-30));
+        assert!(!status.stale);
+    }
+
+    #[test]
+    fn a_far_future_header_is_stale() {
         let status = input(Some(2_000), None).status(1_000);
         assert_eq!(status.age, Some(-1_000));
-        assert!(!status.stale);
+        assert!(status.stale);
+    }
+
+    #[test]
+    fn a_feed_that_failed_to_decode_reports_why() {
+        let input = FeedInput::from_bytes(
+            FeedId::new("kcm").expect("non-empty"),
+            FeedKind::Alerts,
+            &[0xff, 0xff, 0xff],
+        );
+        let status = input.status(1_000);
+        assert!(status.stale);
+        assert!(matches!(status.error, Some(DecodeError::Malformed(_))));
     }
 }

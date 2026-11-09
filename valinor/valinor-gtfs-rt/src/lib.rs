@@ -28,7 +28,7 @@ mod testing;
 
 pub use alerts::Period;
 pub use date::{CalendarDate, parse_start_time};
-pub use decode::{DecodeError, DecodedFeed};
+pub use decode::{DecodeError, DecodeLimits, DecodedFeed};
 pub use feed::{
     DEFAULT_ALERTS_STALE_AFTER, DEFAULT_REALTIME_STALE_AFTER, FeedId, FeedIdError, FeedInput,
     FeedKind, FeedStatus, ScopedId,

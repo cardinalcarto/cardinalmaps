@@ -331,7 +331,10 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
 
 fn sort_entities(input: FeedInput, fresh: &mut FreshFeeds) {
     let feed = input.feed;
-    for entity in input.decoded.into_message().entity {
+    let Ok(decoded) = input.decoded else {
+        return;
+    };
+    for entity in decoded.into_message().entity {
         if entity.is_deleted == Some(true) {
             continue;
         }

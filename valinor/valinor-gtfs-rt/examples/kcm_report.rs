@@ -543,10 +543,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         if failed {
             continue;
         }
-        let trip_entities = inputs[0].decoded.message().entity.len();
+        let first = inputs[0].decoded.as_ref().map_err(Clone::clone)?;
+        let trip_entities = first.message().entity.len();
         raw_skipped.push(
-            inputs[0]
-                .decoded
+            first
                 .message()
                 .entity
                 .iter()
@@ -558,7 +558,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 })
                 .count() as f64,
         );
-        let now = inputs[0].decoded.timestamp().ok_or("no header timestamp")?;
+        let now = first.timestamp().ok_or("no header timestamp")?;
 
         let started = Instant::now();
         let overlay = build_overlay(

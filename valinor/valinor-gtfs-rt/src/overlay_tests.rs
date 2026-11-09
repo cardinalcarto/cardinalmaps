@@ -1079,6 +1079,24 @@ fn alert_impacts_are_counted_per_alert() {
 // Stale.
 
 #[test]
+fn a_feed_that_fails_to_decode_degrades_to_schedule_and_says_why() {
+    let net = three_stop_net();
+    let good = fresh(vec![update("t2", DATE_1, vec![delay_at(1, 30)])]);
+    let bad = FeedInput::from_bytes(feed_id(KCM), FeedKind::Alerts, &[0xff, 0xff]);
+    let overlay = run(&net, vec![good, bad]);
+    assert_eq!(
+        overlay.rider.trip_state(key(1)),
+        TripState::Delayed,
+        "the good feed still applies"
+    );
+    let statuses = overlay.rider.feed_status();
+    assert_eq!(statuses.len(), 2);
+    assert!(statuses[0].error.is_none());
+    assert!(statuses[1].stale);
+    assert!(statuses[1].error.is_some());
+}
+
+#[test]
 fn delayed_to_scheduled_when_the_feed_goes_stale() {
     let net = three_stop_net();
     let feed = updates_at(NOW - 600, vec![update("t1", DATE_1, vec![delay_at(1, 30)])]);
@@ -1893,7 +1911,7 @@ proptest! {
             let feed = FeedInput {
                 feed: feed_id(KCM),
                 kind: FeedKind::Combined,
-                decoded,
+                decoded: Ok(decoded),
                 received_at: Some(NOW),
                 stale_after: i64::MAX,
             };
