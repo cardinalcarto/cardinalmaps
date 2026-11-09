@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use valinor_gtfs::TimetableSet;
 use valinor_gtfs::{
     FeedId as CompileFeedId, FeedInput as CompileInput, InMemorySource, LatLon, LoadedTimetable,
     ZipSource, compile,
@@ -58,7 +59,12 @@ fn andorra() -> StreetPlanner {
     }])
     .unwrap();
     let tt = LoadedTimetable::from_bytes(compiled.bytes).unwrap();
-    StreetPlanner::open(tt, &[andorra_tiles()], StreetConfig::default()).unwrap()
+    StreetPlanner::open_with_built_transfers(
+        TimetableSet::single(tt).unwrap(),
+        &[andorra_tiles()],
+        StreetConfig::default(),
+    )
+    .unwrap()
 }
 fn body(lat: f64, lon: f64, extra: &str) -> Vec<u8> {
     format!(r#"{{"origin":{{"lat":{lat},"lon":{lon}}},"destination":{{"lat":42.51,"lon":1.535}},"departure":{}{extra}}}"#, at(8,55)).into_bytes()
@@ -164,8 +170,8 @@ fn kcm_bytes() -> &'static [u8] {
     })
 }
 fn kcm() -> StreetPlanner {
-    StreetPlanner::open(
-        LoadedTimetable::from_bytes(kcm_bytes().to_vec()).unwrap(),
+    StreetPlanner::open_with_built_transfers(
+        TimetableSet::single(LoadedTimetable::from_bytes(kcm_bytes().to_vec()).unwrap()).unwrap(),
         &[TILES],
         StreetConfig::default(),
     )

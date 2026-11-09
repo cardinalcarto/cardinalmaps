@@ -8,11 +8,16 @@ edition.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+# Lets a tool or another crate's tests open a planner without precomputed transfer tiles.
+test-support = []
+
 [dependencies]
 illuvatar = { workspace = true }
 jiff = { workspace = true }
 self_cell = { workspace = true }
 serde = { workspace = true }
+sha2 = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
 thiserror = { workspace = true }
@@ -33,6 +38,8 @@ insta = { workspace = true, features = ["json"] }
 prost = { workspace = true }
 proptest = { workspace = true }
 valinor-gtfs = { path = "../valinor-gtfs" }
+tempfile = { workspace = true }
+zstd = { workspace = true }
 
 [lints]
 workspace = true

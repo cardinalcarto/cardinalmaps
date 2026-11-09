@@ -1,6 +1,7 @@
 //! Real streets: planning with `valinor-walk` over Valhalla tiles.
 //!
-//! [`StreetPlanner`] opens a tile set beside a [`TransitState`], keeps a pool of per-thread search
+//! [`StreetPlanner`] opens a tile set beside a [`TransitState`] and a [`TransitBuild`]'s walks,
+//! keeps a pool of per-thread search
 //! workers, and answers requests with real walking and cycling legs:
 //! stop tables from [`valinor_walk::StopTables`], transfers from [`valinor_walk::TableTransfers`],
 //! and shapes and instructions by converting through [`valinor_walk::paths`] to Thor's
@@ -25,7 +26,7 @@ use valhalla_proto::location::{HasMinimumReachability, HasSearchCutoff};
 use valhalla_proto::options::HasLanguage;
 use valhalla_proto::{Api, Costing as CostingProto, LatLng, Location, Options};
 use valhalla_response::ErrorCode;
-use valinor_gtfs::{LatLon, LoadedTimetable};
+use valinor_gtfs::{LatLon, TimetableSet};
 use valinor_loki::{LokiConfig, parse_location, search as loki_search};
 use valinor_router::OpenError;
 use valinor_router::tiles::TileSets;
@@ -41,6 +42,7 @@ use valinor_walk::{
     snap_stops,
 };
 
+use crate::build::{BuildLoadError, TransitBuild};
 use crate::error::{PlanError, StateError};
 use crate::plan::{
     AccessEgressRequest, AccessEgressSearch, AccessEgressTables, DirectSearch, TransitRequest,
@@ -122,6 +124,8 @@ pub struct StreetConfig {
     /// How much of a Thor workspace a worker keeps between queries.
     pub retention: Retention,
     /// The longest transfer between two stops on foot, in seconds.
+    ///
+    /// Only used when walks are built in memory; a build's manifest states its own bound.
     pub max_walking_transfer_seconds: u32,
     /// The longest transfer between two stops by bicycle, in seconds.
     pub max_cycling_transfer_seconds: u32,
@@ -666,8 +670,22 @@ self_cell!(
 struct TileSnapper {
     tiles: Arc<TileSets>,
     config: SnapConfig,
-    max_walking_transfer_seconds: u32,
-    max_cycling_transfer_seconds: u32,
+    transfers: BaseTransfers,
+}
+
+/// Where a planner's walks between stops come from.
+enum BaseTransfers {
+    /// Assembled from a build's transfer tiles, which is the only path in production.
+    Loaded {
+        walking: Arc<TransferTable>,
+        cycling: Arc<TransferTable>,
+    },
+    /// Built in memory from the street network, for tests.
+    #[cfg(any(test, feature = "test-support"))]
+    Build {
+        walking_seconds: u32,
+        cycling_seconds: u32,
+    },
 }
 
 impl fmt::Debug for TileSnapper {
@@ -689,20 +707,35 @@ impl StopSnapper for TileSnapper {
         snap_stop(&tiles, &costing, &self.config, ll)
     }
 
-    fn transfers(
+    fn base_transfers(
         &self,
         mode: TravelMode,
         snaps: &Arc<StopSnaps>,
-    ) -> Result<TransferTable, WalkError> {
-        let tiles: &TileSets = &self.tiles;
-        let costing = any_costing(mode).map_err(snap_setup_error)?;
-        let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
-        let seconds = match mode {
-            TravelMode::Walking => self.max_walking_transfer_seconds,
-            TravelMode::Cycling => self.max_cycling_transfer_seconds,
-        };
-        TransferTable::build(&tiles, &costing, snaps, seconds, threads, &|| false)?
-            .ok_or(WalkError::NoCandidates)
+    ) -> Result<Arc<TransferTable>, WalkError> {
+        // Only the in-memory build needs the snaps.
+        let _ = snaps;
+        match &self.transfers {
+            BaseTransfers::Loaded { walking, cycling } => Ok(Arc::clone(match mode {
+                TravelMode::Walking => walking,
+                TravelMode::Cycling => cycling,
+            })),
+            #[cfg(any(test, feature = "test-support"))]
+            BaseTransfers::Build {
+                walking_seconds,
+                cycling_seconds,
+            } => {
+                let tiles: &TileSets = &self.tiles;
+                let costing = any_costing(mode).map_err(snap_setup_error)?;
+                let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+                let seconds = match mode {
+                    TravelMode::Walking => *walking_seconds,
+                    TravelMode::Cycling => *cycling_seconds,
+                };
+                TransferTable::build(&tiles, &costing, snaps, seconds, threads, &|| false)?
+                    .map(Arc::new)
+                    .ok_or(WalkError::NoCandidates)
+            }
+        }
     }
 
     fn add_transfers(
@@ -752,35 +785,80 @@ pub enum OpenPlannerError {
     /// The timetable or stop snaps couldn't be set up.
     #[error(transparent)]
     State(#[from] StateError),
+    /// The build can't be loaded or isn't consistent.
+    #[error(transparent)]
+    Build(#[from] BuildLoadError),
 }
 
 /// The error of [`StreetPlanner::plan`].
 pub type StreetPlanError = PlanError<WalkError, StreetError>;
 
 impl StreetPlanner {
-    /// Opens a compiled timetable over tile sets, snapping every stop.
+    /// Opens a loaded transit build over tile sets, snapping every stop.
     ///
     /// # Performance
     ///
-    /// Snaps every stop and precomputes the transfers between them, for walking and for cycling:
-    /// the slow part of opening.
+    /// Snaps every stop for walking and for cycling, which is the slow part of opening.
+    /// Tables of walks are not computed here: they come from the build's tiles.
     ///
     /// # Errors
     ///
-    /// If the tiles can't be opened or the timetable can't be built.
-    pub fn open<P: AsRef<Path>>(
-        timetable: LoadedTimetable,
+    /// If the tiles can't be opened, are of a different street build from the manifest,
+    /// or the timetables can't be set up.
+    pub fn from_build<P: AsRef<Path>>(
+        build: TransitBuild,
         tile_sets: &[P],
         config: StreetConfig,
     ) -> Result<Self, OpenPlannerError> {
         let tiles = Arc::new(TileSets::open(tile_sets, config.tile_cache_size)?);
+        if u32::from(tiles.build_id().value()) != build.valhalla_build_id {
+            return Err(OpenPlannerError::Build(
+                BuildLoadError::StreetBuildMismatch {
+                    manifest: build.valhalla_build_id,
+                    tiles: u32::from(tiles.build_id().value()),
+                },
+            ));
+        }
+        let transfers = BaseTransfers::Loaded {
+            walking: Arc::new(build.walking),
+            cycling: Arc::new(build.cycling),
+        };
+        Self::open_tiles(build.set, tiles, transfers, config)
+    }
+
+    /// Opens a compiled timetable over tile sets, building its walks in memory.
+    ///
+    /// For tests and tools only: production builds its tables offline, and loads them as tiles.
+    ///
+    /// # Errors
+    ///
+    /// If the tiles can't be opened or the timetable can't be built.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_with_built_transfers<P: AsRef<Path>>(
+        set: TimetableSet,
+        tile_sets: &[P],
+        config: StreetConfig,
+    ) -> Result<Self, OpenPlannerError> {
+        let tiles = Arc::new(TileSets::open(tile_sets, config.tile_cache_size)?);
+        let transfers = BaseTransfers::Build {
+            walking_seconds: config.max_walking_transfer_seconds,
+            cycling_seconds: config.max_cycling_transfer_seconds,
+        };
+        Self::open_tiles(set, tiles, transfers, config)
+    }
+
+    fn open_tiles(
+        set: TimetableSet,
+        tiles: Arc<TileSets>,
+        transfers: BaseTransfers,
+        config: StreetConfig,
+    ) -> Result<Self, OpenPlannerError> {
         let snapper = TileSnapper {
             tiles: Arc::clone(&tiles),
             config: config.snap,
-            max_walking_transfer_seconds: config.max_walking_transfer_seconds,
-            max_cycling_transfer_seconds: config.max_cycling_transfer_seconds,
+            transfers,
         };
-        let state = TransitState::with_snapper(timetable, config.state, Box::new(snapper))?;
+        let state = TransitState::with_snapper(set, config.state, Box::new(snapper))?;
         let cell = Cell::new(tiles, |tiles| WorkerPool {
             tiles,
             idle: Mutex::new(Vec::new()),

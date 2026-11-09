@@ -92,6 +92,15 @@ impl<'a> TimetablePart<'a> {
         StopId::new(local.into_inner() + self.first_stop)
     }
 
+    /// This file's number for a stop of the set's, if the stop is in this file.
+    #[inline]
+    pub fn local_stop(&self, global: StopId) -> Option<StopId> {
+        let raw = global.into_inner().checked_sub(self.first_stop)?;
+        (raw as usize)
+            .lt(&self.compiled.stop_count())
+            .then(|| StopId::new(raw))
+    }
+
     /// The set's number for one of this file's patterns.
     #[inline]
     pub fn global_route(&self, local: RouteId) -> RouteId {

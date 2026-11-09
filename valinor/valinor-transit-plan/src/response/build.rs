@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 
 use valinor_gtfs::{
-    Accessibility, AgencyInfo, CompiledTimetable, GtfsRoute, LatLon, RouteInfo, StopInfo, TripInfo,
+    Accessibility, AgencyInfo, GtfsRoute, LatLon, RouteInfo, StopInfo, TimetablePart, TimetableSet,
+    TripInfo,
 };
 use valinor_gtfs_rt::proto::alert::Effect;
 use valinor_gtfs_rt::proto::trip_update::stop_time_update::ScheduleRelationship;
@@ -166,18 +167,21 @@ pub(crate) fn stop_name_of(
     feed: &FeedId,
     stop_id: &str,
 ) -> Option<String> {
-    let compiled = snapshot.data.loaded.timetable();
-    compiled
-        .location_by_gtfs_id(feed.as_str(), stop_id)
-        .and_then(|location| compiled.location(location))
-        .and_then(|info| info.name.map(str::to_owned))
-        .or_else(|| {
-            snapshot
-                .new_stops
-                .iter()
-                .find(|stop| stop.id.feed == *feed && &*stop.id.id == stop_id)
-                .and_then(new_stop_name)
-        })
+    let part = snapshot.data.set.part_of_feed(feed.as_str());
+    part.and_then(|part| {
+        let compiled = part.compiled();
+        compiled
+            .location_by_gtfs_id(feed.as_str(), stop_id)
+            .and_then(|location| compiled.location(location))
+            .and_then(|info| info.name.map(str::to_owned))
+    })
+    .or_else(|| {
+        snapshot
+            .new_stops
+            .iter()
+            .find(|stop| stop.id.feed == *feed && &*stop.id.id == stop_id)
+            .and_then(new_stop_name)
+    })
 }
 
 fn new_stop_name(stop: &valinor_gtfs_rt::NewStop) -> Option<String> {
@@ -199,8 +203,8 @@ struct Builder<'a, A: AccessEgressSearch> {
 }
 
 impl<A: AccessEgressSearch> Builder<'_, A> {
-    fn compiled(&self) -> &CompiledTimetable<'_> {
-        self.snapshot.data.loaded.timetable()
+    fn set(&self) -> &TimetableSet {
+        &self.snapshot.data.set
     }
 
     fn origin(&self) -> i64 {
@@ -338,9 +342,10 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
     }
 
     fn stop_ref(&self, stop: StopId) -> StopRef {
-        let compiled = self.compiled();
-        if let Some(info) = compiled.stop(stop) {
-            return self.static_stop_ref(info);
+        if let Some((part, local)) = self.set().stop_part(stop)
+            && let Some(info) = part.compiled().stop(local)
+        {
+            return Self::static_stop_ref(part, info);
         }
         let new = self.snapshot.new_stops.iter().find(|s| s.stop == stop);
         StopRef {
@@ -361,9 +366,10 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         }
     }
 
-    fn static_stop_ref(&self, info: StopInfo<'_>) -> StopRef {
-        let compiled = self.compiled();
-        let parent = info.parent_station.and_then(|id| compiled.location(id));
+    fn static_stop_ref(part: TimetablePart<'_>, info: StopInfo<'_>) -> StopRef {
+        let parent = info
+            .parent_station
+            .and_then(|id| part.compiled().location(id));
         StopRef {
             stop_id: info.gtfs_id.to_owned(),
             name: info.name.map(str::to_owned),
@@ -383,17 +389,32 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         reason = "one linear assembly of a leg from its sources"
     )]
     fn transit_leg(&self, ride: &Ride, wait: i64) -> TransitLeg {
-        let compiled = self.compiled();
+        let set = self.set();
         let rider = &self.snapshot.rider;
-        let static_trip = compiled.trip(ride.trip.trip);
+        let trip_part = set.trip_part(ride.trip.trip);
+        let static_trip = trip_part.and_then(|(part, local)| part.compiled().trip(local));
         let details = rider.trip_by_key(ride.trip);
         // Static positions are valid only when the ride is on the trip's own stop pattern.
-        let on_base_pattern = static_trip.is_some_and(|info| info.pattern == ride.route);
-        let gtfs_route = gtfs_route_of(compiled, static_trip, details);
-        let route = gtfs_route.and_then(|route| compiled.route(route));
-        let agency = route
-            .and_then(|r| r.agency)
-            .and_then(|agency| compiled.agency(agency));
+        let on_base_pattern = trip_part
+            .zip(static_trip)
+            .is_some_and(|((part, _), info)| part.global_route(info.pattern) == ride.route);
+        // Which file answers for this leg: its trip's, or for a trip only real-time data knows,
+        // the file of its feed or of its route.
+        let part = trip_part
+            .map(|(part, _)| part)
+            .or_else(|| {
+                details
+                    .and_then(|d| d.feed.as_ref())
+                    .and_then(|feed| set.part_of_feed(feed.as_str()))
+            })
+            .or_else(|| set.route_part(ride.route).map(|(part, _)| part));
+        let gtfs_route = part.and_then(|part| gtfs_route_of(set, part, static_trip, details));
+        let route = part
+            .zip(gtfs_route)
+            .and_then(|(part, route)| part.compiled().route(route));
+        let agency = part
+            .zip(route.and_then(|r| r.agency))
+            .and_then(|(part, agency)| part.compiled().agency(agency));
         let feed = self.feed_of(route, details);
         let trip_id = static_trip
             .map(|info| info.gtfs_id.to_owned())
@@ -410,7 +431,11 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             .snapshot
             .route_stops(ride.route)
             .unwrap_or(&[]);
-        let day_start = self.snapshot.window.day_start_unix(ride.trip.date);
+        let day_start = part.and_then(|part| {
+            self.snapshot
+                .window
+                .day_start_unix(part.index(), ride.trip.date)
+        });
 
         let mut stops = Vec::new();
         for position in ride.board_position..=ride.alight_position {
@@ -420,6 +445,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             };
             let context = VisitContext {
                 feed: feed.as_ref(),
+                part,
                 static_trip: static_trip.filter(|_| on_base_pattern),
                 details,
                 day_start,
@@ -450,9 +476,9 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                 })
             })
             .collect();
-        let alerts = match feed.as_ref() {
-            Some(feed) => leg_alerts(
-                compiled,
+        let alerts = match (feed.as_ref(), part) {
+            (Some(feed), Some(part)) => leg_alerts(
+                part,
                 rider,
                 &LegSelectorContext {
                     feed,
@@ -478,18 +504,18 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     to: alight_unix,
                 },
             ),
-            None => Vec::new(),
+            _ => Vec::new(),
         };
 
-        let shape = on_base_pattern
-            .then(|| {
-                compiled.shape_between(
-                    ride.trip.trip,
+        let shape = trip_part
+            .filter(|_| on_base_pattern)
+            .and_then(|(part, local)| {
+                part.compiled().shape_between(
+                    local,
                     ride.board_position as usize,
                     ride.alight_position as usize,
                 )
             })
-            .flatten()
             .map(|slice| encode_polyline6(&slice.points()));
 
         let realtime = stops
@@ -540,8 +566,9 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
     }
 
     fn stop_gtfs_id_of(&self, stop: StopId) -> Option<&str> {
-        self.compiled()
-            .stop(stop)
+        self.set()
+            .stop_part(stop)
+            .and_then(|(part, local)| part.compiled().stop(local))
             .map(|info| info.gtfs_id)
             .or_else(|| {
                 self.snapshot
@@ -592,7 +619,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
 
         let headsign = live.and_then(|s| s.stop_headsign.clone()).or_else(|| {
             let info = visit.static_trip?;
-            let text = self.compiled().stop_headsign(&info, index)?;
+            let text = visit.part?.compiled().stop_headsign(&info, index)?;
             (Some(text) != info.headsign).then(|| text.to_owned())
         });
 
@@ -637,7 +664,10 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             occupancy: live
                 .and_then(|s| s.occupancy)
                 .map(|occupancy| lower(occupancy.as_str_name())),
-            utc_offset_seconds: self.compiled().stop_utc_offset_at(stop, departure),
+            utc_offset_seconds: self
+                .set()
+                .stop_part(stop)
+                .and_then(|(part, local)| part.compiled().stop_utc_offset_at(local, departure)),
         }
     }
 
@@ -791,6 +821,8 @@ fn walks_affected_by(index: usize, alert: &LegAlert) -> Vec<(usize, StopMovedNot
 /// What a stop visit needs to know about its ride.
 struct VisitContext<'a> {
     feed: Option<&'a FeedId>,
+    /// The file this leg's trip is in, when it has one.
+    part: Option<TimetablePart<'a>>,
     /// Set only when the ride is on the trip's own pattern, so positions agree.
     static_trip: Option<TripInfo<'a>>,
     details: Option<&'a TripDetails>,
@@ -811,7 +843,8 @@ impl VisitContext<'_> {
 }
 
 fn gtfs_route_of(
-    compiled: &CompiledTimetable<'_>,
+    set: &TimetableSet,
+    part: TimetablePart<'_>,
     static_trip: Option<TripInfo<'_>>,
     details: Option<&TripDetails>,
 ) -> Option<GtfsRoute> {
@@ -821,11 +854,14 @@ fn gtfs_route_of(
     let details = details?;
     let route = details
         .route
-        .and_then(|route| compiled.pattern(route))
+        .and_then(|route| set.route_part(route))
+        .filter(|(found, _)| found.index() == part.index())
+        .and_then(|(found, local)| found.compiled().pattern(local))
         .map(|pattern| pattern.route);
     route.or_else(|| {
         let feed = details.feed.as_ref()?;
-        compiled.route_by_gtfs_id(feed.as_str(), details.route_id.as_deref()?)
+        part.compiled()
+            .route_by_gtfs_id(feed.as_str(), details.route_id.as_deref()?)
     })
 }
 

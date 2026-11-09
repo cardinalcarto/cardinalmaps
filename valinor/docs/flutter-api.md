@@ -122,9 +122,10 @@ Transit planning runs through `api::transit::OfflineTransit`, beside the router 
 
 ```rust
 impl OfflineTransit {
-    /// A compiled timetable (from `valinor-gtfs`) over the same tile sets.
+    /// A transit build directory (from `valinor-transit-build`) over the same tile sets;
+    /// `feeds` chooses which of its feeds to load, or `None` for every feed that compiled.
     /// Takes a few seconds: every stop is snapped for walking and for cycling.
-    pub fn open(timetable: String, tile_sets: Vec<String>) -> Result<OfflineTransit, TransitOpenError>;
+    pub fn open(build: String, feeds: Option<Vec<String>>, tile_sets: Vec<String>) -> Result<OfflineTransit, TransitOpenError>;
 
     /// JSON request bytes (the body of the server's `POST /transit/plan`),
     /// with whatever GTFS-RT bytes the app holds, per feed.

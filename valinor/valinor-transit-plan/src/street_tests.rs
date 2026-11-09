@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 use insta::assert_json_snapshot;
-use valinor_gtfs::{FeedId, FeedInput, InMemorySource, LatLon, LoadedTimetable, compile};
+use valinor_gtfs::{
+    FeedId, FeedInput, InMemorySource, LatLon, LoadedTimetable, TimetableSet, compile,
+};
 use valinor_gtfs_rt::FeedKind;
 use valinor_gtfs_rt::proto;
 use valinor_gtfs_rt::proto::alert::Effect;
@@ -73,7 +75,12 @@ fn timetable() -> LoadedTimetable {
 }
 
 fn planner() -> StreetPlanner {
-    StreetPlanner::open(timetable(), &[tiles()], StreetConfig::default()).expect("opens")
+    StreetPlanner::open_with_built_transfers(
+        TimetableSet::single(timetable()).expect("set"),
+        &[tiles()],
+        StreetConfig::default(),
+    )
+    .expect("opens")
 }
 
 fn request(mode: TravelMode) -> TransitRequest {

@@ -12,10 +12,11 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use flutter_rust_bridge::frb;
 use serde_json::json;
-use valinor_gtfs::LoadedTimetable;
 use valinor_gtfs_rt::FeedKind;
 use valinor_thor::Retention;
-use valinor_transit_plan::{FeedUpdate, JsonResponse, ServiceLimits, StreetConfig, StreetPlanner};
+use valinor_transit_plan::{
+    FeedUpdate, JsonResponse, ServiceLimits, StreetConfig, StreetPlanner, TransitBuild,
+};
 
 /// The longest access or egress leg a request may ask for on a device, in seconds.
 ///
@@ -137,29 +138,52 @@ fn response(answer: JsonResponse) -> TransitResponse {
 }
 
 impl OfflineTransit {
-    /// Opens a compiled timetable (`valinor-gtfs`) over tile sets, snapping every stop.
+    /// Opens a transit build directory over tile sets, snapping every stop.
     ///
-    /// Takes a few seconds on a large metro timetable: every stop is snapped for walking and
-    /// for cycling. Run it once and keep the result.
+    /// `feeds` chooses which of the build's feeds to load, by ID; `None` loads every feed that
+    /// compiled. Whichever transfer tiles of those feeds are on disk are used; a stop whose tile
+    /// isn't simply has no transfers, so an offline area needn't hold an agency's whole network.
     ///
-    /// The file is memory-mapped: to replace it, write a new file and rename it over the old
-    /// one; truncating or rewriting it in place while it is open can fault.
+    /// Takes a few seconds on a large metro: every stop is snapped for walking and for cycling.
+    /// Run it once and keep the result.
+    ///
+    /// The build's files are memory-mapped: to replace one, write a new file and rename it over
+    /// the old one; truncating or rewriting it in place while it is open can fault.
     pub fn open(
-        timetable: String,
+        build: String,
+        feeds: Option<Vec<String>>,
         tile_sets: Vec<String>,
     ) -> Result<OfflineTransit, TransitOpenError> {
-        // SAFETY: the mapped file must not change underneath us. This function's documentation
-        // asks the app to publish a new timetable by renaming, and the app owns the file.
-        let loaded = unsafe { LoadedTimetable::map(Path::new(&timetable)) }.map_err(|error| {
+        let loaded = TransitBuild::load(Path::new(&build), feeds.as_deref()).map_err(|error| {
             TransitOpenError {
-                message: format!("{timetable}: {error}"),
+                message: format!("{build}: {error}"),
             }
         })?;
         Ok(Self {
-            planner: StreetPlanner::open(loaded, &tile_sets, device_config()).map_err(|error| {
-                TransitOpenError {
+            planner: StreetPlanner::from_build(loaded, &tile_sets, device_config()).map_err(
+                |error| TransitOpenError {
                     message: error.to_string(),
-                }
+                },
+            )?,
+        })
+    }
+
+    /// Opens one compiled timetable, with its walks built in memory, for tests.
+    #[cfg(test)]
+    pub(crate) fn open_timetable(
+        timetable: valinor_gtfs::LoadedTimetable,
+        tile_sets: Vec<String>,
+    ) -> Result<OfflineTransit, TransitOpenError> {
+        Ok(Self {
+            planner: StreetPlanner::open_with_built_transfers(
+                valinor_gtfs::TimetableSet::single(timetable).map_err(|error| TransitOpenError {
+                    message: error.to_string(),
+                })?,
+                &tile_sets,
+                device_config(),
+            )
+            .map_err(|error| TransitOpenError {
+                message: error.to_string(),
             })?,
         })
     }
@@ -260,7 +284,7 @@ mod tests {
             .into_owned()
     }
 
-    fn timetable() -> (tempdir::Dir, String) {
+    fn timetable() -> (tempdir::Dir, valinor_gtfs::LoadedTimetable) {
         let compiled = valinor_gtfs::compile(vec![valinor_gtfs::FeedInput {
             id: valinor_gtfs::FeedId::try_new("bus".to_owned()).unwrap(),
             source: Box::new(
@@ -290,8 +314,8 @@ mod tests {
         .unwrap();
         let dir = tempdir::Dir::new();
         let path = dir.path().join("timetable.vgtfs");
-        std::fs::write(&path, compiled.bytes).unwrap();
-        (dir, path.to_string_lossy().into_owned())
+        std::fs::write(&path, &compiled.bytes).unwrap();
+        (dir, valinor_gtfs::LoadedTimetable::from_bytes(compiled.bytes).unwrap())
     }
 
     /// A temp directory removed on drop, so the test depends on nothing else.
@@ -327,7 +351,7 @@ mod tests {
     #[test]
     fn plans_transit_from_request_bytes() {
         let (_dir, path) = timetable();
-        let transit = OfflineTransit::open(path, vec![tiles()]).ok().unwrap();
+        let transit = OfflineTransit::open_timetable(path, vec![tiles()]).ok().unwrap();
         // 2026-06-15 08:54 local, a Monday.
         let now = 1_781_506_440;
         let request = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.5100,"lon":1.5350},"max_walk_seconds":600,"departure":1781506500}"#;
@@ -374,7 +398,7 @@ mod tests {
     #[test]
     fn a_request_above_the_device_limit_is_refused() {
         let (_dir, path) = timetable();
-        let transit = OfflineTransit::open(path, vec![tiles()]).ok().unwrap();
+        let transit = OfflineTransit::open_timetable(path, vec![tiles()]).ok().unwrap();
         let request = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.51,"lon":1.535},"max_walk_seconds":2701}"#;
         assert_eq!(
             transit
@@ -387,7 +411,7 @@ mod tests {
     #[test]
     fn a_cancelled_plan_stops_and_says_so() {
         let (_dir, path) = timetable();
-        let transit = OfflineTransit::open(path, vec![tiles()]).ok().unwrap();
+        let transit = OfflineTransit::open_timetable(path, vec![tiles()]).ok().unwrap();
         let request = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.51,"lon":1.535},"max_walk_seconds":600,"departure":1781506500}"#;
         let answer = transit.plan_at(request, Vec::new(), 1_781_506_440, &|| true);
         assert_eq!(answer.status, 499);
@@ -395,9 +419,9 @@ mod tests {
 
     #[test]
     fn reports_why_it_cannot_open() {
-        let error = OfflineTransit::open("/nonexistent/timetable".to_owned(), vec![tiles()])
+        let error = OfflineTransit::open("/nonexistent/build".to_owned(), None, vec![tiles()])
             .err()
             .unwrap();
-        assert!(error.message.contains("/nonexistent/timetable"));
+        assert!(error.message.contains("/nonexistent/build"));
     }
 }

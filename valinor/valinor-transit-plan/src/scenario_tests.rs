@@ -100,13 +100,7 @@ fn two_trip_journey(response: &PlanResponse) -> &crate::response::Journey {
 }
 
 fn lookup_of(snapshot: &TransitSnapshot) -> CompiledLookup<'_> {
-    CompiledLookup::new(
-        snapshot.data.loaded.timetable(),
-        &snapshot.data.timetable,
-        &snapshot.window.days,
-        &snapshot.window.service_days,
-        &snapshot.data.feeds,
-    )
+    CompiledLookup::of(snapshot)
 }
 
 fn feed_id() -> FeedId {

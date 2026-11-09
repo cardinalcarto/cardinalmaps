@@ -108,7 +108,8 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<OfflineTransit> crateApiTransitOfflineTransitOpen({
-    required String timetable,
+    required String build,
+    List<String>? feeds,
     required List<String> tileSets,
   });
 
@@ -356,14 +357,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @override
   Future<OfflineTransit> crateApiTransitOfflineTransitOpen({
-    required String timetable,
+    required String build,
+    List<String>? feeds,
     required List<String> tileSets,
   }) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_String(timetable, serializer);
+          sse_encode_String(build, serializer);
+          sse_encode_opt_list_String(feeds, serializer);
           sse_encode_list_String(tileSets, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
@@ -378,7 +381,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_transit_open_error,
         ),
         constMeta: kCrateApiTransitOfflineTransitOpenConstMeta,
-        argValues: [timetable, tileSets],
+        argValues: [build, feeds, tileSets],
         apiImpl: this,
       ),
     );
@@ -387,7 +390,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiTransitOfflineTransitOpenConstMeta =>
       const TaskConstMeta(
         debugName: "OfflineTransit_open",
-        argNames: ["timetable", "tileSets"],
+        argNames: ["build", "feeds", "tileSets"],
       );
 
   @override
@@ -865,6 +868,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<String>? dco_decode_opt_list_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_list_String(raw);
+  }
+
+  @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_list_prim_u_8_strict(raw);
@@ -1317,6 +1326,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return OpenErrorKind.values[inner];
+  }
+
+  @protected
+  List<String>? sse_decode_opt_list_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_list_String(deserializer));
+    } else {
+      return null;
+    }
   }
 
   @protected
@@ -1777,6 +1797,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_opt_list_String(
+    List<String>? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_list_String(self, serializer);
+    }
   }
 
   @protected

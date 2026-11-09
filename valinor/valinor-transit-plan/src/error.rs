@@ -9,6 +9,9 @@ pub enum StateError {
     /// The compiled timetable was rejected while being loaded or materialized.
     #[error("load the compiled timetable: {0}")]
     Timetable(#[from] valinor_gtfs::DecodeError),
+    /// The compiled timetables can't be loaded together.
+    #[error("number the compiled timetables together: {0}")]
+    Set(#[from] valinor_gtfs::SetError),
     /// A service window could not be laid out.
     #[error("materialize a service window: {0}")]
     Window(#[from] BuildError),

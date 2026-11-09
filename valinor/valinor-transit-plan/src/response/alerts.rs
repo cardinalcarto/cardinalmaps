@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use valinor_gtfs::CompiledTimetable;
+use valinor_gtfs::TimetablePart;
 use valinor_gtfs_rt::proto::TranslatedString;
 use valinor_gtfs_rt::proto::alert::Effect;
 use valinor_gtfs_rt::{
@@ -61,7 +61,7 @@ pub(crate) struct LegSelectorContext<'a> {
 
 /// The alerts that apply to a leg, each once, with `STOP_MOVED` marks for its boarding and alighting.
 pub(crate) fn leg_alerts<'a>(
-    compiled: &CompiledTimetable<'_>,
+    part: TimetablePart<'_>,
     rider: &'a RiderData,
     context: &LegSelectorContext<'_>,
 ) -> Vec<LegAlert> {
@@ -99,7 +99,7 @@ pub(crate) fn leg_alerts<'a>(
         let mut matched = false;
         let mut stop_indices: Vec<usize> = Vec::new();
         for selector in &alert.informed {
-            if let Some(indices) = selector_matches(compiled, feed, selector, context) {
+            if let Some(indices) = selector_matches(part, feed, selector, context) {
                 matched = true;
                 for index in indices {
                     if !stop_indices.contains(&index) {
@@ -111,7 +111,7 @@ pub(crate) fn leg_alerts<'a>(
         if !matched {
             continue;
         }
-        let moved_stops = moved_stops(alert, &stop_indices, compiled, context);
+        let moved_stops = moved_stops(alert, &stop_indices, part, context);
         attached.push(LegAlert {
             alert: alert_response(alert),
             moved_stops: (!moved_stops.is_empty()).then_some(moved_stops),
@@ -138,7 +138,7 @@ fn active_between(alert: &AlertDetails, from: i64, to: i64) -> bool {
 ///
 /// An empty vector means it selects the leg without naming a stop on it.
 fn selector_matches(
-    compiled: &CompiledTimetable<'_>,
+    part: TimetablePart<'_>,
     feed: &FeedId,
     selector: &InformedEntity,
     context: &LegSelectorContext<'_>,
@@ -176,16 +176,23 @@ fn selector_matches(
     if selector.trip_date.is_some() && selector.trip_date != context.date {
         return None;
     }
-    if !start_time_matches(compiled, feed, selector, context) {
+    if !start_time_matches(part, feed, selector, context) {
         return None;
     }
     let Some(stop_id) = selector.stop_id.as_deref() else {
         return Some(Vec::new());
     };
     // A selector can name the stop itself or its parent station.
-    let at_station = compiled
+    let compiled = part.compiled();
+    let at_station: Option<Vec<StopId>> = compiled
         .location_by_gtfs_id(feed.as_str(), stop_id)
-        .and_then(|location| compiled.stops_at(location));
+        .and_then(|location| compiled.stops_at(location))
+        .map(|stops| {
+            stops
+                .into_iter()
+                .map(|stop| part.global_stop(stop))
+                .collect()
+        });
     let indices: Vec<usize> = context
         .stops
         .iter()
@@ -207,7 +214,7 @@ fn selector_matches(
 /// to the run itself for a scheduled trip, and to a frequency run by its start.
 /// One without a `trip_id` compares starts directly, as routing's run search does.
 fn start_time_matches(
-    compiled: &CompiledTimetable<'_>,
+    part: TimetablePart<'_>,
     feed: &FeedId,
     selector: &InformedEntity,
     context: &LegSelectorContext<'_>,
@@ -226,15 +233,15 @@ fn start_time_matches(
         return run.start_time == Some(start);
     };
     let start = i32::try_from(start).ok();
-    compiled
+    part.compiled()
         .trip_run_for_start_time(feed.as_str(), trip_id, run.date, start)
-        .is_some_and(|found| found.trip == static_trip)
+        .is_some_and(|found| part.global_trip(found.trip) == static_trip)
 }
 
 fn moved_stops(
     alert: &AlertDetails,
     stop_indices: &[usize],
-    compiled: &CompiledTimetable<'_>,
+    part: TimetablePart<'_>,
     context: &LegSelectorContext<'_>,
 ) -> Vec<MovedStop> {
     if alert.effect != Some(Effect::StopMoved) {
@@ -254,8 +261,9 @@ fn moved_stops(
             Some(MovedStop {
                 role,
                 stop_id: stop.gtfs_id?.to_owned(),
-                name: compiled
-                    .stop(stop.stop)
+                name: part
+                    .local_stop(stop.stop)
+                    .and_then(|local| part.compiled().stop(local))
                     .and_then(|info| info.name.map(str::to_owned)),
             })
         })

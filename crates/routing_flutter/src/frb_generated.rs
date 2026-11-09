@@ -31,7 +31,7 @@ use crate::api::directions::*;
 use crate::api::router::*;
 use crate::api::transit::*;
 use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
 use flutter_rust_bridge::{Handler, IntoIntoDart};
 
 // Section: boilerplate
@@ -300,13 +300,17 @@ fn wire__crate__api__transit__OfflineTransit_open_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_timetable = <String>::sse_decode(&mut deserializer);
+            let api_build = <String>::sse_decode(&mut deserializer);
+            let api_feeds = <Option<Vec<String>>>::sse_decode(&mut deserializer);
             let api_tile_sets = <Vec<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, crate::api::transit::TransitOpenError>((move || {
-                    let output_ok =
-                        crate::api::transit::OfflineTransit::open(api_timetable, api_tile_sets)?;
+                    let output_ok = crate::api::transit::OfflineTransit::open(
+                        api_build,
+                        api_feeds,
+                        api_tile_sets,
+                    )?;
                     std::result::Result::Ok(output_ok)
                 })(
                 ))
@@ -867,6 +871,17 @@ impl SseDecode for crate::api::router::OpenErrorKind {
             3 => crate::api::router::OpenErrorKind::MixedBuilds,
             _ => unreachable!("Invalid variant for OpenErrorKind: {}", inner),
         };
+    }
+}
+
+impl SseDecode for Option<Vec<String>> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<Vec<String>>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
     }
 }
 
@@ -1642,6 +1657,16 @@ impl SseEncode for crate::api::router::OpenErrorKind {
     }
 }
 
+impl SseEncode for Option<Vec<String>> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <Vec<String>>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<Vec<u8>> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1767,7 +1792,7 @@ mod io {
     use flutter_rust_bridge::for_generated::byteorder::{
         NativeEndian, ReadBytesExt, WriteBytesExt,
     };
-    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate
@@ -1850,7 +1875,7 @@ mod web {
     };
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
-    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate

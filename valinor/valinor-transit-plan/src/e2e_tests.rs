@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use valinor_gtfs::TimetableSet;
 use valinor_gtfs::{
     FeedId as CompileFeedId, FeedInput as CompileInput, LatLon, LoadedTimetable, ZipSource, compile,
 };
@@ -59,9 +60,14 @@ fn compiled_bytes() -> &'static [u8] {
 fn planner() -> StreetPlanner {
     let started = Instant::now();
     let loaded = LoadedTimetable::from_bytes(compiled_bytes().to_vec()).unwrap();
-    let planner = StreetPlanner::open(loaded, &[TILES], StreetConfig::default()).unwrap();
+    let planner = StreetPlanner::open_with_built_transfers(
+        TimetableSet::single(loaded).unwrap(),
+        &[TILES],
+        StreetConfig::default(),
+    )
+    .unwrap();
     println!(
-        "StreetPlanner::open (snaps every stop for walking and cycling): {:?}",
+        "StreetPlanner::open_with_built_transfers (snaps every stop for walking and cycling): {:?}",
         started.elapsed()
     );
     planner
@@ -470,7 +476,7 @@ fn e2e_stop_moved_marks_the_boarding_leg() {
     let state = planner.state();
     let now = ingest_capture(state, &capture_at("20261109T073000Z"));
     let snapshot = state.refresh(now).unwrap();
-    let compiled = *snapshot.data.loaded.timetable();
+    let compiled = *snapshot.data.set.part_of_feed(FEED).unwrap().compiled();
 
     let mut moved = Vec::new();
     for alert in snapshot.rider().alerts() {

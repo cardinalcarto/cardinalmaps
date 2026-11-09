@@ -212,8 +212,8 @@ fn transit_state(token: Option<&str>) -> Arc<app::AppState> {
     }])
     .unwrap();
     let timetable = valinor_gtfs::LoadedTimetable::from_bytes(compiled.bytes).unwrap();
-    let planner = valinor_transit_plan::StreetPlanner::open(
-        timetable,
+    let planner = valinor_transit_plan::StreetPlanner::open_with_built_transfers(
+        valinor_gtfs::TimetableSet::single(timetable).unwrap(),
         &[fixtures().join("andorra-tiles.tar")],
         valinor_transit_plan::StreetConfig::default(),
     )

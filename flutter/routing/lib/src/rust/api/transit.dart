@@ -11,18 +11,24 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineTransit>>
 abstract class OfflineTransit implements RustOpaqueInterface {
-  /// Opens a compiled timetable (`valinor-gtfs`) over tile sets, snapping every stop.
+  /// Opens a transit build directory over tile sets, snapping every stop.
   ///
-  /// Takes a few seconds on a large metro timetable: every stop is snapped for walking and
-  /// for cycling. Run it once and keep the result.
+  /// `feeds` chooses which of the build's feeds to load, by ID; `None` loads every feed that
+  /// compiled. Whichever transfer tiles of those feeds are on disk are used; a stop whose tile
+  /// isn't simply has no transfers, so an offline area needn't hold an agency's whole network.
   ///
-  /// The file is memory-mapped: to replace it, write a new file and rename it over the old
-  /// one; truncating or rewriting it in place while it is open can fault.
+  /// Takes a few seconds on a large metro: every stop is snapped for walking and for cycling.
+  /// Run it once and keep the result.
+  ///
+  /// The build's files are memory-mapped: to replace one, write a new file and rename it over
+  /// the old one; truncating or rewriting it in place while it is open can fault.
   static Future<OfflineTransit> open({
-    required String timetable,
+    required String build,
+    List<String>? feeds,
     required List<String> tileSets,
   }) => RustLib.instance.api.crateApiTransitOfflineTransitOpen(
-    timetable: timetable,
+    build: build,
+    feeds: feeds,
     tileSets: tileSets,
   );
 

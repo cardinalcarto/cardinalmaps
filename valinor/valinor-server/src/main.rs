@@ -8,7 +8,7 @@
 //! with `GET ?json=` and POST, as mainline's httpd does; see [`app`] for the details.
 //! `GET /status` is the health check. Logging follows `RUST_LOG`.
 //! It writes no files.
-//! With `--transit-timetable`, it also plans public transit at `/transit/...`; see [`transit`].
+//! With `--transit-build`, it also plans public transit at `/transit/...`; see [`transit`].
 
 use anyhow::{Context, bail};
 use clap::Parser;
@@ -22,9 +22,8 @@ use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
-use valinor_gtfs::LoadedTimetable;
 use valinor_router::{DEFAULT_TILE_CACHE_SIZE, Router, RouterConfig};
-use valinor_transit_plan::{ServiceLimits, StreetConfig, StreetPlanner};
+use valinor_transit_plan::{ServiceLimits, StreetConfig, StreetPlanner, TransitBuild};
 
 mod app;
 #[cfg(test)]
@@ -66,10 +65,14 @@ struct Cli {
     #[arg(env, long, default_value = "16777216")]
     max_body_bytes: usize,
 
-    /// A compiled transit timetable (`valinor-gtfs`), to serve `/transit/...`.
+    /// A transit build directory (`valinor-transit-build`), to serve `/transit/...`.
     /// Without one, those paths are unknown, as any others are.
     #[arg(env, long)]
-    transit_timetable: Option<PathBuf>,
+    transit_build: Option<PathBuf>,
+
+    /// The feeds to load from the build, by ID (default: every feed that compiled).
+    #[arg(env, long, value_delimiter = ',')]
+    transit_feeds: Vec<String>,
 
     /// The shared secret for feeding GTFS-RT to `PUT /transit/feeds/...`.
     /// Without one, real-time data can't be ingested and transit serves the schedule.
@@ -98,15 +101,14 @@ fn tile_sets(cli: &Cli, config: &RouterConfig) -> anyhow::Result<Vec<PathBuf>> {
     }
 }
 
-/// Opens transit, if a timetable was given, over the same tile sets as the router.
+/// Opens transit, if a build was given, over the same tile sets as the router.
 fn open_transit(cli: &Cli, tiles: &[PathBuf]) -> anyhow::Result<Option<transit::Transit>> {
-    let Some(path) = cli.transit_timetable.as_deref() else {
+    let Some(path) = cli.transit_build.as_deref() else {
         return Ok(None);
     };
-    // SAFETY: the file is the operator's published timetable, replaced by renaming over it,
-    // as `LoadedTimetable::map` asks; nothing modifies it in place while the server runs.
-    let timetable = unsafe { LoadedTimetable::map(path) }
-        .with_context(|| format!("load the timetable {}", path.display()))?;
+    let feeds = (!cli.transit_feeds.is_empty()).then_some(cli.transit_feeds.as_slice());
+    let build = TransitBuild::load(path, feeds)
+        .with_context(|| format!("load the transit build {}", path.display()))?;
     let config = StreetConfig {
         limits: ServiceLimits {
             max_walk_seconds: cli.transit_max_walk_seconds,
@@ -114,8 +116,8 @@ fn open_transit(cli: &Cli, tiles: &[PathBuf]) -> anyhow::Result<Option<transit::
         },
         ..StreetConfig::default()
     };
-    let planner =
-        StreetPlanner::open(timetable, tiles, config).context("open transit over the tiles")?;
+    let planner = StreetPlanner::from_build(build, tiles, config)
+        .context("open transit over the tiles")?;
     info!(
         "transit: {} feeds, from {}",
         planner.state().feeds().len(),

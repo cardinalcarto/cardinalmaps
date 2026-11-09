@@ -2,7 +2,9 @@
 //!
 //! See `docs/transit.md` for the design this crate serves. In outline:
 //!
-//! - [`TransitState`] owns the compiled timetable and service windows, accepts optional GTFS-RT
+//! - [`TransitBuild`] loads a build directory: a chosen subset of its feeds' timetables,
+//!   and the transfer tiles present on disk, checked against the build's manifest.
+//! - [`TransitState`] owns the compiled timetables and service windows, accepts optional GTFS-RT
 //!   bytes per feed, and publishes an immutable [`TransitSnapshot`] that a query pins.
 //!   It has no runtime, network access, or clock; `now` is always an argument,
 //!   so a server and a phone use it identically.
@@ -12,6 +14,7 @@
 //!   rather than Valhalla's.
 //! - [`CompiledLookup`] is the bridge that lets the GTFS-RT overlay builder see compiled GTFS.
 
+mod build;
 mod error;
 mod json;
 mod lookup;
@@ -22,7 +25,11 @@ mod street;
 mod window;
 
 #[cfg(test)]
+mod build_tests;
+#[cfg(test)]
 mod e2e_tests;
+#[cfg(test)]
+mod multi_feed_tests;
 #[cfg(test)]
 mod review_tests;
 #[cfg(test)]
@@ -32,6 +39,7 @@ mod street_tests;
 #[cfg(test)]
 mod testing;
 
+pub use build::{BuildLoadError, BuildLoadReport, TransitBuild, default_decode_limits};
 pub use error::{PlanError, StateError};
 pub use json::{JsonCoordinate, JsonResponse, PlanRequestBody};
 pub use lookup::CompiledLookup;

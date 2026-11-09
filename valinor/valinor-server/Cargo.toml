@@ -17,7 +17,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-valinor-gtfs = { path = "../valinor-gtfs", default-features = false }
 valinor-gtfs-rt = { path = "../valinor-gtfs-rt" }
 valinor-router = { workspace = true }
 valinor-transit-plan = { path = "../valinor-transit-plan" }
@@ -25,6 +24,7 @@ valinor-transit-plan = { path = "../valinor-transit-plan" }
 [dev-dependencies]
 tower = { workspace = true }
 valinor-gtfs = { path = "../valinor-gtfs" }
+valinor-transit-plan = { path = "../valinor-transit-plan", features = ["test-support"] }
 
 [lints]
 workspace = true

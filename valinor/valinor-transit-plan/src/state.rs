@@ -39,7 +39,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, RwLock, TryLockError};
 
-use valinor_gtfs::LoadedTimetable;
+use valinor_gtfs::{LoadedTimetable, TimetableSet};
 use valinor_gtfs_rt::{
     DecodeError, FeedId, FeedInput, FeedKind, FeedStatus, NewStop, OverlayOptions, OverlayStats,
     RiderData, build_overlay,
@@ -51,7 +51,7 @@ use crate::error::StateError;
 use crate::lookup::CompiledLookup;
 use crate::plan::TravelMode;
 use crate::response::{VehicleUpdate, vehicle_update};
-use crate::window::{WindowData, dates_around, required_dates, service_date_at};
+use crate::window::{WindowData, dates_around, required_dates};
 
 /// Materialized windows kept for reuse: the current one, its predecessor, and an on-demand one.
 ///
@@ -124,16 +124,18 @@ pub trait StopSnapper: core::fmt::Debug + Send + Sync {
     /// If a tile can't be read.
     fn snap_one(&self, mode: TravelMode, ll: (f64, f64)) -> Result<SnappedStop, WalkError>;
 
-    /// Precomputes the walks between nearby stops for a travel mode.
+    /// The walks between nearby stops for a travel mode, in the snapshot's stop numbering.
+    ///
+    /// In production these were loaded from transfer tiles; tests may build them in memory.
     ///
     /// # Errors
     ///
     /// If a tile can't be read, or the snaps are of a different build.
-    fn transfers(
+    fn base_transfers(
         &self,
         mode: TravelMode,
         snaps: &Arc<StopSnaps>,
-    ) -> Result<TransferTable, WalkError>;
+    ) -> Result<Arc<TransferTable>, WalkError>;
 
     /// A table that adds an overlay's new stops to `base`, for `snaps` that cover them.
     ///
@@ -224,11 +226,14 @@ pub struct StopLocation {
     pub longitude: f64,
 }
 
-/// The compiled timetable and everything derived once from it.
+/// The compiled timetables and everything derived once from them.
 #[derive(Debug)]
 pub(crate) struct TimetableData {
-    pub(crate) loaded: LoadedTimetable,
-    pub(crate) timetable: Timetable,
+    /// Every loaded file, numbered as one.
+    pub(crate) set: TimetableSet,
+    /// Each file's service, by the file's position in the set.
+    pub(crate) timetables: Vec<Timetable>,
+    /// Every feed in the set.
     pub(crate) feeds: Vec<FeedId>,
 }
 
@@ -245,10 +250,10 @@ pub struct TransitSnapshot {
     pub(crate) stats: OverlayStats,
     pub(crate) built_at: i64,
     pub(crate) snaps: Option<ModeSnaps>,
-    /// The service date this window is centered on, for a snapshot of the current day.
+    /// The dates this window was chosen for, for a snapshot of the current moment.
     ///
     /// `None` for an on-demand window, which never rolls over.
-    center: Option<valinor_transit::ServiceDate>,
+    center: Option<Vec<valinor_transit::ServiceDate>>,
     feed_generation: u64,
 }
 
@@ -306,16 +311,19 @@ impl TransitSnapshot {
     ///
     /// Stops the file holds without coordinates are omitted.
     pub fn stop_locations(&self) -> impl Iterator<Item = StopLocation> + '_ {
-        let compiled = *self.data.loaded.timetable();
-        let base_count = u32::try_from(compiled.stop_count()).unwrap_or(u32::MAX);
-        (0..base_count)
-            .filter_map(move |raw| {
-                let stop = StopId::new(raw);
-                let coordinate = compiled.stop(stop)?.coordinate?;
-                Some(StopLocation {
-                    stop,
-                    latitude: coordinate.lat,
-                    longitude: coordinate.lon,
+        self.data
+            .set
+            .parts()
+            .flat_map(|part| {
+                let count = u32::try_from(part.compiled().stop_count()).unwrap_or(u32::MAX);
+                (0..count).filter_map(move |raw| {
+                    let local = StopId::new(raw);
+                    let coordinate = part.compiled().stop(local)?.coordinate?;
+                    Some(StopLocation {
+                        stop: part.global_stop(local),
+                        latitude: coordinate.lat,
+                        longitude: coordinate.lon,
+                    })
                 })
             })
             .chain(self.new_stops.iter().map(|stop| StopLocation {
@@ -350,7 +358,7 @@ pub(crate) struct Writer {
 }
 
 impl TransitState {
-    /// Takes ownership of a loaded timetable.
+    /// Takes ownership of one loaded timetable.
     ///
     /// # Performance
     ///
@@ -360,10 +368,23 @@ impl TransitState {
     ///
     /// If `valinor-transit` rejects the file's tables.
     pub fn new(loaded: LoadedTimetable, config: StateConfig) -> Result<Self, StateError> {
-        Self::build(loaded, config, None)
+        Self::from_set(TimetableSet::single(loaded)?, config)
     }
 
-    /// Takes ownership of a loaded timetable and snaps its stops to a street network.
+    /// Takes ownership of several loaded timetables, numbered as one.
+    ///
+    /// # Performance
+    ///
+    /// Copies every stop event of every file once. A window is materialized on first use.
+    ///
+    /// # Errors
+    ///
+    /// If `valinor-transit` rejects a file's tables.
+    pub fn from_set(set: TimetableSet, config: StateConfig) -> Result<Self, StateError> {
+        Self::build(set, config, None)
+    }
+
+    /// Takes ownership of timetables and snaps their stops to a street network.
     ///
     /// New stops in overlays are snapped with `snapper` when each overlay is built.
     ///
@@ -373,24 +394,27 @@ impl TransitState {
     ///
     /// # Errors
     ///
-    /// If `valinor-transit` rejects the file's tables, or a stop can't be snapped.
+    /// If `valinor-transit` rejects a file's tables, or a stop can't be snapped.
     pub fn with_snapper(
-        loaded: LoadedTimetable,
+        set: TimetableSet,
         config: StateConfig,
         snapper: Box<dyn StopSnapper>,
     ) -> Result<Self, StateError> {
-        Self::build(loaded, config, Some(snapper))
+        Self::build(set, config, Some(snapper))
     }
 
     fn build(
-        loaded: LoadedTimetable,
+        set: TimetableSet,
         config: StateConfig,
         snapper: Option<Box<dyn StopSnapper>>,
     ) -> Result<Self, StateError> {
-        let timetable = loaded.timetable().to_timetable()?;
+        let timetables = set
+            .parts()
+            .map(|part| part.compiled().to_timetable())
+            .collect::<Result<Vec<_>, _>>()?;
         let mut feeds = Vec::new();
-        for info in loaded.timetable().feeds() {
-            let feed = FeedId::new(info.id).map_err(|_| {
+        for (id, _) in set.feeds() {
+            let feed = FeedId::new(id).map_err(|_| {
                 StateError::Timetable(valinor_gtfs::DecodeError::InvalidValue {
                     table: "feeds",
                     reason: "a feed has an empty identifier",
@@ -401,11 +425,11 @@ impl TransitState {
         let base_snaps = match &snapper {
             None => None,
             Some(snapper) => {
-                let points = stop_points(loaded.timetable());
+                let points = stop_points(&set);
                 let walking = Arc::new(snapper.snap_all(TravelMode::Walking, &points)?);
                 let cycling = Arc::new(snapper.snap_all(TravelMode::Cycling, &points)?);
-                let walking_transfers = Arc::new(snapper.transfers(TravelMode::Walking, &walking)?);
-                let cycling_transfers = Arc::new(snapper.transfers(TravelMode::Cycling, &cycling)?);
+                let walking_transfers = snapper.base_transfers(TravelMode::Walking, &walking)?;
+                let cycling_transfers = snapper.base_transfers(TravelMode::Cycling, &cycling)?;
                 Some(ModeSnaps {
                     walking,
                     cycling,
@@ -416,8 +440,8 @@ impl TransitState {
         };
         Ok(Self {
             data: Arc::new(TimetableData {
-                loaded,
-                timetable,
+                set,
+                timetables,
                 feeds,
             }),
             config,
@@ -540,7 +564,7 @@ impl TransitState {
                 // A rebuild is running. If this snapshot is only behind on feed bytes,
                 // that rebuild will catch it up, and a query needn't wait for it.
                 if let Some(snapshot) = current
-                    && !Self::is_wrong_at(self.data.loaded.timetable(), &snapshot, now)
+                    && !Self::is_wrong_at(&self.data.set, &snapshot, now)
                 {
                     return Ok(snapshot);
                 }
@@ -570,8 +594,7 @@ impl TransitState {
         earliest: i64,
         latest: i64,
     ) -> Result<Arc<TransitSnapshot>, StateError> {
-        let compiled = *self.data.loaded.timetable();
-        let needed = required_dates(&compiled, earliest, latest)?;
+        let needed = required_dates(&self.data.set, earliest, latest)?;
         match self.pin(now) {
             Ok(current) if current.window.covers(&needed) => return Ok(current),
             // `now` may legitimately be outside the feed; the departure isn't.
@@ -616,16 +639,13 @@ impl TransitState {
 
     fn is_out_of_date(&self, snapshot: &TransitSnapshot, now: i64) -> bool {
         snapshot.feed_generation != self.feed_generation.load(Ordering::Acquire)
-            || Self::is_wrong_at(self.data.loaded.timetable(), snapshot, now)
+            || Self::is_wrong_at(&self.data.set, snapshot, now)
     }
 
     /// Whether a snapshot is wrong at `now`, rather than only behind the newest feed bytes.
-    fn is_wrong_at(
-        compiled: &valinor_gtfs::CompiledTimetable<'_>,
-        snapshot: &TransitSnapshot,
-        now: i64,
-    ) -> bool {
-        snapshot.center != service_date_at(compiled, now) || Self::stale_flipped(snapshot, now)
+    fn is_wrong_at(set: &TimetableSet, snapshot: &TransitSnapshot, now: i64) -> bool {
+        snapshot.center.as_deref() != Some(dates_around(set, now).as_slice())
+            || Self::stale_flipped(snapshot, now)
     }
 
     /// Whether any feed's staleness differs at `now` from what the snapshot applied.
@@ -638,10 +658,11 @@ impl TransitState {
     }
 
     fn rebuild(&self, writer: &mut Writer, now: i64) -> Result<Arc<TransitSnapshot>, StateError> {
-        let compiled = self.data.loaded.timetable();
-        let center = service_date_at(compiled, now).ok_or(StateError::DateNotCovered(now))?;
-        let dates = dates_around(compiled, center);
-        let window = self.window(writer, dates)?;
+        let center = dates_around(&self.data.set, now);
+        if center.is_empty() {
+            return Err(StateError::DateNotCovered(now));
+        }
+        let window = self.window(writer, center.clone())?;
         let generation = self.feed_generation.load(Ordering::Acquire);
         let built = Arc::new(self.build_snapshot(writer, window, Some(center), generation, now)?);
         *self.current.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&built));
@@ -658,10 +679,9 @@ impl TransitState {
             writer.windows.insert(0, Arc::clone(&window));
             return Ok(window);
         }
-        let compiled = self.data.loaded.timetable();
         let window = Arc::new(WindowData::materialize(
-            compiled,
-            &self.data.timetable,
+            &self.data.set,
+            &self.data.timetables,
             dates,
         )?);
         writer.windows.insert(0, Arc::clone(&window));
@@ -673,18 +693,11 @@ impl TransitState {
         &self,
         writer: &Writer,
         window: Arc<WindowData>,
-        center: Option<valinor_transit::ServiceDate>,
+        center: Option<Vec<valinor_transit::ServiceDate>>,
         feed_generation: u64,
         now: i64,
     ) -> Result<TransitSnapshot, StateError> {
-        let compiled = self.data.loaded.timetable();
-        let lookup = CompiledLookup::new(
-            compiled,
-            &self.data.timetable,
-            &window.days,
-            &window.service_days,
-            &self.data.feeds,
-        );
+        let lookup = CompiledLookup::new(&self.data, &window);
         let inputs = feeds_in_order(&writer.feeds);
         let overlay = build_overlay(
             &lookup,
@@ -714,20 +727,22 @@ impl TransitState {
     }
 }
 
-/// Every static stop's coordinates as `(lon, lat)`, by stop number.
+/// Every static stop's coordinates as `(lon, lat)`, by the set's stop number.
 ///
 /// A stop with no coordinates is at `(0, 0)`, where no tile set has a street, so it stays
 /// unsnapped; the table keeps its numbering.
-fn stop_points(compiled: &valinor_gtfs::CompiledTimetable<'_>) -> Vec<(f64, f64)> {
-    let count = u32::try_from(compiled.stop_count()).unwrap_or(u32::MAX);
-    (0..count)
-        .map(|raw| {
-            compiled
+fn stop_points(set: &TimetableSet) -> Vec<(f64, f64)> {
+    let mut points = Vec::with_capacity(set.stop_count());
+    for part in set.parts() {
+        let count = u32::try_from(part.compiled().stop_count()).unwrap_or(u32::MAX);
+        points.extend((0..count).map(|raw| {
+            part.compiled()
                 .stop(StopId::new(raw))
                 .and_then(|info| info.coordinate)
                 .map_or((0.0, 0.0), |coordinate| (coordinate.lon, coordinate.lat))
-        })
-        .collect()
+        }));
+    }
+    points
 }
 
 /// The feeds in a stable order, so overlays and statuses are deterministic.
