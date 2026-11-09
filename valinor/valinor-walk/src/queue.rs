@@ -9,6 +9,17 @@
 
 const NONE: u32 = u32::MAX;
 
+/// The ring position of a clock offset.
+#[inline]
+fn ring_index(offset: u64, mask: usize) -> usize {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "only the low bits matter, after masking"
+    )]
+    let index = offset as usize & mask;
+    index
+}
+
 /// A ring of buckets, in seconds.
 #[derive(Debug, Default)]
 pub(crate) struct DialQueue {
@@ -54,12 +65,8 @@ impl DialQueue {
 
     /// Discards everything in the queue, leaving it ready to be reset.
     pub(crate) fn clear(&mut self) {
-        for slot in &mut self.heads {
-            *slot = NONE;
-        }
-        for word in &mut self.occupied {
-            *word = 0;
-        }
+        self.heads.fill(NONE);
+        self.occupied.fill(0);
         self.entries.clear();
         self.pending = 0;
     }
@@ -67,8 +74,8 @@ impl DialQueue {
     /// Pushes `node` at `clock`, which must not be before the last clock popped.
     #[inline]
     pub(crate) fn push(&mut self, clock: i32, node: u32) {
-        let offset = (i64::from(clock) - i64::from(self.base)) as u64;
-        let bucket = offset as usize & self.mask;
+        let offset = (i64::from(clock) - i64::from(self.base)).cast_unsigned();
+        let bucket = ring_index(offset, self.mask);
         let entry = u32::try_from(self.entries.len()).unwrap_or(u32::MAX);
         self.entries.push((node, self.heads[bucket]));
         self.heads[bucket] = entry;
@@ -91,7 +98,7 @@ impl DialQueue {
         }
         self.pending -= 1;
         // The ring is wider than the live span of clocks, so `current` is correct as is.
-        let clock = i64::from(self.base) + self.current as i64;
+        let clock = i64::from(self.base) + self.current.cast_signed();
         // The clock fits, as the queue is only given clocks that do.
         Some((i32::try_from(clock).unwrap_or(i32::MAX), node))
     }
@@ -101,7 +108,7 @@ impl DialQueue {
     /// There is at least one.
     #[inline]
     fn advance(&mut self) -> usize {
-        let bucket = self.current as usize & self.mask;
+        let bucket = ring_index(self.current, self.mask);
         let mut word = bucket >> 6;
         let bits = self.occupied[word] & (!0u64 << (bucket & 63));
         if bits != 0 {

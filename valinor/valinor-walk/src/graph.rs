@@ -74,13 +74,13 @@ pub(crate) struct HotArc {
 
 impl HotArc {
     /// The dense number of the node this arc leads to.
-    #[inline(always)]
+    #[inline]
     pub(crate) const fn head(self) -> u32 {
         self.head_and_flag & !LAST_ARC
     }
 
     /// Whether this is the last arc of its node.
-    #[inline(always)]
+    #[inline]
     pub(crate) const fn is_last(self) -> bool {
         self.head_and_flag & LAST_ARC != 0
     }
@@ -206,7 +206,7 @@ impl Weights {
     #[inline]
     fn of<C: Costing, T: GraphTile>(
         costing: &C,
-        pred: &NoPredecessor,
+        pred: NoPredecessor,
         edge: &DirectedEdge,
         edge_id: GraphId,
         tile: &T,
@@ -214,13 +214,13 @@ impl Weights {
     ) -> Result<u16, WalkError> {
         // Time-independent: transfers are charged the same whenever they are walked.
         let mut access = EdgeAccess::new(0);
-        if !costing.allowed(edge, edge_id, tile, pred, TimeContext::NONE, &mut access) {
+        if !costing.allowed(edge, edge_id, tile, &pred, TimeContext::NONE, &mut access) {
             return Ok(INF);
         }
         let mut access = EdgeAccess::new(0);
         if !costing.allowed_reverse(
             opposing,
-            pred,
+            &pred,
             edge,
             edge_id,
             tile,
@@ -241,6 +241,10 @@ fn rounded_secs(secs: f32) -> u16 {
         return INF;
     }
     let rounded = secs.round();
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "the limit is a small integer, exact in f32"
+    )]
     if rounded > MAX_SECS as f32 {
         return INF;
     }
@@ -564,8 +568,8 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
             .dense_node(tail)?
             .ok_or(WalkError::SnappedEdgeMissing(edge_id))?;
         let pred = NoPredecessor { mode: self.mode };
-        let forward = Weights::of(&self.costing, &pred, edge, edge_id, &tile, opposing)?;
-        let backward = Weights::of(&self.costing, &pred, opposing, opposing_id, &end_tile, edge)?;
+        let forward = Weights::of(&self.costing, pred, edge, edge_id, &tile, opposing)?;
+        let backward = Weights::of(&self.costing, pred, opposing, opposing_id, &end_tile, edge)?;
         Ok(Some(EdgeDescription {
             edge_dense,
             opposing_dense: opp_dense,
@@ -603,7 +607,7 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
         }
         let first = self.arcs.len();
         let pred = NoPredecessor { mode: self.mode };
-        self.read_edges(&tile, node_id, node, &pred)?;
+        self.read_edges(&tile, node_id, node, pred)?;
         self.read_transitions(&tile, node)?;
         if self.arcs.len() == first {
             self.first_arc[dense as usize] = NO_ARCS;
@@ -623,7 +627,7 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
         tile: &P::TileHandle,
         node_id: GraphId,
         node: &NodeInfo,
-        pred: &NoPredecessor,
+        pred: NoPredecessor,
     ) -> Result<(), WalkError> {
         let first_edge = u64::from(node.edge_index());
         for (i, edge) in tile.get_outbound_edges_from_node(node).iter().enumerate() {
@@ -699,11 +703,8 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
         Ok(())
     }
 
-    /// The tile build the graph's tiles come from, read from any tile with a slot.
-    ///
-    /// # Errors
-    ///
-    /// Fails if no tile has been touched.
+    /// The tile build of a tile with a slot, for tests.
+    #[cfg(test)]
     pub(crate) fn build_id(&self) -> Option<BuildId> {
         self.slots.first().map(|s| s.handle.header().build_id())
     }

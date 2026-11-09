@@ -111,7 +111,7 @@ pub fn transfer_leg(
     for (&edge, &secs) in walk.edges.iter().zip(&walk.edge_secs) {
         let part = Cost::new(f32::from(secs), f32::from(secs));
         edges.push(path_edge(edge, mode, so_far, Cost::ZERO, part));
-        so_far = so_far + part;
+        so_far += part;
     }
     Some(leg_from_parts(
         edges,

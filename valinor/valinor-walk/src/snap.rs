@@ -187,7 +187,7 @@ fn index(stop: StopId) -> usize {
 }
 
 /// A location for Loki with the reachability and search cutoff `config` asks for.
-fn location_for(ll: (f64, f64), config: &SnapConfig, loki: &LokiConfig) -> Location {
+fn location_for(ll: (f64, f64), config: SnapConfig, loki: &LokiConfig) -> Location {
     let mut location = Location {
         ll: Some(LatLng {
             has_lat: Some(HasLat::Lat(ll.1)),
@@ -206,7 +206,7 @@ fn location_for(ll: (f64, f64), config: &SnapConfig, loki: &LokiConfig) -> Locat
 /// The snap in a location Loki has correlated.
 fn snap_of<P: GraphTileProvider>(
     location: &Location,
-    config: &SnapConfig,
+    config: SnapConfig,
     provider: &P,
 ) -> Result<SnappedStop, WalkError> {
     let candidates = location
@@ -278,9 +278,9 @@ pub fn snap_stop<P: GraphTileProvider, C: Costing>(
     ll: (f64, f64),
 ) -> Result<SnappedStop, WalkError> {
     let loki = LokiConfig::default();
-    let mut locations = [location_for(ll, config, &loki)];
+    let mut locations = [location_for(ll, *config, &loki)];
     search(&mut locations, provider, costing)?;
-    snap_of(&locations[0], config, provider)
+    snap_of(&locations[0], *config, provider)
 }
 
 /// Snaps every stop, for building a [`StopSnaps`] table at startup.
@@ -301,13 +301,13 @@ pub fn snap_stops<P: GraphTileProvider, C: Costing>(
     let loki = LokiConfig::default();
     let mut locations: Vec<Location> = stops
         .iter()
-        .map(|&ll| location_for(ll, config, &loki))
+        .map(|&ll| location_for(ll, *config, &loki))
         .collect();
     search(&mut locations, provider, costing)?;
     let mut table = StopSnaps::new(build_id, stops.len());
     for (i, location) in locations.iter().enumerate() {
         let stop = StopId::new(u32::try_from(i).map_err(|_| WalkError::TooLarge)?);
-        table.insert(stop, snap_of(location, config, provider)?)?;
+        table.insert(stop, snap_of(location, *config, provider)?)?;
     }
     Ok(table)
 }
