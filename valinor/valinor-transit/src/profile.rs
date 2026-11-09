@@ -13,6 +13,7 @@ use crate::ids::Direction;
 use crate::ids::Time;
 use crate::journey::{Journey, trace_journey};
 use crate::raptor::{Router, TransitQuery, round_results};
+use crate::timetable::INFINITY;
 use crate::transfer::TransferSearch;
 
 /// One Pareto-optimal way to make the journey.
@@ -35,11 +36,90 @@ pub struct Profile<W> {
     pub entries: Vec<ProfileEntry<W>>,
 }
 
+/// Which optional prunings a profile uses. None of them changes what any search reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProfileOptions {
+    /// Bound each search with the journeys the profile already knows, and each backward search
+    /// with the start of the window.
+    pub known_journey_bounds: bool,
+}
+
+impl Default for ProfileOptions {
+    fn default() -> Self {
+        Self {
+            known_journey_bounds: true,
+        }
+    }
+}
+
+/// The journeys a profile has found, as bounds for its later searches.
+///
+/// # Why these bounds change nothing
+///
+/// A forward search at `τ` reports, per number of trips `k`,
+/// the earliest arrival over all journeys departing at or after `τ` with at most `k` trips.
+/// A known journey departing at or after `τ` with `j <= k` trips and arrival `a`
+/// is one of those journeys, so the search's report for `k` is at most `a`,
+/// and `a + 1` is a valid exclusive bound for round `k`.
+/// Mirrored, a backward search from arrival `A` reports the latest departure with at most `k`
+/// trips arriving by `A`, so a known journey arriving by `A` with departure `d` makes `-d + 1`
+/// a valid exclusive bound on that round's clock.
+/// With an exclusive bound above what the round reports, the round reports the same thing.
+#[derive(Debug, Default)]
+struct KnownJourneys {
+    /// `(departure, arrival, trips)`.
+    journeys: Vec<(i32, i32, u8)>,
+}
+
+impl KnownJourneys {
+    fn add(&mut self, departure: i32, arrival: i32, trips: u8) {
+        self.journeys.push((departure, arrival, trips));
+    }
+
+    /// Fills `bounds` by round for a forward search at `departure`.
+    fn forward_bounds(&self, departure: i32, bounds: &mut [i32]) {
+        bounds.fill(INFINITY);
+        for &(d, a, trips) in &self.journeys {
+            if d >= departure
+                && let Some(slot) = bounds.get_mut(usize::from(trips))
+            {
+                *slot = (*slot).min(a + 1);
+            }
+        }
+        prefix_min(bounds);
+    }
+
+    /// Fills `bounds` by round for a backward search arriving by `arrival`.
+    ///
+    /// Departures before `earliest` are never used, so that is a bound for every round.
+    fn backward_bounds(&self, arrival: i32, earliest: i32, bounds: &mut [i32]) {
+        bounds.fill(1 - earliest);
+        for &(d, a, trips) in &self.journeys {
+            if a <= arrival
+                && let Some(slot) = bounds.get_mut(usize::from(trips))
+            {
+                *slot = (*slot).min(1 - d);
+            }
+        }
+        prefix_min(bounds);
+    }
+}
+
+/// A journey with fewer trips also bounds every larger number of trips.
+fn prefix_min(bounds: &mut [i32]) {
+    let mut best = INFINITY;
+    for bound in bounds {
+        best = best.min(*bound);
+        *bound = best;
+    }
+}
+
 pub(crate) fn run_profile<S: TransferSearch>(
     router: &mut Router<S>,
     query: &TransitQuery<'_>,
     earliest: Time,
     latest: Time,
+    options: ProfileOptions,
     interrupt: &dyn Fn() -> bool,
 ) -> Result<Profile<S::Walk>, SearchError<S::Error>> {
     let earliest_seconds = earliest.into_inner();
@@ -52,15 +132,24 @@ pub(crate) fn run_profile<S: TransferSearch>(
     // The entries so far, to skip resolving the walks of one they already beat.
     let mut found: Vec<(Time, Time, u8)> = Vec::new();
 
-    router.run_forward(query, earliest_seconds, interrupt)?;
+    let mut known = KnownJourneys::default();
+    let mut bounds = vec![INFINITY; usize::from(query.max_trips) + 1];
+
+    router.run_forward(query, earliest_seconds, &[], interrupt)?;
     push_arrivals(router, &mut queue, &mut seen_arrivals);
 
     while let Some(core::cmp::Reverse(arrival)) = queue.pop() {
-        router.run_backward(query, arrival, interrupt)?;
+        if options.known_journey_bounds {
+            known.backward_bounds(arrival, earliest_seconds, &mut bounds);
+        } else {
+            bounds.fill(INFINITY);
+        }
+        router.run_backward(query, arrival, &bounds, interrupt)?;
 
         let mut departures = Vec::new();
         for result in round_results(&router.backward, Direction::Backward) {
             let departure = result.time.into_inner();
+            known.add(departure, arrival, result.trips);
             if departure < earliest_seconds || departure > latest_seconds {
                 continue;
             }
@@ -92,7 +181,12 @@ pub(crate) fn run_profile<S: TransferSearch>(
         }
 
         for departure in departures {
-            router.run_forward(query, departure + 1, interrupt)?;
+            if options.known_journey_bounds {
+                known.forward_bounds(departure + 1, &mut bounds);
+            } else {
+                bounds.fill(INFINITY);
+            }
+            router.run_forward(query, departure + 1, &bounds, interrupt)?;
             push_arrivals(router, &mut queue, &mut seen_arrivals);
         }
     }

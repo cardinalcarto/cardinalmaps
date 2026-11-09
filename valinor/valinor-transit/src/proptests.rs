@@ -786,6 +786,29 @@ fn index_of(route: u8, day: u8, routes: usize, days: usize) -> (usize, usize) {
     (usize::from(route) % routes, usize::from(day) % days)
 }
 
+/// The profile's `(departure, arrival, trips)`, with the known-journey bounds on or off.
+fn triples_with(net: &TestNet, raw: &RawNet, known_journey_bounds: bool) -> Triples {
+    let query = net.query(raw.max_trips, RouteFilter::ALL);
+    let mut router = net.router();
+    let mut triples: Triples = router
+        .profile_with(
+            &query,
+            t(WINDOW.0 + raw.shift),
+            t(WINDOW.1 + raw.shift),
+            crate::ProfileOptions {
+                known_journey_bounds,
+            },
+            &|| false,
+        )
+        .expect("profile")
+        .entries
+        .iter()
+        .map(|e| (e.departure.into_inner(), e.arrival.into_inner(), e.trips))
+        .collect();
+    triples.sort_unstable();
+    triples
+}
+
 /// Runs a network through the filters.
 fn check_both_filters(net: &TestNet, raw: &RawNet) {
     check_network(net, RouteFilter::ALL, raw.max_trips, raw.shift);
@@ -956,6 +979,30 @@ fn zero_second_seconds_constant_is_zero() {
 
 /// Guards against the generators drifting into trivial networks,
 /// where the comparisons above would pass while proving nothing.
+#[test]
+fn known_journey_bounds_never_change_a_profile() {
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
+
+    let mut runner = TestRunner::deterministic();
+    let strategy = raw_net();
+    let mut with_entries = 0;
+    for _ in 0..600 {
+        let raw = strategy.new_tree(&mut runner).expect("sample").current();
+        let net = build_net(&raw);
+        let bounded = triples_with(&net, &raw, true);
+        let unbounded = triples_with(&net, &raw, false);
+        assert_eq!(bounded, unbounded, "with bounds against without");
+        if !bounded.is_empty() {
+            with_entries += 1;
+        }
+    }
+    assert!(
+        with_entries > 100,
+        "only {with_entries} profiles had entries"
+    );
+}
+
 #[test]
 fn generated_networks_are_not_trivial() {
     use proptest::strategy::ValueTree;

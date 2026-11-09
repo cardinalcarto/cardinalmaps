@@ -39,7 +39,7 @@ pub use ids::{
 };
 pub use journey::{Journey, Leg, Ride};
 pub use overlay::OverlayBuilder;
-pub use profile::{Profile, ProfileEntry};
+pub use profile::{Profile, ProfileEntry, ProfileOptions};
 pub use raptor::{MAX_TRIPS, RoundResult, Router, SearchRun, TransitQuery};
 pub use snapshot::Snapshot;
 pub use stop_table::{RouteFilter, StopTable};
