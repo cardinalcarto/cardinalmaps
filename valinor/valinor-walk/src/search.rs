@@ -586,10 +586,11 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
         for seed in request.seeds {
             run.seed(seed.stop, seed.clock.seconds());
         }
-        let outcome = run.settle_all(request)?;
-        if outcome == TransferOutcome::Interrupted {
-            self.queue.clear();
-            return Ok(outcome);
+        let outcome = run.settle_all(request);
+        if !matches!(outcome, Ok(TransferOutcome::Completed)) {
+            // Labels this search left unsettled can't dominate later rounds of the run.
+            self.start_stamp();
+            return outcome;
         }
         self.report(sink);
         self.stats.arena_entries = self.arena.len() as u64;
