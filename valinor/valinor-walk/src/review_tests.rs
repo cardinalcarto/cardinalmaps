@@ -287,6 +287,56 @@ fn node_with_two_edges<P: GraphTileProvider>(_p: &P) -> (u32, GraphId, GraphId) 
     panic!("no node found");
 }
 
+/// An offline area holds only part of the network: a snap whose tile isn't on the device acts
+/// as an unsnapped stop, and every other stop works.
+#[test]
+fn a_snap_in_a_tile_not_on_the_device_acts_as_unsnapped() {
+    let provider = andorra();
+    let (_, e1, e2) = node_with_two_edges(&provider);
+    let elsewhere = GraphId::try_from_components(2, 100, 0).expect("valid");
+    let build = provider
+        .with_tile_containing(e1, |t| t.header().build_id())
+        .expect("tile");
+    let mut snaps = StopSnaps::new(build, 3);
+    for (i, edge) in [e1, elsewhere, e2].into_iter().enumerate() {
+        snaps
+            .insert(
+                StopId::new(i as u32),
+                SnappedStop {
+                    result: Ok(point(edge, 0.5)),
+                    quality: SnapQuality::Connected,
+                    build_id: Some(build),
+                },
+            )
+            .expect("insert");
+    }
+    let snaps = Arc::new(snaps);
+
+    let mut tables = StopTables::new(andorra(), ped());
+    tables
+        .bind(Arc::clone(&snaps))
+        .expect("binds with a missing tile");
+    let seeds = tables.stop_seeds(StopId::new(0)).expect("seeds");
+    assert!(
+        tables
+            .search(&TableRequest {
+                side: AccessSide::Access,
+                seeds: &seeds,
+                max_seconds: 60,
+                interrupt: &|| false,
+            })
+            .expect("searches")
+    );
+    assert!(
+        tables
+            .reached_stops()
+            .all(|(stop, _)| stop != StopId::new(1))
+    );
+
+    let mut search = WalkSearch::new(provider, ped());
+    search.bind(snaps).expect("binds with a missing tile");
+}
+
 /// A barrier node stops walks from passing through it, in either direction.
 #[test]
 fn barrier_is_not_walked_through_into_a_stop_on_the_far_side() {

@@ -39,8 +39,10 @@ use valinor_walk::paths::{access_leg, route_paths};
 use valinor_walk::{
     AccessSide, DEFAULT_TRANSFER_SECONDS, SnapConfig, SnappedStop, StopSnaps, StopTables,
     TableRequest, TableSeed, TableTransfers, TableWalk, TransferTable, WalkError, snap_stop,
-    snap_stops,
 };
+
+#[cfg(any(test, feature = "test-support"))]
+use valinor_walk::snap_stops;
 
 use crate::build::{BuildLoadError, TransitBuild};
 use crate::error::{PlanError, StateError};
@@ -679,6 +681,8 @@ enum BaseTransfers {
     Loaded {
         walking: Arc<TransferTable>,
         cycling: Arc<TransferTable>,
+        walking_snaps: Arc<StopSnaps>,
+        cycling_snaps: Arc<StopSnaps>,
     },
     /// Built in memory from the street network, for tests.
     #[cfg(any(test, feature = "test-support"))]
@@ -695,10 +699,30 @@ impl fmt::Debug for TileSnapper {
 }
 
 impl StopSnapper for TileSnapper {
-    fn snap_all(&self, mode: TravelMode, stops: &[(f64, f64)]) -> Result<StopSnaps, WalkError> {
-        let tiles: &TileSets = &self.tiles;
-        let costing = any_costing(mode).map_err(snap_setup_error)?;
-        snap_stops(&tiles, &costing, &self.config, tiles.build_id(), stops)
+    fn snap_all(
+        &self,
+        mode: TravelMode,
+        stops: &[(f64, f64)],
+    ) -> Result<Arc<StopSnaps>, WalkError> {
+        match &self.transfers {
+            BaseTransfers::Loaded {
+                walking_snaps,
+                cycling_snaps,
+                ..
+            } => {
+                let _ = stops;
+                Ok(Arc::clone(match mode {
+                    TravelMode::Walking => walking_snaps,
+                    TravelMode::Cycling => cycling_snaps,
+                }))
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            BaseTransfers::Build { .. } => {
+                let tiles: &TileSets = &self.tiles;
+                let costing = any_costing(mode).map_err(snap_setup_error)?;
+                snap_stops(&tiles, &costing, &self.config, tiles.build_id(), stops).map(Arc::new)
+            }
+        }
     }
 
     fn snap_one(&self, mode: TravelMode, ll: (f64, f64)) -> Result<SnappedStop, WalkError> {
@@ -715,7 +739,9 @@ impl StopSnapper for TileSnapper {
         // Only the in-memory build needs the snaps.
         let _ = snaps;
         match &self.transfers {
-            BaseTransfers::Loaded { walking, cycling } => Ok(Arc::clone(match mode {
+            BaseTransfers::Loaded {
+                walking, cycling, ..
+            } => Ok(Arc::clone(match mode {
                 TravelMode::Walking => walking,
                 TravelMode::Cycling => cycling,
             })),
@@ -794,12 +820,11 @@ pub enum OpenPlannerError {
 pub type StreetPlanError = PlanError<WalkError, StreetError>;
 
 impl StreetPlanner {
-    /// Opens a loaded transit build over tile sets, snapping every stop.
+    /// Opens a loaded transit build over tile sets.
     ///
     /// # Performance
     ///
-    /// Snaps every stop for walking and for cycling, which is the slow part of opening.
-    /// Tables of walks are not computed here: they come from the build's tiles.
+    /// Stop snaps and tables of walks come from the build, so this only materializes state.
     ///
     /// # Errors
     ///
@@ -822,6 +847,8 @@ impl StreetPlanner {
         let transfers = BaseTransfers::Loaded {
             walking: Arc::new(build.walking),
             cycling: Arc::new(build.cycling),
+            walking_snaps: Arc::new(build.walking_snaps),
+            cycling_snaps: Arc::new(build.cycling_snaps),
         };
         Self::open_tiles(build.set, tiles, transfers, config)
     }

@@ -110,12 +110,15 @@ pub struct IngestAndRefresh {
 ///
 /// The state owner has no tiles; a [`crate::StreetPlanner`] provides this, and tests can fake it.
 pub trait StopSnapper: core::fmt::Debug + Send + Sync {
-    /// Snaps every stop, by position, for building the static table.
+    /// Every stop's snap, by position, for the static table.
+    ///
+    /// In production these were saved by the offline build; tests may snap in memory.
     ///
     /// # Errors
     ///
     /// If a tile can't be read, or a stop lands in a tile of a different build.
-    fn snap_all(&self, mode: TravelMode, stops: &[(f64, f64)]) -> Result<StopSnaps, WalkError>;
+    fn snap_all(&self, mode: TravelMode, stops: &[(f64, f64)])
+    -> Result<Arc<StopSnaps>, WalkError>;
 
     /// Snaps one stop that arrived with a real-time overlay.
     ///
@@ -426,8 +429,8 @@ impl TransitState {
             None => None,
             Some(snapper) => {
                 let points = stop_points(&set);
-                let walking = Arc::new(snapper.snap_all(TravelMode::Walking, &points)?);
-                let cycling = Arc::new(snapper.snap_all(TravelMode::Cycling, &points)?);
+                let walking = snapper.snap_all(TravelMode::Walking, &points)?;
+                let cycling = snapper.snap_all(TravelMode::Cycling, &points)?;
                 let walking_transfers = snapper.base_transfers(TravelMode::Walking, &walking)?;
                 let cycling_transfers = snapper.base_transfers(TravelMode::Cycling, &cycling)?;
                 Some(ModeSnaps {

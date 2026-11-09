@@ -29,19 +29,21 @@ use valinor_walk::transfer_tile::{
     TILE_FORMAT_VERSION, TILE_ZOOM, TileWalk, TransferMode, TransferTile, TransferTileRow,
 };
 use valinor_walk::{
-    AccessSide, Hop, SnapConfig, SnapReport, StopAttachments, StopSnaps, StopTables, TableRequest,
-    TableSeed, snap_stops, sorted_walks_from,
+    AccessSide, Hop, SavedSnap, SnapConfig, SnapQuality, SnapReport, StopAttachments, StopSnaps,
+    StopTables, TableRequest, TableSeed, encode_snap_file, snap_stops, sorted_walks_from,
 };
 
 use crate::compile::{CompileReport, FeedOutcome};
 use crate::error::BuildError;
+use crate::feeds::hex_digest;
 use crate::manifest::{
-    FeedModeStats, Manifest, ManifestFeed, ModeTotals, TRANSFERS_DIR, TileEntry, manifest_id,
-    write_manifest,
+    FeedModeStats, Manifest, ManifestFeed, ModeTotals, SnapFileEntry, TRANSFERS_DIR, TileEntry,
+    manifest_id, write_manifest,
 };
 use crate::slippy::tile_of;
 use crate::stops::StopList;
 use crate::{sync_dir, write_synced};
+use sha2::{Digest, Sha256};
 
 /// Where a run works until it succeeds, relative to the output directory.
 const STAGING_DIR: &str = "transfers.staging";
@@ -92,6 +94,8 @@ struct ModeResult {
     feed_stats: BTreeMap<u32, FeedModeStats>,
     totals: ModeTotals,
     unsnapped: Vec<UnsnappedStop>,
+    /// Each feed's saved stop snaps, by feed index.
+    feed_snaps: BTreeMap<u32, SnapFileEntry>,
     seconds: f64,
 }
 
@@ -251,6 +255,7 @@ fn run_mode(
         "snapped stops"
     );
     let snaps = Arc::new(snaps);
+    let feed_snaps = write_feed_snaps(mode, build_id, stops, &snaps, staging)?;
     let attachments = Arc::new(StopAttachments::new(
         tiles,
         costing.clone(),
@@ -277,6 +282,7 @@ fn run_mode(
     let mut result = summarize(outcomes, stops, &unsnapped_list, &disconnected_stops);
     result.seconds = started.elapsed().as_secs_f64();
     result.unsnapped = core::mem::take(&mut unsnapped_list);
+    result.feed_snaps = feed_snaps;
     tracing::info!(
         mode = mode.as_str(),
         tiles = result.tiles.len(),
@@ -286,6 +292,65 @@ fn run_mode(
         "built transfers"
     );
     Ok(result)
+}
+
+/// Where a mode's stop snaps go, relative to [`TRANSFERS_DIR`].
+const SNAPS_DIR: &str = "snaps";
+
+/// Saves each feed's snaps for this mode as one file, in the feed's own stop numbering.
+fn write_feed_snaps(
+    mode: TransferMode,
+    build_id: BuildId,
+    stops: &StopList,
+    snaps: &StopSnaps,
+    staging: &Path,
+) -> Result<BTreeMap<u32, SnapFileEntry>, BuildError> {
+    let directory = staging.join(SNAPS_DIR).join(mode.as_str());
+    fs::create_dir_all(&directory).map_err(|source| BuildError::Write {
+        path: directory.clone(),
+        source,
+    })?;
+    let disconnected: std::collections::HashSet<u32> = snaps
+        .reports()
+        .iter()
+        .filter_map(|report| match report {
+            SnapReport::Disconnected(stop, _) => Some(stop.into_inner()),
+            SnapReport::Unsnapped(_) => None,
+        })
+        .collect();
+    let mut files = BTreeMap::new();
+    for (index, feed) in stops.feeds.iter().enumerate() {
+        if feed.count == 0 {
+            continue;
+        }
+        let saved: Vec<SavedSnap> = (feed.first..feed.first + feed.count)
+            .map(|stop| {
+                snaps.point(StopId::new(stop)).map(|point| {
+                    let quality = if disconnected.contains(&stop) {
+                        SnapQuality::Disconnected
+                    } else {
+                        SnapQuality::Connected
+                    };
+                    (point, quality)
+                })
+            })
+            .collect();
+        let bytes = encode_snap_file(build_id, &saved);
+        let path = directory.join(format!("{index}.bin"));
+        write_synced(&path, &bytes).map_err(|source| BuildError::Write {
+            path: path.clone(),
+            source,
+        })?;
+        let feed_index = u32::try_from(index).map_err(|_| BuildError::WorkerPanicked)?;
+        files.insert(
+            feed_index,
+            SnapFileEntry {
+                file: format!("{TRANSFERS_DIR}/{SNAPS_DIR}/{}/{index}.bin", mode.as_str()),
+                sha256: hex_digest(&Sha256::digest(&bytes)),
+            },
+        );
+    }
+    Ok(files)
 }
 
 /// The costing a mode's transfers use, the same defaults the planner uses.
@@ -633,7 +698,11 @@ fn assemble_manifest(
         let index = u32::try_from(index).map_err(|_| BuildError::TooManyEntries)?;
         let mut stats = BTreeMap::new();
         let mut transfer_tiles = BTreeMap::new();
+        let mut stop_snaps = BTreeMap::new();
         for (mode, result) in by_mode {
+            if let Some(entry) = result.feed_snaps.get(&index) {
+                stop_snaps.insert(mode.as_str().to_owned(), entry.clone());
+            }
             stats.insert(
                 mode.as_str().to_owned(),
                 result.feed_stats.get(&index).copied().unwrap_or_default(),
@@ -663,6 +732,7 @@ fn assemble_manifest(
             last_service_date: feed.last_service_date.clone(),
             stats,
             transfer_tiles,
+            stop_snaps,
         });
     }
     let mut tiles = BTreeMap::new();

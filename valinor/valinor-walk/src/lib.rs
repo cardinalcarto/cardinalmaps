@@ -23,6 +23,7 @@ mod graph;
 mod queue;
 mod search;
 mod snap;
+mod snap_file;
 mod table;
 
 mod flat_table;
@@ -38,6 +39,7 @@ pub use snap::{
     SnapConfig, SnapFailure, SnapPoint, SnapQuality, SnapReport, SnappedStop, StopSnaps, snap_stop,
     snap_stops,
 };
+pub use snap_file::{SavedSnap, SnapFileError, decode_snap_file, encode_snap_file};
 pub use table::{
     AccessEdge, AccessLeg, AccessSide, StopAttachments, StopTables, TableRequest, TableSeed,
     TableStats,

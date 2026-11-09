@@ -7,9 +7,11 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+use valhalla_graphtile::graph_tile::BuildId;
 use valinor_gtfs::{FeedId, FeedInput, InMemorySource, LatLon, compile};
 use valinor_transit::StopId;
 use valinor_walk::transfer_tile::{TileWalk, TransferMode, TransferTile, TransferTileRow};
+use valinor_walk::{SavedSnap, encode_snap_file};
 
 use crate::build::{BuildLoadError, TransitBuild};
 use crate::plan::TransitRequest;
@@ -82,6 +84,23 @@ fn write_tile(dir: &Path, mode: TransferMode, x: u32, y: u32, rows: &[(u32, u32,
     fs::write(path.join(format!("{y}.bin.zst")), compressed).expect("write");
 }
 
+/// Writes empty (unsnapped) stop snaps for a feed and both modes, returning their manifest entry.
+fn write_snap_files(dir: &Path, feed: &str, stops: usize, build: u16) -> serde_json::Value {
+    let saved: Vec<SavedSnap> = vec![None; stops];
+    let bytes = encode_snap_file(BuildId::new(build), &saved);
+    let mut entries = serde_json::Map::new();
+    for mode in ["walking", "cycling"] {
+        let relative = format!("transfers/snaps/{mode}/{feed}.bin");
+        fs::create_dir_all(dir.join("transfers/snaps").join(mode)).expect("mkdir");
+        fs::write(dir.join(&relative), &bytes).expect("write");
+        entries.insert(
+            mode.to_owned(),
+            json!({ "file": relative, "sha256": hex_sha(&bytes) }),
+        );
+    }
+    serde_json::Value::Object(entries)
+}
+
 /// A build of feeds `one` and `two`, and tiles at (10, 20) and (11, 20).
 struct Fixture {
     dir: TempDir,
@@ -98,6 +117,7 @@ impl Fixture {
         fs::write(dir.path().join("timetables/one.timetable"), &one).expect("write");
         fs::write(dir.path().join("timetables/two.timetable"), &two).expect("write");
         let tiles = |tiles: &[[u32; 2]]| json!({ "walking": tiles.to_vec(), "cycling": [] });
+        let snaps = |name: &str, build: u16| write_snap_files(dir.path(), name, 2, build);
         let manifest = json!({
             "manifest_id": format!("{MANIFEST_ID:016x}"),
             "valhalla_build_id": 77,
@@ -112,6 +132,7 @@ impl Fixture {
                     "timetable_sha256": hex_sha(&one),
                     "stop_count": 2,
                     "transfer_tiles": tiles(&[[10, 20]]),
+                    "stop_snaps": snaps("one", 77),
                 },
                 {
                     "id": "failed",
@@ -126,6 +147,7 @@ impl Fixture {
                     "timetable_sha256": hex_sha(&two),
                     "stop_count": 2,
                     "transfer_tiles": tiles(&[[11, 20]]),
+                    "stop_snaps": snaps("two", 77),
                 },
             ],
         });
@@ -460,6 +482,11 @@ fn seattle_only(area: (f64, f64, f64, f64)) -> TempDir {
     std::os::unix::fs::symlink(root.join("timetables"), dir.path().join("timetables"))
         .expect("link");
     fs::create_dir_all(dir.path().join("transfers")).expect("mkdir");
+    std::os::unix::fs::symlink(
+        root.join("transfers/snaps"),
+        dir.path().join("transfers/snaps"),
+    )
+    .expect("link snaps");
     fs::copy(
         root.join("transfers/manifest.json"),
         dir.path().join("transfers/manifest.json"),
@@ -490,6 +517,79 @@ fn seattle_only(area: (f64, f64, f64, f64)) -> TempDir {
         }
     }
     dir
+}
+
+/// Extracts just these street tiles of the Washington network into a tile directory.
+fn seattle_street_tiles(area: (f64, f64, f64, f64)) -> TempDir {
+    let (south, west, north, east) = area;
+    let listing = std::process::Command::new("tar")
+        .args(["-tf", STREETS])
+        .output()
+        .expect("tar lists");
+    let wanted: Vec<String> = String::from_utf8(listing.stdout)
+        .expect("utf-8")
+        .lines()
+        .filter(|name| Path::new(name).extension().is_some_and(|ext| ext == "gph"))
+        .filter(|name| {
+            let digits: String = name.chars().filter(char::is_ascii_digit).collect();
+            let (level, id) = digits.split_at(1);
+            let id: i64 = id.parse().expect("a tile ID");
+            let size = match level {
+                "0" | "1" => return true,
+                _ => 0.25,
+            };
+            let (row, col) = (id / 1440, id % 1440);
+            #[allow(clippy::cast_precision_loss, reason = "a tile's row and column are small")]
+            let (lat, lon) = (-90.0 + row as f64 * size, -180.0 + col as f64 * size);
+            lat + size >= south && lat <= north && lon + size >= west && lon <= east
+        })
+        .map(str::to_owned)
+        .collect();
+    let dir = TempDir::new().expect("temp");
+    let list = dir.path().join("list.txt");
+    fs::write(&list, wanted.join("\n")).expect("write");
+    let status = std::process::Command::new("tar")
+        .args(["-xf", STREETS, "-C"])
+        .arg(dir.path())
+        .arg("-T")
+        .arg(&list)
+        .status()
+        .expect("tar extracts");
+    assert!(status.success());
+    fs::remove_file(&list).expect("remove");
+    dir
+}
+
+/// An offline area holds only part of the street network too: stops whose tile isn't on the
+/// device act as unsnapped, and planning inside the area still works.
+#[test]
+#[ignore = "needs the Washington build under /mnt/maps/cardinal/transit"]
+fn a_downloaded_area_plans_on_partial_streets() {
+    let area = (47.48, -122.46, 47.76, -122.22);
+    let dir = seattle_only(area);
+    let streets = seattle_street_tiles(area);
+    let feeds = [METRO.to_owned(), SOUND_TRANSIT.to_owned()];
+    let build = TransitBuild::load(dir.path(), Some(&feeds)).expect("loads");
+    let planner = StreetPlanner::from_build(build, &[streets.path()], StreetConfig::default())
+        .expect("opens over partial streets");
+    let departure = 1_794_330_000;
+    let request = TransitRequest::new(
+        LatLon {
+            lat: 47.649_735,
+            lon: -122.349_869,
+        },
+        LatLon {
+            lat: 47.613_442,
+            lon: -122.302_605,
+        },
+        departure,
+        departure - 60,
+    );
+    let response = planner.plan(&request, "en-US", &|| false).expect("plans");
+    assert!(
+        !response.journeys.is_empty(),
+        "journeys exist within the area"
+    );
 }
 
 #[test]

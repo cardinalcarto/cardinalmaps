@@ -102,6 +102,15 @@ pub struct FeedModeStats {
     pub cross_feed_walks: u64,
 }
 
+/// One feed's saved stop snaps for one mode.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SnapFileEntry {
+    /// The file, relative to the build directory.
+    pub file: String,
+    /// The SHA-256 of the file.
+    pub sha256: String,
+}
+
 /// One feed in the manifest. Its index is its position in [`Manifest::feeds`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ManifestFeed {
@@ -137,6 +146,11 @@ pub struct ManifestFeed {
     ///
     /// A client downloads these for each feed it wants.
     pub transfer_tiles: BTreeMap<String, Vec<[u32; 2]>>,
+    /// The feed's stops snapped to the street network, by mode.
+    ///
+    /// A client loads these rather than snapping at open.
+    #[serde(default)]
+    pub stop_snaps: BTreeMap<String, SnapFileEntry>,
 }
 
 /// The build manifest. Everything a client needs is here.

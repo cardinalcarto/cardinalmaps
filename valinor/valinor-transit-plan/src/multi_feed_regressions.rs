@@ -346,6 +346,18 @@ fn feed_bytes(id: &str) -> Vec<u8> {
     .bytes
 }
 
+/// Saved snaps of two stops for both modes, and their manifest entries.
+fn snap_entries(dir: &Path) -> Value {
+    let bytes = valinor_walk::encode_snap_file(
+        valhalla_graphtile::graph_tile::BuildId::new(77),
+        &[None, None],
+    );
+    fs::create_dir_all(dir.join("snaps")).expect("mkdir");
+    fs::write(dir.join("snaps/s.bin"), &bytes).expect("write");
+    let entry = json!({ "file": "snaps/s.bin", "sha256": hex_sha(&bytes) });
+    json!({ "walking": entry, "cycling": entry })
+}
+
 /// A build directory of one feed named by `timetable`, whose hash `bytes` must match.
 fn build_with(dir: &Path, timetable: &str, bytes: &[u8]) {
     fs::create_dir_all(dir.join("transfers")).expect("mkdir");
@@ -362,6 +374,7 @@ fn build_with(dir: &Path, timetable: &str, bytes: &[u8]) {
             "timetable_sha256": hex_sha(bytes),
             "stop_count": 2,
             "transfer_tiles": {"walking": [], "cycling": []},
+            "stop_snaps": snap_entries(dir),
         }],
     });
     fs::write(

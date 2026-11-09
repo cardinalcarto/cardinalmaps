@@ -15,13 +15,17 @@ use std::path::{Component, Path, PathBuf};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use valhalla_graphtile::graph_tile::BuildId;
 use valinor_gtfs::{LoadError, LoadedTimetable, SetError, TimetableSet};
+use valinor_transit::StopId;
 use valinor_walk::transfer_tile::{
     DEFAULT_MAX_DECOMPRESSED_BYTES, DecodeLimits, FeedPlacement, LoadRequest, StopPlacement,
     TILE_FORMAT_VERSION, TILE_ZOOM, TileDecodeError, TileLoadError, TransferMode, TransferTile,
     assemble_transfer_table, decode_tile,
 };
-use valinor_walk::{FLAT_TABLE_MAGIC, FlatTableError, TableKey, TransferTable};
+use valinor_walk::{
+    FLAT_TABLE_MAGIC, FlatTableError, StopSnaps, TableKey, TransferTable, decode_snap_file,
+};
 
 /// The default bound on one tile's decompressed size.
 pub fn default_decode_limits() -> DecodeLimits {
@@ -103,6 +107,22 @@ pub enum BuildLoadError {
         /// Of the file.
         found: String,
     },
+    /// The manifest lists no saved stop snaps for a feed and mode.
+    #[error("load saved stop snaps of feed {feed} for {mode}: the manifest has none")]
+    MissingSnaps {
+        /// The feed.
+        feed: String,
+        /// The travel mode.
+        mode: &'static str,
+    },
+    /// A snap file isn't what the manifest says, or can't be decoded.
+    #[error("use the stop snaps of feed {feed}: {reason}")]
+    Snaps {
+        /// The feed.
+        feed: String,
+        /// What's wrong with them.
+        reason: String,
+    },
     /// A timetable holds something other than its feed.
     #[error("use the timetable of feed {feed}: {reason}")]
     TimetableContents {
@@ -183,6 +203,14 @@ struct ManifestFeedFile {
     stop_count: u32,
     #[serde(default)]
     transfer_tiles: std::collections::BTreeMap<String, Vec<[u32; 2]>>,
+    #[serde(default)]
+    stop_snaps: std::collections::BTreeMap<String, ManifestSnapFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManifestSnapFile {
+    file: String,
+    sha256: String,
 }
 
 /// What loading a build found, for logging and checks.
@@ -205,6 +233,10 @@ pub struct TransitBuild {
     pub walking: TransferTable,
     /// Walks between stops by bicycle.
     pub cycling: TransferTable,
+    /// Every stop's snap on foot, as the build made them, in the set's stop numbering.
+    pub walking_snaps: StopSnaps,
+    /// Every stop's snap by bicycle.
+    pub cycling_snaps: StopSnaps,
     /// The manifest's street build, checked when opening a planner.
     pub valhalla_build_id: u32,
     /// What was found on disk.
@@ -326,10 +358,32 @@ impl TransitBuild {
         report.tiles_read = [walking_tiles, cycling_tiles];
         report.tiles_absent = [walking_absent, cycling_absent];
         report.walks = [walking.walk_count(), cycling.walk_count()];
+        let build_id = BuildId::new(
+            u16::try_from(manifest.valhalla_build_id)
+                .map_err(|_| BuildLoadError::ManifestId(manifest.manifest_id.clone()))?,
+        );
+        let walking_snaps = load_snaps(
+            directory,
+            TransferMode::Walking,
+            &manifest,
+            &selected,
+            &set,
+            build_id,
+        )?;
+        let cycling_snaps = load_snaps(
+            directory,
+            TransferMode::Cycling,
+            &manifest,
+            &selected,
+            &set,
+            build_id,
+        )?;
         Ok(Self {
             set,
             walking,
             cycling,
+            walking_snaps,
+            cycling_snaps,
             valhalla_build_id: manifest.valhalla_build_id,
             report,
         })
@@ -473,6 +527,56 @@ fn hex(bytes: &[u8]) -> String {
         out.push(char::from_digit(u32::from(byte & 0xf), 16).unwrap_or('0'));
     }
     out
+}
+
+/// The largest saved stop snap file that will be read, in bytes.
+const MAX_SNAP_FILE_BYTES: u64 = 1 << 30;
+
+/// Reads each loaded feed's saved snaps for a mode into one table in the set's numbering.
+fn load_snaps(
+    directory: &Path,
+    mode: TransferMode,
+    manifest: &ManifestFile,
+    selected: &[usize],
+    set: &TimetableSet,
+    build_id: BuildId,
+) -> Result<StopSnaps, BuildLoadError> {
+    let mut snaps = StopSnaps::new(build_id, set.stop_count());
+    for (&index, part) in selected.iter().zip(set.parts()) {
+        let feed = &manifest.feeds[index];
+        let entry =
+            feed.stop_snaps
+                .get(mode.as_str())
+                .ok_or_else(|| BuildLoadError::MissingSnaps {
+                    feed: feed.id.clone(),
+                    mode: mode.as_str(),
+                })?;
+        let path = inside_build(directory, &entry.file)?;
+        let bytes = read_bounded(&path, MAX_SNAP_FILE_BYTES)?;
+        let found = hex(&Sha256::digest(&bytes));
+        if found != entry.sha256 {
+            return Err(BuildLoadError::Snaps {
+                feed: feed.id.clone(),
+                reason: format!("its SHA-256 is {found}, the manifest says {}", entry.sha256),
+            });
+        }
+        let count = u32::try_from(part.compiled().stop_count()).unwrap_or(u32::MAX);
+        let decoded =
+            decode_snap_file(&bytes, build_id, count).map_err(|error| BuildLoadError::Snaps {
+                feed: feed.id.clone(),
+                reason: error.to_string(),
+            })?;
+        for (local, snapped) in decoded.into_iter().enumerate() {
+            let local = StopId::new(u32::try_from(local).unwrap_or(u32::MAX));
+            snaps
+                .insert(part.global_stop(local), snapped)
+                .map_err(|error| BuildLoadError::Snaps {
+                    feed: feed.id.clone(),
+                    reason: error.to_string(),
+                })?;
+        }
+    }
+    Ok(snaps)
 }
 
 /// Where prepared flat tables live, under a build directory.

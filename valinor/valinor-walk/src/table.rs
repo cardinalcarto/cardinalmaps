@@ -388,9 +388,11 @@ impl StopAttachments {
             let Some(point) = snaps.point(StopId::new(stop_u)) else {
                 continue;
             };
-            let build = graph
-                .build_id_of(point.edge)?
-                .ok_or(WalkError::SnappedEdgeMissing(point.edge))?;
+            // A snap's tile can be absent: an offline area holds only part of the network,
+            // and a stop outside it is unreachable, exactly as if it had no snap.
+            let Some(build) = graph.build_id_of(point.edge)? else {
+                continue;
+            };
             if build != snaps.build_id() {
                 return Err(WalkError::BuildMismatch {
                     snaps: snaps.build_id(),
