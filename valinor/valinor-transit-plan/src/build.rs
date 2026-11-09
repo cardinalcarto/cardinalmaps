@@ -16,12 +16,12 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use valinor_gtfs::{LoadError, LoadedTimetable, SetError, TimetableSet};
-use valinor_walk::TransferTable;
 use valinor_walk::transfer_tile::{
-    DEFAULT_MAX_DECOMPRESSED_BYTES, DecodeLimits, FeedPlacement, LoadReport, LoadRequest,
-    StopPlacement, TILE_FORMAT_VERSION, TILE_ZOOM, TileDecodeError, TileLoadError, TransferMode,
-    TransferTile, assemble_transfer_table, decode_tile,
+    DEFAULT_MAX_DECOMPRESSED_BYTES, DecodeLimits, FeedPlacement, LoadRequest, StopPlacement,
+    TILE_FORMAT_VERSION, TILE_ZOOM, TileDecodeError, TileLoadError, TransferMode, TransferTile,
+    assemble_transfer_table, decode_tile,
 };
+use valinor_walk::{FLAT_TABLE_MAGIC, FlatTableError, TableKey, TransferTable};
 
 /// The default bound on one tile's decompressed size.
 pub fn default_decode_limits() -> DecodeLimits {
@@ -122,6 +122,22 @@ pub enum BuildLoadError {
     /// The timetables can't be numbered together.
     #[error(transparent)]
     Set(#[from] SetError),
+    /// A prepared table couldn't be written.
+    #[error("prepare the transfer table {path}: {source}")]
+    Prepare {
+        /// The file.
+        path: PathBuf,
+        /// What went wrong.
+        source: std::io::Error,
+    },
+    /// A prepared table just written couldn't be opened.
+    #[error("open the prepared transfer table {path}: {source}")]
+    Flat {
+        /// The file.
+        path: PathBuf,
+        /// What went wrong.
+        source: FlatTableError,
+    },
     /// A tile couldn't be decoded.
     #[error("decode the transfer tile {path}: {source}")]
     Tile {
@@ -172,7 +188,7 @@ struct ManifestFeedFile {
 /// What loading a build found, for logging and checks.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BuildLoadReport {
-    /// Tiles decoded, per mode.
+    /// Tiles the prepared table covers, per mode (they are only read when it is rebuilt).
     pub tiles_read: [usize; 2],
     /// Tiles the loaded feeds use but aren't on disk, per mode.
     pub tiles_absent: [usize; 2],
@@ -196,14 +212,34 @@ pub struct TransitBuild {
 }
 
 impl TransitBuild {
-    /// Loads a build directory's timetables and whichever of the needed tiles are on disk.
+    /// Assembles a build's flat transfer tables on disk, without keeping anything.
+    ///
+    /// This is the install step: run it after a download (a deployment or the device's installer)
+    /// so that opening a planner has nothing to assemble. Opening does it anyway if it finds no
+    /// matching prepared table, and it costs only the first open.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::load`].
+    pub fn prepare(
+        directory: &Path,
+        feeds: Option<&[String]>,
+    ) -> Result<BuildLoadReport, BuildLoadError> {
+        Ok(Self::load(directory, feeds)?.report)
+    }
+
+    /// Loads a build directory's timetables and a mapped table of walks per travel mode.
     ///
     /// `feeds` chooses feeds by ID; `None` loads every feed that compiled.
+    /// A mode's table is the flat file under `prepared/` for this manifest, set of feeds, bound,
+    /// and whichever tiles are present; if there is none it is assembled from those tiles and
+    /// published atomically, and tables for other sets are removed.
     /// Files are memory-mapped; to replace one, rename over it; don't modify it in place.
     ///
     /// # Performance
     ///
-    /// Hashes each timetable, validates and maps it, and decodes the tiles found.
+    /// Hashes each timetable, validates and maps it, and stats each tile.
+    /// Only when a table has to be assembled does it decode tiles, once.
     ///
     /// # Errors
     ///
@@ -265,8 +301,8 @@ impl TransitBuild {
         let local_stop_count = u32::try_from(set.stop_count()).unwrap_or(u32::MAX);
 
         let mut report = BuildLoadReport::default();
-        let (walking, walking_report, walking_absent) = load_mode(
-            &transfers,
+        let (walking, walking_tiles, walking_absent) = load_mode(
+            directory,
             TransferMode::Walking,
             &manifest,
             &selected,
@@ -276,8 +312,8 @@ impl TransitBuild {
             local_stop_count,
             limits,
         )?;
-        let (cycling, cycling_report, cycling_absent) = load_mode(
-            &transfers,
+        let (cycling, cycling_tiles, cycling_absent) = load_mode(
+            directory,
             TransferMode::Cycling,
             &manifest,
             &selected,
@@ -287,9 +323,9 @@ impl TransitBuild {
             local_stop_count,
             limits,
         )?;
-        report.tiles_read = [walking_report.tiles, cycling_report.tiles];
+        report.tiles_read = [walking_tiles, cycling_tiles];
         report.tiles_absent = [walking_absent, cycling_absent];
-        report.walks = [walking_report.walks, cycling_report.walks];
+        report.walks = [walking.walk_count(), cycling.walk_count()];
         Ok(Self {
             set,
             walking,
@@ -439,10 +475,149 @@ fn hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Reads whichever of one mode's needed tiles are on disk, and assembles them.
+/// Where prepared flat tables live, under a build directory.
+const PREPARED_DIR: &str = "prepared";
+
+/// How a mode's prepared table is named and keyed; see [`prepared_table`].
+struct PreparedName {
+    /// Depends on the manifest, feeds, bound, and numbering, not on which tiles are present.
+    set_prefix: String,
+    /// The whole key: `set_prefix`, and the tiles present.
+    key: TableKey,
+    /// `<mode>-<set>-<tiles>.bin`.
+    file_name: String,
+}
+
+fn prepared_name(
+    mode: TransferMode,
+    manifest_id: u64,
+    max_seconds: u32,
+    placements: &[FeedPlacement],
+    local_stop_count: u32,
+    present: &[[u32; 2]],
+) -> PreparedName {
+    let mut set = Sha256::new();
+    set.update(b"transfer-table-set-1\n");
+    set.update(mode.as_str().as_bytes());
+    set.update(manifest_id.to_le_bytes());
+    set.update(max_seconds.to_le_bytes());
+    set.update(local_stop_count.to_le_bytes());
+    for placement in placements {
+        set.update(placement.feed_index.to_le_bytes());
+        if let StopPlacement::Contiguous { first, count } = placement.stops {
+            set.update(first.to_le_bytes());
+            set.update(count.to_le_bytes());
+        }
+    }
+    let set: [u8; 32] = set.finalize().into();
+    let mut tiles = Sha256::new();
+    for [x, y] in present {
+        tiles.update(x.to_le_bytes());
+        tiles.update(y.to_le_bytes());
+    }
+    let tiles: [u8; 32] = tiles.finalize().into();
+    let mut key = Sha256::new();
+    key.update(set);
+    key.update(tiles);
+    let key: TableKey = key.finalize().into();
+    let set_prefix = format!("{}-{}", mode.as_str(), hex(&set[..8]));
+    let file_name = format!("{set_prefix}-{}.bin", hex(&tiles[..8]));
+    PreparedName {
+        set_prefix,
+        key,
+        file_name,
+    }
+}
+
+/// Which of the tiles this mode needs are on disk, as a regular file.
+fn present_tiles(
+    transfers: &Path,
+    mode: TransferMode,
+    manifest: &ManifestFile,
+    selected: &[usize],
+) -> Result<(Vec<[u32; 2]>, usize), BuildLoadError> {
+    let needed: BTreeSet<[u32; 2]> = selected
+        .iter()
+        .filter_map(|&index| manifest.feeds[index].transfer_tiles.get(mode.as_str()))
+        .flatten()
+        .copied()
+        .collect();
+    let mut present = Vec::with_capacity(needed.len());
+    let mut absent = 0;
+    for [x, y] in needed {
+        let path = tile_path(transfers, mode, x, y);
+        match check_regular(&path, MAX_TILE_BYTES) {
+            Ok(()) => present.push([x, y]),
+            // An area download holds only some of a feed's tiles; the rest simply have no walks.
+            Err(BuildLoadError::Read { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                absent += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok((present, absent))
+}
+
+fn tile_path(transfers: &Path, mode: TransferMode, x: u32, y: u32) -> PathBuf {
+    transfers
+        .join(mode.as_str())
+        .join(TILE_ZOOM.to_string())
+        .join(x.to_string())
+        .join(format!("{y}.bin.zst"))
+}
+
+/// An existing prepared table for this exact key, or `None` if it has to be built.
+///
+/// When no tile of the mode is on disk, a client has discarded its tiles after installing them,
+/// so a table prepared for this feed set is used whatever tiles it was made from.
+fn prepared_table(
+    prepared: &Path,
+    name: &PreparedName,
+    any_tile_present: bool,
+) -> Option<TransferTable> {
+    if any_tile_present {
+        // SAFETY: a prepared table is only ever published by renaming over it, and this module's
+        // documentation forbids modifying a build in place while it is open.
+        return unsafe { TransferTable::map_flat(&prepared.join(&name.file_name), &name.key) }.ok();
+    }
+    let entries = std::fs::read_dir(prepared).ok()?;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let matches = entry.file_name().to_str().is_some_and(|file| {
+            file.starts_with(&format!("{}-", name.set_prefix)) && is_table_file(file)
+        });
+        if !matches {
+            continue;
+        }
+        let key = read_key(&path)?;
+        // SAFETY: as above.
+        if let Ok(table) = unsafe { TransferTable::map_flat(&path, &key) } {
+            return Some(table);
+        }
+    }
+    None
+}
+
+fn is_table_file(file: &str) -> bool {
+    Path::new(file).extension().is_some_and(|ext| ext == "bin")
+}
+
+/// The key stored in a prepared table's header.
+fn read_key(path: &Path) -> Option<TableKey> {
+    let bytes = read_bounded(path, MAX_TIMETABLE_BYTES).ok()?;
+    let start = FLAT_TABLE_MAGIC.len();
+    bytes
+        .get(start..start + size_of::<TableKey>())?
+        .try_into()
+        .ok()
+}
+
+/// Reads the mode's table from the prepared file, assembling it from tiles first if needed.
 #[allow(clippy::too_many_arguments, reason = "one internal call site per mode")]
 fn load_mode(
-    transfers: &Path,
+    directory: &Path,
     mode: TransferMode,
     manifest: &ManifestFile,
     selected: &[usize],
@@ -451,32 +626,26 @@ fn load_mode(
     max_seconds: u32,
     local_stop_count: u32,
     limits: DecodeLimits,
-) -> Result<(TransferTable, LoadReport, usize), BuildLoadError> {
-    let needed: BTreeSet<[u32; 2]> = selected
-        .iter()
-        .filter_map(|&index| manifest.feeds[index].transfer_tiles.get(mode.as_str()))
-        .flatten()
-        .copied()
-        .collect();
-    let mut tiles: Vec<TransferTile> = Vec::with_capacity(needed.len());
-    let mut absent = 0;
-    for [x, y] in needed {
-        let path = transfers
-            .join(mode.as_str())
-            .join(TILE_ZOOM.to_string())
-            .join(x.to_string())
-            .join(format!("{y}.bin.zst"));
-        let compressed = match read_bounded(&path, MAX_TILE_BYTES) {
-            Ok(bytes) => bytes,
-            // An area download holds only some of a feed's tiles; the rest simply have no walks.
-            Err(BuildLoadError::Read { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound =>
-            {
-                absent += 1;
-                continue;
-            }
-            Err(error) => return Err(error),
-        };
+) -> Result<(TransferTable, usize, usize), BuildLoadError> {
+    let transfers = directory.join("transfers");
+    let (present, absent) = present_tiles(&transfers, mode, manifest, selected)?;
+    let name = prepared_name(
+        mode,
+        manifest_id,
+        max_seconds,
+        placements,
+        local_stop_count,
+        &present,
+    );
+    let prepared = directory.join(PREPARED_DIR);
+    if let Some(table) = prepared_table(&prepared, &name, !present.is_empty()) {
+        return Ok((table, present.len(), absent));
+    }
+
+    let mut tiles: Vec<TransferTile> = Vec::with_capacity(present.len());
+    for &[x, y] in &present {
+        let path = tile_path(&transfers, mode, x, y);
+        let compressed = read_bounded(&path, MAX_TILE_BYTES)?;
         let tile = decode_tile(&compressed, limits)
             .map_err(|source| BuildLoadError::Tile { path, source })?;
         tiles.push(tile);
@@ -488,10 +657,61 @@ fn load_mode(
         local_stop_count,
         feeds: placements,
     };
-    let (table, report) =
+    let (table, _) =
         assemble_transfer_table(&request, &tiles).map_err(|source| BuildLoadError::Assemble {
             mode: mode.as_str(),
             source,
         })?;
-    Ok((table, report, absent))
+    drop(tiles);
+    let path = prepared.join(&name.file_name);
+    publish_flat(&table, &name, &prepared, &path).map_err(|source| BuildLoadError::Prepare {
+        path: path.clone(),
+        source,
+    })?;
+    drop(table);
+    // SAFETY: just published by renaming, which is the only way it ever changes.
+    let table = unsafe { TransferTable::map_flat(&path, &name.key) }
+        .map_err(|source| BuildLoadError::Flat { path, source })?;
+    Ok((table, present.len(), absent))
+}
+
+/// Writes a table to `path` so that readers see the whole file or none of it, and drops others.
+///
+/// Other prepared tables of this mode are for feed or tile sets no longer in use.
+fn publish_flat(
+    table: &TransferTable,
+    name: &PreparedName,
+    prepared: &Path,
+    path: &Path,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(prepared)?;
+    let temp = prepared.join(format!(".{}.{}.tmp", name.file_name, std::process::id()));
+    let result = (|| {
+        let mut file = std::io::BufWriter::new(std::fs::File::create(&temp)?);
+        table.write_flat(&mut file, &name.key)?;
+        file.into_inner()
+            .map_err(std::io::IntoInnerError::into_error)?
+            .sync_all()?;
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result?;
+    std::fs::File::open(prepared)?.sync_all()?;
+    let mode_prefix = name
+        .set_prefix
+        .split('-')
+        .next()
+        .map(|mode| format!("{mode}-"))
+        .unwrap_or_default();
+    for entry in std::fs::read_dir(prepared)?.filter_map(Result::ok) {
+        let stale = entry.file_name().to_str().is_some_and(|file| {
+            file.starts_with(&mode_prefix) && is_table_file(file) && file != name.file_name
+        });
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Ok(())
 }

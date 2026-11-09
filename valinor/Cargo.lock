@@ -3133,9 +3133,11 @@ dependencies = [
  "crc32fast",
  "geo",
  "insta",
+ "memmap2",
  "proptest",
  "ruzstd",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "valhalla-graphtile",
  "valhalla-proto",
@@ -3145,6 +3147,8 @@ dependencies = [
  "valinor-sif",
  "valinor-thor",
  "valinor-transit",
+ "zerocopy",
+ "zerocopy-derive",
  "zstd",
 ]
 

@@ -261,6 +261,30 @@ fn adding_stops_matches_building_with_them() {
     };
     assert_eq!(sorted(&grown), sorted(&expected));
     assert_eq!(grown.stop_count(), 90);
+
+    // The same, adding to a table that is memory-mapped.
+    let dir = tempfile::tempdir().expect("temp");
+    let path = dir.path().join("table.bin");
+    let key = [3; 32];
+    let mut bytes = Vec::new();
+    built(&provider, &costing, &base, 1)
+        .write_flat(&mut bytes, &key)
+        .expect("write");
+    std::fs::write(&path, &bytes).expect("write");
+    // SAFETY: this test owns the file and doesn't change it while mapped.
+    let mapped = unsafe { TransferTable::map_flat(&path, &key) }.expect("maps");
+    let grown_mapped = mapped
+        .with_new_stops(&provider, &costing, &all, &new_stops, &|| false)
+        .expect("grow")
+        .expect("not interrupted");
+    assert_eq!(grown_mapped, grown);
+    assert_eq!(sorted(&grown_mapped), sorted(&expected));
+    assert_eq!(
+        mapped.bytes(),
+        0,
+        "the mapped table's walks aren't on the heap"
+    );
+    assert!(grown_mapped.bytes() < expected.bytes());
 }
 
 #[test]
@@ -389,5 +413,110 @@ fn sorted_walks_refuse_bad_input() {
         vec![(0, hop(1, 901))],
     ] {
         assert!(TransferTable::from_sorted_walks(3, 900, &walks).is_err());
+    }
+}
+
+/// A flat file gives the same table back, through a mapping, and refuses to be misused.
+#[test]
+fn a_table_round_trips_through_a_flat_file() {
+    use crate::flat_table::{FLAT_TABLE_MAGIC, FlatTableError};
+    use crate::transfers::Hop as TransferHop;
+
+    let walks: Vec<(u32, TransferHop)> = vec![
+        (
+            0,
+            TransferHop {
+                stop: 1,
+                seconds: 10,
+            },
+        ),
+        (
+            0,
+            TransferHop {
+                stop: 2,
+                seconds: 20,
+            },
+        ),
+        (
+            2,
+            TransferHop {
+                stop: 0,
+                seconds: 30,
+            },
+        ),
+    ];
+    let table = TransferTable::from_sorted_walks(4, 900, &walks).expect("valid");
+    let dir = tempfile::tempdir().expect("temp");
+    let path = dir.path().join("table.bin");
+    let key = [7; 32];
+    let mut bytes = Vec::new();
+    table.write_flat(&mut bytes, &key).expect("write");
+    std::fs::write(&path, &bytes).expect("write");
+
+    // SAFETY: this test owns the file and doesn't change it while mapped.
+    let mapped = unsafe { TransferTable::map_flat(&path, &key) }.expect("maps");
+    assert_eq!(mapped, table);
+    assert_eq!(mapped.max_seconds(), 900);
+    assert_eq!(mapped.walk_count(), 3);
+    assert_eq!(mapped.bytes(), 0, "a mapped table holds no heap");
+    assert_eq!(mapped.seconds(StopId::new(2), StopId::new(0)), Some(30));
+
+    // SAFETY: as above.
+    let error = unsafe { TransferTable::map_flat(&path, &[9; 32]) }.expect_err("wrong key");
+    assert!(matches!(error, FlatTableError::KeyMismatch));
+
+    // A file of the wrong length is refused, at every length.
+    for length in [0, 7, 40, bytes.len() - 1, bytes.len() + 1] {
+        let mut shortened = bytes.clone();
+        shortened.resize(length, 0);
+        std::fs::write(&path, &shortened).expect("write");
+        // SAFETY: as above.
+        assert!(unsafe { TransferTable::map_flat(&path, &key) }.is_err());
+    }
+
+    // Offsets that leave the file or go backward are refused.
+    let mut broken = bytes.clone();
+    let offset_at = 8 + 32 + 16;
+    broken[offset_at..offset_at + 4].copy_from_slice(&1_000_000_u32.to_le_bytes());
+    std::fs::write(&path, &broken).expect("write");
+    // SAFETY: as above.
+    assert!(matches!(
+        unsafe { TransferTable::map_flat(&path, &key) },
+        Err(FlatTableError::Invalid(_))
+    ));
+
+    // Walks past the table are unused by the search's bounds checks.
+    let mut broken = bytes.clone();
+    let stops_at = 8 + 32 + 16 + 5 * 4;
+    broken[stops_at..stops_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert_eq!(broken[..8], FLAT_TABLE_MAGIC);
+    std::fs::write(&path, &broken).expect("write");
+    // SAFETY: as above.
+    let mapped = unsafe { TransferTable::map_flat(&path, &key) }.expect("maps");
+    let mut transfers = TableTransfers::new(Arc::new(mapped));
+    let mut sink = CollectingSink::default();
+    transfers
+        .search(
+            &TransferRequest {
+                direction: Direction::Forward,
+                seeds: &[TransferSeed {
+                    stop: StopId::new(0),
+                    clock: Clock::new(0),
+                }],
+                upper_bound: Clock::new(10_000),
+                change_margin: TransferRequest::REPORT_ALL,
+                interrupt: &|| false,
+            },
+            &mut sink,
+        )
+        .expect("searches");
+}
+
+#[derive(Default)]
+struct CollectingSink(Vec<StopId>);
+
+impl TransferSink<TableWalk> for CollectingSink {
+    fn reach(&mut self, arrival: TransferArrival<TableWalk>) {
+        self.0.push(arrival.stop);
     }
 }

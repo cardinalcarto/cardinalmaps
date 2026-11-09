@@ -10,6 +10,7 @@ rust-version.workspace = true
 
 [dependencies]
 crc32fast = { workspace = true }
+memmap2 = { workspace = true }
 ruzstd = { workspace = true }
 thiserror = { workspace = true }
 valhalla-graphtile = { workspace = true }
@@ -18,10 +19,13 @@ valinor-loki = { workspace = true }
 valinor-sif = { workspace = true }
 valinor-thor = { workspace = true }
 valinor-transit = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
 proptest = { workspace = true }
+tempfile = { workspace = true }
 valinor-gtfs = { workspace = true }
 zstd = { workspace = true }
 valinor-router = { workspace = true }

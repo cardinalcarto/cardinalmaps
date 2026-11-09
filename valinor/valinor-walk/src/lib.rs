@@ -25,11 +25,13 @@ mod search;
 mod snap;
 mod table;
 
+mod flat_table;
 pub mod paths;
 pub mod transfer_tile;
 mod transfers;
 
 pub use error::WalkError;
+pub use flat_table::{FLAT_TABLE_MAGIC, FlatTableError, TableKey};
 pub use graph::GraphStats;
 pub use search::{ResolvedWalk, SearchStats, WalkHandle, WalkSearch};
 pub use snap::{

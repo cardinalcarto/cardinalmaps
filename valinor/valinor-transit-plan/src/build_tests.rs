@@ -354,6 +354,83 @@ fn a_corrupt_tile_is_an_error_not_a_panic() {
     ));
 }
 
+#[test]
+fn a_prepared_table_is_reused_until_the_tiles_change() {
+    let fixture = Fixture::new();
+    let tile = fixture.path().join("transfers/walking/12/10/20.bin.zst");
+    let first = TransitBuild::load(fixture.path(), None).expect("loads");
+    assert_eq!(first.report.walks[0], 3);
+    drop(first);
+    let original = fs::read(&tile).expect("read");
+
+    // The prepared table doesn't read the tile again: garbage in it goes unnoticed.
+    fs::write(&tile, [1, 2, 3]).expect("write");
+    let again = TransitBuild::load(fixture.path(), None).expect("reuses");
+    assert_eq!(
+        again.walking.seconds(StopId::new(1), StopId::new(2)),
+        Some(90)
+    );
+    drop(again);
+
+    // A tile disappearing changes what is prepared.
+    fs::write(&tile, &original).expect("write");
+    fs::remove_file(fixture.path().join("transfers/walking/12/11/20.bin.zst")).expect("remove");
+    let fewer = TransitBuild::load(fixture.path(), None).expect("rebuilds");
+    assert_eq!(fewer.report.walks[0], 2);
+    assert_eq!(fewer.walking.seconds(StopId::new(2), StopId::new(1)), None);
+    drop(fewer);
+    let names: Vec<String> = fs::read_dir(fixture.path().join("prepared"))
+        .expect("prepared")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.starts_with("walking-"))
+        .collect();
+    assert_eq!(
+        names.len(),
+        1,
+        "older tables of this mode are removed: {names:?}"
+    );
+}
+
+#[test]
+fn tiles_can_be_discarded_after_the_table_is_prepared() {
+    let fixture = Fixture::new();
+    let prepared = TransitBuild::load(fixture.path(), None).expect("loads");
+    assert_eq!(prepared.report.walks[0], 3);
+    drop(prepared);
+    fs::remove_dir_all(fixture.path().join("transfers/walking")).expect("remove");
+    let build = TransitBuild::load(fixture.path(), None).expect("loads with no tiles");
+    assert_eq!(
+        build.report.walks[0], 3,
+        "the walks live on in the prepared table"
+    );
+    assert_eq!(
+        build.walking.seconds(StopId::new(1), StopId::new(2)),
+        Some(90)
+    );
+}
+
+#[test]
+fn a_damaged_prepared_table_is_replaced() {
+    let fixture = Fixture::new();
+    TransitBuild::prepare(fixture.path(), None).expect("prepares");
+    let prepared = fixture.path().join("prepared");
+    let name = fs::read_dir(&prepared)
+        .expect("prepared")
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_string_lossy().starts_with("walking-"))
+        .expect("a walking table")
+        .path();
+    fs::write(&name, b"not a table").expect("write");
+    let build = TransitBuild::load(fixture.path(), None).expect("rebuilds");
+    assert_eq!(build.report.walks[0], 3);
+}
+
 // Real data: the tiles of Seattle only, with King County Metro and Sound Transit loaded.
 const WASHINGTON: &str = "/mnt/maps/cardinal/transit/global/us-wa-2026-11-09";
 const STREETS: &str = "/mnt/maps/cardinal/routing-elevation-i2b/washington/tiles.tar";

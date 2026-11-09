@@ -11,7 +11,10 @@
 //! at the table's own bound: a shorter limit is a different search, whose cost-minimal route
 //! can be a different one, or be cut off where the table's wasn't.
 
+use std::collections::BTreeMap;
+use std::io::{self, Write};
 use std::num::NonZeroUsize;
+use std::path::Path;
 use std::sync::Arc;
 
 use valhalla_graphtile::tile_provider::GraphTileProvider;
@@ -20,8 +23,10 @@ use valinor_transit::{
     Clock, Direction, StopId, TransferArrival, TransferOutcome, TransferRequest, TransferSearch,
     TransferSink,
 };
+use zerocopy::little_endian::{U16, U32};
 
 use crate::error::WalkError;
+use crate::flat_table::{Columns, FlatTableError, MappedTable, TableKey, map_flat, write_flat};
 use crate::snap::StopSnaps;
 use crate::table::{AccessSide, StopTables, TableRequest};
 
@@ -54,30 +59,31 @@ pub struct Hop {
     pub seconds: u32,
 }
 
-/// Compressed rows of hops by stop.
+/// Rows of walks by stop, in the same columns as a mapped table.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Rows {
-    offsets: Vec<u32>,
-    hops: Vec<Hop>,
+    offsets: Vec<U32>,
+    stops: Vec<U32>,
+    seconds: Vec<U16>,
 }
 
 impl Rows {
     fn from_sorted(stop_count: usize, walks: &[(u32, Hop)]) -> Result<Self, WalkError> {
         let mut rows = Self {
             offsets: Vec::with_capacity(stop_count + 1),
-            hops: Vec::with_capacity(walks.len()),
+            stops: Vec::with_capacity(walks.len()),
+            seconds: Vec::with_capacity(walks.len()),
         };
-        rows.offsets.push(0);
+        rows.offsets.push(U32::new(0));
         let mut at = 0;
         for stop in 0..stop_count {
             while let Some(&(from, hop)) = walks.get(at)
                 && from as usize == stop
             {
-                rows.hops.push(hop);
+                rows.push(hop)?;
                 at += 1;
             }
-            rows.offsets
-                .push(u32::try_from(rows.hops.len()).map_err(|_| WalkError::TooLarge)?);
+            rows.finish_row()?;
         }
         Ok(rows)
     }
@@ -85,42 +91,93 @@ impl Rows {
     fn from_lists(lists: &[Vec<Hop>]) -> Result<Self, WalkError> {
         let mut rows = Self {
             offsets: Vec::with_capacity(lists.len() + 1),
-            hops: Vec::with_capacity(lists.iter().map(Vec::len).sum()),
+            stops: Vec::with_capacity(lists.iter().map(Vec::len).sum()),
+            seconds: Vec::with_capacity(lists.iter().map(Vec::len).sum()),
         };
-        rows.offsets.push(0);
+        rows.offsets.push(U32::new(0));
         for list in lists {
-            rows.hops.extend_from_slice(list);
-            rows.offsets
-                .push(u32::try_from(rows.hops.len()).map_err(|_| WalkError::TooLarge)?);
+            for &hop in list {
+                rows.push(hop)?;
+            }
+            rows.finish_row()?;
         }
         Ok(rows)
     }
 
-    #[inline]
-    fn of(&self, stop: usize) -> &[Hop] {
-        match (self.offsets.get(stop), self.offsets.get(stop + 1)) {
-            (Some(&start), Some(&end)) => {
-                self.hops.get(start as usize..end as usize).unwrap_or(&[])
-            }
-            _ => &[],
+    fn push(&mut self, hop: Hop) -> Result<(), WalkError> {
+        let seconds = u16::try_from(hop.seconds).map_err(|_| WalkError::TooLarge)?;
+        self.stops.push(U32::new(hop.stop));
+        self.seconds.push(U16::new(seconds));
+        Ok(())
+    }
+
+    fn finish_row(&mut self) -> Result<(), WalkError> {
+        let count = u32::try_from(self.stops.len()).map_err(|_| WalkError::TooLarge)?;
+        self.offsets.push(U32::new(count));
+        Ok(())
+    }
+
+    fn columns(&self) -> Columns<'_> {
+        Columns {
+            offsets: &self.offsets,
+            stops: &self.stops,
+            seconds: &self.seconds,
         }
     }
 
     fn bytes(&self) -> usize {
-        self.offsets.capacity() * size_of::<u32>() + self.hops.capacity() * size_of::<Hop>()
+        self.offsets.capacity() * size_of::<U32>()
+            + self.stops.capacity() * size_of::<U32>()
+            + self.seconds.capacity() * size_of::<U16>()
     }
 }
 
+/// What backs a table's base walks.
+#[derive(Clone, Debug)]
+enum Storage {
+    /// Held on the heap, as loaded or built here.
+    Heap { out: Arc<Rows>, into: Arc<Rows> },
+    /// A flat file, mapped into memory.
+    Mapped(Arc<MappedTable>),
+}
+
+/// Walks added to a table for an overlay's new stops, which a mapped file can't take.
+///
+/// Small: a new stop is rare, and walks touch only stops near it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct SideTable {
+    /// Walks to add to a stop's row, by the stop whose row they extend.
+    out: BTreeMap<u32, Vec<Hop>>,
+    /// As `out`, for walks read backward.
+    into: BTreeMap<u32, Vec<Hop>>,
+}
+
 /// Every stop's walks to the stops within a bound, in both directions of lookup.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Base walks are read from `storage`, on the heap or mapped from a flat file;
+/// [`Self::with_new_stops`] adds to a small side table, since a mapped file can't change.
+#[derive(Clone, Debug)]
 pub struct TransferTable {
     max_seconds: u32,
     stop_count: usize,
-    /// By stop: where a rider can walk to from it.
-    out: Rows,
-    /// By stop: where a rider can walk to it from.
-    into: Rows,
+    storage: Storage,
+    side: Option<Arc<SideTable>>,
 }
+
+impl PartialEq for TransferTable {
+    /// Whether two tables hold the same walks, however each one stores them.
+    fn eq(&self, other: &Self) -> bool {
+        self.max_seconds == other.max_seconds
+            && self.stop_count == other.stop_count
+            && (0..self.stop_count).all(|stop| {
+                let stop = StopId::new(u32::try_from(stop).unwrap_or(u32::MAX));
+                self.walks_from(stop).eq(other.walks_from(stop))
+                    && self.walks_into(stop).eq(other.walks_into(stop))
+            })
+    }
+}
+
+impl Eq for TransferTable {}
 
 impl TransferTable {
     /// Builds the table for every snapped stop, on `threads` threads.
@@ -175,10 +232,11 @@ impl TransferTable {
 
     /// This table with an overlay's new stops added, for `snaps` that cover them.
     ///
-    /// Base-to-base walks are kept as they are. A walk to or from a new stop is found by the
-    /// same forward search as [`Self::build`], so a base stop's walk to a new stop is drawn
-    /// exactly as it was tabled. Those base stops are every one within the straight-line
-    /// distance a rider could possibly cover in the bound.
+    /// Base-to-base walks are kept as they are, in storage that is shared, not copied.
+    /// A walk to or from a new stop is found by the same forward search as [`Self::build`],
+    /// so a base stop's walk to a new stop is drawn exactly as it was tabled.
+    /// Those base stops are every one within the straight-line distance a rider could
+    /// possibly cover in the bound. New walks live in a small side table.
     /// Returns `Ok(None)` if `interrupt` asks to stop.
     ///
     /// # Performance
@@ -202,7 +260,7 @@ impl TransferTable {
         C: Costing + Clone,
     {
         let stop_count = snaps.stop_count().max(self.stop_count);
-        let mut lists: Vec<Vec<Hop>> = (0..stop_count).map(|s| self.out.of(s).to_vec()).collect();
+        let mut added: BTreeMap<u32, Vec<Hop>> = BTreeMap::new();
         let is_new: std::collections::HashSet<u32> =
             new_stops.iter().map(|s| s.into_inner()).collect();
         let mut tables = StopTables::new(provider.clone(), costing.clone());
@@ -211,21 +269,40 @@ impl TransferTable {
             let Some(hops) = self.walks_of(&mut tables, stop, interrupt)? else {
                 return Ok(None);
             };
-            lists[stop.into_inner() as usize].extend(hops);
+            added.entry(stop.into_inner()).or_default().extend(hops);
         }
         for from in self.base_stops_in_reach(snaps, new_stops, &is_new, stop_count)? {
             let Some(hops) = self.walks_of(&mut tables, from, interrupt)? else {
                 return Ok(None);
             };
-            let list = &mut lists[from.into_inner() as usize];
-            let before = list.len();
-            list.extend(hops.into_iter().filter(|hop| is_new.contains(&hop.stop)));
-            if list.len() != before {
-                // New stops aren't always numbered past the base stops.
-                list.sort_unstable_by_key(|hop| hop.stop);
+            let new_hops: Vec<Hop> = hops
+                .into_iter()
+                .filter(|hop| is_new.contains(&hop.stop))
+                .collect();
+            if !new_hops.is_empty() {
+                added.entry(from.into_inner()).or_default().extend(new_hops);
             }
         }
-        Self::from_lists(&lists, self.max_seconds).map(Some)
+        for hops in added.values_mut() {
+            // New stops aren't always numbered past the base stops.
+            hops.sort_unstable_by_key(|hop| hop.stop);
+        }
+        let mut side = self.side.as_deref().cloned().unwrap_or_default();
+        for (from, hops) in added {
+            for &hop in &hops {
+                side.into.entry(hop.stop).or_default().push(Hop {
+                    stop: from,
+                    seconds: hop.seconds,
+                });
+            }
+            side.out.entry(from).or_default().extend(hops);
+        }
+        Ok(Some(Self {
+            max_seconds: self.max_seconds,
+            stop_count,
+            storage: self.storage.clone(),
+            side: Some(Arc::new(side)),
+        }))
     }
 
     /// The walks a forward search finds from `from`, the way [`Self::build`] finds them.
@@ -329,12 +406,12 @@ impl TransferTable {
             .collect();
         // Stable sort of walks already by `(from, to)`: each `into` row reads by increasing `from`.
         inverse.sort_by_key(|&(stop, _)| stop);
-        Ok(Self {
+        Ok(Self::on_heap(
             max_seconds,
             stop_count,
-            out: Rows::from_sorted(stop_count, walks)?,
-            into: Rows::from_sorted(stop_count, &inverse)?,
-        })
+            Rows::from_sorted(stop_count, walks)?,
+            Rows::from_sorted(stop_count, &inverse)?,
+        ))
     }
 
     fn from_lists(lists: &[Vec<Hop>], max_seconds: u32) -> Result<Self, WalkError> {
@@ -348,11 +425,87 @@ impl TransferTable {
                 });
             }
         }
-        Ok(Self {
+        Ok(Self::on_heap(
             max_seconds,
-            stop_count: lists.len(),
-            out: Rows::from_lists(lists)?,
-            into: Rows::from_lists(&inverse)?,
+            lists.len(),
+            Rows::from_lists(lists)?,
+            Rows::from_lists(&inverse)?,
+        ))
+    }
+
+    fn on_heap(max_seconds: u32, stop_count: usize, out: Rows, into: Rows) -> Self {
+        Self {
+            max_seconds,
+            stop_count,
+            storage: Storage::Heap {
+                out: Arc::new(out),
+                into: Arc::new(into),
+            },
+            side: None,
+        }
+    }
+
+    /// A table with no walks and no stops, for a search that hasn't been bound.
+    fn empty_table() -> Self {
+        Self::on_heap(0, 0, Rows::default(), Rows::default())
+    }
+
+    #[inline]
+    fn outgoing_columns(&self) -> Columns<'_> {
+        match &self.storage {
+            Storage::Heap { out, .. } => out.columns(),
+            Storage::Mapped(mapped) => mapped.outgoing(),
+        }
+    }
+
+    #[inline]
+    fn incoming_columns(&self) -> Columns<'_> {
+        match &self.storage {
+            Storage::Heap { into, .. } => into.columns(),
+            Storage::Mapped(mapped) => mapped.incoming(),
+        }
+    }
+
+    /// Writes this table's base walks as a flat file; see [`crate::flat_table`].
+    ///
+    /// # Errors
+    ///
+    /// If this table has an overlay's side table (only a base table is written), the walks don't
+    /// fit, or the writer fails.
+    pub fn write_flat(&self, writer: &mut impl Write, key: &TableKey) -> io::Result<()> {
+        if self.side.is_some() {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let stop_count = u32::try_from(self.stop_count)
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        write_flat(
+            writer,
+            key,
+            self.max_seconds,
+            stop_count,
+            self.outgoing_columns(),
+            self.incoming_columns(),
+        )
+    }
+
+    /// Maps a flat table written by [`Self::write_flat`].
+    ///
+    /// # Safety
+    ///
+    /// The file must not be modified while it is mapped; replace it by renaming over it.
+    /// A mapping whose file is truncated can fault at any later read.
+    ///
+    /// # Errors
+    ///
+    /// If the file can't be read, its key is wrong, or its header and offsets don't fit.
+    pub unsafe fn map_flat(path: &Path, key: &TableKey) -> Result<Self, FlatTableError> {
+        // SAFETY: passed on to the caller's promise.
+        let mapped = unsafe { map_flat(path, key) }?;
+        Ok(Self {
+            max_seconds: mapped.max_seconds(),
+            stop_count: mapped.stop_count(),
+            storage: Storage::Mapped(Arc::new(mapped)),
+            side: None,
         })
     }
 
@@ -368,32 +521,75 @@ impl TransferTable {
         self.max_seconds
     }
 
-    /// How many walks the table holds.
+    /// How many walks the table holds, base and side.
     pub fn walk_count(&self) -> usize {
-        self.out.hops.len()
+        self.outgoing_columns().stops.len()
+            + self
+                .side
+                .as_ref()
+                .map_or(0, |side| side.out.values().map(Vec::len).sum())
     }
 
-    /// Bytes held by the table.
+    /// Bytes of heap held by the table; a mapped table's walks aren't heap and aren't counted.
     pub fn bytes(&self) -> usize {
-        self.out.bytes() + self.into.bytes()
+        let base = match &self.storage {
+            Storage::Heap { out, into } => out.bytes() + into.bytes(),
+            Storage::Mapped(_) => 0,
+        };
+        base + self.side.as_ref().map_or(0, |side| {
+            side.out.values().map(Vec::capacity).sum::<usize>() * size_of::<Hop>()
+        })
     }
 
     /// The walks starting at a stop, as `(stop, seconds)`, by increasing stop number.
+    ///
+    /// # Performance
+    ///
+    /// Allocates; for inspection, not the transfer search.
     pub fn walks_from(&self, from: StopId) -> impl Iterator<Item = (StopId, u32)> + '_ {
-        self.out
-            .of(from.into_inner() as usize)
+        self.merged_row(self.outgoing_columns(), from, |side| &side.out)
+            .into_iter()
+    }
+
+    /// The walks arriving at a stop, as `(stop, seconds)`, by increasing stop number.
+    ///
+    /// # Performance
+    ///
+    /// Allocates; for inspection, not the transfer search.
+    pub fn walks_into(&self, to: StopId) -> impl Iterator<Item = (StopId, u32)> + '_ {
+        self.merged_row(self.incoming_columns(), to, |side| &side.into)
+            .into_iter()
+    }
+
+    /// One stop's base walks and side walks, as one sorted row.
+    fn merged_row(
+        &self,
+        columns: Columns<'_>,
+        stop: StopId,
+        side_of: impl Fn(&SideTable) -> &BTreeMap<u32, Vec<Hop>>,
+    ) -> Vec<(StopId, u32)> {
+        let (stops, seconds) = columns.of(stop.into_inner() as usize);
+        let mut row: Vec<(StopId, u32)> = stops
             .iter()
-            .map(|hop| (StopId::new(hop.stop), hop.seconds))
+            .zip(seconds)
+            .map(|(hop, seconds)| (StopId::new(hop.get()), u32::from(seconds.get())))
+            .collect();
+        if let Some(extra) = self
+            .side
+            .as_ref()
+            .and_then(|side| side_of(side).get(&stop.into_inner()))
+        {
+            row.extend(extra.iter().map(|hop| (StopId::new(hop.stop), hop.seconds)));
+            row.sort_unstable_by_key(|&(to, _)| to);
+        }
+        row
     }
 
     /// The seconds of the walk from one stop to another, if it is in the table.
     pub fn seconds(&self, from: StopId, to: StopId) -> Option<u32> {
-        let target = to.into_inner();
-        self.out
-            .of(from.into_inner() as usize)
-            .iter()
-            .find(|hop| hop.stop == target)
-            .map(|hop| hop.seconds)
+        self.walks_from(from)
+            .find(|&(stop, _)| stop == to)
+            .map(|(_, seconds)| seconds)
     }
 }
 
@@ -485,12 +681,7 @@ pub struct TableTransfers {
 impl TableTransfers {
     /// A search with no walks, until [`Self::bind`] gives it a table.
     pub fn empty() -> Self {
-        Self::new(Arc::new(TransferTable {
-            max_seconds: 0,
-            stop_count: 0,
-            out: Rows::default(),
-            into: Rows::default(),
-        }))
+        Self::new(Arc::new(TransferTable::empty_table()))
     }
 
     /// A search over `table`.
@@ -556,51 +747,67 @@ impl TransferSearch for TableTransfers {
             self.epoch = 1;
         }
         let forward = request.direction == Direction::Forward;
+        let table = Arc::clone(&self.table);
         let rows = if forward {
-            &self.table.out
+            table.outgoing_columns()
         } else {
-            &self.table.into
+            table.incoming_columns()
         };
+        let side = table
+            .side
+            .as_deref()
+            .map(|side| if forward { &side.out } else { &side.into });
         let bound = request.upper_bound.seconds();
+        let limit = self.limit;
+        let epoch = self.epoch;
+        let (stamps, best) = (&mut self.stamps, &mut self.best);
+        let mut visit = |source: StopId, clock: Clock, hop_stop: u32, hop_seconds: u32| {
+            if hop_seconds > limit {
+                return;
+            }
+            let Ok(cost) = i32::try_from(hop_seconds) else {
+                return;
+            };
+            let reached = clock.seconds().saturating_add(cost);
+            if reached >= bound {
+                return;
+            }
+            let at = hop_stop as usize;
+            let (Some(stamp), Some(best)) = (stamps.get_mut(at), best.get_mut(at)) else {
+                return;
+            };
+            if *stamp == epoch && *best <= reached {
+                return;
+            }
+            *stamp = epoch;
+            *best = reached;
+            let stop = StopId::new(hop_stop);
+            let (from, to) = if forward {
+                (source, stop)
+            } else {
+                (stop, source)
+            };
+            sink.reach(TransferArrival {
+                stop,
+                source,
+                clock: Clock::new(reached),
+                parent: TableWalk {
+                    from,
+                    to,
+                    seconds: hop_seconds,
+                },
+            });
+        };
         for seed in request.seeds {
             let source = seed.stop.into_inner();
-            for hop in rows.of(source as usize) {
-                if hop.seconds > self.limit {
-                    continue;
+            let (stops, seconds) = rows.of(source as usize);
+            for (stop, second) in stops.iter().zip(seconds) {
+                visit(seed.stop, seed.clock, stop.get(), u32::from(second.get()));
+            }
+            if let Some(extra) = side.and_then(|side| side.get(&source)) {
+                for hop in extra {
+                    visit(seed.stop, seed.clock, hop.stop, hop.seconds);
                 }
-                let Some(cost) = i32::try_from(hop.seconds).ok() else {
-                    continue;
-                };
-                let clock = seed.clock.seconds().saturating_add(cost);
-                if clock >= bound {
-                    continue;
-                }
-                let at = hop.stop as usize;
-                let (Some(stamp), Some(best)) = (self.stamps.get_mut(at), self.best.get_mut(at))
-                else {
-                    continue;
-                };
-                if *stamp == self.epoch && *best <= clock {
-                    continue;
-                }
-                *stamp = self.epoch;
-                *best = clock;
-                let stop = StopId::new(hop.stop);
-                let (from, to) = if forward {
-                    (seed.stop, stop)
-                } else {
-                    (stop, seed.stop)
-                };
-                sink.reach(TransferArrival {
-                    stop,
-                    source: seed.stop,
-                    clock: Clock::new(clock),
-                    parent: TableWalk {
-                        from,
-                        to,
-                        seconds: hop.seconds,
-                    },
-                });
             }
         }
         Ok(TransferOutcome::Completed)
