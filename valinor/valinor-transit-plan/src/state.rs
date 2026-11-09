@@ -1,0 +1,503 @@
+//! The owner of timetable state, and the immutable snapshots a query pins.
+//!
+//! [`TransitState`] holds everything that changes over time: the current GTFS-RT messages,
+//! the materialized service windows, and the latest [`TransitSnapshot`].
+//! It uses no runtime, opens no connections, and reads no clock; `now` is always an argument.
+//! The caller decides how bytes arrive and when to rebuild,
+//! which is what lets a server's poller and a phone's foreground refresh share it.
+//!
+//! # Lifecycle
+//!
+//! A snapshot is immutable once published; a query pins one with [`TransitState::pin`] and holds
+//! the `Arc` for all of its searches, however many later refreshes happen meanwhile.
+//! The states and transitions are:
+//!
+//! | From | Event | To |
+//! |---|---|---|
+//! | (none) | first `pin` or `refresh` | Scheduled |
+//! | Scheduled | fresh bytes ingested | Updated (real-time applied) |
+//! | Updated | newer bytes ingested | Updated |
+//! | Updated | feed passes its age limit | Stale (that feed falls back to the schedule) |
+//! | Stale | fresh bytes ingested | Updated |
+//! | Updated | undecodable bytes ingested | Undecodable (that feed falls back to the schedule) |
+//! | Undecodable | decodable bytes ingested | Updated |
+//! | Updated | feed cleared | Scheduled |
+//! | any | service date changes at a query's `now` | window rolled over; feeds kept |
+//!
+//! Each of these transitions has a test in `scenario_tests.rs`.
+//!
+//! # Concurrency
+//!
+//! The published pointer sits behind a read-write lock that only guards cloning an `Arc`,
+//! so a pin never waits for a rebuild; rebuilds are serialized by a separate mutex.
+
+use core::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
+
+use valinor_gtfs::LoadedTimetable;
+use valinor_gtfs_rt::{
+    DecodeError, FeedId, FeedInput, FeedKind, FeedStatus, NewStop, OverlayOptions, OverlayStats,
+    RiderData, build_overlay,
+};
+use valinor_transit::{Snapshot, StopId, Timetable};
+
+use crate::error::StateError;
+use crate::lookup::CompiledLookup;
+use crate::response::{VehicleUpdate, vehicle_update};
+use crate::window::{WindowData, dates_around, required_dates, service_date_at};
+
+/// Materialized windows kept for reuse: the current one, its predecessor, and an on-demand one.
+///
+/// A window is the expensive thing to build, so rollovers and repeat on-demand dates reuse it.
+const WINDOW_CACHE_SIZE: usize = 3;
+
+/// On-demand snapshots kept, each tied to one state of the feeds.
+const ON_DEMAND_CACHE_SIZE: usize = 2;
+
+/// Fixed choices made when a [`TransitState`] is created.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StateConfig {
+    /// Passed through to the overlay builder.
+    pub overlay: OverlayOptions,
+}
+
+/// Bytes for one feed, for [`TransitState::ingest`].
+#[derive(Debug, Clone, Copy)]
+pub struct FeedUpdate<'a> {
+    /// The feed these belong to, by its ID in the compiled timetable.
+    pub feed: &'a str,
+    /// What the bytes carry.
+    pub kind: FeedKind,
+    /// The feed message; `None` clears this feed.
+    pub bytes: Option<&'a [u8]>,
+    /// When the bytes were received, in POSIX seconds.
+    ///
+    /// A message's own header timestamp takes precedence for judging its age.
+    pub received_at: i64,
+    /// Overrides the default age limit for this kind of feed, in seconds.
+    pub stale_after: Option<i64>,
+}
+
+/// What [`TransitState::ingest`] did with some bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IngestOutcome {
+    /// The bytes decoded and will take effect at the next rebuild.
+    Accepted,
+    /// There were no bytes, so the feed was cleared.
+    Cleared,
+    /// The bytes couldn't be decoded. The feed falls back to the schedule, and the reason
+    /// is reported in every response until better bytes arrive.
+    Undecodable(DecodeError),
+}
+
+/// A stop that a street search can snap: base stops and an overlay's new ones.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StopLocation {
+    /// The stop's number in the snapshot.
+    pub stop: StopId,
+    /// Degrees north.
+    pub latitude: f64,
+    /// Degrees east.
+    pub longitude: f64,
+}
+
+/// The compiled timetable and everything derived once from it.
+#[derive(Debug)]
+pub(crate) struct TimetableData {
+    pub(crate) loaded: LoadedTimetable,
+    pub(crate) timetable: Timetable,
+    pub(crate) feeds: Vec<FeedId>,
+}
+
+/// Immutable timetable state: everything one query reads.
+///
+/// Clones of the `Arc` are cheap; a query holds one for its whole duration.
+#[derive(Debug)]
+pub struct TransitSnapshot {
+    pub(crate) data: Arc<TimetableData>,
+    pub(crate) window: Arc<WindowData>,
+    pub(crate) snapshot: Arc<Snapshot>,
+    pub(crate) rider: RiderData,
+    pub(crate) new_stops: Vec<NewStop>,
+    pub(crate) stats: OverlayStats,
+    pub(crate) built_at: i64,
+    /// The service date this window is centered on, for a snapshot of the current day.
+    ///
+    /// `None` for an on-demand window, which never rolls over.
+    center: Option<valinor_transit::ServiceDate>,
+    feed_generation: u64,
+}
+
+impl TransitSnapshot {
+    /// The timetable state a search pins.
+    pub fn snapshot(&self) -> &Arc<Snapshot> {
+        &self.snapshot
+    }
+
+    /// Everything real-time for the response layer.
+    pub fn rider(&self) -> &RiderData {
+        &self.rider
+    }
+
+    /// What the overlay build did.
+    pub fn stats(&self) -> &OverlayStats {
+        &self.stats
+    }
+
+    /// When this snapshot was built, in POSIX seconds.
+    pub fn built_at(&self) -> i64 {
+        self.built_at
+    }
+
+    /// The POSIX time of the window clock's zero.
+    pub fn origin_unix(&self) -> i64 {
+        self.window.origin_unix
+    }
+
+    /// Stops that exist only in real-time data.
+    pub fn new_stops(&self) -> &[NewStop] {
+        &self.new_stops
+    }
+
+    /// Each feed's status as of `now`.
+    ///
+    /// Staleness and decodability decided at the build are what took effect on routing,
+    /// and a pin rebuilds whenever those flip, so these agree with what a query read.
+    pub fn feed_status_at(&self, now: i64) -> Vec<FeedStatus> {
+        self.rider
+            .feed_status()
+            .iter()
+            .map(|status| status.aged_to(self.built_at, now))
+            .collect()
+    }
+
+    /// Every stop a street search can snap, in the snapshot's stop numbering.
+    ///
+    /// Stops the file holds without coordinates are omitted.
+    pub fn stop_locations(&self) -> impl Iterator<Item = StopLocation> + '_ {
+        let compiled = *self.data.loaded.timetable();
+        let base_count = u32::try_from(compiled.stop_count()).unwrap_or(u32::MAX);
+        (0..base_count)
+            .filter_map(move |raw| {
+                let stop = StopId::new(raw);
+                let coordinate = compiled.stop(stop)?.coordinate?;
+                Some(StopLocation {
+                    stop,
+                    latitude: coordinate.lat,
+                    longitude: coordinate.lon,
+                })
+            })
+            .chain(self.new_stops.iter().map(|stop| StopLocation {
+                stop: stop.stop,
+                latitude: f64::from(stop.latitude),
+                longitude: f64::from(stop.longitude),
+            }))
+    }
+}
+
+/// Owns timetable state and publishes snapshots; see the module documentation.
+#[derive(Debug)]
+pub struct TransitState {
+    data: Arc<TimetableData>,
+    config: StateConfig,
+    current: RwLock<Option<Arc<TransitSnapshot>>>,
+    writer: Mutex<Writer>,
+    /// Bumped by every ingest, so a pin can see a snapshot is behind without taking the mutex.
+    feed_generation: AtomicU64,
+}
+
+#[derive(Debug, Default)]
+struct Writer {
+    feeds: HashMap<(FeedId, FeedKind), FeedInput>,
+    /// Most recently used first.
+    windows: Vec<Arc<WindowData>>,
+    /// Most recently used first.
+    on_demand: Vec<Arc<TransitSnapshot>>,
+}
+
+impl TransitState {
+    /// Takes ownership of a loaded timetable.
+    ///
+    /// # Performance
+    ///
+    /// Copies every stop event into a [`Timetable`] once. A window is materialized on first use.
+    ///
+    /// # Errors
+    ///
+    /// If `valinor-transit` rejects the file's tables.
+    pub fn new(loaded: LoadedTimetable, config: StateConfig) -> Result<Self, StateError> {
+        let timetable = loaded.timetable().to_timetable()?;
+        let mut feeds = Vec::new();
+        for info in loaded.timetable().feeds() {
+            let feed = FeedId::new(info.id).map_err(|_| {
+                StateError::Timetable(valinor_gtfs::DecodeError::InvalidValue {
+                    table: "feeds",
+                    reason: "a feed has an empty identifier",
+                })
+            })?;
+            feeds.push(feed);
+        }
+        Ok(Self {
+            data: Arc::new(TimetableData {
+                loaded,
+                timetable,
+                feeds,
+            }),
+            config,
+            current: RwLock::new(None),
+            writer: Mutex::new(Writer::default()),
+            feed_generation: AtomicU64::new(0),
+        })
+    }
+
+    /// The feeds this timetable can take real-time data for.
+    pub fn feeds(&self) -> &[FeedId] {
+        &self.data.feeds
+    }
+
+    /// Replaces what is known about one feed.
+    ///
+    /// Undecodable bytes replace the feed's previous message: the feed then falls back to the
+    /// schedule and reports why, so a rider is never shown an old update as if it were current.
+    /// Neither happens until the next rebuild, which [`Self::pin`] does itself if needed.
+    ///
+    /// # Errors
+    ///
+    /// If the feed isn't in the compiled timetable.
+    pub fn ingest(&self, update: FeedUpdate<'_>) -> Result<IngestOutcome, StateError> {
+        let feed = self
+            .data
+            .feeds
+            .iter()
+            .find(|feed| feed.as_str() == update.feed)
+            .cloned()
+            .ok_or_else(|| StateError::UnknownFeed(update.feed.to_owned()))?;
+        let key = (feed.clone(), update.kind);
+        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let outcome = match update.bytes {
+            None => {
+                writer.feeds.remove(&key);
+                IngestOutcome::Cleared
+            }
+            Some(bytes) => {
+                let mut input = FeedInput::from_bytes(feed, update.kind, bytes);
+                input.received_at = Some(update.received_at);
+                if let Some(stale_after) = update.stale_after {
+                    input.stale_after = stale_after;
+                }
+                let outcome = match &input.decoded {
+                    Ok(_) => IngestOutcome::Accepted,
+                    Err(error) => IngestOutcome::Undecodable(error.clone()),
+                };
+                writer.feeds.insert(key, input);
+                outcome
+            }
+        };
+        // Inside the lock, so a rebuild reads feeds no older than the generation it records.
+        self.feed_generation.fetch_add(1, Ordering::Release);
+        Ok(outcome)
+    }
+
+    /// Rebuilds and publishes a snapshot for `now` from the current feeds.
+    ///
+    /// Call this after [`Self::ingest`] from a background thread so queries don't pay for it.
+    ///
+    /// # Errors
+    ///
+    /// If `now` is outside the timetable's coverage, or building fails.
+    pub fn refresh(&self, now: i64) -> Result<Arc<TransitSnapshot>, StateError> {
+        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        self.rebuild(&mut writer, now)
+    }
+
+    /// The snapshot for `now`, rebuilt first if it is out of date.
+    ///
+    /// A snapshot is out of date if a feed changed, a feed's freshness flipped,
+    /// or the service date rolled over. A query calls this once and keeps the `Arc`.
+    ///
+    /// # Errors
+    ///
+    /// If `now` is outside the timetable's coverage and no snapshot covers it.
+    pub fn pin(&self, now: i64) -> Result<Arc<TransitSnapshot>, StateError> {
+        if let Some(current) = self.read_current()
+            && !self.is_out_of_date(&current, now)
+        {
+            return Ok(current);
+        }
+        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        // Somebody else may have rebuilt while we waited for the mutex.
+        if let Some(current) = self.read_current()
+            && !self.is_out_of_date(&current, now)
+        {
+            return Ok(current);
+        }
+        self.rebuild(&mut writer, now)
+    }
+
+    /// The snapshot for a query departing between two POSIX times.
+    ///
+    /// Usually this is the current snapshot. A departure on another date gets a window of its
+    /// own, with the same feeds applied, so alerts for that date still take effect.
+    ///
+    /// # Errors
+    ///
+    /// If the departure is outside the timetable's coverage, or building fails.
+    pub fn pin_for_departure(
+        &self,
+        now: i64,
+        earliest: i64,
+        latest: i64,
+    ) -> Result<Arc<TransitSnapshot>, StateError> {
+        let compiled = *self.data.loaded.timetable();
+        let needed = required_dates(&compiled, earliest, latest)?;
+        match self.pin(now) {
+            Ok(current) if current.window.covers(&needed) => return Ok(current),
+            // `now` may legitimately be outside the feed; the departure isn't.
+            Ok(_) | Err(StateError::DateNotCovered(_)) => {}
+            Err(error) => return Err(error),
+        }
+        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        // Under the lock, so this can't be newer than the feeds the build reads.
+        let generation = self.feed_generation.load(Ordering::Acquire);
+        if let Some(position) = writer.on_demand.iter().position(|snapshot| {
+            snapshot.window.dates == needed
+                && snapshot.feed_generation == generation
+                && !Self::stale_flipped(snapshot, now)
+        }) {
+            let found = writer.on_demand.remove(position);
+            writer.on_demand.insert(0, Arc::clone(&found));
+            return Ok(found);
+        }
+        let window = self.window(&mut writer, needed)?;
+        let built = Arc::new(self.build_snapshot(&writer, window, None, generation, now)?);
+        writer.on_demand.insert(0, Arc::clone(&built));
+        writer.on_demand.truncate(ON_DEMAND_CACHE_SIZE);
+        Ok(built)
+    }
+
+    /// The latest real-time state of one vehicle, by its feed and vehicle ID.
+    ///
+    /// # Errors
+    ///
+    /// If `now` is outside the timetable's coverage, or building a snapshot fails.
+    pub fn vehicle(&self, now: i64, feed: &str, id: &str) -> Result<VehicleUpdate, StateError> {
+        let snapshot = self.pin(now)?;
+        Ok(vehicle_update(&snapshot, now, feed, id))
+    }
+
+    fn read_current(&self) -> Option<Arc<TransitSnapshot>> {
+        self.current
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn is_out_of_date(&self, snapshot: &TransitSnapshot, now: i64) -> bool {
+        let compiled = self.data.loaded.timetable();
+        snapshot.feed_generation != self.feed_generation.load(Ordering::Acquire)
+            || snapshot.center != service_date_at(compiled, now)
+            || Self::stale_flipped(snapshot, now)
+    }
+
+    /// Whether any feed's staleness differs at `now` from what the snapshot applied.
+    fn stale_flipped(snapshot: &TransitSnapshot, now: i64) -> bool {
+        snapshot
+            .rider
+            .feed_status()
+            .iter()
+            .any(|status| status.aged_to(snapshot.built_at, now).stale != status.stale)
+    }
+
+    fn rebuild(&self, writer: &mut Writer, now: i64) -> Result<Arc<TransitSnapshot>, StateError> {
+        let compiled = self.data.loaded.timetable();
+        let center = service_date_at(compiled, now).ok_or(StateError::DateNotCovered(now))?;
+        let dates = dates_around(compiled, center);
+        let window = self.window(writer, dates)?;
+        let generation = self.feed_generation.load(Ordering::Acquire);
+        let built = Arc::new(self.build_snapshot(writer, window, Some(center), generation, now)?);
+        *self.current.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&built));
+        Ok(built)
+    }
+
+    fn window(
+        &self,
+        writer: &mut Writer,
+        dates: Vec<valinor_transit::ServiceDate>,
+    ) -> Result<Arc<WindowData>, StateError> {
+        if let Some(position) = writer.windows.iter().position(|w| w.dates == dates) {
+            let window = writer.windows.remove(position);
+            writer.windows.insert(0, Arc::clone(&window));
+            return Ok(window);
+        }
+        let compiled = self.data.loaded.timetable();
+        let window = Arc::new(WindowData::materialize(
+            compiled,
+            &self.data.timetable,
+            dates,
+        )?);
+        writer.windows.insert(0, Arc::clone(&window));
+        writer.windows.truncate(WINDOW_CACHE_SIZE);
+        Ok(window)
+    }
+
+    fn build_snapshot(
+        &self,
+        writer: &Writer,
+        window: Arc<WindowData>,
+        center: Option<valinor_transit::ServiceDate>,
+        feed_generation: u64,
+        now: i64,
+    ) -> Result<TransitSnapshot, StateError> {
+        let compiled = self.data.loaded.timetable();
+        let lookup = CompiledLookup::new(
+            compiled,
+            &self.data.timetable,
+            &window.days,
+            &window.service_days,
+            &self.data.feeds,
+        );
+        let inputs = feeds_in_order(&writer.feeds);
+        let overlay = build_overlay(
+            &lookup,
+            Arc::clone(&window.base),
+            inputs,
+            now,
+            self.config.overlay,
+        )?;
+        Ok(TransitSnapshot {
+            data: Arc::clone(&self.data),
+            window,
+            snapshot: overlay.snapshot,
+            rider: overlay.rider,
+            new_stops: overlay.new_stops,
+            stats: overlay.stats,
+            built_at: now,
+            center,
+            feed_generation,
+        })
+    }
+}
+
+/// The feeds in a stable order, so overlays and statuses are deterministic.
+fn feeds_in_order(feeds: &HashMap<(FeedId, FeedKind), FeedInput>) -> Vec<FeedInput> {
+    let mut inputs: Vec<(&FeedId, u8, &FeedInput)> = feeds
+        .iter()
+        .map(|((feed, kind), input)| (feed, kind_rank(*kind), input))
+        .collect();
+    inputs.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    inputs
+        .into_iter()
+        .map(|(_, _, input)| input.clone())
+        .collect()
+}
+
+/// A stable order for feed kinds, which have no natural one.
+fn kind_rank(kind: FeedKind) -> u8 {
+    match kind {
+        FeedKind::TripUpdates => 0,
+        FeedKind::VehiclePositions => 1,
+        FeedKind::Alerts => 2,
+        FeedKind::Combined => 3,
+    }
+}

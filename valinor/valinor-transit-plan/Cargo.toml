@@ -1,0 +1,27 @@
+[package]
+name = "valinor-transit-plan"
+description = "Connects compiled timetables, GTFS-RT overlays, and the transit router, and builds rider-facing responses."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_with = { workspace = true }
+thiserror = { workspace = true }
+valinor-gtfs = { path = "../valinor-gtfs", default-features = false }
+valinor-gtfs-rt = { path = "../valinor-gtfs-rt" }
+valinor-transit = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true, features = ["json"] }
+prost = { workspace = true }
+proptest = { workspace = true }
+serde_json = { workspace = true }
+valinor-gtfs = { path = "../valinor-gtfs" }
+
+[lints]
+workspace = true
