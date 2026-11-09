@@ -116,8 +116,8 @@ fn open_transit(cli: &Cli, tiles: &[PathBuf]) -> anyhow::Result<Option<transit::
         },
         ..StreetConfig::default()
     };
-    let planner = StreetPlanner::from_build(build, tiles, config)
-        .context("open transit over the tiles")?;
+    let planner =
+        StreetPlanner::from_build(build, tiles, config).context("open transit over the tiles")?;
     info!(
         "transit: {} feeds, from {}",
         planner.state().feeds().len(),

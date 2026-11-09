@@ -30,7 +30,7 @@ searching the street network during a query cost too much time and memory (see "
 | Crate | Responsibility |
 |---|---|
 | `valinor-transit` | Timetable, real-time overlay, MCR forward and backward, profile loop, journeys. |
-| `valinor-gtfs` | Compiles GTFS into the timetable file. |
+| `valinor-gtfs` | Compiles GTFS into the timetable file, and numbers several files as one. |
 | `valinor-gtfs-rt` | Decodes GTFS-RT and builds real-time overlays. |
 | `valinor-walk` | Street search over tiles in both directions, stop snapping, access and egress tables. |
 
@@ -148,6 +148,39 @@ RAPTOR is fast because of cache hits on data the prefetcher can predict. Nothing
 - Pickup and drop-off rules are one flag per stop position of a lane,
   so trips differing in them are in different lanes.
 - Stops are numbered so that stops on the same route are close together.
+
+## Several timetables at once
+
+Each feed keeps its own compiled file, memory-mapped as it is, one per feed.
+Stops, routes, and trips are numbered across files: a file's number plus that file's base.
+`TimetableSet` does this numbering and sends a number back to its file;
+adding or removing a feed rewrites no file.
+
+Only the materialized window is concatenated, by `valinor_transit::materialize_parts`.
+The window has one arena and one layout, and the scan never sees a file.
+Nothing per-file is in the hot path; rider-facing lookups (stop names, trips, routes, agencies,
+alerts) find their file by number on the cold path.
+
+Each file keeps its own service-day clock. A window's slots are service dates,
+and the date `D` starts at a different instant in each time zone,
+so a file's slot `i` has its own offset from the window's origin, the earliest start of any file.
+A file that doesn't cover a date simply has no service in that slot,
+so feeds in other time zones coexist and files covering different date ranges can be loaded
+together. A window for a moment is the union of yesterday, today, and tomorrow in each file.
+
+Overlays are built across all loaded feeds.
+A feed has real-time data or none, feeds are independent,
+and a stale or broken feed degrades only itself.
+New overlay stops number after every file's stops.
+
+A build is loaded from a directory (`TransitBuild::load`), optionally for a subset of its feeds.
+The manifest is checked three ways: tiles carry its ID, each timetable must match its SHA-256,
+and opening refuses street tiles of a different build.
+Transfers come only from tiles; none are built at open, and any tile not on disk is left out,
+so an offline area needn't include a large agency's whole network:
+a stop in a tile that wasn't downloaded just has no walks from it.
+Stops are still snapped to the street network at open (5.5 s for all of Washington, 2 s for
+King County Metro on the development machine).
 
 ## Real-time overlay
 

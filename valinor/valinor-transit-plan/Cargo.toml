@@ -41,5 +41,8 @@ valinor-gtfs = { path = "../valinor-gtfs" }
 tempfile = { workspace = true }
 zstd = { workspace = true }
 
+[[example]]
+name = "multi_feed_bench"
+
 [lints]
 workspace = true

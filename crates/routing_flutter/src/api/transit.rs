@@ -176,8 +176,10 @@ impl OfflineTransit {
     ) -> Result<OfflineTransit, TransitOpenError> {
         Ok(Self {
             planner: StreetPlanner::open_with_built_transfers(
-                valinor_gtfs::TimetableSet::single(timetable).map_err(|error| TransitOpenError {
-                    message: error.to_string(),
+                valinor_gtfs::TimetableSet::single(timetable).map_err(|error| {
+                    TransitOpenError {
+                        message: error.to_string(),
+                    }
                 })?,
                 &tile_sets,
                 device_config(),
@@ -315,7 +317,10 @@ mod tests {
         let dir = tempdir::Dir::new();
         let path = dir.path().join("timetable.vgtfs");
         std::fs::write(&path, &compiled.bytes).unwrap();
-        (dir, valinor_gtfs::LoadedTimetable::from_bytes(compiled.bytes).unwrap())
+        (
+            dir,
+            valinor_gtfs::LoadedTimetable::from_bytes(compiled.bytes).unwrap(),
+        )
     }
 
     /// A temp directory removed on drop, so the test depends on nothing else.
@@ -351,7 +356,9 @@ mod tests {
     #[test]
     fn plans_transit_from_request_bytes() {
         let (_dir, path) = timetable();
-        let transit = OfflineTransit::open_timetable(path, vec![tiles()]).ok().unwrap();
+        let transit = OfflineTransit::open_timetable(path, vec![tiles()])
+            .ok()
+            .unwrap();
         // 2026-06-15 08:54 local, a Monday.
         let now = 1_781_506_440;
         let request = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.5100,"lon":1.5350},"max_walk_seconds":600,"departure":1781506500}"#;
@@ -398,7 +405,9 @@ mod tests {
     #[test]
     fn a_request_above_the_device_limit_is_refused() {
         let (_dir, path) = timetable();
-        let transit = OfflineTransit::open_timetable(path, vec![tiles()]).ok().unwrap();
+        let transit = OfflineTransit::open_timetable(path, vec![tiles()])
+            .ok()
+            .unwrap();
         let request = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.51,"lon":1.535},"max_walk_seconds":2701}"#;
         assert_eq!(
             transit
@@ -411,7 +420,9 @@ mod tests {
     #[test]
     fn a_cancelled_plan_stops_and_says_so() {
         let (_dir, path) = timetable();
-        let transit = OfflineTransit::open_timetable(path, vec![tiles()]).ok().unwrap();
+        let transit = OfflineTransit::open_timetable(path, vec![tiles()])
+            .ok()
+            .unwrap();
         let request = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.51,"lon":1.535},"max_walk_seconds":600,"departure":1781506500}"#;
         let answer = transit.plan_at(request, Vec::new(), 1_781_506_440, &|| true);
         assert_eq!(answer.status, 499);

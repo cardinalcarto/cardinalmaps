@@ -486,3 +486,197 @@ fn a_downloaded_area_loads_and_plans_with_partial_tiles() {
         "journeys exist within the area"
     );
 }
+
+fn named_requests() -> Vec<TransitRequest> {
+    let tuesday_midnight = 1_794_297_600;
+    let trips = [
+        ((47.649_735, -122.349_869), (47.613_442, -122.302_605)),
+        ((47.668_606, -122.385_345), (47.441_296, -122.298_523)),
+    ];
+    let mut requests = Vec::new();
+    for (from, to) in trips {
+        for hour in [8, 12, 17] {
+            let departure = tuesday_midnight + hour * 3600;
+            requests.push(TransitRequest::new(
+                LatLon {
+                    lat: from.0,
+                    lon: from.1,
+                },
+                LatLon {
+                    lat: to.0,
+                    lon: to.1,
+                },
+                departure,
+                departure - 60,
+            ));
+        }
+    }
+    requests
+}
+
+/// Loading Metro from the build matches its single file with walks built in memory.
+#[test]
+#[ignore = "needs the Washington build under /mnt/maps/cardinal/transit"]
+fn metro_from_tiles_matches_metro_alone_with_built_walks() {
+    let feeds = [METRO.to_owned()];
+    let build = TransitBuild::load(Path::new(WASHINGTON), Some(&feeds)).expect("loads");
+    let from_tiles =
+        StreetPlanner::from_build(build, &[STREETS], StreetConfig::default()).expect("opens");
+    let path = Path::new(WASHINGTON).join(format!("timetables/{METRO}.timetable"));
+    // SAFETY: the Washington build's timetables are not modified while this test runs.
+    let single = unsafe { valinor_gtfs::LoadedTimetable::map(&path) }.expect("maps");
+    let in_memory = StreetPlanner::open_with_built_transfers(
+        valinor_gtfs::TimetableSet::single(single).expect("set"),
+        &[STREETS],
+        StreetConfig::default(),
+    )
+    .expect("builds");
+    let mut compared = 0;
+    for request in named_requests() {
+        let tiles = from_tiles
+            .plan(&request, "en-US", &|| false)
+            .expect("plans");
+        let local = in_memory.plan(&request, "en-US", &|| false).expect("plans");
+        assert!(!tiles.journeys.is_empty());
+        assert_eq!(
+            serde_json::to_value(&tiles).expect("json"),
+            serde_json::to_value(&local).expect("json"),
+            "a request answered differently from tiles"
+        );
+        compared += tiles.journeys.len();
+    }
+    println!("compared {compared} journeys");
+}
+
+/// Whichever Metro capture is newest, ingested for the time it was taken.
+fn newest_capture() -> (PathBuf, i64) {
+    let mut names: Vec<_> = fs::read_dir("/mnt/maps/cardinal/transit/kcm/rt")
+        .expect("captures")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    let name = names.pop().expect("a capture");
+    let parsed = jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", &name).expect("named by time");
+    let now = parsed
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .expect("zoned")
+        .timestamp()
+        .as_second();
+    (
+        PathBuf::from("/mnt/maps/cardinal/transit/kcm/rt").join(name),
+        now,
+    )
+}
+
+#[test]
+#[ignore = "needs the Washington build under /mnt/maps/cardinal/transit"]
+fn washington_combines_metro_and_sound_transit_with_real_walks() {
+    use crate::response::JourneyLeg;
+    use crate::state::FeedUpdate;
+    use valinor_gtfs_rt::FeedKind;
+
+    let build = TransitBuild::load(Path::new(WASHINGTON), None).expect("loads");
+    let planner =
+        StreetPlanner::from_build(build, &[STREETS], StreetConfig::default()).expect("opens");
+    let request = &named_requests()[3];
+    let response = planner.plan(request, "en-US", &|| false).expect("plans");
+    let mut both = 0;
+    let mut drawn = 0;
+    for journey in &response.journeys {
+        let feeds: Vec<&str> = journey
+            .legs
+            .iter()
+            .filter_map(|leg| match leg {
+                JourneyLeg::Transit(leg) => leg.trip.feed.as_deref(),
+                _ => None,
+            })
+            .collect();
+        if feeds.contains(&METRO) && feeds.contains(&SOUND_TRANSIT) {
+            both += 1;
+        }
+        for pair in journey.legs.windows(3) {
+            let [
+                JourneyLeg::Transit(before),
+                JourneyLeg::Transfer(walk),
+                JourneyLeg::Transit(after),
+            ] = pair
+            else {
+                continue;
+            };
+            if before.trip.feed != after.trip.feed {
+                assert!(
+                    walk.walk
+                        .as_ref()
+                        .is_some_and(|w| !w.shape.is_empty() && w.distance_meters > 0.0)
+                );
+                drawn += 1;
+            }
+        }
+    }
+    println!("Ballard to SeaTac: {both} journeys used both agencies, {drawn} walks between them");
+    assert!(both > 0, "Link should appear in these answers");
+    assert!(drawn > 0);
+
+    let (capture, now) = newest_capture();
+    let mut accepted = 0;
+    for (file, kind) in [
+        ("tripupdates.pb", FeedKind::TripUpdates),
+        ("alerts.pb", FeedKind::Alerts),
+        ("vehiclepositions.pb", FeedKind::VehiclePositions),
+    ] {
+        let bytes = fs::read(capture.join(file)).expect("capture");
+        let result = planner
+            .state()
+            .ingest_and_refresh(
+                FeedUpdate {
+                    feed: METRO,
+                    kind,
+                    bytes: Some(&bytes),
+                    received_at: now,
+                    stale_after: Some(3600),
+                },
+                now,
+            )
+            .expect("known feed");
+        assert!(result.snapshot.is_ok());
+        accepted += 1;
+    }
+    assert_eq!(accepted, 3);
+    let snapshot = planner.state().refresh(now).expect("rebuilds");
+    println!(
+        "overlay: {} trips updated, {} vehicles",
+        snapshot.stats().trips_updated,
+        snapshot.stats().vehicles
+    );
+    assert!(snapshot.stats().trip_updates_matched > 0);
+    assert!(snapshot.stats().vehicles_matched > 0);
+    let request = TransitRequest::new(
+        LatLon {
+            lat: 47.668_606,
+            lon: -122.385_345,
+        },
+        LatLon {
+            lat: 47.441_296,
+            lon: -122.298_523,
+        },
+        now,
+        now,
+    );
+    let response = planner.plan(&request, "en-US", &|| false).expect("plans");
+    assert!(
+        response
+            .journeys
+            .iter()
+            .any(|journey| journey.legs.iter().any(|leg| matches!(
+                leg,
+                JourneyLeg::Transit(leg) if leg.trip.feed.as_deref() == Some(METRO) && leg.realtime
+            ))),
+        "real-time Metro legs appear in a Washington-wide answer"
+    );
+}
