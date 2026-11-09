@@ -8,6 +8,7 @@
 //! with `GET ?json=` and POST, as mainline's httpd does; see [`app`] for the details.
 //! `GET /status` is the health check. Logging follows `RUST_LOG`.
 //! It writes no files.
+//! With `--transit-timetable`, it also plans public transit at `/transit/...`; see [`transit`].
 
 use anyhow::{Context, bail};
 use clap::Parser;
@@ -21,11 +22,14 @@ use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
+use valinor_gtfs::LoadedTimetable;
 use valinor_router::{DEFAULT_TILE_CACHE_SIZE, Router, RouterConfig};
+use valinor_transit_plan::{StreetConfig, StreetPlanner};
 
 mod app;
 #[cfg(test)]
 mod tests;
+mod transit;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -61,6 +65,16 @@ struct Cli {
     /// The largest request body, in bytes (larger ones are a 413).
     #[arg(env, long, default_value = "16777216")]
     max_body_bytes: usize,
+
+    /// A compiled transit timetable (`valinor-gtfs`), to serve `/transit/...`.
+    /// Without one, those paths are unknown, as any others are.
+    #[arg(env, long)]
+    transit_timetable: Option<PathBuf>,
+
+    /// The shared secret for feeding GTFS-RT to `PUT /transit/feeds/...`.
+    /// Without one, real-time data can't be ingested and transit serves the schedule.
+    #[arg(env, long)]
+    transit_ingest_token: Option<String>,
 }
 
 /// The tile sets to open: `--tiles`, or else the config's `mjolnir.tile_extract`
@@ -79,7 +93,29 @@ fn tile_sets(cli: &Cli, config: &RouterConfig) -> anyhow::Result<Vec<PathBuf>> {
     }
 }
 
-fn open(cli: &Cli) -> anyhow::Result<(Router, usize)> {
+/// Opens transit, if a timetable was given, over the same tile sets as the router.
+fn open_transit(cli: &Cli, tiles: &[PathBuf]) -> anyhow::Result<Option<transit::Transit>> {
+    let Some(path) = cli.transit_timetable.as_deref() else {
+        return Ok(None);
+    };
+    // SAFETY: the file is the operator's published timetable, replaced by renaming over it,
+    // as `LoadedTimetable::map` asks; nothing modifies it in place while the server runs.
+    let timetable = unsafe { LoadedTimetable::map(path) }
+        .with_context(|| format!("load the timetable {}", path.display()))?;
+    let planner = StreetPlanner::open(timetable, tiles, StreetConfig::default())
+        .context("open transit over the tiles")?;
+    info!(
+        "transit: {} feeds, from {}",
+        planner.state().feeds().len(),
+        path.display()
+    );
+    Ok(Some(transit::Transit::new(
+        planner,
+        cli.transit_ingest_token.clone(),
+    )))
+}
+
+fn open(cli: &Cli) -> anyhow::Result<(Router, usize, Vec<PathBuf>)> {
     let json = std::fs::read_to_string(&cli.config)
         .with_context(|| format!("read {}", cli.config.display()))?;
     let mut config = RouterConfig::from_valhalla_json(&json)
@@ -101,7 +137,7 @@ fn open(cli: &Cli) -> anyhow::Result<(Router, usize)> {
             .collect::<Vec<_>>()
             .join(", ")
     );
-    Ok((router, workers))
+    Ok((router, workers, tiles))
 }
 
 #[tokio::main]
@@ -117,12 +153,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let (router, workers) = open(&cli)?;
-    let state = Arc::new(app::AppState::new(
-        router,
-        workers,
-        Duration::from_secs(cli.timeout_seconds),
-    ));
+    let (router, workers, tiles) = open(&cli)?;
+    let transit = open_transit(&cli, &tiles)?;
+    let state = Arc::new(
+        app::AppState::new(router, workers, Duration::from_secs(cli.timeout_seconds))
+            .with_transit(transit),
+    );
     let listener = tokio::net::TcpListener::bind(cli.listen)
         .await
         .with_context(|| format!("listen on {}", cli.listen))?;

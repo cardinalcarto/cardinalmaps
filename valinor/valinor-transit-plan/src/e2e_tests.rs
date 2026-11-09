@@ -266,7 +266,7 @@ fn e2e_overnight_replay() {
     let directory = capture_at("20261109T073000Z");
     println!("capture: {}", directory.display());
     let started = Instant::now();
-    let now = ingest_capture(&state, &directory);
+    let now = ingest_capture(state, &directory);
     println!("now = {now}, ingest {:?}", started.elapsed());
     let started = Instant::now();
     let snapshot = state.refresh(now).unwrap();
@@ -337,7 +337,7 @@ fn e2e_overnight_replay() {
 
     // Replaying a later capture updates the snapshot in place.
     let later = capture_at("20261109T083000Z");
-    let later_now = ingest_capture(&state, &later);
+    let later_now = ingest_capture(state, &later);
     let started = Instant::now();
     let snapshot = state.refresh(later_now).unwrap();
     println!(
@@ -450,10 +450,10 @@ fn e2e_daytime_schedule() {
         for leg in &journey.legs {
             match leg {
                 JourneyLeg::Access(l) => {
-                    print_walk("cycle to the first stop", l.walk.as_ref().unwrap())
+                    print_walk("cycle to the first stop", l.walk.as_ref().unwrap());
                 }
                 JourneyLeg::Egress(l) => {
-                    print_walk("cycle from the last stop", l.walk.as_ref().unwrap())
+                    print_walk("cycle from the last stop", l.walk.as_ref().unwrap());
                 }
                 _ => {}
             }

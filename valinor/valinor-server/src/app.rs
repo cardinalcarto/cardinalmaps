@@ -16,6 +16,8 @@
 //! A request that isn't answered within the timeout (waiting for a worker included) is a 504,
 //! and its path search is interrupted, as it is when the client goes away.
 //! `/status` is cheap and is the deployment's health probe, so it doesn't wait for a worker.
+//!
+//! Public transit, when configured, has its own paths under `/transit`; see [`crate::transit`].
 
 use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, State};
@@ -55,6 +57,7 @@ pub struct AppState {
     router: Arc<Router>,
     workers: Arc<Semaphore>,
     timeout: Duration,
+    transit: Option<Arc<crate::transit::Transit>>,
 }
 
 impl AppState {
@@ -64,7 +67,27 @@ impl AppState {
             router: Arc::new(router),
             workers: Arc::new(Semaphore::new(workers)),
             timeout,
+            transit: None,
         }
+    }
+
+    /// Serves transit too, when `transit` is given.
+    #[must_use]
+    pub fn with_transit(mut self, transit: Option<crate::transit::Transit>) -> Self {
+        self.transit = transit.map(Arc::new);
+        self
+    }
+
+    pub(crate) fn transit(&self) -> Option<&Arc<crate::transit::Transit>> {
+        self.transit.as_ref()
+    }
+
+    pub(crate) fn workers_semaphore(&self) -> &Arc<Semaphore> {
+        &self.workers
+    }
+
+    pub(crate) fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     #[cfg(test)]
@@ -75,7 +98,7 @@ impl AppState {
 
 /// The server: every path and method goes to [`handle`].
 pub fn app(state: Arc<AppState>, max_body_bytes: usize) -> axum::Router {
-    axum::Router::new()
+    crate::transit::routes(&state)
         .fallback(handle)
         .layer(DefaultBodyLimit::max(max_body_bytes))
         // Outermost, so that the body limit's 413 has it too.
