@@ -176,7 +176,7 @@ pub(super) fn read_feed(
         keep
     });
 
-    let version = read_version(source.as_mut(), pool)?;
+    let version = read_version(source.as_mut(), pool, &mut report)?;
     Ok(FeedModel {
         id,
         version,
@@ -245,10 +245,11 @@ fn read_agencies(
         table.optional("agency_phone"),
         table.optional("agency_fare_url"),
     );
+    table.optional_identifier(id);
     let mut agencies = Vec::new();
     let mut ids = AgencyIds::new();
     let mut row = ByteRecord::new();
-    while table.read(&mut row)? {
+    while table.read(&mut row, report)? {
         let gtfs_id = field(&row, id);
         let zone = field(&row, Some(timezone));
         if zone.is_empty() {
@@ -299,6 +300,7 @@ fn read_calendars(
     if let Some(mut table) = Table::open(source, "calendar.txt")? {
         found_any = true;
         let service = table.column("service_id")?;
+        table.identifier(service);
         let start = table.column("start_date")?;
         let end = table.column("end_date")?;
         let days = [
@@ -311,7 +313,7 @@ fn read_calendars(
             table.column("sunday")?,
         ];
         let mut row = ByteRecord::new();
-        while table.read(&mut row)? {
+        while table.read(&mut row, report)? {
             let id = field(&row, Some(service));
             if specs.contains_key(id) {
                 report.warn(|| format!("duplicate service_id {id:?}; keeping the first row"));
@@ -335,10 +337,11 @@ fn read_calendars(
     if let Some(mut table) = Table::open(source, "calendar_dates.txt")? {
         found_any = true;
         let service = table.column("service_id")?;
+        table.identifier(service);
         let date = table.column("date")?;
         let kind = table.column("exception_type")?;
         let mut row = ByteRecord::new();
-        while table.read(&mut row)? {
+        while table.read(&mut row, report)? {
             let id = field(&row, Some(service));
             let Some(day) = parse_date(field(&row, Some(date))) else {
                 report.warn(|| format!("calendar_dates {id:?} has an invalid date"));
@@ -513,6 +516,7 @@ fn read_routes(
 ) -> Result<(Vec<RouteModel>, RouteIds), CompileError> {
     let mut table = Table::require(source, "routes.txt")?;
     let id = table.column("route_id")?;
+    table.identifier(id);
     let route_type = table.column("route_type")?;
     let (agency_id, short, long, desc, url, color, text_color) = (
         table.optional("agency_id"),
@@ -526,7 +530,7 @@ fn read_routes(
     let mut routes = Vec::new();
     let mut ids = RouteIds::new();
     let mut row = ByteRecord::new();
-    while table.read(&mut row)? {
+    while table.read(&mut row, report)? {
         let gtfs_id = field(&row, Some(id));
         let agency_text = field(&row, agency_id);
         let agency = if agency_text.is_empty() && agencies.len() == 1 {
@@ -591,6 +595,7 @@ fn read_stops(
 ) -> Result<(Vec<StopModel>, StopIds), CompileError> {
     let mut table = Table::require(source, "stops.txt")?;
     let id = table.column("stop_id")?;
+    table.identifier(id);
     let (name, code, platform, lat, lon, location_type, parent, zone, wheelchair) = (
         table.optional("stop_name"),
         table.optional("stop_code"),
@@ -605,7 +610,7 @@ fn read_stops(
     let mut rows: Vec<StopRow> = Vec::new();
     let mut ids = StopIds::new();
     let mut record = ByteRecord::new();
-    while table.read(&mut record)? {
+    while table.read(&mut record, report)? {
         let gtfs_id = field(&record, Some(id));
         if ids.contains_key(gtfs_id) {
             report.warn(|| format!("duplicate stop_id {gtfs_id:?}"));
@@ -754,7 +759,7 @@ fn apply_transfers(
         .collect();
     let children = children_of(stops);
     let mut row = ByteRecord::new();
-    while table.read(&mut row)? {
+    while table.read(&mut row, report)? {
         let (from_id, to_id) = (field(&row, Some(from)), field(&row, Some(to)));
         let time = field(&row, min_time).parse::<u32>().ok();
         let unscoped = scoped.iter().all(|column| field(&row, *column).is_empty());
@@ -810,6 +815,7 @@ fn read_shapes(
         return Ok(HashMap::new());
     };
     let shape = table.column("shape_id")?;
+    table.identifier(shape);
     let lat = table.column("shape_pt_lat")?;
     let lon = table.column("shape_pt_lon")?;
     let sequence = table.column("shape_pt_sequence")?;
@@ -817,7 +823,7 @@ fn read_shapes(
 
     let mut raw: BTreeMap<String, Vec<RawPoint>> = BTreeMap::new();
     let mut row = ByteRecord::new();
-    while table.read(&mut row)? {
+    while table.read(&mut row, report)? {
         let id = field(&row, Some(shape));
         let parsed = (
             field(&row, Some(sequence)).parse::<u32>(),
@@ -916,12 +922,13 @@ fn read_frequencies(
         return Ok(HashMap::new());
     };
     let trip = table.column("trip_id")?;
+    table.identifier(trip);
     let start = table.column("start_time")?;
     let end = table.column("end_time")?;
     let headway = table.column("headway_secs")?;
     let mut out: HashMap<String, Vec<Frequency>> = HashMap::new();
     let mut row = ByteRecord::new();
-    while table.read(&mut row)? {
+    while table.read(&mut row, report)? {
         let id = field(&row, Some(trip)).to_owned();
         let parsed = (
             parse_time(field(&row, Some(start))),
@@ -949,7 +956,11 @@ fn read_frequencies(
     Ok(out)
 }
 
-fn read_version(source: &mut dyn GtfsSource, pool: &mut StringPool) -> Result<u32, CompileError> {
+fn read_version(
+    source: &mut dyn GtfsSource,
+    pool: &mut StringPool,
+    report: &mut FeedReport,
+) -> Result<u32, CompileError> {
     let Some(mut table) = Table::open(source, "feed_info.txt")? else {
         return Ok(0);
     };
@@ -957,7 +968,7 @@ fn read_version(source: &mut dyn GtfsSource, pool: &mut StringPool) -> Result<u3
         return Ok(0);
     };
     let mut row = ByteRecord::new();
-    if table.read(&mut row)? {
+    if table.read(&mut row, report)? {
         return Ok(pool.intern(field(&row, Some(version))));
     }
     Ok(0)
@@ -1018,6 +1029,7 @@ fn read_trips(
             table.column("route_id")?,
             table.column("service_id")?,
         );
+        table.identifier(trip_id);
         let (headsign, direction, block, shape, wheelchair, bikes) = (
             table.optional("trip_headsign"),
             table.optional("direction_id"),
@@ -1027,7 +1039,7 @@ fn read_trips(
             table.optional("bikes_allowed"),
         );
         let mut row = ByteRecord::new();
-        while table.read(&mut row)? {
+        while table.read(&mut row, report)? {
             report.trips_listed += 1;
             let id = field(&row, Some(trip_id));
             let route = route_ids.get(field(&row, Some(route_id))).copied();
@@ -1081,6 +1093,7 @@ fn read_trips(
     {
         let mut table = Table::require(source, "stop_times.txt")?;
         let trip_id = table.column("trip_id")?;
+        table.identifier(trip_id);
         let stop_id = table.column("stop_id")?;
         let sequence = table.column("stop_sequence")?;
         let (arrival, departure, pickup, drop_off, headsign, dist) = (
@@ -1092,7 +1105,7 @@ fn read_trips(
             table.optional("shape_dist_traveled"),
         );
         let mut row = ByteRecord::new();
-        while table.read(&mut row)? {
+        while table.read(&mut row, report)? {
             report.stop_times_listed += 1;
             let id = field(&row, Some(trip_id));
             let Some(&header_index) = trip_ids.get(id) else {

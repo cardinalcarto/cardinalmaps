@@ -1,6 +1,8 @@
 //! Regression tests for problems an independent review found.
 
 use core::fmt::Write as _;
+use std::collections::HashMap;
+use std::io::{Cursor, Read};
 
 use valinor_transit::ServiceDate;
 use zerocopy::little_endian::U32;
@@ -9,8 +11,8 @@ use zerocopy::{FromBytes, IntoBytes};
 use crate::format::layout::{FileHeader, PatternRow, RouteRow, SectionId, ServiceRow, StopRow};
 use crate::format::writer::FileWriter;
 use crate::{
-    CompileError, CompiledOutput, CompiledTimetable, DecodeError, FeedId, FeedInput, GtfsSource,
-    InMemorySource, compile, parse_service_date,
+    CompileError, CompiledOutput, CompiledTimetable, DecodeError, DropReason, FeedId, FeedInput,
+    GtfsSource, InMemorySource, compile, parse_service_date,
 };
 
 fn compile_one(source: impl GtfsSource + 'static) -> Result<CompiledOutput, CompileError> {
@@ -375,4 +377,117 @@ fn a_duplicate_calendar_row_warns_and_keeps_the_first() {
     assert_eq!(output.reports[0].warning_count, 1);
     assert!(view.service_active(0, d("20260110")));
     assert!(!view.service_active(0, d("20260210")));
+}
+
+/// A source of raw bytes, for files that aren't UTF-8.
+struct RawSource(HashMap<String, Vec<u8>>);
+
+impl GtfsSource for RawSource {
+    fn open(&mut self, name: &str) -> Result<Option<Box<dyn Read + '_>>, CompileError> {
+        Ok(self
+            .0
+            .get(name)
+            .map(|bytes| Box::new(Cursor::new(bytes.as_slice())) as Box<dyn Read + '_>))
+    }
+}
+
+fn latin1_feed(stops: &[u8], stop_times: &[u8]) -> RawSource {
+    let mut files = HashMap::new();
+    let mut insert = |name: &str, bytes: Vec<u8>| files.insert(name.to_owned(), bytes);
+    insert(
+        "agency.txt",
+        b"agency_name,agency_timezone\nA,UTC\n".to_vec(),
+    );
+    insert("routes.txt", b"route_id,route_type\nR,3\n".to_vec());
+    insert("stops.txt", stops.to_vec());
+    insert("calendar.txt", daily().into_bytes());
+    insert(
+        "trips.txt",
+        b"route_id,service_id,trip_id\nR,W,T\n".to_vec(),
+    );
+    insert("stop_times.txt", stop_times.to_vec());
+    RawSource(files)
+}
+
+#[test]
+fn trips_at_non_utf8_stop_ids_are_not_conflated() {
+    let source = latin1_feed(
+        b"stop_id,stop_name,stop_lat,stop_lon\n\
+          S\xe9,a,47.60,-122.33\nS\xe8,b,47.70,-122.33\nZ,z,47.80,-122.33\n",
+        b"trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+          T,08:00:00,08:00:00,S\xe8,1\nT,08:10:00,08:10:00,Z,2\n",
+    );
+    let output = compile_one(source).expect("compile");
+    let report = &output.reports[0];
+    assert_eq!(report.stops_listed, 1, "only Z survives");
+    assert_eq!(report.trips_kept, 0, "{:?}", report.warnings);
+    assert_eq!(report.dropped_trips.get(&DropReason::UnknownStop), Some(&1));
+    assert!(report.warnings.iter().any(|w| w.contains("identifier")));
+}
+
+#[test]
+fn a_non_utf8_name_reads_as_empty_and_warns() {
+    let source = latin1_feed(
+        b"stop_id,stop_name,stop_lat,stop_lon\nA,Caf\xe9,47.60,-122.33\nB,b,47.70,-122.33\n",
+        b"trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+          T,08:00:00,08:00:00,A,1\nT,08:10:00,08:10:00,B,2\n",
+    );
+    let output = compile_one(source).expect("compile");
+    assert_eq!(output.reports[0].trips_kept, 1);
+    assert_eq!(output.reports[0].warning_count, 1);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let stop = view.stop_by_gtfs_id("f", "A").expect("stop");
+    assert_eq!(view.stop(stop).expect("info").name, None);
+}
+
+#[test]
+fn an_empty_stop_id_never_resolves() {
+    let stops = "stop_id,stop_lat,stop_lon\n,47.60,-122.33\nS2,47.70,-122.33\n";
+    let stop_times = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+                      T,08:00:00,08:00:00,,1\nT,08:10:00,08:10:00,S2,2\n";
+    let output =
+        compile_one(minimal("UTC", &daily(), NO_DATES, stop_times).with("stops.txt", stops))
+            .expect("compile");
+    let report = &output.reports[0];
+    assert_eq!(
+        report.stops_listed, 1,
+        "the row with an empty ID is dropped"
+    );
+    assert_eq!(report.trips_kept, 0);
+    assert_eq!(report.dropped_trips.get(&DropReason::UnknownStop), Some(&1));
+}
+
+#[test]
+fn zero_byte_optional_files_count_as_absent() {
+    for name in [
+        "calendar_dates.txt",
+        "frequencies.txt",
+        "transfers.txt",
+        "shapes.txt",
+        "feed_info.txt",
+    ] {
+        let source = minimal("UTC", &daily(), NO_DATES, ST).with(name, "");
+        let output = compile_one(source).unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(output.reports[0].trips_kept, 1, "{name}");
+    }
+}
+
+#[test]
+fn a_zero_byte_required_file_is_missing() {
+    let source = minimal("UTC", &daily(), NO_DATES, ST).with("routes.txt", "");
+    assert!(matches!(
+        compile_one(source),
+        Err(CompileError::MissingFile("routes.txt"))
+    ));
+}
+
+#[test]
+fn a_short_row_can_omit_an_optional_identifier() {
+    let source = minimal("UTC", &daily(), NO_DATES, ST).with(
+        "agency.txt",
+        "agency_name,agency_timezone,agency_id\nA,UTC\n",
+    );
+    let output = compile_one(source).expect("compile");
+    assert_eq!(output.reports[0].agencies, 1);
+    assert_eq!(output.reports[0].warning_count, 0);
 }
