@@ -158,3 +158,5 @@ impl OfflineTransit {
   `no_service`, or `slower_than_direct`), and `direct` reports the direct search's outcome.
 - The device refuses access or egress walks above 45 minutes with a 400,
   and a timetable must be replaced by renaming, never rewritten in place, while open.
+On first open (or `TransitBuild::prepare`) a flat transfer table is assembled under the build's
+`prepared/`, so that directory must be writable.

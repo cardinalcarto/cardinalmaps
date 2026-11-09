@@ -179,8 +179,21 @@ and opening refuses street tiles of a different build.
 Transfers come only from tiles; none are built at open, and any tile not on disk is left out,
 so an offline area needn't include a large agency's whole network:
 a stop in a tile that wasn't downloaded just has no walks from it.
-Stops are still snapped to the street network at open (5.5 s for all of Washington, 2 s for
-King County Metro on the development machine).
+
+Opening a build maps almost everything rather than copying it:
+
+- Timetables are read from their mapped files for each window; a heap copy of a file's trips
+  is only made by tools and tests.
+- Tiles are for the network. The first open (or `TransitBuild::prepare`, as an install step)
+  assembles one flat file per travel mode under `prepared/`, holding each direction's
+  offsets, stop numbers, and seconds in the loaded feeds' stop numbering, and maps it.
+  A table is keyed by the manifest, the loaded feeds, the bound, and which tiles are present,
+  and is rebuilt and published atomically when that changes. A GTFS-RT new stop goes in a small
+  in-memory side table, since a mapped file can't change. Keep tile files if a new area might
+  be added later: a rebuild reads only tiles still on disk, unless no tile of the mode remains.
+- Stop snaps are saved by the offline build, one file per feed and mode, bound to the street
+  build, and read at open rather than computed. A snap whose tile isn't on the device, as when
+  an offline area holds only part of the network, acts as an unsnapped stop.
 
 ## Real-time overlay
 
@@ -248,7 +261,8 @@ an unchanged archive (by SHA-256) is not recompiled.
 `TransferTable::build`. Results are tiled at zoom 12 by the stop the walk starts at,
 so a tile can walk to stops of any feed, and one mode's tiles are at
 `transfers/<mode>/12/<x>/<y>.bin.zst`.
-`transfers/manifest.json` lists the feeds in index order, with the tiles each feed's stops need,
+`transfers/manifest.json` lists the feeds in index order, with the tiles each feed's stops need
+and its saved stop snaps (`transfers/snaps/<mode>/<feed index>.bin`),
 since clients choose which feeds to download, and `transfers/unsnapped-<mode>.jsonl` the stops
 with no walks. A run is staged, and appears only by one rename when everything has succeeded.
 
