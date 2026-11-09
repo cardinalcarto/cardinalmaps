@@ -101,7 +101,7 @@ fn run_search<P: GraphTileProvider, C: Costing>(
 
 /// Snaps for stops placed along random pedestrian edges of a tile,
 /// from a deterministic generator (no Loki): stops on edges directly.
-fn random_stops<P: GraphTileProvider>(
+pub(crate) fn random_stops<P: GraphTileProvider>(
     provider: &P,
     tiles: &[u64],
     count: usize,
@@ -255,17 +255,8 @@ fn reference_from<P: GraphTileProvider, C: Costing>(
         if v.group.1 > 0 {
             let u = search.stops[seed as usize].expect("seed");
             if u.edges[0] == v.edges[0] || u.edges[0] == v.edges[1] {
-                let q = if v.edges[0] == u.edges[0] {
-                    v.percent
-                } else {
-                    1.0 - v.percent
-                };
-                let (a, b) = if dir == 0 {
-                    (u.percent, q)
-                } else {
-                    (q, u.percent)
-                };
-                let cost = direct_cost(u.weights, a, b);
+                let (from, to) = if dir == 0 { (u, *v) } else { (*v, u) };
+                let cost = direct_between(from, to).cost;
                 if cost != INF {
                     best = best.min(u32::from(cost));
                 }
@@ -567,7 +558,8 @@ fn stops_on_the_same_edge_walk_directly() {
     let found = run_search(&mut search, &seeds, Direction::Forward, i32::MAX / 2);
     let &(clock, _, handle) = found.get(&1).expect("the other stop");
     let attach = search.stops[0].expect("stop");
-    let expected = direct_cost(attach.weights, 0.2, 0.8);
+    let other = search.stops[1].expect("stop");
+    let expected = direct_between(attach, other).cost;
     assert_eq!(clock - 100, i32::from(expected));
     assert_eq!(handle.chain, NONE, "a direct walk has no node chain");
     let walk = search.walk(handle);
@@ -834,7 +826,7 @@ fn egress_tables_mirror_access_on_a_small_scale() {
     assert!(both > 50, "only {both} stops reached both ways");
 }
 
-fn pedestrian_options() -> valhalla_proto::Options {
+pub(crate) fn pedestrian_options() -> valhalla_proto::Options {
     use valhalla_proto::costing::Type as CostingType;
     use valinor_sif::costing_options::parse_costing;
     use valinor_sif::json::JsonValue;
@@ -1061,20 +1053,17 @@ fn king_county_forward_backward_agree_on_real_tiles() {
             }];
             let backward = run_search(&mut search, &back, Direction::Backward, 3600 + 1);
             checked += 1;
-            match backward.get(&u) {
-                Some(&(from_v, _, _)) => {
-                    if from_v != clock {
-                        mismatches += 1;
-                        if mismatches <= 20 {
-                            println!("mismatch {u} -> {v}: forward {clock}, backward {from_v}");
-                        }
+            if let Some(&(from_v, _, _)) = backward.get(&u) {
+                if from_v != clock {
+                    mismatches += 1;
+                    if mismatches <= 20 {
+                        println!("mismatch {u} -> {v}: forward {clock}, backward {from_v}");
                     }
                 }
-                None => {
-                    missing += 1;
-                    if missing <= 20 {
-                        println!("missing mirror arrival {u} -> {v}: forward {clock}");
-                    }
+            } else {
+                missing += 1;
+                if missing <= 20 {
+                    println!("missing mirror arrival {u} -> {v}: forward {clock}");
                 }
             }
         }
@@ -1379,7 +1368,7 @@ fn bench_run_rounds<P: GraphTileProvider, C: Costing>(
         };
         search.begin_run(dir);
         let started = std::time::Instant::now();
-        let mut upper = bound.map_or(i32::MAX / 2, |b| b);
+        let mut upper = bound.unwrap_or(i32::MAX / 2);
         for (r, &size) in sizes.iter().enumerate() {
             let size = size.min(stop_count);
             let ids = seed_sample(stop_count, size, u64::from(repeat) * 91 + r as u64);

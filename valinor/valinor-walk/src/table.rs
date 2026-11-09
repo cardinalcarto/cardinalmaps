@@ -194,6 +194,14 @@ impl Ord for Key {
     }
 }
 
+/// A walk limit in the units costs are in.
+#[inline]
+fn limit_secs(max_seconds: u32) -> f32 {
+    #[expect(clippy::cast_precision_loss, reason = "a walk limit, far below 2^24")]
+    let limit = max_seconds as f32;
+    limit
+}
+
 /// `a - b`, in each component of a cost.
 #[inline]
 fn sub_cost(a: Cost, b: Cost) -> Cost {
@@ -259,6 +267,8 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         if self.snaps.as_ref().is_some_and(|s| Arc::ptr_eq(s, &snaps)) {
             return Ok(());
         }
+        // As in `WalkSearch::bind`: a failure below must not leave the old `Arc` in place.
+        self.snaps = None;
         for &edge in &self.attached_edges {
             if let Some(slot) = self.edge_first_stop.get_mut(edge as usize) {
                 *slot = NONE;
@@ -502,29 +512,30 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             return Ok(());
         };
         self.ensure_edge_state();
-        self.push_label(
-            TableLabel {
-                inner,
-                cost: partial.cost + Cost::new(seed.initial, seed.initial),
-                transition: Cost::ZERO,
-                real_edge: seed.edge,
-                dense_edge,
-                end_node: label_edge.end_node_id(),
-                span: (begin, end),
-                settled: false,
-                destonly_mask: access.destonly_access_restr_mask,
-            },
-            request.max_seconds,
-        );
+        if seed.initial > limit_secs(request.max_seconds) {
+            return Ok(());
+        }
+        // A seed takes no edge status (as Thor's origin edges), so a route can come back
+        // around onto its own edge to reach a stop behind the start on a one-way street.
+        self.push_seed(TableLabel {
+            inner,
+            cost: partial.cost + Cost::new(seed.initial, seed.initial),
+            transition: Cost::ZERO,
+            real_edge: seed.edge,
+            dense_edge,
+            end_node: label_edge.end_node_id(),
+            span: (begin, end),
+            settled: false,
+            destonly_mask: access.destonly_access_restr_mask,
+        });
         Ok(())
     }
 
     /// Adds or improves the label of a directed edge in the queue.
-    fn push_label(&mut self, label: TableLabel, max_seconds: u32) {
-        #[expect(clippy::cast_precision_loss, reason = "a walk limit, far below 2^24")]
-        if label.cost.secs > max_seconds as f32 {
-            return;
-        }
+    ///
+    /// The caller has checked the limit at the start of the edge: a stop partway along an edge
+    /// can be within it even when the far end of the edge isn't.
+    fn push_label(&mut self, label: TableLabel) {
         let dense = label.dense_edge as usize;
         let Some(&state) = self.edge_state.get(dense) else {
             return;
@@ -553,6 +564,13 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         self.queue.push(Reverse((Key(label.cost.cost), index)));
     }
 
+    /// Queues a seed's label, which has no edge status.
+    fn push_seed(&mut self, label: TableLabel) {
+        let index = u32::try_from(self.labels.len()).unwrap_or(NONE);
+        self.labels.push(label);
+        self.queue.push(Reverse((Key(label.cost.cost), index)));
+    }
+
     /// Settles a label, reaches the stops on its edge, and expands from its far node.
     fn settle(&mut self, index: u32, request: &TableRequest<'_>) -> Result<(), WalkError> {
         let Some(label) = self.labels.get(index as usize).copied() else {
@@ -561,18 +579,20 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         if label.settled {
             return Ok(());
         }
-        let dense = label.dense_edge as usize;
-        if let Some(state) = self.edge_state.get_mut(dense) {
-            if state.stamp != self.epoch || state.label != index {
-                return Ok(());
+        if label.inner.predecessor().is_some() {
+            let dense = label.dense_edge as usize;
+            if let Some(state) = self.edge_state.get_mut(dense) {
+                if state.stamp != self.epoch || state.label != index {
+                    return Ok(());
+                }
+                state.permanent = true;
             }
-            state.permanent = true;
         }
         if let Some(stored) = self.labels.get_mut(index as usize) {
             stored.settled = true;
         }
         self.stats.labels_settled += 1;
-        self.reach_stops(index, &label)?;
+        self.reach_stops(index, &label, request.max_seconds)?;
 
         let forward = self.side == AccessSide::Access;
         let Some(node_tile) = self.tile_handle(label.end_node)? else {
@@ -753,7 +773,11 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 access.edge_destonly,
             )?
         };
-        let cost = pred.cost + transition + edge_cost.cost;
+        let at_start = pred.cost + transition;
+        if at_start.secs > limit_secs(request.max_seconds) {
+            return Ok(true);
+        }
+        let cost = at_start + edge_cost.cost;
         let inner = EdgeLabel::new(
             edge_id,
             edge,
@@ -769,20 +793,17 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             return Ok(false);
         };
         self.ensure_edge_state();
-        self.push_label(
-            TableLabel {
-                inner,
-                cost,
-                transition,
-                real_edge: traversed_id,
-                dense_edge,
-                end_node: edge.end_node_id(),
-                span: (0.0, 1.0),
-                settled: false,
-                destonly_mask: access.destonly_access_restr_mask,
-            },
-            request.max_seconds,
-        );
+        self.push_label(TableLabel {
+            inner,
+            cost,
+            transition,
+            real_edge: traversed_id,
+            dense_edge,
+            end_node: edge.end_node_id(),
+            span: (0.0, 1.0),
+            settled: false,
+            destonly_mask: access.destonly_access_restr_mask,
+        });
         Ok(true)
     }
 
@@ -796,7 +817,12 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     }
 
     /// Offers the stops attached to a settled label's real edge.
-    fn reach_stops(&mut self, index: u32, label: &TableLabel) -> Result<(), WalkError> {
+    fn reach_stops(
+        &mut self,
+        index: u32,
+        label: &TableLabel,
+        max_seconds: u32,
+    ) -> Result<(), WalkError> {
         let Some(dense_real) = self.graph.dense_edge(label.real_edge)? else {
             return Ok(());
         };
@@ -866,6 +892,9 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 )?
                 .cost;
             let cost = sub_cost(label.cost, whole) + part;
+            if cost.secs > limit_secs(max_seconds) {
+                continue;
+            }
             let best = &mut self.stop_best[entry.stop as usize];
             if best.stamp != self.epoch || cost.cost < best.key {
                 if best.stamp != self.epoch {
@@ -928,6 +957,12 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             (seed_span.0, best.percent)
         } else {
             edges.reverse();
+            // A label holds the transition onto its edge in search order, which for egress is
+            // the turn after that edge in real order: move each to the edge the rider enters.
+            let mut entered = Cost::ZERO;
+            for edge in &mut edges {
+                entered = core::mem::replace(&mut edge.transition, entered);
+            }
             (best.percent, seed_span.1)
         };
         Some(AccessLeg {
