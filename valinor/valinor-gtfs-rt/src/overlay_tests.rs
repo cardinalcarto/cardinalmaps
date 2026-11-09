@@ -127,6 +127,57 @@ fn scheduled_to_delayed_replaces_times() {
 }
 
 #[test]
+fn two_vehicles_on_one_headway_grid_run_keep_both_updates() {
+    let mut net = three_stop_net();
+    net.lookup.headway_trips.insert("t1".to_owned());
+    let vehicle = |start: &str, delay: i32, timestamp: u64| {
+        let mut one = update("t1", DATE_1, vec![delay_at(2, delay)]);
+        one.trip.start_time = Some(start.to_owned());
+        one.timestamp = Some(timestamp);
+        one
+    };
+    let overlay = run(
+        &net,
+        vec![fresh(vec![
+            vehicle("00:01:40", 30, 1_000),
+            vehicle("00:03:00", 90, 2_000),
+        ])],
+    );
+
+    // Neither update is a duplicate of the other, and riders can reach each one.
+    assert_eq!(overlay.stats.duplicate_trip_updates, 0);
+    assert_eq!(overlay.stats.trip_updates, 2);
+    assert_eq!(overlay.rider.trips_of_run(key(0)).len(), 2);
+    let feed = feed_id("kcm");
+    let scoped = ScopedId::new(&feed, "t1");
+    let early = overlay
+        .rider
+        .trip(&scoped, Some(date(DATE_1)), Some(100))
+        .expect("the 00:01:40 vehicle");
+    assert_eq!(early.delay, None);
+    assert_eq!(early.stops[1].arrival_delay, Some(30));
+    let late = overlay
+        .rider
+        .trip(&scoped, Some(date(DATE_1)), Some(180))
+        .expect("the 00:03:00 vehicle");
+    assert_eq!(late.stops[1].arrival_delay, Some(90));
+
+    // The one grid run routes on the newest of them.
+    assert_eq!(
+        overlay.rider.trip_by_key(key(0)).map(|t| t.start_time),
+        Some(Some(180))
+    );
+    assert_eq!(
+        arrivals_of(&overlay.snapshot, 0, TODAY, 0),
+        Some(vec![
+            window_seconds(TODAY, 100),
+            window_seconds(TODAY, 290),
+            window_seconds(TODAY, 390)
+        ])
+    );
+}
+
+#[test]
 fn delayed_to_scheduled_when_the_update_vanishes() {
     let net = three_stop_net();
     let delayed = run(

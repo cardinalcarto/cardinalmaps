@@ -49,6 +49,11 @@ pub struct TripRef {
     pub first_departure: Time,
     /// The last arrival, in window time.
     pub last_arrival: Time,
+    /// The descriptor's `start_time`, for a run of an `exact_times=0` frequency trip.
+    ///
+    /// Such a run is a template laid out by the compiler, and two real vehicles can resolve
+    /// to the same one, so the run alone does not identify a vehicle. `None` for any other run.
+    pub headway_start: Option<u32>,
 }
 
 /// The GTFS identity of a stop pattern.

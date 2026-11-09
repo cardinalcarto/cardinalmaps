@@ -220,6 +220,8 @@ pub struct RiderData {
     trips: Vec<TripDetails>,
     trip_index: HashMap<(ScopedId, Option<CalendarDate>, Option<u32>), usize>,
     trips_by_key: HashMap<TripKey, usize>,
+    /// Every update of a run, oldest first; more than one only for `exact_times=0` trips.
+    trips_of_key: HashMap<TripKey, Vec<usize>>,
     trips_by_route: HashMap<ScopedId, Vec<usize>>,
     /// `(trip index, stops index)` per stop.
     stop_times: HashMap<ScopedId, Vec<(usize, usize)>>,
@@ -253,6 +255,7 @@ impl RiderData {
         );
         if let Some(key) = trip.trip_key {
             self.trips_by_key.insert(key, index);
+            self.trips_of_key.entry(key).or_default().push(index);
         }
         if let Some(route) = trip.route_id.as_deref() {
             self.trips_by_route
@@ -382,6 +385,19 @@ impl RiderData {
     /// A trip's details by its identity in the timetable.
     pub fn trip_by_key(&self, key: TripKey) -> Option<&TripDetails> {
         self.trips_by_key.get(&key).and_then(|&i| self.trips.get(i))
+    }
+
+    /// Every update that resolved to a timetable run, oldest first.
+    ///
+    /// Each `exact_times=0` vehicle on the run has its own, told apart by
+    /// [`TripDetails::start_time`]; other runs have at most one.
+    pub fn trips_of_run(&self, key: TripKey) -> Vec<&TripDetails> {
+        self.trips_of_key
+            .get(&key)
+            .into_iter()
+            .flatten()
+            .filter_map(|&i| self.trips.get(i))
+            .collect()
     }
 
     /// All trips with real-time information.

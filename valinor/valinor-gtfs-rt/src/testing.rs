@@ -2,7 +2,7 @@
 
 #![allow(clippy::needless_pass_by_value)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use valinor_transit::{
@@ -64,6 +64,8 @@ pub(crate) struct FakeLookup {
     trips: HashMap<(FeedId, String), (TripId, RouteId)>,
     children: HashMap<(FeedId, String), Vec<StopId>>,
     next_trip: u32,
+    /// Trips answered as `exact_times=0` runs: `start_time` identifies their vehicles.
+    pub(crate) headway_trips: HashSet<String>,
 }
 
 pub(crate) fn feed_id(name: &str) -> FeedId {
@@ -216,6 +218,7 @@ impl NetBuilder {
                 trips,
                 children: HashMap::new(),
                 next_trip,
+                headway_trips: HashSet::new(),
             },
             base,
         }
@@ -277,6 +280,11 @@ impl StaticLookup for FakeLookup {
             day: DaySlot::new(u8::try_from(slot).ok()?),
             first_departure: found.events.first()?.departure,
             last_arrival: found.events.last()?.arrival,
+            headway_start: self
+                .headway_trips
+                .contains(query.trip_id)
+                .then_some(query.start_time)
+                .flatten(),
         })
     }
 

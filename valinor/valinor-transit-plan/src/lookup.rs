@@ -79,6 +79,7 @@ impl StaticLookup for CompiledLookup<'_> {
             day: DaySlot::new(u8::try_from(slot).ok()?),
             first_departure: Self::window_time(day.offset, first_departure)?,
             last_arrival: Self::window_time(day.offset, last_arrival)?,
+            headway_start: run.headway_based.then_some(query.start_time).flatten(),
         })
     }
 
