@@ -19,8 +19,8 @@ use valinor_transit::{
 };
 
 use crate::alerts::{
-    AlertBudget, AlertEffect, NoServiceAlert, Period, TripIdentity, compile_no_service,
-    scheduled_identity,
+    ALERT_WORK_LIMIT, AlertBudget, AlertEffect, NoServiceAlert, Period, TripIdentity,
+    compile_no_service, scheduled_identity,
 };
 use crate::date::{CalendarDate, parse_start_time};
 use crate::feed::{FeedId, FeedInput, ScopedId};
@@ -128,8 +128,12 @@ pub struct OverlayStats {
     pub duplicate_trip_updates: usize,
     /// Alert selectors that are empty or invalid, and so inform nothing.
     pub invalid_selectors: usize,
-    /// Whether alerts caused so much work that the rest of them were not applied.
+    /// Whether a feed's alerts caused so much work that the rest of them were not applied.
     pub alert_work_exhausted: bool,
+    /// The feeds whose real-time data was cut short by a budget, sorted.
+    ///
+    /// Each spends only its own budget, so this is the list of who lost anything.
+    pub feeds_over_budget: Vec<FeedId>,
     /// Trip updates naming no trip at all.
     pub trip_updates_without_trip: usize,
     /// `NEW`, `ADDED`, `REPLACEMENT`, or `DUPLICATED` updates that couldn't be used.
@@ -200,19 +204,75 @@ pub struct RealtimeOverlay {
     pub stats: OverlayStats,
 }
 
-/// How much `TripModifications` work one build may do, in run lookups and modifications.
+/// How much `TripModifications` work one feed may do, in run lookups and modifications.
 ///
 /// Well beyond any feed yet seen (King County sends none), and a bound on what a feed
 /// can make a phone do.
 const MAX_MODIFICATION_WORK: u64 = 50_000;
 
-/// The most trips one build may add or move to new patterns.
+/// How much `TripModifications` work one build may do across all its feeds.
+const MAX_MODIFICATION_WORK_OVERALL: u64 = 1 << 20;
+
+/// The most trips one feed may add or move to new patterns.
 ///
 /// Lanes are built first-fit, so mutually overtaking trips on one pattern cost quadratic time.
 const MAX_ADDED_TRIPS: usize = 4_096;
 
-/// The most stops one build may append; each one costs a street search snap.
+/// The most trips one build may add or move to new patterns, across all its feeds.
+///
+/// This, with [`MAX_NEW_STOPS_OVERALL`], is what bounds an overlay's memory.
+const MAX_ADDED_TRIPS_OVERALL: usize = 65_536;
+
+/// The most stops one feed may append; each one costs a street search snap.
 const MAX_NEW_STOPS: usize = 10_000;
+
+/// The most stops one build may append, across all its feeds.
+const MAX_NEW_STOPS_OVERALL: usize = 10_000;
+
+/// What each feed may spend in one build.
+///
+/// Budgets are per feed, so one noisy feed can only lose its own data.
+/// An equal share of each overall limit keeps a whole overlay bounded
+/// however many feeds are loaded, and a feed's share depends only on how many feeds sent
+/// something this build, so no feed's content can change what another feed may use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FeedLimits {
+    alert_work: u64,
+    added_trips: usize,
+    new_stops: usize,
+    modification_work: u64,
+}
+
+impl FeedLimits {
+    /// Each feed's limits when `feeds` feeds have data in a build.
+    fn shared_by(feeds: usize) -> Self {
+        let feeds = feeds.max(1);
+        let wide = u64::try_from(feeds).unwrap_or(u64::MAX);
+        Self {
+            alert_work: (ALERT_WORK_LIMIT / wide).max(1),
+            added_trips: (MAX_ADDED_TRIPS_OVERALL / feeds).clamp(1, MAX_ADDED_TRIPS),
+            new_stops: (MAX_NEW_STOPS_OVERALL / feeds).clamp(1, MAX_NEW_STOPS),
+            modification_work: (MAX_MODIFICATION_WORK_OVERALL / wide)
+                .clamp(1, MAX_MODIFICATION_WORK),
+        }
+    }
+}
+
+/// `(added trips, new stops)` a feed may use when `feeds` feeds have data, for tests.
+#[cfg(test)]
+pub(crate) fn tests_limits_for(feeds: usize) -> (usize, usize) {
+    let limits = FeedLimits::shared_by(feeds);
+    (limits.added_trips, limits.new_stops)
+}
+
+/// One feed's spending so far in a build.
+#[derive(Debug)]
+struct FeedBudget {
+    alert_work: AlertBudget,
+    added_trips: usize,
+    new_stops: usize,
+    modification_work: u64,
+}
 
 /// The latest a `DUPLICATED` trip's `start_time` may be, in seconds of its service day.
 const MAX_DUPLICATE_START_TIME: u32 = 3 * 86_400;
@@ -285,7 +345,8 @@ struct Context<'a, L: StaticLookup + ?Sized> {
     blocks: HashMap<(RouteId, DaySlot), Vec<ScheduledTrip>>,
     new_stops: HashMap<ScopedId, StopId>,
     new_stop_names: HashMap<(FeedId, StopId), String>,
-    added_trips: usize,
+    limits: FeedLimits,
+    budgets: HashMap<FeedId, FeedBudget>,
     modified: HashMap<(TripId, DaySlot), ModifiedLayout>,
     modified_refs: HashMap<(TripId, DaySlot), (TripRef, FeedId)>,
     added_index: HashMap<(ScopedId, CalendarDate), (TripId, DaySlot)>,
@@ -293,7 +354,6 @@ struct Context<'a, L: StaticLookup + ?Sized> {
     added: BTreeMap<(Vec<StopId>, RouteAttributes), AddedDays>,
     rider: RiderData,
     stats: OverlayStats,
-    alert_budget: AlertBudget,
 }
 
 /// Builds the overlay for `feeds` over `base`.
@@ -329,6 +389,7 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
     let mut statuses = Vec::with_capacity(feeds.len());
     let mut fresh = FreshFeeds::default();
     let mut feed_clocks: HashMap<FeedId, Vec<DayClock>> = HashMap::new();
+    let mut feeds_with_data: BTreeSet<FeedId> = BTreeSet::new();
     for input in feeds {
         feed_clocks.entry(input.feed.clone()).or_insert_with(|| {
             clocks
@@ -344,6 +405,7 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
         if stale {
             continue;
         }
+        feeds_with_data.insert(input.feed.clone());
         sort_entities(input, &mut fresh);
     }
 
@@ -359,7 +421,8 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
         blocks: HashMap::new(),
         new_stops: HashMap::new(),
         new_stop_names: HashMap::new(),
-        added_trips: 0,
+        limits: FeedLimits::shared_by(feeds_with_data.len()),
+        budgets: HashMap::new(),
         modified: HashMap::new(),
         modified_refs: HashMap::new(),
         added_index: HashMap::new(),
@@ -367,7 +430,6 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
         added: BTreeMap::new(),
         rider: RiderData::default(),
         stats: OverlayStats::default(),
-        alert_budget: AlertBudget::new(),
     };
 
     let new_stops = context.add_new_stops(fresh.stops, &mut overlay, options)?;
@@ -380,7 +442,7 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
     context.lay_out_blocks(&mut overlay, &alerts, &block_alerts)?;
     context.lay_out_added_routes(&mut overlay, &alerts)?;
 
-    context.stats.alert_work_exhausted = context.alert_budget.exhausted();
+    context.finish_budgets();
     context.rider.set_feeds(statuses);
     let snapshot = overlay.build()?;
     context.stats.arena = snapshot.overlay_usage();
@@ -462,13 +524,51 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         TripKey { trip, date }
     }
 
-    /// Reserves room for one more added or moved trip, or says the build is full.
-    fn take_added_slot(&mut self) -> bool {
-        if self.added_trips >= MAX_ADDED_TRIPS {
+    /// A feed's spending, created on first use.
+    fn budget_of(&mut self, feed: &FeedId) -> &mut FeedBudget {
+        let limits = self.limits;
+        self.budgets
+            .entry(feed.clone())
+            .or_insert_with(|| FeedBudget {
+                alert_work: AlertBudget::new(limits.alert_work),
+                added_trips: 0,
+                new_stops: 0,
+                modification_work: 0,
+            })
+    }
+
+    /// Records in the stats what ended up being cut.
+    fn finish_budgets(&mut self) {
+        let mut over: Vec<FeedId> = self
+            .budgets
+            .iter()
+            .filter(|(_, budget)| {
+                budget.alert_work.exhausted()
+                    || budget.added_trips > self.limits.added_trips
+                    || budget.new_stops > self.limits.new_stops
+                    || budget.modification_work > self.limits.modification_work
+            })
+            .map(|(feed, _)| feed.clone())
+            .collect();
+        over.sort();
+        self.stats.alert_work_exhausted = self
+            .budgets
+            .values()
+            .any(|budget| budget.alert_work.exhausted());
+        self.stats.feeds_over_budget = over;
+    }
+
+    /// Reserves room for one more added or moved trip of `feed`, or says it has used its share.
+    fn take_added_slot(&mut self, feed: &FeedId) -> bool {
+        let limit = self.limits.added_trips;
+        let budget = self.budget_of(feed);
+        if budget.added_trips >= limit {
+            // One past the limit is how `finish_budgets` knows something was refused.
+            budget.added_trips = limit + 1;
             self.stats.invalid_added_trips += 1;
             return false;
         }
-        self.added_trips += 1;
+        budget.added_trips += 1;
         true
     }
 
@@ -507,10 +607,18 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 self.stats.invalid_stops += 1;
                 continue;
             };
-            if !valid_coordinates(latitude, longitude) || out.len() >= MAX_NEW_STOPS {
+            if !valid_coordinates(latitude, longitude) {
                 self.stats.invalid_stops += 1;
                 continue;
             }
+            let limit = self.limits.new_stops;
+            let budget = self.budget_of(&feed);
+            if budget.new_stops >= limit {
+                budget.new_stops = limit + 1;
+                self.stats.invalid_stops += 1;
+                continue;
+            }
+            budget.new_stops += 1;
             let id = overlay.add_stop(options.new_stop_min_change)?;
             self.new_stop_names
                 .insert((feed.clone(), id), scoped.id.to_string());
@@ -592,7 +700,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
     ///
     /// Its lists multiply, so they are deduplicated, and each run costs from one shared budget.
     fn apply_modifications(&mut self, modifications: Vec<(FeedId, String, TripModifications)>) {
-        let mut budget = MAX_MODIFICATION_WORK;
+        let limit = self.limits.modification_work;
         for (feed, _, set) in modifications {
             let dates: BTreeSet<CalendarDate> = set
                 .service_dates
@@ -617,14 +725,17 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 .collect();
             // One lookup per run, then the cost of the modifications themselves.
             let run_cost = 1 + u64::try_from(set.modifications.len()).unwrap_or(u64::MAX);
-            for &trip_id in &trip_ids {
+            'set: for &trip_id in &trip_ids {
                 for &date in &dates {
                     for &start_time in &start_times {
-                        if budget < run_cost {
+                        let budget = self.budget_of(&feed);
+                        if budget.modification_work + run_cost > limit {
+                            budget.modification_work = limit + 1;
                             self.stats.invalid_modifications += 1;
-                            return;
+                            // Only this set of this feed stops: others have their own budgets.
+                            break 'set;
                         }
-                        budget -= run_cost;
+                        budget.modification_work += run_cost;
                         self.apply_modification(&feed, trip_id, date, start_time, &set);
                     }
                 }
@@ -894,7 +1005,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             }
         }
 
-        if pattern_changed && !self.take_added_slot() {
+        if pattern_changed && !self.take_added_slot(feed) {
             self.modified.remove(&(reference.trip, reference.day));
             self.push_unmatched(feed, trip_id, date, start_time, update);
             return;
@@ -1047,7 +1158,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             self.push_unmatched(feed, trip_id, date, start_time, update);
             return Ok(());
         };
-        if !self.take_added_slot() {
+        if !self.take_added_slot(feed) {
             self.push_unmatched(feed, trip_id, date, start_time, update);
             return Ok(());
         }
@@ -1138,7 +1249,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         date: Option<CalendarDate>,
         update: &TripUpdate,
     ) -> Result<(), OverlayError> {
-        if !self.take_added_slot() {
+        if !self.take_added_slot(feed) {
             self.push_unmatched(feed, trip_id, date, None, update);
             return Ok(());
         }
@@ -1291,7 +1402,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 self.stats.invalid_modifications += 1;
                 continue;
             };
-            if !self.take_added_slot() {
+            if !self.take_added_slot(&feed) {
                 continue;
             }
             let key = self.trip_key(trip, day);
@@ -1390,6 +1501,16 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             let new_stops = &self.new_stops;
             let resolve = |id: &str| find_stop(lookup, new_stops, &feed, id);
             let rider_index = self.rider.alerts().len();
+            let limits = self.limits;
+            let budget = self
+                .budgets
+                .entry(feed.clone())
+                .or_insert_with(|| FeedBudget {
+                    alert_work: AlertBudget::new(limits.alert_work),
+                    added_trips: 0,
+                    new_stops: 0,
+                    modification_work: 0,
+                });
             let clocks = self
                 .feed_clocks
                 .get(&feed)
@@ -1403,7 +1524,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 &self.added_index,
                 &resolve,
                 &mut self.stats.invalid_selectors,
-                &mut self.alert_budget,
+                &mut budget.alert_work,
             ) {
                 self.stats
                     .alert_impacts
@@ -1550,7 +1671,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                         &events,
                         clock,
                         &mut self.stats.alert_impacts,
-                        &mut self.alert_budget,
+                        &mut self.budgets,
                     ),
                     None => AlertEffect::default(),
                 };
@@ -1606,7 +1727,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                         &resolved.events,
                         clock,
                         &mut self.stats.alert_impacts,
-                        &mut self.alert_budget,
+                        &mut self.budgets,
                     ),
                     None => AlertEffect::default(),
                 };
@@ -1682,7 +1803,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                         &trip.events,
                         clock,
                         &mut self.stats.alert_impacts,
-                        &mut self.alert_budget,
+                        &mut self.budgets,
                     );
                     if effect.remove {
                         self.stats.trips_removed += 1;
@@ -1757,11 +1878,15 @@ fn combined_effect<'a>(
     events: &[StopEvent],
     clock: DayClock,
     impacts: &mut BTreeMap<usize, AlertImpact>,
-    budget: &mut AlertBudget,
+    budgets: &mut HashMap<FeedId, FeedBudget>,
 ) -> AlertEffect {
     let mut combined = AlertEffect::default();
     for alert in alerts {
-        let effect = alert.effect_on(identity, stops, events, clock, budget);
+        // Every alert was compiled for its own feed, which is what creates that feed's budget.
+        let Some(budget) = budgets.get_mut(alert.feed()) else {
+            continue;
+        };
+        let effect = alert.effect_on(identity, stops, events, clock, &mut budget.alert_work);
         let impact = impacts.entry(alert.rider_index).or_default();
         if effect.remove {
             impact.trips_removed += 1;

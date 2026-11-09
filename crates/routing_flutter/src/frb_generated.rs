@@ -960,9 +960,11 @@ impl SseDecode for crate::api::transit::TransitResponse {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_status = <u16>::sse_decode(deserializer);
         let mut var_body = <Vec<u8>>::sse_decode(deserializer);
+        let mut var_ignoredFeeds = <Vec<String>>::sse_decode(deserializer);
         return crate::api::transit::TransitResponse {
             status: var_status,
             body: var_body,
+            ignored_feeds: var_ignoredFeeds,
         };
     }
 }
@@ -1385,6 +1387,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::transit::TransitResponse {
         [
             self.status.into_into_dart().into_dart(),
             self.body.into_into_dart().into_dart(),
+            self.ignored_feeds.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1732,6 +1735,7 @@ impl SseEncode for crate::api::transit::TransitResponse {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <u16>::sse_encode(self.status, serializer);
         <Vec<u8>>::sse_encode(self.body, serializer);
+        <Vec<String>>::sse_encode(self.ignored_feeds, serializer);
     }
 }
 

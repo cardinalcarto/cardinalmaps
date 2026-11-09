@@ -933,11 +933,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TransitResponse dco_decode_transit_response(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return TransitResponse(
       status: dco_decode_u_16(arr[0]),
       body: dco_decode_list_prim_u_8_strict(arr[1]),
+      ignoredFeeds: dco_decode_list_String(arr[2]),
     );
   }
 
@@ -1396,7 +1397,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_status = sse_decode_u_16(deserializer);
     var var_body = sse_decode_list_prim_u_8_strict(deserializer);
-    return TransitResponse(status: var_status, body: var_body);
+    var var_ignoredFeeds = sse_decode_list_String(deserializer);
+    return TransitResponse(
+      status: var_status,
+      body: var_body,
+      ignoredFeeds: var_ignoredFeeds,
+    );
   }
 
   @protected
@@ -1879,6 +1885,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_16(self.status, serializer);
     sse_encode_list_prim_u_8_strict(self.body, serializer);
+    sse_encode_list_String(self.ignoredFeeds, serializer);
   }
 
   @protected

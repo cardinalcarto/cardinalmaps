@@ -29,6 +29,8 @@ mod build_tests;
 #[cfg(test)]
 mod e2e_tests;
 #[cfg(test)]
+mod multi_feed_regressions;
+#[cfg(test)]
 mod multi_feed_tests;
 #[cfg(test)]
 mod review_tests;

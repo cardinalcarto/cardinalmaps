@@ -130,10 +130,17 @@ class TransitResponse {
   /// The body: a plan, a vehicle, or `{"error": ..., "kind": ...}`.
   final Uint8List body;
 
-  const TransitResponse({required this.status, required this.body});
+  /// Feeds passed with this plan that aren't loaded, and so were ignored.
+  final List<String> ignoredFeeds;
+
+  const TransitResponse({
+    required this.status,
+    required this.body,
+    required this.ignoredFeeds,
+  });
 
   @override
-  int get hashCode => status.hashCode ^ body.hashCode;
+  int get hashCode => status.hashCode ^ body.hashCode ^ ignoredFeeds.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -141,5 +148,6 @@ class TransitResponse {
       other is TransitResponse &&
           runtimeType == other.runtimeType &&
           status == other.status &&
-          body == other.body;
+          body == other.body &&
+          ignoredFeeds == other.ignoredFeeds;
 }

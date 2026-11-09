@@ -9,7 +9,8 @@
 //! must match their SHA-256, and street tiles must match its build ID (checked when opening).
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -29,6 +30,17 @@ pub fn default_decode_limits() -> DecodeLimits {
     }
 }
 
+/// The largest compiled timetable that will be read, in bytes.
+///
+/// Far beyond any real feed (King County's is 14 MB), and a bound on what a manifest can name.
+pub(crate) const MAX_TIMETABLE_BYTES: u64 = 4 << 30;
+
+/// The largest manifest that will be read, in bytes.
+const MAX_MANIFEST_BYTES: u64 = 256 << 20;
+
+/// The largest compressed transfer tile that will be read, in bytes.
+const MAX_TILE_BYTES: u64 = 256 << 20;
+
 /// Why a build directory couldn't be loaded.
 #[derive(Debug, Error)]
 pub enum BuildLoadError {
@@ -39,6 +51,17 @@ pub enum BuildLoadError {
         path: PathBuf,
         /// What went wrong.
         source: std::io::Error,
+    },
+    /// A path in the manifest leaves the build directory, or isn't a simple relative path.
+    #[error("use the path {0:?} from the manifest, which isn't inside the build")]
+    UnsafePath(String),
+    /// A file of the build isn't a regular file, or is larger than it can reasonably be.
+    #[error("read {path}: it isn't a regular file of at most {limit} bytes")]
+    UnsuitableFile {
+        /// The file.
+        path: PathBuf,
+        /// The largest size allowed.
+        limit: u64,
     },
     /// The manifest isn't valid.
     #[error("parse the manifest {path}: {source}")]
@@ -203,10 +226,7 @@ impl TransitBuild {
     ) -> Result<Self, BuildLoadError> {
         let transfers = directory.join("transfers");
         let manifest_path = transfers.join("manifest.json");
-        let bytes = std::fs::read(&manifest_path).map_err(|source| BuildLoadError::Read {
-            path: manifest_path.clone(),
-            source,
-        })?;
+        let bytes = read_bounded(&manifest_path, MAX_MANIFEST_BYTES)?;
         let manifest: ManifestFile =
             serde_json::from_slice(&bytes).map_err(|source| BuildLoadError::Manifest {
                 path: manifest_path.clone(),
@@ -317,12 +337,8 @@ fn load_timetable(
         .timetable
         .as_deref()
         .ok_or_else(|| BuildLoadError::NotCompiled(feed.id.clone()))?;
-    let path = directory.join(relative);
-    let bytes = std::fs::read(&path).map_err(|source| BuildLoadError::Read {
-        path: path.clone(),
-        source,
-    })?;
-    let found = hex(&Sha256::digest(&bytes));
+    let path = inside_build(directory, relative)?;
+    let found = hex(&sha256_of_file(&path, MAX_TIMETABLE_BYTES)?);
     let expected = feed.timetable_sha256.as_deref().unwrap_or_default();
     if found != expected {
         return Err(BuildLoadError::TimetableMismatch {
@@ -331,7 +347,6 @@ fn load_timetable(
             found,
         });
     }
-    drop(bytes);
     // SAFETY: a timetable under a build directory is published by renaming over it, and
     // `TransitBuild::load`'s documentation forbids modifying it in place while it is open.
     let loaded =
@@ -353,6 +368,66 @@ fn load_timetable(
         });
     }
     Ok(loaded)
+}
+
+/// A path from the manifest, resolved inside the build directory.
+///
+/// Only plain relative paths are accepted: no root, `..`, or `.` components.
+fn inside_build(directory: &Path, relative: &str) -> Result<PathBuf, BuildLoadError> {
+    let path = Path::new(relative);
+    let plain = !relative.is_empty()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)));
+    if !plain {
+        return Err(BuildLoadError::UnsafePath(relative.to_owned()));
+    }
+    Ok(directory.join(path))
+}
+
+/// Checks that `path` is a regular file of at most `limit` bytes, before anything reads it.
+///
+/// Reading a device or a pipe can never end. Symbolic links are followed, since a build may be
+/// assembled from links to a shared directory; what they lead to is what is checked.
+fn check_regular(path: &Path, limit: u64) -> Result<(), BuildLoadError> {
+    let metadata = std::fs::metadata(path).map_err(|source| BuildLoadError::Read {
+        path: path.to_owned(),
+        source,
+    })?;
+    if !metadata.is_file() || metadata.len() > limit {
+        return Err(BuildLoadError::UnsuitableFile {
+            path: path.to_owned(),
+            limit,
+        });
+    }
+    Ok(())
+}
+
+fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, BuildLoadError> {
+    check_regular(path, limit)?;
+    std::fs::read(path).map_err(|source| BuildLoadError::Read {
+        path: path.to_owned(),
+        source,
+    })
+}
+
+/// The SHA-256 of a file, streamed, so it costs no memory proportional to the file.
+fn sha256_of_file(path: &Path, limit: u64) -> Result<Vec<u8>, BuildLoadError> {
+    check_regular(path, limit)?;
+    let read_error = |source| BuildLoadError::Read {
+        path: path.to_owned(),
+        source,
+    };
+    let mut file = std::fs::File::open(path).map_err(read_error)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 1 << 16];
+    loop {
+        let count = file.read(&mut buffer).map_err(read_error)?;
+        if count == 0 {
+            return Ok(hasher.finalize().to_vec());
+        }
+        hasher.update(&buffer[..count]);
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -391,14 +466,16 @@ fn load_mode(
             .join(TILE_ZOOM.to_string())
             .join(x.to_string())
             .join(format!("{y}.bin.zst"));
-        let compressed = match std::fs::read(&path) {
+        let compressed = match read_bounded(&path, MAX_TILE_BYTES) {
             Ok(bytes) => bytes,
             // An area download holds only some of a feed's tiles; the rest simply have no walks.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(BuildLoadError::Read { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
                 absent += 1;
                 continue;
             }
-            Err(source) => return Err(BuildLoadError::Read { path, source }),
+            Err(error) => return Err(error),
         };
         let tile = decode_tile(&compressed, limits)
             .map_err(|source| BuildLoadError::Tile { path, source })?;

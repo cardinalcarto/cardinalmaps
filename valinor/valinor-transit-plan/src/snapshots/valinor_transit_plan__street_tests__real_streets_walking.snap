@@ -34,6 +34,7 @@ expression: "&response"
           "departure": 1781506719,
           "arrival": 1781506800,
           "stop": {
+            "feed": "andorra",
             "stop_id": "A",
             "name": "Plaça",
             "latitude": 42.5078,
@@ -141,6 +142,7 @@ expression: "&response"
           },
           "stops": [
             {
+              "feed": "andorra",
               "stop_id": "A",
               "name": "Plaça",
               "latitude": 42.5078,
@@ -156,6 +158,7 @@ expression: "&response"
               "utc_offset_seconds": 7200
             },
             {
+              "feed": "andorra",
               "stop_id": "B",
               "name": "Meritxell",
               "latitude": 42.5095,
@@ -180,6 +183,7 @@ expression: "&response"
           "departure": 1781507280,
           "arrival": 1781507638,
           "from": {
+            "feed": "andorra",
             "stop_id": "B",
             "name": "Meritxell",
             "latitude": 42.5095,
@@ -187,6 +191,7 @@ expression: "&response"
             "time_zone": "Europe/Andorra"
           },
           "to": {
+            "feed": "andorra",
             "stop_id": "C",
             "name": "Caldea",
             "latitude": 42.5111,
@@ -308,6 +313,7 @@ expression: "&response"
           },
           "stops": [
             {
+              "feed": "andorra",
               "stop_id": "C",
               "name": "Caldea",
               "latitude": 42.5111,
@@ -323,6 +329,7 @@ expression: "&response"
               "utc_offset_seconds": 7200
             },
             {
+              "feed": "andorra",
               "stop_id": "D",
               "name": "Encamp",
               "latitude": 42.5355,
@@ -347,6 +354,7 @@ expression: "&response"
           "departure": 1781508300,
           "arrival": 1781508375,
           "stop": {
+            "feed": "andorra",
             "stop_id": "D",
             "name": "Encamp",
             "latitude": 42.5355,

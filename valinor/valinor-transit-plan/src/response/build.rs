@@ -349,6 +349,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         }
         let new = self.snapshot.new_stops.iter().find(|s| s.stop == stop);
         StopRef {
+            feed: new.map(|s| s.id.feed.to_string()),
             stop_id: new.map_or_else(|| stop.to_string(), |s| s.id.id.to_string()),
             name: new.and_then(new_stop_name),
             code: new.and_then(|s| first_text(s.details.stop_code.as_ref())),
@@ -371,6 +372,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             .parent_station
             .and_then(|id| part.compiled().location(id));
         StopRef {
+            feed: Some(info.feed.to_owned()),
             stop_id: info.gtfs_id.to_owned(),
             name: info.name.map(str::to_owned),
             code: info.code.map(str::to_owned),

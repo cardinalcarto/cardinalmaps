@@ -62,16 +62,17 @@ pub(crate) fn service_periods(alert: &Alert) -> Vec<Period> {
     ranges.iter().map(Period::from_range).collect()
 }
 
-/// How much selector matching one build may do, in single checks.
+/// How much selector matching one build may do, in single checks, across all feeds.
 ///
 /// Far beyond any real feed (King County's 121 selectors cost a few thousand checks), and
-/// small enough to finish quickly on a phone.
-const ALERT_WORK_LIMIT: u64 = 50_000_000;
+/// small enough to finish quickly on a phone. Each feed gets an equal share of it;
+/// see [`crate::overlay`]'s budgets.
+pub(crate) const ALERT_WORK_LIMIT: u64 = 50_000_000;
 
-/// Counts down the work alerts may cause in one build.
+/// Counts down the work one feed's alerts may cause in one build.
 ///
-/// When it runs out the remaining alerts stop applying, and the build reports that:
-/// a hostile feed degrades routing rather than hanging the device.
+/// When it runs out that feed's remaining alerts stop applying, and the build reports it:
+/// a hostile feed degrades its own routing rather than hanging the device or anyone else's.
 #[derive(Debug)]
 pub(crate) struct AlertBudget {
     remaining: u64,
@@ -79,9 +80,9 @@ pub(crate) struct AlertBudget {
 }
 
 impl AlertBudget {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(limit: u64) -> Self {
         Self {
-            remaining: ALERT_WORK_LIMIT,
+            remaining: limit,
             exhausted: false,
         }
     }
@@ -335,6 +336,11 @@ pub(crate) struct AlertEffect {
 }
 
 impl NoServiceAlert {
+    /// The feed this alert came from.
+    pub(crate) fn feed(&self) -> &FeedId {
+        &self.feed
+    }
+
     /// Whether this alert is active in the inclusive interval of POSIX times.
     fn active(&self, from: i64, to: i64) -> bool {
         self.periods.is_empty() || self.periods.iter().any(|p| p.overlaps(from, to))
@@ -541,7 +547,7 @@ mod tests {
 
     #[test]
     fn the_budget_refuses_work_once_spent() {
-        let mut budget = AlertBudget::new();
+        let mut budget = AlertBudget::new(ALERT_WORK_LIMIT);
         assert!(budget.charge(usize::try_from(ALERT_WORK_LIMIT).expect("64-bit only")));
         assert!(!budget.exhausted());
         assert!(!budget.charge(1));

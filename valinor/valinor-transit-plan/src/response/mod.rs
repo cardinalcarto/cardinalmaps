@@ -391,6 +391,8 @@ pub struct TripResponse {
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StopRef {
+    /// The feed this stop belongs to; a `stop_id` is only unique within its feed.
+    pub feed: Option<String>,
     /// `stop_id`.
     pub stop_id: String,
     /// `stop_name`.

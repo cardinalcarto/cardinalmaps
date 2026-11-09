@@ -343,3 +343,17 @@ async fn review_an_empty_configured_token_refuses_ingest() {
     println!("empty token, header 'Bearer ': {status}");
     assert_ne!(status, StatusCode::OK);
 }
+
+/// An empty environment variable must behave like an unset one.
+#[test]
+fn an_empty_transit_feeds_variable_is_no_subset() {
+    // SAFETY: this test binary reads no other environment concurrently for this variable.
+    unsafe { std::env::set_var("TRANSIT_FEEDS", "") };
+    let cli = Cli::try_parse_from(["valinor-server", "--config", "x"]).expect("parses");
+    unsafe { std::env::remove_var("TRANSIT_FEEDS") };
+    assert!(
+        cli.transit_feeds.is_empty(),
+        "an empty TRANSIT_FEEDS parsed as {:?}, which then fails with unknown feed",
+        cli.transit_feeds
+    );
+}

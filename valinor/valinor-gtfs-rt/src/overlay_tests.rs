@@ -769,6 +769,64 @@ fn trip_modifications_replace_the_pattern() {
     assert_eq!(overlay.rider.trip_state(key(0)), TripState::Replaced);
 }
 
+/// A feed spending its whole modification budget doesn't stop another feed's modifications.
+#[test]
+fn a_flood_of_modifications_in_one_feed_leaves_another_alone() {
+    let net = NetBuilder::new()
+        .route(
+            "R1",
+            &["A", "B", "C"],
+            &[("t1", &[100, 200, 300]), ("t2", &[1100, 1200, 1300])],
+        )
+        .in_feed("noisy")
+        .route("R1", &["A", "B"], &[("t1", &[500, 600])])
+        .build();
+    let flood = proto::FeedEntity {
+        id: "noisy-mods".into(),
+        trip_modifications: Some(proto::TripModifications {
+            selected_trips: vec![proto::trip_modifications::SelectedTrips {
+                trip_ids: (0..60_000).map(|i| format!("gone-{i}")).collect(),
+                shape_id: None,
+            }],
+            start_times: vec![],
+            service_dates: vec![DATE_1.into()],
+            modifications: vec![proto::trip_modifications::Modification::default()],
+        }),
+        ..Default::default()
+    };
+    let overlay = run(
+        &net,
+        vec![
+            input("noisy", FeedKind::Combined, NOW, vec![flood]),
+            input(
+                KCM,
+                FeedKind::Combined,
+                NOW,
+                vec![new_stop("N", 47.6, -122.3), detour("t1", DATE_1)],
+            ),
+        ],
+    );
+    assert_eq!(
+        overlay.rider.trip_state(key(0)),
+        TripState::Replaced,
+        "the quiet feed's detour was dropped"
+    );
+    assert_eq!(overlay.stats.feeds_over_budget, vec![feed_id("noisy")]);
+}
+
+/// Each feed's limit is an equal share of the whole, and never more than one feed's limit.
+#[test]
+fn feed_limits_keep_a_whole_overlay_bounded() {
+    let one = crate::overlay::tests_limits_for(1);
+    assert_eq!(one.0, 4_096);
+    let many = crate::overlay::tests_limits_for(26);
+    assert_eq!(many.0, 65_536 / 26);
+    assert!(many.0 * 26 <= 65_536);
+    let huge = crate::overlay::tests_limits_for(100_000);
+    assert!(huge.0 >= 1);
+    assert!(many.1 * 26 <= 10_000);
+}
+
 #[test]
 fn a_modified_trip_update_applies_to_the_detoured_times() {
     let net = three_stop_net();

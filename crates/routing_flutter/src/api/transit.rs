@@ -91,6 +91,8 @@ pub struct TransitResponse {
     pub status: u16,
     /// The body: a plan, a vehicle, or `{"error": ..., "kind": ...}`.
     pub body: Vec<u8>,
+    /// Feeds passed with this plan that aren't loaded, and so were ignored.
+    pub ignored_feeds: Vec<String>,
 }
 
 /// What a GTFS-RT message carries.
@@ -134,6 +136,7 @@ fn response(answer: JsonResponse) -> TransitResponse {
     TransitResponse {
         status: answer.status,
         body: answer.body,
+        ignored_feeds: Vec::new(),
     }
 }
 
@@ -229,22 +232,19 @@ impl OfflineTransit {
         now: i64,
         interrupt: &dyn Fn() -> bool,
     ) -> TransitResponse {
-        // Checked first, so that a list with an unknown feed changes nothing at all.
+        // A feed that isn't loaded is about nothing this plan can use, and only affects itself.
         let state = self.planner.state();
-        if let Some(unknown) = feeds.iter().find(|feed| {
-            !state
+        let mut ignored_feeds = Vec::new();
+        for feed in &feeds {
+            if !state
                 .feeds()
                 .iter()
                 .any(|known| known.as_str() == feed.feed)
-        }) {
-            return error_response(
-                404,
-                "unknown_feed",
-                &format!("unknown feed {}", unknown.feed),
-            );
-        }
-        for feed in &feeds {
-            // Every feed was found above; undecodable bytes are reported by the plan itself.
+            {
+                ignored_feeds.push(feed.feed.clone());
+                continue;
+            }
+            // Undecodable bytes are reported by the plan itself.
             let _ = state.ingest(FeedUpdate {
                 feed: &feed.feed,
                 kind: feed_kind(&feed.kind),
@@ -253,7 +253,10 @@ impl OfflineTransit {
                 stale_after: None,
             });
         }
-        response(self.planner.plan_json(request, now, interrupt))
+        TransitResponse {
+            ignored_feeds,
+            ..response(self.planner.plan_json(request, now, interrupt))
+        }
     }
 }
 
@@ -262,6 +265,7 @@ fn error_response(status: u16, kind: &str, message: &str) -> TransitResponse {
     TransitResponse {
         status,
         body: serde_json::to_vec(&json!({ "error": message, "kind": kind })).unwrap_or_default(),
+        ignored_feeds: Vec::new(),
     }
 }
 
@@ -379,7 +383,7 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
         assert_eq!(body["realtime"]["feeds"][0]["state"], "undecodable");
 
-        // A feed the timetable doesn't know is an error the app can see.
+        // A feed that isn't loaded is ignored and reported; the plan and other feeds go on.
         let feeds = vec![
             TransitFeed {
                 feed: "bus".to_owned(),
@@ -393,13 +397,11 @@ mod tests {
             },
         ];
         let answer = transit.plan_at(request, feeds, now, &|| false);
-        assert_eq!(answer.status, 404);
-        // Valid JSON even with a control character, and the earlier feed wasn't touched.
+        assert_eq!(answer.status, 200);
+        assert_eq!(answer.ignored_feeds, vec!["nope\u{1}".to_owned()]);
         let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
-        assert_eq!(body["kind"], "unknown_feed");
-        let answer = transit.plan_at(request, Vec::new(), now, &|| false);
-        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
-        assert_eq!(body["realtime"]["feeds"][0]["state"], "undecodable");
+        // The known feed was still applied: its undecodable bytes are gone.
+        assert_eq!(body["realtime"]["level"], "schedule");
     }
 
     #[test]

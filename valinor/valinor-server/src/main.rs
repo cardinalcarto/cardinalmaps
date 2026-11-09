@@ -17,8 +17,9 @@ use core::time::Duration;
 use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
@@ -70,9 +71,10 @@ struct Cli {
     #[arg(env, long)]
     transit_build: Option<PathBuf>,
 
-    /// The feeds to load from the build, by ID (default: every feed that compiled).
-    #[arg(env, long, value_delimiter = ',')]
-    transit_feeds: Vec<String>,
+    /// The feeds to load from the build, comma-separated by ID
+    /// (default: every feed that compiled; an empty value means the same).
+    #[arg(env, long, default_value = "")]
+    transit_feeds: FeedList,
 
     /// The shared secret for feeding GTFS-RT to `PUT /transit/feeds/...`.
     /// Without one, real-time data can't be ingested and transit serves the schedule.
@@ -83,6 +85,33 @@ struct Cli {
     /// (longer ones are a 400), as Valhalla's service limits bound its other work.
     #[arg(env, long, default_value = "3600")]
     transit_max_walk_seconds: u32,
+}
+
+/// A comma-separated list of feed IDs; an empty value is no feeds at all, so no subset.
+#[derive(Clone, Debug, Default)]
+struct FeedList(Vec<String>);
+
+impl FeedList {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn as_slice(&self) -> &[String] {
+        &self.0
+    }
+}
+
+impl FromStr for FeedList {
+    type Err = core::convert::Infallible;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Ok(Self(
+            text.split(',')
+                .filter(|feed| !feed.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        ))
+    }
 }
 
 /// The tile sets to open: `--tiles`, or else the config's `mjolnir.tile_extract`
@@ -109,6 +138,18 @@ fn open_transit(cli: &Cli, tiles: &[PathBuf]) -> anyhow::Result<Option<transit::
     let feeds = (!cli.transit_feeds.is_empty()).then_some(cli.transit_feeds.as_slice());
     let build = TransitBuild::load(path, feeds)
         .with_context(|| format!("load the transit build {}", path.display()))?;
+    // Absent tiles are expected for a device's partial download, not for a server.
+    info!(
+        "transit build {}: walking {} tiles read, {} absent, cycling {} read, {} absent",
+        path.display(),
+        build.report.tiles_read[0],
+        build.report.tiles_absent[0],
+        build.report.tiles_read[1],
+        build.report.tiles_absent[1]
+    );
+    if build.report.tiles_absent.iter().any(|&absent| absent > 0) {
+        warn!("some transfer tiles the loaded feeds need are absent: their stops have no walks");
+    }
     let config = StreetConfig {
         limits: ServiceLimits {
             max_walk_seconds: cli.transit_max_walk_seconds,

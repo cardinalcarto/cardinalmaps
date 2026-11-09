@@ -62,6 +62,7 @@ expression: "&response"
           "departure": 1781535708,
           "arrival": 1781535750,
           "stop": {
+            "feed": "metro",
             "stop_id": "S1",
             "name": "Alpha",
             "code": "101",
@@ -138,6 +139,7 @@ expression: "&response"
           },
           "stops": [
             {
+              "feed": "metro",
               "stop_id": "S1",
               "name": "Alpha",
               "code": "101",
@@ -161,6 +163,7 @@ expression: "&response"
               "utc_offset_seconds": -25200
             },
             {
+              "feed": "metro",
               "stop_id": "S2",
               "name": "Beta",
               "code": "102",
@@ -184,6 +187,7 @@ expression: "&response"
               "utc_offset_seconds": -25200
             },
             {
+              "feed": "metro",
               "stop_id": "S3",
               "name": "Gamma",
               "code": "103",
@@ -338,6 +342,7 @@ expression: "&response"
           "departure": 1781536920,
           "arrival": 1781536954,
           "from": {
+            "feed": "metro",
             "stop_id": "S3",
             "name": "Gamma",
             "code": "103",
@@ -346,6 +351,7 @@ expression: "&response"
             "time_zone": "America/Los_Angeles"
           },
           "to": {
+            "feed": "metro",
             "stop_id": "S5",
             "name": "Epsilon",
             "code": "105",
@@ -386,6 +392,7 @@ expression: "&response"
           },
           "stops": [
             {
+              "feed": "metro",
               "stop_id": "S5",
               "name": "Epsilon",
               "code": "105",
@@ -402,6 +409,7 @@ expression: "&response"
               "utc_offset_seconds": -25200
             },
             {
+              "feed": "metro",
               "stop_id": "S6",
               "name": "Zeta",
               "code": "106",
@@ -427,6 +435,7 @@ expression: "&response"
           "departure": 1781539200,
           "arrival": 1781539212,
           "stop": {
+            "feed": "metro",
             "stop_id": "S6",
             "name": "Zeta",
             "code": "106",
@@ -457,6 +466,7 @@ expression: "&response"
           "departure": 1781537388,
           "arrival": 1781537430,
           "stop": {
+            "feed": "metro",
             "stop_id": "S1",
             "name": "Alpha",
             "code": "101",
@@ -532,6 +542,7 @@ expression: "&response"
           },
           "stops": [
             {
+              "feed": "metro",
               "stop_id": "S1",
               "name": "Alpha",
               "code": "101",
@@ -549,6 +560,7 @@ expression: "&response"
               "utc_offset_seconds": -25200
             },
             {
+              "feed": "metro",
               "stop_id": "S2",
               "name": "Beta",
               "code": "102",
@@ -568,6 +580,7 @@ expression: "&response"
               "utc_offset_seconds": -25200
             },
             {
+              "feed": "metro",
               "stop_id": "S3",
               "name": "Gamma",
               "code": "103",
@@ -699,6 +712,7 @@ expression: "&response"
           "departure": 1781538600,
           "arrival": 1781538634,
           "from": {
+            "feed": "metro",
             "stop_id": "S3",
             "name": "Gamma",
             "code": "103",
@@ -707,6 +721,7 @@ expression: "&response"
             "time_zone": "America/Los_Angeles"
           },
           "to": {
+            "feed": "metro",
             "stop_id": "S5",
             "name": "Epsilon",
             "code": "105",
@@ -747,6 +762,7 @@ expression: "&response"
           },
           "stops": [
             {
+              "feed": "metro",
               "stop_id": "S5",
               "name": "Epsilon",
               "code": "105",
@@ -763,6 +779,7 @@ expression: "&response"
               "utc_offset_seconds": -25200
             },
             {
+              "feed": "metro",
               "stop_id": "S6",
               "name": "Zeta",
               "code": "106",
@@ -788,6 +805,7 @@ expression: "&response"
           "departure": 1781541000,
           "arrival": 1781541012,
           "stop": {
+            "feed": "metro",
             "stop_id": "S6",
             "name": "Zeta",
             "code": "106",
