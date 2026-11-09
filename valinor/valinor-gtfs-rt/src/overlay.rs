@@ -200,6 +200,20 @@ pub struct RealtimeOverlay {
     pub stats: OverlayStats,
 }
 
+/// How much `TripModifications` work one build may do, in run lookups and modifications.
+///
+/// Well beyond any feed yet seen (King County sends none), and a bound on what a feed
+/// can make a phone do.
+const MAX_MODIFICATION_WORK: u64 = 50_000;
+
+/// The most trips one build may add or move to new patterns.
+///
+/// Lanes are built first-fit, so mutually overtaking trips on one pattern cost quadratic time.
+const MAX_ADDED_TRIPS: usize = 4_096;
+
+/// The most stops one build may append; each one costs a street search snap.
+const MAX_NEW_STOPS: usize = 10_000;
+
 /// The latest a `DUPLICATED` trip's `start_time` may be, in seconds of its service day.
 const MAX_DUPLICATE_START_TIME: u32 = 3 * 86_400;
 
@@ -265,6 +279,8 @@ struct Context<'a, L: StaticLookup + ?Sized> {
     next_trip_id: u32,
     blocks: HashMap<(RouteId, DaySlot), Vec<ScheduledTrip>>,
     new_stops: HashMap<ScopedId, StopId>,
+    new_stop_names: HashMap<(FeedId, StopId), String>,
+    added_trips: usize,
     modified: HashMap<(TripId, DaySlot), ModifiedLayout>,
     modified_refs: HashMap<(TripId, DaySlot), (TripRef, FeedId)>,
     added_index: HashMap<(ScopedId, CalendarDate), (TripId, DaySlot)>,
@@ -327,6 +343,8 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
         next_trip_id: lookup.first_unused_trip_id(),
         blocks: HashMap::new(),
         new_stops: HashMap::new(),
+        new_stop_names: HashMap::new(),
+        added_trips: 0,
         modified: HashMap::new(),
         modified_refs: HashMap::new(),
         added_index: HashMap::new(),
@@ -419,6 +437,16 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         TripKey { trip, date }
     }
 
+    /// Reserves room for one more added or moved trip, or says the build is full.
+    fn take_added_slot(&mut self) -> bool {
+        if self.added_trips >= MAX_ADDED_TRIPS {
+            self.stats.invalid_added_trips += 1;
+            return false;
+        }
+        self.added_trips += 1;
+        true
+    }
+
     fn allocate_trip_id(&mut self) -> Result<TripId, OverlayError> {
         let id = self.next_trip_id;
         self.next_trip_id = id.checked_add(1).ok_or(OverlayError::TripIdsExhausted)?;
@@ -454,11 +482,13 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 self.stats.invalid_stops += 1;
                 continue;
             };
-            if !valid_coordinates(latitude, longitude) {
+            if !valid_coordinates(latitude, longitude) || out.len() >= MAX_NEW_STOPS {
                 self.stats.invalid_stops += 1;
                 continue;
             }
             let id = overlay.add_stop(options.new_stop_min_change)?;
+            self.new_stop_names
+                .insert((feed.clone(), id), scoped.id.to_string());
             self.new_stops.insert(scoped.clone(), id);
             out.push(NewStop {
                 stop: id,
@@ -533,27 +563,44 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         Ok(best.map(|(_, found)| found))
     }
 
+    /// Applies each `TripModifications` to the runs it selects.
+    ///
+    /// Its lists multiply, so they are deduplicated, and each run costs from one shared budget.
     fn apply_modifications(&mut self, modifications: Vec<(FeedId, String, TripModifications)>) {
+        let mut budget = MAX_MODIFICATION_WORK;
         for (feed, _, set) in modifications {
-            let dates: Vec<CalendarDate> = set
+            let dates: BTreeSet<CalendarDate> = set
                 .service_dates
                 .iter()
                 .filter_map(|d| CalendarDate::parse(d))
+                .filter(|&date| self.clock_on(date).is_some())
                 .collect();
-            let start_times: Vec<Option<u32>> = if set.start_times.is_empty() {
-                vec![None]
+            let start_times: BTreeSet<Option<u32>> = if set.start_times.is_empty() {
+                BTreeSet::from([None])
             } else {
                 set.start_times
                     .iter()
-                    .map(|t| parse_start_time(t))
+                    .filter_map(|t| parse_start_time(t))
+                    .map(Some)
                     .collect()
             };
-            for selected in &set.selected_trips {
-                for trip_id in &selected.trip_ids {
-                    for &date in &dates {
-                        for &start_time in &start_times {
-                            self.apply_modification(&feed, trip_id, date, start_time, &set);
+            let trip_ids: BTreeSet<&str> = set
+                .selected_trips
+                .iter()
+                .flat_map(|selected| &selected.trip_ids)
+                .map(String::as_str)
+                .collect();
+            // One lookup per run, then the cost of the modifications themselves.
+            let run_cost = 1 + u64::try_from(set.modifications.len()).unwrap_or(u64::MAX);
+            for &trip_id in &trip_ids {
+                for &date in &dates {
+                    for &start_time in &start_times {
+                        if budget < run_cost {
+                            self.stats.invalid_modifications += 1;
+                            return;
                         }
+                        budget -= run_cost;
+                        self.apply_modification(&feed, trip_id, date, start_time, &set);
                     }
                 }
             }
@@ -814,6 +861,15 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             }
         }
 
+        if pattern_changed && !self.take_added_slot() {
+            self.modified.remove(&(reference.trip, reference.day));
+            self.push_unmatched(feed, trip_id, date, start_time, update);
+            return;
+        }
+
+        let lookup = self.lookup;
+        let new_stops = &self.new_stops;
+        let resolve = |id: &str| find_stop(lookup, new_stops, feed, id);
         let Ok(propagated) = propagate(
             &Trip {
                 events: &base_events,
@@ -958,6 +1014,10 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             self.push_unmatched(feed, trip_id, date, start_time, update);
             return Ok(());
         };
+        if !self.take_added_slot() {
+            self.push_unmatched(feed, trip_id, date, start_time, update);
+            return Ok(());
+        }
         // Some producers still mark a trip that exists in the static feed as `ADDED`;
         // treating any match as a replacement avoids running it twice.
         let date_or_original = date.or_else(|| {
@@ -1044,6 +1104,10 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         date: Option<CalendarDate>,
         update: &TripUpdate,
     ) -> Result<(), OverlayError> {
+        if !self.take_added_slot() {
+            self.push_unmatched(feed, trip_id, date, None, update);
+            return Ok(());
+        }
         let properties = update.trip_properties.clone().unwrap_or_default();
         let new_date = properties
             .start_date
@@ -1193,6 +1257,9 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 self.stats.invalid_modifications += 1;
                 continue;
             };
+            if !self.take_added_slot() {
+                continue;
+            }
             let key = self.trip_key(trip, day);
             self.rider.set_state(key, TripState::Replaced);
             self.push_moved(
@@ -1220,12 +1287,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                     .lookup
                     .stop_gtfs_id(feed, *stop)
                     .map(str::to_owned)
-                    .or_else(|| {
-                        self.new_stops
-                            .iter()
-                            .find(|(scoped, id)| **id == *stop && scoped.feed == *feed)
-                            .map(|(scoped, _)| scoped.id.to_string())
-                    });
+                    .or_else(|| self.new_stop_names.get(&(feed.clone(), *stop)).cloned());
             }
         }
         details

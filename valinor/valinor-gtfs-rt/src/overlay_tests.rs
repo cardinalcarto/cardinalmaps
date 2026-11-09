@@ -1570,6 +1570,64 @@ fn stop_sequences_need_not_be_consecutive() {
     );
 }
 
+// Bounds on what a feed can make a build do.
+
+#[test]
+fn modifications_stop_when_their_budget_runs_out() {
+    let net = three_stop_net();
+    let set = proto::TripModifications {
+        selected_trips: vec![proto::trip_modifications::SelectedTrips {
+            trip_ids: (0..60_000).map(|i| format!("nope-{i}")).collect(),
+            shape_id: None,
+        }],
+        service_dates: vec![DATE_1.into()],
+        ..Default::default()
+    };
+    let feed = input(
+        KCM,
+        FeedKind::TripUpdates,
+        NOW,
+        vec![proto::FeedEntity {
+            id: "m".into(),
+            trip_modifications: Some(set),
+            ..Default::default()
+        }],
+    );
+    let overlay = run(&net, vec![feed]);
+    // 50,000 unknown trips, then one more count for the set cut short.
+    assert_eq!(overlay.stats.invalid_modifications, 50_001);
+}
+
+#[test]
+fn added_trips_past_the_limit_are_dropped_and_counted() {
+    let net = three_stop_net();
+    let updates = (0..4_100)
+        .map(|i| {
+            with_relationship(
+                timed_new_trip(
+                    &format!("extra-{i}"),
+                    &[("A", unix_on_today(400 + i)), ("B", unix_on_today(500))],
+                ),
+                Trip::New,
+            )
+        })
+        .collect();
+    let overlay = run(&net, vec![fresh(updates)]);
+    assert_eq!(overlay.stats.trips_added, 4_096);
+    assert_eq!(overlay.stats.invalid_added_trips, 4);
+}
+
+#[test]
+fn new_stops_past_the_limit_are_dropped_and_counted() {
+    let net = three_stop_net();
+    let stops = (0..10_002)
+        .map(|i| new_stop(&format!("n{i}"), 47.0, -122.0))
+        .collect();
+    let overlay = run(&net, vec![updates_with_stops(vec![], stops)]);
+    assert_eq!(overlay.new_stops.len(), 10_000);
+    assert_eq!(overlay.stats.invalid_stops, 2);
+}
+
 // Several feeds.
 
 #[test]
