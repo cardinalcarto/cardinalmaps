@@ -46,6 +46,11 @@ impl DialQueue {
     ///
     /// Allocates only when `span` is larger than any seen so far.
     pub(crate) fn reset(&mut self, base: i32, span: u64) {
+        // A search that stopped early (an interrupt, or a tile that couldn't be read)
+        // leaves entries behind, in buckets that a later search would otherwise walk.
+        if self.pending != 0 {
+            self.clear();
+        }
         let needed = usize::try_from(span.max(1 << 17))
             .unwrap_or(usize::MAX)
             .next_power_of_two();
@@ -58,13 +63,11 @@ impl DialQueue {
         self.mask = self.heads.len() - 1;
         self.base = base;
         self.current = 0;
-        debug_assert_eq!(self.pending, 0, "a search must drain or clear its queue");
         self.entries.clear();
-        self.pending = 0;
     }
 
-    /// Discards everything in the queue, leaving it ready to be reset.
-    pub(crate) fn clear(&mut self) {
+    /// Discards everything in the queue.
+    fn clear(&mut self) {
         self.heads.fill(NONE);
         self.occupied.fill(0);
         self.entries.clear();
@@ -182,13 +185,15 @@ mod tests {
     }
 
     #[test]
-    fn a_reused_queue_is_clean_after_clear() {
+    fn a_reset_discards_what_an_abandoned_search_left_behind() {
         let mut q = DialQueue::default();
         q.reset(0, 1 << 16);
         q.push(5, 1);
-        q.clear();
-        q.reset(0, 1 << 16);
+        q.push(9, 2);
+        q.reset(100, 1 << 16);
         assert_eq!(q.pop(), None);
+        q.push(120, 3);
+        assert_eq!(q.pop(), Some((120, 3)));
     }
 
     #[test]
