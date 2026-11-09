@@ -14,8 +14,8 @@ use valinor_sif::costing_options::parse_costing;
 use valinor_sif::json::JsonValue;
 use valinor_transit::StopId;
 use valinor_walk::{
-    AccessSide, SnapConfig, StopSnaps, StopTables, TableRequest, TransferTable, snap_stop,
-    snap_stops,
+    AccessSide, SnapConfig, StopAttachments, StopSnaps, StopTables, TableRequest, TableSeed,
+    TransferTable, snap_stop, snap_stops,
 };
 
 const TAR: &str = "/mnt/maps/cardinal/routing-elevation-i2b/washington/tiles.tar";
@@ -34,6 +34,8 @@ fn costing(name: &str) -> AnyCosting {
     parse_costing(&doc, "/none", &mut proto, &mut Vec::new(), Some(kind)).expect("costing");
     AnyCosting::new(&proto).expect("any")
 }
+
+const TIMETABLES: &str = "/mnt/maps/cardinal/transit/global/us-wa-2026-11-09/timetables";
 
 fn tiles() -> TileSets {
     TileSets::open(&[PathBuf::from(TAR)], NonZeroUsize::new(64).unwrap()).expect("tiles")
@@ -80,10 +82,84 @@ fn built(p: &&TileSets, c: &AnyCosting, s: &Arc<StopSnaps>) -> TransferTable {
         .expect("done")
 }
 
-/// `with_new_stops` promises what building with those stops gives, and draws must agree with it.
+/// One side of a walk between two stops, as far as this file compares them.
+#[derive(Clone, Debug, PartialEq)]
+struct Found {
+    secs: f32,
+    cost: f32,
+    edges: Vec<u64>,
+    /// Each edge's `(transition cost, traversal cost)`, in travel order.
+    parts: Vec<(f32, f32)>,
+}
+
+fn found(leg: &valinor_walk::AccessLeg) -> Found {
+    Found {
+        secs: leg.secs,
+        cost: leg
+            .edges
+            .iter()
+            .map(|e| e.transition.cost + e.traversal.cost)
+            .sum(),
+        edges: leg.edges.iter().map(|e| e.edge.value()).collect(),
+        parts: leg
+            .edges
+            .iter()
+            .map(|e| (e.transition.cost, e.traversal.cost))
+            .collect(),
+    }
+}
+
+/// How a forward and a backward walk between the same two stops relate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Agreement {
+    /// The same route and the same seconds, to the rounding of the table.
+    Same,
+    /// The same route and costs; float noise in the seconds, within or across a whole second.
+    Rounding,
+    /// As `Rounding`, but the noise moved the seconds across a whole-second rounding edge.
+    RoundsDifferently,
+    /// Different routes of equal cost: a tie, broken differently by each direction.
+    EqualCost,
+    /// Different routes whose costs differ by less than a tenth of a second of cost: a tie
+    /// but for accumulated float noise.
+    NearlyEqualCost,
+    /// The same route with a different cost, so Sif's forward and reverse charge it differently.
+    CostOfSameRoute,
+    /// Different routes of different cost.
+    DifferentRoute,
+}
+
+fn classify(forward: &Found, backward: &Found) -> Agreement {
+    let cost_off = (forward.cost - backward.cost).abs();
+    if forward.edges == backward.edges {
+        if cost_off < 0.01 {
+            if forward.secs.round() == backward.secs.round() {
+                return if forward.secs == backward.secs {
+                    Agreement::Same
+                } else {
+                    Agreement::Rounding
+                };
+            }
+            return Agreement::RoundsDifferently;
+        }
+        return Agreement::CostOfSameRoute;
+    }
+    if cost_off < 1e-3 {
+        Agreement::EqualCost
+    } else if cost_off < 0.1 {
+        Agreement::NearlyEqualCost
+    } else {
+        Agreement::DifferentRoute
+    }
+}
+
+/// `with_new_stops` adds what a full build would, with each base stop's walk into a new stop
+/// from that new stop's backward search: any difference from a full forward build must be one
+/// of those walks, and must be what that backward search finds.
 #[test]
 #[ignore = "needs /mnt/maps/cardinal data"]
 fn new_stops_match_a_full_build_on_real_streets() {
+    use std::collections::BTreeMap;
     let sets = tiles();
     let p = &sets;
     let mut failures = Vec::new();
@@ -101,66 +177,214 @@ fn new_stops_match_a_full_build_on_real_streets() {
             .with_new_stops(&p, &c, &all, &new, &|| false)
             .expect("grow")
             .expect("done");
-        eprintln!(
-            "{name}: added {k} new stops to {} base stops in {:.2} s on one thread",
-            n - k,
-            started.elapsed().as_secs_f64()
-        );
+        let added_in = started.elapsed().as_secs_f64();
         let grown = triples(&grown);
-        let full_set: std::collections::BTreeMap<(u32, u32), u32> =
+        let full_map: BTreeMap<(u32, u32), u32> =
             full.iter().map(|&(a, b, s)| ((a, b), s)).collect();
-        let grown_set: std::collections::BTreeMap<(u32, u32), u32> =
+        let grown_map: BTreeMap<(u32, u32), u32> =
             grown.iter().map(|&(a, b, s)| ((a, b), s)).collect();
-        let mut differ = Vec::new();
-        for (key, s) in &full_set {
-            match grown_set.get(key) {
-                Some(t) if t == s => {}
-                other => differ.push((*key, Some(*s), other.copied())),
+        // What the backward search from each new stop finds, to explain any difference.
+        let mut backward = StopTables::new(p, c.clone());
+        backward.bind(Arc::clone(&all)).expect("bind");
+        let mut backward_found: BTreeMap<(u32, u32), Found> = BTreeMap::new();
+        for &stop in &new {
+            let seeds = backward.stop_seeds(stop).expect("seeds");
+            if seeds.is_empty() {
+                continue;
+            }
+            assert!(
+                backward
+                    .search(&TableRequest {
+                        side: AccessSide::Egress,
+                        seeds: &seeds,
+                        max_seconds: 900,
+                        interrupt: &|| false,
+                    })
+                    .expect("search")
+            );
+            for (from, _) in backward.reached_stops().collect::<Vec<_>>() {
+                if from == stop {
+                    continue;
+                }
+                let leg = backward.leg(from).expect("leg");
+                backward_found.insert((from.into_inner(), stop.into_inner()), found(&leg));
             }
         }
-        for (key, s) in &grown_set {
-            if !full_set.contains_key(key) {
-                differ.push((*key, None, Some(*s)));
+        let is_new = |s: u32| s as usize >= n - k;
+        let mut unexplained: Vec<((u32, u32), Option<u32>, Option<u32>)> = Vec::new();
+        let (mut base_to_new_diff, mut base_to_new_total) = (0_usize, 0_usize);
+        let (mut new_origin_diff, mut new_origin_total) = (0_usize, 0_usize);
+        let mut keys: Vec<_> = full_map.keys().chain(grown_map.keys()).copied().collect();
+        keys.sort_unstable();
+        keys.dedup();
+        for key in keys {
+            let (f, g) = (full_map.get(&key).copied(), grown_map.get(&key).copied());
+            if !is_new(key.0) && is_new(key.1) {
+                base_to_new_total += 1;
+                let backward_secs = backward_found.get(&key).map(|b| b.secs.round() as u32);
+                if f != g {
+                    base_to_new_diff += 1;
+                }
+                if g != backward_secs {
+                    unexplained.push((key, f, g));
+                }
+            } else {
+                if is_new(key.0) {
+                    new_origin_total += 1;
+                    if f != g {
+                        new_origin_diff += 1;
+                    }
+                }
+                if f != g {
+                    unexplained.push((key, f, g));
+                }
             }
         }
-        let touching_new = |&((a, b), _, _): &((u32, u32), Option<u32>, Option<u32>)| {
-            a as usize >= n - k || b as usize >= n - k
-        };
-        let from_new = differ.iter().filter(|d| d.0.0 as usize >= n - k).count();
-        let base_to_new_total = full_set
-            .keys()
-            .filter(|k2| (k2.0 as usize) < n - k && (k2.1 as usize) >= n - k)
-            .count();
-        let lost = differ
-            .iter()
-            .filter(|d| d.1.is_some() && d.2.is_none())
-            .count();
-        let invented = differ.iter().filter(|d| d.1.is_none()).count();
-        let time_off: Vec<i64> = differ
-            .iter()
-            .filter_map(|d| Some(d.2? as i64 - d.1? as i64))
-            .collect();
         eprintln!(
-            "{name}: differ with a new origin {from_new}; base-to-new walks in the full build {base_to_new_total}; lost {lost}, invented {invented}, wrong seconds {} (max abs {:?})",
-            time_off.len(),
-            time_off.iter().map(|v| v.abs()).max()
+            "{name}: added {k} new stops in {added_in:.2} s; new-stop origins {new_origin_total} \
+             walks, {new_origin_diff} differ; base-to-new {base_to_new_total} walks, \
+             {base_to_new_diff} differ from a full forward build (all from the backward search); \
+             unexplained {}: {:?}",
+            unexplained.len(),
+            &unexplained[..unexplained.len().min(12)]
         );
-        eprintln!(
-            "{name}: full {} grown {} differ {} (touching a new stop {}); first {:?}",
-            full.len(),
-            grown.len(),
-            differ.len(),
-            differ.iter().filter(|d| touching_new(d)).count(),
-            &differ[..differ.len().min(12)]
-        );
-        failures.push((name, differ.len()));
+        failures.push((name, unexplained.len()));
     }
     assert!(failures.iter().all(|f| f.1 == 0), "{failures:?}");
 }
 
-/// A draw at the table's own bound is the table's route, in time and edges.
+/// A forward and a backward search between each pair of stops: how they differ, and why.
 ///
-/// Also times a draw at the old limit of one second past the walk, for what the bound costs.
+/// `PROOF_OUT` writes each differing pair to a file.
+#[test]
+#[ignore = "needs /mnt/maps/cardinal data"]
+fn forward_and_backward_agree_on_real_streets() {
+    use std::collections::{BTreeMap, HashMap};
+    use std::io::Write as _;
+    let sets = tiles();
+    let p = &sets;
+    let mut out = std::env::var("PROOF_OUT")
+        .ok()
+        .map(|path| std::fs::File::create(path).expect("output"));
+    for name in ["pedestrian", "bicycle"] {
+        let c = costing(name);
+        let pts = points(700);
+        let snaps = snapped(&p, &c, &pts);
+        let mut tables = StopTables::new(p, c.clone());
+        tables.bind(Arc::clone(&snaps)).expect("bind");
+        let mut forward: HashMap<(u32, u32), Found> = HashMap::new();
+        for from in 0..snaps.stop_count() as u32 {
+            let id = StopId::new(from);
+            let seeds = tables.stop_seeds(id).expect("seeds");
+            if seeds.is_empty() {
+                continue;
+            }
+            assert!(
+                tables
+                    .search(&TableRequest {
+                        side: AccessSide::Access,
+                        seeds: &seeds,
+                        max_seconds: 900,
+                        interrupt: &|| false,
+                    })
+                    .expect("forward")
+            );
+            for (to, _) in tables.reached_stops().collect::<Vec<_>>() {
+                if to != id {
+                    let leg = tables.leg(to).expect("leg");
+                    forward.insert((from, to.into_inner()), found(&leg));
+                }
+            }
+        }
+        let mut counts: BTreeMap<Agreement, u64> = BTreeMap::new();
+        let (mut only_forward, mut only_backward, mut compared) = (0_u64, 0_u64, 0_u64);
+        let mut seen = HashMap::new();
+        for to in 0..snaps.stop_count() as u32 {
+            let id = StopId::new(to);
+            let seeds = tables.stop_seeds(id).expect("seeds");
+            if seeds.is_empty() {
+                continue;
+            }
+            assert!(
+                tables
+                    .search(&TableRequest {
+                        side: AccessSide::Egress,
+                        seeds: &seeds,
+                        max_seconds: 900,
+                        interrupt: &|| false,
+                    })
+                    .expect("backward")
+            );
+            for (from, _) in tables.reached_stops().collect::<Vec<_>>() {
+                if from == id {
+                    continue;
+                }
+                let key = (from.into_inner(), to);
+                let leg = tables.leg(from).expect("leg");
+                let backward = found(&leg);
+                seen.insert(key, ());
+                match forward.get(&key) {
+                    None => {
+                        only_backward += 1;
+                        if let Some(out) = out.as_mut() {
+                            writeln!(out, "{name}\t{key:?}\tonly_backward\t{}", backward.secs)
+                                .expect("write");
+                        }
+                    }
+                    Some(forward) => {
+                        compared += 1;
+                        let verdict = classify(forward, &backward);
+                        *counts.entry(verdict).or_default() += 1;
+                        if verdict != Agreement::Same
+                            && let Some(out) = out.as_mut()
+                        {
+                            writeln!(
+                                out,
+                                "{name}\t{key:?}\t{verdict:?}\tf_secs={} b_secs={} f_cost={} \
+                                 b_cost={} f_edges={} b_edges={} f={:?} b={:?} fp={:?} bp={:?}",
+                                forward.secs,
+                                backward.secs,
+                                forward.cost,
+                                backward.cost,
+                                forward.edges.len(),
+                                backward.edges.len(),
+                                forward.edges,
+                                backward.edges,
+                                forward.parts,
+                                backward.parts,
+                            )
+                            .expect("write");
+                        }
+                    }
+                }
+            }
+        }
+        for key in forward.keys() {
+            if !seen.contains_key(key) {
+                only_forward += 1;
+                if let Some(out) = out.as_mut() {
+                    writeln!(out, "{name}\t{key:?}\tonly_forward\t{}", forward[key].secs)
+                        .expect("write");
+                }
+            }
+        }
+        eprintln!(
+            "{name}: compared {compared}, only forward {only_forward}, only backward \
+             {only_backward}; {counts:?}"
+        );
+        let unexplained = counts.get(&Agreement::DifferentRoute).copied().unwrap_or(0)
+            + counts
+                .get(&Agreement::CostOfSameRoute)
+                .copied()
+                .unwrap_or(0)
+            + only_forward
+            + only_backward;
+        assert_eq!(unexplained, 0, "{name}: unexplained differences");
+    }
+}
+
+/// The table entry's route, drawn again: the same search at the table's bound,
+/// and at the walk's own seconds, since the search's result doesn't depend on the limit.
 #[test]
 #[ignore = "needs /mnt/maps/cardinal data"]
 fn a_draw_is_the_tables_route_on_real_streets() {
@@ -195,40 +419,43 @@ fn a_draw_is_the_tables_route_on_real_streets() {
                 .map(|(to, s)| (to, s.into_inner()))
                 .collect();
             for (i, (to, seconds)) in reached.into_iter().enumerate() {
-                if i % 9 != 0 {
+                // Bicycles reach many more stops, and each pair costs two full searches.
+                if i % (if name == "bicycle" { 27 } else { 9 }) != 0 {
                     continue;
                 }
                 let leg = table_search.leg(to).expect("table leg");
-                let started = Instant::now();
-                assert!(draw.search(&request).expect("draw"));
-                at_bound += started.elapsed().as_secs_f64();
-                checked += 1;
-                let Some(drawn) = draw.leg(to) else {
-                    missing += 1;
-                    continue;
-                };
-                if drawn.secs.round() as u32 != seconds {
-                    secs_off += 1;
+                for (bound_search, max_seconds) in [(true, 900), (false, seconds)] {
+                    let started = Instant::now();
+                    let limited = TableRequest {
+                        max_seconds,
+                        ..request
+                    };
+                    assert!(draw.search(&limited).expect("draw"));
+                    let elapsed = started.elapsed().as_secs_f64();
+                    if bound_search {
+                        at_bound += elapsed;
+                    } else {
+                        at_walk += elapsed;
+                    }
+                    checked += 1;
+                    let Some(drawn) = draw.leg(to) else {
+                        missing += 1;
+                        continue;
+                    };
+                    if drawn.secs.round() as u32 != seconds {
+                        secs_off += 1;
+                    }
+                    let a: Vec<_> = leg.edges.iter().map(|e| e.edge).collect();
+                    let b: Vec<_> = drawn.edges.iter().map(|e| e.edge).collect();
+                    if a != b {
+                        edges_off += 1;
+                    }
                 }
-                let a: Vec<_> = leg.edges.iter().map(|e| e.edge).collect();
-                let b: Vec<_> = drawn.edges.iter().map(|e| e.edge).collect();
-                if a != b {
-                    edges_off += 1;
-                }
-                let started = Instant::now();
-                let shorter = TableRequest {
-                    max_seconds: seconds + 1,
-                    ..request
-                };
-                assert!(draw.search(&shorter).expect("short draw"));
-                at_walk += started.elapsed().as_secs_f64();
             }
         }
-        let per = |total: f64| 1000.0 * total / checked.max(1) as f64;
+        let per = |total: f64| 2000.0 * total / checked.max(1) as f64;
         eprintln!(
-            "{name}: checked {checked}, not drawn {missing}, seconds differ {secs_off}, \
-             route differs {edges_off}; per draw {:.2} ms at the bound, {:.2} ms at the walk's \
-             own limit",
+            "{name}: draws {checked}, not drawn {missing}, seconds differ {secs_off},              route differs {edges_off}; per draw {:.2} ms at the bound, {:.2} ms at the walk's              own seconds",
             per(at_bound),
             per(at_walk)
         );
@@ -264,4 +491,270 @@ fn snapping_does_not_depend_on_the_batch() {
     }
     eprintln!("batch differ {differ}, single differ {one_differ}");
     assert_eq!((differ, one_differ), (0, 0));
+}
+
+/// Every Washington stop, in one list.
+fn washington_points() -> Vec<(f64, f64)> {
+    let mut files: Vec<_> = std::fs::read_dir(TIMETABLES)
+        .expect("timetables")
+        .map(|entry| entry.expect("entry").path())
+        .collect();
+    files.sort();
+    let mut out = Vec::new();
+    for file in files {
+        let bytes = std::fs::read(&file).expect("timetable");
+        let timetable = valinor_gtfs::CompiledTimetable::parse(&bytes).expect("parse");
+        out.extend(
+            (0..timetable.stop_count() as u32)
+                .filter_map(|s| timetable.stop(StopId::new(s)).and_then(|i| i.coordinate))
+                .map(|c| (c.lon, c.lat)),
+        );
+    }
+    out
+}
+
+fn percentile(sorted: &[f64], fraction: f64) -> f64 {
+    sorted[((sorted.len() - 1) as f64 * fraction) as usize]
+}
+
+/// Search cost on real stops: access, egress, and transfer, warm and cold, walking and cycling.
+///
+/// Prints one line per case; `TABLE_BENCH_OUT` also writes them to a file.
+#[test]
+#[ignore = "needs /mnt/maps/cardinal data"]
+fn table_search_costs_on_real_streets() {
+    use std::io::Write as _;
+    let sets = tiles();
+    let p = &sets;
+    let mut out = std::env::var("TABLE_BENCH_OUT")
+        .ok()
+        .map(|path| std::fs::File::create(path).expect("output"));
+    let mut report = |line: String| {
+        eprintln!("{line}");
+        if let Some(out) = out.as_mut() {
+            writeln!(out, "{line}").expect("write");
+        }
+    };
+    report("mode,side,limit,phase,n,p50_ms,p95_ms,mean_labels,mean_stops,terminated_early".into());
+    let all = washington_points();
+    // Query stops in greater Seattle, shuffled, the same on every run.
+    let mut seattle: Vec<u32> = (0..all.len() as u32)
+        .filter(|&i| {
+            let (lon, lat) = all[i as usize];
+            (47.55..47.68).contains(&lat) && (-122.40..-122.27).contains(&lon)
+        })
+        .collect();
+    let mut state = 0x1234_5678_u64;
+    for i in (1..seattle.len()).rev() {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        seattle.swap(i, (state >> 33) as usize % (i + 1));
+    }
+    seattle.truncate(230);
+    // Places a little off the stops, for access and egress, snapped as a query's would be.
+    let offset: Vec<(f64, f64)> = seattle
+        .iter()
+        .map(|&i| {
+            let (lon, lat) = all[i as usize];
+            (lon + 0.0004, lat - 0.0003)
+        })
+        .collect();
+    for name in ["pedestrian", "bicycle"] {
+        let c = costing(name);
+        let snaps = snapped(&p, &c, &all);
+        let attachments =
+            Arc::new(StopAttachments::new(p, c.clone(), Arc::clone(&snaps)).expect("attach"));
+        let place_snaps = snapped(&p, &c, &offset);
+        let mut places = StopTables::new(p, c.clone());
+        places.bind(place_snaps).expect("bind");
+        let mut stops = StopTables::new(p, c.clone());
+        stops.bind_shared(Arc::clone(&attachments));
+        let mut queries: Vec<(Vec<TableSeed>, Vec<TableSeed>)> = Vec::new();
+        for (index, &stop) in seattle.iter().enumerate() {
+            let at_place = places
+                .stop_seeds(StopId::new(index as u32))
+                .expect("place seeds");
+            let at_stop = stops.stop_seeds(StopId::new(stop)).expect("stop seeds");
+            if !at_place.is_empty() && !at_stop.is_empty() {
+                queries.push((at_place, at_stop));
+            }
+        }
+        let sides = [
+            ("access", AccessSide::Access, false),
+            ("egress", AccessSide::Egress, false),
+            ("transfer", AccessSide::Access, true),
+        ];
+        for limit in [900_u32, 1800] {
+            for &(kind, side, at_stop) in &sides {
+                let seeds_of = |q: &(Vec<TableSeed>, Vec<TableSeed>)| -> Vec<TableSeed> {
+                    if at_stop { q.1.clone() } else { q.0.clone() }
+                };
+                let run = |tables: &mut StopTables<&TileSets, AnyCosting>,
+                           q: &(Vec<TableSeed>, Vec<TableSeed>)|
+                 -> (f64, u64, usize, bool) {
+                    let seeds = seeds_of(q);
+                    let started = Instant::now();
+                    assert!(
+                        tables
+                            .search(&TableRequest {
+                                side,
+                                seeds: &seeds,
+                                max_seconds: limit,
+                                interrupt: &|| false,
+                            })
+                            .expect("search")
+                    );
+                    let ms = started.elapsed().as_secs_f64() * 1000.0;
+                    (
+                        ms,
+                        tables.stats().labels_settled,
+                        tables.reached_stops().count(),
+                        tables.stats().terminated_early,
+                    )
+                };
+                let mut warm = StopTables::new(p, c.clone());
+                warm.bind_shared(Arc::clone(&attachments));
+                for q in queries.iter().take(30) {
+                    run(&mut warm, q);
+                }
+                let warm_runs: Vec<_> = queries.iter().map(|q| run(&mut warm, q)).collect();
+                let cold_runs: Vec<_> = queries
+                    .iter()
+                    .take(40)
+                    .map(|q| {
+                        let mut fresh = StopTables::new(p, c.clone());
+                        fresh.bind_shared(Arc::clone(&attachments));
+                        run(&mut fresh, q)
+                    })
+                    .collect();
+                for (phase, runs) in [("warm", &warm_runs), ("cold", &cold_runs)] {
+                    let mut ms: Vec<f64> = runs.iter().map(|r| r.0).collect();
+                    ms.sort_by(f64::total_cmp);
+                    let n = runs.len() as f64;
+                    report(format!(
+                        "{name},{kind},{limit},{phase},{},{:.3},{:.3},{:.0},{:.0},{}",
+                        runs.len(),
+                        percentile(&ms, 0.5),
+                        percentile(&ms, 0.95),
+                        runs.iter().map(|r| r.1 as f64).sum::<f64>() / n,
+                        runs.iter().map(|r| r.2 as f64).sum::<f64>() / n,
+                        runs.iter().filter(|r| r.3).count(),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// What adding one GTFS-RT new stop costs, for real stops in a statewide table.
+#[test]
+#[ignore = "needs /mnt/maps/cardinal data"]
+fn new_stop_cost_on_real_streets() {
+    let sets = tiles();
+    let p = &sets;
+    let all = washington_points();
+    let picks: Vec<u32> = (0..all.len() as u32)
+        .filter(|&i| {
+            let (lon, lat) = all[i as usize];
+            (47.55..47.68).contains(&lat) && (-122.40..-122.27).contains(&lon)
+        })
+        .step_by(400)
+        .take(4)
+        .collect();
+    let base = TransferTable::from_sorted_walks(all.len(), 900, &[]).expect("empty table");
+    for name in ["pedestrian", "bicycle"] {
+        let c = costing(name);
+        let snaps = snapped(&p, &c, &all);
+        for &stop in &picks {
+            let started = Instant::now();
+            let grown = base
+                .with_new_stops(&p, &c, &snaps, &[StopId::new(stop)], &|| false)
+                .expect("grow")
+                .expect("done");
+            eprintln!(
+                "new-stop,{name},{stop},{:.1} ms,{} walks",
+                started.elapsed().as_secs_f64() * 1000.0,
+                grown.walk_count()
+            );
+        }
+    }
+}
+
+/// How two transfer builds differ, walk by walk: which walks, and by how much, in each direction.
+///
+/// `TRANSFER_DIFF_BEFORE` and `TRANSFER_DIFF_AFTER` are `transfers/` directories.
+#[test]
+#[ignore = "needs TRANSFER_DIFF_BEFORE and TRANSFER_DIFF_AFTER"]
+fn transfer_build_differences() {
+    use std::collections::{BTreeMap, HashMap};
+    use valinor_walk::transfer_tile::{DecodeLimits, TransferMode, decode_tile};
+    let before = PathBuf::from(std::env::var("TRANSFER_DIFF_BEFORE").expect("before"));
+    let after = PathBuf::from(std::env::var("TRANSFER_DIFF_AFTER").expect("after"));
+    type Walks = HashMap<(u32, u32, u32, u32), u32>;
+    fn load(root: &std::path::Path, mode: TransferMode) -> Walks {
+        let mut walks = Walks::new();
+        let mode_root = root.join(mode.as_str()).join("12");
+        for x in std::fs::read_dir(&mode_root).expect("x") {
+            let x = x.expect("x").path();
+            for tile in std::fs::read_dir(&x).expect("y") {
+                let tile = tile.expect("tile").path();
+                let bytes = std::fs::read(&tile).expect("read");
+                let tile = decode_tile(&bytes, DecodeLimits::default()).expect("decode");
+                for (feed, stop, row) in tile.rows() {
+                    for walk in row.iter() {
+                        walks.insert((feed, stop, walk.feed, walk.stop), walk.seconds);
+                    }
+                }
+            }
+        }
+        walks
+    }
+    for mode in [TransferMode::Walking, TransferMode::Cycling] {
+        let b = load(&before, mode);
+        let a = load(&after, mode);
+        let (mut same, mut lost, mut gained, mut faster, mut slower) = (0_u64, 0, 0, 0, 0);
+        let mut delta_hist: BTreeMap<i32, u64> = BTreeMap::new();
+        let mut gained_at_bound = 0_u64;
+        let mut lost_at_bound = 0_u64;
+        for (key, &seconds) in &b {
+            match a.get(key) {
+                None => {
+                    lost += 1;
+                    lost_at_bound += u64::from(seconds >= 890);
+                }
+                Some(&now) if now == seconds => same += 1,
+                Some(&now) => {
+                    let delta = now as i32 - seconds as i32;
+                    if delta < 0 {
+                        faster += 1;
+                    } else {
+                        slower += 1;
+                    }
+                    let bucket = match delta.abs() {
+                        0..=1 => delta.signum(),
+                        2..=5 => 5 * delta.signum(),
+                        6..=30 => 30 * delta.signum(),
+                        31..=120 => 120 * delta.signum(),
+                        _ => 9999 * delta.signum(),
+                    };
+                    *delta_hist.entry(bucket).or_default() += 1;
+                }
+            }
+        }
+        for (key, &seconds) in &a {
+            if !b.contains_key(key) {
+                gained += 1;
+                gained_at_bound += u64::from(seconds >= 890);
+            }
+        }
+        eprintln!(
+            "{}: before {} after {}; same {same}, lost {lost} (at the bound {lost_at_bound}), \
+             gained {gained} (at the bound {gained_at_bound}), seconds down {faster}, up {slower}; \
+             change histogram {delta_hist:?}",
+            mode.as_str(),
+            b.len(),
+            a.len()
+        );
+    }
 }
