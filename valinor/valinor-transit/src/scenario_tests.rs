@@ -6,7 +6,9 @@ use crate::stop_table::RouteFilter;
 use crate::testing::{
     Scenario, ScenarioTrip, TestNet, block_of, check_journey, day_slot, oracle, t,
 };
-use crate::timetable::{ResolvedTrip, RouteAttributes, StopEvent, StopRules};
+use crate::timetable::{
+    ResolvedBlock, ResolvedLane, ResolvedTrip, RouteAttributes, StopEvent, StopRules,
+};
 use crate::{Journey, Leg, MAX_TRIPS, QueryError, Router, SearchError, StopTable};
 
 fn arrivals(net: &TestNet, departure: i32) -> Vec<(u8, i32)> {
@@ -462,6 +464,36 @@ fn overlay_changes_are_seen_by_a_search() {
     net.snapshot = overlay.build().expect("build");
     net.routes[0].days[0][0].events = vec![event(150), event(250)];
     assert_eq!(arrivals(&net, 0), vec![(1, 250)]);
+}
+
+#[test]
+fn a_lane_that_lost_all_its_trips_does_not_reach_the_scan() {
+    let (mut net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[100, 200])])
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    let event = |time| StopEvent {
+        arrival: t(time),
+        departure: t(time),
+        rules: StopRules::REGULAR,
+    };
+    let kept = ResolvedLane::new(vec![ResolvedTrip {
+        trip: TripId::new(1),
+        events: vec![event(100), event(200)],
+    }])
+    .expect("valid");
+    let emptied = ResolvedLane::new(Vec::new()).expect("cancellation can empty a lane");
+    let mut overlay = OverlayBuilder::new(net.snapshot.base().clone());
+    overlay
+        .replace_block(
+            crate::RouteId::new(0),
+            day_slot(0),
+            &ResolvedBlock::from_lanes(vec![kept, emptied]),
+        )
+        .expect("replace");
+    net.snapshot = overlay.build().expect("build");
+    assert_eq!(arrivals(&net, 0), vec![(1, 200)]);
 }
 
 #[test]
