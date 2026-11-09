@@ -31,6 +31,7 @@
     clippy::cast_sign_loss,
     clippy::cast_lossless,
     clippy::too_many_lines,
+    clippy::struct_excessive_bools,
     reason = "a reporting tool with small numbers"
 )]
 
@@ -51,8 +52,9 @@ use valinor_gtfs::{CompiledTimetable, FeedId, FeedInput, ZipSource, compile, par
 use valinor_router::tiles::TileSets;
 use valinor_sif::AnyCosting;
 use valinor_transit::{
-    DaySlot, Direction, ProfileOptions, RouteFilter, RouteId, Router, ServiceDate, Snapshot,
-    StopId, Time, TransferOutcome, TransferRequest, TransferSearch, TransferSink, TransitQuery,
+    DEFAULT_BOOTSTRAP_WALK_LIMIT, DaySlot, Direction, ProfileOptions, RouteFilter, RouteId, Router,
+    ServiceDate, Snapshot, StopId, Time, TransferOutcome, TransferRequest, TransferSearch,
+    TransferSink, TransitQuery,
 };
 use valinor_walk::{
     AccessSide, ResolvedWalk, SnapConfig, SnapPoint, StopSnaps, StopTables, TableRequest,
@@ -140,6 +142,10 @@ impl TransferSearch for Timed {
         self.direction = direction;
         self.round = 0;
         self.inner.begin_run(direction);
+    }
+
+    fn set_walk_limit(&mut self, limit: Option<u32>) {
+        self.inner.set_walk_limit(limit);
     }
 
     fn walk(&self, parent: WalkHandle) -> ResolvedWalk {
@@ -632,7 +638,7 @@ fn run_table_canary(worker: &mut Worker, env: &Env, sample: Sample) -> Result<f6
             &TableRequest {
                 side,
                 seeds,
-                max_seconds: env.max_walk,
+                max_seconds: 86_400,
                 interrupt: &|| false,
             },
         )?;
@@ -654,6 +660,7 @@ struct Config {
     known_journey_bounds: bool,
     own_seed_pruning: bool,
     terminate_tables: bool,
+    bootstrap: bool,
 }
 
 const ALL_OFF: Config = Config {
@@ -661,6 +668,7 @@ const ALL_OFF: Config = Config {
     known_journey_bounds: false,
     own_seed_pruning: false,
     terminate_tables: false,
+    bootstrap: false,
 };
 
 const ALL_ON: Config = Config {
@@ -668,6 +676,7 @@ const ALL_ON: Config = Config {
     known_journey_bounds: true,
     own_seed_pruning: true,
     terminate_tables: true,
+    bootstrap: true,
 };
 
 /// Runs every query under `config` and `ALL_OFF`, and reports any profile that differs.
@@ -691,6 +700,7 @@ fn compare_with_reference(
     };
     let options_of = |c: Config| ProfileOptions {
         known_journey_bounds: c.known_journey_bounds,
+        bootstrap_walk_limit: c.bootstrap.then_some(DEFAULT_BOOTSTRAP_WALK_LIMIT),
     };
     let mut reference = worker_of(ALL_OFF)?;
     let mut candidate = worker_of(config)?;
@@ -752,11 +762,64 @@ fn compare_each(
             terminate_tables: true,
             ..ALL_OFF
         },
+        Config {
+            name: "known bounds with bootstrap",
+            known_journey_bounds: true,
+            bootstrap: true,
+            ..ALL_OFF
+        },
     ];
     let mut differing = 0;
     for config in singles {
         differing += compare_with_reference(env, provider, costing, snaps, samples, config)?;
     }
+    if differing > 0 {
+        return Err(format!("{differing} profiles differ").into());
+    }
+    Ok(())
+}
+
+/// Checks the skipped walk of a search's final round.
+///
+/// A walk after the last allowed round can't change anything, so a profile with `K` trips must
+/// equal the entries with at most `K` trips of a profile allowing `K + 1`, whose round `K` walks.
+fn compare_final_round(
+    env: &Env,
+    provider: Provider,
+    costing: &AnyCosting,
+    snaps: &Arc<StopSnaps>,
+    samples: &[Sample],
+) -> Result<(), Box<dyn Error>> {
+    let (mut limited, _) = new_worker(provider, costing, snaps, true, true)?;
+    let (mut larger, _) = new_worker(provider, costing, snaps, true, true)?;
+    let bigger_env = Env {
+        max_trips: env.max_trips + 1,
+        provider: env.provider,
+        snapshot: env.snapshot.clone(),
+        day_start: env.day_start,
+        max_walk: env.max_walk,
+        options: env.options,
+    };
+    let (mut differing, mut entries) = (0usize, 0usize);
+    for sample in samples {
+        let (_, expected) = run_query_with(&mut limited, env, *sample, env.options)?;
+        let (_, wider) = run_query_with(&mut larger, &bigger_env, *sample, env.options)?;
+        let filtered: Triples = wider
+            .into_iter()
+            .filter(|&(_, _, trips)| trips <= env.max_trips)
+            .collect();
+        entries += expected.len();
+        if expected != filtered {
+            differing += 1;
+            println!("DIFFERENT {sample:?}\n  limited {expected:?}\n  larger  {filtered:?}");
+        }
+    }
+    println!(
+        "final-round walk, max_trips {} vs {}: compared {} queries, {entries} entries: {differing} differ",
+        env.max_trips,
+        bigger_env.max_trips,
+        samples.len(),
+    );
     if differing > 0 {
         return Err(format!("{differing} profiles differ").into());
     }
@@ -851,6 +914,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         max_walk: flags.number("max-walk", 86_400),
         options: ProfileOptions {
             known_journey_bounds: !flags.present("no-known-bounds"),
+            bootstrap_walk_limit: (!flags.present("no-bootstrap"))
+                .then(|| flags.number("bootstrap-limit", DEFAULT_BOOTSTRAP_WALK_LIMIT)),
         },
     };
     println!(
@@ -869,6 +934,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let own_seed_pruning = !flags.present("no-own-seed-pruning");
     let terminate_tables = !flags.present("flood-tables");
+    if flags.present("compare-final-round") {
+        return compare_final_round(&env, provider, &costing, &snaps, &samples);
+    }
     if flags.present("compare-each") {
         return compare_each(&env, provider, &costing, &snaps, &samples);
     }
@@ -926,6 +994,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let run_started = Instant::now();
     for (i, sample) in samples.iter().enumerate() {
         let measure = run_query(&mut worker, &env, *sample)?;
+        if matches!(i + 1, 1 | 4 | 16 | 64) {
+            let search = &worker.router.transfers().inner;
+            println!(
+                "retained after {} warm queries: walk search {:.1} MB, graph memo {:.1} MB, tables {:.1} MB",
+                i + 1,
+                search.working_memory_bytes() as f64 / 1e6,
+                search.graph_stats().bytes as f64 / 1e6,
+                worker.tables.stats().bytes as f64 / 1e6,
+            );
+        }
         if verbose {
             eprintln!(
                 "query {i}: {} {} -> {} {} {:.0} ms ({:.0} street, {:.0} tables, {} entries, \
