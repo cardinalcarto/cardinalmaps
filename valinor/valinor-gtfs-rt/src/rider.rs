@@ -115,6 +115,11 @@ pub struct VehicleDetails {
     pub route_id: Option<String>,
     /// The service date of its trip, when given.
     pub start_date: Option<CalendarDate>,
+    /// The start of its trip in seconds from the start of the day, when given.
+    ///
+    /// For `exact_times=0` frequency trips this, rather than [`Self::trip_key`], tells two
+    /// vehicles on the same trip apart: both can resolve to one headway-grid run.
+    pub start_time: Option<u32>,
     /// The vehicle's trip, when it matched the timetable.
     pub trip_key: Option<TripKey>,
     /// Latitude, in degrees.

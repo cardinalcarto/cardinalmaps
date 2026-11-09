@@ -168,10 +168,7 @@ impl FeedInput {
             header_timestamp,
             age,
             stale_after: self.stale_after,
-            stale: error.is_some()
-                || age.is_none_or(|age| {
-                    age > self.stale_after || age < self.stale_after.saturating_neg()
-                }),
+            stale: error.is_some() || is_stale(age, self.stale_after),
             entities_dropped: self
                 .decoded
                 .as_ref()
@@ -179,6 +176,13 @@ impl FeedInput {
             error,
         }
     }
+}
+
+/// Whether a message of this age, in seconds, is past its limit.
+///
+/// A message of unknown age, or dated further ahead of the clock than its limit allows, is stale.
+fn is_stale(age: Option<i64>, stale_after: i64) -> bool {
+    age.is_none_or(|age| age > stale_after || age < stale_after.saturating_neg())
 }
 
 /// How current one feed message was when an overlay was built.
@@ -204,6 +208,25 @@ pub struct FeedStatus {
     pub error: Option<DecodeError>,
     /// How many entities were dropped while decoding, for being empty or oversized.
     pub entities_dropped: usize,
+}
+
+impl FeedStatus {
+    /// This status as of `now`, for an overlay built at `built_at`.
+    ///
+    /// An overlay is built once but read for a while,
+    /// so responses report age at the moment of the query rather than at the build.
+    /// The feed's effect on routing was decided at the build; see [`Self::stale`].
+    #[must_use]
+    pub fn aged_to(&self, built_at: i64, now: i64) -> Self {
+        let age = self
+            .age
+            .map(|age| age.saturating_add(now.saturating_sub(built_at)));
+        Self {
+            age,
+            stale: self.error.is_some() || is_stale(age, self.stale_after),
+            ..self.clone()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -269,6 +292,18 @@ mod tests {
         let status = input(Some(2_000), None).status(1_000);
         assert_eq!(status.age, Some(-1_000));
         assert!(status.stale);
+    }
+
+    #[test]
+    fn aging_a_status_keeps_its_rules() {
+        let status = input(Some(1_000), None).status(1_030);
+        let later = status.aged_to(1_030, 1_100);
+        assert_eq!(later.age, Some(100));
+        assert!(later.stale);
+
+        let undated = input(None, None).status(1_000).aged_to(1_000, 1_001);
+        assert_eq!(undated.age, None);
+        assert!(undated.stale);
     }
 
     #[test]

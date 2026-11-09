@@ -1326,6 +1326,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                     .and_then(|d| d.route_id.clone())
                     .or_else(|| reference.and_then(|r| route_id_of(self.lookup, r.route))),
                 start_date,
+                start_time,
                 trip_key,
                 latitude: position.map(|p| p.latitude),
                 longitude: position.map(|p| p.longitude),
