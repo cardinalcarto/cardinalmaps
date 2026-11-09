@@ -10,7 +10,9 @@
 //! Letting two rows share a run would let a small file load as a very large timetable.
 
 use crate::error::DecodeError;
-use crate::format::layout::{MAX_SERVICE_DAYS, NONE, PATTERN_BIKES_ALLOWED};
+use crate::format::layout::{
+    MAX_SERVICE_DAYS, NONE, PATTERN_BIKES_ALLOWED, RULE_VALID_BITS, RUN_HEADWAY_FREQUENCY,
+};
 use crate::format::reader::Tables;
 use zerocopy::little_endian::U32;
 
@@ -497,6 +499,18 @@ fn validate_trip_riders(tables: &Tables<'_>) -> Result<(), DecodeError> {
                 reason: "an accessibility flag is not defined by GTFS",
             });
         }
+        if rider.frequency_run > RUN_HEADWAY_FREQUENCY {
+            return Err(DecodeError::InvalidValue {
+                table: "trip riders",
+                reason: "a run kind is not defined by this version",
+            });
+        }
+    }
+    if tables.rules.iter().any(|rule| rule & !RULE_VALID_BITS != 0) {
+        return Err(DecodeError::InvalidValue {
+            table: "rules",
+            reason: "a rule byte has bits this version does not define",
+        });
     }
     for id in tables.stop_headsigns {
         check_string("stop headsigns", tables, *id)?;

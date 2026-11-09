@@ -16,7 +16,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 pub const MAGIC: [u8; 8] = *b"VLNRGTFS";
 
 /// The only format version this build reads.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// The longest calendar a file may hold, in days (over a hundred years).
 pub(crate) const MAX_SERVICE_DAYS: u32 = 40_000;
@@ -296,7 +296,7 @@ pub(crate) struct TripRow {
     pub(crate) pattern: U32,
     pub(crate) service: U32,
     pub(crate) times_start: U32,
-    /// Per-position rule bytes, or [`NONE`] when every position is regular.
+    /// Per-position rule bytes, or [`NONE`] when every position is regular and exact.
     pub(crate) rules_start: U32,
 }
 
@@ -312,6 +312,11 @@ pub(crate) struct TimePair {
 pub(crate) const RULE_PICKUP_MASK: u8 = 0b0011;
 /// The next two bits of a rule byte: GTFS `drop_off_type`.
 pub(crate) const RULE_DROP_OFF_SHIFT: u8 = 2;
+/// A bit of a rule byte: this stop's time is approximate
+/// (GTFS `timepoint` is `0`, or the time was interpolated).
+pub(crate) const RULE_APPROXIMATE: u8 = 1 << 4;
+/// Every bit a rule byte may use.
+pub(crate) const RULE_VALID_BITS: u8 = 0b1_1111;
 
 /// What a rider sees about a trip, out of the way of the data that is read to route it.
 #[derive(Clone, Copy, Debug, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
@@ -331,9 +336,17 @@ pub(crate) struct TripRiderRow {
     pub(crate) bikes: u8,
     /// GTFS `direction_id`, or [`DIRECTION_NONE`].
     pub(crate) direction: u8,
-    /// Non-zero when this row is one run of a `frequencies.txt` trip.
+    /// [`RUN_SCHEDULED`], [`RUN_EXACT_FREQUENCY`], or [`RUN_HEADWAY_FREQUENCY`].
     pub(crate) frequency_run: u8,
 }
+
+/// A trip with its own schedule.
+pub(crate) const RUN_SCHEDULED: u8 = 0;
+/// One run of a `frequencies.txt` trip with `exact_times=1`, whose start times are real.
+pub(crate) const RUN_EXACT_FREQUENCY: u8 = 1;
+/// One run of a `frequencies.txt` trip with `exact_times=0`,
+/// whose start times are a grid the compiler laid out from the headway.
+pub(crate) const RUN_HEADWAY_FREQUENCY: u8 = 2;
 
 /// The direction byte of a trip without a `direction_id`.
 pub(crate) const DIRECTION_NONE: u8 = 0xff;

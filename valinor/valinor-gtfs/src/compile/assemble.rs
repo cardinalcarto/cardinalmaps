@@ -867,7 +867,7 @@ fn emit_trip(
         wheelchair: model.wheelchair,
         bikes: model.bikes,
         direction: model.direction,
-        frequency_run: u8::from(model.frequency_run),
+        frequency_run: model.frequency_run,
     });
     tables.shapes.push((feed, model.shape));
 

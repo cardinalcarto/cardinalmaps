@@ -25,6 +25,8 @@ pub enum DropReason {
     TimesOutOfOrder,
     /// A time is too large to represent.
     TimeOutOfRange,
+    /// Every row of `frequencies.txt` for this trip is unusable.
+    NoUsableFrequencies,
     /// The trip has fewer than two stops.
     TooFewStops,
 }
@@ -72,6 +74,8 @@ pub struct FeedReport {
     pub latest_time: i32,
     /// Stop times that were interpolated.
     pub interpolated_stop_times: usize,
+    /// Stop times of kept trips that are approximate: `timepoint=0` or interpolated.
+    pub approximate_stop_times: usize,
     /// Rows with a stop headsign.
     pub stop_headsigns: usize,
     /// Distinct shapes used.
@@ -115,6 +119,7 @@ impl FeedReport {
             trips_past_midnight: 0,
             latest_time: 0,
             interpolated_stop_times: 0,
+            approximate_stop_times: 0,
             stop_headsigns: 0,
             shapes: 0,
             shape_points: 0,

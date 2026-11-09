@@ -647,6 +647,11 @@ fn frequencies_expand_into_timetabled_runs() {
         .map(|run| {
             let trip = view.trip(run.trip).expect("trip");
             assert!(trip.frequency_run);
+            assert!(
+                trip.headway_based,
+                "exact_times=0 promises only the headway"
+            );
+            assert_eq!(trip.time_is_approximate_at(0), Some(true));
             assert_eq!(trip.time_at(1).expect("time").1 - run.first_departure, 1800);
             run.first_departure
         })
@@ -1376,6 +1381,7 @@ fn the_king_county_feed_reconciles() {
     assert_eq!(report.loop_patterns, 2);
     assert_eq!(report.trips_past_midnight, 1_433);
     assert_eq!(report.stop_headsigns, 266_075);
+    assert_eq!(report.approximate_stop_times, 912_227);
     assert!(
         report.dropped_trips.is_empty(),
         "{:?}",

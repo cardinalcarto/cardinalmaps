@@ -16,7 +16,10 @@ use crate::compile::source::GtfsSource;
 use crate::compile::table::{Table, field};
 use crate::compile::time::{parse_date, parse_time};
 use crate::error::CompileError;
-use crate::format::layout::{DIRECTION_NONE, MAX_SERVICE_DAYS};
+use crate::format::layout::{
+    DIRECTION_NONE, MAX_SERVICE_DAYS, RULE_APPROXIMATE, RUN_EXACT_FREQUENCY, RUN_HEADWAY_FREQUENCY,
+    RUN_SCHEDULED,
+};
 use crate::format::reader::service_date_of;
 
 /// The most runs one row of `frequencies.txt` may expand into.
@@ -83,7 +86,7 @@ pub(super) struct TripModel {
     pub(super) bikes: u8,
     pub(super) wheelchair: u8,
     pub(super) direction: u8,
-    pub(super) frequency_run: bool,
+    pub(super) frequency_run: u8,
     pub(super) stops: Vec<u32>,
     pub(super) times: Vec<(i32, i32)>,
     pub(super) rules: Vec<u8>,
@@ -912,6 +915,8 @@ struct Frequency {
     start: i32,
     end: i32,
     headway: i32,
+    /// `exact_times=1`: the runs are the real schedule, not an estimate from a headway.
+    exact: bool,
 }
 
 fn read_frequencies(
@@ -926,10 +931,14 @@ fn read_frequencies(
     let start = table.column("start_time")?;
     let end = table.column("end_time")?;
     let headway = table.column("headway_secs")?;
+    let exact_times = table.optional("exact_times");
+    // A trip with an entry here is frequency-based even when none of its rows are usable,
+    // so a malformed row can't turn it into one trip at its template time.
     let mut out: HashMap<String, Vec<Frequency>> = HashMap::new();
     let mut row = ByteRecord::new();
     while table.read(&mut row, report)? {
         let id = field(&row, Some(trip)).to_owned();
+        let spans = out.entry(id.clone()).or_default();
         let parsed = (
             parse_time(field(&row, Some(start))),
             parse_time(field(&row, Some(end))),
@@ -947,10 +956,11 @@ fn read_frequencies(
             report.warn(|| format!("frequency row for trip {id:?} is implausibly long"));
             continue;
         }
-        out.entry(id).or_default().push(Frequency {
+        spans.push(Frequency {
             start,
             end,
             headway,
+            exact: field(&row, exact_times) == "1",
         });
     }
     Ok(out)
@@ -980,6 +990,8 @@ struct RawStopTime {
     stop: u32,
     arrival: Option<i32>,
     departure: Option<i32>,
+    /// `timepoint=0`, or no time at all so that it will be interpolated.
+    approximate: bool,
     pickup: u8,
     drop_off: u8,
     headsign: u32,
@@ -1096,6 +1108,7 @@ fn read_trips(
         table.identifier(trip_id);
         let stop_id = table.column("stop_id")?;
         let sequence = table.column("stop_sequence")?;
+        let timepoint = table.optional("timepoint");
         let (arrival, departure, pickup, drop_off, headsign, dist) = (
             table.optional("arrival_time"),
             table.optional("departure_time"),
@@ -1148,6 +1161,8 @@ fn read_trips(
                 stop,
                 arrival,
                 departure,
+                approximate: field(&row, timepoint) == "0"
+                    || (arrival.is_none() && departure.is_none()),
                 pickup: rule_type(field(&row, pickup)),
                 drop_off: rule_type(field(&row, drop_off)),
                 headsign: pool.intern(stop_headsign)?,
@@ -1169,6 +1184,14 @@ fn read_trips(
     for mut header in headers {
         if let Some(reason) = header.drop {
             report.dropped(reason);
+            continue;
+        }
+        if frequencies
+            .get(header.name.as_str())
+            .is_some_and(Vec::is_empty)
+        {
+            // A warning for each bad row has already said why.
+            report.dropped(DropReason::NoUsableFrequencies);
             continue;
         }
         if header.rows.len() < 2 {
@@ -1215,7 +1238,10 @@ fn read_trips(
         let rules: Vec<u8> = header
             .rows
             .iter()
-            .map(|row| (row.pickup & 0b11) | ((row.drop_off & 0b11) << 2))
+            .map(|row| {
+                let approximate = if row.approximate { RULE_APPROXIMATE } else { 0 };
+                (row.pickup & 0b11) | ((row.drop_off & 0b11) << 2) | approximate
+            })
             .collect();
         let sequences: Vec<u32> = header.rows.iter().map(|row| row.sequence).collect();
         let headsigns: Vec<u32> = if header.rows.iter().all(|row| row.headsign == 0) {
@@ -1238,6 +1264,7 @@ fn read_trips(
         };
 
         report.trips_kept += 1;
+        report.approximate_stop_times += header.rows.iter().filter(|row| row.approximate).count();
         let last_arrival = times.last().map_or(0, |pair| pair.0);
         if last_arrival >= 86_400 {
             report.trips_past_midnight += 1;
@@ -1259,7 +1286,7 @@ fn read_trips(
             bikes: header.bikes,
             wheelchair: header.wheelchair,
             direction: header.direction,
-            frequency_run: false,
+            frequency_run: RUN_SCHEDULED,
             stops: stop_seq,
             times,
             rules,
@@ -1276,7 +1303,14 @@ fn read_trips(
                 while run_start < span.end {
                     let delta = run_start - first_departure;
                     let mut run = base.clone_with_shift(delta);
-                    run.frequency_run = true;
+                    run.frequency_run = if span.exact {
+                        RUN_EXACT_FREQUENCY
+                    } else {
+                        RUN_HEADWAY_FREQUENCY
+                    };
+                    // Departing at the run's start, the vehicle can't arrive any earlier:
+                    // the template's dwell at its first stop would otherwise reach before it.
+                    run.times[0].0 = run_start;
                     trips.push(run);
                     emitted += 1;
                     run_start += span.headway;

@@ -20,9 +20,10 @@ use zerocopy::{FromBytes, Immutable, KnownLayout, Unaligned};
 use crate::error::{DecodeError, LoadError};
 use crate::format::layout::{
     AgencyRow, DIRECTION_NONE, FORMAT_VERSION, FeedRow, FileHeader, IdIndexRow, MAGIC, NONE,
-    NoonOffsetRow, PATTERN_BIKES_ALLOWED, PatternRow, RULE_DROP_OFF_SHIFT, RULE_PICKUP_MASK,
-    RouteRow, SectionEntry, SectionId, ServiceRow, ShapePointRow, ShapeRow, StopRow, TimePair,
-    TripRiderRow, TripRow, UNCHECKSUMMED_PREFIX, ZoneRow, ZoneTransitionRow, checksum_of,
+    NoonOffsetRow, PATTERN_BIKES_ALLOWED, PatternRow, RULE_APPROXIMATE, RULE_DROP_OFF_SHIFT,
+    RULE_PICKUP_MASK, RUN_HEADWAY_FREQUENCY, RUN_SCHEDULED, RouteRow, SectionEntry, SectionId,
+    ServiceRow, ShapePointRow, ShapeRow, StopRow, TimePair, TripRiderRow, TripRow,
+    UNCHECKSUMMED_PREFIX, ZoneRow, ZoneTransitionRow, checksum_of,
 };
 use crate::format::validate::validate;
 
@@ -677,7 +678,8 @@ impl<'a> CompiledTimetable<'a> {
             wheelchair_accessible: Accessibility::from_byte(rider.wheelchair),
             bikes_allowed: Accessibility::from_byte(rider.bikes),
             direction: direction_of(rider.direction),
-            frequency_run: rider.frequency_run != 0,
+            frequency_run: rider.frequency_run != RUN_SCHEDULED,
+            headway_based: rider.frequency_run == RUN_HEADWAY_FREQUENCY,
             has_shape: reference(rider.shape).is_some(),
             times,
             stop_headsigns,
@@ -707,9 +709,12 @@ impl<'a> CompiledTimetable<'a> {
 
     /// Runs of a GTFS trip on a service date, as GTFS-RT finds them by `trip_id` and `start_date`.
     ///
-    /// A frequency-based trip has one run per expanded departure;
-    /// GTFS-RT tells them apart by `start_time`, which [`TripRun::first_departure`] answers.
+    /// A frequency-based trip has one run per expanded departure.
     /// Runs whose calendar doesn't include the date are not returned.
+    ///
+    /// To resolve a GTFS-RT `start_time`, use [`Self::trip_run_for_start_time`] rather than
+    /// comparing [`TripRun::first_departure`]: the departures of a headway-based run are a grid
+    /// laid out by the compiler, and a vehicle's real start time need not fall on it.
     pub fn trips_by_gtfs_id(
         &self,
         feed: &str,
@@ -724,13 +729,61 @@ impl<'a> CompiledTimetable<'a> {
             copy.service_active(trip_row.service.get(), date)
                 .then_some(())?;
             let times = copy.tables.times.get(trip_row.times_start.get() as usize)?;
+            let kind = copy
+                .tables
+                .trip_riders
+                .get(row.get() as usize)?
+                .frequency_run;
             Some(TripRun {
                 trip: TripId::new(row.get()),
                 date,
                 service_day_start_unix: start,
                 first_departure: times.departure.get(),
+                frequency_run: kind != RUN_SCHEDULED,
+                headway_based: kind == RUN_HEADWAY_FREQUENCY,
             })
         })
+    }
+
+    /// The run of a trip that a GTFS-RT `TripDescriptor` names.
+    ///
+    /// `start_time` is the descriptor's `start_time`, in seconds from the start of the service day.
+    ///
+    /// - A trip with its own schedule has one run on a date, and `start_time` isn't needed.
+    /// - An `exact_times=1` frequency trip needs `start_time`, and it must match a departure.
+    /// - An `exact_times=0` frequency trip needs `start_time`, and it gets the *nearest* run.
+    ///   Those runs are a grid the compiler laid out from the headway, so a real start time
+    ///   usually falls between them and two vehicles can land on one run.
+    ///   Treat the result as the template for a vehicle's times, not as that vehicle's identity:
+    ///   key real-time state for these runs by the descriptor's `start_time`.
+    ///
+    /// `None` means no run fits: the trip isn't active on `date`,
+    /// or a frequency trip came without a `start_time`, or nothing in the feed matches it.
+    pub fn trip_run_for_start_time(
+        &self,
+        feed: &str,
+        trip_id: &str,
+        date: ServiceDate,
+        start_time: Option<i32>,
+    ) -> Option<TripRun> {
+        let mut nearest: Option<(u32, TripRun)> = None;
+        for run in self.trips_by_gtfs_id(feed, trip_id, date) {
+            if !run.frequency_run {
+                return Some(run);
+            }
+            let start = start_time?;
+            if !run.headway_based {
+                if run.first_departure == start {
+                    return Some(run);
+                }
+                continue;
+            }
+            let gap = run.first_departure.abs_diff(start);
+            if nearest.is_none_or(|(best, _)| gap < best) {
+                nearest = Some((gap, run));
+            }
+        }
+        nearest.map(|(_, run)| run)
     }
 
     /// How many trips run on a date, counted from the compiled file alone.
@@ -1097,6 +1150,11 @@ pub struct TripInfo<'a> {
     pub direction: Option<u8>,
     /// Whether this is one run of a `frequencies.txt` trip.
     pub frequency_run: bool,
+    /// Whether the feed gives only a headway for this run (`exact_times=0`).
+    ///
+    /// Such trips are expanded to fixed runs so that they can be routed,
+    /// but only the headway is promised, so a response should call their times approximate.
+    pub headway_based: bool,
     /// Whether the trip has a shape to slice.
     pub has_shape: bool,
     times: &'a [TimePair],
@@ -1137,6 +1195,20 @@ impl TripInfo<'_> {
             .map_or(0, |byte| byte & RULE_PICKUP_MASK)
     }
 
+    /// Whether the time at a position is approximate, so a response can say so.
+    ///
+    /// True when the feed marks it `timepoint=0`, when it was interpolated,
+    /// or when the whole trip is [`Self::headway_based`].
+    /// `None` means the position is out of range.
+    pub fn time_is_approximate_at(&self, position: usize) -> Option<bool> {
+        self.times.get(position)?;
+        let marked = self
+            .rules
+            .get(position)
+            .is_some_and(|byte| byte & RULE_APPROXIMATE != 0);
+        Some(self.headway_based || marked)
+    }
+
     /// The GTFS `drop_off_type` at a position.
     pub fn drop_off_type_at(&self, position: usize) -> u8 {
         self.rules
@@ -1155,7 +1227,13 @@ pub struct TripRun {
     /// The UTC instant its service day starts at, when the file covers that date.
     pub service_day_start_unix: Option<i64>,
     /// When the run leaves its first stop, in seconds from the service day's start.
+    ///
+    /// For a [`Self::headway_based`] run this is a position on a grid, not a real departure.
     pub first_departure: i32,
+    /// Whether this is one run of a `frequencies.txt` trip.
+    pub frequency_run: bool,
+    /// Whether the feed gives only a headway for this run (`exact_times=0`).
+    pub headway_based: bool,
 }
 
 /// A piece of a shape between two stops of a trip.

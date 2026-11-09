@@ -4,7 +4,7 @@ use core::fmt::Write as _;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 
-use valinor_transit::ServiceDate;
+use valinor_transit::{RouteId, ServiceDate, Time, TripId};
 use zerocopy::little_endian::U32;
 use zerocopy::{FromBytes, IntoBytes};
 
@@ -490,4 +490,178 @@ fn a_short_row_can_omit_an_optional_identifier() {
     let output = compile_one(source).expect("compile");
     assert_eq!(output.reports[0].agencies, 1);
     assert_eq!(output.reports[0].warning_count, 0);
+}
+
+fn frequency_feed(frequencies: &str, stop_times: &str) -> InMemorySource {
+    minimal("UTC", &daily(), NO_DATES, stop_times).with("frequencies.txt", frequencies)
+}
+
+const FREQUENCY_HEADER: &str = "trip_id,start_time,end_time,headway_secs,exact_times\n";
+
+/// The first-stop arrival must not reach before the run, into negative time.
+#[test]
+fn frequency_runs_never_arrive_before_they_start() {
+    let stop_times = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+                      T,00:00:00,00:05:00,S1,1\nT,00:10:00,00:10:00,S2,2\n";
+    let frequencies = format!("{FREQUENCY_HEADER}T,00:00:00,00:30:00,600,1\n");
+    let output = compile_one(frequency_feed(&frequencies, stop_times)).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    for index in 0..view.trip_count() {
+        let trip = view
+            .trip(TripId::new(u32::try_from(index).expect("fits")))
+            .expect("trip");
+        let (arrival, departure) = trip.time_at(0).expect("time");
+        assert!(arrival >= 0, "{arrival}");
+        assert_eq!(arrival, departure);
+    }
+}
+
+#[test]
+fn a_trip_with_only_malformed_frequencies_does_not_run() {
+    let frequencies = format!("{FREQUENCY_HEADER}T,06:00:00,07:00:00,0,0\nT,bad,07:00:00,600,0\n");
+    let output = compile_one(frequency_feed(&frequencies, ST)).expect("compile");
+    let report = &output.reports[0];
+    assert_eq!(report.trips_kept, 0);
+    assert_eq!(
+        report.dropped_trips.get(&DropReason::NoUsableFrequencies),
+        Some(&1)
+    );
+    assert_eq!(report.warning_count, 2, "{:?}", report.warnings);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    assert_eq!(view.trip_count(), 0);
+}
+
+#[test]
+fn one_good_frequency_row_is_enough() {
+    let frequencies =
+        format!("{FREQUENCY_HEADER}T,06:00:00,07:00:00,0,0\nT,06:00:00,06:20:00,600,0\n");
+    let output = compile_one(frequency_feed(&frequencies, ST)).expect("compile");
+    assert_eq!(output.reports[0].frequency_runs, 2);
+    assert_eq!(output.reports[0].warning_count, 1);
+}
+
+/// `start_time` picks a run exactly, except that a headway-based run is only ever the nearest.
+#[test]
+fn gtfs_rt_start_time_matches_by_the_kind_of_run() {
+    let frequencies = format!("{FREQUENCY_HEADER}T,08:00:00,09:00:00,1800,1\n");
+    let exact = compile_one(frequency_feed(&frequencies, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&exact.bytes).expect("parse");
+    let date = d("20260105");
+    let run = |start| view.trip_run_for_start_time("f", "T", date, start);
+    assert_eq!(
+        run(Some(8 * 3600 + 1800)).expect("run").first_departure,
+        30_600
+    );
+    assert_eq!(
+        run(Some(8 * 3600 + 1)),
+        None,
+        "exact runs need an exact match"
+    );
+    assert_eq!(run(None), None, "a frequency trip needs a start time");
+    assert!(run(Some(8 * 3600)).expect("run").frequency_run);
+
+    let frequencies = format!("{FREQUENCY_HEADER}T,08:00:00,09:00:00,1800,0\n");
+    let headway = compile_one(frequency_feed(&frequencies, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&headway.bytes).expect("parse");
+    let run = |start| view.trip_run_for_start_time("f", "T", date, start);
+    let found = run(Some(8 * 3600 + 1000)).expect("run");
+    assert!(found.headway_based);
+    assert_eq!(found.first_departure, 8 * 3600 + 1800, "nearest, not exact");
+    assert_eq!(
+        run(Some(8 * 3600 + 400)).expect("run").first_departure,
+        8 * 3600
+    );
+    assert_eq!(run(None), None);
+    assert_eq!(
+        view.trip_run_for_start_time("f", "T", d("20250105"), Some(1)),
+        None
+    );
+
+    let plain = compile_one(minimal("UTC", &daily(), NO_DATES, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&plain.bytes).expect("parse");
+    let found = view
+        .trip_run_for_start_time("f", "T", date, None)
+        .expect("run");
+    assert!(!found.frequency_run, "a scheduled trip needs no start time");
+}
+
+#[test]
+fn exact_frequency_runs_are_not_marked_approximate() {
+    let frequencies = format!("{FREQUENCY_HEADER}T,08:00:00,08:20:00,600,1\n");
+    let output = compile_one(frequency_feed(&frequencies, ST)).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let trip = view.trip(TripId::new(0)).expect("trip");
+    assert!(trip.frequency_run);
+    assert!(!trip.headway_based);
+    assert_eq!(trip.time_is_approximate_at(1), Some(false));
+}
+
+#[test]
+fn timepoints_mark_approximate_times() {
+    let stop_times = "trip_id,arrival_time,departure_time,stop_id,stop_sequence,timepoint\n\
+                      T,08:00:00,08:00:00,S1,1,1\n\
+                      T,08:05:00,08:05:00,S2,2,0\n\
+                      T,,,S3,3,\n\
+                      T,08:30:00,08:30:00,S1,4,\n";
+    let output = compile_one(minimal("UTC", &daily(), NO_DATES, stop_times)).expect("compile");
+    assert_eq!(output.reports[0].approximate_stop_times, 2);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let trip = view.trip(TripId::new(0)).expect("trip");
+    assert_eq!(trip.time_is_approximate_at(0), Some(false), "timepoint=1");
+    assert_eq!(trip.time_is_approximate_at(1), Some(true), "timepoint=0");
+    assert_eq!(trip.time_is_approximate_at(2), Some(true), "interpolated");
+    assert_eq!(
+        trip.time_is_approximate_at(3),
+        Some(false),
+        "empty means exact"
+    );
+    assert_eq!(trip.time_is_approximate_at(4), None, "out of range");
+    assert_eq!(
+        trip.pickup_type_at(1),
+        0,
+        "the flag leaves the pickup type alone"
+    );
+    let timetable = view.to_timetable().expect("timetable");
+    let events = timetable
+        .resolved_trips(
+            RouteId::new(0),
+            d("20260105"),
+            Time::try_new(0).expect("time"),
+        )
+        .expect("trips");
+    assert!(
+        events[0]
+            .events
+            .iter()
+            .all(|event| event.rules.pickup && event.rules.drop_off)
+    );
+}
+
+#[test]
+fn a_rule_byte_with_undefined_bits_is_rejected() {
+    let stop_times = "trip_id,arrival_time,departure_time,stop_id,stop_sequence,timepoint\n\
+                      T,08:00:00,08:00:00,S1,1,0\nT,08:05:00,08:05:00,S2,2,0\n";
+    let mut file = HostileFile::from_source(minimal("UTC", &daily(), NO_DATES, stop_times));
+    file.section(SectionId::Rules)[0] = 0x20;
+    assert_rejected(&file.finish());
+}
+
+/// A trip naming a station is dropped and counted, not silently routed.
+#[test]
+fn a_trip_at_a_station_is_counted() {
+    let source = minimal(
+        "UTC",
+        &daily(),
+        NO_DATES,
+        "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+         T,08:00:00,08:00:00,ST,1\nT,08:10:00,08:10:00,S2,2\n",
+    )
+    .with(
+        "stops.txt",
+        "stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station\n\
+         ST,a,47.60,-122.33,1,\nP1,p,47.60,-122.33,0,ST\nS2,b,47.61,-122.33,0,\n",
+    );
+    let output = compile_one(source).expect("compile");
+    assert_eq!(output.reports[0].trips_kept, 0);
+    assert_eq!(output.reports[0].dropped_trips.values().sum::<usize>(), 1);
 }
