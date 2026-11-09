@@ -6,7 +6,9 @@ use crate::stop_table::RouteFilter;
 use crate::testing::{
     Scenario, ScenarioTrip, TestNet, block_of, check_journey, day_slot, oracle, t,
 };
-use crate::timetable::{ResolvedTrip, RouteAttributes, StopEvent, StopRules};
+use crate::timetable::{
+    ResolvedBlock, ResolvedLane, ResolvedTrip, RouteAttributes, StopEvent, StopRules,
+};
 use crate::{Journey, Leg, MAX_TRIPS, QueryError, Router, SearchError, StopTable};
 
 fn arrivals(net: &TestNet, departure: i32) -> Vec<(u8, i32)> {
@@ -346,6 +348,18 @@ fn a_route_cycle_terminates() {
 }
 
 #[test]
+fn a_stop_with_no_target_entry_is_never_a_result() {
+    // At the limit a backward clock is `-TIME_LIMIT`, so an unreachable stop's sum would
+    // land inside the valid time range. Stop 0 has no access entry; there is no journey at all.
+    let limit = crate::TIME_LIMIT;
+    let (net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[limit, limit])])
+        .egress(1, 0)
+        .build();
+    assert_eq!(departures(&net, limit), vec![]);
+}
+
+#[test]
 fn an_interrupt_stops_the_search() {
     let (net, _) = Scenario::new(2)
         .route(&[0, 1], &[ScenarioTrip::simple(1, &[10, 20])])
@@ -421,6 +435,55 @@ fn profile_has_one_entry_per_useful_departure() {
     assert_eq!(triples, vec![(100, 200, 1), (300, 400, 1)]);
 }
 
+/// A two-trip journey leaving at 100 and arriving at 300, and a direct one leaving at 50 and
+/// arriving at 400.
+fn walks_scenario() -> TestNet {
+    Scenario::new(4)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[100, 200])])
+        .route(&[2, 3], &[ScenarioTrip::simple(2, &[220, 300])])
+        .route(&[0, 3], &[ScenarioTrip::simple(3, &[50, 400])])
+        .walk(1, 2, 10)
+        .access(0, 0)
+        .egress(3, 0)
+        .build()
+        .0
+}
+
+#[test]
+fn a_profile_resolves_no_walk_for_a_departure_outside_its_window() {
+    let net = walks_scenario();
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router = net.router();
+    let profile = router
+        .profile(&query, t(0), t(90), &|| false)
+        .expect("profile");
+    assert_eq!(
+        profile.entries.len(),
+        1,
+        "only the direct journey departs in the window"
+    );
+    assert_eq!(router.transfers().walks_resolved.get(), 0);
+}
+
+#[test]
+fn a_profile_resolves_the_walk_of_each_entry_once() {
+    // The backward searches from 300 and from 400 both find the two-trip journey,
+    // and the second must not pay for its walk again.
+    let net = walks_scenario();
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router = net.router();
+    let profile = router
+        .profile(&query, t(0), t(200), &|| false)
+        .expect("profile");
+    let triples: Vec<_> = profile
+        .entries
+        .iter()
+        .map(|e| (e.departure.into_inner(), e.arrival.into_inner(), e.trips))
+        .collect();
+    assert_eq!(triples, vec![(50, 400, 1), (100, 300, 2)]);
+    assert_eq!(router.transfers().walks_resolved.get(), 1);
+}
+
 #[test]
 fn a_two_day_window_includes_tomorrows_trips() {
     let mut tomorrow = ScenarioTrip::simple(1, &[100, 200]);
@@ -462,6 +525,36 @@ fn overlay_changes_are_seen_by_a_search() {
     net.snapshot = overlay.build().expect("build");
     net.routes[0].days[0][0].events = vec![event(150), event(250)];
     assert_eq!(arrivals(&net, 0), vec![(1, 250)]);
+}
+
+#[test]
+fn a_lane_that_lost_all_its_trips_does_not_reach_the_scan() {
+    let (mut net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[100, 200])])
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    let event = |time| StopEvent {
+        arrival: t(time),
+        departure: t(time),
+        rules: StopRules::REGULAR,
+    };
+    let kept = ResolvedLane::new(vec![ResolvedTrip {
+        trip: TripId::new(1),
+        events: vec![event(100), event(200)],
+    }])
+    .expect("valid");
+    let emptied = ResolvedLane::new(Vec::new()).expect("cancellation can empty a lane");
+    let mut overlay = OverlayBuilder::new(net.snapshot.base().clone());
+    overlay
+        .replace_block(
+            crate::RouteId::new(0),
+            day_slot(0),
+            &ResolvedBlock::from_lanes(vec![kept, emptied]),
+        )
+        .expect("replace");
+    net.snapshot = overlay.build().expect("build");
+    assert_eq!(arrivals(&net, 0), vec![(1, 200)]);
 }
 
 #[test]

@@ -11,7 +11,7 @@ use std::collections::{BTreeSet, BinaryHeap};
 use crate::error::SearchError;
 use crate::ids::Direction;
 use crate::ids::Time;
-use crate::journey::{Journey, extract_journey};
+use crate::journey::{Journey, trace_journey};
 use crate::raptor::{Router, TransitQuery, round_results};
 use crate::transfer::TransferSearch;
 
@@ -49,6 +49,8 @@ pub(crate) fn run_profile<S: TransferSearch>(
     let mut seen_arrivals = BTreeSet::new();
     let mut seen_departures = BTreeSet::new();
     let mut entries = Vec::new();
+    // The entries so far, to skip resolving the walks of one they already beat.
+    let mut found: Vec<(Time, Time, u8)> = Vec::new();
 
     router.run_forward(query, earliest_seconds, interrupt)?;
     push_arrivals(router, &mut queue, &mut seen_arrivals);
@@ -58,28 +60,35 @@ pub(crate) fn run_profile<S: TransferSearch>(
 
         let mut departures = Vec::new();
         for result in round_results(&router.backward, Direction::Backward) {
-            let Some(journey) = extract_journey(
-                query,
-                &router.backward,
-                &router.transfers,
-                Direction::Backward,
-                result.trips,
-            ) else {
-                continue;
-            };
-            let departure = journey.departure.into_inner();
+            let departure = result.time.into_inner();
             if departure < earliest_seconds || departure > latest_seconds {
                 continue;
             }
+            // Before the filter below, though either order is correct: `departure` is the latest
+            // for this arrival and trip count, so an entry that beats this one has this same
+            // departure, which was queued when that entry was found.
+            if departure < latest_seconds && seen_departures.insert(departure) {
+                departures.push(departure);
+            }
+            let Some(trace) =
+                trace_journey(query, &router.backward, Direction::Backward, result.trips)
+            else {
+                continue;
+            };
+            let beaten = found
+                .iter()
+                .any(|&(d, a, k)| d >= trace.departure && a <= trace.arrival && k <= trace.trips);
+            if beaten {
+                continue;
+            }
+            found.push((trace.departure, trace.arrival, trace.trips));
+            let journey = trace.resolve_walks(|parent| router.transfers.walk(parent));
             entries.push(ProfileEntry {
                 departure: journey.departure,
                 arrival: journey.arrival,
                 trips: journey.trips,
                 journey,
             });
-            if departure < latest_seconds && seen_departures.insert(departure) {
-                departures.push(departure);
-            }
         }
 
         for departure in departures {

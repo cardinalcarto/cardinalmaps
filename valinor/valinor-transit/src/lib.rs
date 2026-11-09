@@ -28,6 +28,8 @@ mod proptests;
 #[cfg(test)]
 mod scenario_tests;
 #[cfg(test)]
+mod stress_tests;
+#[cfg(test)]
 mod testing;
 
 pub use error::{BuildError, QueryError, SearchError};
