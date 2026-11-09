@@ -64,8 +64,9 @@ pub(crate) fn run_profile<S: TransferSearch>(
             if departure < earliest_seconds || departure > latest_seconds {
                 continue;
             }
-            // This comes before the filter below: a forward search after a departure can lead to
-            // entries that matter even when this one is beaten.
+            // Before the filter below, though either order is correct: `departure` is the latest
+            // for this arrival and trip count, so an entry that beats this one has this same
+            // departure, which was queued when that entry was found.
             if departure < latest_seconds && seen_departures.insert(departure) {
                 departures.push(departure);
             }
