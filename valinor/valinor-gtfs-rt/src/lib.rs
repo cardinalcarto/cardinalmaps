@@ -24,6 +24,8 @@ mod states;
 #[cfg(test)]
 mod overlay_tests;
 #[cfg(test)]
+mod review_tests;
+#[cfg(test)]
 mod testing;
 
 pub use alerts::Period;
