@@ -515,7 +515,9 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         if seed.initial > limit_secs(request.max_seconds) {
             return Ok(());
         }
-        self.push_label(
+        // A seed takes no edge status (as Thor's origin edges), so a route can come back
+        // around onto its own edge to reach a stop behind the start on a one-way street.
+        self.push_seed(
             TableLabel {
                 inner,
                 cost: partial.cost + Cost::new(seed.initial, seed.initial),
@@ -564,6 +566,13 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         self.queue.push(Reverse((Key(label.cost.cost), index)));
     }
 
+    /// Queues a seed's label, which has no edge status.
+    fn push_seed(&mut self, label: TableLabel) {
+        let index = u32::try_from(self.labels.len()).unwrap_or(NONE);
+        self.labels.push(label);
+        self.queue.push(Reverse((Key(label.cost.cost), index)));
+    }
+
     /// Settles a label, reaches the stops on its edge, and expands from its far node.
     fn settle(&mut self, index: u32, request: &TableRequest<'_>) -> Result<(), WalkError> {
         let Some(label) = self.labels.get(index as usize).copied() else {
@@ -572,12 +581,14 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         if label.settled {
             return Ok(());
         }
-        let dense = label.dense_edge as usize;
-        if let Some(state) = self.edge_state.get_mut(dense) {
-            if state.stamp != self.epoch || state.label != index {
-                return Ok(());
+        if label.inner.predecessor().is_some() {
+            let dense = label.dense_edge as usize;
+            if let Some(state) = self.edge_state.get_mut(dense) {
+                if state.stamp != self.epoch || state.label != index {
+                    return Ok(());
+                }
+                state.permanent = true;
             }
-            state.permanent = true;
         }
         if let Some(stored) = self.labels.get_mut(index as usize) {
             stored.settled = true;
