@@ -106,6 +106,9 @@ impl KnownJourneys {
 }
 
 /// A journey with fewer trips also bounds every larger number of trips.
+///
+/// This also keeps the bounds non-increasing by round,
+/// which the transfer search's carry-over of node labels across rounds relies on.
 fn prefix_min(bounds: &mut [i32]) {
     let mut best = INFINITY;
     for bound in bounds {

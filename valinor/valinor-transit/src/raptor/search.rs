@@ -61,6 +61,7 @@ pub(super) fn run<const BACK: bool, S: TransferSearch>(
     let day_count = snapshot.days().len();
     let target_costs = input.target.costs();
     let mut scans = 0_u32;
+    let mut previous_upper_bound = INFINITY;
 
     for round in 1..=input.max_trips {
         if labels.marked.is_empty() {
@@ -129,6 +130,15 @@ pub(super) fn run<const BACK: bool, S: TransferSearch>(
             .get(usize::from(round) + 1)
             .copied()
             .unwrap_or(INFINITY);
+        // A transfer search carries node labels between the rounds of a run,
+        // which is only sound if this never rises: `best_target` only falls,
+        // and the bounds of a profile are non-increasing by round.
+        let upper_bound = labels.best_target.min(walk_bound);
+        debug_assert!(
+            upper_bound <= previous_upper_bound,
+            "a walk bound rose within a run"
+        );
+        previous_upper_bound = upper_bound;
         let outcome = run_transfers(
             labels,
             round,
