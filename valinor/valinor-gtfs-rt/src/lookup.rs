@@ -161,6 +161,12 @@ impl DayClock {
         self.start_unix
     }
 
+    /// Seconds from the start of this service day to a window time on it.
+    #[inline]
+    pub(crate) fn relative(self, seconds: i32) -> i64 {
+        i64::from(seconds) - self.offset
+    }
+
     /// The POSIX moment of a window time on this day's clock.
     #[inline]
     pub(crate) fn unix(self, seconds: i32) -> i64 {

@@ -261,8 +261,11 @@ fn translated_bytes(text: Option<&TranslatedString>) -> usize {
     text.map_or(0, |text| size_of_val(text.translation.as_slice()))
 }
 
-/// Splits one field off a message: its number, its bytes if length-delimited, and the rest.
-fn next_field(bytes: &[u8]) -> Result<(u64, Option<&[u8]>, &[u8]), DecodeError> {
+/// One field of a message: its number, its bytes if length-delimited, and what follows it.
+type Field<'a> = (u64, Option<&'a [u8]>, &'a [u8]);
+
+/// Splits one field off a message.
+fn next_field(bytes: &[u8]) -> Result<Field<'_>, DecodeError> {
     let (key, rest) = read_varint(bytes)?;
     let number = key >> 3;
     if number == 0 {
@@ -321,7 +324,7 @@ mod tests {
             },
             entity: vec![FeedEntity {
                 id: "1".into(),
-                alert: Some(Default::default()),
+                alert: Some(crate::proto::Alert::default()),
                 ..Default::default()
             }],
         }

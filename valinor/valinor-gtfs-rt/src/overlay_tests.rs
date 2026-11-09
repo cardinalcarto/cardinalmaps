@@ -836,6 +836,7 @@ fn no_service_at_direction_scope_removes_its_trips() {
     let overlay = removed_by(
         &net,
         vec![proto::EntitySelector {
+            route_id: Some("R2".into()),
             direction_id: Some(1),
             ..Default::default()
         }],
@@ -907,6 +908,89 @@ fn an_empty_selector_informs_nothing() {
     let net = multi_net();
     let overlay = removed_by(&net, vec![proto::EntitySelector::default()]);
     assert_eq!(remaining(&overlay), vec![0, 1, 2]);
+}
+
+#[test]
+fn a_direction_that_does_not_match_removes_nothing() {
+    let net = multi_net();
+    let overlay = removed_by(
+        &net,
+        vec![proto::EntitySelector {
+            route_id: Some("R1".into()),
+            direction_id: Some(1),
+            ..Default::default()
+        }],
+    );
+    assert_eq!(remaining(&overlay), vec![0, 1, 2]);
+    assert_eq!(overlay.stats.invalid_selectors, 0);
+}
+
+#[test]
+fn invalid_selectors_are_counted() {
+    let net = multi_net();
+    let overlay = removed_by(
+        &net,
+        vec![
+            proto::EntitySelector {
+                direction_id: Some(1),
+                ..Default::default()
+            },
+            trip_selector("t1", Some("not-a-date")),
+            proto::EntitySelector {
+                trip: Some(proto::TripDescriptor {
+                    route_id: Some("R1".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ],
+    );
+    assert_eq!(overlay.stats.invalid_selectors, 3);
+    assert_eq!(remaining(&overlay), vec![0, 1, 2]);
+}
+
+#[test]
+fn a_descriptor_without_trip_id_removes_the_run_it_names() {
+    let net = three_stop_net();
+    let overlay = removed_by(
+        &net,
+        vec![proto::EntitySelector {
+            trip: Some(proto::TripDescriptor {
+                route_id: Some("R1".into()),
+                direction_id: Some(0),
+                start_time: Some("00:01:40".into()),
+                start_date: Some(DATE_1.into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }],
+    );
+    assert_eq!(arrivals_of(&overlay.snapshot, 0, TODAY, 0), None);
+    assert!(arrivals_of(&overlay.snapshot, 0, TODAY, 1).is_some());
+    assert!(arrivals_of(&overlay.snapshot, 0, 2, 0).is_some());
+}
+
+#[test]
+fn an_agency_selector_matches_a_feed_that_omits_agency_id() {
+    let net = NetBuilder::new()
+        .route_with(
+            "R1",
+            None,
+            3,
+            Some(0),
+            1,
+            &["A", "B"],
+            &[("t1", &[100, 200])],
+        )
+        .build();
+    let overlay = removed_by(
+        &net,
+        vec![proto::EntitySelector {
+            agency_id: Some("anything".into()),
+            ..Default::default()
+        }],
+    );
+    assert_eq!(arrivals_of(&overlay.snapshot, 0, TODAY, 0), None);
 }
 
 #[test]

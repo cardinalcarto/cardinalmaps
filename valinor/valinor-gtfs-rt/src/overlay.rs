@@ -19,7 +19,8 @@ use valinor_transit::{
 };
 
 use crate::alerts::{
-    AlertEffect, NoServiceAlert, Period, TripIdentity, compile_no_service, scheduled_identity,
+    AlertBudget, AlertEffect, NoServiceAlert, Period, TripIdentity, compile_no_service,
+    scheduled_identity,
 };
 use crate::date::{CalendarDate, parse_start_time};
 use crate::feed::{FeedId, FeedInput, ScopedId};
@@ -125,6 +126,10 @@ pub struct OverlayStats {
     pub trip_updates_outside_window: usize,
     /// Trip updates dropped because a newer one named the same trip run.
     pub duplicate_trip_updates: usize,
+    /// Alert selectors that are empty or invalid, and so inform nothing.
+    pub invalid_selectors: usize,
+    /// Whether alerts caused so much work that the rest of them were not applied.
+    pub alert_work_exhausted: bool,
     /// Trip updates naming no trip at all.
     pub trip_updates_without_trip: usize,
     /// `NEW`, `ADDED`, `REPLACEMENT`, or `DUPLICATED` updates that couldn't be used.
@@ -226,7 +231,15 @@ enum TripChange {
 struct BlockChange {
     trips: HashMap<TripId, TripChange>,
     /// Trips added to this block outright (duplicates on the same pattern).
-    added: Vec<ResolvedTrip>,
+    added: Vec<CopiedTrip>,
+}
+
+/// A `DUPLICATED` trip running on its template's pattern.
+#[derive(Debug, Clone)]
+struct CopiedTrip {
+    resolved: ResolvedTrip,
+    key: TripKey,
+    direction_id: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -259,6 +272,7 @@ struct Context<'a, L: StaticLookup + ?Sized> {
     added: BTreeMap<(Vec<StopId>, RouteAttributes), AddedDays>,
     rider: RiderData,
     stats: OverlayStats,
+    alert_budget: AlertBudget,
 }
 
 /// Builds the overlay for `feeds` over `base`.
@@ -320,6 +334,7 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
         added: BTreeMap::new(),
         rider: RiderData::default(),
         stats: OverlayStats::default(),
+        alert_budget: AlertBudget::new(),
     };
 
     let new_stops = context.add_new_stops(fresh.stops, &mut overlay, options)?;
@@ -332,6 +347,7 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
     context.lay_out_blocks(&mut overlay, &alerts, &block_alerts)?;
     context.lay_out_added_routes(&mut overlay, &alerts)?;
 
+    context.stats.alert_work_exhausted = context.alert_budget.exhausted();
     context.rider.set_feeds(statuses);
     let snapshot = overlay.build()?;
     context.stats.arena = snapshot.overlay_usage();
@@ -861,6 +877,11 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             .base
             .route_attributes(reference.route)
             .unwrap_or(RouteAttributes::NONE);
+        // A feed needn't repeat the direction, and alerts by direction must still reach the trip.
+        let direction_id = trip.direction_id.or_else(|| {
+            self.find_trip(reference)
+                .and_then(|scheduled| scheduled.direction_id)
+        });
         self.added
             .entry((stops, attributes))
             .or_default()
@@ -876,7 +897,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                         .route_info(reference.route)
                         .map(|info| info.route_id.to_owned())
                 }),
-                direction_id: trip.direction_id,
+                direction_id,
                 state,
             });
     }
@@ -1025,7 +1046,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         let first = scheduled.events.first().map(|e| e.departure.into_inner());
         // With no new start time the copy keeps the template's time of day.
         let shift = match (new_time, first) {
-            (Some(new_time), Some(first)) => i64::from(new_time) - relative(source_clock, first),
+            (Some(new_time), Some(first)) => i64::from(new_time) - source_clock.relative(first),
             _ => 0,
         };
 
@@ -1097,9 +1118,13 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             .entry((template.route, target_clock.slot))
             .or_default()
             .added
-            .push(ResolvedTrip {
-                trip: new_id,
-                events: propagated.events,
+            .push(CopiedTrip {
+                resolved: ResolvedTrip {
+                    trip: new_id,
+                    events: propagated.events,
+                },
+                key,
+                direction_id: scheduled.direction_id,
             });
         Ok(())
     }
@@ -1235,6 +1260,8 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 &self.clocks,
                 &self.added_index,
                 &resolve,
+                &mut self.stats.invalid_selectors,
+                &mut self.alert_budget,
             ) {
                 self.stats
                     .alert_impacts
@@ -1367,6 +1394,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                         &events,
                         clock,
                         &mut self.stats.alert_impacts,
+                        &mut self.alert_budget,
                     ),
                     None => AlertEffect::default(),
                 };
@@ -1400,8 +1428,43 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                     events,
                 });
             }
-            self.stats.trips_added += change.added.len();
-            trips.extend(change.added);
+            for copy in change.added {
+                let CopiedTrip {
+                    mut resolved,
+                    key: key_of_trip,
+                    direction_id,
+                } = copy;
+                let effect = match info {
+                    Some(info) => combined_effect(
+                        alerts.iter(),
+                        TripIdentity {
+                            feed: info.feed,
+                            route: Some(info),
+                            direction: direction_id,
+                            trip: resolved.trip,
+                            day,
+                        },
+                        stops,
+                        &resolved.events,
+                        clock,
+                        &mut self.stats.alert_impacts,
+                        &mut self.alert_budget,
+                    ),
+                    None => AlertEffect::default(),
+                };
+                if effect.remove {
+                    self.stats.trips_removed += 1;
+                    self.rider.set_state(key_of_trip, TripState::NoService);
+                    continue;
+                }
+                for position in effect.stops_removed {
+                    if let Some(event) = resolved.events.get_mut(position) {
+                        event.rules = StopRules::SKIPPED;
+                    }
+                }
+                self.stats.trips_added += 1;
+                trips.push(resolved);
+            }
             if !changed {
                 continue;
             }
@@ -1454,6 +1517,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                         &trip.events,
                         clock,
                         &mut self.stats.alert_impacts,
+                        &mut self.alert_budget,
                     );
                     if effect.remove {
                         self.stats.trips_removed += 1;
@@ -1526,10 +1590,11 @@ fn combined_effect<'a>(
     events: &[StopEvent],
     clock: DayClock,
     impacts: &mut BTreeMap<usize, AlertImpact>,
+    budget: &mut AlertBudget,
 ) -> AlertEffect {
     let mut combined = AlertEffect::default();
     for alert in alerts {
-        let effect = alert.effect_on(identity, stops, events, clock);
+        let effect = alert.effect_on(identity, stops, events, clock, budget);
         let impact = impacts.entry(alert.rider_index).or_default();
         if effect.remove {
             impact.trips_removed += 1;
@@ -1680,11 +1745,6 @@ fn within_service_day(unix: i64, clock: DayClock, max_offset: i64) -> bool {
     (from..=to).contains(&unix)
 }
 
-/// Seconds from the start of `clock`'s service day to a window time on it.
-fn relative(clock: DayClock, seconds: i32) -> i64 {
-    clock.unix(seconds) - clock.start_unix()
-}
-
 /// A trip's events moved from one service day to another, plus `shift` seconds.
 fn shifted_events(
     events: &[StopEvent],
@@ -1693,7 +1753,7 @@ fn shifted_events(
     shift: i64,
 ) -> Option<Vec<StopEvent>> {
     let convert = |time: Time| {
-        let seconds = relative(source, time.into_inner()) + shift + target.start_unix();
+        let seconds = source.relative(time.into_inner()) + shift + target.start_unix();
         window_time(target.window_seconds(seconds)).ok()
     };
     events
