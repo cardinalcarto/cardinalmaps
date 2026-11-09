@@ -896,17 +896,17 @@ fn walks_convert_to_thor_legs_with_a_shape() {
 fn access_legs_convert_to_thor_legs_with_a_shape() {
     use crate::paths::{access_leg, route_paths};
     let (mut tables, snaps, points) = tables_fixture();
-    let _ = access_table_for(
-        &mut tables,
-        AccessSide::Egress,
-        points[3],
-        snaps.stop_count(),
-    );
-    let leg = (0..snaps.stop_count())
-        .find_map(|i| {
-            tables
-                .leg(StopId::new(i as u32))
-                .filter(|l| l.edges.len() >= 3)
+    // Some seeds lie on an edge whose cost alone exceeds the search's bound, so look for one that
+    // reaches further.
+    let leg = points[3..]
+        .iter()
+        .find_map(|&seed| {
+            let _ = access_table_for(&mut tables, AccessSide::Egress, seed, snaps.stop_count());
+            (0..snaps.stop_count()).find_map(|i| {
+                tables
+                    .leg(StopId::new(i as u32))
+                    .filter(|l| l.edges.len() >= 3)
+            })
         })
         .expect("a long enough leg");
     let thor_leg = access_leg(

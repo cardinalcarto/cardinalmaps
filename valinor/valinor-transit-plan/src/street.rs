@@ -589,7 +589,7 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
         };
         // The search that found this walk, so the drawn route matches its seconds: a walk from a
         // base stop to a GTFS-RT new stop was found by a backward search from the new stop.
-        // The walk's own seconds are enough of a limit: results don't depend on the limit.
+        // It runs at the table's own limit, which sets the search's cost bound.
         self.mode_worker_transfer.bind(Arc::clone(
             request
                 .snapshot
@@ -601,13 +601,22 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
             AccessSide::Access => (walk.from, walk.to),
             AccessSide::Egress => (walk.to, walk.from),
         };
+        let max_seconds = request
+            .snapshot
+            .snaps()
+            .ok_or(StreetError::NoSnaps)?
+            .transfers_for_mode(request.mode)
+            .max_seconds();
         let seeds = self.mode_worker_transfer.stop_seeds(seed_stop)?;
-        if !self.mode_worker_transfer.search(&TableRequest {
-            side: walk.search,
-            seeds: &seeds,
-            max_seconds: walk.seconds,
-            interrupt: self.interrupt,
-        })? {
+        if !self.mode_worker_transfer.search_to_stop(
+            &TableRequest {
+                side: walk.search,
+                seeds: &seeds,
+                max_seconds,
+                interrupt: self.interrupt,
+            },
+            target_stop,
+        )? {
             return Ok(None);
         }
         let Some(leg) = self.mode_worker_transfer.leg(target_stop) else {

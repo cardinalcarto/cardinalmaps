@@ -104,14 +104,15 @@ It stores only times; a transfer in a result is routed again with the same searc
 A table depends on stop positions and the street graph, not on the timetable,
 so a new real-time stop only needs its own walks added.
 
-Sif's cost and seconds are different quantities, so a walk's cheapest route can take longer than
-a bound while a costlier route fits. The table search never drops a label for exceeding its time
-limit: it keeps expanding in cost order, over-limit labels included,
-and stops only when no queued label is still within the limit (and one last edge's cost past that,
-so an over-limit route that's cheaper to a stop than a tabled one can still knock it out).
-A stop whose cheapest route exceeds the limit is left out, rather than taking a costlier one.
-Every settled edge then has its true cheapest route, so the results don't depend on the limit
-or on the search's direction, and a draw at the walk's own seconds finds the same route as the table.
+Sif's cost and seconds are different quantities, so cutting a cost-ordered search off by seconds
+lets a costlier route that fits take a stop whose cheapest route doesn't.
+Table searches (access, egress, transfers, GTFS-RT new stops, and draws alike) are bounded by cost
+alone: `max_cost = max_seconds * factor(mode)`, with factors covering the 95th percentile of
+measured whole-route cost over time (walking 1.2, cycling 3.6).
+Labels over the bound are dropped, and a stop is only offered a route within it,
+so exactly the routes of cost at most `max_cost` survive, whichever direction the search runs.
+A stop's entry is its cheapest route, reported if its seconds are within `max_seconds`.
+A draw searches with the table's limit and stops once its target stop's route is final.
 
 The table bounds which journeys exist: a transfer past the bound isn't considered.
 Measured on King County Metro, about 91% of the profile entries of a 15-minute table match a search

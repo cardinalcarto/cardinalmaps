@@ -514,8 +514,16 @@ fn a_stop_within_the_limit_on_an_edge_ending_beyond_it_is_kept() {
         if leg.end_percent >= 0.8 || last.traversal.secs < 1.0 || leg.edges.len() < 2 {
             continue;
         }
-        // The stop's own whole seconds: the limit is on the entry, so this admits it exactly.
-        let limit = leg.secs.round() as u32;
+        let limit = leg.secs.ceil() as u32;
+        // A route too costly for this limit's cost bound is rightly left out.
+        let cost: f32 = leg
+            .edges
+            .iter()
+            .map(|e| e.transition.cost + e.traversal.cost)
+            .sum();
+        if cost > limit as f32 * crate::table::WALKING_COST_FACTOR {
+            continue;
+        }
         let table = tables
             .compute(
                 snaps.stop_count(),

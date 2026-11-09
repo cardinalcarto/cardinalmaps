@@ -8,8 +8,8 @@
 //! Forward and backward searches read the same entry for a directed pair of stops,
 //! so they agree by construction.
 //! The table holds only times; a transfer that ends up in a result is routed again to draw it.
-//! The table search's results don't depend on its time limit (see [`crate::table`]),
-//! so a draw limited to the walk's own seconds finds the same route as the table's own search.
+//! A draw searches with the table's own limit, which sets the search's cost bound,
+//! so that it finds the same route as the table's own search; it stops once that route is final.
 //! A walk from a GTFS-RT new stop's backward search is drawn with that same backward search;
 //! [`TableWalk::search`] records which search found a walk.
 

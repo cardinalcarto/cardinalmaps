@@ -369,12 +369,15 @@ fn a_walk_into_a_new_stop_is_found_and_drawn_backward() {
                 assert_eq!(walk.search, AccessSide::Egress, "{name}: {from}->{to}");
                 let seeds = draw.stop_seeds(walk.to).expect("seeds");
                 assert!(
-                    draw.search(&TableRequest {
-                        side: AccessSide::Egress,
-                        seeds: &seeds,
-                        max_seconds: walk.seconds,
-                        interrupt: &|| false,
-                    })
+                    draw.search_to_stop(
+                        &TableRequest {
+                            side: AccessSide::Egress,
+                            seeds: &seeds,
+                            max_seconds: RADIUS,
+                            interrupt: &|| false,
+                        },
+                        walk.from,
+                    )
                     .expect("draw")
                 );
                 let leg = draw.leg(walk.from).expect("drawn");
@@ -390,14 +393,17 @@ fn a_walk_into_a_new_stop_is_found_and_drawn_backward() {
     }
 }
 
-/// A search's results at any limit are the unbounded search's results within that limit,
-/// route for route: nothing a limit does changes which route wins.
+/// A search at a limit reports exactly what a wider search reports with cost and seconds within
+/// that limit's bound: a bound drops only routes too costly, and never changes the cheapest.
 #[test]
-fn a_tables_results_do_not_depend_on_its_limit() {
+fn a_tables_entries_are_a_wider_searchs_within_its_bound() {
     let sets = andorra();
     let provider = &sets;
     let mut limited_out = 0;
-    for name in ["pedestrian", "bicycle"] {
+    for (name, mode) in [
+        ("pedestrian", valinor_sif::TravelMode::Pedestrian),
+        ("bicycle", valinor_sif::TravelMode::Bicycle),
+    ] {
         let costing = costing_named(name);
         let points = random_stops(&provider, &TILES, 90, 43);
         let snaps = snaps_of(&provider, &points);
@@ -405,6 +411,12 @@ fn a_tables_results_do_not_depend_on_its_limit() {
         wide.bind(Arc::clone(&snaps)).expect("bind");
         let mut narrow = StopTables::new(provider, costing.clone());
         narrow.bind(Arc::clone(&snaps)).expect("bind");
+        let cost_of = |leg: &crate::table::AccessLeg| -> f32 {
+            leg.edges
+                .iter()
+                .map(|e| e.transition.cost + e.traversal.cost)
+                .sum()
+        };
         for side in [AccessSide::Access, AccessSide::Egress] {
             for origin in (0..90_u32).step_by(7) {
                 let stop = StopId::new(origin);
@@ -425,29 +437,45 @@ fn a_tables_results_do_not_depend_on_its_limit() {
                     );
                 };
                 run(&mut wide, 7200);
-                let full: HashMap<StopId, (u32, Vec<_>)> = wide
+                let full: HashMap<StopId, (f32, f32)> = wide
                     .reached_stops()
-                    .map(|(to, secs)| {
+                    .map(|(to, _)| {
                         let leg = wide.leg(to).expect("leg");
-                        (to, (secs.into_inner(), leg.edges))
+                        (to, (leg.secs, cost_of(&leg)))
                     })
                     .collect();
-                for limit in [30, 60, 120, 240, 480, 900, 1800, 3600] {
+                for limit in [30_u32, 60, 120, 240, 480, 900, 1800, 3600] {
                     run(&mut narrow, limit);
-                    let got: HashMap<StopId, (u32, Vec<_>)> = narrow
+                    let bound = limit as f32 * crate::table::cost_factor(mode);
+                    let got: HashMap<StopId, (f32, f32)> = narrow
                         .reached_stops()
-                        .map(|(to, secs)| {
+                        .map(|(to, _)| {
                             let leg = narrow.leg(to).expect("leg");
-                            (to, (secs.into_inner(), leg.edges))
+                            (to, (leg.secs, cost_of(&leg)))
                         })
                         .collect();
-                    limited_out += full.len() - got.len();
-                    let expected: HashMap<StopId, (u32, Vec<_>)> = full
-                        .iter()
-                        .filter(|(_, (secs, _))| *secs <= limit)
-                        .map(|(stop, value)| (*stop, value.clone()))
-                        .collect();
-                    assert_eq!(got, expected, "{name} {side:?} from {origin} at {limit}");
+                    for (to, &(secs, cost)) in &full {
+                        // Float noise of the sum at the edge of the bound or limit can go either way.
+                        if (cost - bound).abs() < 0.05 || (secs - limit as f32).abs() < 0.05 {
+                            continue;
+                        }
+                        let should = cost <= bound && secs <= limit as f32;
+                        assert_eq!(
+                            got.contains_key(to),
+                            should,
+                            "{name} {side:?} from {origin} to {to:?} at {limit}: {secs}s, cost {cost}"
+                        );
+                        if should {
+                            let (s, c) = got[to];
+                            assert!(
+                                (c - cost).abs() < 0.05 && (s - secs).abs() < 2.0,
+                                "{name} {side:?} from {origin} to {to:?} at {limit}: \
+                                 {s}s/{c} against {secs}s/{cost}"
+                            );
+                        } else {
+                            limited_out += 1;
+                        }
+                    }
                 }
             }
         }
@@ -456,6 +484,50 @@ fn a_tables_results_do_not_depend_on_its_limit() {
         limited_out > 0,
         "no limit changed anything, so this tested nothing"
     );
+}
+
+/// A search stopped at its target gives the target what the full search would.
+#[test]
+fn a_search_to_a_stop_finds_the_full_searchs_route() {
+    let sets = andorra();
+    let provider = &sets;
+    for name in ["pedestrian", "bicycle"] {
+        let costing = costing_named(name);
+        let points = random_stops(&provider, &TILES, 90, 47);
+        let snaps = snaps_of(&provider, &points);
+        let mut full = StopTables::new(provider, costing.clone());
+        full.bind(Arc::clone(&snaps)).expect("bind");
+        let mut draw = StopTables::new(provider, costing.clone());
+        draw.bind(Arc::clone(&snaps)).expect("bind");
+        let mut checked = 0;
+        for side in [AccessSide::Access, AccessSide::Egress] {
+            for origin in (0..90_u32).step_by(3) {
+                let seeds = full.stop_seeds(StopId::new(origin)).expect("seeds");
+                if seeds.is_empty() {
+                    continue;
+                }
+                let request = TableRequest {
+                    side,
+                    seeds: &seeds,
+                    max_seconds: RADIUS,
+                    interrupt: &|| false,
+                };
+                assert!(full.search(&request).expect("search"));
+                let reached: Vec<StopId> = full.reached_stops().map(|(to, _)| to).collect();
+                for to in reached {
+                    assert!(draw.search_to_stop(&request, to).expect("draw"));
+                    let drawn = draw.leg(to).expect("drawn");
+                    let tabled = full.leg(to).expect("tabled");
+                    assert_eq!(
+                        drawn.edges, tabled.edges,
+                        "{name} {side:?} {origin}->{to:?}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 50, "{name}: only {checked} draws");
+    }
 }
 
 #[test]
