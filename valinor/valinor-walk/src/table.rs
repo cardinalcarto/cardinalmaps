@@ -1003,6 +1003,14 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 "stop_visits",
                 self.stop_visits.capacity() * size_of::<(u32, u8)>(),
             ),
+            (
+                "queue",
+                self.queue.capacity() * size_of::<Reverse<(Key, u32)>>(),
+            ),
+            (
+                "touched_stops",
+                self.touched_stops.capacity() * size_of::<u32>(),
+            ),
             ("graph memo", self.graph.stats().bytes),
         ]
     }
