@@ -16,7 +16,9 @@ use crate::timetable::{INFINITY, RouteAttributes};
 pub struct StopTable {
     /// Dense by stop; [`INFINITY`] where the stop isn't reachable.
     costs: Vec<i32>,
-    entries: Vec<(StopId, i32)>,
+    /// The reachable stops, each once. Their costs live in `costs`,
+    /// so relaxing a stop's cost repeatedly takes constant time each.
+    reachable: Vec<StopId>,
 }
 
 impl StopTable {
@@ -26,7 +28,7 @@ impl StopTable {
     pub fn new(stop_count: usize) -> Self {
         Self {
             costs: vec![INFINITY; stop_count],
-            entries: Vec::new(),
+            reachable: Vec::new(),
         }
     }
 
@@ -43,16 +45,9 @@ impl StopTable {
             .ok_or(BuildError::UnknownStopId(stop))?;
         let cost = cost.as_i32();
         if *slot == INFINITY {
-            self.entries.push((stop, cost));
-            *slot = cost;
-        } else if cost < *slot {
-            *slot = cost;
-            for entry in &mut self.entries {
-                if entry.0 == stop {
-                    entry.1 = cost;
-                }
-            }
+            self.reachable.push(stop);
         }
+        *slot = (*slot).min(cost);
         Ok(())
     }
 
@@ -70,8 +65,10 @@ impl StopTable {
 
     /// The reachable stops and their costs.
     #[inline]
-    pub(crate) fn entries(&self) -> &[(StopId, i32)] {
-        &self.entries
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (StopId, i32)> + '_ {
+        self.reachable
+            .iter()
+            .map(|&stop| (stop, self.costs[stop.index()]))
     }
 
     /// The cost at a stop, if it is reachable.
@@ -124,7 +121,10 @@ mod tests {
         table.set(StopId::new(1), secs(90)).expect("set");
         assert_eq!(table.cost(StopId::new(1)), Some(secs(20)));
         assert_eq!(table.cost(StopId::new(0)), None);
-        assert_eq!(table.entries(), &[(StopId::new(1), 20)]);
+        assert_eq!(
+            table.entries().collect::<Vec<_>>(),
+            vec![(StopId::new(1), 20)]
+        );
     }
 
     #[test]

@@ -48,7 +48,7 @@ pub(super) fn run<const BACK: bool, S: TransferSearch>(
     transfers.begin_run(direction);
 
     // Round zero: the access table is already complete, so it needs no transfer search.
-    for &(stop, cost) in input.seeding.entries() {
+    for (stop, cost) in input.seeding.entries() {
         labels.seed_access(stop, start + cost);
     }
 
