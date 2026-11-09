@@ -72,7 +72,7 @@ prost-build = "0.14.4"
 protobuf-src = "2.1.1"
 protoc-bin-vendored = "3.3.0"
 rand = "0.10.3"
-ruzstd = "0.9.1"
+ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 regex = "1.13.1"
 self_cell = "1.3.0"
 serde = { version = "1.0.229", features = ["derive"] }
