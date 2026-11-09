@@ -28,9 +28,11 @@ pub const DEFAULT_TRANSFER_SECONDS: u32 = 900;
 
 /// A walk to or from another stop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Hop {
-    stop: u32,
-    seconds: u32,
+pub struct Hop {
+    /// The stop at the other end, in the numbering of the search's snaps.
+    pub stop: u32,
+    /// The walk's whole seconds.
+    pub seconds: u32,
 }
 
 /// Compressed rows of hops by stop.
@@ -41,6 +43,26 @@ struct Rows {
 }
 
 impl Rows {
+    fn from_sorted(stop_count: usize, walks: &[(u32, Hop)]) -> Result<Self, WalkError> {
+        let mut rows = Self {
+            offsets: Vec::with_capacity(stop_count + 1),
+            hops: Vec::with_capacity(walks.len()),
+        };
+        rows.offsets.push(0);
+        let mut at = 0;
+        for stop in 0..stop_count {
+            while let Some(&(from, hop)) = walks.get(at)
+                && from as usize == stop
+            {
+                rows.hops.push(hop);
+                at += 1;
+            }
+            rows.offsets
+                .push(u32::try_from(rows.hops.len()).map_err(|_| WalkError::TooLarge)?);
+        }
+        Ok(rows)
+    }
+
     fn from_lists(lists: &[Vec<Hop>]) -> Result<Self, WalkError> {
         let mut rows = Self {
             offsets: Vec::with_capacity(lists.len() + 1),
@@ -158,6 +180,7 @@ impl TransferTable {
             new_stops.iter().map(|s| s.into_inner()).collect();
         let mut tables = StopTables::new(provider.clone(), costing.clone());
         tables.bind(Arc::clone(snaps))?;
+        let mut reached = Vec::new();
         for &stop in new_stops {
             let seeds = tables.stop_seeds(stop)?;
             if seeds.is_empty() {
@@ -165,26 +188,27 @@ impl TransferTable {
             }
             let id = stop.into_inner();
             for side in [AccessSide::Access, AccessSide::Egress] {
-                let Some(table) = tables.compute(
-                    stop_count,
-                    &TableRequest {
-                        side,
-                        seeds: &seeds,
-                        max_seconds: self.max_seconds,
-                        interrupt: &|| interrupt(),
-                    },
-                )?
-                else {
+                if !tables.search(&TableRequest {
+                    side,
+                    seeds: &seeds,
+                    max_seconds: self.max_seconds,
+                    interrupt: &|| interrupt(),
+                })? {
                     return Ok(None);
-                };
-                for other in 0..u32::try_from(stop_count).map_err(|_| WalkError::TooLarge)? {
-                    let Some(cost) = table.cost(StopId::new(other)) else {
-                        continue;
-                    };
-                    let seconds = cost.into_inner();
+                }
+                reached.clear();
+                reached.extend(tables.reached_stops().map(|(stop, cost)| Hop {
+                    stop: stop.into_inner(),
+                    seconds: cost.into_inner(),
+                }));
+                // Reached in search order; a walk list reads by stop number.
+                reached.sort_unstable_by_key(|hop| hop.stop);
+                for &hop in &reached {
+                    let other = hop.stop;
                     if other == id {
                         continue;
                     }
+                    let seconds = hop.seconds;
                     match side {
                         AccessSide::Access => lists[id as usize].push(Hop {
                             stop: other,
@@ -200,6 +224,57 @@ impl TransferTable {
             }
         }
         Self::from_lists(&lists, self.max_seconds).map(Some)
+    }
+
+    /// Builds a table from walks already sorted by `(from, to)`, for loading precomputed tiles.
+    ///
+    /// Equal to the [`Self::build`] that found those walks, field for field.
+    ///
+    /// # Errors
+    ///
+    /// Refuses walks out of order, walking from a stop to itself, past `stop_count`, or above
+    /// `max_seconds`: those are never produced by a search, so a violation means bad input.
+    pub fn from_sorted_walks(
+        stop_count: usize,
+        max_seconds: u32,
+        walks: &[(u32, Hop)],
+    ) -> Result<Self, WalkError> {
+        for (index, &(from, hop)) in walks.iter().enumerate() {
+            let in_range = (from as usize) < stop_count && (hop.stop as usize) < stop_count;
+            let increasing = index
+                .checked_sub(1)
+                .and_then(|prior| walks.get(prior))
+                .is_none_or(|&(prior_from, prior_hop)| {
+                    (prior_from, prior_hop.stop) < (from, hop.stop)
+                });
+            if !in_range || !increasing || from == hop.stop || hop.seconds > max_seconds {
+                return Err(WalkError::InvalidWalk {
+                    from,
+                    to: hop.stop,
+                    seconds: hop.seconds,
+                });
+            }
+        }
+        let mut inverse: Vec<(u32, Hop)> = walks
+            .iter()
+            .map(|&(from, hop)| {
+                (
+                    hop.stop,
+                    Hop {
+                        stop: from,
+                        seconds: hop.seconds,
+                    },
+                )
+            })
+            .collect();
+        // Stable sort of walks already by `(from, to)`: each `into` row reads by increasing `from`.
+        inverse.sort_by_key(|&(stop, _)| stop);
+        Ok(Self {
+            max_seconds,
+            stop_count,
+            out: Rows::from_sorted(stop_count, walks)?,
+            into: Rows::from_sorted(stop_count, &inverse)?,
+        })
     }
 
     fn from_lists(lists: &[Vec<Hop>], max_seconds: u32) -> Result<Self, WalkError> {
@@ -275,7 +350,6 @@ where
     P: GraphTileProvider + Clone,
     C: Costing + Clone,
 {
-    let stop_count = snaps.stop_count();
     let mut tables = StopTables::new(provider.clone(), costing.clone());
     tables.bind(Arc::clone(snaps))?;
     let mut lists = Vec::with_capacity(end - start);
@@ -289,34 +363,40 @@ where
             lists.push(Vec::new());
             continue;
         }
-        let Some(table) = tables.compute(
-            stop_count,
-            &TableRequest {
-                side: AccessSide::Access,
-                seeds: &seeds,
-                max_seconds,
-                interrupt: &|| interrupt(),
-            },
-        )?
-        else {
+        if !tables.search(&TableRequest {
+            side: AccessSide::Access,
+            seeds: &seeds,
+            max_seconds,
+            interrupt: &|| interrupt(),
+        })? {
             return Ok(None);
-        };
-        let mut hops = Vec::new();
-        for to in 0..stop_count {
-            if to == from {
-                continue;
-            }
-            let to_id = u32::try_from(to).map_err(|_| WalkError::TooLarge)?;
-            if let Some(cost) = table.cost(StopId::new(to_id)) {
-                hops.push(Hop {
-                    stop: to_id,
-                    seconds: cost.into_inner(),
-                });
-            }
         }
-        lists.push(hops);
+        lists.push(sorted_walks_from(&tables, from_id));
     }
     Ok(Some(lists))
+}
+
+/// The walks found by the last search from `from`, by increasing stop number.
+///
+/// Anything using one stop's walks calls this, so the table and the tiles agree by construction.
+///
+/// # Performance
+///
+/// Allocates only for the walks found, which is what the caller is about to keep.
+pub fn sorted_walks_from<P: GraphTileProvider, C: Costing>(
+    tables: &StopTables<P, C>,
+    from: StopId,
+) -> Vec<Hop> {
+    let mut hops: Vec<Hop> = tables
+        .reached_stops()
+        .filter(|&(to, _)| to != from)
+        .map(|(to, cost)| Hop {
+            stop: to.into_inner(),
+            seconds: cost.into_inner(),
+        })
+        .collect();
+    hops.sort_unstable_by_key(|hop| hop.stop);
+    hops
 }
 
 /// One transfer, resolved: the stops in real travel order, and how long it takes.

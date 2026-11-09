@@ -26,6 +26,7 @@ mod snap;
 mod table;
 
 pub mod paths;
+pub mod transfer_tile;
 mod transfers;
 
 pub use error::WalkError;
@@ -36,6 +37,9 @@ pub use snap::{
     snap_stops,
 };
 pub use table::{
-    AccessEdge, AccessLeg, AccessSide, StopTables, TableRequest, TableSeed, TableStats,
+    AccessEdge, AccessLeg, AccessSide, StopAttachments, StopTables, TableRequest, TableSeed,
+    TableStats,
 };
-pub use transfers::{DEFAULT_TRANSFER_SECONDS, TableTransfers, TableWalk, TransferTable};
+pub use transfers::{
+    DEFAULT_TRANSFER_SECONDS, Hop, TableTransfers, TableWalk, TransferTable, sorted_walks_from,
+};

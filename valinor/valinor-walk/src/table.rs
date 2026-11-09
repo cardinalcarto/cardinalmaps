@@ -153,7 +153,7 @@ impl Label for TableLabel {
     );
 }
 
-/// Where a stop is attached to a dense directed edge.
+/// Where a stop is attached to a directed edge.
 #[derive(Clone, Copy, Debug)]
 struct EdgeStop {
     stop: u32,
@@ -255,34 +255,34 @@ impl EdgeStates {
 }
 
 /// The first of a directed edge's attached stops, sized by the edges with stops.
+///
+/// Keyed by the edge's raw graph ID, so one index can serve every worker of a large build
+/// without tying them to one worker's dense numbering.
 #[derive(Debug, Default)]
 struct AttachedEdges {
-    /// `(dense edge, first attachment)`, open addressed; a power of two long, or empty.
-    slots: Vec<(u32, u32)>,
+    /// `(raw graph ID, first attachment)`, open addressed; a power of two long, or empty.
+    slots: Vec<(u64, u32)>,
     len: usize,
 }
 
 impl AttachedEdges {
-    const EMPTY: (u32, u32) = (u32::MAX, NONE);
-
-    fn clear(&mut self) {
-        self.slots.clear();
-        self.len = 0;
-    }
+    /// No graph ID is all ones: the ID fits in 46 bits.
+    const EMPTY: (u64, u32) = (u64::MAX, NONE);
 
     fn bytes(&self) -> usize {
-        self.slots.capacity() * size_of::<(u32, u32)>()
+        self.slots.capacity() * size_of::<(u64, u32)>()
     }
 
     #[inline]
-    fn start(&self, edge: u32) -> usize {
-        // Fibonacci hashing: dense numbers are clustered, so spread them over the table.
-        (edge.wrapping_mul(0x9E37_79B1) as usize) & (self.slots.len() - 1)
+    fn start(&self, edge: u64) -> usize {
+        // Fibonacci hashing: graph IDs are clustered, so spread them over the table.
+        let hashed = (edge.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize;
+        hashed & (self.slots.len() - 1)
     }
 
     /// The first attachment of `edge`, or [`NONE`].
     #[inline]
-    fn get(&self, edge: u32) -> u32 {
+    fn get(&self, edge: u64) -> u32 {
         if self.slots.is_empty() {
             return NONE;
         }
@@ -300,7 +300,7 @@ impl AttachedEdges {
         }
     }
 
-    fn insert(&mut self, edge: u32, value: u32) {
+    fn insert(&mut self, edge: u64, value: u32) {
         if (self.len + 1) * 2 > self.slots.len() {
             let old = core::mem::take(&mut self.slots);
             self.slots = vec![Self::EMPTY; (old.len() * 2).max(64)];
@@ -316,7 +316,7 @@ impl AttachedEdges {
     }
 
     /// Stores a value, returning whether the key is new.
-    fn place(&mut self, edge: u32, value: u32) -> bool {
+    fn place(&mut self, edge: u64, value: u32) -> bool {
         let mask = self.slots.len() - 1;
         let mut at = self.start(edge);
         loop {
@@ -327,6 +327,101 @@ impl AttachedEdges {
             }
             at = (at + 1) & mask;
         }
+    }
+}
+
+/// Every bound stop's place on the street network, built once and shared by a build's workers.
+///
+/// A table search reaches stops through this index, which depends only on the snaps and the tiles.
+/// [`StopTables::bind`] builds one for its own use; a build that binds many workers to the same
+/// stops builds it once with [`StopAttachments::new`] and gives each [`StopTables::bind_shared`],
+/// so a planet-sized stop list is held once rather than once per thread.
+#[derive(Debug)]
+pub struct StopAttachments {
+    snaps: Arc<StopSnaps>,
+    edges: AttachedEdges,
+    edge_stops: Vec<EdgeStop>,
+    attached_stops: usize,
+}
+
+impl StopAttachments {
+    /// Attaches every snapped stop in `snaps` to the street network.
+    ///
+    /// # Errors
+    ///
+    /// Refuses snaps from a different tile build, or tiles it can't read.
+    pub fn new<P: GraphTileProvider, C: Costing>(
+        provider: P,
+        costing: C,
+        snaps: Arc<StopSnaps>,
+    ) -> Result<Self, WalkError> {
+        let mut graph = LazyGraph::numbering_only(provider, costing);
+        Self::build(&mut graph, snaps)
+    }
+
+    fn build<P: GraphTileProvider, C: Costing>(
+        graph: &mut LazyGraph<P, C>,
+        snaps: Arc<StopSnaps>,
+    ) -> Result<Self, WalkError> {
+        let mut attachments = Self {
+            snaps,
+            edges: AttachedEdges::default(),
+            edge_stops: Vec::new(),
+            attached_stops: 0,
+        };
+        let snaps = Arc::clone(&attachments.snaps);
+        for stop in 0..snaps.stop_count() {
+            // Keys are graph IDs, so dense numbers are only needed for one stop at a time;
+            // forgetting them keeps a planet of stops under the dense numbering's limit.
+            if stop.is_multiple_of(4096) {
+                graph.forget_tiles();
+            }
+            let stop_u = u32::try_from(stop).map_err(|_| WalkError::TooLarge)?;
+            let Some(point) = snaps.point(StopId::new(stop_u)) else {
+                continue;
+            };
+            let build = graph
+                .build_id_of(point.edge)?
+                .ok_or(WalkError::SnappedEdgeMissing(point.edge))?;
+            if build != snaps.build_id() {
+                return Err(WalkError::BuildMismatch {
+                    snaps: snaps.build_id(),
+                    tiles: build,
+                });
+            }
+            let Some(description) = graph.describe_edge(point.edge)? else {
+                continue;
+            };
+            attachments.attach(point.edge.value(), stop_u, point.percent_along);
+            attachments.attach(
+                description.opposing_id.value(),
+                stop_u,
+                1.0 - point.percent_along,
+            );
+            attachments.attached_stops += 1;
+        }
+        Ok(attachments)
+    }
+
+    fn attach(&mut self, edge: u64, stop: u32, percent: f32) {
+        let next = self.edges.get(edge);
+        let index = u32::try_from(self.edge_stops.len()).unwrap_or(NONE);
+        self.edge_stops.push(EdgeStop {
+            stop,
+            percent,
+            next,
+        });
+        self.edges.insert(edge, index);
+    }
+
+    /// The snaps these attachments were built from.
+    pub fn snaps(&self) -> &Arc<StopSnaps> {
+        &self.snaps
+    }
+
+    /// Bytes held.
+    pub fn bytes(&self) -> usize {
+        self.edges.bytes() + self.edge_stops.capacity() * size_of::<EdgeStop>()
     }
 }
 
@@ -400,10 +495,8 @@ fn sub_cost(a: Cost, b: Cost) -> Cost {
 /// A query runs this once for access and once for egress.
 pub struct StopTables<P: GraphTileProvider, C: Costing> {
     graph: LazyGraph<P, C>,
-    snaps: Option<Arc<StopSnaps>>,
-    /// Stops on each dense directed edge, as linked lists through `edge_stops`.
-    attached: AttachedEdges,
-    edge_stops: Vec<EdgeStop>,
+    /// Where the bound stops are on the network, and the snaps they came from.
+    attachments: Option<Arc<StopAttachments>>,
 
     labels: Vec<TableLabel>,
     edge_states: EdgeStates,
@@ -412,8 +505,6 @@ pub struct StopTables<P: GraphTileProvider, C: Costing> {
     stop_best: Vec<StopBest>,
     /// `(epoch, number of the stop's two directed edges settled so far)`.
     stop_visits: Vec<(u32, u8)>,
-    /// How many stops were attached to edges by [`Self::bind`].
-    attached_stops: usize,
     /// How many stops still have a directed edge left to settle in this search.
     stops_pending: usize,
     terminate_when_stops_settled: bool,
@@ -427,16 +518,13 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     pub fn new(provider: P, costing: C) -> Self {
         Self {
             graph: LazyGraph::numbering_only(provider, costing),
-            snaps: None,
-            attached: AttachedEdges::default(),
-            edge_stops: Vec::new(),
+            attachments: None,
             labels: Vec::new(),
             edge_states: EdgeStates::default(),
             epoch: 0,
             queue: BinaryHeap::new(),
             stop_best: Vec::new(),
             stop_visits: Vec::new(),
-            attached_stops: 0,
             stops_pending: 0,
             terminate_when_stops_settled: true,
             touched_stops: Vec::new(),
@@ -451,16 +539,37 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     ///
     /// Refuses snaps from a different tile build, or tiles it can't read.
     pub fn bind(&mut self, snaps: Arc<StopSnaps>) -> Result<(), WalkError> {
-        if self.snaps.as_ref().is_some_and(|s| Arc::ptr_eq(s, &snaps)) {
+        if self
+            .attachments
+            .as_ref()
+            .is_some_and(|a| Arc::ptr_eq(&a.snaps, &snaps))
+        {
             return Ok(());
         }
-        // As in `WalkSearch::bind`: a failure below must not leave the old `Arc` in place.
-        self.snaps = None;
-        self.attached.clear();
-        self.edge_stops.clear();
+        // As in `WalkSearch::bind`: a failure below must not leave the old attachments in place.
+        self.attachments = None;
+        let attachments = StopAttachments::build(&mut self.graph, snaps)?;
+        self.bind_shared(Arc::new(attachments));
+        Ok(())
+    }
+
+    /// Sets the stops to reach to attachments built once for many workers.
+    ///
+    /// # Performance
+    ///
+    /// Sizes this worker's per-stop arrays for all the stops, and nothing else.
+    pub fn bind_shared(&mut self, attachments: Arc<StopAttachments>) {
+        if self
+            .attachments
+            .as_ref()
+            .is_some_and(|a| Arc::ptr_eq(a, &attachments))
+        {
+            return;
+        }
+        let stops = attachments.snaps.stop_count();
         self.stop_best.clear();
         self.stop_best.resize(
-            snaps.stop_count(),
+            stops,
             StopBest {
                 stamp: 0,
                 key: f32::INFINITY,
@@ -470,47 +579,17 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             },
         );
         self.stop_visits.clear();
-        self.stop_visits.resize(snaps.stop_count(), (0, 0));
-        self.attached_stops = 0;
-        for stop in 0..snaps.stop_count() {
-            let stop_u = u32::try_from(stop).map_err(|_| WalkError::TooLarge)?;
-            let Some(point) = snaps.point(StopId::new(stop_u)) else {
-                continue;
-            };
-            let build = self
-                .graph
-                .build_id_of(point.edge)?
-                .ok_or(WalkError::SnappedEdgeMissing(point.edge))?;
-            if build != snaps.build_id() {
-                return Err(WalkError::BuildMismatch {
-                    snaps: snaps.build_id(),
-                    tiles: build,
-                });
-            }
-            let Some(description) = self.graph.describe_edge(point.edge)? else {
-                continue;
-            };
-            self.attach(description.edge_dense, stop_u, point.percent_along);
-            self.attach(
-                description.opposing_dense,
-                stop_u,
-                1.0 - point.percent_along,
-            );
-            self.attached_stops += 1;
-        }
-        self.snaps = Some(snaps);
-        Ok(())
+        self.stop_visits.resize(stops, (0, 0));
+        self.attachments = Some(attachments);
     }
 
-    fn attach(&mut self, edge: u32, stop: u32, percent: f32) {
-        let next = self.attached.get(edge);
-        let index = u32::try_from(self.edge_stops.len()).unwrap_or(NONE);
-        self.edge_stops.push(EdgeStop {
-            stop,
-            percent,
-            next,
-        });
-        self.attached.insert(edge, index);
+    /// Gives back the tile slots and dense numbers this search has built up.
+    ///
+    /// A long-running build calls this between batches of searches, so that a worker's memory
+    /// stays tied to the area it is working on rather than growing with everywhere it has been.
+    /// Labels and dense numbers don't survive it; [`Self::leg`] needs the search it read.
+    pub fn forget_tiles(&mut self) {
+        self.graph.forget_tiles();
     }
 
     /// Computes a table for `stop_count` stops within `max_seconds` of the request's seeds.
@@ -518,6 +597,8 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     /// # Performance
     ///
     /// Runs once per query per direction; reuses its storage between queries.
+    /// Allocates a table of `stop_count` entries; a caller only reading the few stops a search
+    /// reached should use [`Self::search`] and [`Self::reached_stops`] instead.
     ///
     /// # Errors
     ///
@@ -527,6 +608,32 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         stop_count: usize,
         request: &TableRequest<'_>,
     ) -> Result<Option<StopTable>, WalkError> {
+        if !self.search(request)? {
+            return Ok(None);
+        }
+        let mut table = StopTable::new(stop_count);
+        let mut reached = 0;
+        for (stop, secs) in self.reached_stops() {
+            if table.set(stop, secs).is_ok() {
+                reached += 1;
+            }
+        }
+        self.stats.stops_reached += reached;
+        Ok(Some(table))
+    }
+
+    /// Runs one search, reporting what it reached only through [`Self::reached_stops`].
+    ///
+    /// Returns `Ok(false)` if `request.interrupt` asks to stop.
+    ///
+    /// # Performance
+    ///
+    /// Like [`Self::compute`], but allocates nothing proportional to the stop count.
+    ///
+    /// # Errors
+    ///
+    /// Fails on unreadable tiles or a costing error.
+    pub fn search(&mut self, request: &TableRequest<'_>) -> Result<bool, WalkError> {
         self.side = request.side;
         self.epoch = self.epoch.wrapping_add(1);
         if self.epoch == 0 {
@@ -542,7 +649,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         }
         self.touched_stops.clear();
         self.stats = TableStats::default();
-        self.stops_pending = self.attached_stops;
+        self.stops_pending = self.attachments.as_ref().map_or(0, |a| a.attached_stops);
         self.edge_states.reset(self.graph.edge_count());
         self.edge_states.trim();
 
@@ -555,7 +662,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             if since_check >= INTERRUPT_INTERVAL {
                 since_check = 0;
                 if (request.interrupt)() {
-                    return Ok(None);
+                    return Ok(false);
                 }
             }
             self.settle(index, request)?;
@@ -568,12 +675,20 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         let used = self.labels.len();
         trim(&mut self.labels, used, RETAINED_LABELS);
         self.edge_states.trim();
-        let mut table = StopTable::new(stop_count);
-        for &stop in &self.touched_stops {
-            let best = self.stop_best[stop as usize];
+        Ok(true)
+    }
+
+    /// What the last search reached, as `(stop, whole seconds)`, in the order it reached them.
+    ///
+    /// # Performance
+    ///
+    /// Allocates nothing and visits only the stops the search found.
+    pub fn reached_stops(&self) -> impl Iterator<Item = (StopId, Seconds)> + '_ {
+        self.touched_stops.iter().filter_map(|&stop| {
+            let best = self.stop_best.get(stop as usize)?;
             let secs = best.secs.round();
             if secs < 0.0 || !secs.is_finite() {
-                continue;
+                return None;
             }
             #[expect(
                 clippy::cast_possible_truncation,
@@ -581,11 +696,8 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 reason = "a non-negative whole number of seconds, far below the limit"
             )]
             let secs = Seconds::try_new(secs as u32).unwrap_or(Seconds::ZERO);
-            if table.set(StopId::new(stop), secs).is_ok() {
-                self.stats.stops_reached += 1;
-            }
-        }
-        Ok(Some(table))
+            Some((StopId::new(stop), secs))
+        })
     }
 
     fn ensure_edge_state(&mut self) {
@@ -1005,11 +1117,10 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         label: &TableLabel,
         max_seconds: u32,
     ) -> Result<(), WalkError> {
-        let Some(dense_real) = self.graph.dense_edge(label.real_edge)? else {
+        let Some(attachments) = self.attachments.clone() else {
             return Ok(());
         };
-        self.ensure_edge_state();
-        let mut at = self.attached.get(dense_real);
+        let mut at = attachments.edges.get(label.real_edge.value());
         if at == NONE {
             return Ok(());
         }
@@ -1039,7 +1150,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 .cost
         };
         while at != NONE {
-            let Some(entry) = self.edge_stops.get(at as usize).copied() else {
+            let Some(entry) = attachments.edge_stops.get(at as usize).copied() else {
                 break;
             };
             at = entry.next;
@@ -1121,7 +1232,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     ///
     /// Fails on unreadable tiles.
     pub fn stop_seeds(&mut self, stop: StopId) -> Result<Vec<TableSeed>, WalkError> {
-        let Some(point) = self.snaps.as_ref().and_then(|snaps| snaps.point(stop)) else {
+        let Some(point) = self.attachments.as_ref().and_then(|a| a.snaps.point(stop)) else {
             return Ok(Vec::new());
         };
         let mut seeds = vec![TableSeed {
@@ -1147,10 +1258,9 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         vec![
             ("labels", self.labels.capacity() * size_of::<TableLabel>()),
             ("edge_state", self.edge_states.bytes()),
-            ("attached edges", self.attached.bytes()),
             (
-                "edge_stops",
-                self.edge_stops.capacity() * size_of::<EdgeStop>(),
+                "stop attachments",
+                self.attachments.as_ref().map_or(0, |a| a.bytes()),
             ),
             (
                 "stop_best",
@@ -1293,7 +1403,7 @@ mod sparse_tests {
         assert_eq!(attached.get(5), NONE, "an empty table has no key");
         let mut expected = HashMap::new();
         for (i, n) in numbers(11).take(5_000).enumerate() {
-            let edge = u32::try_from(n % 20_000).expect("small");
+            let edge = (n % 20_000) * (1 << 25);
             attached.insert(edge, i as u32);
             expected.insert(edge, i as u32);
             assert_eq!(attached.get(edge), i as u32);
@@ -1301,8 +1411,6 @@ mod sparse_tests {
         for (&edge, &value) in &expected {
             assert_eq!(attached.get(edge), value);
         }
-        attached.clear();
-        assert_eq!(attached.get(*expected.keys().next().expect("keys")), NONE);
     }
 
     #[test]

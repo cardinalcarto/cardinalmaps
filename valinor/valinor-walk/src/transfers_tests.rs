@@ -17,8 +17,8 @@ use valinor_transit::{
 use super::review_tests::snaps_of;
 use super::tile_tests::{costing_named, random_stops};
 use crate::snap::StopSnaps;
-use crate::table::{AccessSide, StopTables, TableRequest};
-use crate::transfers::{TableTransfers, TableWalk, TransferTable};
+use crate::table::{AccessSide, StopAttachments, StopTables, TableRequest};
+use crate::transfers::{Hop, TableTransfers, TableWalk, TransferTable, sorted_walks_from};
 
 const TILES: [u64; 5] = [762_485, 762_486, 763_925, 763_926, 763_927];
 const RADIUS: u32 = 900;
@@ -273,4 +273,121 @@ fn an_interrupted_build_stops() {
     let outcome = TransferTable::build(&provider, &costing, &snaps, RADIUS, threads(1), &|| true)
         .expect("build");
     assert!(outcome.is_none());
+}
+
+/// The allocation-free read finds what the table does, stop by stop, in either direction.
+#[test]
+fn reading_what_a_search_reached_matches_the_full_table() {
+    let sets = andorra();
+    let provider = &sets;
+    let costing = costing_named("pedestrian");
+    let points = random_stops(&provider, &TILES, 120, 29);
+    let snaps = snaps_of(&provider, &points);
+    let mut tables = StopTables::new(provider, costing.clone());
+    tables.bind(Arc::clone(&snaps)).expect("bind");
+    for from in 0..snaps.stop_count() as u32 {
+        let seeds = tables.stop_seeds(StopId::new(from)).expect("seeds");
+        if seeds.is_empty() {
+            continue;
+        }
+        for side in [AccessSide::Access, AccessSide::Egress] {
+            let request = TableRequest {
+                side,
+                seeds: &seeds,
+                max_seconds: RADIUS,
+                interrupt: &|| false,
+            };
+            let table = tables
+                .compute(snaps.stop_count(), &request)
+                .expect("compute")
+                .expect("not interrupted");
+            let expected: Vec<(u32, u32)> = (0..snaps.stop_count() as u32)
+                .filter_map(|to| {
+                    table
+                        .cost(StopId::new(to))
+                        .map(|cost| (to, cost.into_inner()))
+                })
+                .collect();
+            assert!(tables.search(&request).expect("search"));
+            let mut reached: Vec<(u32, u32)> = tables
+                .reached_stops()
+                .map(|(stop, cost)| (stop.into_inner(), cost.into_inner()))
+                .collect();
+            reached.sort_unstable();
+            assert_eq!(reached, expected, "stop {from}, {side:?}");
+        }
+    }
+}
+
+/// Shared attachments and forgetting tiles between searches change no walk.
+#[test]
+fn shared_attachments_and_forgotten_tiles_change_no_walk() {
+    let sets = andorra();
+    let provider = &sets;
+    for name in ["pedestrian", "bicycle"] {
+        let costing = costing_named(name);
+        let points = random_stops(&provider, &TILES, 120, 31);
+        let snaps = snaps_of(&provider, &points);
+        let expected = pairs(&built(&provider, &costing, &snaps, 2));
+        let attachments = Arc::new(
+            StopAttachments::new(provider, costing.clone(), Arc::clone(&snaps)).expect("attach"),
+        );
+        let mut tables = StopTables::new(provider, costing.clone());
+        tables.bind_shared(Arc::clone(&attachments));
+        let mut found = Vec::new();
+        for from in 0..snaps.stop_count() as u32 {
+            // A build forgets tiles between batches, so check every search survives it.
+            tables.forget_tiles();
+            let from_id = StopId::new(from);
+            let seeds = tables.stop_seeds(from_id).expect("seeds");
+            if seeds.is_empty() {
+                continue;
+            }
+            let ran = tables
+                .search(&TableRequest {
+                    side: AccessSide::Access,
+                    seeds: &seeds,
+                    max_seconds: RADIUS,
+                    interrupt: &|| false,
+                })
+                .expect("search");
+            assert!(ran);
+            for Hop { stop, seconds } in sorted_walks_from(&tables, from_id) {
+                found.push((from, stop, seconds));
+            }
+        }
+        assert_eq!(found, expected, "{name}");
+    }
+}
+
+/// A table loaded from sorted walks is the built table, in every field.
+#[test]
+fn a_table_from_sorted_walks_equals_the_built_table() {
+    let sets = andorra();
+    let provider = &sets;
+    let costing = costing_named("pedestrian");
+    let points = random_stops(&provider, &TILES, 90, 37);
+    let snaps = snaps_of(&provider, &points);
+    let built = built(&provider, &costing, &snaps, 2);
+    let walks: Vec<(u32, Hop)> = pairs(&built)
+        .into_iter()
+        .map(|(from, stop, seconds)| (from, Hop { stop, seconds }))
+        .collect();
+    let loaded =
+        TransferTable::from_sorted_walks(built.stop_count(), RADIUS, &walks).expect("load");
+    assert_eq!(loaded, built);
+}
+
+#[test]
+fn sorted_walks_refuse_bad_input() {
+    let hop = |stop, seconds| Hop { stop, seconds };
+    for walks in [
+        vec![(0, hop(1, 10)), (0, hop(1, 12))],
+        vec![(1, hop(1, 10))],
+        vec![(1, hop(0, 10)), (0, hop(1, 10))],
+        vec![(0, hop(9, 10))],
+        vec![(0, hop(1, 901))],
+    ] {
+        assert!(TransferTable::from_sorted_walks(3, 900, &walks).is_err());
+    }
 }
