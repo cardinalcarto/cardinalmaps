@@ -17,15 +17,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{FromRef, FromRequestParts, Path, State};
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use serde::Serialize;
 use tracing::{error, warn};
 use valinor_gtfs_rt::FeedKind;
-use valinor_transit_plan::{FeedUpdate, IngestOutcome, JsonResponse, StreetPlanner};
+use valinor_transit_plan::{FeedUpdate, IngestOutcome, JsonResponse, StateError, StreetPlanner};
 
 use crate::app::AppState;
 
@@ -37,10 +38,13 @@ pub struct Transit {
 
 impl Transit {
     /// Transit over a planner; `ingest_token` is the shared secret for the ingest path.
+    ///
+    /// An empty token configures no ingest: nothing an unset variable or flag set by mistake
+    /// produces may grant access.
     pub fn new(planner: StreetPlanner, ingest_token: Option<String>) -> Self {
         Self {
             planner,
-            ingest_token,
+            ingest_token: ingest_token.filter(|token| !token.is_empty()),
         }
     }
 }
@@ -97,13 +101,13 @@ fn timed_out() -> Response {
     error_response(504, "timed_out", "the server didn't respond in time")
 }
 
-/// Runs planning on the blocking pool, at most `workers` at once, within the timeout.
+/// Runs work on the blocking pool, at most `workers` at once, within the timeout.
 ///
 /// The interrupt fires if the client goes away or the timeout passes.
-async fn run_plan(state: Arc<AppState>, body: Bytes) -> Response {
-    let Some(transit) = state.transit().cloned() else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
+async fn run_blocking(
+    state: &AppState,
+    work: impl FnOnce(&dyn Fn() -> bool) -> JsonResponse + Send + 'static,
+) -> Response {
     let deadline = tokio::time::Instant::now() + state.timeout();
     let Ok(Ok(permit)) =
         tokio::time::timeout_at(deadline, state.workers_semaphore().clone().acquire_owned()).await
@@ -111,13 +115,11 @@ async fn run_plan(state: Arc<AppState>, body: Bytes) -> Response {
         return timed_out();
     };
     let interrupted = Arc::new(AtomicBool::new(false));
-    let guard = crate::transit::InterruptOnDrop(interrupted.clone());
+    let guard = InterruptOnDrop(interrupted.clone());
     let work = tokio::task::spawn_blocking(move || {
         // Held to the end, so at most `workers` searches run even for a client gone away.
         let _permit = permit;
-        transit
-            .planner
-            .plan_json(&body, unix_now(), &|| interrupted.load(Ordering::Relaxed))
+        work(&|| interrupted.load(Ordering::Relaxed))
     });
     let result = tokio::time::timeout_at(deadline, work).await;
     drop(guard);
@@ -140,7 +142,13 @@ impl Drop for InterruptOnDrop {
 }
 
 async fn plan(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
-    run_plan(state, body).await
+    let Some(transit) = state.transit().cloned() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    run_blocking(&state, move |interrupt| {
+        transit.planner.plan_json(&body, unix_now(), interrupt)
+    })
+    .await
 }
 
 async fn vehicle(
@@ -150,15 +158,10 @@ async fn vehicle(
     let Some(transit) = state.transit().cloned() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let work =
-        tokio::task::spawn_blocking(move || transit.planner.vehicle_json(&feed, &id, unix_now()));
-    match work.await {
-        Ok(answer) => json_response(answer),
-        Err(join_error) => {
-            error!("a transit worker failed: {join_error}");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    run_blocking(&state, move |_| {
+        transit.planner.vehicle_json(&feed, &id, unix_now())
+    })
+    .await
 }
 
 /// Parses the feed kind in an ingest path.
@@ -200,61 +203,90 @@ struct IngestBody {
     built_at: Option<i64>,
 }
 
+/// Checks the shared secret from the headers alone, so a body is never read for a stranger.
+struct IngestAuthorized;
+
+impl<S> FromRequestParts<S> for IngestAuthorized
+where
+    Arc<AppState>: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let state = Arc::<AppState>::from_ref(state);
+        let Some(transit) = state.transit() else {
+            return Err(StatusCode::NOT_FOUND.into_response());
+        };
+        if transit.ingest_token.is_none() {
+            return Err(error_response(
+                403,
+                "ingest_disabled",
+                "no ingest token is configured",
+            ));
+        }
+        if !authorized(transit, &parts.headers) {
+            return Err(error_response(
+                401,
+                "unauthorized",
+                "a valid ingest token is required",
+            ));
+        }
+        Ok(Self)
+    }
+}
+
 async fn ingest(
+    _authorized: IngestAuthorized,
     State(state): State<Arc<AppState>>,
     Path((feed, kind)): Path<(String, String)>,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let Some(transit) = state.transit().cloned() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if transit.ingest_token.is_none() {
-        return error_response(403, "ingest_disabled", "no ingest token is configured");
-    }
-    if !authorized(&transit, &headers) {
-        return error_response(401, "unauthorized", "a valid ingest token is required");
-    }
     let Some(kind) = feed_kind(&kind) else {
         return error_response(400, "invalid_request", "unknown feed kind");
     };
     let work = tokio::task::spawn_blocking(move || {
         let now = unix_now();
-        let planner = &transit.planner;
-        let outcome = planner.state().ingest(FeedUpdate {
+        let update = FeedUpdate {
             feed: &feed,
             kind,
             bytes: (!body.is_empty()).then_some(body.as_ref()),
             received_at: now,
             stale_after: None,
-        });
-        match outcome {
-            Err(error) => error_response(404, "unknown_feed", &error.to_string()),
-            Ok(outcome) => {
-                // Rebuild here, so that queries don't pay for it.
-                let built_at = match planner.state().refresh(now) {
-                    Ok(snapshot) => Some(snapshot.built_at()),
-                    Err(error) => {
-                        warn!("couldn't rebuild the transit overlay: {error}");
-                        None
-                    }
-                };
-                let (outcome, error) = match outcome {
-                    IngestOutcome::Accepted => ("accepted", None),
-                    IngestOutcome::Cleared => ("cleared", None),
-                    IngestOutcome::Undecodable(error) => ("undecodable", Some(error.to_string())),
-                };
-                let body = IngestBody {
-                    outcome,
-                    error,
-                    built_at,
-                };
-                json_response(JsonResponse {
-                    status: 200,
-                    body: serde_json::to_vec(&body).unwrap_or_default(),
-                })
+        };
+        // In one step, so that queries keep serving the old snapshot until this one is ready.
+        let state = transit.planner.state();
+        let result = match state.ingest_and_refresh(update, now) {
+            Ok(result) => result,
+            Err(StateError::UnknownFeed(feed)) => {
+                return error_response(404, "unknown_feed", &format!("unknown feed {feed}"));
             }
-        }
+            Err(error) => return error_response(500, "internal", &error.to_string()),
+        };
+        let built_at = match &result.snapshot {
+            Ok(snapshot) => Some(snapshot.built_at()),
+            Err(error) => {
+                warn!("couldn't rebuild the transit overlay: {error}");
+                None
+            }
+        };
+        let (outcome, error) = match result.outcome {
+            IngestOutcome::Accepted => ("accepted", None),
+            IngestOutcome::Cleared => ("cleared", None),
+            IngestOutcome::Undecodable(error) => ("undecodable", Some(error.to_string())),
+        };
+        json_response(JsonResponse {
+            status: 200,
+            body: serde_json::to_vec(&IngestBody {
+                outcome,
+                error,
+                built_at,
+            })
+            .unwrap_or_default(),
+        })
     });
     match work.await {
         Ok(response) => response,
