@@ -789,7 +789,10 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 ..LabelState::default()
             },
         );
+        // No predecessor to turn from: without this, a seed edge whose own simple turn restrictions
+        // happen to have the bit of its local index would be refused as if turning onto itself.
         neutral.set_deadend(true);
+        neutral.clear_restrictions();
         if !costing.allowed(
             &edge,
             seed.edge,
