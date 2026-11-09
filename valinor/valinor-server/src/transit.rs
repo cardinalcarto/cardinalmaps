@@ -213,6 +213,10 @@ where
 {
     type Rejection = Response;
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the trait is async; a token check needs no I/O"
+    )]
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let state = Arc::<AppState>::from_ref(state);
         let Some(transit) = state.transit() else {
