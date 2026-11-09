@@ -673,8 +673,7 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
         } else {
             attach.into
         };
-        for side in 0..2 {
-            let cost = leave[side];
+        for (side, (&cost, &node)) in leave.iter().zip(&attach.node).enumerate() {
             if cost == INF {
                 continue;
             }
@@ -685,7 +684,7 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
                     &mut self.search.queue,
                     &mut self.search.arena,
                     self.search.stamp_base,
-                    attach.node[side],
+                    node,
                     at,
                     stop_index,
                     NONE,
@@ -901,6 +900,10 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
     }
 
     /// Follows a handle to its walk, in real travel order.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the two directions, spelled out side by side"
+    )]
     fn resolve(&self, handle: WalkHandle) -> ResolvedWalk {
         let forward = self.direction == Direction::Forward;
         let dir = usize::from(!forward);

@@ -1053,20 +1053,17 @@ fn king_county_forward_backward_agree_on_real_tiles() {
             }];
             let backward = run_search(&mut search, &back, Direction::Backward, 3600 + 1);
             checked += 1;
-            match backward.get(&u) {
-                Some(&(from_v, _, _)) => {
-                    if from_v != clock {
-                        mismatches += 1;
-                        if mismatches <= 20 {
-                            println!("mismatch {u} -> {v}: forward {clock}, backward {from_v}");
-                        }
+            if let Some(&(from_v, _, _)) = backward.get(&u) {
+                if from_v != clock {
+                    mismatches += 1;
+                    if mismatches <= 20 {
+                        println!("mismatch {u} -> {v}: forward {clock}, backward {from_v}");
                     }
                 }
-                None => {
-                    missing += 1;
-                    if missing <= 20 {
-                        println!("missing mirror arrival {u} -> {v}: forward {clock}");
-                    }
+            } else {
+                missing += 1;
+                if missing <= 20 {
+                    println!("missing mirror arrival {u} -> {v}: forward {clock}");
                 }
             }
         }
@@ -1371,7 +1368,7 @@ fn bench_run_rounds<P: GraphTileProvider, C: Costing>(
         };
         search.begin_run(dir);
         let started = std::time::Instant::now();
-        let mut upper = bound.map_or(i32::MAX / 2, |b| b);
+        let mut upper = bound.unwrap_or(i32::MAX / 2);
         for (r, &size) in sizes.iter().enumerate() {
             let size = size.min(stop_count);
             let ids = seed_sample(stop_count, size, u64::from(repeat) * 91 + r as u64);
