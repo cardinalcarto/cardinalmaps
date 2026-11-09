@@ -227,6 +227,10 @@ pub struct WalkSearch<P: GraphTileProvider, C: Costing> {
     run_pruning: bool,
     /// Whether to use the request's change margin; see [`Self::set_own_seed_pruning`].
     own_seed_pruning: bool,
+    /// The longest walk from one seed, in seconds; see [`Self::set_walk_limit`].
+    walk_limit: Option<u32>,
+    /// By stop: the clock of its latest seeding, read only with a walk limit.
+    seed_clocks: Vec<i32>,
     /// The stamp of the current search's stop labels.
     stop_stamp: u32,
     /// By dense node: the first attachment, or [`NONE`].
@@ -259,6 +263,8 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
             stamp_base: 4,
             run_pruning: true,
             own_seed_pruning: true,
+            walk_limit: None,
+            seed_clocks: Vec::new(),
             stop_stamp: 1,
             node_attach: Vec::new(),
             attachments: Vec::new(),
@@ -464,6 +470,15 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
         self.run_pruning = enabled;
     }
 
+    /// Limits how far a single walk may go, in seconds, or `None` (the default) for no limit.
+    ///
+    /// **This changes which journeys exist**: walking is meant to be unrestricted,
+    /// and a limited search can miss the best journey. It is here to measure what a cap
+    /// would buy, and nothing in this crate turns it on.
+    pub fn set_walk_limit(&mut self, limit: Option<u32>) {
+        self.walk_limit = limit;
+    }
+
     /// Whether a node's second label is kept only when a seed could need it (the default).
     ///
     /// The second label exists so a stop can be reached from another seed than itself.
@@ -658,6 +673,19 @@ impl<P: GraphTileProvider, C: Costing> TransferSearch for WalkSearch<P, C> {
                 TransferRequest::REPORT_ALL
             },
         };
+        if run.search.walk_limit.is_some() {
+            let stops = run.search.stops.len();
+            run.search.seed_clocks.resize(stops, i32::MAX);
+            for seed in request.seeds {
+                if let Some(slot) = run
+                    .search
+                    .seed_clocks
+                    .get_mut(seed.stop.into_inner() as usize)
+                {
+                    *slot = seed.clock.seconds();
+                }
+            }
+        }
         for seed in request.seeds {
             run.seed(seed.stop, seed.clock.seconds());
         }
@@ -813,15 +841,23 @@ impl<P: GraphTileProvider, C: Costing> Run<'_, P, C> {
                     continue;
                 }
             }
+            // Worked out once per settled label: most searches have no limit to apply.
+            let mut limits = [self.upper_bound; 2];
+            if let Some(limit) = search.walk_limit {
+                for (slot, &(_, source, _)) in limits.iter_mut().zip(&settled[..count]) {
+                    let seed = search.seed_clocks[source as usize];
+                    *slot = self.upper_bound.min(seed.saturating_add_unsigned(limit));
+                }
+            }
             let mut index = first as usize;
             loop {
                 let arc = search.graph.arcs[index];
                 search.stats.arcs_relaxed += 1;
                 let weight = arc.secs[self.dir];
                 if weight != INF {
-                    for &(at, source, parent) in &settled[..count] {
+                    for (&(at, source, parent), &limit) in settled[..count].iter().zip(&limits) {
                         let next = at.saturating_add(i32::from(weight));
-                        if next < self.upper_bound {
+                        if next < limit {
                             relax(
                                 &mut search.labels,
                                 &mut search.second,
