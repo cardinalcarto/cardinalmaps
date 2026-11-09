@@ -57,9 +57,9 @@ pub struct FeedRecord {
     pub region: String,
     /// The feed's name.
     pub name: String,
-    /// The SHA-256 of the input archive.
+    /// The SHA-256 of the archive as read, empty if it couldn't be read.
     pub sha256: String,
-    /// The size of the input archive.
+    /// The size of the archive as read.
     pub bytes: u64,
     /// The feed's license, verbatim.
     pub license: Box<RawValue>,
@@ -226,18 +226,14 @@ fn compile_feed(
     let archive = archive_path(&options.input, feed)?;
     let (sha256, bytes) = match sha256_of_file(&archive) {
         Ok(value) => value,
-        Err(error) => return finish_failed(options, feed, error.to_string(), started),
+        Err(error) => return finish_failed(options, feed, error.to_string(), None, started),
     };
     if sha256 != feed.sha256 {
-        return finish_failed(
-            options,
-            feed,
-            format!(
-                "verify the archive: feeds.json says sha256 {}, the file is {sha256}",
-                feed.sha256
-            ),
-            started,
+        let error = format!(
+            "verify the archive: feeds.json says sha256 {}, the file is {sha256}",
+            feed.sha256
         );
+        return finish_failed(options, feed, error, Some((sha256, bytes)), started);
     }
     if let Some(mut record) = reusable(options, feed, &sha256, fetched_date) {
         record.reused = true;
@@ -248,7 +244,9 @@ fn compile_feed(
             write_sidecar(options, &record)?;
             Ok(record)
         }
-        Err(Failed::Feed(error)) => finish_failed(options, feed, error, started),
+        Err(Failed::Feed(error)) => {
+            finish_failed(options, feed, error, Some((sha256, bytes)), started)
+        }
         Err(Failed::Stage(error)) => Err(error),
     }
 }
@@ -278,7 +276,11 @@ fn reusable(
             }
         }
     }
-    // Reads the date against this run's fetch, not the one it was compiled under.
+    // Unchanged compiled output, with everything else about it from this run's listing.
+    record.region.clone_from(&feed.region);
+    record.name.clone_from(&feed.name);
+    record.license = feed.license.clone();
+    record.source = feed.source.clone();
     record.has_current_service = has_service(record.last_service_date.as_deref(), fetched_date);
     Some(record)
 }
@@ -377,11 +379,16 @@ fn panic_text(payload: &(dyn core::any::Any + Send)) -> String {
         .unwrap_or_else(|| "without a message".to_owned())
 }
 
-/// Records a feed's failure, writing its result for the next run, and removes a stale timetable.
+/// Records a feed's failure and removes a stale timetable.
+///
+/// `read` is the archive's actual SHA-256 and size, if it could be read. When the archive matched
+/// its listing, the result is kept for the next run: unchanged input would fail the same way.
+/// Otherwise the failure is about this input, not the feed, so nothing is kept to reuse.
 fn finish_failed(
     options: &CompileOptions,
     feed: &FeedEntry,
     error: String,
+    read: Option<(String, u64)>,
     started: Instant,
 ) -> Result<FeedRecord, BuildError> {
     let path = options
@@ -395,12 +402,14 @@ fn finish_failed(
         _ => {}
     }
     tracing::warn!(feed = %feed.id, %error, "feed failed to compile");
+    let matches_listing = read.as_ref().is_some_and(|(sha, _)| *sha == feed.sha256);
+    let (sha256, bytes) = read.unwrap_or_default();
     let record = FeedRecord {
         id: feed.id.clone(),
         region: feed.region.clone(),
         name: feed.name.clone(),
-        sha256: feed.sha256.clone(),
-        bytes: feed.bytes,
+        sha256,
+        bytes,
         license: feed.license.clone(),
         source: feed.source.clone(),
         outcome: FeedOutcome::Failed { error },
@@ -420,8 +429,22 @@ fn finish_failed(
         seconds: started.elapsed().as_secs_f64(),
         reused: false,
     };
-    write_sidecar(options, &record)?;
+    if matches_listing {
+        write_sidecar(options, &record)?;
+    } else {
+        remove_sidecar(options, &feed.id)?;
+    }
     Ok(record)
+}
+
+fn remove_sidecar(options: &CompileOptions, id: &str) -> Result<(), BuildError> {
+    let path = sidecar_path(options, id);
+    match fs::remove_file(&path) {
+        Err(source) if source.kind() != std::io::ErrorKind::NotFound => {
+            Err(BuildError::Write { path, source })
+        }
+        _ => Ok(()),
+    }
 }
 
 fn sidecar_path(options: &CompileOptions, id: &str) -> PathBuf {

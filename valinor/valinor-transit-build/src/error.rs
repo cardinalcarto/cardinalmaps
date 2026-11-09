@@ -63,6 +63,12 @@ pub enum BuildError {
         /// The cause.
         source: LoadError,
     },
+    /// A timetable isn't the one the compile stage recorded, so its stop numbering may differ.
+    #[error("use the timetable of feed {feed}: it is not the one compile.json recorded")]
+    TimetableChanged {
+        /// The feed.
+        feed: String,
+    },
     /// A street search failed.
     #[error("search the streets: {0}")]
     Walk(#[from] WalkError),

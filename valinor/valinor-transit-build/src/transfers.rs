@@ -5,12 +5,13 @@
 //! Everything held for the whole run is one list of stops and one index of them on the street
 //! network; a worker's tile memory is given back between tiles.
 //!
-//! Tiles are written under a staging directory and moved into `transfers/` only after every tile
-//! of every mode has succeeded, so a killed run leaves the previous `transfers/` as it was.
+//! Tiles, reports, and the manifest are written under a staging directory, which is renamed to
+//! `transfers/` only once everything has succeeded and been flushed to disk.
+//! That one rename is the stage's commit point, so a failed or killed run leaves the previous
+//! `transfers/` exactly as it was, and no reader can pair one run's tiles with another's manifest.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Write;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -35,10 +36,17 @@ use valinor_walk::{
 use crate::compile::{CompileReport, FeedOutcome};
 use crate::error::BuildError;
 use crate::manifest::{
-    FeedModeStats, Manifest, ManifestFeed, ModeTotals, TileEntry, manifest_id, write_manifest,
+    FeedModeStats, Manifest, ManifestFeed, ModeTotals, TRANSFERS_DIR, TileEntry, manifest_id,
+    write_manifest,
 };
 use crate::slippy::tile_of;
 use crate::stops::StopList;
+use crate::{sync_dir, write_synced};
+
+/// Where a run works until it succeeds, relative to the output directory.
+const STAGING_DIR: &str = "transfers.staging";
+/// Where the previous published directory goes during the swap.
+const RETIRED_DIR: &str = "transfers.replaced";
 
 /// How many stops one snapping batch covers: sized for tile-neighbour batches, not memory.
 const SNAP_BATCH: usize = 2048;
@@ -50,7 +58,7 @@ pub struct TransferOptions {
     pub compiled: PathBuf,
     /// The street network: a `build_extract` tarball or a tile directory.
     pub street_tiles: PathBuf,
-    /// Where to write `transfers/` and the manifest.
+    /// Where to publish `transfers/`, holding the tiles, reports, and manifest.
     pub output: PathBuf,
     /// How many threads to search and snap on.
     pub threads: NonZeroUsize,
@@ -126,13 +134,17 @@ pub fn run(options: &TransferOptions) -> Result<Manifest, BuildError> {
     );
 
     let id = manifest_id(&feeds, build_id.value());
-    let staging = options.output.join("transfers.staging");
+    let staging = options.output.join(STAGING_DIR);
     if staging.exists() {
         fs::remove_dir_all(&staging).map_err(|source| BuildError::Write {
             path: staging.clone(),
             source,
         })?;
     }
+    fs::create_dir_all(&staging).map_err(|source| BuildError::Write {
+        path: staging.clone(),
+        source,
+    })?;
 
     let mut ordered = stops_by_tile(&stops);
     ordered.sort_unstable();
@@ -149,9 +161,7 @@ pub fn run(options: &TransferOptions) -> Result<Manifest, BuildError> {
         let result = run_mode(
             options, mode, &tiles, build_id, &stops, &order, &jobs, &staging, id,
         )?;
-        let unsnapped_path = options
-            .output
-            .join(format!("unsnapped-{}.jsonl", mode.as_str()));
+        let unsnapped_path = staging.join(format!("unsnapped-{}.jsonl", mode.as_str()));
         write_unsnapped(
             &unsnapped_path,
             &result.unsnapped,
@@ -162,9 +172,10 @@ pub fn run(options: &TransferOptions) -> Result<Manifest, BuildError> {
         by_mode.insert(mode, result);
     }
 
-    publish_staging(&options.output, &staging)?;
     let manifest = assemble_manifest(&report, &feeds, build_id, id, &by_mode, options)?;
-    write_manifest(&options.output, &manifest)?;
+    write_manifest(&staging, &manifest)?;
+    sync_tree(&staging)?;
+    publish_staging(&options.output, &staging)?;
     tracing::info!(
         seconds = started.elapsed().as_secs_f64(),
         "transfer stage done"
@@ -527,7 +538,7 @@ fn build_tile(
             source,
         })?;
     }
-    fs::write(&path, &compressed).map_err(|source| BuildError::Write {
+    write_synced(&path, &compressed).map_err(|source| BuildError::Write {
         path: path.clone(),
         source,
     })?;
@@ -675,41 +686,45 @@ fn assemble_manifest(
     })
 }
 
-/// Swaps the finished staging directory in as `transfers/`.
-fn publish_staging(output: &Path, staging: &Path) -> Result<(), BuildError> {
-    let target = output.join("transfers");
-    let retired = output.join("transfers.replaced");
-    if retired.exists() {
-        fs::remove_dir_all(&retired).map_err(|source| BuildError::Write {
-            path: retired.clone(),
+/// Flushes every directory under `root`, so the files written in it survive a power loss
+/// (the files themselves are synced as they are written).
+fn sync_tree(root: &Path) -> Result<(), BuildError> {
+    let entries = fs::read_dir(root).map_err(|source| BuildError::Read {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| BuildError::Read {
+            path: root.to_path_buf(),
             source,
         })?;
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            sync_tree(&entry.path())?;
+        }
+    }
+    sync_dir(root)
+}
+
+/// Publishes the finished staging directory as `transfers/`, by a single rename.
+///
+/// The old directory is moved aside first, so `transfers/` is briefly absent, never mixed.
+/// A failure here, or a kill, leaves staging and any retired copy for the next run to clear.
+fn publish_staging(output: &Path, staging: &Path) -> Result<(), BuildError> {
+    let target = output.join(TRANSFERS_DIR);
+    let retired = output.join(RETIRED_DIR);
+    let write_error = |path: PathBuf| move |source| BuildError::Write { path, source };
+    if retired.exists() {
+        fs::remove_dir_all(&retired).map_err(write_error(retired.clone()))?;
     }
     if target.exists() {
-        fs::rename(&target, &retired).map_err(|source| BuildError::Write {
-            path: retired.clone(),
-            source,
-        })?;
+        fs::rename(&target, &retired).map_err(write_error(retired.clone()))?;
     }
-    if staging.exists() {
-        fs::rename(staging, &target).map_err(|source| BuildError::Write {
-            path: target.clone(),
-            source,
-        })?;
-    } else {
-        // A build with no walks at all still publishes an empty directory.
-        fs::create_dir_all(&target).map_err(|source| BuildError::Write {
-            path: target.clone(),
-            source,
-        })?;
-    }
+    fs::rename(staging, &target).map_err(write_error(target.clone()))?;
+    sync_dir(output)?;
     if retired.exists() {
-        fs::remove_dir_all(&retired).map_err(|source| BuildError::Write {
-            path: retired,
-            source,
-        })?;
+        fs::remove_dir_all(&retired).map_err(write_error(retired.clone()))?;
     }
-    Ok(())
+    sync_dir(output)
 }
 
 fn write_unsnapped(
@@ -747,9 +762,7 @@ fn write_unsnapped(
         out.push_str(&line.to_string());
         out.push('\n');
     }
-    let mut file = fs::File::create(path).map_err(write_error)?;
-    file.write_all(out.as_bytes()).map_err(write_error)?;
-    Ok(())
+    write_synced(path, out.as_bytes()).map_err(write_error)
 }
 
 /// The GTFS stop IDs of one feed, only when something needs reporting.
