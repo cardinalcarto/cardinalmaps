@@ -1304,6 +1304,252 @@ fn every_stop_and_leg_reports_accessibility() {
     assert!(body[0]["legs"][0]["accessibility"].is_string());
 }
 
+/// `T1` (route R1) from the origin to a middle stop, staying seated into `T2` (route R2) on
+/// to the destination.
+fn seated_state() -> TransitState {
+    let source = InMemorySource::new()
+        .with(
+            "agency.txt",
+            "agency_id,agency_name,agency_timezone,agency_url\n\
+             A,Metro,America/Los_Angeles,https://m.test\n",
+        )
+        .with(
+            "routes.txt",
+            "route_id,agency_id,route_short_name,route_type\nR1,A,1,3\nR2,A,2,3\n",
+        )
+        .with(
+            "stops.txt",
+            "stop_id,stop_name,stop_lat,stop_lon\n\
+             ORG,Origin,47.5995,-122.3300\n\
+             MID,Middle,47.6100,-122.3200\n\
+             DST,Destination,47.6204,-122.3098\n",
+        )
+        .with(
+            "calendar.txt",
+            "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n\
+             WK,1,1,1,1,1,0,0,20260601,20260630\n",
+        )
+        .with(
+            "trips.txt",
+            "route_id,service_id,trip_id,block_id,trip_headsign\n\
+             R1,WK,T1,X,To Middle\nR2,WK,T2,X,To Destination\n",
+        )
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             T1,08:05:00,08:05:00,ORG,1\nT1,08:20:00,08:20:00,MID,2\n\
+             T2,08:25:00,08:25:00,MID,1\nT2,08:50:00,08:50:00,DST,2\n",
+        );
+    let compiled = compile(vec![FeedInput {
+        id: CompileFeedId::try_new("seated".to_owned()).expect("id"),
+        source: Box::new(source),
+    }])
+    .expect("compiles");
+    TransitState::new(
+        LoadedTimetable::from_bytes(compiled.bytes).expect("loads"),
+        StateConfig::default(),
+    )
+    .expect("state")
+}
+
+/// The rider's one ride, and how it's reported.
+fn seated_leg(response: &PlanResponse) -> &TransitLeg {
+    let journey = response
+        .journeys
+        .iter()
+        .find(|journey| journey.trips == 1)
+        .expect("a journey with one ride");
+    transit_legs(journey)[0]
+}
+
+#[test]
+fn a_stay_seated_ride_is_one_leg_with_its_segments() {
+    let state = seated_state();
+    let response = run(&state, &morning_request());
+    let leg = seated_leg(&response);
+    assert_eq!(leg.trip.trip_id, "T1", "the segment the rider boards");
+    assert_eq!(leg.route.as_ref().expect("route").route_id, "R1");
+    assert_eq!(leg.segments.len(), 2);
+    assert_eq!(leg.segments[0].trip_id, "T1");
+    assert_eq!(
+        leg.segments[0].route.as_ref().expect("route").route_id,
+        "R1"
+    );
+    assert_eq!(leg.segments[0].headsign.as_deref(), Some("To Middle"));
+    assert_eq!(leg.segments[1].trip_id, "T2");
+    assert_eq!(
+        leg.segments[1].route.as_ref().expect("route").route_id,
+        "R2"
+    );
+    // The join shows once, with the first trip's arrival and the next one's departure.
+    let names: Vec<_> = leg.stops.iter().map(|s| s.stop.stop_id.as_str()).collect();
+    assert_eq!(names, vec!["ORG", "MID", "DST"]);
+    let middle = &leg.stops[1];
+    assert_eq!(middle.arrival, june_15(8, 20));
+    assert_eq!(middle.departure, june_15(8, 25));
+    assert_eq!(leg.segments[0].first_stop_index, 0);
+    assert_eq!(leg.segments[0].last_stop_index, 1);
+    assert_eq!(leg.segments[1].first_stop_index, 1);
+    assert_eq!(leg.segments[1].last_stop_index, 2);
+}
+
+fn seated_trip_update(
+    trip: &str,
+    relationship: proto::trip_descriptor::ScheduleRelationship,
+    stop_sequence: u32,
+    delay: i32,
+) -> proto::FeedEntity {
+    proto::FeedEntity {
+        trip_update: Some(proto::TripUpdate {
+            trip: proto::TripDescriptor {
+                trip_id: Some(trip.to_owned()),
+                start_date: Some(JUNE_15.to_owned()),
+                schedule_relationship: Some(relationship as i32),
+                ..proto::TripDescriptor::default()
+            },
+            stop_time_update: if delay == 0 {
+                Vec::new()
+            } else {
+                vec![proto::trip_update::StopTimeUpdate {
+                    stop_sequence: Some(stop_sequence),
+                    arrival: Some(proto::trip_update::StopTimeEvent {
+                        delay: Some(delay),
+                        ..proto::trip_update::StopTimeEvent::default()
+                    }),
+                    departure: Some(proto::trip_update::StopTimeEvent {
+                        delay: Some(delay),
+                        ..proto::trip_update::StopTimeEvent::default()
+                    }),
+                    ..proto::trip_update::StopTimeUpdate::default()
+                }]
+            },
+            ..proto::TripUpdate::default()
+        }),
+        ..entity_for(trip)
+    }
+}
+
+fn entity_for(id: &str) -> proto::FeedEntity {
+    proto::FeedEntity {
+        id: id.to_owned(),
+        ..proto::FeedEntity::default()
+    }
+}
+
+/// A plan with the stay-seated feed's one update applied.
+fn seated_plan_with(entity: proto::FeedEntity) -> PlanResponse {
+    let state = seated_state();
+    let bytes = encoded_feed(FEED_TIME, vec![entity]);
+    state
+        .ingest(FeedUpdate {
+            feed: "seated",
+            kind: FeedKind::TripUpdates,
+            bytes: Some(&bytes),
+            received_at: FEED_TIME,
+            stale_after: None,
+        })
+        .expect("known feed");
+    run(
+        &state,
+        &TransitRequest {
+            now: FEED_TIME + 15,
+            ..morning_request()
+        },
+    )
+}
+
+#[test]
+fn a_delay_on_either_original_trip_moves_only_its_part() {
+    use proto::trip_descriptor::ScheduleRelationship;
+    // T2 (the second part) five minutes late: T1's part keeps its times.
+    let response = seated_plan_with(seated_trip_update(
+        "T2",
+        ScheduleRelationship::Scheduled,
+        1,
+        300,
+    ));
+    let leg = seated_leg(&response);
+    assert_eq!(leg.departure, june_15(8, 5), "the first part is on time");
+    assert_eq!(leg.arrival, june_15(8, 55), "the second part is late");
+    let middle = &leg.stops[1];
+    assert_eq!(middle.arrival, june_15(8, 20), "T1's arrival is unchanged");
+    assert_eq!(middle.departure, june_15(8, 30));
+
+    // Updates for both original trips of one run in the same feed both apply.
+    let state = seated_state();
+    let bytes = encoded_feed(
+        FEED_TIME,
+        vec![
+            seated_trip_update("T1", ScheduleRelationship::Scheduled, 2, 60),
+            seated_trip_update("T2", ScheduleRelationship::Scheduled, 1, 300),
+        ],
+    );
+    state
+        .ingest(FeedUpdate {
+            feed: "seated",
+            kind: FeedKind::TripUpdates,
+            bytes: Some(&bytes),
+            received_at: FEED_TIME,
+            stale_after: None,
+        })
+        .expect("known feed");
+    let response = run(
+        &state,
+        &TransitRequest {
+            now: FEED_TIME + 15,
+            ..morning_request()
+        },
+    );
+    let leg = seated_leg(&response);
+    assert_eq!(leg.stops[1].arrival, june_15(8, 21), "T1's own delay");
+    assert_eq!(leg.arrival, june_15(8, 55), "T2's own delay");
+
+    // T1 late past T2's departure from the join: T2 can't leave before T1 arrives.
+    let response = seated_plan_with(seated_trip_update(
+        "T1",
+        ScheduleRelationship::Scheduled,
+        2,
+        600,
+    ));
+    let leg = seated_leg(&response);
+    assert_eq!(leg.stops[1].arrival, june_15(8, 30));
+    assert_eq!(leg.stops[1].departure, june_15(8, 30));
+}
+
+#[test]
+fn a_cancelled_second_part_ends_the_ride_at_the_join() {
+    use proto::trip_descriptor::ScheduleRelationship;
+    let response = seated_plan_with(seated_trip_update(
+        "T2",
+        ScheduleRelationship::Canceled,
+        1,
+        0,
+    ));
+    // Nothing reaches the destination by staying on.
+    for journey in &response.journeys {
+        for leg in transit_legs(journey) {
+            assert_ne!(
+                leg.stops.last().map(|s| s.stop.stop_id.as_str()),
+                Some("DST"),
+                "the ride can't reach the end of the cancelled part"
+            );
+        }
+    }
+    // A cancelled first part leaves the second part running, boarded at the join.
+    let response = seated_plan_with(seated_trip_update(
+        "T1",
+        ScheduleRelationship::Canceled,
+        1,
+        0,
+    ));
+    let boarded_at_origin = response
+        .journeys
+        .iter()
+        .flat_map(transit_legs)
+        .any(|leg| leg.stops.first().map(|s| s.stop.stop_id.as_str()) == Some("ORG"));
+    assert!(!boarded_at_origin, "the first part is gone");
+}
+
 #[test]
 fn a_cycling_query_only_rides_routes_that_allow_bikes() {
     let state = synthetic_state();

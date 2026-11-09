@@ -35,7 +35,9 @@ pub use feed::{
     DEFAULT_ALERTS_STALE_AFTER, DEFAULT_REALTIME_STALE_AFTER, FeedId, FeedIdError, FeedInput,
     FeedKind, FeedStatus, ScopedId,
 };
-pub use lookup::{RouteInfo, ScheduledTrip, StaticLookup, TripQuery, TripRef, WindowDay};
+pub use lookup::{
+    RouteInfo, ScheduledSegment, ScheduledTrip, StaticLookup, TripQuery, TripRef, WindowDay,
+};
 pub use overlay::{
     AlertImpact, DEFAULT_MAX_PREDICTION_OFFSET, NewStop, OverlayError, OverlayOptions,
     OverlayStats, RealtimeOverlay, build_overlay,

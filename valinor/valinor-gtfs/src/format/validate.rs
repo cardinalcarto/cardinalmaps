@@ -77,6 +77,7 @@ pub(crate) fn validate(tables: &Tables<'_>) -> Result<(), DecodeError> {
     )?;
     validate_index("stop index", tables, tables.stop_index, tables.stops.len())?;
     validate_transfer_pairs(tables)?;
+    validate_trip_segments(tables)?;
     Ok(())
 }
 
@@ -565,6 +566,73 @@ fn validate_shapes(tables: &Tables<'_>) -> Result<(), DecodeError> {
                 table: "stop distances",
                 reason: "a distance is not finite",
             });
+        }
+    }
+    Ok(())
+}
+
+/// Each combined trip's segments must tile its positions exactly, in order,
+/// so a segment's stops and times are always a valid slice of the trip.
+fn validate_trip_segments(tables: &Tables<'_>) -> Result<(), DecodeError> {
+    let mut row = 0;
+    while row < tables.trip_segments.len() {
+        let trip = tables.trip_segments[row].trip.get();
+        let trip_row = tables
+            .trips
+            .get(trip as usize)
+            .ok_or_else(|| fail("trip segments", "a segment names an unknown trip"))?;
+        let pattern = tables
+            .patterns
+            .get(trip_row.pattern.get() as usize)
+            .ok_or_else(|| fail("trip segments", "a segment's trip has no pattern"))?;
+        let stop_count = pattern.stop_count.get();
+        let mut next_first = 0_u32;
+        let start = row;
+        while let Some(segment) = tables
+            .trip_segments
+            .get(row)
+            .filter(|segment| segment.trip.get() == trip)
+        {
+            if segment.first_position.get() != next_first
+                || segment.last_position.get() < next_first
+                || segment.last_position.get() >= stop_count
+            {
+                return Err(fail("trip segments", "the segments do not tile the trip"));
+            }
+            next_first = segment.last_position.get() + 1;
+            for id in [segment.gtfs_id, segment.headsign] {
+                check_string("trip segments", tables, id)?;
+            }
+            check_index(
+                "trip segments",
+                "a route reference is out of range",
+                segment.route.get(),
+                tables.routes.len(),
+            )?;
+            if segment.shape.get() != NONE {
+                check_index(
+                    "trip segments",
+                    "a shape reference is out of range",
+                    segment.shape.get(),
+                    tables.shapes.len(),
+                )?;
+            }
+            if segment.wheelchair > 2 || segment.bikes > 2 {
+                return Err(DecodeError::InvalidValue {
+                    table: "trip segments",
+                    reason: "an accessibility flag is not defined by GTFS",
+                });
+            }
+            row += 1;
+        }
+        if next_first != stop_count {
+            return Err(fail("trip segments", "the segments do not cover the trip"));
+        }
+        if row - start < 2 {
+            return Err(fail(
+                "trip segments",
+                "a combined trip has fewer than two trips",
+            ));
         }
     }
     Ok(())

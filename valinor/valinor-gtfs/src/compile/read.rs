@@ -11,6 +11,7 @@ use crate::compile::FeedInput;
 use crate::compile::assemble::StringPool;
 use crate::compile::interpolate::{RawTime, interpolate};
 use crate::compile::report::{DropReason, FeedReport};
+use crate::compile::seated::{CompileOptions, SeatedRow, merge_seated_trips};
 use crate::compile::shape_match::{ShapePoint, project};
 use crate::compile::source::GtfsSource;
 use crate::compile::table::{Table, field};
@@ -95,6 +96,23 @@ pub(super) struct TripModel {
     pub(super) stop_headsigns: Vec<u32>,
     pub(super) sequences: Vec<u32>,
     pub(super) stop_dists: Option<Vec<f32>>,
+    /// For a combined stay-seated trip, each original trip's stretch, in order.
+    pub(super) segments: Option<Vec<SegmentModel>>,
+}
+
+/// One original trip's stretch of a combined stay-seated trip.
+#[derive(Clone)]
+pub(super) struct SegmentModel {
+    pub(super) gtfs_id: u32,
+    /// A feed-local route.
+    pub(super) route: u32,
+    pub(super) headsign: u32,
+    pub(super) shape: Option<u32>,
+    pub(super) direction: u8,
+    pub(super) wheelchair: u8,
+    pub(super) bikes: u8,
+    pub(super) first_position: u32,
+    pub(super) last_position: u32,
 }
 
 /// One feed, with feed-local indices.
@@ -118,6 +136,7 @@ pub(super) struct FeedModel {
 pub(super) fn read_feed(
     feed: FeedInput<'_>,
     pool: &mut StringPool,
+    options: CompileOptions,
 ) -> Result<FeedModel, CompileError> {
     let id = feed.id.into_inner();
     let mut source = feed.source;
@@ -129,7 +148,8 @@ pub(super) fn read_feed(
     let (routes, route_ids) =
         read_routes(source.as_mut(), pool, &agency_ids, &agencies, &mut report)?;
     let (mut stops, stop_ids) = read_stops(source.as_mut(), pool, &time_zone, &mut report)?;
-    let transfer_pairs = apply_transfers(source.as_mut(), &stop_ids, &mut stops, &mut report)?;
+    let (transfer_pairs, seated_rows) =
+        apply_transfers(source.as_mut(), &stop_ids, &mut stops, &mut report)?;
 
     let shapes = read_shapes(source.as_mut(), pool, &mut report)?;
     let frequencies = read_frequencies(source.as_mut(), &mut report)?;
@@ -145,12 +165,21 @@ pub(super) fn read_feed(
         &mut report,
     )?;
 
+    merge_seated_trips(
+        &mut trips,
+        &mut services,
+        &seated_rows,
+        options,
+        pool,
+        &mut report,
+    )?;
+
     // Keep only the calendars and shapes that some kept trip uses.
     let mut used_services = vec![false; services.len()];
     let mut used_shapes = vec![false; shapes.len()];
     for trip in &trips {
         used_services[trip.service as usize] = true;
-        if let Some(shape) = trip.shape {
+        for shape in trip_shapes(trip) {
             used_shapes[shape as usize] = true;
         }
     }
@@ -160,10 +189,17 @@ pub(super) fn read_feed(
         trip.service = service_remap[trip.service as usize].ok_or(CompileError::OutOfRange(
             "a kept trip's service was not retained".to_owned(),
         ))?;
+        let not_retained =
+            || CompileError::OutOfRange("a kept trip's shape was not retained".to_owned());
         if let Some(shape) = trip.shape {
-            trip.shape = Some(shape_remap[shape as usize].ok_or(CompileError::OutOfRange(
-                "a kept trip's shape was not retained".to_owned(),
-            ))?);
+            trip.shape = Some(shape_remap[shape as usize].ok_or_else(not_retained)?);
+        }
+        if let Some(segments) = &mut trip.segments {
+            for segment in segments {
+                if let Some(shape) = segment.shape {
+                    segment.shape = Some(shape_remap[shape as usize].ok_or_else(not_retained)?);
+                }
+            }
         }
     }
     let mut indexed_shapes: Vec<(u32, ShapeModel)> = shapes.into_values().collect();
@@ -198,6 +234,16 @@ pub(super) fn read_feed(
         transfer_pairs,
         report,
     })
+}
+
+/// Every shape a trip uses: its own, and those of the original trips of a combined one.
+fn trip_shapes(trip: &TripModel) -> impl Iterator<Item = u32> + '_ {
+    trip.shape.into_iter().chain(
+        trip.segments
+            .iter()
+            .flatten()
+            .filter_map(|segment| segment.shape),
+    )
 }
 
 fn remap_used(used: &[bool]) -> Vec<Option<u32>> {
@@ -761,14 +807,21 @@ const MAX_ROW_PAIRS: usize = 4096;
 /// transfer time; the smallest of several rows wins, and every other stop keeps the default.
 /// A row between two different stops sets a floor on that walk; the first such row wins.
 /// A station in a row covers each of its boardable stops.
+/// A feed's rules for walking between stops, and its stay-seated rows.
+type TransferRules = (Vec<(u32, u32, u32)>, Vec<SeatedRow>);
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one linear pass over the rows of transfers.txt"
+)]
 fn apply_transfers(
     source: &mut dyn GtfsSource,
     stop_ids: &StopIds,
     stops: &mut [StopModel],
     report: &mut FeedReport,
-) -> Result<Vec<(u32, u32, u32)>, CompileError> {
+) -> Result<TransferRules, CompileError> {
     let Some(mut table) = Table::open(source, "transfers.txt")? else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
     let from = table.column("from_stop_id")?;
     let to = table.column("to_stop_id")?;
@@ -779,6 +832,7 @@ fn apply_transfers(
         .map(|name| table.optional(name))
         .collect();
     let children = children_of(stops);
+    let mut seated_rows = Vec::new();
     let mut stop_times: HashMap<u32, u32> = HashMap::new();
     let mut pairs: BTreeMap<(u32, u32), u32> = BTreeMap::new();
     let mut row = ByteRecord::new();
@@ -788,6 +842,20 @@ fn apply_transfers(
         let unscoped = scoped.iter().all(|column| field(&row, *column).is_empty());
         let (from_stop, to_stop) = (stop_ids.get(from_id).copied(), stop_ids.get(to_id).copied());
         let row_kind = field(&row, Some(kind));
+        if row_kind == "4" || row_kind == "5" {
+            let (from_trip, to_trip) = (field(&row, scoped[2]), field(&row, scoped[3]));
+            if from_trip.is_empty() || to_trip.is_empty() {
+                report.transfers_ignored += 1;
+            } else {
+                report.seated_rows += 1;
+                seated_rows.push(SeatedRow {
+                    from_trip: from_trip.to_owned(),
+                    to_trip: to_trip.to_owned(),
+                    stay_seated: row_kind == "4",
+                });
+            }
+            continue;
+        }
         if row_kind == "3" && !unscoped {
             report.transfers_forbidden_qualified += 1;
             continue;
@@ -854,10 +922,13 @@ fn apply_transfers(
     }
     report.transfers_forbidden_pairs = pairs.values().filter(|&&s| s == NONE).count();
     report.transfer_pairs = pairs.len() - report.transfers_forbidden_pairs;
-    Ok(pairs
-        .into_iter()
-        .map(|((from, to), seconds)| (from, to, seconds))
-        .collect())
+    Ok((
+        pairs
+            .into_iter()
+            .map(|((from, to), seconds)| (from, to, seconds))
+            .collect(),
+        seated_rows,
+    ))
 }
 
 /// The boardable stops a location stands for: itself if boardable, and its descendants.
@@ -1383,6 +1454,7 @@ fn read_trips(
             stop_headsigns: headsigns,
             sequences,
             stop_dists,
+            segments: None,
         };
 
         if let Some(spans) = frequencies.get(header.name.as_str()) {
@@ -1440,6 +1512,7 @@ impl TripModel {
             stop_headsigns: self.stop_headsigns.clone(),
             sequences: self.sequences.clone(),
             stop_dists: self.stop_dists.clone(),
+            segments: None,
         }
     }
 }

@@ -4,7 +4,7 @@
 //! numbers are the set's. See [`valinor_gtfs::TimetableSet`].
 
 use valinor_gtfs_rt::{
-    FeedId, RouteInfo, ScheduledTrip, StaticLookup, TripQuery, TripRef, WindowDay,
+    FeedId, RouteInfo, ScheduledSegment, ScheduledTrip, StaticLookup, TripQuery, TripRef, WindowDay,
 };
 use valinor_transit::{DaySlot, RouteId, StopId, Time, TimetableSource};
 
@@ -81,8 +81,14 @@ impl StaticLookup for CompiledLookup<'_> {
         let run =
             compiled.trip_run_for_start_time(feed.as_str(), query.trip_id, date, start_time)?;
         let info = compiled.trip(run.trip)?;
-        let (_, first_departure) = info.time_at(0)?;
-        let (last_arrival, _) = info.time_at(info.stop_count().checked_sub(1)?)?;
+        // A combined trip's run is found under each original trip, as that trip's stretch.
+        let (first_position, last_position) = run
+            .segment
+            .map_or((0, info.stop_count().checked_sub(1)?), |(first, last)| {
+                (first as usize, last as usize)
+            });
+        let (_, first_departure) = info.time_at(first_position)?;
+        let (last_arrival, _) = info.time_at(last_position)?;
         Some(TripRef {
             trip: part.global_trip(run.trip),
             route: part.global_route(info.pattern),
@@ -90,6 +96,7 @@ impl StaticLookup for CompiledLookup<'_> {
             first_departure: Self::window_time(day.offset, first_departure)?,
             last_arrival: Self::window_time(day.offset, last_arrival)?,
             headway_start: run.headway_based.then_some(query.start_time).flatten(),
+            segment: run.segment,
         })
     }
 
@@ -111,6 +118,22 @@ impl StaticLookup for CompiledLookup<'_> {
         let compiled = part.compiled();
         let pattern = compiled.pattern(local)?;
         let info = compiled.route(pattern.route)?;
+        Some(RouteInfo {
+            feed: self.feed_id(info.feed)?,
+            route_id: info.gtfs_id,
+            agency_id: info
+                .agency
+                .and_then(|agency| compiled.agency(agency))
+                .and_then(|agency| agency.gtfs_id),
+            route_type: i32::from(info.route_type),
+        })
+    }
+
+    fn route_info_by_id(&self, feed: &FeedId, route_id: &str) -> Option<RouteInfo<'_>> {
+        let part = self.data.set.part_of_feed(feed.as_str())?;
+        let compiled = part.compiled();
+        let route = compiled.route_by_gtfs_id(feed.as_str(), route_id)?;
+        let info = compiled.route(route)?;
         Some(RouteInfo {
             feed: self.feed_id(info.feed)?,
             route_id: info.gtfs_id,
@@ -186,6 +209,19 @@ impl StaticLookup for CompiledLookup<'_> {
                 ScheduledTrip {
                     trip: part.global_trip(trip.trip),
                     direction_id: info.and_then(|i| i.direction).map(u32::from),
+                    segments: compiled
+                        .trip_segments(trip.trip)
+                        .into_iter()
+                        .map(|segment| ScheduledSegment {
+                            first: segment.first_position,
+                            last: segment.last_position,
+                            route_id: compiled
+                                .route(segment.route)
+                                .map(|route| route.gtfs_id.to_owned())
+                                .unwrap_or_default(),
+                            direction_id: segment.direction.map(u32::from),
+                        })
+                        .collect(),
                     stop_sequences: (0..stop_count)
                         .map(|position| {
                             info.and_then(|i| i.stop_sequence_at(position))

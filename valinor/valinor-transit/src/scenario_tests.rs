@@ -442,6 +442,65 @@ fn a_wheelchair_rider_only_rides_routes_not_marked_inaccessible() {
     assert_eq!(results, vec![(1, 200)]);
 }
 
+/// A combined stay-seated trip is one row on a longer pattern: its join's arrival and departure
+/// positions at one stop can't be boarded and alighted across, in either search direction.
+#[test]
+fn a_combined_trip_rides_through_its_join_and_mirrors() {
+    let no_pickup = StopRules {
+        pickup: false,
+        drop_off: true,
+    };
+    let no_drop_off = StopRules {
+        pickup: true,
+        drop_off: false,
+    };
+    // Stop 1 is the join: the last position of the first trip and the first of the second.
+    let mut trip = ScenarioTrip::simple(1, &[0, 100, 150, 400]);
+    trip.times = vec![(0, 0), (100, 100), (150, 150), (400, 400)];
+    trip.rules = vec![
+        StopRules::REGULAR,
+        no_pickup,
+        no_drop_off,
+        StopRules::REGULAR,
+    ];
+    let (net, _) = Scenario::new(4)
+        .route(&[0, 1, 1, 2], &[trip])
+        .route(&[3, 1], &[ScenarioTrip::simple(2, &[0, 120])])
+        .min_change(1, 300)
+        .access(0, 0)
+        .access(3, 0)
+        .egress(1, 0)
+        .egress(2, 0)
+        .build();
+    // Riding through the join: one trip, no change time, and the egress at stop 2.
+    assert_eq!(arrivals(&net, 0), vec![(1, 100)]);
+    agrees_with_oracle(&net, 0);
+    // From the other route, the change at the join's stop is the only way, and it costs 300.
+    assert_eq!(departures(&net, 400), vec![(1, 0)]);
+    assert_eq!(
+        departures(&net, 100),
+        oracle(&net, RouteFilter::ALL, Direction::Backward, 100, 4)
+    );
+    // A second ride after the join's stop can board at position 2 at 150, not the 100 of position 1.
+    let mut later = ScenarioTrip::simple(3, &[0, 100, 150, 400]);
+    later.rules = vec![
+        StopRules::REGULAR,
+        no_pickup,
+        no_drop_off,
+        StopRules::REGULAR,
+    ];
+    let (net, _) = Scenario::new(4)
+        .route(&[0, 1, 1, 2], &[later])
+        .route(&[3, 1], &[ScenarioTrip::simple(4, &[0, 120])])
+        .access(3, 0)
+        .egress(2, 0)
+        .build();
+    // Arriving at stop 1 at 120 by the other route (change time 0), boarding position 2 works,
+    // since 120 <= its departure 150.
+    assert_eq!(arrivals(&net, 0), vec![(2, 400)]);
+    agrees_with_oracle(&net, 0);
+}
+
 #[test]
 fn walking_from_another_stop_helps_even_after_a_trip_arrival() {
     // A rider arrives at stop 1 by trip at 100 and at stop 2 by trip at 90,

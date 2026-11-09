@@ -275,6 +275,7 @@ impl StaticLookup for FakeLookup {
         let found = resolved.into_iter().find(|t| t.trip == trip)?;
         let _ = day;
         Some(TripRef {
+            segment: None,
             trip,
             route,
             day: DaySlot::new(u8::try_from(slot).ok()?),
@@ -336,6 +337,7 @@ impl StaticLookup for FakeLookup {
                     .find(|(_, id, _, _)| *id == trip.trip)
                     .expect("known trip");
                 ScheduledTrip {
+                    segments: Vec::new(),
                     trip: trip.trip,
                     direction_id: *direction,
                     events: trip.events,

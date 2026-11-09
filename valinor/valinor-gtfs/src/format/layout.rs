@@ -16,7 +16,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 pub const MAGIC: [u8; 8] = *b"VLNRGTFS";
 
 /// The only format version this build reads.
-pub const FORMAT_VERSION: u32 = 5;
+pub const FORMAT_VERSION: u32 = 6;
 
 /// A transfer time for a stop that `transfers.txt` doesn't set one for, as MOTIS does: 2 minutes.
 pub const DEFAULT_TRANSFER_SECONDS: u32 = 120;
@@ -95,11 +95,12 @@ pub(crate) enum SectionId {
     RouteIndex,
     StopIndex,
     TransferPairs,
+    TripSegments,
 }
 
 impl SectionId {
     /// Every section, in file order.
-    pub(crate) const ALL: [Self; 28] = [
+    pub(crate) const ALL: [Self; 29] = [
         Self::Feeds,
         Self::Zones,
         Self::ZoneTransitions,
@@ -128,6 +129,7 @@ impl SectionId {
         Self::RouteIndex,
         Self::StopIndex,
         Self::TransferPairs,
+        Self::TripSegments,
     ];
 
     /// The section's name, for error messages.
@@ -161,6 +163,7 @@ impl SectionId {
             Self::RouteIndex => "route index",
             Self::StopIndex => "stop index",
             Self::TransferPairs => "transfer pairs",
+            Self::TripSegments => "trip segments",
         }
     }
 }
@@ -396,6 +399,31 @@ pub(crate) struct TransferPairRow {
     pub(crate) to: U32,
     /// The walk costs at least this many seconds; [`NONE`] means the walk is forbidden.
     pub(crate) floor: U32,
+}
+
+/// One original trip's stretch of a combined stay-seated trip, sorted by `(trip, first_position)`.
+///
+/// A combined trip's rider row holds its first original trip;
+/// each stretch here has what that one original trip's riders see.
+#[derive(Clone, Copy, Debug, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(C)]
+pub(crate) struct TripSegmentRow {
+    /// The combined trip's row.
+    pub(crate) trip: U32,
+    pub(crate) first_position: U32,
+    /// Inclusive.
+    pub(crate) last_position: U32,
+    pub(crate) gtfs_id: U32,
+    /// The original trip's route, as a [`RouteRow`].
+    pub(crate) route: U32,
+    pub(crate) headsign: U32,
+    /// The original trip's shape, or [`NONE`].
+    pub(crate) shape: U32,
+    pub(crate) wheelchair: u8,
+    pub(crate) bikes: u8,
+    /// GTFS `direction_id`, or [`DIRECTION_NONE`].
+    pub(crate) direction: u8,
+    pub(crate) _pad: u8,
 }
 
 /// Maps a feed-scoped GTFS identifier to a row, sorted by feed and then by string.

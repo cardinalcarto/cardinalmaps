@@ -292,6 +292,27 @@ at whatever scope it is declared.
 Fields within one entity selector are combined with AND, and selectors with OR.
 `DETOUR`, `STOP_MOVED`, and other effects don't change routing; they are displayed on the legs.
 
+## Stay-seated transfers
+
+A vehicle that continues as a new trip is one ride, not a transfer. In the compiler, consecutive
+trips of a `block_id` merge into one trip on a combined stop pattern when the first's last stop is
+the same stop as the next's first and the wait there is at most 10 minutes (`--seated-wait-seconds`,
+600 by default). A chain holds at most 8 trips by default; what the cap cuts is counted.
+A `transfer_type=4` row merges its two trips whatever the wait (up to a sanity limit of two hours,
+as nigiri has) and whatever their stops, and takes precedence over `block_id`: a block with any trip
+in a type 4 row doesn't merge by `block_id`. A `transfer_type=5` row forbids its pair's merge.
+Trips also merge only when both run that day, and only when their bike and wheelchair rules agree,
+because a pattern has one of each.
+
+A merged trip keeps each original trip's positions as they were, so the last stop of one and the
+first stop of the next are two consecutive positions of the combined pattern.
+A rider can't board at the former or alight at the latter, so staying on is the only way through.
+Each original trip keeps its `trip_id`, route, headsign, stop sequences, and shape, per segment
+in the file. GTFS-RT applies to the original trip's stretch: a delay moves only that stretch (times
+stay in order across the join, since the vehicle can't leave before it has arrived), and
+a cancellation leaves it unusable, so a ride can still board on another stretch and end at the join.
+A response shows one ride with `segments`, and the join as one stop.
+
 ## Responses
 
 Transit has its own endpoint and JSON, separate from Valhalla's `Api` and `multimodal`.

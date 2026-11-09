@@ -18,6 +18,7 @@
 //! `--csv PATH` one row per query, `--verbose` a line per query, `--trace` a line per street search,
 //! `--walk-limit SECS` cap each transfer walk (changes results; to measure what a cap buys),
 //! `--no-known-bounds`, `--no-own-seed-pruning`, `--flood-tables` turn a pruning off,
+//! `--no-seated-merge` compiles without merging stay-seated trips,
 //! `--no-canary` skips the full-network table floods at the start and end
 //! (they cost a second worker's memory, so use it when reading the memory lines),
 //! `--compare` checks profiles with every pruning off and on, and
@@ -48,7 +49,10 @@ use std::time::Instant;
 use valhalla_graphtile::GraphId;
 use valhalla_graphtile::graph_tile::GraphTile;
 use valhalla_graphtile::tile_provider::GraphTileProvider;
-use valinor_gtfs::{CompiledTimetable, FeedId, FeedInput, ZipSource, compile, parse_service_date};
+use valinor_gtfs::{
+    CompileOptions, CompiledTimetable, FeedId, FeedInput, ZipSource, compile_with,
+    parse_service_date,
+};
 use valinor_router::tiles::TileSets;
 use valinor_sif::AnyCosting;
 use valinor_transit::{
@@ -1798,10 +1802,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let verbose = flags.present("verbose");
 
     let started = Instant::now();
-    let output = compile(vec![FeedInput {
-        id: FeedId::try_new("kcm".to_owned())?,
-        source: Box::new(ZipSource::from_path(Path::new(&feed))?),
-    }])?;
+    let output = compile_with(
+        vec![FeedInput {
+            id: FeedId::try_new("kcm".to_owned())?,
+            source: Box::new(ZipSource::from_path(Path::new(&feed))?),
+        }],
+        CompileOptions {
+            merge_seated_trips: !flags.present("no-seated-merge"),
+            ..CompileOptions::default()
+        },
+    )?;
     let bytes = output.bytes;
     let view = CompiledTimetable::parse(&bytes)?;
     let days = date.into_inner();

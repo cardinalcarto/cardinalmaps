@@ -225,7 +225,8 @@ pub struct RiderData {
     trips: Vec<TripDetails>,
     trip_index: HashMap<(ScopedId, Option<CalendarDate>, Option<u32>), usize>,
     trips_by_key: HashMap<TripKey, usize>,
-    /// Every update of a run, oldest first; more than one only for `exact_times=0` trips.
+    /// Every update of a run, oldest first; more than one for `exact_times=0` trips,
+    /// and for a combined trip, one per original trip that has an update.
     trips_of_key: HashMap<TripKey, Vec<usize>>,
     trips_by_route: HashMap<ScopedId, Vec<usize>>,
     /// `(trip index, stops index)` per stop.
@@ -245,6 +246,30 @@ pub struct RiderData {
 }
 
 impl RiderData {
+    /// A combined trip's details for one position: from whichever original trip's update has it.
+    pub fn stop_details_at(&self, key: TripKey, position: u32) -> Option<&StopTimeDetails> {
+        self.trips_of_key
+            .get(&key)?
+            .iter()
+            .rev()
+            .find_map(|&index| {
+                self.trips[index]
+                    .stops
+                    .iter()
+                    .find(|stop| stop.position == Some(position))
+            })
+    }
+
+    /// The update of a combined trip's run that names this original `trip_id`.
+    pub fn trip_details_named(&self, key: TripKey, trip_id: &str) -> Option<&TripDetails> {
+        self.trips_of_key
+            .get(&key)?
+            .iter()
+            .rev()
+            .map(|&index| &self.trips[index])
+            .find(|trip| trip.trip_id == trip_id)
+    }
+
     pub(crate) fn push_trip(&mut self, trip: TripDetails) {
         let Some(feed) = trip.feed.clone() else {
             return;

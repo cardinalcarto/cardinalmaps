@@ -34,6 +34,9 @@ enum Stage {
         /// Recompile feeds that failed last time, even with unchanged input.
         #[arg(long)]
         retry_failed: bool,
+        /// The longest wait that two consecutive trips of one `block_id` merge across, in seconds.
+        #[arg(long, default_value_t = valinor_gtfs::DEFAULT_SEATED_WAIT_SECONDS)]
+        seated_wait_seconds: i32,
     },
     /// Computes tiled transfers between every stop of every compiled feed.
     Transfers {
@@ -97,12 +100,14 @@ fn run(cli: Cli) -> Result<(), Box<dyn core::error::Error>> {
             input,
             output,
             retry_failed,
+            seated_wait_seconds,
         } => {
             let report = compile::run(&CompileOptions {
                 input,
                 output,
                 threads,
                 retry_failed,
+                seated_wait_seconds,
             })?;
             let failed = report
                 .feeds

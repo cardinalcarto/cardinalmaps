@@ -19,8 +19,8 @@ use crate::error::CompileError;
 use crate::format::layout::{
     AgencyRow, ColorRow, FeedRow, IdIndexRow, NONE, NoonOffsetRow, PATTERN_BIKES_ALLOWED,
     PATTERN_WHEELCHAIR_ACCESSIBLE, PatternRow, RouteRow, STOP_NO_CHANGE, SectionId, ServiceRow,
-    ShapePointRow, ShapeRow, StopRow, TimePair, TransferPairRow, TripRiderRow, TripRow, ZoneRow,
-    ZoneTransitionRow,
+    ShapePointRow, ShapeRow, StopRow, TimePair, TransferPairRow, TripRiderRow, TripRow,
+    TripSegmentRow, ZoneRow, ZoneTransitionRow,
 };
 use crate::format::reader::{civil_date_of, service_date_of};
 use crate::format::timetable::stop_rules;
@@ -55,6 +55,10 @@ impl StringPool {
         self.offsets.push(end);
         self.index.insert(text.to_owned(), index);
         Ok(index)
+    }
+
+    pub(crate) fn text(&self, index: u32) -> &str {
+        self.get(index)
     }
 
     fn get(&self, index: u32) -> &str {
@@ -166,6 +170,24 @@ pub(super) fn assemble(
             .entry(pattern.route)
             .or_default()
             .push(pattern_u32);
+        // A combined trip is filed under each of its original routes, so alerts and lookups
+        // by route find it; the pattern's own route is the first original's.
+        let extra_routes: HashSet<u32> = pattern
+            .trips
+            .iter()
+            .filter_map(|&trip| feeds[pattern.feed].trips[trip].segments.as_ref())
+            .flatten()
+            .map(|segment| segment.route + bases[pattern.feed].route_base)
+            .filter(|&route| route != pattern.route)
+            .collect();
+        let mut extra_routes: Vec<u32> = extra_routes.into_iter().collect();
+        extra_routes.sort_unstable();
+        for route in extra_routes {
+            route_pattern_lists
+                .entry(route)
+                .or_default()
+                .push(pattern_u32);
+        }
 
         let mut seen = HashSet::with_capacity(pattern.stops.len());
         let mut is_loop = false;
@@ -187,6 +209,7 @@ pub(super) fn assemble(
                 pattern.feed,
                 pattern_u32,
                 bases[pattern.feed].service_base,
+                bases[pattern.feed].route_base,
                 model,
             )?;
         }
@@ -306,6 +329,7 @@ pub(super) fn assemble(
     writer.table(SectionId::RouteIndex, &route_index);
     writer.table(SectionId::StopIndex, &stop_index);
     writer.table(SectionId::TransferPairs, &transfer_pair_rows);
+    writer.table(SectionId::TripSegments, &trip_table.segments);
 
     let boardable =
         u32::try_from(boardable_count).map_err(|_| CompileError::TableTooLarge("stops"))?;
@@ -795,6 +819,9 @@ struct TripTables {
     dist_starts: HashMap<Vec<u32>, u32>,
     /// Per emitted trip: feed index and shape, patched once shape bases are known.
     shapes: Vec<(usize, Option<u32>)>,
+    segments: Vec<TripSegmentRow>,
+    /// Per segment: feed index and shape, patched as `shapes` is.
+    segment_shapes: Vec<(usize, Option<u32>)>,
 }
 
 impl TripTables {
@@ -802,6 +829,11 @@ impl TripTables {
         for (rider, (feed, shape)) in self.riders.iter_mut().zip(&self.shapes) {
             if let Some(shape) = shape {
                 rider.shape = U32::new(bases[*feed] + shape);
+            }
+        }
+        for (segment, (feed, shape)) in self.segments.iter_mut().zip(&self.segment_shapes) {
+            if let Some(shape) = shape {
+                segment.shape = U32::new(bases[*feed] + shape);
             }
         }
     }
@@ -821,11 +853,13 @@ fn dedupe_start<K: Eq + core::hash::Hash>(
     Ok((start, true))
 }
 
+#[allow(clippy::too_many_lines, reason = "one linear write of a trip's rows")]
 fn emit_trip(
     tables: &mut TripTables,
     feed: usize,
     pattern: u32,
     service_base: u32,
+    route_base: u32,
     model: &TripModel,
 ) -> Result<(), CompileError> {
     let trip_row =
@@ -920,11 +954,34 @@ fn emit_trip(
     tables.shapes.push((feed, model.shape));
 
     let feed_row = u32::try_from(feed).map_err(|_| CompileError::TableTooLarge("feeds"))?;
-    tables.index.push(IdIndexRow {
-        feed: U32::new(feed_row),
-        id: U32::new(model.gtfs_id),
-        row: U32::new(trip_row),
-    });
+    // A combined trip is found under each of its original trips, by their own identifiers.
+    let ids: Vec<u32> = model.segments.as_ref().map_or_else(
+        || vec![model.gtfs_id],
+        |segments| segments.iter().map(|segment| segment.gtfs_id).collect(),
+    );
+    for id in ids {
+        tables.index.push(IdIndexRow {
+            feed: U32::new(feed_row),
+            id: U32::new(id),
+            row: U32::new(trip_row),
+        });
+    }
+    for segment in model.segments.iter().flatten() {
+        tables.segments.push(TripSegmentRow {
+            trip: U32::new(trip_row),
+            first_position: U32::new(segment.first_position),
+            last_position: U32::new(segment.last_position),
+            gtfs_id: U32::new(segment.gtfs_id),
+            route: U32::new(segment.route + route_base),
+            headsign: U32::new(segment.headsign),
+            shape: U32::new(NONE),
+            wheelchair: segment.wheelchair,
+            bikes: segment.bikes,
+            direction: segment.direction,
+            _pad: 0,
+        });
+        tables.segment_shapes.push((feed, segment.shape));
+    }
     Ok(())
 }
 

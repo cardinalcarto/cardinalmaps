@@ -136,6 +136,7 @@ fn compile_options(input: &Path, output: &Path) -> CompileOptions {
         output: output.to_path_buf(),
         threads: threads(4),
         retry_failed: false,
+        seated_wait_seconds: valinor_gtfs::DEFAULT_SEATED_WAIT_SECONDS,
     }
 }
 

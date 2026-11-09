@@ -21,7 +21,8 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use valinor_gtfs::{
-    CompiledTimetable, FORMAT_VERSION, FeedId, FeedInput, ZipSource, civil_date_of, compile,
+    CompileOptions as GtfsCompileOptions, CompiledTimetable, FORMAT_VERSION, FeedId, FeedInput,
+    ZipSource, civil_date_of, compile_with,
 };
 
 use crate::error::BuildError;
@@ -46,6 +47,25 @@ pub enum FeedOutcome {
         /// Why not.
         error: String,
     },
+}
+
+/// What stay-seated merging did to one feed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeatedOutcome {
+    /// Combined trips written.
+    pub merged: usize,
+    /// Trips that only run as part of a combined trip.
+    pub absorbed: usize,
+    /// Trips with some days merged and some alone.
+    pub partial: usize,
+    /// Stay-seated links that passed every check.
+    pub links_valid: usize,
+    /// Chains cut short by the chain limit.
+    pub chains_cut: usize,
+    /// `transfer_type` 4 or 5 rows that named a trip this feed doesn't have.
+    pub rows_unmatched: usize,
+    /// Patterns: trips with the same route, stop sequence, and attributes.
+    pub patterns: usize,
 }
 
 /// One feed's result.
@@ -102,6 +122,9 @@ pub struct FeedRecord {
     /// `transfer_type=3` rows qualified by route or trip, counted because they can't be honored.
     #[serde(default)]
     pub transfers_forbidden_qualified: usize,
+    /// Trip rows after stay-seated merging, and the patterns they fall in.
+    #[serde(default)]
+    pub seated: Option<SeatedOutcome>,
     /// How long this feed took to compile, in seconds.
     pub seconds: f64,
     /// Whether this run reused a previous result without compiling.
@@ -153,6 +176,8 @@ pub struct CompileOptions {
     pub threads: NonZeroUsize,
     /// Recompile a feed that failed last time, even if its archive is unchanged.
     pub retry_failed: bool,
+    /// The longest wait two trips of one `block_id` may be merged across, in seconds.
+    pub seated_wait_seconds: i32,
 }
 
 /// Runs the compile stage.
@@ -318,7 +343,11 @@ fn compile_archive(
         id: feed_id,
         source: Box::new(source),
     }];
-    let compiled = panic::catch_unwind(AssertUnwindSafe(|| compile(input)))
+    let gtfs_options = GtfsCompileOptions {
+        seated_wait_seconds: options.seated_wait_seconds,
+        ..GtfsCompileOptions::default()
+    };
+    let compiled = panic::catch_unwind(AssertUnwindSafe(|| compile_with(input, gtfs_options)))
         .map_err(|payload| {
             Failed::Feed(format!(
                 "compile the feed: panicked: {}",
@@ -378,6 +407,15 @@ fn compile_archive(
         transfers_forbidden_same_stop: report.map_or(0, |r| r.transfers_forbidden_same_stop),
         transfers_forbidden_pairs: report.map_or(0, |r| r.transfers_forbidden_pairs),
         transfers_forbidden_qualified: report.map_or(0, |r| r.transfers_forbidden_qualified),
+        seated: report.map(|r| SeatedOutcome {
+            merged: r.seated_trips_merged,
+            absorbed: r.seated_trips_absorbed,
+            partial: r.seated_trips_partial,
+            links_valid: r.seated_links_valid,
+            chains_cut: r.seated_chains_cut,
+            rows_unmatched: r.seated_rows_unmatched,
+            patterns: r.patterns,
+        }),
         seconds: started.elapsed().as_secs_f64(),
         reused: false,
     })
@@ -441,6 +479,7 @@ fn finish_failed(
         transfers_forbidden_same_stop: 0,
         transfers_forbidden_pairs: 0,
         transfers_forbidden_qualified: 0,
+        seated: None,
         seconds: started.elapsed().as_secs_f64(),
         reused: false,
     };

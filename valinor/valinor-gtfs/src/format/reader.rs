@@ -23,8 +23,8 @@ use crate::format::layout::{
     NoonOffsetRow, PATTERN_BIKES_ALLOWED, PATTERN_WHEELCHAIR_ACCESSIBLE, PatternRow,
     RULE_APPROXIMATE, RULE_DROP_OFF_SHIFT, RULE_PICKUP_MASK, RUN_HEADWAY_FREQUENCY, RUN_SCHEDULED,
     RouteRow, SectionEntry, SectionId, ServiceRow, ShapePointRow, ShapeRow, StopRow, TimePair,
-    TransferPairRow, TripRiderRow, TripRow, UNCHECKSUMMED_PREFIX, ZoneRow, ZoneTransitionRow,
-    checksum_of,
+    TransferPairRow, TripRiderRow, TripRow, TripSegmentRow, UNCHECKSUMMED_PREFIX, ZoneRow,
+    ZoneTransitionRow, checksum_of,
 };
 use crate::format::validate::validate;
 
@@ -110,6 +110,7 @@ pub(crate) struct Tables<'a> {
     pub(crate) route_index: &'a [IdIndexRow],
     pub(crate) stop_index: &'a [IdIndexRow],
     pub(crate) transfer_pairs: &'a [TransferPairRow],
+    pub(crate) trip_segments: &'a [TripSegmentRow],
 }
 
 /// Casts a slice of bytes to a slice of records, naming the section on failure.
@@ -273,6 +274,7 @@ impl<'a> Tables<'a> {
         let route_index = table!(RouteIndex);
         let stop_index = table!(StopIndex);
         let transfer_pairs = table!(TransferPairs);
+        let trip_segments = table!(TripSegments);
 
         let strings = core::str::from_utf8(strings_bytes)
             .map_err(|_| DecodeError::InvalidStrings("the pool is not UTF-8"))?;
@@ -306,6 +308,7 @@ impl<'a> Tables<'a> {
             route_index,
             stop_index,
             transfer_pairs,
+            trip_segments,
         })
     }
 
@@ -721,6 +724,35 @@ impl<'a> CompiledTimetable<'a> {
         })
     }
 
+    /// The segment rows of a combined trip, in order; empty for any other trip.
+    fn segment_rows(&self, trip: u32) -> impl Iterator<Item = &'a TripSegmentRow> + 'a {
+        let segments = self.tables.trip_segments;
+        let start = segments.partition_point(|segment| segment.trip.get() < trip);
+        segments[start..]
+            .iter()
+            .take_while(move |segment| segment.trip.get() == trip)
+    }
+
+    /// The original trips of a combined stay-seated trip, in order; empty for any other trip.
+    pub fn trip_segments(&self, trip: TripId) -> Vec<TripSegmentInfo<'a>> {
+        let tables = self.tables;
+        self.segment_rows(trip.into_inner())
+            .filter_map(|segment| {
+                Some(TripSegmentInfo {
+                    gtfs_id: tables.string(segment.gtfs_id)?,
+                    route: GtfsRoute(segment.route.get()),
+                    headsign: non_empty(tables.string(segment.headsign)),
+                    direction: direction_of(segment.direction),
+                    wheelchair_accessible: Accessibility::from_byte(segment.wheelchair),
+                    bikes_allowed: Accessibility::from_byte(segment.bikes),
+                    first_position: segment.first_position.get(),
+                    last_position: segment.last_position.get(),
+                    shape: reference(segment.shape),
+                })
+            })
+            .collect()
+    }
+
     /// A headsign for a stop of a trip: the stop's own, or else the trip's.
     pub fn stop_headsign(&self, trip: &TripInfo<'a>, position: usize) -> Option<&'a str> {
         if let Some(headsigns) = trip.stop_headsigns
@@ -749,11 +781,21 @@ impl<'a> CompiledTimetable<'a> {
         let start = self.service_day_start_unix(date);
         let copy = *self;
         let rows = lookup_range(&self.tables, self.tables.trip_index, feed, trip_id);
+        let trip_id_owned = trip_id.to_owned();
         rows.into_iter().filter_map(move |row| {
             let trip_row = copy.tables.trips.get(row.get() as usize)?;
             copy.service_active(trip_row.service.get(), date)
                 .then_some(())?;
-            let times = copy.tables.times.get(trip_row.times_start.get() as usize)?;
+            // A combined trip is found under each of its original trips, as that trip's stretch.
+            let segment = copy
+                .segment_rows(row.get())
+                .find(|segment| copy.tables.string(segment.gtfs_id) == Some(trip_id_owned.as_str()))
+                .map(|segment| (segment.first_position.get(), segment.last_position.get()));
+            let first_position = segment.map_or(0, |(first, _)| first as usize);
+            let times = copy
+                .tables
+                .times
+                .get(trip_row.times_start.get() as usize + first_position)?;
             let kind = copy
                 .tables
                 .trip_riders
@@ -766,6 +808,7 @@ impl<'a> CompiledTimetable<'a> {
                 first_departure: times.departure.get(),
                 frequency_run: kind != RUN_SCHEDULED,
                 headway_based: kind == RUN_HEADWAY_FREQUENCY,
+                segment,
             })
         })
     }
@@ -861,6 +904,61 @@ impl<'a> CompiledTimetable<'a> {
             .get(dists_start.checked_add(to)?)?
             .get();
         Some(slice_shape(points, from_dist, to_dist))
+    }
+
+    /// A trip's shape between two positions as points, across every original trip if combined.
+    ///
+    /// `None` means the part of the trip between the positions has no shape to draw.
+    pub fn shape_points_between(
+        &self,
+        trip: TripId,
+        from: usize,
+        to: usize,
+    ) -> Option<Vec<LatLon>> {
+        let segments = self.trip_segments(trip);
+        if segments.is_empty() {
+            return self
+                .shape_between(trip, from, to)
+                .map(|slice| slice.points());
+        }
+        if from >= to {
+            return None;
+        }
+        let (_, rider) = self.trip_rows(trip)?;
+        let dists_start = reference(rider.stop_dists_start)? as usize;
+        let mut points = Vec::new();
+        for segment in segments {
+            let (first, last) = (
+                segment.first_position as usize,
+                segment.last_position as usize,
+            );
+            let (from_position, to_position) = (from.max(first), to.min(last));
+            if from_position >= to_position {
+                continue;
+            }
+            let Some(shape_index) = segment.shape else {
+                continue;
+            };
+            let shape = self.tables.shapes.get(shape_index as usize)?;
+            let start = shape.points_start.get() as usize;
+            let count = shape.point_count.get() as usize;
+            let shape_points = self
+                .tables
+                .shape_points
+                .get(start..start.checked_add(count)?)?;
+            let from_dist = self
+                .tables
+                .stop_dists
+                .get(dists_start.checked_add(from_position)?)?
+                .get();
+            let to_dist = self
+                .tables
+                .stop_dists
+                .get(dists_start.checked_add(to_position)?)?
+                .get();
+            points.extend(slice_shape(shape_points, from_dist, to_dist).points());
+        }
+        (!points.is_empty()).then_some(points)
     }
 }
 
@@ -1264,6 +1362,30 @@ pub struct TripRun {
     pub frequency_run: bool,
     /// Whether the feed gives only a headway for this run (`exact_times=0`).
     pub headway_based: bool,
+    /// For a combined trip, the found original trip's inclusive `(first, last)` positions in it.
+    pub segment: Option<(u32, u32)>,
+}
+
+/// One original trip's stretch of a combined stay-seated trip.
+#[derive(Debug, Clone, Copy)]
+pub struct TripSegmentInfo<'a> {
+    /// The original trip's `trip_id`.
+    pub gtfs_id: &'a str,
+    /// The original trip's route.
+    pub route: GtfsRoute,
+    /// The original trip's `trip_headsign`.
+    pub headsign: Option<&'a str>,
+    /// The original trip's `direction_id`.
+    pub direction: Option<u8>,
+    /// The original trip's `wheelchair_accessible`.
+    pub wheelchair_accessible: Accessibility,
+    /// The original trip's `bikes_allowed`.
+    pub bikes_allowed: Accessibility,
+    /// The first of the original trip's positions on the combined trip.
+    pub first_position: u32,
+    /// The last of the original trip's positions on the combined trip, inclusive.
+    pub last_position: u32,
+    shape: Option<u32>,
 }
 
 /// A piece of a shape between two stops of a trip.
