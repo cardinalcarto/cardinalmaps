@@ -29,11 +29,15 @@
 //! # Concurrency
 //!
 //! The published pointer sits behind a read-write lock that only guards cloning an `Arc`,
-//! so a pin never waits for a rebuild; rebuilds are serialized by a separate mutex.
+//! and rebuilds are serialized by a separate mutex.
+//! A pin that finds its snapshot behind only on feed bytes serves it while a rebuild is in
+//! flight, so queries don't wait for newer real-time data.
+//! It waits only when the service date has rolled over or a feed's freshness has flipped,
+//! because then the current snapshot would be wrong, not merely not the newest.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, TryLockError};
 
 use valinor_gtfs::LoadedTimetable;
 use valinor_gtfs_rt::{
@@ -91,6 +95,15 @@ pub enum IngestOutcome {
     /// The bytes couldn't be decoded. The feed falls back to the schedule, and the reason
     /// is reported in every response until better bytes arrive.
     Undecodable(DecodeError),
+}
+
+/// What [`TransitState::ingest_and_refresh`] did.
+#[derive(Debug)]
+pub struct IngestAndRefresh {
+    /// What became of the bytes.
+    pub outcome: IngestOutcome,
+    /// The snapshot built from them, or why none could be built.
+    pub snapshot: Result<Arc<TransitSnapshot>, StateError>,
 }
 
 /// Snaps stops to the street network for a travel mode.
@@ -269,7 +282,7 @@ pub struct TransitState {
     data: Arc<TimetableData>,
     config: StateConfig,
     current: RwLock<Option<Arc<TransitSnapshot>>>,
-    writer: Mutex<Writer>,
+    pub(crate) writer: Mutex<Writer>,
     snapper: Option<Box<dyn StopSnapper>>,
     /// The static stops' snaps, made once.
     base_snaps: Option<ModeSnaps>,
@@ -278,7 +291,7 @@ pub struct TransitState {
 }
 
 #[derive(Debug, Default)]
-struct Writer {
+pub(crate) struct Writer {
     feeds: HashMap<(FeedId, FeedKind), FeedInput>,
     /// Most recently used first.
     windows: Vec<Arc<WindowData>>,
@@ -375,6 +388,35 @@ impl TransitState {
     ///
     /// If the feed isn't in the compiled timetable.
     pub fn ingest(&self, update: FeedUpdate<'_>) -> Result<IngestOutcome, StateError> {
+        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        self.store_update(&mut writer, update)
+    }
+
+    /// [`Self::ingest`] and [`Self::refresh`] as one step.
+    ///
+    /// Queries in the meantime keep serving the previous snapshot, since the rebuild holds
+    /// the writer from the moment the new bytes arrive.
+    ///
+    /// # Errors
+    ///
+    /// If the feed isn't in the compiled timetable. A rebuild failure is in the result:
+    /// by then the bytes have been stored.
+    pub fn ingest_and_refresh(
+        &self,
+        update: FeedUpdate<'_>,
+        now: i64,
+    ) -> Result<IngestAndRefresh, StateError> {
+        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let outcome = self.store_update(&mut writer, update)?;
+        let snapshot = self.rebuild(&mut writer, now);
+        Ok(IngestAndRefresh { outcome, snapshot })
+    }
+
+    fn store_update(
+        &self,
+        writer: &mut Writer,
+        update: FeedUpdate<'_>,
+    ) -> Result<IngestOutcome, StateError> {
         let feed = self
             .data
             .feeds
@@ -383,7 +425,6 @@ impl TransitState {
             .cloned()
             .ok_or_else(|| StateError::UnknownFeed(update.feed.to_owned()))?;
         let key = (feed.clone(), update.kind);
-        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         let outcome = match update.bytes {
             None => {
                 writer.feeds.remove(&key);
@@ -410,7 +451,8 @@ impl TransitState {
 
     /// Rebuilds and publishes a snapshot for `now` from the current feeds.
     ///
-    /// Call this after [`Self::ingest`] from a background thread so queries don't pay for it.
+    /// Call this after [`Self::ingest`] from a background thread so queries don't pay for it,
+    /// or use [`Self::ingest_and_refresh`].
     ///
     /// # Errors
     ///
@@ -429,12 +471,26 @@ impl TransitState {
     ///
     /// If `now` is outside the timetable's coverage and no snapshot covers it.
     pub fn pin(&self, now: i64) -> Result<Arc<TransitSnapshot>, StateError> {
-        if let Some(current) = self.read_current()
-            && !self.is_out_of_date(&current, now)
+        let current = self.read_current();
+        if let Some(snapshot) = &current
+            && !self.is_out_of_date(snapshot, now)
         {
-            return Ok(current);
+            return Ok(Arc::clone(snapshot));
         }
-        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut writer = match self.writer.try_lock() {
+            Ok(writer) => writer,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                // A rebuild is running. If this snapshot is only behind on feed bytes,
+                // that rebuild will catch it up, and a query needn't wait for it.
+                if let Some(snapshot) = current
+                    && !Self::is_wrong_at(self.data.loaded.timetable(), &snapshot, now)
+                {
+                    return Ok(snapshot);
+                }
+                self.writer.lock().unwrap_or_else(PoisonError::into_inner)
+            }
+        };
         // Somebody else may have rebuilt while we waited for the mutex.
         if let Some(current) = self.read_current()
             && !self.is_out_of_date(&current, now)
@@ -503,10 +559,17 @@ impl TransitState {
     }
 
     fn is_out_of_date(&self, snapshot: &TransitSnapshot, now: i64) -> bool {
-        let compiled = self.data.loaded.timetable();
         snapshot.feed_generation != self.feed_generation.load(Ordering::Acquire)
-            || snapshot.center != service_date_at(compiled, now)
-            || Self::stale_flipped(snapshot, now)
+            || Self::is_wrong_at(self.data.loaded.timetable(), snapshot, now)
+    }
+
+    /// Whether a snapshot is wrong at `now`, rather than only behind the newest feed bytes.
+    fn is_wrong_at(
+        compiled: &valinor_gtfs::CompiledTimetable<'_>,
+        snapshot: &TransitSnapshot,
+        now: i64,
+    ) -> bool {
+        snapshot.center != service_date_at(compiled, now) || Self::stale_flipped(snapshot, now)
     }
 
     /// Whether any feed's staleness differs at `now` from what the snapshot applied.

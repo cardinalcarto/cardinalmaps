@@ -590,6 +590,62 @@ fn a_pinned_snapshot_is_unchanged_by_later_refreshes() {
 }
 
 #[test]
+fn a_pin_serves_the_current_snapshot_while_a_rebuild_is_running() {
+    let state = std::sync::Arc::new(synthetic_state());
+    let before = state.pin(FEED_TIME).expect("pin");
+    trip_feed(
+        &state,
+        FEED_TIME,
+        vec![delay_update("T1", JUNE_15, 10, 120)],
+    );
+
+    // A rebuild in flight holds the writer.
+    let writer = state.writer.lock().expect("lock");
+    let (done, finished) = std::sync::mpsc::channel();
+    let shared = std::sync::Arc::clone(&state);
+    let query = std::thread::spawn(move || {
+        let pinned = shared.pin(FEED_TIME);
+        done.send(()).expect("receiver");
+        pinned
+    });
+    finished
+        .recv_timeout(core::time::Duration::from_secs(5))
+        .expect("the query didn't wait for the rebuild");
+    let pinned = query.join().expect("join").expect("pin");
+    assert!(std::sync::Arc::ptr_eq(&pinned, &before));
+    drop(writer);
+    assert_eq!(state.pin(FEED_TIME).expect("pin").stats().trip_updates, 1);
+}
+
+#[test]
+fn a_pin_waits_when_the_service_date_has_rolled_over() {
+    let state = synthetic_state();
+    let monday = state.pin(june_15(23, 59)).expect("pin");
+    let tuesday = state.pin(june_15(24, 1)).expect("pin");
+    assert_ne!(monday.window.dates, tuesday.window.dates);
+}
+
+#[test]
+fn ingest_and_refresh_publishes_in_one_step() {
+    let state = synthetic_state();
+    let bytes = encoded_feed(FEED_TIME, vec![delay_update("T1", JUNE_15, 10, 60)]);
+    let result = state
+        .ingest_and_refresh(
+            FeedUpdate {
+                feed: FEED,
+                kind: FeedKind::TripUpdates,
+                bytes: Some(&bytes),
+                received_at: FEED_TIME,
+                stale_after: None,
+            },
+            FEED_TIME,
+        )
+        .expect("ingest");
+    assert_eq!(result.outcome, IngestOutcome::Accepted);
+    assert_eq!(result.snapshot.expect("built").stats().trip_updates, 1);
+}
+
+#[test]
 fn a_query_outside_the_timetable_is_an_error() {
     let state = synthetic_state();
     let far_future = june_15(24 * 400, 0);
