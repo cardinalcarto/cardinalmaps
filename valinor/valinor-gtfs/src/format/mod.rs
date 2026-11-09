@@ -13,6 +13,7 @@
 
 pub(crate) mod layout;
 pub(crate) mod reader;
+pub(crate) mod set;
 pub(crate) mod timetable;
 pub(crate) mod validate;
 #[cfg(feature = "compile")]

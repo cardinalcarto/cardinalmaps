@@ -8,6 +8,7 @@
 //! - [`CompiledTimetable::to_timetable`] gives a [`valinor_transit::Timetable`],
 //!   and [`CompiledTimetable::service_window`] gives the service days to materialize,
 //!   using UTC offsets resolved when the file was compiled.
+//! - [`TimetableSet`] numbers several compiled files as one, leaving each file as it is.
 //! - [`CompiledTimetable`] also answers the questions a response layer and GTFS-RT need,
 //!   by feed-scoped GTFS identifiers.
 
@@ -22,6 +23,7 @@ pub use format::reader::{
     LoadedTimetable, LocationId, LocationType, PatternInfo, RouteInfo, ServiceWindow, ShapeSlice,
     StopInfo, TripInfo, TripRun, civil_date_of, parse_service_date, service_date_of,
 };
+pub use format::set::{SetError, TimetablePart, TimetableSet};
 pub use format::{FORMAT_VERSION, MAGIC};
 
 #[cfg(feature = "compile")]
