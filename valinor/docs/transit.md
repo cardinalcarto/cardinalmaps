@@ -47,12 +47,14 @@ For an interval `[τmin, τmax]`:
    Push each Pareto-optimal arrival time into a priority queue.
 2. Pop the minimum arrival time and run a backward search from it.
    Each number of trips with a result yields a profile entry.
-3. For each distinct new departure time `τdep` from step 2 with `τdep < τmax`,
-   run a forward search at `τdep + 1` and push its arrivals, skipping those already seen.
+3. For each distinct new departure time `τdep` from step 2, at any number of trips,
+   with `τdep < τmax`, run a forward search at `τdep + 1` and push its arrivals,
+   skipping those already seen.
 4. Repeat until the queue is empty. Discard entries departing after `τmax`.
 
-The paper leaves step 3 ambiguous.
-Brute force decides: see "Testing".
+Step 3 must run for the new departures of every number of trips.
+Forward searches only for the earliest, the latest, or the fewest-trips departure lose journeys;
+the brute-force test (see "Testing") confirms this rule and fails each of those.
 
 A query's searches all read one pinned real-time snapshot.
 
@@ -82,6 +84,10 @@ A journey must contain a trip, as `t` is only reachable by a stop's egress entry
 This replaces the paper's pruning at `t` in section 3.1.
 Entries slower than the direct journey in the query's mode are removed afterwards.
 
+Access reaches a first boarding directly, and egress leaves from the last alighting stop.
+Transfer search doesn't reach those tables, so the tables must cover every stop,
+and every search mirrors exactly: a journey is access, trips joined by walks, and egress.
+
 | Use case | Access | Transfers | Routes | Egress |
 |---|---|---|---|---|
 | Walk | walk | walk | all | walk |
@@ -102,6 +108,8 @@ Each stop occurrence on a route is indexed, so loop routes work.
 A stop has separate labels for arriving by trip and arriving on foot.
 Boarding the same stop after arriving by trip requires the minimum change time,
 so a zero-length walk can't bypass it.
+A walk joins two different stops, so it never leads from a stop back to itself;
+a rider reaching a stop on foot from another stop owes no change time there.
 
 ## Memory layout
 
@@ -115,6 +123,9 @@ RAPTOR is fast because of cache hits on data the prefetcher can predict. Nothing
 - A route directory gives each route its block, which is in the base window or in the overlay arena.
   Both use the same layout, and the scan is the same code for both.
 - Labels are flat arrays indexed by stop and round, cleared by version stamps.
+  They are sized from the pinned snapshot's stop count, which includes an overlay's new stops.
+- Pickup and drop-off rules are one flag per stop position of a lane,
+  so trips differing in them are in different lanes.
 - Stops are numbered so that stops on the same route are close together.
 
 ## Real-time overlay
@@ -122,6 +133,8 @@ RAPTOR is fast because of cache hits on data the prefetcher can predict. Nothing
 An overlay is an immutable value built from GTFS-RT input and published as an `Arc`.
 It holds an arena of route blocks, the directory entries that point into it,
 and per-stop additions for new stop patterns.
+Stop IDs number base stops first and then an overlay's new stops.
+New stops are snapped to the street network when the overlay is built.
 
 Each changed route and service day gets a whole replacement block.
 If delays make trips overtake, the block is split into non-overtaking lanes,
@@ -134,6 +147,7 @@ each laid out and scanned like any route block. An unchanged route has one lane.
 | Stop skipped | `SKIPPED` stop time | No boarding or alighting at that stop |
 | Canceled | Canceled trip | Removed from that service day |
 | Added or replaced | New trip or stop pattern | Own pattern in the overlay |
+| New stop | GTFS-RT `Stop`, or `replacement_stops`, not in the static feed | Stop appended to the snapshot's stop numbering; added patterns may use it |
 | No service | Active `NO_SERVICE` alert | Removed from routing for the alert's scope |
 | Stale | Feed older than its limit | Falls back to Scheduled |
 
