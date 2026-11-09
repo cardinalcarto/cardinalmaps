@@ -19,6 +19,7 @@ use jiff::Timestamp;
 use self_cell::self_cell;
 use thiserror::Error;
 use valhalla_graphtile::GraphId;
+use valhalla_proto::costing::Type as CostingType;
 use valhalla_proto::lat_lng::{HasLat, HasLng};
 use valhalla_proto::location::{HasMinimumReachability, HasSearchCutoff};
 use valhalla_proto::options::HasLanguage;
@@ -30,7 +31,7 @@ use valinor_router::tiles::TileSets;
 use valinor_sif::costing_options::parse_costing;
 use valinor_sif::json::JsonValue;
 use valinor_sif::{AnyCosting, TravelMode as SifMode};
-use valinor_thor::{Leg as ThorLeg, Thor, ThorConfig, Workspace};
+use valinor_thor::{Leg as ThorLeg, Retention, Thor, ThorConfig, Workspace};
 use valinor_transit::{Router, Seconds, StopId, StopTable};
 use valinor_walk::paths::{access_leg, route_paths, transfer_leg};
 use valinor_walk::{
@@ -78,6 +79,33 @@ pub enum StreetError {
     NoSnaps,
 }
 
+/// The most a server or device will do for one query, as Valhalla's service limits are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServiceLimits {
+    /// The longest access or egress leg a query may ask for, in seconds.
+    ///
+    /// Table work and the street graph retained after a query grow with the area it covers,
+    /// so an unbounded value is an unbounded query.
+    pub max_walk_seconds: u32,
+    /// The most street data one idle worker may keep for the next query, in bytes.
+    ///
+    /// A worker that retains more is dropped after the query, returning that memory.
+    pub max_retained_worker_bytes: usize,
+    /// How many idle workers are kept. Concurrent queries beyond this make temporary workers,
+    /// so the caller bounds them by how many queries it runs at once.
+    pub max_idle_workers: usize,
+}
+
+impl Default for ServiceLimits {
+    fn default() -> Self {
+        Self {
+            max_walk_seconds: 3600,
+            max_retained_worker_bytes: 512 * 1024 * 1024,
+            max_idle_workers: 32,
+        }
+    }
+}
+
 /// Choices for a [`StreetPlanner`].
 #[derive(Debug, Clone, Copy)]
 pub struct StreetConfig {
@@ -87,6 +115,10 @@ pub struct StreetConfig {
     pub snap: SnapConfig,
     /// How many tiles each tile directory keeps in memory.
     pub tile_cache_size: NonZeroUsize,
+    /// The most one query may ask for and keep.
+    pub limits: ServiceLimits,
+    /// How much of a Thor workspace a worker keeps between queries.
+    pub retention: Retention,
 }
 
 impl Default for StreetConfig {
@@ -95,13 +127,14 @@ impl Default for StreetConfig {
             state: StateConfig::default(),
             snap: SnapConfig::default(),
             tile_cache_size: valinor_router::DEFAULT_TILE_CACHE_SIZE,
+            limits: ServiceLimits::default(),
+            retention: Retention::default(),
         }
     }
 }
 
 /// The pedestrian or bicycle costing, as Thor's options and a Sif costing.
 fn costing_parts(mode: TravelMode) -> Result<(CostingProto, i32), StreetError> {
-    use valhalla_proto::costing::Type as CostingType;
     let costing_type = match mode {
         TravelMode::Walking => CostingType::Pedestrian,
         TravelMode::Cycling => CostingType::Bicycle,
@@ -217,6 +250,17 @@ impl<'a> ModeWorker<'a> {
     }
 }
 
+impl ModeWorker<'_> {
+    fn retained_bytes(&self) -> usize {
+        let transfers = self.router.transfers();
+        transfers
+            .working_memory_bytes()
+            .saturating_add(transfers.graph_stats().bytes)
+            .saturating_add(self.access.stats().bytes)
+            .saturating_add(self.egress.stats().bytes)
+    }
+}
+
 /// One thread's search storage: per-mode searches and a Thor workspace.
 struct Worker<'a> {
     walking: ModeWorker<'a>,
@@ -226,13 +270,21 @@ struct Worker<'a> {
 }
 
 impl<'a> Worker<'a> {
-    fn new(tiles: &'a TileSets) -> Result<Self, StreetError> {
+    fn new(tiles: &'a TileSets, retention: Retention) -> Result<Self, StreetError> {
         Ok(Self {
             walking: ModeWorker::new(tiles, TravelMode::Walking)?,
             cycling: ModeWorker::new(tiles, TravelMode::Cycling)?,
             thor: Thor::new(ThorConfig::default(), tiles),
-            workspace: Workspace::default(),
+            workspace: Workspace::new(retention),
         })
+    }
+
+    /// What this worker's street searches keep for the next query, in bytes.
+    fn retained_bytes(&self) -> usize {
+        [&self.walking, &self.cycling]
+            .into_iter()
+            .map(ModeWorker::retained_bytes)
+            .sum()
     }
 }
 
@@ -524,6 +576,8 @@ struct WorkerPool<'a> {
     tiles: &'a TileSets,
     idle: Mutex<Vec<Worker<'a>>>,
     odin: Odin,
+    limits: ServiceLimits,
+    retention: Retention,
 }
 
 impl<'a> WorkerPool<'a> {
@@ -535,15 +589,23 @@ impl<'a> WorkerPool<'a> {
             .pop();
         match idle {
             Some(worker) => Ok(worker),
-            None => Worker::new(self.tiles),
+            None => Worker::new(self.tiles, self.retention),
         }
     }
 
-    fn put(&self, worker: Worker<'a>) {
-        self.idle
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(worker);
+    /// Keeps a worker for the next query, unless it holds too much or enough are idle.
+    fn put(&self, mut worker: Worker<'a>) {
+        // Thor's searches keep their storage until their next start; give it back now.
+        worker.workspace.trim();
+        if worker.retained_bytes() > self.limits.max_retained_worker_bytes {
+            // There is no trimming the street searches, so a query this large gives
+            // back what it grew to by letting its worker go.
+            return;
+        }
+        let mut idle = self.idle.lock().unwrap_or_else(PoisonError::into_inner);
+        if idle.len() < self.limits.max_idle_workers {
+            idle.push(worker);
+        }
     }
 }
 
@@ -588,11 +650,13 @@ fn snap_setup_error(_: StreetError) -> WalkError {
 
 /// Plans over a compiled timetable, real-time overlays, and real streets.
 ///
-/// One planner serves every thread; each [`Self::plan`] takes a search worker from a pool
-/// that grows to however many queries run at once, so the caller bounds concurrency.
+/// One planner serves every thread; each [`Self::plan`] takes a search worker from a pool.
+/// The pool keeps [`ServiceLimits::max_idle_workers`], and a query with none idle makes one,
+/// so the number of workers alive is the number of queries the caller runs at once.
 pub struct StreetPlanner {
     cell: Cell,
     state: Arc<TransitState>,
+    limits: ServiceLimits,
 }
 
 impl fmt::Debug for StreetPlanner {
@@ -642,10 +706,13 @@ impl StreetPlanner {
             tiles,
             idle: Mutex::new(Vec::new()),
             odin: Odin::default(),
+            limits: config.limits,
+            retention: config.retention,
         });
         Ok(Self {
             cell,
             state: Arc::new(state),
+            limits: config.limits,
         })
     }
 
@@ -670,6 +737,11 @@ impl StreetPlanner {
         interrupt: &dyn Fn() -> bool,
     ) -> Result<PlanResponse, StreetPlanError> {
         let latest_unix = validated_latest::<WalkError, StreetError>(request)?;
+        if request.options.max_walk_seconds > self.limits.max_walk_seconds {
+            return Err(PlanError::InvalidRequest(
+                "max_walk_seconds exceeds the service limit",
+            ));
+        }
         let snapshot = self
             .state
             .pin_for_departure(request.now, request.departure, latest_unix)?;

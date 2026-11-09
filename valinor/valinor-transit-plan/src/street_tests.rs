@@ -240,6 +240,11 @@ fn json_requests_round_trip_and_report_errors() {
     let unknown = br#"{"origin":{"lat":42.5,"lon":1.5},"destination":{"lat":42.5,"lon":1.5},"mode":"flying"}"#;
     assert_eq!(planner.plan_json(unknown, at(8, 54), &|| false).status, 400);
 
+    let over_limit = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.535,"lon":1.5825},"max_walk_seconds":3601}"#;
+    let answer = planner.plan_json(over_limit, at(8, 54), &|| false);
+    assert_eq!(answer.status, 400);
+    assert!(String::from_utf8_lossy(&answer.body).contains("service limit"));
+
     let vehicle = planner.vehicle_json(FEED, "nope", at(8, 54));
     assert_eq!(vehicle.status, 200);
     assert!(String::from_utf8_lossy(&vehicle.body).contains("built_at"));

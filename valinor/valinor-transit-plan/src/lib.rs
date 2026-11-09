@@ -42,4 +42,6 @@ pub use state::{
     FeedUpdate, IngestOutcome, ModeSnaps, StateConfig, StopLocation, StopSnapper, TransitSnapshot,
     TransitState,
 };
-pub use street::{OpenPlannerError, StreetConfig, StreetError, StreetPlanError, StreetPlanner};
+pub use street::{
+    OpenPlannerError, ServiceLimits, StreetConfig, StreetError, StreetPlanError, StreetPlanner,
+};

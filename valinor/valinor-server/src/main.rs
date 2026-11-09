@@ -24,7 +24,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 use valinor_gtfs::LoadedTimetable;
 use valinor_router::{DEFAULT_TILE_CACHE_SIZE, Router, RouterConfig};
-use valinor_transit_plan::{StreetConfig, StreetPlanner};
+use valinor_transit_plan::{ServiceLimits, StreetConfig, StreetPlanner};
 
 mod app;
 #[cfg(test)]
@@ -75,6 +75,11 @@ struct Cli {
     /// Without one, real-time data can't be ingested and transit serves the schedule.
     #[arg(env, long)]
     transit_ingest_token: Option<String>,
+
+    /// The longest access or egress leg a transit query may ask for, in seconds
+    /// (longer ones are a 400), as Valhalla's service limits bound its other work.
+    #[arg(env, long, default_value = "3600")]
+    transit_max_walk_seconds: u32,
 }
 
 /// The tile sets to open: `--tiles`, or else the config's `mjolnir.tile_extract`
@@ -102,8 +107,15 @@ fn open_transit(cli: &Cli, tiles: &[PathBuf]) -> anyhow::Result<Option<transit::
     // as `LoadedTimetable::map` asks; nothing modifies it in place while the server runs.
     let timetable = unsafe { LoadedTimetable::map(path) }
         .with_context(|| format!("load the timetable {}", path.display()))?;
-    let planner = StreetPlanner::open(timetable, tiles, StreetConfig::default())
-        .context("open transit over the tiles")?;
+    let config = StreetConfig {
+        limits: ServiceLimits {
+            max_walk_seconds: cli.transit_max_walk_seconds,
+            ..ServiceLimits::default()
+        },
+        ..StreetConfig::default()
+    };
+    let planner =
+        StreetPlanner::open(timetable, tiles, config).context("open transit over the tiles")?;
     info!(
         "transit: {} feeds, from {}",
         planner.state().feeds().len(),
