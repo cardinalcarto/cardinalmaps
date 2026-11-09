@@ -769,6 +769,90 @@ fn report_leave_now(
     Ok(())
 }
 
+/// A new worker with nothing memoized, and how long binding it took in milliseconds.
+type FreshWorker<'a> = &'a dyn Fn() -> Result<(Worker, f64), Box<dyn Error>>;
+
+/// Prints leave-now timings where every query gets a new worker.
+fn report_cold(
+    fresh: FreshWorker<'_>,
+    env: &Env,
+    samples: &[Sample],
+    located: &[Option<(f64, f64)>],
+) -> Result<(), Box<dyn Error>> {
+    for (name, from, to) in NAMED_TRIPS {
+        let (from, _) = nearest_stop(located, from).ok_or("no stop near the origin")?;
+        let (to, _) = nearest_stop(located, to).ok_or("no stop near the destination")?;
+        println!("cold, new worker per query: {name}, first run then median of {NAMED_REPEATS}");
+        for (period, (period_name, hour)) in PERIODS.iter().enumerate() {
+            let sample = Sample {
+                from,
+                to,
+                period,
+                band: 0,
+                hour: *hour,
+            };
+            let (mut binds, mut runs, mut profiles) = (Vec::new(), Vec::new(), Vec::new());
+            for _ in 0..NAMED_REPEATS {
+                let (mut worker, bind_ms) = fresh()?;
+                binds.push(bind_ms);
+                runs.push(run_leave_now(&mut worker, env, sample)?);
+                let (mut worker, profile_bind_ms) = fresh()?;
+                let profile = run_query(&mut worker, env, sample)?;
+                profiles.push(profile_bind_ms + profile.total_ms);
+            }
+            let first = runs.first().ok_or("no runs")?;
+            println!(
+                "  {period_name} {hour:02}:00: first response first run {:.1}, median {:.1} \
+                 (bind {:.1}, tables {:.1}, leave now {:.1}); missed-it queries {:.1}; \
+                 60-minute profile {:.1} ms",
+                binds[0] + first.first_response_ms(),
+                median(
+                    runs.iter()
+                        .zip(&binds)
+                        .map(|(r, b)| b + r.first_response_ms())
+                        .collect()
+                ),
+                median(binds.clone()),
+                median(runs.iter().map(|r| r.tables_ms).collect()),
+                median(runs.iter().map(|r| r.now_ms).collect()),
+                median(runs.iter().map(|r| r.misses_ms).collect()),
+                median(profiles),
+            );
+        }
+        println!();
+    }
+
+    let mut runs = Vec::with_capacity(samples.len());
+    for sample in samples {
+        let (mut worker, bind_ms) = fresh()?;
+        runs.push((bind_ms, run_leave_now(&mut worker, env, *sample)?));
+    }
+    let row = |name: &str, f: &dyn Fn(&(f64, LeaveNow)) -> f64| {
+        let mut values: Vec<f64> = runs.iter().map(f).collect();
+        values.sort_by(f64::total_cmp);
+        println!(
+            "  {name:<26} {:>8.1} {:>8.1} {:>9.1}",
+            percentile(&values, 0.5),
+            percentile(&values, 0.95),
+            percentile(&values, 1.0),
+        );
+    };
+    println!(
+        "cold leave now, new worker per query, over {} sampled queries:",
+        runs.len()
+    );
+    println!("  {:<26} {:>8} {:>8} {:>9}", "metric", "p50", "p95", "max");
+    row("bind ms", &|(bind, _)| *bind);
+    row("tables ms", &|(_, run)| run.tables_ms);
+    row("leave now ms", &|(_, run)| run.now_ms);
+    row("first response ms", &|(bind, run)| {
+        bind + run.first_response_ms()
+    });
+    row("every missed-it query ms", &|(_, run)| run.misses_ms);
+    println!();
+    Ok(())
+}
+
 /// The stop nearest a point, and how far away it is in meters.
 fn nearest_stop(located: &[Option<(f64, f64)>], point: (f64, f64)) -> Option<(u32, f64)> {
     located
@@ -1211,7 +1295,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             eprintln!("warmup {i}: {:.0} ms", measure.total_ms);
         }
     }
+    let fresh = || {
+        new_worker(
+            provider,
+            &costing,
+            &snaps,
+            own_seed_pruning,
+            terminate_tables,
+        )
+    };
     if flags.present("named-only") {
+        report_cold(&fresh, &env, &samples, &located)?;
         report_named(&mut worker, &env, &located)?;
         report_leave_now(&mut worker, &env, &samples)?;
         return Ok(());
@@ -1294,6 +1388,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!();
+    report_cold(&fresh, &env, &samples, &located)?;
     report_named(&mut worker, &env, &located)?;
     report_leave_now(&mut worker, &env, &samples)?;
     summarize("warm, all queries", &measures);
