@@ -67,7 +67,7 @@ pub struct TableStats {
     pub labels_settled: u64,
     /// Stops reached.
     pub stops_reached: u64,
-    /// Bytes retained by the search's arrays.
+    /// Every byte retained by this search's arrays, from [`StopTables::memory_parts`].
     pub bytes: usize,
     /// Whether the search stopped because every attached stop's entry was final.
     pub terminated_early: bool,
@@ -161,12 +161,188 @@ struct EdgeStop {
     next: u32,
 }
 
-/// The state of a directed edge in the current search.
-#[derive(Clone, Copy, Debug)]
-struct EdgeState {
-    stamp: u32,
-    label: u32,
-    permanent: bool,
+/// No label for this directed edge in the current search.
+const UNSET: u32 = u32::MAX;
+
+/// Set in a directed edge's state once its label has been settled.
+const SETTLED: u32 = 1 << 31;
+
+/// How many directed edges one page of [`EdgeStates`] covers, as a power of two.
+const EDGE_PAGE_BITS: u32 = 8;
+const EDGE_PAGE: usize = 1 << EDGE_PAGE_BITS;
+
+/// A label index and [`SETTLED`] flag per directed edge, paged so only touched regions cost memory.
+///
+/// A search only touches edges near its seeds, while the dense numbers run over whole tiles.
+#[derive(Debug, Default)]
+struct EdgeStates {
+    /// By page of dense edge numbers: its place in `storage`, or [`NO_PAGE`].
+    page_of: Vec<u32>,
+    storage: Vec<u32>,
+    /// The pages of `page_of` in use by this search, to clear them cheaply.
+    touched: Vec<u32>,
+}
+
+const NO_PAGE: u32 = u32::MAX;
+
+impl EdgeStates {
+    /// Forgets the current search's states, and covers `edges` dense edge numbers.
+    fn reset(&mut self, edges: usize) {
+        for &page in &self.touched {
+            self.page_of[page as usize] = NO_PAGE;
+        }
+        self.touched.clear();
+        self.grow(edges);
+    }
+
+    fn grow(&mut self, edges: usize) {
+        let pages = edges.div_ceil(EDGE_PAGE);
+        if self.page_of.len() < pages {
+            self.page_of.resize(pages, NO_PAGE);
+        }
+    }
+
+    /// Bytes retained.
+    fn bytes(&self) -> usize {
+        self.page_of.capacity() * size_of::<u32>()
+            + self.storage.capacity() * size_of::<u32>()
+            + self.touched.capacity() * size_of::<u32>()
+    }
+
+    /// Gives back storage beyond what this search used, unless that is small.
+    fn trim(&mut self) {
+        trim(
+            &mut self.storage,
+            self.touched.len() * EDGE_PAGE,
+            RETAINED_EDGE_STATES,
+        );
+    }
+
+    #[inline]
+    fn get(&self, edge: u32) -> u32 {
+        match self.page_of.get((edge >> EDGE_PAGE_BITS) as usize) {
+            Some(&page) if page != NO_PAGE => {
+                self.storage[(page as usize) * EDGE_PAGE + (edge as usize & (EDGE_PAGE - 1))]
+            }
+            _ => UNSET,
+        }
+    }
+
+    fn set(&mut self, edge: u32, state: u32) {
+        let index = (edge >> EDGE_PAGE_BITS) as usize;
+        let mut page = self.page_of[index];
+        if page == NO_PAGE {
+            page = u32::try_from(self.touched.len()).unwrap_or(NO_PAGE);
+            let start = self.touched.len() * EDGE_PAGE;
+            if self.storage.len() < start + EDGE_PAGE {
+                self.storage.resize(start + EDGE_PAGE, UNSET);
+            } else {
+                self.storage[start..start + EDGE_PAGE].fill(UNSET);
+            }
+            self.touched.push(u32::try_from(index).unwrap_or(NO_PAGE));
+            self.page_of[index] = page;
+        }
+        let slot = (page as usize) * EDGE_PAGE + (edge as usize & (EDGE_PAGE - 1));
+        self.storage[slot] = state;
+    }
+
+    /// Makes an edge as if it had no label in this search.
+    fn forget(&mut self, edge: u32) {
+        if self.get(edge) != UNSET {
+            self.set(edge, UNSET);
+        }
+    }
+}
+
+/// The first of a directed edge's attached stops, sized by the edges with stops.
+#[derive(Debug, Default)]
+struct AttachedEdges {
+    /// `(dense edge, first attachment)`, open addressed; a power of two long, or empty.
+    slots: Vec<(u32, u32)>,
+    len: usize,
+}
+
+impl AttachedEdges {
+    const EMPTY: (u32, u32) = (u32::MAX, NONE);
+
+    fn clear(&mut self) {
+        self.slots.clear();
+        self.len = 0;
+    }
+
+    fn bytes(&self) -> usize {
+        self.slots.capacity() * size_of::<(u32, u32)>()
+    }
+
+    #[inline]
+    fn start(&self, edge: u32) -> usize {
+        // Fibonacci hashing: dense numbers are clustered, so spread them over the table.
+        (edge.wrapping_mul(0x9E37_79B1) as usize) & (self.slots.len() - 1)
+    }
+
+    /// The first attachment of `edge`, or [`NONE`].
+    #[inline]
+    fn get(&self, edge: u32) -> u32 {
+        if self.slots.is_empty() {
+            return NONE;
+        }
+        let mask = self.slots.len() - 1;
+        let mut at = self.start(edge);
+        loop {
+            let (key, value) = self.slots[at];
+            if key == edge {
+                return value;
+            }
+            if key == Self::EMPTY.0 {
+                return NONE;
+            }
+            at = (at + 1) & mask;
+        }
+    }
+
+    fn insert(&mut self, edge: u32, value: u32) {
+        if (self.len + 1) * 2 > self.slots.len() {
+            let old = core::mem::take(&mut self.slots);
+            self.slots = vec![Self::EMPTY; (old.len() * 2).max(64)];
+            for (key, stored) in old {
+                if key != Self::EMPTY.0 {
+                    self.place(key, stored);
+                }
+            }
+        }
+        if self.place(edge, value) {
+            self.len += 1;
+        }
+    }
+
+    /// Stores a value, returning whether the key is new.
+    fn place(&mut self, edge: u32, value: u32) -> bool {
+        let mask = self.slots.len() - 1;
+        let mut at = self.start(edge);
+        loop {
+            let key = self.slots[at].0;
+            if key == edge || key == Self::EMPTY.0 {
+                self.slots[at] = (edge, value);
+                return key == Self::EMPTY.0;
+            }
+            at = (at + 1) & mask;
+        }
+    }
+}
+
+/// How many labels a search keeps room for between queries (72 bytes each, about 5 MB).
+const RETAINED_LABELS: usize = 1 << 16;
+/// How many edge states a search keeps room for between queries (4 bytes each).
+const RETAINED_EDGE_STATES: usize = 1 << 20;
+/// How many queue entries a search keeps room for between queries (8 bytes each).
+const RETAINED_QUEUE: usize = 1 << 14;
+
+/// Gives back a buffer's room beyond `used`, unless it is within `floor`.
+fn trim<T>(buffer: &mut Vec<T>, used: usize, floor: usize) {
+    let keep = used.max(floor);
+    if buffer.capacity() > keep {
+        buffer.shrink_to(keep);
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -226,12 +402,11 @@ pub struct StopTables<P: GraphTileProvider, C: Costing> {
     graph: LazyGraph<P, C>,
     snaps: Option<Arc<StopSnaps>>,
     /// Stops on each dense directed edge, as linked lists through `edge_stops`.
-    edge_first_stop: Vec<u32>,
+    attached: AttachedEdges,
     edge_stops: Vec<EdgeStop>,
-    attached_edges: Vec<u32>,
 
     labels: Vec<TableLabel>,
-    edge_state: Vec<EdgeState>,
+    edge_states: EdgeStates,
     epoch: u32,
     queue: BinaryHeap<Reverse<(Key, u32)>>,
     stop_best: Vec<StopBest>,
@@ -251,13 +426,12 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     /// A table search over `provider`, costed by `costing`.
     pub fn new(provider: P, costing: C) -> Self {
         Self {
-            graph: LazyGraph::new(provider, costing),
+            graph: LazyGraph::numbering_only(provider, costing),
             snaps: None,
-            edge_first_stop: Vec::new(),
+            attached: AttachedEdges::default(),
             edge_stops: Vec::new(),
-            attached_edges: Vec::new(),
             labels: Vec::new(),
-            edge_state: Vec::new(),
+            edge_states: EdgeStates::default(),
             epoch: 0,
             queue: BinaryHeap::new(),
             stop_best: Vec::new(),
@@ -282,12 +456,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         }
         // As in `WalkSearch::bind`: a failure below must not leave the old `Arc` in place.
         self.snaps = None;
-        for &edge in &self.attached_edges {
-            if let Some(slot) = self.edge_first_stop.get_mut(edge as usize) {
-                *slot = NONE;
-            }
-        }
-        self.attached_edges.clear();
+        self.attached.clear();
         self.edge_stops.clear();
         self.stop_best.clear();
         self.stop_best.resize(
@@ -334,20 +503,14 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     }
 
     fn attach(&mut self, edge: u32, stop: u32, percent: f32) {
-        if self.edge_first_stop.len() <= edge as usize {
-            self.edge_first_stop.resize(edge as usize + 1, NONE);
-        }
-        let next = self.edge_first_stop[edge as usize];
-        if next == NONE {
-            self.attached_edges.push(edge);
-        }
+        let next = self.attached.get(edge);
         let index = u32::try_from(self.edge_stops.len()).unwrap_or(NONE);
         self.edge_stops.push(EdgeStop {
             stop,
             percent,
             next,
         });
-        self.edge_first_stop[edge as usize] = index;
+        self.attached.insert(edge, index);
     }
 
     /// Computes a table for `stop_count` stops within `max_seconds` of the request's seeds.
@@ -367,17 +530,21 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         self.side = request.side;
         self.epoch = self.epoch.wrapping_add(1);
         if self.epoch == 0 {
-            self.edge_state.iter_mut().for_each(|e| e.stamp = 0);
             self.stop_best.iter_mut().for_each(|s| s.stamp = 0);
             self.stop_visits.fill((0, 0));
             self.epoch = 1;
         }
         self.labels.clear();
+        trim(&mut self.labels, 0, RETAINED_LABELS);
         self.queue.clear();
+        if self.queue.capacity() > RETAINED_QUEUE {
+            self.queue.shrink_to(RETAINED_QUEUE);
+        }
         self.touched_stops.clear();
         self.stats = TableStats::default();
         self.stops_pending = self.attached_stops;
-        self.ensure_edge_state();
+        self.edge_states.reset(self.graph.edge_count());
+        self.edge_states.trim();
 
         for &seed in request.seeds {
             self.add_seed(seed, request)?;
@@ -397,9 +564,10 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 break;
             }
         }
-        self.stats.bytes = self.labels.capacity() * size_of::<TableLabel>()
-            + self.edge_state.capacity() * size_of::<EdgeState>()
-            + self.stop_best.capacity() * size_of::<StopBest>();
+        // After an unusually large query, keep only what its legs still read.
+        let used = self.labels.len();
+        trim(&mut self.labels, used, RETAINED_LABELS);
+        self.edge_states.trim();
         let mut table = StopTable::new(stop_count);
         for &stop in &self.touched_stops {
             let best = self.stop_best[stop as usize];
@@ -421,20 +589,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     }
 
     fn ensure_edge_state(&mut self) {
-        let edges = self.graph.edge_count();
-        if self.edge_state.len() < edges {
-            self.edge_state.resize(
-                edges,
-                EdgeState {
-                    stamp: 0,
-                    label: NONE,
-                    permanent: false,
-                },
-            );
-        }
-        if self.edge_first_stop.len() < edges {
-            self.edge_first_stop.resize(edges, NONE);
-        }
+        self.edge_states.grow(self.graph.edge_count());
     }
 
     /// The tile holding `id`; slots keep each tile's handle after its first use.
@@ -559,30 +714,22 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     /// The caller has checked the limit at the start of the edge: a stop partway along an edge
     /// can be within it even when the far end of the edge isn't.
     fn push_label(&mut self, label: TableLabel) {
-        let dense = label.dense_edge as usize;
-        let Some(&state) = self.edge_state.get(dense) else {
-            return;
-        };
-        if state.stamp == self.epoch {
-            if state.permanent {
+        let state = self.edge_states.get(label.dense_edge);
+        if state != UNSET {
+            if state & SETTLED != 0 {
                 return;
             }
-            let Some(existing) = self.labels.get_mut(state.label as usize) else {
+            let Some(existing) = self.labels.get_mut(state as usize) else {
                 return;
             };
             if label.cost.cost < existing.cost.cost {
                 *existing = label;
-                self.queue
-                    .push(Reverse((Key(label.cost.cost), state.label)));
+                self.queue.push(Reverse((Key(label.cost.cost), state)));
             }
             return;
         }
         let index = u32::try_from(self.labels.len()).unwrap_or(NONE);
-        self.edge_state[dense] = EdgeState {
-            stamp: self.epoch,
-            label: index,
-            permanent: false,
-        };
+        self.edge_states.set(label.dense_edge, index);
         self.labels.push(label);
         self.queue.push(Reverse((Key(label.cost.cost), index)));
     }
@@ -603,13 +750,11 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             return Ok(());
         }
         if label.inner.predecessor().is_some() {
-            let dense = label.dense_edge as usize;
-            if let Some(state) = self.edge_state.get_mut(dense) {
-                if state.stamp != self.epoch || state.label != index {
-                    return Ok(());
-                }
-                state.permanent = true;
+            let state = self.edge_states.get(label.dense_edge);
+            if state == UNSET || state & !SETTLED != index {
+                return Ok(());
             }
+            self.edge_states.set(label.dense_edge, state | SETTLED);
         }
         if let Some(stored) = self.labels.get_mut(index as usize) {
             stored.settled = true;
@@ -742,7 +887,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             return Ok(false);
         }
         let labels = self.labels.as_slice();
-        let (edge_state, graph, epoch) = (&mut self.edge_state, &self.graph, self.epoch);
+        let (edge_states, graph) = (&mut self.edge_states, &self.graph);
         let restricted = costing
             .base()
             .restricted(
@@ -754,11 +899,8 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 forward,
                 TimeContext::NONE,
                 |id| {
-                    if let Some(dense) = graph.known_dense_edge(id)
-                        && let Some(state) = edge_state.get_mut(dense as usize)
-                        && state.stamp == epoch
-                    {
-                        state.stamp = 0;
+                    if let Some(dense) = graph.known_dense_edge(id) {
+                        edge_states.forget(dense);
                     }
                 },
             )
@@ -851,9 +993,8 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     /// Whether a directed edge is already settled in this search.
     fn is_permanent(&self, id: GraphId) -> bool {
         self.graph.known_dense_edge(id).is_some_and(|dense| {
-            self.edge_state
-                .get(dense as usize)
-                .is_some_and(|s| s.stamp == self.epoch && s.permanent)
+            let state = self.edge_states.get(dense);
+            state != UNSET && state & SETTLED != 0
         })
     }
 
@@ -868,11 +1009,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             return Ok(());
         };
         self.ensure_edge_state();
-        let mut at = self
-            .edge_first_stop
-            .get(dense_real as usize)
-            .copied()
-            .unwrap_or(NONE);
+        let mut at = self.attached.get(dense_real);
         if at == NONE {
             return Ok(());
         }
@@ -965,9 +1102,12 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         self.terminate_when_stops_settled = enabled;
     }
 
-    /// What the last search did.
+    /// What the last search did, and everything this search retains right now.
     pub fn stats(&self) -> TableStats {
-        self.stats
+        TableStats {
+            bytes: self.memory_parts().iter().map(|(_, bytes)| bytes).sum(),
+            ..self.stats
+        }
     }
 
     /// How many tiles this search's graph has given dense numbers to.
@@ -979,21 +1119,11 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     pub fn memory_parts(&self) -> Vec<(&'static str, usize)> {
         vec![
             ("labels", self.labels.capacity() * size_of::<TableLabel>()),
-            (
-                "edge_state",
-                self.edge_state.capacity() * size_of::<EdgeState>(),
-            ),
-            (
-                "edge_first_stop",
-                self.edge_first_stop.capacity() * size_of::<u32>(),
-            ),
+            ("edge_state", self.edge_states.bytes()),
+            ("attached edges", self.attached.bytes()),
             (
                 "edge_stops",
                 self.edge_stops.capacity() * size_of::<EdgeStop>(),
-            ),
-            (
-                "attached_edges",
-                self.attached_edges.capacity() * size_of::<u32>(),
             ),
             (
                 "stop_best",
@@ -1071,5 +1201,89 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             end_percent,
             secs: best.secs,
         })
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::cast_possible_truncation, reason = "tests, with small sizes")]
+mod sparse_tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    /// A small deterministic stream of numbers.
+    fn numbers(seed: u64) -> impl Iterator<Item = u64> {
+        let mut state = seed;
+        core::iter::repeat_with(move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            state >> 33
+        })
+    }
+
+    #[test]
+    fn edge_states_behave_like_a_map_and_forget_each_search() {
+        let mut states = EdgeStates::default();
+        let mut expected = HashMap::new();
+        states.reset(1 << 20);
+        for (i, n) in numbers(7).take(20_000).enumerate() {
+            // Clustered edges, as a real search touches them.
+            let edge = u32::try_from(n % (1 << 20)).expect("small") & !0x3f | (i as u32 & 0x3f);
+            if n % 3 == 0 {
+                states.forget(edge);
+                expected.remove(&edge);
+            } else {
+                let state = i as u32 | if n % 2 == 0 { SETTLED } else { 0 };
+                states.set(edge, state);
+                expected.insert(edge, state);
+            }
+            assert_eq!(
+                states.get(edge),
+                expected.get(&edge).copied().unwrap_or(UNSET)
+            );
+        }
+        for (&edge, &state) in &expected {
+            assert_eq!(states.get(edge), state);
+        }
+        states.reset(1 << 20);
+        for &edge in expected.keys() {
+            assert_eq!(states.get(edge), UNSET, "a new search starts empty");
+        }
+    }
+
+    #[test]
+    fn edge_states_read_unset_past_their_range() {
+        let mut states = EdgeStates::default();
+        states.reset(100);
+        assert_eq!(states.get(1 << 30), UNSET);
+        states.forget(1 << 30);
+    }
+
+    #[test]
+    fn attached_edges_keep_every_key_as_they_grow() {
+        let mut attached = AttachedEdges::default();
+        assert_eq!(attached.get(5), NONE, "an empty table has no key");
+        let mut expected = HashMap::new();
+        for (i, n) in numbers(11).take(5_000).enumerate() {
+            let edge = u32::try_from(n % 20_000).expect("small");
+            attached.insert(edge, i as u32);
+            expected.insert(edge, i as u32);
+            assert_eq!(attached.get(edge), i as u32);
+        }
+        for (&edge, &value) in &expected {
+            assert_eq!(attached.get(edge), value);
+        }
+        attached.clear();
+        assert_eq!(attached.get(*expected.keys().next().expect("keys")), NONE);
+    }
+
+    #[test]
+    fn trim_keeps_what_was_used_and_the_floor() {
+        let mut buffer: Vec<u32> = Vec::with_capacity(1000);
+        buffer.resize(100, 0);
+        trim(&mut buffer, 100, 200);
+        assert!(buffer.capacity() >= 200 && buffer.capacity() < 1000);
+        assert_eq!(buffer.len(), 100);
     }
 }
