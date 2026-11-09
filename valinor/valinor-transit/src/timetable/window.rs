@@ -60,11 +60,14 @@ impl StopRouteIndex {
         let mut counts = vec![0_u32; stop_count + 1];
         for (_route, stops) in routes.clone() {
             for stop in stops {
-                counts[stop.index() + 1] += 1;
+                let count = &mut counts[stop.index() + 1];
+                *count = count.checked_add(1).ok_or(BuildError::TableTooLarge)?;
             }
         }
         for s in 1..counts.len() {
-            counts[s] += counts[s - 1];
+            counts[s] = counts[s]
+                .checked_add(counts[s - 1])
+                .ok_or(BuildError::TableTooLarge)?;
         }
         let offsets = counts.clone();
         let total = counts.last().copied().unwrap_or(0) as usize;
