@@ -38,6 +38,13 @@ impl StopRules {
     pub(crate) fn encode(self) -> u8 {
         u8::from(self.pickup) | (u8::from(self.drop_off) << 1)
     }
+
+    pub(crate) fn decode(bits: u8) -> Self {
+        Self {
+            pickup: bits & 1 != 0,
+            drop_off: bits & 2 != 0,
+        }
+    }
 }
 
 /// One stop of a trip, in times already resolved for a window.

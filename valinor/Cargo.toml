@@ -11,6 +11,7 @@ members = [
     "valhalla-response",
     "valinor-cli",
     "valinor-export-graph",
+    "valinor-gtfs-rt",
     "valinor-loki",
     "valinor-loki-service",
     "valinor-router",

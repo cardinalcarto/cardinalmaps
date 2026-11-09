@@ -27,7 +27,8 @@ over multimodal multicriteria RAPTOR (MCR).
 | Crate | Responsibility |
 |---|---|
 | `valinor-transit` | Timetable, real-time overlay, MCR forward and backward, profile loop, journeys. |
-| `valinor-gtfs` | Compiles GTFS into the timetable file; decodes GTFS-RT into overlay input. |
+| `valinor-gtfs` | Compiles GTFS into the timetable file. |
+| `valinor-gtfs-rt` | Decodes GTFS-RT and builds real-time overlays. |
 | `valinor-walk` | Street search over tiles in both directions, stop snapping, access and egress tables. |
 
 `valinor-transit` knows nothing about tiles or GTFS.

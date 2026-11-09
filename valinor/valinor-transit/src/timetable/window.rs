@@ -10,7 +10,7 @@ use crate::timetable::arena::{Arena, BlockRef, offset_of};
 ///
 /// The set is held as bits so a [`crate::RouteFilter`] is a mask test on the route,
 /// not a per-trip check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct RouteAttributes(u8);
 
 impl RouteAttributes {
@@ -146,6 +146,11 @@ impl BaseWindow {
         self.arena
             .stops
             .get(start as usize..(start + length) as usize)
+    }
+
+    /// The attributes of a route.
+    pub fn route_attributes(&self, route: RouteId) -> Option<RouteAttributes> {
+        self.attributes.get(route.index()).copied()
     }
 
     /// How many stops the window numbers.

@@ -2,8 +2,11 @@
 
 use std::sync::Arc;
 
-use crate::ids::{DaySlot, LaneRef, RouteId, ServiceDay, StopId, TripKey};
-use crate::timetable::{Arena, BaseWindow, BlockRef, Lane, RouteAttributes, StopRouteIndex};
+use crate::ids::{DaySlot, LaneRef, RouteId, ServiceDay, StopId, Time, TripKey};
+use crate::timetable::{
+    Arena, ArenaUsage, BaseWindow, BlockRef, Lane, RouteAttributes, StopEvent, StopRouteIndex,
+    StopRules,
+};
 
 /// A timetable window together with any real-time changes to it.
 ///
@@ -112,6 +115,64 @@ impl Snapshot {
             .lanes
             .get(lane.index() as usize)
             .map(|l| l.day)
+    }
+
+    /// The lanes of a route's block on a day, in scan order.
+    ///
+    /// An empty block has no lanes. `None` means the route or day is unknown.
+    ///
+    /// # Performance
+    ///
+    /// Allocates. This is for diagnostics and the response layer, not the route scan.
+    pub fn block_lanes(&self, route: RouteId, day: DaySlot) -> Option<Vec<LaneRef>> {
+        if route.index() >= self.route_count() || day.index() >= self.base.days.len() {
+            return None;
+        }
+        let reference = self.block_ref(route.index(), day.index());
+        let arena = self.arena(usize::from(reference.arena));
+        let block = arena.blocks.get(reference.block as usize)?;
+        Some(
+            (0..block.lane_count)
+                .map(|lane| LaneRef::new(reference.arena, block.lanes_start + lane))
+                .collect(),
+        )
+    }
+
+    /// How many trips a lane has.
+    pub fn lane_trip_count(&self, lane: LaneRef) -> Option<u32> {
+        self.lane(lane).map(|l| l.trip_count)
+    }
+
+    /// The stop events of the trip at `row` of a lane.
+    ///
+    /// # Performance
+    ///
+    /// Allocates. This is for diagnostics and the response layer, not the route scan.
+    pub fn lane_trip_events(&self, lane: LaneRef, row: u32) -> Option<Vec<StopEvent>> {
+        let record = self.lane(lane)?;
+        if row >= record.trip_count {
+            return None;
+        }
+        let arena = self.arena(lane.arena());
+        let stride = record.stop_count as usize * 2;
+        let grid = arena.lane_times(record);
+        // Row zero of the grid is the leading sentinel.
+        let times = grid.get((row as usize + 1) * stride..(row as usize + 2) * stride)?;
+        let rules = arena.lane_rules(record);
+        let mut events = Vec::with_capacity(record.stop_count as usize);
+        for (&[arrival, departure], &rule) in times.as_chunks::<2>().0.iter().zip(rules) {
+            events.push(StopEvent {
+                arrival: Time::try_new(arrival).ok()?,
+                departure: Time::try_new(departure).ok()?,
+                rules: StopRules::decode(rule),
+            });
+        }
+        Some(events)
+    }
+
+    /// How much the overlay's arena holds; all zero for a schedule-only snapshot.
+    pub fn overlay_usage(&self) -> ArenaUsage {
+        self.overlay_arena.usage()
     }
 
     /// `[base, overlay]`: selecting an arena is an index, not a branch.
