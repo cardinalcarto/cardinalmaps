@@ -22,6 +22,8 @@ impl RouteAttributes {
     pub const NONE: Self = Self(0);
     /// Bicycles may be taken on board.
     pub const BIKES_ALLOWED: Self = Self(1);
+    /// A rider in a wheelchair may ride: the trips aren't marked `wheelchair_accessible=2`.
+    pub const WHEELCHAIR_ACCESSIBLE: Self = Self(2);
 
     /// Whether every attribute in `other` is present.
     #[inline]
@@ -123,6 +125,8 @@ pub struct BaseWindow {
     pub(crate) transfer_times: Vec<i32>,
     /// The rules for walking between particular stops.
     pub(crate) pairs: TransferPairs,
+    /// Per stop, whether a rider in a wheelchair may board and alight there.
+    pub(crate) stop_access: Vec<bool>,
     pub(crate) index: StopRouteIndex,
     pub(crate) days: Vec<ServiceDay>,
 }
@@ -140,6 +144,7 @@ impl BaseWindow {
         min_change: Vec<i32>,
         transfer_times: Vec<i32>,
         pairs: TransferPairs,
+        stop_access: Vec<bool>,
         index: StopRouteIndex,
         days: Vec<ServiceDay>,
     ) -> Self {
@@ -151,6 +156,7 @@ impl BaseWindow {
             min_change,
             transfer_times,
             pairs,
+            stop_access,
             index,
             days,
         }

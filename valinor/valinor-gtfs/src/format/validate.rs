@@ -11,8 +11,8 @@
 
 use crate::error::DecodeError;
 use crate::format::layout::{
-    MAX_SERVICE_DAYS, NONE, PATTERN_BIKES_ALLOWED, RULE_VALID_BITS, RUN_HEADWAY_FREQUENCY,
-    STOP_NO_CHANGE,
+    MAX_SERVICE_DAYS, NONE, PATTERN_BIKES_ALLOWED, PATTERN_WHEELCHAIR_ACCESSIBLE, RULE_VALID_BITS,
+    RUN_HEADWAY_FREQUENCY, STOP_NO_CHANGE,
 };
 use crate::format::reader::Tables;
 use zerocopy::little_endian::U32;
@@ -380,7 +380,7 @@ fn validate_trips(tables: &Tables<'_>) -> Result<(), DecodeError> {
                 reason: "a pattern has fewer than two stops",
             });
         }
-        if pattern.attributes & !PATTERN_BIKES_ALLOWED != 0 {
+        if pattern.attributes & !(PATTERN_BIKES_ALLOWED | PATTERN_WHEELCHAIR_ACCESSIBLE) != 0 {
             return Err(DecodeError::InvalidValue {
                 table: "patterns",
                 reason: "a pattern has an attribute this version does not define",

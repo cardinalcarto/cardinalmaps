@@ -20,10 +20,11 @@ use zerocopy::{FromBytes, Immutable, KnownLayout, Unaligned};
 use crate::error::{DecodeError, LoadError};
 use crate::format::layout::{
     AgencyRow, DIRECTION_NONE, FORMAT_VERSION, FeedRow, FileHeader, IdIndexRow, MAGIC, NONE,
-    NoonOffsetRow, PATTERN_BIKES_ALLOWED, PatternRow, RULE_APPROXIMATE, RULE_DROP_OFF_SHIFT,
-    RULE_PICKUP_MASK, RUN_HEADWAY_FREQUENCY, RUN_SCHEDULED, RouteRow, SectionEntry, SectionId,
-    ServiceRow, ShapePointRow, ShapeRow, StopRow, TimePair, TransferPairRow, TripRiderRow, TripRow,
-    UNCHECKSUMMED_PREFIX, ZoneRow, ZoneTransitionRow, checksum_of,
+    NoonOffsetRow, PATTERN_BIKES_ALLOWED, PATTERN_WHEELCHAIR_ACCESSIBLE, PatternRow,
+    RULE_APPROXIMATE, RULE_DROP_OFF_SHIFT, RULE_PICKUP_MASK, RUN_HEADWAY_FREQUENCY, RUN_SCHEDULED,
+    RouteRow, SectionEntry, SectionId, ServiceRow, ShapePointRow, ShapeRow, StopRow, TimePair,
+    TransferPairRow, TripRiderRow, TripRow, UNCHECKSUMMED_PREFIX, ZoneRow, ZoneTransitionRow,
+    checksum_of,
 };
 use crate::format::validate::validate;
 
@@ -655,6 +656,7 @@ impl<'a> CompiledTimetable<'a> {
             route: GtfsRoute(row.route.get()),
             stops,
             bikes_allowed: row.attributes & PATTERN_BIKES_ALLOWED != 0,
+            wheelchair_accessible: row.attributes & PATTERN_WHEELCHAIR_ACCESSIBLE != 0,
         })
     }
 
@@ -1144,6 +1146,8 @@ pub struct PatternInfo<'a> {
     stops: &'a [U32],
     /// Whether bicycles are allowed on this pattern's trips.
     pub bikes_allowed: bool,
+    /// Whether a rider in a wheelchair may ride this pattern's trips.
+    pub wheelchair_accessible: bool,
 }
 
 impl PatternInfo<'_> {

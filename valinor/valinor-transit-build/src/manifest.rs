@@ -175,6 +175,8 @@ pub struct Manifest {
     pub walking_bound_seconds: u32,
     /// The cycling bound, in seconds.
     pub cycling_bound_seconds: u32,
+    /// The wheelchair bound, in seconds, if the build has wheelchair transfers.
+    pub wheelchair_bound_seconds: Option<u32>,
     /// The feeds, in index order.
     pub feeds: Vec<ManifestFeed>,
     /// Every tile written, by mode, sorted by `(x, y)`.

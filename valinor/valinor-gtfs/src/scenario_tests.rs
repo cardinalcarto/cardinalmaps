@@ -808,6 +808,80 @@ fn forbidden_transfers_apply_to_stops_and_pairs_and_qualified_rows_are_counted()
 }
 
 #[test]
+fn trips_split_by_wheelchair_rule_and_stops_inherit_from_their_station() {
+    let source = InMemorySource::new()
+        .with("agency.txt", AGENCY)
+        .with("routes.txt", "route_id,route_type\nR,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_lat,stop_lon,location_type,parent_station,wheelchair_boarding\n\
+             HUB,47.0,-122.0,1,,2\n\
+             P1,47.0,-122.0,,HUB,\n\
+             P2,47.0,-122.0,,HUB,1\n\
+             B,47.1,-122.0,,,\n\
+             C,47.2,-122.0,,,2\n",
+        )
+        .with(
+            "calendar_dates.txt",
+            "service_id,date,exception_type\nS,20260602,1\n",
+        )
+        .with(
+            "trips.txt",
+            "route_id,service_id,trip_id,wheelchair_accessible\nR,S,OPEN,1\nR,S,UNKNOWN,\nR,S,CLOSED,2\n",
+        )
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             OPEN,10:00:00,10:00:00,P1,1\nOPEN,11:00:00,11:00:00,B,2\n\
+             UNKNOWN,10:30:00,10:30:00,P1,1\nUNKNOWN,11:30:00,11:30:00,B,2\n\
+             CLOSED,10:15:00,10:15:00,P1,1\nCLOSED,11:15:00,11:15:00,B,2\n",
+        );
+    let output = compile_one(source);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let stop = |id: &str| view.stop_by_gtfs_id("kcm", id).expect("stop");
+    let accessible = |id: &str| {
+        valinor_transit::TimetableSource::wheelchair_stop_accessible(
+            &view,
+            stop(id).into_inner() as usize,
+        )
+    };
+    assert!(!accessible("P1"), "an empty child inherits its station's 2");
+    assert!(
+        accessible("P2"),
+        "a child's own value wins over its station's"
+    );
+    assert!(accessible("B"), "unknown is allowed");
+    assert!(!accessible("C"), "an explicit 2 excludes the stop");
+    // Trips with and without the rule are in separate patterns; unknown shares the open pattern.
+    let wheelchair_patterns: Vec<_> = (0..view.pattern_count())
+        .filter(|&p| {
+            view.pattern(valinor_transit::RouteId::new(
+                u32::try_from(p).expect("few"),
+            ))
+            .expect("pattern")
+            .wheelchair_accessible
+        })
+        .collect();
+    assert_eq!(view.pattern_count(), 2);
+    assert_eq!(wheelchair_patterns.len(), 1);
+    let trip = |id: &str| {
+        view.trip_run_for_start_time(
+            "kcm",
+            id,
+            parse_service_date("20260602").expect("date"),
+            None,
+        )
+        .expect("trip")
+        .trip
+    };
+    let pattern_of = |id: &str| view.trip(trip(id)).expect("trip").pattern;
+    assert_eq!(pattern_of("OPEN"), pattern_of("UNKNOWN"));
+    assert_ne!(pattern_of("OPEN"), pattern_of("CLOSED"));
+    let timetable = view.to_timetable().expect("timetable");
+    assert_eq!(timetable.stop_count(), view.stop_count());
+}
+
+#[test]
 fn a_rule_between_stops_keeps_the_first_row() {
     let source = InMemorySource::new()
         .with("agency.txt", AGENCY)

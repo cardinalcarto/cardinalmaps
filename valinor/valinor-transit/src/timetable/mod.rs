@@ -17,6 +17,7 @@ pub use builder::{
     PatternKey, StopKey, StopTime, Timetable, TimetableBuilder, TimetableSource, WindowPart,
     materialize_parts,
 };
+pub(crate) use lanes::{RULE_DROP_OFF, RULE_PICKUP, RULE_WHEELCHAIR_SHIFT};
 pub use lanes::{ResolvedBlock, ResolvedLane, ResolvedTrip, StopEvent, StopRules};
 pub(crate) use pairs::FORBIDDEN_WALK;
 pub use pairs::{PairRule, TransferPair, TransferPairs};

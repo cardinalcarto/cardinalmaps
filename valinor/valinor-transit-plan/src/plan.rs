@@ -25,6 +25,8 @@ pub enum TravelMode {
     Walking,
     /// With a bicycle on board; only routes that allow bikes may be ridden.
     Cycling,
+    /// In a wheelchair: only trips and stops not marked inaccessible may be used.
+    Wheelchair,
 }
 
 impl TravelMode {
@@ -32,6 +34,7 @@ impl TravelMode {
         match self {
             Self::Walking => RouteFilter::ALL,
             Self::Cycling => RouteFilter::requiring(RouteAttributes::BIKES_ALLOWED),
+            Self::Wheelchair => RouteFilter::WHEELCHAIR,
         }
     }
 
@@ -40,6 +43,7 @@ impl TravelMode {
         match self {
             Self::Walking => "walking",
             Self::Cycling => "cycling",
+            Self::Wheelchair => "wheelchair",
         }
     }
 }

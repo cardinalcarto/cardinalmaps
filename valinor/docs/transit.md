@@ -123,6 +123,7 @@ of the street network during the query, at about one hundredth of the search tim
 |---|---|---|---|---|
 | Walk | walk | walk | all | walk |
 | Bike on board | bike | bike | `bikes_allowed` | bike |
+| Wheelchair | wheelchair | wheelchair | not `wheelchair_accessible=2` | wheelchair |
 | Bike and park | bike, park, walk | walk | all | walk |
 | Park and ride (deferred) | drive, park, walk | walk | all | walk |
 
@@ -162,6 +163,25 @@ Tables keep real walk seconds; the longer value applies when a search reads a wa
 so a walk drawn in a response still takes as long as it really does,
 and what's left of the transfer's cost is a wait to board, shown as the next ride's `wait_seconds`.
 Nothing here depends on the request: there is no per-request slack.
+
+### Wheelchair
+
+`wheelchair` is a third travel mode, using Sif's pedestrian `wheelchair` type for access, egress,
+and transfer tiles and stop snaps, built offline by the same stages as walking and cycling.
+Only what a feed explicitly marks inaccessible is excluded:
+a stop with `wheelchair_boarding=2` (a stop's empty value inherits its parent station's,
+as GTFS says), and a trip with `wheelchair_accessible=2`. Unknown is allowed, and no feed is
+special-cased. An excluded stop can't be boarded, alighted, or changed at.
+Trips with and without `wheelchair_accessible=2` go in separate patterns, as `bikes_allowed` does,
+so a route filter tests one attribute. A stop's exclusion is one more pair of bits in each lane
+position's rule byte, set when the lane is laid out, and the scan reads the bits its query chose
+with the same test as before, so a query on foot or by bicycle pays nothing.
+
+Forward and backward searches mirror the wheelchair bits exactly as they mirror pickup and drop-off.
+
+A table search's cost bound for a wheelchair is `1.2`, the same as walking;
+measured over 5,338 real wheelchair routes in Washington, whole-route cost over time has
+p50 1.03, p95 1.175, p99 2.2 (walking p95 1.176, cycling 3.49 over the same sample).
 
 ### Forbidden transfers
 

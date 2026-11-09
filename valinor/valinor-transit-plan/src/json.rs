@@ -69,6 +69,7 @@ fn parse_body(body: &[u8], now: i64) -> Result<(TransitRequest, String), JsonRes
     let mode = match parsed.mode.as_deref() {
         None | Some("walking") => TravelMode::Walking,
         Some("cycling") => TravelMode::Cycling,
+        Some("wheelchair") => TravelMode::Wheelchair,
         Some(other) => {
             return Err(error_body(
                 400,

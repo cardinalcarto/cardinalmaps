@@ -4,7 +4,9 @@ use core::convert::Infallible;
 
 use insta::assert_json_snapshot;
 use proptest::prelude::*;
-use valinor_gtfs::LatLon;
+use valinor_gtfs::{
+    FeedId as CompileFeedId, FeedInput, InMemorySource, LatLon, LoadedTimetable, compile,
+};
 use valinor_gtfs_rt::proto::alert::Effect;
 use valinor_gtfs_rt::{FeedId, FeedKind, StaticLookup, TripQuery};
 use valinor_transit::{RouteAttributes, RouteFilter, Router, StopId};
@@ -16,7 +18,7 @@ use crate::plan::{
     TravelMode, plan,
 };
 use crate::response::{FeedState, JourneyLeg, PlanResponse, RealtimeLevel, TransitLeg};
-use crate::state::{FeedUpdate, IngestOutcome, TransitSnapshot, TransitState};
+use crate::state::{FeedUpdate, IngestOutcome, StateConfig, TransitSnapshot, TransitState};
 use crate::testing::{
     FEED, JUNE_15, JUNE_16, StraightLineAccess, StraightLineTransfers, StraightWalk, alert_entity,
     delay_update, encoded_feed, june_15, route_selector, route_stop_selector, stop_selector,
@@ -1128,6 +1130,110 @@ fn removed_stops_carry_their_marks_without_a_trip_update() {
         leg.alerts
             .iter()
             .any(|a| a.alert.effect.as_deref() == Some("no_service"))
+    );
+}
+
+/// Stops with every wheelchair value, and trips with and without the accessible flag.
+fn wheelchair_state() -> TransitState {
+    let source = InMemorySource::new()
+        .with(
+            "agency.txt",
+            "agency_id,agency_name,agency_timezone,agency_url\n\
+             A,Metro,America/Los_Angeles,https://m.test\n",
+        )
+        .with("routes.txt", "route_id,agency_id,route_type\nR,A,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_name,stop_lat,stop_lon,wheelchair_boarding\n\
+             ORG,Origin,47.5995,-122.3300,1\n\
+             BAD,Stairs,47.6100,-122.3200,2\n\
+             GOOD,Unknown,47.6100,-122.3100,\n\
+             DST,Destination,47.6204,-122.3098,1\n",
+        )
+        .with(
+            "calendar.txt",
+            "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n\
+             WK,1,1,1,1,1,0,0,20260601,20260630\n",
+        )
+        .with(
+            "trips.txt",
+            "route_id,service_id,trip_id,wheelchair_accessible\n\
+             R,WK,T1,1\nR,WK,T2,1\nR,WK,T3,1\nR,WK,T4,1\nR,WK,T5,2\n",
+        )
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             T1,08:05:00,08:05:00,ORG,1\nT1,08:15:00,08:15:00,BAD,2\n\
+             T2,08:20:00,08:20:00,BAD,1\nT2,08:30:00,08:30:00,DST,2\n\
+             T3,08:10:00,08:10:00,ORG,1\nT3,08:25:00,08:25:00,GOOD,2\n\
+             T4,08:30:00,08:30:00,GOOD,1\nT4,08:45:00,08:45:00,DST,2\n\
+             T5,08:20:00,08:20:00,ORG,1\nT5,08:36:00,08:36:00,DST,2\n",
+        );
+    let compiled = compile(vec![FeedInput {
+        id: CompileFeedId::try_new("w".to_owned()).expect("id"),
+        source: Box::new(source),
+    }])
+    .expect("compiles");
+    TransitState::new(
+        LoadedTimetable::from_bytes(compiled.bytes).expect("loads"),
+        StateConfig::default(),
+    )
+    .expect("state")
+}
+
+/// A rider in a wheelchair can't change at an inaccessible stop, but unknown ones are fine,
+/// and a trip marked inaccessible is out of the question.
+#[test]
+fn a_wheelchair_query_avoids_an_inaccessible_stop_and_uses_unknown_ones() {
+    let state = wheelchair_state();
+    let run_mode = |mode| {
+        let request = TransitRequest {
+            mode,
+            options: TransitOptions {
+                max_trips: 3,
+                ..TransitOptions::default()
+            },
+            ..morning_request()
+        };
+        run(&state, &request)
+    };
+    let stops_of = |response: &PlanResponse| -> Vec<String> {
+        response
+            .journeys
+            .iter()
+            .flat_map(transit_legs)
+            .flat_map(|leg| leg.stops.iter().map(|visit| visit.stop.stop_id.clone()))
+            .collect()
+    };
+    let walking = run_mode(TravelMode::Walking);
+    assert!(
+        stops_of(&walking).contains(&"BAD".to_owned()),
+        "a rider on foot may use it"
+    );
+    assert!(
+        walking
+            .journeys
+            .iter()
+            .flat_map(transit_legs)
+            .any(|leg| leg.trip.trip_id == "T5")
+    );
+    let wheelchair = run_mode(TravelMode::Wheelchair);
+    assert!(!wheelchair.journeys.is_empty());
+    let trips: Vec<&str> = wheelchair
+        .journeys
+        .iter()
+        .flat_map(transit_legs)
+        .map(|leg| leg.trip.trip_id.as_str())
+        .collect();
+    assert!(
+        !stops_of(&wheelchair).contains(&"BAD".to_owned()),
+        "a rider in a wheelchair can't use it"
+    );
+    assert!(!trips.contains(&"T5"), "a trip marked inaccessible is out");
+    assert!(trips.contains(&"T3"), "{trips:?}");
+    assert!(
+        stops_of(&wheelchair).contains(&"GOOD".to_owned()),
+        "a stop with no accessibility information is allowed"
     );
 }
 

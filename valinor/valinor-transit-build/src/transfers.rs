@@ -68,6 +68,8 @@ pub struct TransferOptions {
     pub max_seconds_walking: u32,
     /// The bound for cycling transfers, in seconds.
     pub max_seconds_cycling: u32,
+    /// The bound for wheelchair transfers, in seconds.
+    pub max_seconds_wheelchair: u32,
     /// The zstd level of the tiles.
     pub zstd_level: i32,
     /// Which modes to build.
@@ -264,6 +266,7 @@ fn run_mode(
     let max_seconds = match mode {
         TransferMode::Walking => options.max_seconds_walking,
         TransferMode::Cycling => options.max_seconds_cycling,
+        TransferMode::Wheelchair => options.max_seconds_wheelchair,
     };
 
     let pair_rules_without_walk = AtomicU64::new(0);
@@ -367,20 +370,19 @@ pub fn costing_for(mode: TransferMode) -> Result<AnyCosting, BuildError> {
         mode: mode_name,
         reason,
     };
-    let costing_type = match mode {
-        TransferMode::Walking => valhalla_proto::costing::Type::Pedestrian,
-        TransferMode::Cycling => valhalla_proto::costing::Type::Bicycle,
+    let (costing_type, options, key): (_, &[u8], _) = match mode {
+        TransferMode::Walking => (valhalla_proto::costing::Type::Pedestrian, b"{}", "/none"),
+        TransferMode::Cycling => (valhalla_proto::costing::Type::Bicycle, b"{}", "/none"),
+        TransferMode::Wheelchair => (
+            valhalla_proto::costing::Type::Pedestrian,
+            br#"{"o":{"type":"wheelchair"}}"#,
+            "/o",
+        ),
     };
-    let doc = JsonValue::parse(b"{}").map_err(|e| error(format!("{e:?}")))?;
+    let doc = JsonValue::parse(options).map_err(|e| error(format!("{e:?}")))?;
     let mut proto = CostingProto::default();
-    parse_costing(
-        &doc,
-        "/none",
-        &mut proto,
-        &mut Vec::new(),
-        Some(costing_type),
-    )
-    .map_err(|e| error(format!("{e:?}")))?;
+    parse_costing(&doc, key, &mut proto, &mut Vec::new(), Some(costing_type))
+        .map_err(|e| error(format!("{e:?}")))?;
     AnyCosting::new(&proto).map_err(|e| error(e.to_string()))
 }
 
@@ -763,6 +765,9 @@ fn assemble_manifest(
         zoom: TILE_ZOOM,
         walking_bound_seconds: options.max_seconds_walking,
         cycling_bound_seconds: options.max_seconds_cycling,
+        wheelchair_bound_seconds: by_mode
+            .contains_key(&TransferMode::Wheelchair)
+            .then_some(options.max_seconds_wheelchair),
         feeds: manifest_feeds,
         tiles,
         totals,

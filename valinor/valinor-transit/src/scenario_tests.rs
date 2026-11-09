@@ -374,6 +374,75 @@ fn a_forbidden_rule_binds_only_its_own_walk() {
 }
 
 #[test]
+fn a_wheelchair_rider_avoids_an_inaccessible_stop_and_uses_unknown_ones() {
+    // The fast way is through stop 1, inaccessible; the slow way through 2 is fine.
+    let trip = |id, times: &[i32]| ScenarioTrip::simple(id, times);
+    let (net, _) = Scenario::new(4)
+        .inaccessible(1)
+        .route_with(
+            &[0, 1, 3],
+            RouteAttributes::WHEELCHAIR_ACCESSIBLE,
+            &[trip(1, &[0, 100, 200])],
+        )
+        .route_with(
+            &[0, 2, 3],
+            RouteAttributes::WHEELCHAIR_ACCESSIBLE,
+            &[trip(2, &[0, 150, 300])],
+        )
+        .access(0, 0)
+        .egress(1, 0)
+        .egress(3, 0)
+        .build();
+    let run = |filter: RouteFilter| {
+        let query = net.query(4, filter);
+        let mut router = net.router();
+        let run = router.forward(&query, t(0), &|| false).expect("search");
+        run.results()
+            .iter()
+            .map(|r| (r.trips, r.time.into_inner()))
+            .collect::<Vec<_>>()
+    };
+    // On foot, the first route reaches stop 1 at 100.
+    assert_eq!(run(RouteFilter::ALL), vec![(1, 100)]);
+    // In a wheelchair, the first route passes through stop 1 without stopping,
+    // so stop 3 by the first route and the second both arrive, and the first is earliest.
+    assert_eq!(run(RouteFilter::WHEELCHAIR), vec![(1, 200)]);
+    assert_eq!(
+        oracle(&net, RouteFilter::WHEELCHAIR, Direction::Forward, 0, 4),
+        vec![(1, 200)]
+    );
+    assert_eq!(
+        oracle(&net, RouteFilter::WHEELCHAIR, Direction::Backward, 200, 4),
+        vec![(1, 0)],
+    );
+}
+
+#[test]
+fn a_wheelchair_rider_only_rides_routes_not_marked_inaccessible() {
+    let trip = |id, times: &[i32]| ScenarioTrip::simple(id, times);
+    let (net, _) = Scenario::new(3)
+        .route(&[0, 1], &[trip(1, &[0, 100])]) // Marked inaccessible: no attribute.
+        .route_with(
+            &[0, 2],
+            RouteAttributes::WHEELCHAIR_ACCESSIBLE,
+            &[trip(2, &[0, 200])],
+        )
+        .access(0, 0)
+        .egress(1, 0)
+        .egress(2, 0)
+        .build();
+    let query = net.query(4, RouteFilter::WHEELCHAIR);
+    let mut router = net.router();
+    let run = router.forward(&query, t(0), &|| false).expect("search");
+    let results: Vec<_> = run
+        .results()
+        .iter()
+        .map(|r| (r.trips, r.time.into_inner()))
+        .collect();
+    assert_eq!(results, vec![(1, 200)]);
+}
+
+#[test]
 fn walking_from_another_stop_helps_even_after_a_trip_arrival() {
     // A rider arrives at stop 1 by trip at 100 and at stop 2 by trip at 90,
     // and the walk from 2 to 1 costs the longer of its 15 seconds and stop 1's 30.

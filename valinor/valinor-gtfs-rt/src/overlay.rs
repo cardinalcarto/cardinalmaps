@@ -625,7 +625,9 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 continue;
             }
             budget.new_stops += 1;
-            let id = overlay.add_stop(options.new_stop_min_change)?;
+            let accessible =
+                stop.wheelchair_boarding() != proto::stop::WheelchairBoarding::NotAvailable;
+            let id = overlay.add_stop(options.new_stop_min_change, accessible)?;
             self.new_stop_names
                 .insert((feed.clone(), id), scoped.id.to_string());
             self.new_stops.insert(scoped.clone(), id);
@@ -1228,7 +1230,8 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             .as_deref()
             .and_then(|id| self.lookup.route_patterns(feed, id).first().copied())
             .and_then(|route| self.base.route_attributes(route))
-            .unwrap_or(RouteAttributes::NONE);
+            // Unknown accessibility is allowed; a brand-new trip says nothing about bicycles.
+            .unwrap_or(RouteAttributes::WHEELCHAIR_ACCESSIBLE);
         self.added
             .entry((stops, attributes))
             .or_default()

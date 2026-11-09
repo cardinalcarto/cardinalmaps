@@ -52,11 +52,14 @@ enum Stage {
         /// The bound for cycling transfers, in seconds.
         #[arg(long, default_value_t = DEFAULT_TRANSFER_SECONDS)]
         max_seconds_cycling: u32,
+        /// The bound for wheelchair transfers, in seconds.
+        #[arg(long, default_value_t = DEFAULT_TRANSFER_SECONDS)]
+        max_seconds_wheelchair: u32,
         /// The zstd level of the tiles.
         #[arg(long, default_value_t = DEFAULT_ZSTD_LEVEL)]
         zstd_level: i32,
-        /// The modes to build; both by default.
-        #[arg(long, value_enum, num_args = 1.., default_values_t = [Mode::Walking, Mode::Cycling])]
+        /// The modes to build; all three by default.
+        #[arg(long, value_enum, num_args = 1.., default_values_t = [Mode::Walking, Mode::Cycling, Mode::Wheelchair])]
         modes: Vec<Mode>,
     },
 }
@@ -65,6 +68,7 @@ enum Stage {
 enum Mode {
     Walking,
     Cycling,
+    Wheelchair,
 }
 
 fn main() -> ExitCode {
@@ -117,6 +121,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn core::error::Error>> {
             output,
             max_seconds_walking,
             max_seconds_cycling,
+            max_seconds_wheelchair,
             zstd_level,
             modes,
         } => {
@@ -127,12 +132,14 @@ fn run(cli: Cli) -> Result<(), Box<dyn core::error::Error>> {
                 threads,
                 max_seconds_walking,
                 max_seconds_cycling,
+                max_seconds_wheelchair,
                 zstd_level,
                 modes: modes
                     .into_iter()
                     .map(|mode| match mode {
                         Mode::Walking => TransferMode::Walking,
                         Mode::Cycling => TransferMode::Cycling,
+                        Mode::Wheelchair => TransferMode::Wheelchair,
                     })
                     .collect(),
             })?;

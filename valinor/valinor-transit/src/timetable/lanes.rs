@@ -13,6 +13,13 @@ use std::collections::BTreeMap;
 use crate::error::BuildError;
 use crate::ids::{Time, TripId};
 
+/// Bit of a lane's rule byte: a rider may board at this position.
+pub(crate) const RULE_PICKUP: u8 = 1;
+/// Bit of a lane's rule byte: a rider may alight at this position.
+pub(crate) const RULE_DROP_OFF: u8 = 2;
+/// How far the wheelchair copies of those two bits are shifted up.
+pub(crate) const RULE_WHEELCHAIR_SHIFT: u8 = 2;
+
 /// What may happen at one stop of a trip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StopRules {
@@ -36,13 +43,13 @@ impl StopRules {
     };
 
     pub(crate) fn encode(self) -> u8 {
-        u8::from(self.pickup) | (u8::from(self.drop_off) << 1)
+        (u8::from(self.pickup) * RULE_PICKUP) | (u8::from(self.drop_off) * RULE_DROP_OFF)
     }
 
     pub(crate) fn decode(bits: u8) -> Self {
         Self {
-            pickup: bits & 1 != 0,
-            drop_off: bits & 2 != 0,
+            pickup: bits & RULE_PICKUP != 0,
+            drop_off: bits & RULE_DROP_OFF != 0,
         }
     }
 }

@@ -458,7 +458,7 @@ impl AccessEgressSearch for StraightLineAccess {
         _interrupt: &dyn Fn() -> bool,
     ) -> Result<AccessEgressTables, Self::Error> {
         let speed = match request.mode {
-            TravelMode::Walking => self.walk_speed,
+            TravelMode::Walking | TravelMode::Wheelchair => self.walk_speed,
             TravelMode::Cycling => self.bike_speed,
         };
         Ok(AccessEgressTables {

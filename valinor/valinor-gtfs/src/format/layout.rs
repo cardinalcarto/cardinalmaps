@@ -16,7 +16,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 pub const MAGIC: [u8; 8] = *b"VLNRGTFS";
 
 /// The only format version this build reads.
-pub const FORMAT_VERSION: u32 = 4;
+pub const FORMAT_VERSION: u32 = 5;
 
 /// A transfer time for a stop that `transfers.txt` doesn't set one for, as MOTIS does: 2 minutes.
 pub const DEFAULT_TRANSFER_SECONDS: u32 = 120;
@@ -299,6 +299,8 @@ pub(crate) struct PatternRow {
 
 /// The attribute bit for a pattern on which bicycles are allowed.
 pub(crate) const PATTERN_BIKES_ALLOWED: u8 = 1;
+/// The attribute bit for a pattern whose trips aren't marked `wheelchair_accessible=2`.
+pub(crate) const PATTERN_WHEELCHAIR_ACCESSIBLE: u8 = 2;
 
 /// One run of a trip. A frequency-based trip has one row per expanded run.
 #[derive(Clone, Copy, Debug, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]

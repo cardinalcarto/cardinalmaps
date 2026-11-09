@@ -60,6 +60,7 @@ pub(super) fn run<const BACK: bool, S: TransferSearch>(
     let arenas = snapshot.arenas();
     let day_count = snapshot.days().len();
     let target_costs = input.target.costs();
+    let masks = input.filter.rule_masks::<BACK>();
     let mut scans = 0_u32;
     let mut previous_upper_bound = INFINITY;
 
@@ -106,6 +107,7 @@ pub(super) fn run<const BACK: bool, S: TransferSearch>(
                         start_position,
                         round,
                         target_costs,
+                        masks,
                     );
                 }
             }

@@ -164,6 +164,7 @@ fn random_net(rng: &mut Rng) -> TestNet {
     let routes = routes_from_timetable(&timetable, &window);
     TestNet {
         no_change: vec![false; stops],
+        stop_access: vec![true; stops],
         pair_floors: HashMap::new(),
         min_change,
         routes,
@@ -215,6 +216,7 @@ fn apply_random_overlay(rng: &mut Rng, net: &TestNet) -> TestNet {
     let snapshot = overlay.build().unwrap();
     TestNet {
         no_change: net.no_change.clone(),
+        stop_access: net.stop_access.clone(),
         pair_floors: HashMap::new(),
         min_change: net.min_change.clone(),
         routes,

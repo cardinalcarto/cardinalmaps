@@ -2,7 +2,9 @@
 
 use crate::error::BuildError;
 use crate::ids::{Seconds, StopId};
-use crate::timetable::{INFINITY, RouteAttributes};
+use crate::timetable::{
+    INFINITY, RULE_DROP_OFF, RULE_PICKUP, RULE_WHEELCHAIR_SHIFT, RouteAttributes,
+};
 
 /// Time-independent costs between one end of a journey and every reachable stop.
 ///
@@ -87,27 +89,63 @@ impl StopTable {
     }
 }
 
-/// Which routes a query may ride.
+/// Which routes a query may ride, and which stops a rider may use.
+///
+/// Wheelchair exclusions are decided when a lane is laid out, by the bits of its rule bytes;
+/// a query only picks which bits to read, so a non-wheelchair query pays nothing for this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RouteFilter {
     required: RouteAttributes,
+    wheelchair: bool,
 }
 
 impl RouteFilter {
     /// Every route.
     pub const ALL: Self = Self {
         required: RouteAttributes::NONE,
+        wheelchair: false,
+    };
+
+    /// A rider in a wheelchair: routes not marked inaccessible, and stops not marked inaccessible.
+    pub const WHEELCHAIR: Self = Self {
+        required: RouteAttributes::WHEELCHAIR_ACCESSIBLE,
+        wheelchair: true,
     };
 
     /// Routes that have every one of `required`.
     pub const fn requiring(required: RouteAttributes) -> Self {
-        Self { required }
+        Self {
+            required,
+            wheelchair: false,
+        }
     }
 
     /// Whether a route with these attributes may be ridden.
     #[inline]
     pub(crate) fn allows(self, attributes: RouteAttributes) -> bool {
         attributes.contains(self.required)
+    }
+
+    /// Whether this query uses the wheelchair rule bits.
+    #[cfg(test)]
+    pub(crate) fn is_wheelchair(self) -> bool {
+        self.wheelchair
+    }
+
+    /// `(can_alight, can_board)` masks of a lane's rule bytes, in a search's direction.
+    #[inline]
+    pub(crate) fn rule_masks<const BACK: bool>(self) -> (u8, u8) {
+        let shift = if self.wheelchair {
+            RULE_WHEELCHAIR_SHIFT
+        } else {
+            0
+        };
+        let (alight, board) = if BACK {
+            (RULE_PICKUP, RULE_DROP_OFF)
+        } else {
+            (RULE_DROP_OFF, RULE_PICKUP)
+        };
+        (alight << shift, board << shift)
     }
 }
 

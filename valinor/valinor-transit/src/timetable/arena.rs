@@ -14,7 +14,7 @@
 
 use crate::error::BuildError;
 use crate::ids::{DaySlot, RouteId, StopId, TripId};
-use crate::timetable::lanes::{ResolvedBlock, ResolvedLane};
+use crate::timetable::lanes::{RULE_WHEELCHAIR_SHIFT, ResolvedBlock, ResolvedLane};
 
 /// A clock value beyond every real time: an unreachable label.
 ///
@@ -150,6 +150,7 @@ impl Arena {
         stops_start: u32,
         stop_count: usize,
         block: &ResolvedBlock,
+        stop_access: &[bool],
     ) -> Result<u32, BuildError> {
         if block.trip_count() == 0 {
             return Ok(0);
@@ -159,7 +160,7 @@ impl Arena {
         let mut latest_departure = -INFINITY;
         for lane in block.lanes() {
             let (lane_earliest, lane_latest) =
-                self.push_lane(route, day, stops_start, stop_count, lane)?;
+                self.push_lane(route, day, stops_start, stop_count, lane, stop_access)?;
             earliest_arrival = earliest_arrival.min(lane_earliest);
             latest_departure = latest_departure.max(lane_latest);
         }
@@ -180,6 +181,7 @@ impl Arena {
         stops_start: u32,
         stop_count: usize,
         lane: &ResolvedLane,
+        stop_access: &[bool],
     ) -> Result<(i32, i32), BuildError> {
         for trip in lane.trips() {
             if trip.events.len() != stop_count {
@@ -199,7 +201,21 @@ impl Arena {
         let rules_start = offset_of(self.rules.len())?;
         let trips_start = offset_of(self.trips.len())?;
 
-        self.rules.extend(lane.rules_bytes());
+        // Each position's byte holds the rules twice, the wheelchair copy only at stops a rider
+        // in a wheelchair may use, so the scan tests one byte against one mask either way.
+        let stops = &self.stops[stops_start as usize..][..stop_count];
+        for (position, byte) in lane.rules_bytes().into_iter().enumerate() {
+            let accessible = stop_access
+                .get(stops[position].index())
+                .copied()
+                .unwrap_or(true);
+            let wheelchair = if accessible {
+                byte << RULE_WHEELCHAIR_SHIFT
+            } else {
+                0
+            };
+            self.rules.push(byte | wheelchair);
+        }
         self.times
             .extend(core::iter::repeat_n(-INFINITY, stop_count * 2));
         let mut earliest_arrival = INFINITY;

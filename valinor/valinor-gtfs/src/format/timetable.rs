@@ -8,7 +8,8 @@ use valinor_transit::{
 
 use crate::error::DecodeError;
 use crate::format::layout::{
-    NONE, PATTERN_BIKES_ALLOWED, RULE_DROP_OFF_SHIFT, RULE_PICKUP_MASK, STOP_NO_CHANGE,
+    NONE, PATTERN_BIKES_ALLOWED, PATTERN_WHEELCHAIR_ACCESSIBLE, RULE_DROP_OFF_SHIFT,
+    RULE_PICKUP_MASK, STOP_NO_CHANGE,
 };
 use crate::format::reader::CompiledTimetable;
 
@@ -69,6 +70,9 @@ impl CompiledTimetable<'_> {
             if stop.flags & STOP_NO_CHANGE != 0 {
                 builder.forbid_change_at(key)?;
             }
+            if stop.wheelchair_boarding == 2 {
+                builder.mark_stop_inaccessible(key)?;
+            }
             keys.push(key);
         }
 
@@ -97,12 +101,7 @@ impl CompiledTimetable<'_> {
                     })?;
                 scratch.push(*key);
             }
-            let attributes = if pattern.attributes & PATTERN_BIKES_ALLOWED != 0 {
-                RouteAttributes::BIKES_ALLOWED
-            } else {
-                RouteAttributes::NONE
-            };
-            let key = builder.add_pattern(&scratch, attributes)?;
+            let key = builder.add_pattern(&scratch, attributes_of(pattern.attributes))?;
 
             let trips_start = pattern.trips_start.get() as usize;
             let trip_count = pattern.trip_count.get() as usize;
@@ -324,6 +323,13 @@ impl TimetableSource for CompiledTimetable<'_> {
         })
     }
 
+    fn wheelchair_stop_accessible(&self, stop: usize) -> bool {
+        self.tables
+            .stops
+            .get(stop)
+            .is_none_or(|row| row.wheelchair_boarding != 2)
+    }
+
     fn no_change_at(&self, stop: usize) -> bool {
         self.tables
             .stops
@@ -371,11 +377,7 @@ impl TimetableSource for CompiledTimetable<'_> {
             .patterns
             .get(route.into_inner() as usize)
             .ok_or(BuildError::UnknownRoute(route))?;
-        Ok(if pattern.attributes & PATTERN_BIKES_ALLOWED != 0 {
-            RouteAttributes::BIKES_ALLOWED
-        } else {
-            RouteAttributes::NONE
-        })
+        Ok(attributes_of(pattern.attributes))
     }
 
     fn resolved_trips_on(
@@ -433,6 +435,19 @@ impl TimetableSource for CompiledTimetable<'_> {
         }
         Ok(resolved)
     }
+}
+
+/// A pattern's attribute byte, as the core's attributes.
+fn attributes_of(bits: u8) -> RouteAttributes {
+    let mut attributes = if bits & PATTERN_BIKES_ALLOWED != 0 {
+        RouteAttributes::BIKES_ALLOWED
+    } else {
+        RouteAttributes::NONE
+    };
+    if bits & PATTERN_WHEELCHAIR_ACCESSIBLE != 0 {
+        attributes = attributes | RouteAttributes::WHEELCHAIR_ACCESSIBLE;
+    }
+    attributes
 }
 
 /// A file's service-day-relative time on a window's clock.

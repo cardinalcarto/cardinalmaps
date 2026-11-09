@@ -61,6 +61,8 @@ pub struct TimetableBuilder {
     pairs: Vec<(u32, u32, PairRule)>,
     /// Stops where a rider arriving by trip can't board another there.
     no_change: Vec<bool>,
+    /// Stops marked as not accessible to a rider in a wheelchair.
+    inaccessible: Vec<bool>,
 }
 
 impl TimetableBuilder {
@@ -78,6 +80,7 @@ impl TimetableBuilder {
         let key = StopKey(offset_of(self.stops.len())?);
         self.stops.push(min_change);
         self.no_change.push(false);
+        self.inaccessible.push(false);
         Ok(key)
     }
 
@@ -89,6 +92,19 @@ impl TimetableBuilder {
     pub fn forbid_change_at(&mut self, stop: StopKey) -> Result<(), BuildError> {
         *self
             .no_change
+            .get_mut(stop.0 as usize)
+            .ok_or(BuildError::UnknownStop(stop.0))? = true;
+        Ok(())
+    }
+
+    /// Marks a stop as not accessible: a rider in a wheelchair can't board or alight there.
+    ///
+    /// # Errors
+    ///
+    /// If the stop wasn't issued by this builder.
+    pub fn mark_stop_inaccessible(&mut self, stop: StopKey) -> Result<(), BuildError> {
+        *self
+            .inaccessible
             .get_mut(stop.0 as usize)
             .ok_or(BuildError::UnknownStop(stop.0))? = true;
         Ok(())
@@ -239,9 +255,11 @@ impl TimetableBuilder {
 
         let mut min_change = vec![0_i32; self.stops.len()];
         let mut no_change = vec![false; self.stops.len()];
+        let mut stop_access = vec![true; self.stops.len()];
         for (old, &id) in stop_map.iter().enumerate() {
             min_change[id.index()] = self.stops[old].as_i32();
             no_change[id.index()] = self.no_change[old];
+            stop_access[id.index()] = !self.inaccessible[old];
         }
 
         let mut routes = Vec::with_capacity(self.patterns.len());
@@ -276,6 +294,7 @@ impl TimetableBuilder {
             stop_map,
             min_change,
             no_change,
+            stop_access,
             services: self.services,
             routes,
             pairs,
@@ -313,6 +332,7 @@ pub struct Timetable {
     stop_map: Vec<StopId>,
     min_change: Vec<i32>,
     no_change: Vec<bool>,
+    stop_access: Vec<bool>,
     services: Vec<BTreeSet<ServiceDate>>,
     routes: Vec<RouteRecord>,
     pairs: Vec<TransferPair>,
@@ -427,6 +447,11 @@ pub trait TimetableSource {
         false
     }
 
+    /// Whether a rider in a wheelchair may use this stop (only an explicit `2` says no).
+    fn wheelchair_stop_accessible(&self, _stop: usize) -> bool {
+        true
+    }
+
     /// The rules for walking between particular stops, in the source's numbering.
     ///
     /// Empty by default: most sources have none.
@@ -477,6 +502,10 @@ impl TimetableSource for Timetable {
 
     fn no_change_at(&self, stop: usize) -> bool {
         self.no_change.get(stop).copied().unwrap_or(false)
+    }
+
+    fn wheelchair_stop_accessible(&self, stop: usize) -> bool {
+        self.stop_access.get(stop).copied().unwrap_or(true)
     }
 
     fn transfer_pairs(&self) -> Vec<TransferPair> {
@@ -578,6 +607,12 @@ pub fn materialize_parts(
     let mut min_change = Vec::with_capacity(stop_total);
     let mut transfer_times = Vec::with_capacity(stop_total);
     let mut pairs = Vec::new();
+    let mut stop_access = Vec::with_capacity(stop_total);
+    for part in parts {
+        let timetable = part.timetable;
+        stop_access
+            .extend((0..timetable.stop_count()).map(|s| timetable.wheelchair_stop_accessible(s)));
+    }
     let mut stop_base = 0_u32;
     let mut route_base = 0_u32;
     let mut stops = Vec::new();
@@ -618,6 +653,7 @@ pub fn materialize_parts(
                     stops_start,
                     stops.len(),
                     &block,
+                    &stop_access,
                 )?;
                 directory.push(BlockRef {
                     arena: 0,
@@ -669,6 +705,7 @@ pub fn materialize_parts(
         min_change,
         transfer_times,
         pairs,
+        stop_access,
         index,
         days.to_vec(),
     ))

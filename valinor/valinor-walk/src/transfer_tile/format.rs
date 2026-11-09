@@ -76,17 +76,20 @@ pub enum TransferMode {
     Walking,
     /// On a bicycle.
     Cycling,
+    /// In a wheelchair: Sif's pedestrian `wheelchair` type.
+    Wheelchair,
 }
 
 impl TransferMode {
     /// Every mode, in the order they are built.
-    pub const ALL: [Self; 2] = [Self::Walking, Self::Cycling];
+    pub const ALL: [Self; 3] = [Self::Walking, Self::Cycling, Self::Wheelchair];
 
     /// The name used in paths and manifests.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Walking => "walking",
             Self::Cycling => "cycling",
+            Self::Wheelchair => "wheelchair",
         }
     }
 
@@ -94,6 +97,7 @@ impl TransferMode {
         match self {
             Self::Walking => 0,
             Self::Cycling => 1,
+            Self::Wheelchair => 2,
         }
     }
 
@@ -101,6 +105,7 @@ impl TransferMode {
         match byte {
             0 => Some(Self::Walking),
             1 => Some(Self::Cycling),
+            2 => Some(Self::Wheelchair),
             _ => None,
         }
     }

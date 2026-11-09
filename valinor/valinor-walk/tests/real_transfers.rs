@@ -24,14 +24,19 @@ const METRO: &str =
 
 fn costing(name: &str) -> AnyCosting {
     use valhalla_proto::costing::Type;
-    let kind = if name == "pedestrian" {
-        Type::Pedestrian
-    } else {
+    let kind = if name == "bicycle" {
         Type::Bicycle
+    } else {
+        Type::Pedestrian
     };
-    let doc = JsonValue::parse(b"{}").expect("doc");
+    let (json, key): (&[u8], &str) = if name == "wheelchair" {
+        (br#"{"o":{"type":"wheelchair"}}"#, "/o")
+    } else {
+        (b"{}", "/none")
+    };
+    let doc = JsonValue::parse(json).expect("doc");
     let mut proto = valhalla_proto::Costing::default();
-    parse_costing(&doc, "/none", &mut proto, &mut Vec::new(), Some(kind)).expect("costing");
+    parse_costing(&doc, key, &mut proto, &mut Vec::new(), Some(kind)).expect("costing");
     AnyCosting::new(&proto).expect("any")
 }
 
@@ -502,6 +507,73 @@ fn washington_points() -> Vec<(f64, f64)> {
 
 fn percentile(sorted: &[f64], fraction: f64) -> f64 {
     sorted[((sorted.len() - 1) as f64 * fraction) as usize]
+}
+
+/// A mode's whole-route cost over time, over real routes in Washington, for its table bound.
+///
+/// `max_cost = max_seconds * factor(mode)` should cover the 95th percentile of cost over time,
+/// so that a stop's cheapest route usually isn't cut off by the bound. The search here runs with
+/// a very large factor, so a costly route is measured instead of censored, and every route of
+/// at least a minute is counted.
+#[test]
+#[ignore = "needs /mnt/maps/cardinal data"]
+fn route_cost_over_time_on_real_streets() {
+    let sets = tiles();
+    let p = &sets;
+    let all = washington_points();
+    let mut sample: Vec<u32> = (0..all.len() as u32).collect();
+    let mut state = 0x1234_5678_u64;
+    for i in (1..sample.len()).rev() {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        sample.swap(i, (state >> 33) as usize % (i + 1));
+    }
+    sample.truncate(300);
+    for name in ["pedestrian", "bicycle", "wheelchair"] {
+        let c = costing(name);
+        let snaps = snapped(&p, &c, &all);
+        let mut tables = StopTables::new(p, c.clone());
+        tables.bind(Arc::clone(&snaps)).expect("bind");
+        tables.set_cost_factor_override(Some(100.0));
+        let mut ratios: Vec<f64> = Vec::new();
+        for &stop in &sample {
+            let seeds = tables.stop_seeds(StopId::new(stop)).expect("seeds");
+            if seeds.is_empty() {
+                continue;
+            }
+            tables
+                .search(&TableRequest {
+                    side: AccessSide::Access,
+                    seeds: &seeds,
+                    max_seconds: 900,
+                    interrupt: &|| false,
+                })
+                .expect("search");
+            let reached: Vec<StopId> = tables.reached_stops().map(|(to, _)| to).collect();
+            for to in reached {
+                let leg = tables.leg(to).expect("leg");
+                if leg.secs < 60.0 {
+                    continue;
+                }
+                let cost: f32 = leg
+                    .edges
+                    .iter()
+                    .map(|e| e.transition.cost + e.traversal.cost)
+                    .sum();
+                ratios.push(f64::from(cost / leg.secs));
+            }
+        }
+        ratios.sort_unstable_by(f64::total_cmp);
+        eprintln!(
+            "{name}: routes {}, cost over time p50 {:.3}, p95 {:.3}, p99 {:.3}, max {:.3}",
+            ratios.len(),
+            percentile(&ratios, 0.5),
+            percentile(&ratios, 0.95),
+            percentile(&ratios, 0.99),
+            ratios.last().copied().unwrap_or(0.0),
+        );
+    }
 }
 
 /// Search cost on real stops: access, egress, and transfer, warm and cold, walking and cycling.

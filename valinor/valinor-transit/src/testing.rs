@@ -384,6 +384,8 @@ pub(crate) struct TestNet {
     pub(crate) min_change: Vec<i32>,
     /// Stops where a rider arriving by trip can't board another there.
     pub(crate) no_change: Vec<bool>,
+    /// Per stop, whether a rider in a wheelchair may use it.
+    pub(crate) stop_access: Vec<bool>,
     /// Floors on walks between particular stops, by final stop number, or [`FORBIDDEN_WALK`].
     pub(crate) pair_floors: HashMap<(u32, u32), i32>,
     pub(crate) routes: Vec<TestRoute>,
@@ -497,7 +499,8 @@ pub(crate) fn oracle(
                             (event.rules.pickup, event.departure.into_inner())
                         };
                         let from_stop = route.stops[from].index();
-                        if !can_board || board_clock < board[from_stop] {
+                        let usable = !filter.is_wheelchair() || net.stop_access[from_stop];
+                        if !can_board || !usable || board_clock < board[from_stop] {
                             continue;
                         }
                         for &to in &order[i + 1..] {
@@ -507,8 +510,9 @@ pub(crate) fn oracle(
                             } else {
                                 (event.rules.drop_off, event.arrival.into_inner())
                             };
-                            if can_alight {
-                                let to_stop = route.stops[to].index();
+                            let to_stop = route.stops[to].index();
+                            let usable = !filter.is_wheelchair() || net.stop_access[to_stop];
+                            if can_alight && usable {
                                 improved_trip[to_stop] = improved_trip[to_stop].min(alight_clock);
                             }
                         }
@@ -681,6 +685,7 @@ pub(crate) struct Scenario {
     edges: Vec<(u32, u32, i32)>,
     pairs: Vec<(u32, u32, u32)>,
     no_change: Vec<u32>,
+    inaccessible: Vec<u32>,
     access: Vec<(u32, u32)>,
     egress: Vec<(u32, u32)>,
     days: Vec<(ServiceDate, i32)>,
@@ -764,6 +769,12 @@ impl Scenario {
         self
     }
 
+    /// `wheelchair_boarding=2`: a rider in a wheelchair can't use this stop.
+    pub(crate) fn inaccessible(mut self, stop: u32) -> Self {
+        self.inaccessible.push(stop);
+        self
+    }
+
     /// `transfer_type=3` at one stop: a rider arriving by trip can't board another there.
     pub(crate) fn forbid_change(mut self, stop: u32) -> Self {
         self.no_change.push(stop);
@@ -808,6 +819,11 @@ impl Scenario {
         }
         for &stop in &self.no_change {
             builder.forbid_change_at(keys[stop as usize]).expect("stop");
+        }
+        for &stop in &self.inaccessible {
+            builder
+                .mark_stop_inaccessible(keys[stop as usize])
+                .expect("stop");
         }
         for (stops, attributes, trips) in &self.routes {
             let stop_keys: Vec<_> = stops.iter().map(|&s| keys[s as usize]).collect();
@@ -895,10 +911,15 @@ impl Scenario {
         for &stop in &self.no_change {
             no_change[ids[stop as usize].index()] = true;
         }
+        let mut stop_access = vec![true; stop_count];
+        for &stop in &self.inaccessible {
+            stop_access[ids[stop as usize].index()] = false;
+        }
         (
             TestNet {
                 min_change,
                 no_change,
+                stop_access,
                 pair_floors,
                 routes,
                 graph,

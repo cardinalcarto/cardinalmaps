@@ -147,6 +147,7 @@ fn transfer_options(compiled: &Path, output: &Path) -> TransferOptions {
         threads: threads(4),
         max_seconds_walking: BOUND,
         max_seconds_cycling: BOUND,
+        max_seconds_wheelchair: BOUND,
         zstd_level: 3,
         modes: TransferMode::ALL.to_vec(),
     }

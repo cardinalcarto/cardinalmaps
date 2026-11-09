@@ -447,7 +447,7 @@ fn a_tables_entries_are_a_wider_searchs_within_its_bound() {
                     .collect();
                 for limit in [30_u32, 60, 120, 240, 480, 900, 1800, 3600] {
                     run(&mut narrow, limit);
-                    let bound = limit as f32 * crate::table::cost_factor(mode);
+                    let bound = limit as f32 * crate::table::cost_factor(mode, 0);
                     let got: HashMap<StopId, (f32, f32)> = narrow
                         .reached_stops()
                         .map(|(to, _)| {

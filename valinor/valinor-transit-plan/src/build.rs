@@ -192,6 +192,8 @@ struct ManifestFile {
     zoom: u8,
     walking_bound_seconds: u32,
     cycling_bound_seconds: u32,
+    #[serde(default)]
+    wheelchair_bound_seconds: Option<u32>,
     feeds: Vec<ManifestFeedFile>,
 }
 
@@ -217,11 +219,11 @@ struct ManifestSnapFile {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BuildLoadReport {
     /// Tiles the prepared table covers, per mode (they are only read when it is rebuilt).
-    pub tiles_read: [usize; 2],
+    pub tiles_read: [usize; 3],
     /// Tiles the loaded feeds use but aren't on disk, per mode.
-    pub tiles_absent: [usize; 2],
+    pub tiles_absent: [usize; 3],
     /// Walks assembled, per mode.
-    pub walks: [usize; 2],
+    pub walks: [usize; 3],
 }
 
 /// One feed set of a transit build, ready for a planner: timetables and walks.
@@ -233,10 +235,14 @@ pub struct TransitBuild {
     pub walking: TransferTable,
     /// Walks between stops by bicycle.
     pub cycling: TransferTable,
+    /// Walks between stops in a wheelchair; empty if the build has no wheelchair mode.
+    pub wheelchair: TransferTable,
     /// Every stop's snap on foot, as the build made them, in the set's stop numbering.
     pub walking_snaps: StopSnaps,
     /// Every stop's snap by bicycle.
     pub cycling_snaps: StopSnaps,
+    /// Every stop's snap in a wheelchair; all unsnapped if the build has no wheelchair mode.
+    pub wheelchair_snaps: StopSnaps,
     /// The manifest's street build, checked when opening a planner.
     pub valhalla_build_id: u32,
     /// What was found on disk.
@@ -287,6 +293,10 @@ impl TransitBuild {
     /// # Errors
     ///
     /// As [`Self::load`].
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one linear walk through the manifest"
+    )]
     pub fn load_with_limits(
         directory: &Path,
         feeds: Option<&[String]>,
@@ -355,9 +365,34 @@ impl TransitBuild {
             local_stop_count,
             limits,
         )?;
-        report.tiles_read = [walking_tiles, cycling_tiles];
-        report.tiles_absent = [walking_absent, cycling_absent];
-        report.walks = [walking.walk_count(), cycling.walk_count()];
+        let (wheelchair, wheelchair_tiles, wheelchair_absent) =
+            if manifest.wheelchair_bound_seconds.is_some() {
+                load_mode(
+                    directory,
+                    TransferMode::Wheelchair,
+                    &manifest,
+                    &selected,
+                    &placements,
+                    manifest_id,
+                    manifest.wheelchair_bound_seconds.unwrap_or_default(),
+                    local_stop_count,
+                    limits,
+                )?
+            } else {
+                (
+                    TransferTable::from_sorted_walks(set.stop_count(), 0, &[])
+                        .map_err(|_| BuildLoadError::ManifestId(manifest.manifest_id.clone()))?,
+                    0,
+                    0,
+                )
+            };
+        report.tiles_read = [walking_tiles, cycling_tiles, wheelchair_tiles];
+        report.tiles_absent = [walking_absent, cycling_absent, wheelchair_absent];
+        report.walks = [
+            walking.walk_count(),
+            cycling.walk_count(),
+            wheelchair.walk_count(),
+        ];
         let build_id = BuildId::new(
             u16::try_from(manifest.valhalla_build_id)
                 .map_err(|_| BuildLoadError::ManifestId(manifest.manifest_id.clone()))?,
@@ -378,12 +413,26 @@ impl TransitBuild {
             &set,
             build_id,
         )?;
+        let wheelchair_snaps = if manifest.wheelchair_bound_seconds.is_some() {
+            load_snaps(
+                directory,
+                TransferMode::Wheelchair,
+                &manifest,
+                &selected,
+                &set,
+                build_id,
+            )?
+        } else {
+            StopSnaps::new(build_id, set.stop_count())
+        };
         Ok(Self {
             set,
             walking,
             cycling,
+            wheelchair,
             walking_snaps,
             cycling_snaps,
+            wheelchair_snaps,
             valhalla_build_id: manifest.valhalla_build_id,
             report,
         })

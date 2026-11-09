@@ -18,8 +18,9 @@ use crate::compile::report::FeedReport;
 use crate::error::CompileError;
 use crate::format::layout::{
     AgencyRow, ColorRow, FeedRow, IdIndexRow, NONE, NoonOffsetRow, PATTERN_BIKES_ALLOWED,
-    PatternRow, RouteRow, STOP_NO_CHANGE, SectionId, ServiceRow, ShapePointRow, ShapeRow, StopRow,
-    TimePair, TransferPairRow, TripRiderRow, TripRow, ZoneRow, ZoneTransitionRow,
+    PATTERN_WHEELCHAIR_ACCESSIBLE, PatternRow, RouteRow, STOP_NO_CHANGE, SectionId, ServiceRow,
+    ShapePointRow, ShapeRow, StopRow, TimePair, TransferPairRow, TripRiderRow, TripRow, ZoneRow,
+    ZoneTransitionRow,
 };
 use crate::format::reader::{civil_date_of, service_date_of};
 use crate::format::timetable::stop_rules;
@@ -205,11 +206,7 @@ pub(super) fn assemble(
                 u32::try_from(pattern.trips.len())
                     .map_err(|_| CompileError::TableTooLarge("trips"))?,
             ),
-            attributes: if pattern.bikes {
-                PATTERN_BIKES_ALLOWED
-            } else {
-                0
-            },
+            attributes: pattern_attribute_bits(pattern.bikes, pattern.wheelchair),
             _pad: [0; 3],
         });
     }
@@ -623,27 +620,46 @@ struct Pattern {
     feed: usize,
     route: u32,
     bikes: bool,
+    /// Whether a rider in a wheelchair may ride, because no trip is marked inaccessible.
+    wheelchair: bool,
     stops: Vec<u32>,
     trips: Vec<usize>,
 }
 
-/// Groups each feed's trips by route, stop sequence, and bike rule, in a fixed order.
+/// The attribute bits of a pattern, from the trips it was grouped for.
+fn pattern_attribute_bits(bikes: bool, wheelchair: bool) -> u8 {
+    (if bikes { PATTERN_BIKES_ALLOWED } else { 0 })
+        | (if wheelchair {
+            PATTERN_WHEELCHAIR_ACCESSIBLE
+        } else {
+            0
+        })
+}
+
+/// Trips a pattern groups together: the feed, route, stop sequence, and bike and wheelchair rules.
+type PatternKeyParts = (usize, u32, Vec<u32>, bool, bool);
+
+/// Groups each feed's trips by route, stop sequence, and bike and wheelchair rules, in a fixed order.
+///
+/// Trips differing in those two rules go in different patterns, because a filter tests a pattern.
 fn build_patterns(feeds: &[FeedModel], bases: &[FeedBases]) -> Vec<Pattern> {
-    let mut map: BTreeMap<(usize, u32, Vec<u32>, bool), Vec<usize>> = BTreeMap::new();
+    let mut map: BTreeMap<PatternKeyParts, Vec<usize>> = BTreeMap::new();
     for (feed_index, feed) in feeds.iter().enumerate() {
         for (trip_index, trip) in feed.trips.iter().enumerate() {
             let route = trip.route + bases[feed_index].route_base;
             let bikes = trip.bikes == 1;
-            map.entry((feed_index, route, trip.stops.clone(), bikes))
+            let wheelchair = trip.wheelchair != 2;
+            map.entry((feed_index, route, trip.stops.clone(), bikes, wheelchair))
                 .or_default()
                 .push(trip_index);
         }
     }
     map.into_iter()
-        .map(|((feed, route, stops, bikes), trips)| Pattern {
+        .map(|((feed, route, stops, bikes, wheelchair), trips)| Pattern {
             feed,
             route,
             bikes,
+            wheelchair,
             stops,
             trips,
         })
@@ -725,11 +741,14 @@ fn number_stops(
                 })
             })
             .collect::<Result<_, _>>()?;
-        let attributes = if pattern.bikes {
+        let mut attributes = if pattern.bikes {
             RouteAttributes::BIKES_ALLOWED
         } else {
             RouteAttributes::NONE
         };
+        if pattern.wheelchair {
+            attributes = attributes | RouteAttributes::WHEELCHAIR_ACCESSIBLE;
+        }
         let key = builder.add_pattern(&keys, attributes)?;
         for &trip_index in &pattern.trips {
             let trip = &feeds[pattern.feed].trips[trip_index];
