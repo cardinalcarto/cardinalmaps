@@ -435,6 +435,55 @@ fn profile_has_one_entry_per_useful_departure() {
     assert_eq!(triples, vec![(100, 200, 1), (300, 400, 1)]);
 }
 
+/// A two-trip journey leaving at 100 and arriving at 300, and a direct one leaving at 50 and
+/// arriving at 400.
+fn walks_scenario() -> TestNet {
+    Scenario::new(4)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[100, 200])])
+        .route(&[2, 3], &[ScenarioTrip::simple(2, &[220, 300])])
+        .route(&[0, 3], &[ScenarioTrip::simple(3, &[50, 400])])
+        .walk(1, 2, 10)
+        .access(0, 0)
+        .egress(3, 0)
+        .build()
+        .0
+}
+
+#[test]
+fn a_profile_resolves_no_walk_for_a_departure_outside_its_window() {
+    let net = walks_scenario();
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router = net.router();
+    let profile = router
+        .profile(&query, t(0), t(90), &|| false)
+        .expect("profile");
+    assert_eq!(
+        profile.entries.len(),
+        1,
+        "only the direct journey departs in the window"
+    );
+    assert_eq!(router.transfers().walks_resolved.get(), 0);
+}
+
+#[test]
+fn a_profile_resolves_the_walk_of_each_entry_once() {
+    // The backward searches from 300 and from 400 both find the two-trip journey,
+    // and the second must not pay for its walk again.
+    let net = walks_scenario();
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router = net.router();
+    let profile = router
+        .profile(&query, t(0), t(200), &|| false)
+        .expect("profile");
+    let triples: Vec<_> = profile
+        .entries
+        .iter()
+        .map(|e| (e.departure.into_inner(), e.arrival.into_inner(), e.trips))
+        .collect();
+    assert_eq!(triples, vec![(50, 400, 1), (100, 300, 2)]);
+    assert_eq!(router.transfers().walks_resolved.get(), 1);
+}
+
 #[test]
 fn a_two_day_window_includes_tomorrows_trips() {
     let mut tomorrow = ScenarioTrip::simple(1, &[100, 200]);

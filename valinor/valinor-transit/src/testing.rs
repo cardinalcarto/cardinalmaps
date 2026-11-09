@@ -5,6 +5,7 @@
 
 #![allow(clippy::needless_range_loop, clippy::too_many_lines)]
 
+use std::cell::Cell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::convert::Infallible;
@@ -123,6 +124,8 @@ struct NodeLabel {
 pub(crate) struct SyntheticSearch {
     pub(crate) graph: Arc<Graph>,
     trace: Vec<Trace>,
+    /// How many walks have been resolved from handles.
+    pub(crate) walks_resolved: Cell<usize>,
 }
 
 impl SyntheticSearch {
@@ -130,6 +133,7 @@ impl SyntheticSearch {
         Self {
             graph,
             trace: Vec::new(),
+            walks_resolved: Cell::new(0),
         }
     }
 
@@ -157,6 +161,7 @@ impl TransferSearch for SyntheticSearch {
     }
 
     fn walk(&self, parent: TraceId) -> Vec<u32> {
+        self.walks_resolved.set(self.walks_resolved.get() + 1);
         self.path(parent)
     }
 
