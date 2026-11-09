@@ -302,10 +302,25 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
                 continue;
             };
             let w = edge.weights;
-            let into_tail = prefix(w.forward, point.percent_along);
-            let from_head = sub_weight(w.forward, into_tail);
-            let into_head = prefix(w.backward, 1.0 - point.percent_along);
-            let from_tail = sub_weight(w.backward, into_head);
+            // Each connector is split from its directed edge's whole cost.
+            // A connector of no length is free whichever way the edge may be walked:
+            // a stop at the end of a one-way edge can still step onto the node it is at.
+            let at_tail = point.percent_along <= 0.0;
+            let at_head = point.percent_along >= 1.0;
+            let forward_part = prefix(w.forward, point.percent_along);
+            let backward_part = prefix(w.backward, 1.0 - point.percent_along);
+            let into_tail = if at_tail { 0 } else { forward_part };
+            let from_head = if at_head {
+                0
+            } else {
+                sub_weight(w.forward, forward_part)
+            };
+            let into_head = if at_head { 0 } else { backward_part };
+            let from_tail = if at_tail {
+                0
+            } else {
+                sub_weight(w.backward, backward_part)
+            };
             let attach = StopAttach {
                 node: [edge.tail, edge.head],
                 into: [into_tail, into_head],
@@ -996,7 +1011,12 @@ fn same_edge_walk(from: StopAttach, to: StopAttach) -> (f32, f32, u32, u16) {
 /// or [`INF`] if that direction isn't allowed.
 #[inline]
 fn direct_cost(weights: [u16; 2], real_from: f32, real_to: f32) -> u16 {
-    if real_from <= real_to {
+    // Going nowhere is free, whichever direction the edge may be walked.
+    #[expect(clippy::float_cmp, reason = "the same stored fraction, not a computed one")]
+    if real_from == real_to {
+        return 0;
+    }
+    if real_from < real_to {
         if weights[0] == INF {
             return INF;
         }
