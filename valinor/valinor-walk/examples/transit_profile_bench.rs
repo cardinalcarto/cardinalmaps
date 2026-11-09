@@ -15,7 +15,13 @@
 //! `--seed N` (1), `--max-trips N` (8), `--cold N` queries from a cold router (4),
 //! `--warmup N` queries run and discarded before timing warm queries (24),
 //! `--max-walk SECS` longest access or egress walk (86400),
-//! `--csv PATH` one row per query, `--verbose` a line per query.
+//! `--csv PATH` one row per query, `--verbose` a line per query, `--trace` a line per street search,
+//! `--walk-limit SECS` cap each transfer walk (changes results; to measure what a cap buys),
+//! `--no-known-bounds`, `--no-own-seed-pruning`, `--flood-tables` turn a pruning off,
+//! `--no-canary` skips the full-network table floods at the start and end
+//! (they cost a second worker's memory, so use it when reading the memory lines),
+//! `--compare` checks profiles with every pruning off and on, and
+//! `--compare-each` does so for each pruning alone.
 
 #![allow(
     clippy::print_stdout,
@@ -45,8 +51,8 @@ use valinor_gtfs::{CompiledTimetable, FeedId, FeedInput, ZipSource, compile, par
 use valinor_router::tiles::TileSets;
 use valinor_sif::AnyCosting;
 use valinor_transit::{
-    DaySlot, Direction, RouteFilter, RouteId, Router, ServiceDate, Snapshot, StopId, Time,
-    TransferOutcome, TransferRequest, TransferSearch, TransferSink, TransitQuery,
+    DaySlot, Direction, ProfileOptions, RouteFilter, RouteId, Router, ServiceDate, Snapshot,
+    StopId, Time, TransferOutcome, TransferRequest, TransferSearch, TransferSink, TransitQuery,
 };
 use valinor_walk::{
     AccessSide, ResolvedWalk, SnapConfig, SnapPoint, StopSnaps, StopTables, TableRequest,
@@ -118,6 +124,10 @@ impl Counters {
 struct Timed {
     inner: Walk,
     counters: Counters,
+    /// Print one line per street search, to see which rounds carry the work.
+    trace: bool,
+    direction: Direction,
+    round: u32,
 }
 
 impl TransferSearch for Timed {
@@ -127,6 +137,8 @@ impl TransferSearch for Timed {
 
     fn begin_run(&mut self, direction: Direction) {
         self.counters.runs[usize::from(direction == Direction::Backward)] += 1;
+        self.direction = direction;
+        self.round = 0;
         self.inner.begin_run(direction);
     }
 
@@ -148,6 +160,37 @@ impl TransferSearch for Timed {
         self.counters.nodes_settled += stats.nodes_settled;
         self.counters.labels_settled += stats.labels_settled;
         self.counters.arcs_relaxed += stats.arcs_relaxed;
+        self.round += 1;
+        if self.trace {
+            let first = request
+                .seeds
+                .iter()
+                .map(|s| s.clock.seconds())
+                .min()
+                .unwrap_or(0);
+            let last = request
+                .seeds
+                .iter()
+                .map(|s| s.clock.seconds())
+                .max()
+                .unwrap_or(0);
+            let bound = request.upper_bound.seconds();
+            let horizon = if bound >= (1 << 30) {
+                -1
+            } else {
+                bound - first
+            };
+            eprintln!(
+                "trace {:?} walk {} seeds {} seed_span_s {} horizon_s {} nodes {} us {}",
+                self.direction,
+                self.round,
+                request.seeds.len(),
+                last - first,
+                horizon,
+                stats.nodes_settled,
+                started.elapsed().as_micros(),
+            );
+        }
         outcome
     }
 }
@@ -462,11 +505,22 @@ fn new_worker(
     provider: Provider,
     costing: &AnyCosting,
     snaps: &Arc<StopSnaps>,
+    own_seed_pruning: bool,
+    terminate_tables: bool,
 ) -> Result<(Worker, f64), Box<dyn Error>> {
     let started = Instant::now();
     let mut tables = StopTables::new(provider, costing.clone());
+    tables.set_terminate_when_stops_settled(terminate_tables);
     tables.bind(snaps.clone())?;
     let mut search = WalkSearch::new(provider, costing.clone());
+    search.set_own_seed_pruning(own_seed_pruning);
+    if let Some(limit) = std::env::args()
+        .skip_while(|arg| arg != "--walk-limit")
+        .nth(1)
+        .and_then(|limit| limit.parse().ok())
+    {
+        search.set_walk_limit(Some(limit));
+    }
     search.bind(snaps.clone())?;
     let bind_ms = started.elapsed().as_secs_f64() * 1000.0;
     Ok((
@@ -475,6 +529,9 @@ fn new_worker(
             router: Router::new(Timed {
                 inner: search,
                 counters: Counters::default(),
+                trace: std::env::args().any(|arg| arg == "--trace"),
+                direction: Direction::Forward,
+                round: 0,
             }),
         },
         bind_ms,
@@ -487,9 +544,22 @@ struct Env {
     day_start: i32,
     max_trips: u8,
     max_walk: u32,
+    options: ProfileOptions,
 }
 
 fn run_query(worker: &mut Worker, env: &Env, sample: Sample) -> Result<Measure, Box<dyn Error>> {
+    run_query_with(worker, env, sample, env.options).map(|(measure, _)| measure)
+}
+
+/// One profile's `(departure, arrival, trips)`, for comparing configurations.
+type Triples = Vec<(i32, i32, u8)>;
+
+fn run_query_with(
+    worker: &mut Worker,
+    env: &Env,
+    sample: Sample,
+    options: ProfileOptions,
+) -> Result<(Measure, Triples), Box<dyn Error>> {
     let snaps_point =
         |stop: u32| -> Result<SnapPoint, Box<dyn Error>> { Ok(worker_point(env, stop)?) };
     let origin = seeds_at(&env.provider, snaps_point(sample.from)?)?;
@@ -528,12 +598,17 @@ fn run_query(worker: &mut Worker, env: &Env, sample: Sample) -> Result<Measure, 
     let profile_started = Instant::now();
     let profile = worker
         .router
-        .profile(&query, earliest, latest, &|| false)
+        .profile_with(&query, earliest, latest, options, &|| false)
         .map_err(|e| e.to_string())?;
     let profile_ms = profile_started.elapsed().as_secs_f64() * 1000.0;
     let counters = worker.router.transfers().counters.since(before);
     let street_ms = counters.street_nanos as f64 / 1e6;
-    Ok(Measure {
+    let triples = profile
+        .entries
+        .iter()
+        .map(|e| (e.departure.into_inner(), e.arrival.into_inner(), e.trips))
+        .collect();
+    let measure = Measure {
         sample,
         total_ms: tables_ms + profile_ms,
         tables_ms,
@@ -541,7 +616,29 @@ fn run_query(worker: &mut Worker, env: &Env, sample: Sample) -> Result<Measure, 
         scan_ms: profile_ms - street_ms,
         entries: profile.entries.len(),
         counters,
-    })
+    };
+    Ok((measure, triples))
+}
+
+/// Times the two tables of a query with a full flood: a constant workload across code changes,
+/// for spotting how fast the machine is running while measuring.
+fn run_table_canary(worker: &mut Worker, env: &Env, sample: Sample) -> Result<f64, Box<dyn Error>> {
+    let origin = seeds_at(&env.provider, worker_point(env, sample.from)?)?;
+    let target = seeds_at(&env.provider, worker_point(env, sample.to)?)?;
+    let stop_count = env.snapshot.stop_count();
+    let started = Instant::now();
+    for (seeds, side) in [(&origin, AccessSide::Access), (&target, AccessSide::Egress)] {
+        worker.tables.compute(
+            stop_count,
+            &TableRequest {
+                side,
+                seeds,
+                max_seconds: env.max_walk,
+                interrupt: &|| false,
+            },
+        )?;
+    }
+    Ok(started.elapsed().as_secs_f64() * 1000.0)
 }
 
 fn worker_point(env: &Env, stop: u32) -> Result<SnapPoint, Box<dyn Error>> {
@@ -549,6 +646,122 @@ fn worker_point(env: &Env, stop: u32) -> Result<SnapPoint, Box<dyn Error>> {
         .get()
         .and_then(|points| points.get(stop as usize).copied().flatten())
         .ok_or_else(|| format!("stop {stop} has no snap ({})", env.max_trips).into())
+}
+
+/// One way of turning prunings on and off.
+#[derive(Clone, Copy, Debug)]
+struct Config {
+    name: &'static str,
+    known_journey_bounds: bool,
+    own_seed_pruning: bool,
+    terminate_tables: bool,
+}
+
+const ALL_OFF: Config = Config {
+    name: "all off",
+    known_journey_bounds: false,
+    own_seed_pruning: false,
+    terminate_tables: false,
+};
+
+const ALL_ON: Config = Config {
+    name: "all on",
+    known_journey_bounds: true,
+    own_seed_pruning: true,
+    terminate_tables: true,
+};
+
+/// Runs every query under `config` and `ALL_OFF`, and reports any profile that differs.
+fn compare_with_reference(
+    env: &Env,
+    provider: Provider,
+    costing: &AnyCosting,
+    snaps: &Arc<StopSnaps>,
+    samples: &[Sample],
+    config: Config,
+) -> Result<usize, Box<dyn Error>> {
+    let worker_of = |c: Config| {
+        new_worker(
+            provider,
+            costing,
+            snaps,
+            c.own_seed_pruning,
+            c.terminate_tables,
+        )
+        .map(|(worker, _)| worker)
+    };
+    let options_of = |c: Config| ProfileOptions {
+        known_journey_bounds: c.known_journey_bounds,
+    };
+    let mut reference = worker_of(ALL_OFF)?;
+    let mut candidate = worker_of(config)?;
+    let mut differing = 0usize;
+    let mut entries = 0usize;
+    for sample in samples {
+        let (_, expected) = run_query_with(&mut reference, env, *sample, options_of(ALL_OFF))?;
+        let (_, got) = run_query_with(&mut candidate, env, *sample, options_of(config))?;
+        entries += expected.len();
+        if expected != got {
+            differing += 1;
+            println!("DIFFERENT {sample:?}\n  reference {expected:?}\n  candidate {got:?}");
+        }
+    }
+    println!(
+        "{}: compared {} queries, {entries} profile entries: {differing} differ",
+        config.name,
+        samples.len(),
+    );
+    Ok(differing)
+}
+
+/// Compares all prunings on against all off.
+fn compare_configurations(
+    env: &Env,
+    provider: Provider,
+    costing: &AnyCosting,
+    snaps: &Arc<StopSnaps>,
+    samples: &[Sample],
+) -> Result<(), Box<dyn Error>> {
+    let differing = compare_with_reference(env, provider, costing, snaps, samples, ALL_ON)?;
+    if differing > 0 {
+        return Err(format!("{differing} profiles differ").into());
+    }
+    Ok(())
+}
+
+/// Compares each pruning on its own against all off.
+fn compare_each(
+    env: &Env,
+    provider: Provider,
+    costing: &AnyCosting,
+    snaps: &Arc<StopSnaps>,
+    samples: &[Sample],
+) -> Result<(), Box<dyn Error>> {
+    let singles = [
+        Config {
+            name: "known journey bounds only",
+            known_journey_bounds: true,
+            ..ALL_OFF
+        },
+        Config {
+            name: "own-seed pruning only",
+            own_seed_pruning: true,
+            ..ALL_OFF
+        },
+        Config {
+            name: "table termination only",
+            terminate_tables: true,
+            ..ALL_OFF
+        },
+    ];
+    let mut differing = 0;
+    for config in singles {
+        differing += compare_with_reference(env, provider, costing, snaps, samples, config)?;
+    }
+    if differing > 0 {
+        return Err(format!("{differing} profiles differ").into());
+    }
+    Ok(())
 }
 
 static SNAP_POINTS: std::sync::OnceLock<Vec<Option<SnapPoint>>> = std::sync::OnceLock::new();
@@ -637,6 +850,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         day_start,
         max_trips: flags.number("max-trips", 8),
         max_walk: flags.number("max-walk", 86_400),
+        options: ProfileOptions {
+            known_journey_bounds: !flags.present("no-known-bounds"),
+        },
     };
     println!(
         "date {} max_trips {} max_walk {} queries {} (per bin {per_bin}), seed {seed}",
@@ -652,18 +868,55 @@ fn main() -> Result<(), Box<dyn Error>> {
             .trim()
     );
 
+    let own_seed_pruning = !flags.present("no-own-seed-pruning");
+    let terminate_tables = !flags.present("flood-tables");
+    if flags.present("compare-each") {
+        return compare_each(&env, provider, &costing, &snaps, &samples);
+    }
+    if flags.present("compare") {
+        return compare_configurations(&env, provider, &costing, &snaps, &samples);
+    }
+
+    let canary_sample = samples[0];
+    let canary = |label: &str| -> Result<(), Box<dyn Error>> {
+        let (mut worker, _) = new_worker(provider, &costing, &snaps, true, false)?;
+        worker.tables.set_terminate_when_stops_settled(false);
+        let mut best = f64::MAX;
+        for _ in 0..3 {
+            best = best.min(run_table_canary(&mut worker, &env, canary_sample)?);
+        }
+        println!("canary ({label}): {best:.0} ms for a full-network table pair (best of 3)");
+        Ok(())
+    };
+    let run_canary = !flags.present("no-canary");
+    if run_canary {
+        canary("before")?;
+    }
+
     // Cold: a brand new worker per query.
     let mut cold_measures = Vec::new();
     let mut bind_ms = Vec::new();
     for sample in samples.iter().take(cold) {
-        let (mut worker, bound) = new_worker(provider, &costing, &snaps)?;
+        let (mut worker, bound) = new_worker(
+            provider,
+            &costing,
+            &snaps,
+            own_seed_pruning,
+            terminate_tables,
+        )?;
         bind_ms.push(bound);
         let measure = run_query(&mut worker, &env, *sample)?;
         cold_measures.push(measure);
     }
 
     // Warm: one worker.
-    let (mut worker, _) = new_worker(provider, &costing, &snaps)?;
+    let (mut worker, _) = new_worker(
+        provider,
+        &costing,
+        &snaps,
+        own_seed_pruning,
+        terminate_tables,
+    )?;
     for (i, sample) in samples.iter().take(warmup).enumerate() {
         let measure = run_query(&mut worker, &env, *sample)?;
         if verbose {
@@ -731,6 +984,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             )?;
         }
         std::fs::write(path, csv)?;
+    }
+
+    if run_canary {
+        canary("after")?;
     }
 
     println!();
