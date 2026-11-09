@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `feed_kind`, `plan_at`, `response`, `unix_now`
+// These functions are ignored because they are not marked as `pub`: `device_config`, `error_response`, `feed_kind`, `plan_at`, `response`, `unix_now`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineTransit>>
 abstract class OfflineTransit implements RustOpaqueInterface {
@@ -15,6 +15,9 @@ abstract class OfflineTransit implements RustOpaqueInterface {
   ///
   /// Takes a few seconds on a large metro timetable: every stop is snapped for walking and
   /// for cycling. Run it once and keep the result.
+  ///
+  /// The file is memory-mapped: to replace it, write a new file and rename it over the old
+  /// one; truncating or rewriting it in place while it is open can fault.
   static Future<OfflineTransit> open({
     required String timetable,
     required List<String> tileSets,
@@ -29,13 +32,29 @@ abstract class OfflineTransit implements RustOpaqueInterface {
   /// Each [`TransitFeed`] replaces what was held for its feed;
   /// feeds not mentioned stay as they are, until they age out.
   /// Undecodable bytes degrade to the schedule and are reported in the response.
+  ///
+  /// A plan answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
   Future<TransitResponse> plan({
     required List<int> request,
     required List<TransitFeed> feeds,
+    required TransitCancel cancel,
   });
 
   /// The latest real-time state of a vehicle, as the server's vehicle lookup returns it.
   Future<TransitResponse> vehicle({required String feed, required String id});
+}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<TransitCancel>>
+abstract class TransitCancel implements RustOpaqueInterface {
+  /// Asks every plan given this token to stop; each then answers 499.
+  void cancel();
+
+  static Future<TransitCancel> default_() =>
+      RustLib.instance.api.crateApiTransitTransitCancelDefault();
+
+  /// A token that hasn't been cancelled.
+  factory TransitCancel() =>
+      RustLib.instance.api.crateApiTransitTransitCancelNew();
 }
 
 /// The latest GTFS-RT bytes for one feed.

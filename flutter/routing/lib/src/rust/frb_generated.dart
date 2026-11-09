@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 493404630;
+  int get rustContentHash => -64462424;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -116,6 +116,7 @@ abstract class RustLibApi extends BaseApi {
     required OfflineTransit that,
     required List<int> request,
     required List<TransitFeed> feeds,
+    required TransitCancel cancel,
   });
 
   Future<TransitResponse> crateApiTransitOfflineTransitVehicle({
@@ -123,6 +124,12 @@ abstract class RustLibApi extends BaseApi {
     required String feed,
     required String id,
   });
+
+  void crateApiTransitTransitCancelCancel({required TransitCancel that});
+
+  Future<TransitCancel> crateApiTransitTransitCancelDefault();
+
+  TransitCancel crateApiTransitTransitCancelNew();
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_DirectionsAdapter;
@@ -150,6 +157,15 @@ abstract class RustLibApi extends BaseApi {
 
   CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_OfflineTransitPtr;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_TransitCancel;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_TransitCancel;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_TransitCancelPtr;
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -379,6 +395,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required OfflineTransit that,
     required List<int> request,
     required List<TransitFeed> feeds,
+    required TransitCancel cancel,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -390,6 +407,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_list_prim_u_8_loose(request, serializer);
           sse_encode_list_transit_feed(feeds, serializer);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+            cancel,
+            serializer,
+          );
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -402,7 +423,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: null,
         ),
         constMeta: kCrateApiTransitOfflineTransitPlanConstMeta,
-        argValues: [that, request, feeds],
+        argValues: [that, request, feeds, cancel],
         apiImpl: this,
       ),
     );
@@ -411,7 +432,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiTransitOfflineTransitPlanConstMeta =>
       const TaskConstMeta(
         debugName: "OfflineTransit_plan",
-        argNames: ["that", "request", "feeds"],
+        argNames: ["that", "request", "feeds", "cancel"],
       );
 
   @override
@@ -454,6 +475,86 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         argNames: ["that", "feed", "id"],
       );
 
+  @override
+  void crateApiTransitTransitCancelCancel({required TransitCancel that}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTransitTransitCancelCancelConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTransitTransitCancelCancelConstMeta =>
+      const TaskConstMeta(
+        debugName: "TransitCancel_cancel",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<TransitCancel> crateApiTransitTransitCancelDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 10,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTransitTransitCancelDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTransitTransitCancelDefaultConstMeta =>
+      const TaskConstMeta(debugName: "TransitCancel_default", argNames: []);
+
+  @override
+  TransitCancel crateApiTransitTransitCancelNew() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTransitTransitCancelNewConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTransitTransitCancelNewConstMeta =>
+      const TaskConstMeta(debugName: "TransitCancel_new", argNames: []);
+
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_DirectionsAdapter => wire
       .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter;
@@ -477,6 +578,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RustArcDecrementStrongCountFnType
   get rust_arc_decrement_strong_count_OfflineTransit => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_TransitCancel => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_TransitCancel => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel;
 
   @protected
   DirectionsAdapter
@@ -506,6 +615,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TransitCancel
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   DirectionsAdapter
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     dynamic raw,
@@ -530,6 +648,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return OfflineTransitImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  TransitCancel
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -566,6 +693,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return OfflineTransitImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  TransitCancel
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -863,6 +999,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TransitCancel
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   DirectionsAdapter
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     SseDeserializer deserializer,
@@ -893,6 +1041,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return OfflineTransitImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  TransitCancel
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -938,6 +1098,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return OfflineTransitImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  TransitCancel
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -1283,6 +1455,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    TransitCancel self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as TransitCancelImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     DirectionsAdapter self,
     SseSerializer serializer,
@@ -1316,6 +1501,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as OfflineTransitImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    TransitCancel self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as TransitCancelImpl).frbInternalSseEncode(move: false),
       serializer,
     );
   }
@@ -1367,6 +1565,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as OfflineTransitImpl).frbInternalSseEncode(move: null),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    TransitCancel self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as TransitCancelImpl).frbInternalSseEncode(move: null),
       serializer,
     );
   }
@@ -1769,13 +1980,17 @@ class OfflineTransitImpl extends RustOpaque implements OfflineTransit {
   /// Each [`TransitFeed`] replaces what was held for its feed;
   /// feeds not mentioned stay as they are, until they age out.
   /// Undecodable bytes degrade to the schedule and are reported in the response.
+  ///
+  /// A plan answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
   Future<TransitResponse> plan({
     required List<int> request,
     required List<TransitFeed> feeds,
+    required TransitCancel cancel,
   }) => RustLib.instance.api.crateApiTransitOfflineTransitPlan(
     that: this,
     request: request,
     feeds: feeds,
+    cancel: cancel,
   );
 
   /// The latest real-time state of a vehicle, as the server's vehicle lookup returns it.
@@ -1785,4 +2000,28 @@ class OfflineTransitImpl extends RustOpaque implements OfflineTransit {
         feed: feed,
         id: id,
       );
+}
+
+@sealed
+class TransitCancelImpl extends RustOpaque implements TransitCancel {
+  // Not to be used by end users
+  TransitCancelImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  TransitCancelImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_TransitCancel,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_TransitCancel,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_TransitCancelPtr,
+  );
+
+  /// Asks every plan given this token to stop; each then answers 499.
+  void cancel() =>
+      RustLib.instance.api.crateApiTransitTransitCancelCancel(that: this);
 }

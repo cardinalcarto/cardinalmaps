@@ -4,13 +4,79 @@
 //! The app fetches GTFS-RT itself and hands in whatever bytes it has with each call;
 //! none of the routing crates reach the network.
 
+use core::time::Duration;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use flutter_rust_bridge::frb;
+use serde_json::json;
 use valinor_gtfs::LoadedTimetable;
 use valinor_gtfs_rt::FeedKind;
-use valinor_transit_plan::{FeedUpdate, IngestOutcome, JsonResponse, StreetConfig, StreetPlanner};
+use valinor_thor::Retention;
+use valinor_transit_plan::{FeedUpdate, JsonResponse, ServiceLimits, StreetConfig, StreetPlanner};
+
+/// The longest access or egress leg a request may ask for on a device, in seconds.
+///
+/// Above the 30-minute default, but well below the server's limit:
+/// what a phone keeps grows with the area a query covers.
+const MAX_WALK_SECONDS: u32 = 2700;
+
+/// How much street data one idle worker may keep between plans, in bytes.
+const MAX_RETAINED_WORKER_BYTES: usize = 64 * 1024 * 1024;
+
+/// How many workers stay idle between plans; more only while plans run at once.
+const MAX_IDLE_WORKERS: usize = 2;
+
+/// Labels a Thor workspace keeps between plans, per search tree (72 bytes each).
+const RETAINED_LABELS: usize = 1 << 16;
+
+/// How long a plan may run on a device before it is abandoned.
+const PLAN_DEADLINE: Duration = Duration::from_secs(30);
+
+fn device_config() -> StreetConfig {
+    StreetConfig {
+        limits: ServiceLimits {
+            max_walk_seconds: MAX_WALK_SECONDS,
+            max_retained_worker_bytes: MAX_RETAINED_WORKER_BYTES,
+            max_idle_workers: MAX_IDLE_WORKERS,
+        },
+        retention: Retention {
+            bidirectional_labels: RETAINED_LABELS,
+            unidirectional_labels: RETAINED_LABELS,
+        },
+        ..StreetConfig::default()
+    }
+}
+
+/// A way to stop a plan from Dart, by a screen that no longer wants its answer. Opaque to Dart.
+#[frb(opaque)]
+pub struct TransitCancel {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl TransitCancel {
+    /// A token that hasn't been cancelled.
+    #[frb(sync)]
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Asks every plan given this token to stop; each then answers 499.
+    #[frb(sync)]
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Default for TransitCancel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// The timetable and streets of the device's offline regions. Opaque to Dart.
 #[frb(opaque)]
@@ -75,23 +141,26 @@ impl OfflineTransit {
     ///
     /// Takes a few seconds on a large metro timetable: every stop is snapped for walking and
     /// for cycling. Run it once and keep the result.
+    ///
+    /// The file is memory-mapped: to replace it, write a new file and rename it over the old
+    /// one; truncating or rewriting it in place while it is open can fault.
     pub fn open(
         timetable: String,
         tile_sets: Vec<String>,
     ) -> Result<OfflineTransit, TransitOpenError> {
-        // SAFETY: the app downloads the timetable to its own file and replaces it by renaming
-        // over it, as `LoadedTimetable::map` asks, so it is never modified while mapped.
+        // SAFETY: the mapped file must not change underneath us. This function's documentation
+        // asks the app to publish a new timetable by renaming, and the app owns the file.
         let loaded = unsafe { LoadedTimetable::map(Path::new(&timetable)) }.map_err(|error| {
             TransitOpenError {
                 message: format!("{timetable}: {error}"),
             }
         })?;
         Ok(Self {
-            planner: StreetPlanner::open(loaded, &tile_sets, StreetConfig::default()).map_err(
-                |error| TransitOpenError {
+            planner: StreetPlanner::open(loaded, &tile_sets, device_config()).map_err(|error| {
+                TransitOpenError {
                     message: error.to_string(),
-                },
-            )?,
+                }
+            })?,
         })
     }
 
@@ -101,8 +170,24 @@ impl OfflineTransit {
     /// Each [`TransitFeed`] replaces what was held for its feed;
     /// feeds not mentioned stay as they are, until they age out.
     /// Undecodable bytes degrade to the schedule and are reported in the response.
-    pub fn plan(&self, request: Vec<u8>, feeds: Vec<TransitFeed>) -> TransitResponse {
-        self.plan_at(&request, feeds, unix_now())
+    ///
+    /// A plan answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+    pub fn plan(
+        &self,
+        request: Vec<u8>,
+        feeds: Vec<TransitFeed>,
+        cancel: &TransitCancel,
+    ) -> TransitResponse {
+        let cancelled = Arc::clone(&cancel.cancelled);
+        let deadline = Instant::now() + PLAN_DEADLINE;
+        let timed_out = move || Instant::now() >= deadline;
+        let answer = self.plan_at(&request, feeds, unix_now(), &|| {
+            cancelled.load(Ordering::Relaxed) || timed_out()
+        });
+        if answer.status == 499 && !cancel.cancelled.load(Ordering::Relaxed) {
+            return error_response(504, "timed_out", "the plan ran past its deadline");
+        }
+        answer
     }
 
     /// The latest real-time state of a vehicle, as the server's vehicle lookup returns it.
@@ -110,34 +195,47 @@ impl OfflineTransit {
         response(self.planner.vehicle_json(&feed, &id, unix_now()))
     }
 
-    /// [`Self::plan`] at a chosen moment, for tests.
+    /// [`Self::plan`] at a chosen moment, with a chosen interrupt, for tests.
     pub(crate) fn plan_at(
         &self,
         request: &[u8],
         feeds: Vec<TransitFeed>,
         now: i64,
+        interrupt: &dyn Fn() -> bool,
     ) -> TransitResponse {
-        for feed in feeds {
-            let outcome = self.planner.state().ingest(FeedUpdate {
+        // Checked first, so that a list with an unknown feed changes nothing at all.
+        let state = self.planner.state();
+        if let Some(unknown) = feeds.iter().find(|feed| {
+            !state
+                .feeds()
+                .iter()
+                .any(|known| known.as_str() == feed.feed)
+        }) {
+            return error_response(
+                404,
+                "unknown_feed",
+                &format!("unknown feed {}", unknown.feed),
+            );
+        }
+        for feed in &feeds {
+            // Every feed was found above; undecodable bytes are reported by the plan itself.
+            let _ = state.ingest(FeedUpdate {
                 feed: &feed.feed,
                 kind: feed_kind(&feed.kind),
                 bytes: feed.bytes.as_deref(),
                 received_at: now,
                 stale_after: None,
             });
-            match outcome {
-                // Undecodable bytes are reported by the plan itself, so carry on.
-                Ok(IngestOutcome::Accepted | IngestOutcome::Cleared | IngestOutcome::Undecodable(_)) => {}
-                Err(error) => {
-                    return TransitResponse {
-                        status: 404,
-                        body: format!(r#"{{"error":{:?},"kind":"unknown_feed"}}"#, error.to_string())
-                            .into_bytes(),
-                    };
-                }
-            }
         }
-        response(self.planner.plan_json(request, now, &|| false))
+        response(self.planner.plan_json(request, now, interrupt))
+    }
+}
+
+/// A JSON error body, as the server's would be.
+fn error_response(status: u16, kind: &str, message: &str) -> TransitResponse {
+    TransitResponse {
+        status,
+        body: serde_json::to_vec(&json!({ "error": message, "kind": kind })).unwrap_or_default(),
     }
 }
 
@@ -199,14 +297,17 @@ mod tests {
     /// A temp directory removed on drop, so the test depends on nothing else.
     mod tempdir {
         use std::path::{Path, PathBuf};
+        use std::sync::atomic::{AtomicU64, Ordering};
 
         pub struct Dir(PathBuf);
 
         impl Dir {
             pub fn new() -> Self {
+                static NEXT: AtomicU64 = AtomicU64::new(0);
                 let path = std::env::temp_dir().join(format!(
-                    "routing-flutter-transit-{}",
-                    std::process::id()
+                    "routing-flutter-transit-{}-{}",
+                    std::process::id(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
                 ));
                 std::fs::create_dir_all(&path).unwrap();
                 Self(path)
@@ -230,7 +331,7 @@ mod tests {
         // 2026-06-15 08:54 local, a Monday.
         let now = 1_781_506_440;
         let request = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.5100,"lon":1.5350},"max_walk_seconds":600,"departure":1781506500}"#;
-        let answer = transit.plan_at(request, Vec::new(), now);
+        let answer = transit.plan_at(request, Vec::new(), now, &|| false);
         assert_eq!(answer.status, 200);
         let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
         assert_eq!(body["journeys"][0]["trips"], 1);
@@ -242,18 +343,54 @@ mod tests {
             kind: TransitFeedKind::Alerts,
             bytes: Some(vec![0xff, 0xff, 0xff]),
         }];
-        let answer = transit.plan_at(request, feeds, now);
+        let answer = transit.plan_at(request, feeds, now, &|| false);
         assert_eq!(answer.status, 200);
         let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
         assert_eq!(body["realtime"]["feeds"][0]["state"], "undecodable");
 
         // A feed the timetable doesn't know is an error the app can see.
-        let feeds = vec![TransitFeed {
-            feed: "nope".to_owned(),
-            kind: TransitFeedKind::Alerts,
-            bytes: None,
-        }];
-        assert_eq!(transit.plan_at(request, feeds, now).status, 404);
+        let feeds = vec![
+            TransitFeed {
+                feed: "bus".to_owned(),
+                kind: TransitFeedKind::Alerts,
+                bytes: None,
+            },
+            TransitFeed {
+                feed: "nope\u{1}".to_owned(),
+                kind: TransitFeedKind::Alerts,
+                bytes: None,
+            },
+        ];
+        let answer = transit.plan_at(request, feeds, now, &|| false);
+        assert_eq!(answer.status, 404);
+        // Valid JSON even with a control character, and the earlier feed wasn't touched.
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        assert_eq!(body["kind"], "unknown_feed");
+        let answer = transit.plan_at(request, Vec::new(), now, &|| false);
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        assert_eq!(body["realtime"]["feeds"][0]["state"], "undecodable");
+    }
+
+    #[test]
+    fn a_request_above_the_device_limit_is_refused() {
+        let (_dir, path) = timetable();
+        let transit = OfflineTransit::open(path, vec![tiles()]).ok().unwrap();
+        let request = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.51,"lon":1.535},"max_walk_seconds":2701}"#;
+        assert_eq!(
+            transit
+                .plan_at(request, Vec::new(), 1_781_506_440, &|| false)
+                .status,
+            400
+        );
+    }
+
+    #[test]
+    fn a_cancelled_plan_stops_and_says_so() {
+        let (_dir, path) = timetable();
+        let transit = OfflineTransit::open(path, vec![tiles()]).ok().unwrap();
+        let request = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.51,"lon":1.535},"max_walk_seconds":600,"departure":1781506500}"#;
+        let answer = transit.plan_at(request, Vec::new(), 1_781_506_440, &|| true);
+        assert_eq!(answer.status, 499);
     }
 
     #[test]

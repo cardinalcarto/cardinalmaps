@@ -128,7 +128,13 @@ impl OfflineTransit {
 
     /// JSON request bytes (the body of the server's `POST /transit/plan`),
     /// with whatever GTFS-RT bytes the app holds, per feed.
-    pub fn plan(&self, request: Vec<u8>, feeds: Vec<TransitFeed>) -> TransitResponse;
+    /// `cancel` lets a screen abandon the plan; past a 30-second deadline it answers 504.
+    pub fn plan(
+        &self,
+        request: Vec<u8>,
+        feeds: Vec<TransitFeed>,
+        cancel: &TransitCancel,
+    ) -> TransitResponse;
 
     /// A vehicle's latest state, as the server's vehicle lookup returns it.
     pub fn vehicle(&self, feed: String, id: String) -> TransitResponse;
@@ -147,3 +153,7 @@ impl OfflineTransit {
   temporary location only as prose, so show that text beside the walk.
   The transit leg's alert also names the affected stop in `moved_stops`.
 - Not `#[frb(sync)]`: planning runs on flutter_rust_bridge's worker pool.
+- A plan with no journeys says why in `no_journeys_reason` (`no_access`, `no_egress`,
+  `no_service`, or `slower_than_direct`), and `direct` reports the direct search's outcome.
+- The device refuses access or egress walks above 45 minutes with a 400,
+  and a timetable must be replaced by renaming, never rewritten in place, while open.
