@@ -1,0 +1,20 @@
+[package]
+name = "valinor-transit"
+description = "Real-time public transit routing: timetables, overlays, multimodal RAPTOR, and profiles."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nutype = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+proptest = { workspace = true }
+
+[lints]
+workspace = true
