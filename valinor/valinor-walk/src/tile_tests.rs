@@ -255,17 +255,8 @@ fn reference_from<P: GraphTileProvider, C: Costing>(
         if v.group.1 > 0 {
             let u = search.stops[seed as usize].expect("seed");
             if u.edges[0] == v.edges[0] || u.edges[0] == v.edges[1] {
-                let q = if v.edges[0] == u.edges[0] {
-                    v.percent
-                } else {
-                    1.0 - v.percent
-                };
-                let (a, b) = if dir == 0 {
-                    (u.percent, q)
-                } else {
-                    (q, u.percent)
-                };
-                let cost = direct_cost(u.weights, a, b);
+                let (from, to) = if dir == 0 { (u, *v) } else { (*v, u) };
+                let cost = direct_between(from, to).cost;
                 if cost != INF {
                     best = best.min(u32::from(cost));
                 }
@@ -567,7 +558,8 @@ fn stops_on_the_same_edge_walk_directly() {
     let found = run_search(&mut search, &seeds, Direction::Forward, i32::MAX / 2);
     let &(clock, _, handle) = found.get(&1).expect("the other stop");
     let attach = search.stops[0].expect("stop");
-    let expected = direct_cost(attach.weights, 0.2, 0.8);
+    let other = search.stops[1].expect("stop");
+    let expected = direct_between(attach, other).cost;
     assert_eq!(clock - 100, i32::from(expected));
     assert_eq!(handle.chain, NONE, "a direct walk has no node chain");
     let walk = search.walk(handle);
