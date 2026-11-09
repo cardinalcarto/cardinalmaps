@@ -426,6 +426,21 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
         }
     }
 
+    /// Gives back every slot and dense number, keeping the provider and costing.
+    ///
+    /// Dense numbers mean nothing past this: only callers that hold none across it may call this.
+    pub(crate) fn forget_tiles(&mut self) {
+        for directory in &mut self.directories {
+            directory.pages.fill(None);
+        }
+        self.slots.clear();
+        self.node_total = 0;
+        self.edge_total = 0;
+        self.first_arc.clear();
+        self.arcs.clear();
+        self.cold_arcs.clear();
+    }
+
     /// The slot of the tile that holds `id`, or `None` if the tile isn't in the tile set.
     ///
     /// # Performance
@@ -641,6 +656,7 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
         let backward = Weights::of(&self.costing, pred, opposing, opposing_id, &end_tile, edge)?;
         Ok(Some(EdgeDescription {
             edge_dense,
+            opposing_id,
             opposing_dense: opp_dense,
             tail: tail_dense,
             head,
@@ -799,6 +815,8 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EdgeDescription {
     pub(crate) edge_dense: u32,
+    /// The directed edge's opposing edge.
+    pub(crate) opposing_id: GraphId,
     pub(crate) opposing_dense: u32,
     pub(crate) tail: u32,
     pub(crate) head: u32,

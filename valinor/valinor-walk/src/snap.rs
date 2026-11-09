@@ -175,6 +175,39 @@ impl StopSnaps {
         Ok(())
     }
 
+    /// Moves every stop of `part` into this table, `part`'s stop `n` becoming `ids[n]`.
+    ///
+    /// A build snaps stops in batches of neighbours, then gathers them into one table.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a part from another tile build, or `ids` that don't match `part`.
+    pub fn absorb(&mut self, part: &Self, ids: &[u32]) -> Result<(), WalkError> {
+        if part.build_id != self.build_id {
+            return Err(WalkError::BuildMismatch {
+                snaps: self.build_id,
+                tiles: part.build_id,
+            });
+        }
+        if ids.len() != part.stop_count() || ids.iter().any(|&id| id as usize >= self.stop_count())
+        {
+            return Err(WalkError::TooLarge);
+        }
+        for (&id, point) in ids.iter().zip(&part.points) {
+            self.points[id as usize] = *point;
+        }
+        for report in &part.reports {
+            let remap = |stop: StopId| StopId::new(ids[index(stop)]);
+            self.reports.push(match *report {
+                SnapReport::Unsnapped(stop) => SnapReport::Unsnapped(remap(stop)),
+                SnapReport::Disconnected(stop, point) => {
+                    SnapReport::Disconnected(remap(stop), point)
+                }
+            });
+        }
+        Ok(())
+    }
+
     /// Whether every stop in the table has a snap.
     pub fn all_snapped(&self) -> bool {
         self.points.iter().all(Option::is_some)

@@ -38,6 +38,16 @@ pub enum WalkError {
     /// A thread building a transfer table panicked.
     #[error("finish a transfer table: a worker thread panicked")]
     WorkerPanicked,
+    /// A walk handed to a [`TransferTable`](crate::TransferTable) breaks its invariants.
+    #[error("load walk from {from} to {to} ({seconds} s): out of order or out of range")]
+    InvalidWalk {
+        /// The stop the walk starts at.
+        from: u32,
+        /// The stop the walk ends at.
+        to: u32,
+        /// Its seconds.
+        seconds: u32,
+    },
     /// The graph grew past what its 32-bit dense indexes can address.
     #[error("index more than 2^31 nodes or edges")]
     TooLarge,
