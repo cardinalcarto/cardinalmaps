@@ -56,6 +56,14 @@ pub enum BuildError {
     /// A window was asked for no days.
     #[error("materialize a window with no days")]
     NoDays,
+    /// A part of a window has a different number of day offsets from the window.
+    #[error("use {got} day offsets for a window of {expected} days")]
+    PartDayCount {
+        /// Days in the window.
+        expected: usize,
+        /// Offsets given for one part.
+        got: usize,
+    },
     /// A route doesn't exist.
     #[error("use unknown route {0}")]
     UnknownRoute(RouteId),

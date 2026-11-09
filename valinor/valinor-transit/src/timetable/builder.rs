@@ -219,20 +219,11 @@ impl TimetableBuilder {
             });
         }
 
-        let index = StopRouteIndex::build(
-            min_change.len(),
-            routes
-                .iter()
-                .enumerate()
-                .map(|(r, route)| (r, route.stops.as_slice())),
-        )?;
-
         Ok(Timetable {
             stop_map,
             min_change,
             services: self.services,
             routes,
-            index,
         })
     }
 }
@@ -268,7 +259,6 @@ pub struct Timetable {
     min_change: Vec<i32>,
     services: Vec<BTreeSet<ServiceDate>>,
     routes: Vec<RouteRecord>,
-    index: StopRouteIndex,
 }
 
 impl Timetable {
@@ -344,31 +334,128 @@ impl Timetable {
     ///
     /// If there are too many days, or a shifted time leaves the supported range.
     pub fn materialize(&self, days: &[ServiceDay]) -> Result<BaseWindow, BuildError> {
-        if days.is_empty() {
-            return Err(BuildError::NoDays);
-        }
-        if days.len() > usize::from(u8::MAX) {
-            return Err(BuildError::TooManyDays(days.len()));
-        }
+        let offsets: Vec<Option<Time>> = days.iter().map(|day| Some(day.offset)).collect();
+        materialize_parts(
+            &[WindowPart {
+                timetable: self,
+                first_trip: 0,
+                day_offsets: &offsets,
+            }],
+            days,
+        )
+    }
+}
 
-        let mut arena = Arena::new();
-        let mut directory = Vec::with_capacity(self.routes.len() * days.len());
-        let mut attributes = Vec::with_capacity(self.routes.len());
-        let mut route_stops = Vec::with_capacity(self.routes.len());
-        for (route_index, route) in self.routes.iter().enumerate() {
-            let route_id = RouteId::new(offset_of(route_index)?);
+/// One timetable of a window built from several, in that window's numbering.
+///
+/// [`materialize_parts`] concatenates its stops and routes after those of the parts before it,
+/// so a part's stop number is its own plus the sum of the earlier parts' stops, and likewise for
+/// routes. Trips keep the numbers this part's caller gives them, offset by `first_trip`.
+#[derive(Debug, Clone, Copy)]
+pub struct WindowPart<'a> {
+    /// The part's own stops, routes, and trips, numbered from zero.
+    pub timetable: &'a Timetable,
+    /// Added to each of this part's trip identifiers, so that parts can't collide.
+    pub first_trip: u32,
+    /// For each service day of the window, in slot order, where the day starts on the window's
+    /// clock for this part, or `None` if this part has no such day.
+    ///
+    /// This lets parts in different time zones share one clock:
+    /// the same service date starts at a different instant in each.
+    pub day_offsets: &'a [Option<Time>],
+}
+
+/// Lays out the active trips of several timetables as one window for searches.
+///
+/// Stops, routes, and days are concatenated in `parts` order, in one arena, so the route scan
+/// reads one contiguous layout exactly as it does for a single timetable.
+/// Nothing about a part is visible after this point.
+///
+/// `days` gives the date of each slot and is kept as the window's [`BaseWindow::days`];
+/// a part's own clock for each slot is in [`WindowPart::day_offsets`].
+///
+/// # Performance
+///
+/// Runs once per window, not per query; it evaluates every calendar of every part.
+///
+/// # Errors
+///
+/// If there are too many days, a part's `day_offsets` differs from `days` in length,
+/// a shifted time leaves the supported range, or a table grows past its `u32` offsets.
+pub fn materialize_parts(
+    parts: &[WindowPart<'_>],
+    days: &[ServiceDay],
+) -> Result<BaseWindow, BuildError> {
+    if days.is_empty() {
+        return Err(BuildError::NoDays);
+    }
+    if days.len() > usize::from(u8::MAX) {
+        return Err(BuildError::TooManyDays(days.len()));
+    }
+    for part in parts {
+        if part.day_offsets.len() != days.len() {
+            return Err(BuildError::PartDayCount {
+                expected: days.len(),
+                got: part.day_offsets.len(),
+            });
+        }
+    }
+
+    let route_total: usize = parts.iter().map(|part| part.timetable.routes.len()).sum();
+    let stop_total: usize = parts
+        .iter()
+        .map(|part| part.timetable.min_change.len())
+        .sum();
+    // Checked here so that the per-stop and per-route additions below can't overflow.
+    offset_of(route_total)?;
+    offset_of(stop_total)?;
+    let mut arena = Arena::new();
+    let mut directory = Vec::with_capacity(route_total * days.len());
+    let mut attributes = Vec::with_capacity(route_total);
+    let mut route_stops = Vec::with_capacity(route_total);
+    let mut min_change = Vec::with_capacity(stop_total);
+    let mut stop_base = 0_u32;
+    let mut route_base = 0_u32;
+    let mut stops = Vec::new();
+    for part in parts {
+        let timetable = part.timetable;
+        for (local_route, route) in timetable.routes.iter().enumerate() {
+            let route_id = RouteId::new(route_base + offset_of(local_route)?);
             attributes.push(route.attributes);
-            let stops_start = arena.push_stops(&route.stops)?;
-            route_stops.push((stops_start, offset_of(route.stops.len())?));
+            stops.clear();
+            stops.extend(
+                route
+                    .stops
+                    .iter()
+                    .map(|stop| StopId::new(stop.into_inner() + stop_base)),
+            );
+            let stops_start = arena.push_stops(&stops)?;
+            route_stops.push((stops_start, offset_of(stops.len())?));
             for (slot, day) in days.iter().enumerate() {
                 let slot = u8::try_from(slot).map_err(|_| BuildError::TooManyDays(days.len()))?;
-                let trips = self.resolved_trips(route_id, day.date, day.offset)?;
+                let Some(offset) = part.day_offsets[usize::from(slot)] else {
+                    directory.push(BlockRef::EMPTY);
+                    continue;
+                };
+                let mut trips = timetable.resolved_trips(
+                    RouteId::new(offset_of(local_route)?),
+                    day.date,
+                    offset,
+                )?;
+                for trip in &mut trips {
+                    trip.trip = TripId::new(
+                        trip.trip
+                            .into_inner()
+                            .checked_add(part.first_trip)
+                            .ok_or(BuildError::TableTooLarge)?,
+                    );
+                }
                 let block = ResolvedBlock::from_trips(trips)?;
                 let index = arena.push_block(
                     route_id,
                     DaySlot::new(slot),
                     stops_start,
-                    route.stops.len(),
+                    stops.len(),
                     &block,
                 )?;
                 directory.push(BlockRef {
@@ -377,17 +464,31 @@ impl Timetable {
                 });
             }
         }
-
-        Ok(BaseWindow::new(
-            arena,
-            directory,
-            attributes,
-            route_stops,
-            self.min_change.clone(),
-            self.index.clone(),
-            days.to_vec(),
-        ))
+        min_change.extend_from_slice(&timetable.min_change);
+        stop_base += offset_of(timetable.min_change.len())?;
+        route_base += offset_of(timetable.routes.len())?;
     }
+
+    let index = StopRouteIndex::build(
+        min_change.len(),
+        route_stops
+            .iter()
+            .enumerate()
+            .map(|(route, &(start, length))| {
+                let stops = &arena.stops[start as usize..(start + length) as usize];
+                (route, stops)
+            }),
+    )?;
+
+    Ok(BaseWindow::new(
+        arena,
+        directory,
+        attributes,
+        route_stops,
+        min_change,
+        index,
+        days.to_vec(),
+    ))
 }
 
 /// Shifts a service-day-relative time onto a window's clock.
@@ -584,6 +685,120 @@ mod tests {
             window
                 .lane_trips_for_test(RouteId::new(0), DaySlot::new(0))
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn parts_share_one_window_with_their_own_clocks() {
+        fn one_part(hours_to_day: i32, trip: u32) -> Timetable {
+            let mut builder = TimetableBuilder::new();
+            let a = builder.add_stop(secs(60)).expect("add");
+            let b = builder.add_stop(secs(0)).expect("add");
+            let service = builder.add_service([date(10), date(11)]).expect("service");
+            let pattern = builder
+                .add_pattern(&[a, b], RouteAttributes::NONE)
+                .expect("pattern");
+            builder
+                .add_trip(
+                    pattern,
+                    TripId::new(trip),
+                    service,
+                    vec![stop_time(hours_to_day), stop_time(hours_to_day + 600)],
+                )
+                .expect("trip");
+            builder.build().expect("build")
+        }
+        let first = one_part(0, 0);
+        let second = one_part(0, 2);
+        // The second part's day 10 starts an hour after the window's origin;
+        // its day 11 is outside what it covers.
+        let days = [
+            ServiceDay {
+                date: date(10),
+                offset: t(0),
+            },
+            ServiceDay {
+                date: date(11),
+                offset: t(86_400),
+            },
+        ];
+        let first_offsets = [Some(t(0)), Some(t(86_400))];
+        let second_offsets = [Some(t(3_600)), None];
+        let window = materialize_parts(
+            &[
+                WindowPart {
+                    timetable: &first,
+                    first_trip: 0,
+                    day_offsets: &first_offsets,
+                },
+                WindowPart {
+                    timetable: &second,
+                    first_trip: 10,
+                    day_offsets: &second_offsets,
+                },
+            ],
+            &days,
+        )
+        .expect("materialize");
+
+        assert_eq!(window.stop_count(), 4);
+        assert_eq!(window.route_count(), 2);
+        // Stops of part 2 are numbered after part 1's, and the minimum change times come along.
+        assert_eq!(
+            window.route_stops(RouteId::new(1)),
+            Some(&[StopId::new(2), StopId::new(3)][..])
+        );
+        assert_eq!(window.min_change, vec![60, 0, 60, 0]);
+        // Each part's trips have their own clock and their trip base.
+        assert_eq!(
+            window.lane_trips_for_test(RouteId::new(0), DaySlot::new(0)),
+            vec![(0, vec![0, 0, 600, 600])]
+        );
+        assert_eq!(
+            window.lane_trips_for_test(RouteId::new(1), DaySlot::new(0)),
+            vec![(12, vec![3_600, 3_600, 4_200, 4_200])]
+        );
+        // A day a part doesn't cover has no trips.
+        assert!(
+            window
+                .lane_trips_for_test(RouteId::new(1), DaySlot::new(1))
+                .is_empty()
+        );
+        assert_eq!(
+            window.lane_trips_for_test(RouteId::new(0), DaySlot::new(1)),
+            vec![(0, vec![86_400, 86_400, 87_000, 87_000])]
+        );
+    }
+
+    #[test]
+    fn a_part_with_the_wrong_day_count_is_an_error() {
+        let builder = TimetableBuilder::new();
+        let timetable = builder.build().expect("build");
+        let offsets = [Some(t(0))];
+        let days = [
+            ServiceDay {
+                date: date(1),
+                offset: t(0),
+            },
+            ServiceDay {
+                date: date(2),
+                offset: t(86_400),
+            },
+        ];
+        assert_eq!(
+            materialize_parts(
+                &[WindowPart {
+                    timetable: &timetable,
+                    first_trip: 0,
+                    day_offsets: &offsets,
+                }],
+                &days
+            )
+            .err(),
+            Some(BuildError::PartDayCount {
+                expected: 2,
+                got: 1
+            }),
         );
     }
 
