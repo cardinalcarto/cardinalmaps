@@ -35,8 +35,11 @@ pub(crate) fn secs(seconds: u32) -> Seconds {
     Seconds::try_new(seconds).expect("duration in range")
 }
 
-/// An unreachable clock in the oracle, comfortably away from overflow.
-const INF: i32 = TIME_LIMIT * 2 / 3;
+/// An unreachable clock in the oracle, above every time near the limits and clear of overflow.
+const INF: i32 = TIME_LIMIT * 2;
+
+/// A walking distance between unconnected nodes, small enough to add two of them.
+pub(crate) const NO_WALK: i32 = TIME_LIMIT / 2;
 
 /// A directed street graph with stops on some of its nodes.
 #[derive(Debug, Clone)]
@@ -72,7 +75,7 @@ impl Graph {
     /// Exhaustive `stop → stop` walking distances, following edges as directed.
     pub(crate) fn distances(&self) -> Vec<Vec<i32>> {
         let n = self.edges_out.len();
-        let mut d = vec![vec![INF; n]; n];
+        let mut d = vec![vec![NO_WALK; n]; n];
         for (node, row) in d.iter_mut().enumerate() {
             row[node] = 0;
         }
@@ -86,13 +89,13 @@ impl Graph {
             for i in 0..n {
                 for j in 0..n {
                     if d[i][k] + d[k][j] < d[i][j] {
-                        d[i][j] = d[i][k] + d[k][j];
+                        d[i][j] = (d[i][k] + d[k][j]).min(NO_WALK);
                     }
                 }
             }
         }
         let stops = self.stop_node.len();
-        let mut out = vec![vec![INF; stops]; stops];
+        let mut out = vec![vec![NO_WALK; stops]; stops];
         for (u, row) in out.iter_mut().enumerate() {
             for (v, cell) in row.iter_mut().enumerate() {
                 *cell = d[self.stop_node[u] as usize][self.stop_node[v] as usize];
@@ -412,7 +415,7 @@ pub(crate) fn oracle(
                 continue;
             }
             for v in 0..n {
-                if u != v && walk(u, v) < INF {
+                if u != v && walk(u, v) < NO_WALK {
                     foot[v] = foot[v].min(trip[u] + walk(u, v));
                 }
             }
@@ -783,29 +786,25 @@ pub(crate) fn pareto(mut entries: Triples) -> Triples {
     reduced
 }
 
-/// The profile by brute force: a forward search at every second of the window.
+/// The oracle's forward results at every second from `earliest` to one past `latest`.
+pub(crate) fn oracle_every_second(
+    net: &TestNet,
+    filter: RouteFilter,
+    earliest: i32,
+    latest: i32,
+    max_trips: u8,
+) -> Vec<Results> {
+    (earliest..=latest + 1)
+        .map(|departure| oracle(net, filter, Direction::Forward, departure, max_trips))
+        .collect()
+}
+
+/// The profile by brute force, from a forward search at every second of the window.
 ///
 /// A journey departing later than a given second is reported only by the later search,
 /// so a second's result counts only if the next second's search can't also make it.
-/// The search at one past the window decides this for the window's last second.
-pub(crate) fn brute_force_profile(
-    router: &mut Router<SyntheticSearch>,
-    query: &TransitQuery<'_>,
-    earliest: i32,
-    latest: i32,
-) -> Triples {
-    let mut runs: Vec<Results> = Vec::new();
-    for departure in earliest..=latest + 1 {
-        let run = router
-            .forward(query, t(departure), &|| false)
-            .expect("search");
-        runs.push(
-            run.results()
-                .iter()
-                .map(|r| (r.trips, r.time.into_inner()))
-                .collect(),
-        );
-    }
+/// The run one past the window decides this for the window's last second.
+pub(crate) fn brute_force_profile(runs: &[Results], earliest: i32) -> Triples {
     let arrival_with = |results: &Results, k: u8| {
         results
             .iter()
