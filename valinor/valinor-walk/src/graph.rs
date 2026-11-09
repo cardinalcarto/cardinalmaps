@@ -611,6 +611,10 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
             self.first_arc[dense as usize] = NO_ARCS;
             return Ok(());
         }
+        // An arena entry reserves the top bit of an arc's number for seeds.
+        if self.arcs.len() >= 1 << 31 {
+            return Err(WalkError::TooLarge);
+        }
         let first = self.arcs.len();
         let pred = NoPredecessor { mode: self.mode };
         self.read_edges(&tile, node_id, node, pred)?;
