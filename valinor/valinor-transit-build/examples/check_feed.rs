@@ -35,6 +35,7 @@ fn load_tiles(root: &std::path::Path, mode: TransferMode, list: &[[u32; 2]]) -> 
         .collect()
 }
 
+#[expect(clippy::too_many_lines, reason = "one linear check of a whole feed")]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [compiled, street, output, feed] = args.as_slice() else {
