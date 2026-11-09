@@ -1,0 +1,8 @@
+---
+source: valinor-walk/src/transfer_tile/format.rs
+expression: "hex.join(\"\\n\")"
+---
+56 54 46 52 01 00 01 0c 90 02 00 00 8e 05 00 00
+67 45 23 01 fe ca ed fe 84 03 00 00 03 00 00 00
+04 00 00 00 98 e7 ab 4a 00 03 00 06 02 01 02 01
+01 00 07 02 00 00 03 02 a0 f7 36 5a 00 84 07 05

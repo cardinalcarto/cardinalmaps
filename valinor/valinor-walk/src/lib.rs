@@ -26,6 +26,7 @@ mod snap;
 mod table;
 
 pub mod paths;
+pub mod transfer_tile;
 mod transfers;
 
 pub use error::WalkError;
