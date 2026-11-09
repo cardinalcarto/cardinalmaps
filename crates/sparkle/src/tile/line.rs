@@ -509,10 +509,13 @@ impl Emitter<'_> {
         } else {
             scale(sum, 1.0 / sum_len)
         };
+        // How far the miter reaches, for unit normals: one over the cosine of half the turn,
+        // and the sum of the normals is twice that cosine. Near a U-turn, this stays right
+        // where the dot product of the miter and a normal would be lost to rounding.
         let miter_len = if reversal {
             f32::INFINITY
         } else {
-            1.0 / dot(miter, nb)
+            2.0 / sum_len
         };
 
         let limit = match shape.join {
@@ -776,6 +779,30 @@ mod tests {
         let corners: Vec<_> = bucket.vertices.iter().filter(|v| v.round == 1.0).collect();
         assert_eq!(corners.len(), 2);
         assert!(corners.iter().all(|v| length(v.extrude) <= 2.0));
+    }
+
+    #[test]
+    fn near_u_turns_stay_within_the_line() {
+        // A shape where the normals nearly cancel, and rounding used to make the miter
+        // negative and thousands of half widths long, which drew a line across the map.
+        for (cap, join) in [
+            (LineCap::Butt, LineJoin::Miter),
+            (LineCap::Round, LineJoin::Round),
+            (LineCap::Butt, LineJoin::Bevel),
+        ] {
+            let l = layer(cap, join);
+            let line = line_string![(x: 0, y: 0), (x: 136, y: 379), (x: 122, y: 340)];
+            let bucket = tessellate(&l, Geometry::LineString(line));
+            assert!(
+                bucket.vertices.iter().all(|v| length(v.extrude) <= 2.0),
+                "{:?}",
+                bucket
+                    .vertices
+                    .iter()
+                    .map(|v| v.extrude)
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

@@ -6,8 +6,11 @@ import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
 
 import 'config.dart';
+import 'directions/route_source.dart';
 import 'geocoder/geocoder.dart';
+import 'map/location.dart';
 import 'map/map.dart';
+import 'map/overlays.dart';
 import 'routes.dart';
 import 'store/store.dart';
 
@@ -23,9 +26,14 @@ void main() {
       store: store,
       child: GeocoderScope(
         geocoder: Geocoder(Uri.parse(geocoderUrl)),
-        child: MapScope(
-          controller: map,
-          child: MainApp(router: appRouter(map)),
+        child: DirectionsScope(
+          routes: ValhallaRouteSource(Uri.parse('$routingUrl/route')),
+          location: const GeolocatorSource(),
+          child: MapScope(
+            controller: map,
+            overlays: MapOverlays(),
+            child: MainApp(router: appRouter(map)),
+          ),
         ),
       ),
     ),

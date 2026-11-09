@@ -4,61 +4,16 @@ import 'dart:math' as math;
 import 'package:cardinal/map/layers.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/map.dart';
+import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../fakes/fake_location.dart';
 import '../fakes/fake_map.dart';
 import '../fakes/fake_place_store.dart';
 import '../fakes/fake_saved_store.dart';
-
-/// A location service that answers as told, and counts what it's asked.
-class FakeLocation implements LocationSource {
-  FakeLocation({
-    this.enabled = true,
-    this.permission = LocationPermission.whileInUse,
-    this.granted,
-    this.now,
-  });
-
-  bool enabled;
-  LocationPermission permission;
-
-  /// What asking for permission gives; [permission] stays if null.
-  final LocationPermission? granted;
-  final Fix? now;
-  int asked = 0;
-  int listening = 0;
-  final positionsController = StreamController<Fix>.broadcast(sync: true);
-
-  @override
-  Future<bool> serviceEnabled() async => enabled;
-
-  @override
-  Future<LocationPermission> checkPermission() async => permission;
-
-  @override
-  Future<LocationPermission> requestPermission() async {
-    asked++;
-    return permission = granted ?? permission;
-  }
-
-  @override
-  Stream<Fix> positions() {
-    listening++;
-    return positionsController.stream;
-  }
-
-  @override
-  Future<Fix?> current() async => now;
-
-  @override
-  Future<void> openAppSettings() async {}
-
-  @override
-  Future<void> openLocationSettings() async {}
-}
 
 const seattle = Fix(lng: -122.3321, lat: 47.6062, accuracy: 25);
 
@@ -209,6 +164,7 @@ void main() {
       await tester.pumpWidget(
         MapScope(
           controller: map,
+          overlays: MapOverlays(),
           child: StoreScope(
             store: Store.withoutDatabase(
               places: FakePlaceStore(),
@@ -277,6 +233,25 @@ void main() {
         expect(find.text(title), findsNothing);
       },
     );
+
+    testWidgets('the dot starts when you come back having allowed it', (
+      tester,
+    ) async {
+      final map = FakeMap();
+      final settings = SettingsStore.inMemory();
+      final source = FakeLocation(permission: LocationPermission.denied);
+      await settings.set(locationOffered, true);
+      await launch(tester, map: map, settings: settings, source: source);
+      expect(source.listening, 0);
+
+      // Directions asked, or the system's settings did: the app resumes after either.
+      source.permission = LocationPermission.whileInUse;
+      tester.binding
+        ..handleAppLifecycleStateChanged(AppLifecycleState.inactive)
+        ..handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(source.listening, 1);
+    });
 
     testWidgets("isn't offered if you've already allowed it", (tester) async {
       final settings = SettingsStore.inMemory();

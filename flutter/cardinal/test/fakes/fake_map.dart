@@ -56,6 +56,14 @@ class FakeMap extends SparkleMapController {
   @override
   Future<void> get firstComplete async {}
 
+  /// The ground under the screen, if the test wants any: screen pixels as hundredths of
+  /// a degree, from the origin.
+  bool hasGround = false;
+
+  @override
+  ({double lng, double lat})? screenToLngLat(Offset position) =>
+      hasGround ? (lng: position.dx / 100, lat: position.dy / 100) : null;
+
   /// Where [flyTo] last sent the camera.
   ({double lng, double lat, double zoom})? flownTo;
 

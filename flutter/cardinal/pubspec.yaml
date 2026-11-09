@@ -19,6 +19,8 @@ dependencies:
   http: ^1.6.0
   material_ui: ^1.1.0
   path_provider: ^2.1.6
+  routing:
+    path: ../routing
   sparkle:
     path: ../sparkle
 

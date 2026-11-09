@@ -6,6 +6,7 @@
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
+import 'api/directions.dart';
 import 'api/router.dart';
 
 import 'dart:async';
@@ -24,8 +25,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   });
 
   CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_DirectionsAdapterPtr => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter;
+
+  CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_OfflineRouterPtr => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter;
+
+  @protected
+  DirectionsAdapter
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    dynamic raw,
+  );
 
   @protected
   OfflineRouter
@@ -34,8 +45,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  DirectionsAdapter
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    dynamic raw,
+  );
+
+  @protected
   OfflineRouter
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
+    dynamic raw,
+  );
+
+  @protected
+  Map<String, String> dco_decode_Map_String_String_None(dynamic raw);
+
+  @protected
+  DirectionsAdapter
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     dynamic raw,
   );
 
@@ -49,10 +75,43 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String dco_decode_String(dynamic raw);
 
   @protected
+  DirectionsPoint dco_decode_box_autoadd_directions_point(dynamic raw);
+
+  @protected
+  DirectionsError dco_decode_directions_error(dynamic raw);
+
+  @protected
+  DirectionsErrorKind dco_decode_directions_error_kind(dynamic raw);
+
+  @protected
+  DirectionsPoint dco_decode_directions_point(dynamic raw);
+
+  @protected
+  DirectionsRequest dco_decode_directions_request(dynamic raw);
+
+  @protected
+  DirectionsRoute dco_decode_directions_route(dynamic raw);
+
+  @protected
+  DirectionsStep dco_decode_directions_step(dynamic raw);
+
+  @protected
+  double dco_decode_f_64(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<DirectionsPoint> dco_decode_list_directions_point(dynamic raw);
+
+  @protected
+  List<DirectionsRoute> dco_decode_list_directions_route(dynamic raw);
+
+  @protected
+  List<DirectionsStep> dco_decode_list_directions_step(dynamic raw);
 
   @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
@@ -61,16 +120,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<(String, String)> dco_decode_list_record_string_string(dynamic raw);
+
+  @protected
   OpenError dco_decode_open_error(dynamic raw);
 
   @protected
   OpenErrorKind dco_decode_open_error_kind(dynamic raw);
 
   @protected
+  (String, String) dco_decode_record_string_string(dynamic raw);
+
+  @protected
   RouterResponse dco_decode_router_response(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
+
+  @protected
+  int dco_decode_u_32(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -82,14 +150,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt dco_decode_usize(dynamic raw);
 
   @protected
+  DirectionsAdapter
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   OfflineRouter
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     SseDeserializer deserializer,
   );
 
   @protected
+  DirectionsAdapter
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   OfflineRouter
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Map<String, String> sse_decode_Map_String_String_None(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DirectionsAdapter
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     SseDeserializer deserializer,
   );
 
@@ -103,10 +194,53 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  DirectionsPoint sse_decode_box_autoadd_directions_point(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DirectionsError sse_decode_directions_error(SseDeserializer deserializer);
+
+  @protected
+  DirectionsErrorKind sse_decode_directions_error_kind(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DirectionsPoint sse_decode_directions_point(SseDeserializer deserializer);
+
+  @protected
+  DirectionsRequest sse_decode_directions_request(SseDeserializer deserializer);
+
+  @protected
+  DirectionsRoute sse_decode_directions_route(SseDeserializer deserializer);
+
+  @protected
+  DirectionsStep sse_decode_directions_step(SseDeserializer deserializer);
+
+  @protected
+  double sse_decode_f_64(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<DirectionsPoint> sse_decode_list_directions_point(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<DirectionsRoute> sse_decode_list_directions_route(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<DirectionsStep> sse_decode_list_directions_step(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
@@ -115,16 +249,29 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<(String, String)> sse_decode_list_record_string_string(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   OpenError sse_decode_open_error(SseDeserializer deserializer);
 
   @protected
   OpenErrorKind sse_decode_open_error_kind(SseDeserializer deserializer);
 
   @protected
+  (String, String) sse_decode_record_string_string(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   RouterResponse sse_decode_router_response(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -140,6 +287,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    DirectionsAdapter self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     OfflineRouter self,
     SseSerializer serializer,
@@ -147,8 +301,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    DirectionsAdapter self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     OfflineRouter self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_Map_String_String_None(
+    Map<String, String> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    DirectionsAdapter self,
     SseSerializer serializer,
   );
 
@@ -163,10 +337,73 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_directions_point(
+    DirectionsPoint self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_directions_error(
+    DirectionsError self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_directions_error_kind(
+    DirectionsErrorKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_directions_point(
+    DirectionsPoint self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_directions_request(
+    DirectionsRequest self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_directions_route(
+    DirectionsRoute self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_directions_step(
+    DirectionsStep self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_f_64(double self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_directions_point(
+    List<DirectionsPoint> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_directions_route(
+    List<DirectionsRoute> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_directions_step(
+    List<DirectionsStep> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
@@ -178,10 +415,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_record_string_string(
+    List<(String, String)> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_open_error(OpenError self, SseSerializer serializer);
 
   @protected
   void sse_encode_open_error_kind(OpenErrorKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_record_string_string(
+    (String, String) self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_router_response(
@@ -191,6 +440,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
@@ -209,6 +461,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
 class RustLibWire implements BaseWire {
   RustLibWire.fromExternalLibrary(ExternalLibrary lib);
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+        ptr,
+      );
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+        ptr,
+      );
 
   void
   rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
@@ -233,6 +501,16 @@ external RustLibWasmModule get wasmModule;
 @JS()
 @anonymous
 extension type RustLibWasmModule._(JSObject _) implements JSObject {
+  external void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    int ptr,
+  );
+
+  external void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    int ptr,
+  );
+
   external void
   rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     int ptr,

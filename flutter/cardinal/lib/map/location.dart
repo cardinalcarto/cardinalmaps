@@ -153,13 +153,28 @@ class GeolocatorSource implements LocationSource {
     locationSettings: const LocationSettings(distanceFilter: 2),
   ).map(_fix);
 
+  /// How old a position can be and still count as where you are now.
+  static const _recent = Duration(seconds: 30);
+
+  /// A recent position if there is one, since a new one can take many seconds.
   @override
   Future<Fix?> current() async {
+    final last = await _lastKnown();
+    if (last != null && DateTime.now().difference(last.timestamp) < _recent) {
+      return _fix(last);
+    }
     try {
       return _fix(await Geolocator.getCurrentPosition());
     } on Object {
-      final last = await Geolocator.getLastKnownPosition();
       return last == null ? null : _fix(last);
+    }
+  }
+
+  static Future<Position?> _lastKnown() async {
+    try {
+      return await Geolocator.getLastKnownPosition();
+    } on Object {
+      return null;
     }
   }
 
@@ -174,7 +189,8 @@ class GeolocatorSource implements LocationSource {
 /// answered.
 final locationOffered = Setting.flag('location.offered', false);
 
-bool _allowed(LocationPermission p) =>
+/// Whether [p] lets the app have your location.
+bool locationAllowed(LocationPermission p) =>
     p == LocationPermission.always || p == LocationPermission.whileInUse;
 
 /// Follows where you are once you've allowed it, and shows it on [map].
@@ -193,7 +209,7 @@ class LocationTracker {
   /// platform without a location service shows nothing.
   Future<void> startIfAllowed() async {
     try {
-      if (_allowed(await source.checkPermission()) &&
+      if (locationAllowed(await source.checkPermission()) &&
           await source.serviceEnabled()) {
         _follow();
       }
@@ -215,7 +231,7 @@ class LocationTracker {
   /// location service.
   Future<bool?> allowed() async {
     try {
-      return _allowed(await source.checkPermission());
+      return locationAllowed(await source.checkPermission());
     } on Object {
       return null;
     }
@@ -240,7 +256,7 @@ class LocationTracker {
     if (permission == LocationPermission.deniedForever) {
       return LocateResult.deniedForever;
     }
-    if (!_allowed(permission)) return LocateResult.denied;
+    if (!locationAllowed(permission)) return LocateResult.denied;
     _follow();
     final fix = _fix ?? await source.current();
     if (fix == null) return LocateResult.unavailable;
@@ -276,12 +292,19 @@ class MyLocationButton extends StatefulWidget {
 class _MyLocationButtonState extends State<MyLocationButton> {
   LocationTracker? _tracker;
 
+  /// The dot appears as soon as you've allowed it, however that happened: directions can
+  /// ask, and so can the system's settings, and the app resumes after either.
+  late final AppLifecycleListener _lifecycle = AppLifecycleListener(
+    onResume: () => _tracker?.startIfAllowed(),
+  );
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_tracker != null) return;
     _tracker = LocationTracker(MapScope.of(context), source: widget.source)
       ..startIfAllowed();
+    _lifecycle;
     final settings = StoreScope.of(context).settings;
     WidgetsBinding.instance.addPostFrameCallback((_) => _offer(settings));
   }
@@ -331,6 +354,7 @@ class _MyLocationButtonState extends State<MyLocationButton> {
 
   @override
   void dispose() {
+    _lifecycle.dispose();
     _tracker?.dispose();
     super.dispose();
   }

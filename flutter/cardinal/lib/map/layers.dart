@@ -7,6 +7,7 @@ import '../config.dart';
 import '../store/store.dart';
 import '../saved/saved_layers_sheet.dart';
 import 'location.dart';
+import 'route_layer.dart';
 import 'saved_layer.dart';
 import 'selection.dart';
 
@@ -92,6 +93,7 @@ Future<Map<String, Object?>> styleFor(MapLayers layers) async {
     'winter': layers.winter,
   });
   addSavedLayers(style);
+  addRouteLayers(style);
   addSelectionLayers(style);
   addLocationLayers(style);
   return style;

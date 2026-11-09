@@ -70,6 +70,28 @@ void main() {
     expect((route['legs'] as List).first['annotation'], contains('distance'));
   });
 
+  test("Ferrostar's request through the router reads back as routes", () async {
+    final router = await OfflineRouter.open(tileSets: [tiles]);
+    final adapter = DirectionsAdapter.valhalla(
+      endpointUrl: 'http://unused/route',
+      costing: 'auto',
+      alternates: 2,
+    );
+    final request = adapter.request(
+      from: const DirectionsPoint(lat: 42.5078, lng: 1.5211),
+      to: const DirectionsPoint(lat: 42.5355, lng: 1.583),
+    );
+    final response = await router.route(body: request.body);
+    expect(response.status, 200);
+    final routes = await adapter.parse(body: response.body);
+    expect(routes, isNotEmpty);
+    final best = routes.first;
+    expect(best.distance, closeTo(8072.066, 1));
+    expect(best.duration, greaterThan(0));
+    expect(best.geometry.length, greaterThan(2));
+    expect(best.steps.first.instruction, isNotEmpty);
+  });
+
   test('routes concurrently', () async {
     final router = await OfflineRouter.open(tileSets: [tiles]);
     final responses = await Future.wait(
@@ -98,6 +120,26 @@ void main() {
     final json = jsonDecode(utf8.decode(response.body)) as Map<String, dynamic>;
     expect(json['code'], isA<String>());
     expect(json['message'], isA<String>());
+  });
+
+  test('no way there is a kind of error of its own', () async {
+    final adapter = DirectionsAdapter.valhalla(
+      endpointUrl: 'http://unused/route',
+      costing: 'auto',
+      alternates: 0,
+    );
+    await expectLater(
+      adapter.parse(
+        body: utf8.encode('{"code":"NoRoute","routes":[],"waypoints":[]}'),
+      ),
+      throwsA(
+        isA<DirectionsError>().having(
+          (e) => e.kind,
+          'kind',
+          DirectionsErrorKind.noRoute,
+        ),
+      ),
+    );
   });
 
   test('opening reports why it failed', () async {

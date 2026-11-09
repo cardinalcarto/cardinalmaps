@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:cardinal/geocoder/geocoder.dart';
 import 'package:cardinal/map/map.dart';
+import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/place/place_page.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/search/search_sheet.dart';
@@ -89,6 +90,7 @@ Future<Store> _pumpApp(
         geocoder: geocoder,
         child: MapScope(
           controller: map ?? FakeMap(),
+          overlays: MapOverlays(),
           child: MaterialApp.router(routerConfig: router),
         ),
       ),
