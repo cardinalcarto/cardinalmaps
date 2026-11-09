@@ -535,22 +535,24 @@ impl<'a> CompiledTimetable<'a> {
             .map(|row| row.offset.get())
     }
 
-    /// The stops inside a station (or other parent): every boardable descendant.
+    /// The stops at a location: every boardable descendant, plus the location itself if boardable.
     ///
-    /// A boardable stop lists itself. `None` means that the location doesn't exist.
+    /// A platform's list includes its boarding areas.
+    /// `None` means that the location doesn't exist.
     pub fn stops_at(&self, location: LocationId) -> Option<Vec<StopId>> {
         let row = self.tables.stops.get(location.0 as usize)?;
-        if (location.0 as usize) < self.tables.boardable_stops {
-            return Some(vec![StopId::new(location.0)]);
-        }
         let start = row.children_start.get() as usize;
         let count = row.child_count.get() as usize;
+        let children = self
+            .tables
+            .child_stops
+            .get(start..start.checked_add(count)?)?;
+        let boardable = (location.0 as usize) < self.tables.boardable_stops;
         Some(
-            self.tables
-                .child_stops
-                .get(start..start.checked_add(count)?)?
-                .iter()
-                .map(|stop| StopId::new(stop.get()))
+            boardable
+                .then_some(StopId::new(location.0))
+                .into_iter()
+                .chain(children.iter().map(|stop| StopId::new(stop.get())))
                 .collect(),
         )
     }
@@ -813,7 +815,10 @@ impl<'a> CompiledTimetable<'a> {
         if from >= to {
             return None;
         }
-        let (_, rider) = self.trip_rows(trip)?;
+        let (row, rider) = self.trip_rows(trip)?;
+        if to >= self.trip_pattern(row)?.stop_count.get() as usize {
+            return None;
+        }
         let shape = self.tables.shapes.get(reference(rider.shape)? as usize)?;
         let start = shape.points_start.get() as usize;
         let count = shape.point_count.get() as usize;

@@ -514,7 +514,8 @@ fn stations_keep_platforms_and_inherit_attributes() {
     assert_eq!(members, expected, "every boardable stop in the station");
     assert_eq!(
         view.stops_at(view.location_by_gtfs_id("kcm", "PLAT1").expect("loc")),
-        Some(vec![platform])
+        Some(vec![platform, area]),
+        "a platform is listed first, with its boarding areas after it"
     );
 }
 

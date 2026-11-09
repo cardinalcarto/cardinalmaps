@@ -665,3 +665,55 @@ fn a_trip_at_a_station_is_counted() {
     assert_eq!(output.reports[0].trips_kept, 0);
     assert_eq!(output.reports[0].dropped_trips.values().sum::<usize>(), 1);
 }
+
+/// `to == stop_count` used to read the first stop distance of the next trip.
+#[test]
+fn shape_between_is_none_past_the_last_stop() {
+    let source = minimal("UTC", &daily(), NO_DATES, ST)
+        .with(
+            "stops.txt",
+            "stop_id,stop_name,stop_lat,stop_lon\n\
+             S1,a,47.60,-122.33\nS2,b,47.61,-122.33\nS3,c,47.62,-122.33\nS4,d,47.63,-122.33\n",
+        )
+        .with(
+            "shapes.txt",
+            "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled\n\
+             A,47.60,-122.33,1,0\nA,47.61,-122.33,2,10\nA,47.62,-122.33,3,20\nA,47.63,-122.33,4,30\n",
+        )
+        .with(
+            "trips.txt",
+            "route_id,service_id,trip_id,shape_id\nR,W,T1,A\nR,W,T2,A\n",
+        )
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence,shape_dist_traveled\n\
+             T1,08:00:00,08:00:00,S1,1,0\nT1,08:10:00,08:10:00,S2,2,10\n\
+             T2,09:00:00,09:00:00,S3,1,20\nT2,09:10:00,09:10:00,S4,2,30\n",
+        );
+    let output = compile_one(source).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    for index in 0..2 {
+        let trip = TripId::new(index);
+        let count = view.trip(trip).expect("trip").stop_count();
+        assert!(view.shape_between(trip, 0, count).is_none());
+        assert!(view.shape_between(trip, 0, count - 1).is_some());
+    }
+}
+
+/// A platform's boarding areas are boardable descendants, so `stops_at` includes them.
+#[test]
+fn stops_at_a_platform_includes_its_boarding_areas() {
+    let stop_times = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+                      T,08:00:00,08:00:00,BA,1\nT,08:10:00,08:10:00,S2,2\n";
+    let source = minimal("UTC", &daily(), NO_DATES, stop_times).with(
+        "stops.txt",
+        "stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station\n\
+         P,p,47.60,-122.33,0,\nBA,ba,47.60,-122.33,4,P\nS2,b,47.61,-122.33,0,\n",
+    );
+    let output = compile_one(source).expect("compile");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let platform = view.location_by_gtfs_id("f", "P").expect("platform");
+    let area = view.stop_by_gtfs_id("f", "BA").expect("area");
+    let own = view.stop_by_gtfs_id("f", "P").expect("platform stop");
+    assert_eq!(view.stops_at(platform), Some(vec![own, area]));
+}
