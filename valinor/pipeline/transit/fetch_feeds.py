@@ -18,6 +18,7 @@ import io
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -29,6 +30,8 @@ from typing import Any, Protocol
 
 NATIONWIDE_REASON = "nationwide agency"
 ENCRYPTED_SENTINEL = "AGE-ENCRYPTED:"
+GENERATIONS = ".generations"
+CURRENT = ".current"
 REGION_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
 MAX_REASON_LENGTH = 600
 Entry = dict[str, Any]
@@ -50,6 +53,10 @@ class Resolution:
     # Fields from the upstream database, under the names it uses.
     license: dict[str, Any] = dataclasses.field(default_factory=dict)
     error: str | None = None
+    # Whether `error` is a verdict about this one source, such as a missing key.
+    # Anything else counts as an outage of the resolver, which must not pass for a result:
+    # an error nobody has vouched for fails the run instead of dropping a feed.
+    source_level: bool = False
 
 
 class Resolver(Protocol):
@@ -115,7 +122,7 @@ class TransitousResolver:
                 return Resolution((ResolvedSource(entry.get("spec", "gtfs"), entry.get("url")),))
 
         if not results:
-            return Resolution(error=warnings.getvalue().strip() or unresolved)
+            return Resolution(error=warnings.getvalue().strip() or unresolved, source_level=True)
         return Resolution(
             tuple(ResolvedSource(result.spec, result.url) for result in results),
             license_fields,
@@ -141,6 +148,7 @@ class Plan:
     skipped: list[dict[str, str]] = dataclasses.field(default_factory=list)
     realtime: list[dict[str, str]] = dataclasses.field(default_factory=list)
     excluded: list[StaticFeed] = dataclasses.field(default_factory=list)
+    outages: list[str] = dataclasses.field(default_factory=list)
 
 
 def source_reference(entry: Entry) -> str:
@@ -207,6 +215,8 @@ def classify(
 
         resolution = resolver.resolve(entry)
         if resolution.error is not None:
+            if not resolution.source_level:
+                plan.outages.append(f"{feed_id} ({reference}): {resolution.error}")
             plan.skipped.append(
                 {"id": feed_id, "reason": f"unresolved ({reference}): {resolution.error}"}
             )
@@ -330,16 +340,49 @@ def fetch_one(
     return feed, cleaned, None
 
 
-def publish(cleaned: Path, destination: Path) -> None:
-    """Puts a cleaned feed in the output, sharing storage with the cache where it can."""
-    destination.unlink(missing_ok=True)
-    try:
-        os.link(cleaned, destination)
-    except OSError:
-        # Hard links can't cross mounts, which separate cache and output volumes may do.
-        temporary = destination.with_name(f".tmp-{destination.name}")
-        temporary.write_bytes(cleaned.read_bytes())
-        temporary.rename(destination)
+def has_flat_layout(output: Path) -> bool:
+    """Whether the output has a real `feeds/` or `feeds.json`, which this stage can't swap."""
+    return any(
+        (output / name).exists() and not (output / name).is_symlink()
+        for name in ("feeds", "feeds.json")
+    )
+
+
+def new_generation(output: Path) -> Path:
+    """Creates an empty generation, numbered above any left behind by a killed run."""
+    generations = output / GENERATIONS
+    generations.mkdir(parents=True, exist_ok=True)
+    numbers = [int(path.name) for path in generations.iterdir() if path.name.isdigit()]
+    generation = generations / f"{max(numbers, default=0) + 1:06d}"
+    (generation / "feeds").mkdir(parents=True)
+    return generation
+
+
+def switch_generation(output: Path, generation: Path) -> None:
+    """Makes a finished generation the published one, in a single atomic rename.
+
+    `feeds` and `feeds.json` are links through the one `CURRENT` link,
+    so readers see either the whole old generation or the whole new one, whenever a run dies.
+    """
+    for name in ("feeds", "feeds.json"):
+        if not (output / name).is_symlink():
+            (output / name).symlink_to(f"{CURRENT}/{name}")
+    temporary = output / f".tmp-{CURRENT.removeprefix('.')}"
+    temporary.unlink(missing_ok=True)
+    temporary.symlink_to(f"{GENERATIONS}/{generation.name}")
+    os.replace(temporary, output / CURRENT)
+
+
+def prune_generations(output: Path, keep: Path) -> None:
+    """Deletes every generation but the published one, including those of killed runs."""
+    for path in (output / GENERATIONS).iterdir():
+        if path.name != keep.name:
+            shutil.rmtree(path)
+
+
+def has_published_feeds(output: Path) -> bool:
+    feeds = output / CURRENT / "feeds"
+    return feeds.is_dir() and any(feeds.iterdir())
 
 
 def sha256_of(path: Path) -> str:
@@ -392,7 +435,14 @@ def run(args: argparse.Namespace, resolver: Resolver | None = None) -> int:
 
     excluded = load_exclusions(args.exclusions)
     output = args.output.resolve()
-    (output / "feeds").mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=True)
+    if has_flat_layout(output):
+        print(
+            f"error: {output} has a real feeds/ or feeds.json from another layout; "
+            "move them aside first",
+            file=sys.stderr,
+        )
+        return 2
     cache = args.cache.resolve() if args.cache else output / ".cache"
     work = prepare_work_dir(cache, args.transitous)
     logs = cache / "logs"
@@ -411,6 +461,15 @@ def run(args: argparse.Namespace, resolver: Resolver | None = None) -> int:
         plan.skipped += region_plan.skipped
         plan.realtime += region_plan.realtime
         plan.excluded += region_plan.excluded
+        plan.outages += region_plan.outages
+
+    # Before anything changes: these sources' fate is unknown, not that they should go.
+    if plan.outages:
+        print("error: a source resolver is unavailable; keeping the output as it was:", file=sys.stderr)
+        for outage in plan.outages:
+            print(f"  {outage}", file=sys.stderr)
+        return 1
+
     remove_excluded_from_cache(work, plan.excluded)
 
     print(f"{len(plan.static)} static feeds to fetch with {args.jobs} jobs", flush=True)
@@ -421,6 +480,9 @@ def run(args: argparse.Namespace, resolver: Resolver | None = None) -> int:
         ]
         results = [future.result() for future in futures]
 
+    # Everything is built in a new generation first, so nothing published changes until the end.
+    # Copied rather than hard-linked: a link would tie a published archive to the cache's file.
+    generation = new_generation(output)
     feeds = []
     skipped = list(plan.skipped)
     for feed, cleaned, reason in results:
@@ -428,8 +490,8 @@ def run(args: argparse.Namespace, resolver: Resolver | None = None) -> int:
             skipped.append({"id": feed.id, "reason": reason or "unknown failure"})
             continue
         file_name = f"{feed.id}.gtfs.zip"
-        destination = output / "feeds" / file_name
-        publish(cleaned, destination)
+        destination = generation / "feeds" / file_name
+        shutil.copy2(cleaned, destination)
         feeds.append(
             {
                 "id": feed.id,
@@ -443,11 +505,11 @@ def run(args: argparse.Namespace, resolver: Resolver | None = None) -> int:
             }
         )
 
-    # `feeds/` always matches the manifest, so a feed that now fails can't linger as a stale file.
-    published = {item["file"] for item in feeds}
-    for path in (output / "feeds").glob("*.zip"):
-        if f"feeds/{path.name}" not in published:
-            path.unlink()
+    # Downloads failing for every feed says more about the network than about the feeds.
+    if not feeds and has_published_feeds(output):
+        shutil.rmtree(generation)
+        print("error: no feed succeeded; keeping the output as it was", file=sys.stderr)
+        return 1
 
     manifest = {
         "transitous_commit": args.commit,
@@ -460,7 +522,9 @@ def run(args: argparse.Namespace, resolver: Resolver | None = None) -> int:
     temporary.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    temporary.rename(output / "feeds.json")
+    temporary.rename(generation / "feeds.json")
+    switch_generation(output, generation)
+    prune_generations(output, generation)
 
     print(
         f"done in {time.monotonic() - started:.0f} s: {len(feeds)} feeds, "

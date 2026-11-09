@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import fetch_feeds
 from fetch_feeds import NATIONWIDE_REASON, Resolution, ResolvedSource
@@ -23,6 +24,16 @@ if name.startswith("bad"):
 if name.startswith("empty"):
     sys.exit(0)
 Path("out", region + "_" + name + ".gtfs.zip").write_bytes(name.encode())
+"""
+
+
+# A later version of the fake, publishing different bytes under the same names.
+FAKE_FETCH_REVISED = """#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+region = Path(sys.argv[1]).stem
+name = json.load(open(sys.argv[1]))["sources"][0]["name"]
+Path("out", region + "_" + name + ".gtfs.zip").write_bytes(b"revised " + name.encode())
 """
 
 
@@ -78,9 +89,15 @@ class ClassifyTests(unittest.TestCase):
         plan = self.classify([entry])
         self.assertIn("encrypted keys", plan.skipped[0]["reason"])
 
-    def test_resolution_error_is_reported(self):
-        plan = self.classify([{"name": "A", "type": "http"}], {"A": Resolution(error="no key")})
+    def test_source_level_resolution_error_is_skipped_without_an_outage(self):
+        resolution = Resolution(error="no key", source_level=True)
+        plan = self.classify([{"name": "A", "type": "http"}], {"A": resolution})
         self.assertIn("no key", plan.skipped[0]["reason"])
+        self.assertEqual(plan.outages, [])
+
+    def test_any_other_resolution_error_is_an_outage(self):
+        plan = self.classify([{"name": "A", "type": "http"}], {"A": Resolution(error="503")})
+        self.assertIn("503", plan.outages[0])
 
     def test_realtime_urls_are_listed_with_the_feed_id(self):
         resolution = Resolution(
@@ -261,6 +278,88 @@ class StageTests(unittest.TestCase):
         status, manifest = self.run_stage(["bad"])
         self.assertEqual(status, 1)
         self.assertEqual(manifest["feeds"], [])
+
+    def assert_listing_matches_archives(self):
+        listing = json.loads((self.output / "feeds.json").read_text(encoding="utf-8"))
+        on_disk = sorted(path.name for path in (self.output / "feeds").iterdir())
+        self.assertEqual(on_disk, sorted(Path(feed["file"]).name for feed in listing["feeds"]))
+        for feed in listing["feeds"]:
+            actual = hashlib.sha256((self.output / feed["file"]).read_bytes()).hexdigest()
+            self.assertEqual(actual, feed["sha256"], feed["id"])
+        return listing
+
+    def revise_and_run(self, names):
+        """Runs the stage again with every archive changed, for runs that are made to die."""
+        (self.transitous / "src" / "fetch.py").write_text(FAKE_FETCH_REVISED, encoding="utf-8")
+        self.write_region(names)
+        return fetch_feeds.run(self.args(), FakeResolver(dict.fromkeys(names, STATIC)))
+
+    def test_a_resolver_outage_is_not_success_and_keeps_feeds(self):
+        self.assertEqual(self.run_stage(["good", "mdb-feed"])[0], 0)
+        before = (self.output / "feeds.json").read_bytes()
+        outage = {
+            "good": STATIC,
+            "mdb-feed": Resolution(error="could not load the Mobility Database export: 503"),
+        }
+        self.write_region(["good", "mdb-feed"])
+        self.assertNotEqual(fetch_feeds.run(self.args(), FakeResolver(outage)), 0)
+        self.assertEqual((self.output / "feeds.json").read_bytes(), before)
+        self.assertEqual(len(self.assert_listing_matches_archives()["feeds"]), 2)
+
+    def test_a_source_level_resolution_error_is_still_success(self):
+        table = {"good": STATIC, "keyed": Resolution(error="no key", source_level=True)}
+        self.write_region(["good", "keyed"])
+        self.assertEqual(fetch_feeds.run(self.args(), FakeResolver(table)), 0)
+        self.assertEqual(len(self.assert_listing_matches_archives()["feeds"]), 1)
+
+    def test_a_run_where_every_feed_fails_keeps_feeds(self):
+        self.assertEqual(self.run_stage(["good"])[0], 0)
+        before = (self.output / "feeds.json").read_bytes()
+        (self.transitous / "src" / "fetch.py").write_text(
+            "import sys\nprint('Error: down', file=sys.stderr)\nsys.exit(1)\n", encoding="utf-8"
+        )
+        self.write_region(["good"])
+        self.assertEqual(fetch_feeds.run(self.args(), FakeResolver({"good": STATIC})), 1)
+        self.assertEqual((self.output / "feeds.json").read_bytes(), before)
+        self.assert_listing_matches_archives()
+
+    def test_a_killed_publish_leaves_feeds_and_listing_consistent(self):
+        self.assertEqual(self.run_stage(["good", "other"])[0], 0)
+        # The listing's temporary path is taken, so writing it fails.
+        (self.output / ".tmp-feeds.json").mkdir()
+        with self.assertRaises(OSError):
+            self.revise_and_run(["good", "other"])
+        self.assert_listing_matches_archives()
+
+    def test_a_kill_before_the_switch_keeps_the_old_pair(self):
+        self.assertEqual(self.run_stage(["good", "other"])[0], 0)
+        with mock.patch.object(fetch_feeds, "switch_generation", side_effect=OSError):
+            with self.assertRaises(OSError):
+                self.revise_and_run(["good"])
+        self.assertEqual(len(self.assert_listing_matches_archives()["feeds"]), 2)
+
+    def test_a_kill_after_the_switch_has_the_new_pair(self):
+        self.assertEqual(self.run_stage(["good", "other"])[0], 0)
+        with mock.patch.object(fetch_feeds, "prune_generations", side_effect=OSError):
+            with self.assertRaises(OSError):
+                self.revise_and_run(["good"])
+        self.assertEqual(len(self.assert_listing_matches_archives()["feeds"]), 1)
+
+    def test_a_run_after_a_killed_one_cleans_up(self):
+        self.assertEqual(self.run_stage(["good"])[0], 0)
+        with mock.patch.object(fetch_feeds, "switch_generation", side_effect=OSError):
+            with self.assertRaises(OSError):
+                self.revise_and_run(["good"])
+        self.assertEqual(self.revise_and_run(["good"]), 0)
+        self.assertEqual(len(list((self.output / fetch_feeds.GENERATIONS).iterdir())), 1)
+        self.assert_listing_matches_archives()
+
+    def test_a_flat_output_is_refused_rather_than_replaced(self):
+        (self.output / "feeds").mkdir(parents=True)
+        (self.output / "feeds" / "kept").write_text("x", encoding="utf-8")
+        self.write_region(["good"])
+        self.assertEqual(fetch_feeds.run(self.args(), FakeResolver({"good": STATIC})), 2)
+        self.assertTrue((self.output / "feeds" / "kept").exists())
 
     def test_region_names_cannot_be_patterns(self):
         args = self.args()

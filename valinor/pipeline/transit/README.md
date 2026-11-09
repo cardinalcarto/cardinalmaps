@@ -74,7 +74,7 @@ which Transitous applies when importing into MOTIS.
 
 One ID can appear in several lists, since a feed's static and real-time sources share a name.
 A feed that fails to download or clean is listed in `skipped` and doesn't stop the others.
-The stage exits non-zero only when no feed at all succeeds.
+The stage exits non-zero when no feed at all succeeds, or when a source resolver is unavailable.
 
 ## Running it again
 
@@ -86,6 +86,17 @@ Feeds with `fetch-interval-days` aren't requested within that interval.
 The Mobility Database export is fetched fresh on every run.
 Cleaned feeds that are reused aren't checked again for expiry; only a new download is.
 `feeds/` and `feeds.json` are rebuilt on every run, so feeds that now fail don't linger.
+
+## Publishing
+
+`feeds` and `feeds.json` are symbolic links through `.current`, which names a directory in `.generations/`.
+Each run builds a whole new generation and switches `.current` with one rename,
+so a run killed at any point leaves a listing that matches its archives.
+Archives are copies, so the cleaned feeds take up space in both the cache and the output.
+An output directory with a real `feeds/` or `feeds.json` is refused, rather than replaced.
+
+When a source resolver is unavailable, such as the Mobility Database export not loading,
+or when no feed succeeds and earlier feeds exist, the stage exits non-zero and leaves the output as it was.
 
 ## Tests
 
