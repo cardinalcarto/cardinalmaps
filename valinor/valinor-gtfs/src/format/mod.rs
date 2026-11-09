@@ -9,11 +9,13 @@
 //! with the UTC offsets that each service day needs already resolved,
 //! so that a device needs no time zone database.
 //!
-//! The on-disk records live in [`layout`], and [`reader`] loads them.
+//! The on-disk records live in [`layout`], and [`writer`] and [`reader`] are their two sides.
 
 pub(crate) mod layout;
 pub(crate) mod reader;
 pub(crate) mod timetable;
 pub(crate) mod validate;
+#[cfg(feature = "compile")]
+pub(crate) mod writer;
 
 pub use layout::{FORMAT_VERSION, MAGIC};

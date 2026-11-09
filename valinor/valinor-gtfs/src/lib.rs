@@ -2,14 +2,17 @@
 //!
 //! See `docs/transit.md` for the design this crate serves. In outline:
 //!
-//! - [`CompiledTimetable::parse`] loads a compiled file without copying it, validating every
-//!   byte, so a truncated, corrupt, or wrong-version file is an error rather than a panic.
+//! - [`compile`] turns GTFS feeds (zip archives or directories) into the bytes of one file.
+//! - [`CompiledTimetable::parse`] loads such a file without copying it, validating every byte,
+//!   so a truncated, corrupt, or wrong-version file is an error rather than a panic.
 //! - [`CompiledTimetable::to_timetable`] gives a [`valinor_transit::Timetable`],
 //!   and [`CompiledTimetable::service_window`] gives the service days to materialize,
 //!   using UTC offsets resolved when the file was compiled.
 //! - [`CompiledTimetable`] also answers the questions a response layer and GTFS-RT need,
 //!   by feed-scoped GTFS identifiers.
 
+#[cfg(feature = "compile")]
+mod compile;
 mod error;
 pub(crate) mod format;
 
@@ -22,4 +25,12 @@ pub use format::reader::{
 pub use format::{FORMAT_VERSION, MAGIC};
 
 #[cfg(feature = "compile")]
+pub use compile::{
+    CompiledOutput, DirectorySource, DropReason, FeedId, FeedIdError, FeedInput, FeedReport,
+    GtfsSource, InMemorySource, WARNING_LIMIT, ZipSource, compile,
+};
+#[cfg(feature = "compile")]
 pub use error::CompileError;
+
+#[cfg(test)]
+mod scenario_tests;

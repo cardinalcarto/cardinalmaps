@@ -34,5 +34,10 @@ zip = { workspace = true, optional = true }
 [dev-dependencies]
 proptest = { workspace = true }
 
+[[bin]]
+name = "valinor-gtfs"
+path = "src/bin/valinor-gtfs.rs"
+required-features = ["compile"]
+
 [lints]
 workspace = true
