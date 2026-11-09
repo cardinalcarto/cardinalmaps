@@ -33,4 +33,6 @@ pub use compile::{
 pub use error::CompileError;
 
 #[cfg(test)]
+mod regression_tests;
+#[cfg(test)]
 mod scenario_tests;

@@ -965,7 +965,6 @@ fn build_stop_rows(
         }
     }
 
-    let mut children_cursor = 0_u32;
     for (feed_index, feed) in feeds.iter().enumerate() {
         for (local, stop) in feed.stops.iter().enumerate() {
             let location = location_of[feed_index][local] as usize;
@@ -977,13 +976,6 @@ fn build_stop_rows(
                 .get(stop.timezone.as_str())
                 .copied()
                 .unwrap_or(0);
-            let list = &mut descendant_lists[location];
-            list.sort_unstable();
-            let child_count = u32::try_from(list.len()).unwrap_or(NONE);
-            let children_start = children_cursor;
-            children_cursor += child_count;
-            children.extend(list.iter().map(|&value| U32::new(value)));
-
             rows[location] = StopRow {
                 feed: U32::new(u32::try_from(feed_index).unwrap_or(NONE)),
                 gtfs_id: U32::new(stop.gtfs_id),
@@ -998,13 +990,26 @@ fn build_stop_rows(
                 ),
                 zone: U32::new(zone),
                 min_change: U32::new(stop.min_change),
-                children_start: U32::new(children_start),
-                child_count: U32::new(child_count),
+                children_start: U32::new(0),
+                child_count: U32::new(0),
                 location_type: stop.location_type,
                 wheelchair_boarding: stop.wheelchair,
                 _pad: [0; 2],
             };
         }
+    }
+
+    // Children are laid out in location order, so each location owns the next run of the table.
+    for (row, list) in rows.iter_mut().zip(&mut descendant_lists) {
+        list.sort_unstable();
+        row.children_start = U32::new(
+            u32::try_from(children.len())
+                .map_err(|_| CompileError::TableTooLarge("child stops"))?,
+        );
+        row.child_count = U32::new(
+            u32::try_from(list.len()).map_err(|_| CompileError::TableTooLarge("child stops"))?,
+        );
+        children.extend(list.iter().map(|&value| U32::new(value)));
     }
     Ok(())
 }

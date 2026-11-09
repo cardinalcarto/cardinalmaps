@@ -4,6 +4,10 @@
 //! so loading can't rely on the checksum for safety.
 //! After this pass every accessor is a plain bounds-checked read
 //! and every value is one its readers expect.
+//!
+//! Tables whose rows expand into allocations at load must be contiguous:
+//! each row owns the next run of its child table, and together they cover it exactly.
+//! Letting two rows share a run would let a small file load as a very large timetable.
 
 use crate::error::DecodeError;
 use crate::format::layout::{NONE, PATTERN_BIKES_ALLOWED};
@@ -163,6 +167,7 @@ fn validate_stops(tables: &Tables<'_>) -> Result<(), DecodeError> {
     if tables.boardable_stops > tables.stops.len() {
         return Err(fail("stops", "there are more boardable stops than rows"));
     }
+    let mut next_child = 0_usize;
     for stop in tables.stops {
         check_index(
             "stops",
@@ -195,6 +200,10 @@ fn validate_stops(tables: &Tables<'_>) -> Result<(), DecodeError> {
             stop.child_count.get(),
             tables.child_stops.len(),
         )?;
+        if stop.children_start.get() as usize != next_child {
+            return Err(fail("stops", "children do not partition by location"));
+        }
+        next_child += stop.child_count.get() as usize;
         if stop.location_type > 4 {
             return Err(DecodeError::InvalidValue {
                 table: "stops",
@@ -211,6 +220,9 @@ fn validate_stops(tables: &Tables<'_>) -> Result<(), DecodeError> {
                 reason: "a coordinate is out of range",
             });
         }
+    }
+    if next_child != tables.child_stops.len() {
+        return Err(fail("child stops", "some children belong to no location"));
     }
     for child in tables.child_stops {
         check_index(
@@ -241,6 +253,7 @@ fn validate_routes(tables: &Tables<'_>) -> Result<(), DecodeError> {
             check_string("agencies", tables, id)?;
         }
     }
+    let mut next_pattern = 0_usize;
     for route in tables.routes {
         check_index(
             "routes",
@@ -272,6 +285,13 @@ fn validate_routes(tables: &Tables<'_>) -> Result<(), DecodeError> {
             route.pattern_count.get(),
             tables.route_patterns.len(),
         )?;
+        if route.patterns_start.get() as usize != next_pattern {
+            return Err(fail("routes", "patterns do not partition by route"));
+        }
+        next_pattern += route.pattern_count.get() as usize;
+    }
+    if next_pattern != tables.route_patterns.len() {
+        return Err(fail("route patterns", "some patterns belong to no route"));
     }
     for pattern in tables.route_patterns {
         check_index(
@@ -285,6 +305,7 @@ fn validate_routes(tables: &Tables<'_>) -> Result<(), DecodeError> {
 }
 
 fn validate_services(tables: &Tables<'_>) -> Result<(), DecodeError> {
+    let mut next_bit_byte = 0_usize;
     for service in tables.services {
         check_index(
             "services",
@@ -313,20 +334,31 @@ fn validate_services(tables: &Tables<'_>) -> Result<(), DecodeError> {
             days.div_ceil(8),
             tables.service_bits.len(),
         )?;
+        if service.bits_start.get() as usize != next_bit_byte {
+            return Err(fail(
+                "services",
+                "calendar bits do not partition by service",
+            ));
+        }
+        next_bit_byte += days.div_ceil(8) as usize;
+    }
+    if next_bit_byte != tables.service_bits.len() {
+        return Err(fail("service bits", "some bits belong to no calendar"));
     }
     Ok(())
 }
 
 /// Walks patterns and trips together.
 ///
-/// Trips must partition by pattern, and each stop event must have exactly one row in
-/// the time table, so that loading can't be made to allocate more events than the file holds.
+/// Patterns must own their stops, trips must partition by pattern, and each stop event must have
+/// exactly one row in the time table, so that loading can't allocate more than the file holds.
 fn validate_trips(tables: &Tables<'_>) -> Result<(), DecodeError> {
     if tables.trip_riders.len() != tables.trips.len() {
         return Err(fail("trip riders", "there is not one row per trip"));
     }
     let mut next_trip = 0_usize;
     let mut next_time = 0_usize;
+    let mut next_stop = 0_usize;
     for (index, pattern) in tables.patterns.iter().enumerate() {
         check_index(
             "patterns",
@@ -354,6 +386,16 @@ fn validate_trips(tables: &Tables<'_>) -> Result<(), DecodeError> {
             pattern.stop_count.get(),
             tables.pattern_stops.len(),
         )?;
+        if pattern.stops_start.get() as usize != next_stop {
+            return Err(fail("patterns", "stops do not partition by pattern"));
+        }
+        next_stop += stop_count;
+        if pattern.trip_count.get() == 0 {
+            return Err(DecodeError::InvalidValue {
+                table: "patterns",
+                reason: "a pattern has no trips",
+            });
+        }
         if pattern.trips_start.get() as usize != next_trip {
             return Err(fail("patterns", "trips do not partition by pattern"));
         }
@@ -387,6 +429,9 @@ fn validate_trips(tables: &Tables<'_>) -> Result<(), DecodeError> {
             }
         }
         next_trip += trip_count;
+    }
+    if next_stop != tables.pattern_stops.len() {
+        return Err(fail("pattern stops", "some stops belong to no pattern"));
     }
     if next_trip != tables.trips.len() {
         return Err(fail("trips", "some trips belong to no pattern"));
