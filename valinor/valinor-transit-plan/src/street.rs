@@ -108,12 +108,6 @@ impl Default for ServiceLimits {
     }
 }
 
-/// The most threads building transfer tables by default.
-const MAX_DEFAULT_TRANSFER_BUILD_THREADS: NonZeroUsize = match NonZeroUsize::new(8) {
-    Some(threads) => threads,
-    None => NonZeroUsize::MIN,
-};
-
 /// Choices for a [`StreetPlanner`].
 #[derive(Debug, Clone, Copy)]
 pub struct StreetConfig {
@@ -131,8 +125,6 @@ pub struct StreetConfig {
     pub max_walking_transfer_seconds: u32,
     /// The longest transfer between two stops by bicycle, in seconds.
     pub max_cycling_transfer_seconds: u32,
-    /// How many threads build the transfer tables; each holds its own search storage.
-    pub transfer_build_threads: NonZeroUsize,
 }
 
 impl Default for StreetConfig {
@@ -145,9 +137,6 @@ impl Default for StreetConfig {
             retention: Retention::default(),
             max_walking_transfer_seconds: DEFAULT_TRANSFER_SECONDS,
             max_cycling_transfer_seconds: DEFAULT_TRANSFER_SECONDS,
-            transfer_build_threads: std::thread::available_parallelism()
-                .unwrap_or(NonZeroUsize::MIN)
-                .min(MAX_DEFAULT_TRANSFER_BUILD_THREADS),
         }
     }
 }
@@ -677,7 +666,6 @@ struct TileSnapper {
     config: SnapConfig,
     max_walking_transfer_seconds: u32,
     max_cycling_transfer_seconds: u32,
-    transfer_build_threads: NonZeroUsize,
 }
 
 impl fmt::Debug for TileSnapper {
@@ -706,7 +694,7 @@ impl StopSnapper for TileSnapper {
     ) -> Result<TransferTable, WalkError> {
         let tiles: &TileSets = &self.tiles;
         let costing = any_costing(mode).map_err(snap_setup_error)?;
-        let threads = self.transfer_build_threads;
+        let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
         let seconds = match mode {
             TravelMode::Walking => self.max_walking_transfer_seconds,
             TravelMode::Cycling => self.max_cycling_transfer_seconds,
@@ -789,7 +777,6 @@ impl StreetPlanner {
             config: config.snap,
             max_walking_transfer_seconds: config.max_walking_transfer_seconds,
             max_cycling_transfer_seconds: config.max_cycling_transfer_seconds,
-            transfer_build_threads: config.transfer_build_threads,
         };
         let state = TransitState::with_snapper(timetable, config.state, Box::new(snapper))?;
         let cell = Cell::new(tiles, |tiles| WorkerPool {

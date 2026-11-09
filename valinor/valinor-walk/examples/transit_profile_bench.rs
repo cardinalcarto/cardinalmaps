@@ -2002,14 +2002,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let node = build_walk_table(
                         &mut builder.router.transfers_mut().inner,
                         table.stop_count(),
-                        radius as i32,
+                        i32::try_from(radius)?,
                     )?;
                     let mut deltas = Vec::new();
                     let mut only_node = 0_usize;
                     for (from, walks) in node.out.iter().enumerate() {
                         for &(to, seconds) in walks {
                             match table.seconds(StopId::new(from as u32), StopId::new(to)) {
-                                Some(edge) => deltas.push(f64::from(edge as i32 - seconds)),
+                                Some(edge) => deltas.push(f64::from(edge) - f64::from(seconds)),
                                 None => only_node += 1,
                             }
                         }

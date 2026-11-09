@@ -1,5 +1,7 @@
 //! Transfer tables on real tiles: what they hold, and how a search reads them.
 
+#![allow(clippy::all, clippy::pedantic)]
+
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
