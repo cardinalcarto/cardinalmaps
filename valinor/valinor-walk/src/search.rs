@@ -262,6 +262,9 @@ impl<P: GraphTileProvider, C: Costing> WalkSearch<P, C> {
         if self.snaps.as_ref().is_some_and(|s| Arc::ptr_eq(s, &snaps)) {
             return Ok(());
         }
+        // Until this finishes, the search holds no valid snaps: a failure below must not leave
+        // the old `Arc` in place, or binding it again would skip rebuilding what was cleared.
+        self.snaps = None;
         self.clear_attachments();
         let stop_count = snaps.stop_count();
         self.stops.clear();

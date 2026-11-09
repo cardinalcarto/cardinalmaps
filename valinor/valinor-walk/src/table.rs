@@ -267,6 +267,8 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         if self.snaps.as_ref().is_some_and(|s| Arc::ptr_eq(s, &snaps)) {
             return Ok(());
         }
+        // As in `WalkSearch::bind`: a failure below must not leave the old `Arc` in place.
+        self.snaps = None;
         for &edge in &self.attached_edges {
             if let Some(slot) = self.edge_first_stop.get_mut(edge as usize) {
                 *slot = NONE;
