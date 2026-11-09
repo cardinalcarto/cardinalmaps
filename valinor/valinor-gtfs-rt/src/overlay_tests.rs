@@ -129,6 +129,11 @@ fn scheduled_to_delayed_replaces_times() {
 #[test]
 fn delayed_to_scheduled_when_the_update_vanishes() {
     let net = three_stop_net();
+    let delayed = run(
+        &net,
+        vec![fresh(vec![update("t1", DATE_1, vec![delay_at(1, 30)])])],
+    );
+    assert_eq!(delayed.rider.trip_state(key(0)), TripState::Delayed);
     let overlay = run(&net, vec![fresh(vec![])]);
     assert_eq!(overlay.stats.blocks_replaced, 0);
     assert_eq!(overlay.rider.trip_state(key(0)), TripState::Scheduled);
@@ -202,6 +207,11 @@ fn scheduled_to_stop_skipped_forbids_boarding_there() {
 #[test]
 fn stop_skipped_to_scheduled_when_the_skip_vanishes() {
     let net = three_stop_net();
+    let skipped = run(
+        &net,
+        vec![fresh(vec![update("t1", DATE_1, vec![skip_at(2)])])],
+    );
+    assert_eq!(skipped.rider.trip_state(key(0)), TripState::StopSkipped);
     let overlay = run(&net, vec![]);
     let lanes = lanes_of(&overlay.snapshot, 0, TODAY);
     assert!(lanes.iter().all(|(_, _, _, r)| r[1] == StopRules::REGULAR));
@@ -277,6 +287,14 @@ fn canceled_only_touches_its_own_service_day() {
 #[test]
 fn canceled_to_scheduled_when_the_cancellation_vanishes() {
     let net = three_stop_net();
+    let canceled = run(
+        &net,
+        vec![fresh(vec![with_relationship(
+            update("t1", DATE_1, vec![]),
+            Trip::Canceled,
+        )])],
+    );
+    assert_eq!(arrivals_of(&canceled.snapshot, 0, TODAY, 0), None);
     let overlay = run(&net, vec![fresh(vec![])]);
     assert!(arrivals_of(&overlay.snapshot, 0, TODAY, 0).is_some());
 }
@@ -353,6 +371,15 @@ fn scheduled_to_replaced_by_replacement_moves_to_its_own_pattern() {
 #[test]
 fn replaced_to_scheduled_restores_the_original_pattern() {
     let net = three_stop_net();
+    let replacement = with_relationship(
+        timed_new_trip(
+            "t1",
+            &[("A", unix_on_today(500)), ("C", unix_on_today(700))],
+        ),
+        Trip::Replacement,
+    );
+    let replaced = run(&net, vec![fresh(vec![replacement])]);
+    assert_eq!(replaced.stats.added_routes, 1);
     let overlay = run(&net, vec![fresh(vec![])]);
     assert!(arrivals_of(&overlay.snapshot, 0, TODAY, 0).is_some());
     assert_eq!(overlay.stats.added_routes, 0);
@@ -421,6 +448,15 @@ fn deprecated_added_counts_as_added() {
 #[test]
 fn added_to_gone_when_it_vanishes() {
     let net = three_stop_net();
+    let added = with_relationship(
+        timed_new_trip(
+            "extra",
+            &[("A", unix_on_today(400)), ("B", unix_on_today(500))],
+        ),
+        Trip::New,
+    );
+    let present = run(&net, vec![fresh(vec![added])]);
+    assert_eq!(present.snapshot.route_count(), 2);
     let overlay = run(&net, vec![fresh(vec![])]);
     assert_eq!(overlay.snapshot.route_count(), 1);
 }
@@ -1052,6 +1088,16 @@ fn delayed_to_scheduled_when_the_feed_goes_stale() {
     let status = &overlay.rider.feed_status()[0];
     assert_eq!(status.age, Some(600));
     assert!(status.stale);
+}
+
+#[test]
+fn stop_skipped_to_scheduled_when_the_feed_goes_stale() {
+    let net = three_stop_net();
+    let feed = updates_at(NOW - 600, vec![update("t1", DATE_1, vec![skip_at(2)])]);
+    let overlay = run(&net, vec![feed]);
+    assert_eq!(overlay.rider.trip_state(key(0)), TripState::Scheduled);
+    let lanes = lanes_of(&overlay.snapshot, 0, TODAY);
+    assert!(lanes.iter().all(|(_, _, _, r)| r[1] == StopRules::REGULAR));
 }
 
 #[test]
@@ -1789,8 +1835,17 @@ fn every_lane_is_ordered(snapshot: &Snapshot) -> bool {
                 .block_lanes(RouteId::new(route), DaySlot::new(day))
                 .expect("known");
             for lane in lanes {
+                let mut previous: Option<Vec<valinor_transit::StopEvent>> = None;
                 for row in 0..snapshot.lane_trip_count(lane).expect("lane") {
                     let events = snapshot.lane_trip_events(lane, row).expect("events");
+                    if let Some(earlier) = previous.as_ref()
+                        && earlier.iter().zip(&events).any(|(a, b)| {
+                            a.arrival > b.arrival || a.departure > b.departure || a.rules != b.rules
+                        })
+                    {
+                        return false;
+                    }
+                    previous = Some(events.clone());
                     for pair in events.windows(2) {
                         if pair[0].departure > pair[1].arrival
                             || pair[0].arrival > pair[0].departure

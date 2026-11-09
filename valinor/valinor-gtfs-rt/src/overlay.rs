@@ -594,14 +594,18 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 continue;
             }
             self.stats.trip_updates += 1;
-            self.apply_trip_update(&feed, update)?;
+            self.apply_trip_update(&feed, &update)?;
         }
         Ok(())
     }
 
     // `ADDED` is deprecated in the specification, but feeds in the wild still send it.
     #[allow(deprecated)]
-    fn apply_trip_update(&mut self, feed: &FeedId, update: TripUpdate) -> Result<(), OverlayError> {
+    fn apply_trip_update(
+        &mut self,
+        feed: &FeedId,
+        update: &TripUpdate,
+    ) -> Result<(), OverlayError> {
         let (trip_id, date_text, start_time_text) = effective_identity(&update.trip);
         let Some(trip_id) = trip_id.map(str::to_owned) else {
             self.stats.trip_updates_without_trip += 1;
@@ -612,14 +616,14 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         let relationship = update.trip.schedule_relationship();
         match relationship {
             TripRelationship::Added | TripRelationship::New | TripRelationship::Replacement => {
-                self.apply_added(feed, &trip_id, date, start_time, relationship, &update)
+                self.apply_added(feed, &trip_id, date, start_time, relationship, update)
             }
-            TripRelationship::Duplicated => self.apply_duplicated(feed, &trip_id, date, &update),
+            TripRelationship::Duplicated => self.apply_duplicated(feed, &trip_id, date, update),
             TripRelationship::Scheduled
             | TripRelationship::Unscheduled
             | TripRelationship::Canceled
             | TripRelationship::Deleted => {
-                self.apply_to_existing(feed, &trip_id, date, start_time, relationship, &update);
+                self.apply_to_existing(feed, &trip_id, date, start_time, relationship, update);
                 Ok(())
             }
         }
@@ -779,6 +783,10 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         self.rider.push_trip(TripDetails {
             state: changed.then_some(state),
             route: Some(reference.route),
+            route_id: details
+                .route_id
+                .clone()
+                .or_else(|| route_id_of(lookup, reference.route)),
             ..details
         });
 
@@ -1138,14 +1146,12 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             let start_time = descriptor
                 .and_then(|d| d.start_time.as_deref())
                 .and_then(parse_start_time);
-            let trip_key = trip_id
-                .as_deref()
-                .and_then(|id| {
-                    self.resolve_trip(&feed, id, start_date, start_time)
-                        .ok()
-                        .flatten()
-                })
-                .map(|reference| self.trip_key(reference.trip, reference.day));
+            let reference = trip_id.as_deref().and_then(|id| {
+                self.resolve_trip(&feed, id, start_date, start_time)
+                    .ok()
+                    .flatten()
+            });
+            let trip_key = reference.map(|r| self.trip_key(r.trip, r.day));
             if trip_key.is_some() {
                 self.stats.vehicles_matched += 1;
             }
@@ -1158,7 +1164,9 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                     .map(vehicle_ref)
                     .unwrap_or_default(),
                 trip_id,
-                route_id: descriptor.and_then(|d| d.route_id.clone()),
+                route_id: descriptor
+                    .and_then(|d| d.route_id.clone())
+                    .or_else(|| reference.and_then(|r| route_id_of(self.lookup, r.route))),
                 start_date,
                 trip_key,
                 latitude: position.map(|p| p.latitude),
@@ -1754,6 +1762,13 @@ fn trip_details(
             .and_then(|p| p.trip_headsign.clone()),
         stops,
     }
+}
+
+/// The GTFS route a stop pattern belongs to.
+fn route_id_of<L: StaticLookup + ?Sized>(lookup: &L, route: RouteId) -> Option<String> {
+    lookup
+        .route_info(route)
+        .map(|info| info.route_id.to_owned())
 }
 
 /// A stop update as the feed gave it, before any matching to the timetable.

@@ -17,7 +17,7 @@
 //!
 //! ## Transitions
 //!
-//! Each of these has a test named after it in `src/overlay.rs`:
+//! Each of these has a test named after it in `src/overlay_tests.rs`:
 //!
 //! - `Scheduled` → `Delayed`: a trip update with times arrives.
 //! - `Delayed` → `Scheduled`: the update vanishes or its delay becomes zero.
