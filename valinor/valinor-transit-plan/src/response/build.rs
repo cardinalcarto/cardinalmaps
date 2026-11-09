@@ -1,5 +1,7 @@
 //! Turns a profile's journeys into rider-facing legs.
 
+use std::collections::HashMap;
+
 use valinor_gtfs::{
     Accessibility, AgencyInfo, CompiledTimetable, GtfsRoute, LatLon, RouteInfo, StopInfo, TripInfo,
 };
@@ -10,40 +12,46 @@ use valinor_gtfs_rt::{
 };
 use valinor_transit::{Leg, Profile, ProfileEntry, Ride, Seconds, StopEvent, StopId, StopRules};
 
-use crate::plan::TransitRequest;
+use crate::plan::{AccessEgressRequest, AccessEgressSearch, TransitRequest};
 use crate::response::alerts::{LegSelectorContext, LegStop, leg_alerts};
 use crate::response::vehicle::{lower, vehicle_from};
 use crate::response::{
-    AccessEgressLeg, AgencyResponse, FeedReport, FeedState, Journey, JourneyLeg, PlanResponse,
-    RealtimeLevel, RealtimeStatus, RouteResponse, StopRef, StopVisit, TransferLeg, TransitLeg,
-    TripResponse, Vehicle, WalkDurations, Window,
+    AccessEgressLeg, AgencyResponse, FeedReport, FeedState, Journey, JourneyLeg, LegAlert,
+    PlanResponse, RealtimeLevel, RealtimeStatus, RouteResponse, StopMovedNotice, StopRef,
+    StopVisit, TransferLeg, TransitLeg, TripResponse, Vehicle, WalkDurations, WalkPath, Window,
 };
 use crate::state::TransitSnapshot;
 use crate::window::calendar_date;
 
-pub(crate) fn build_response<W: Clone>(
+pub(crate) fn build_response<A: AccessEgressSearch>(
     snapshot: &TransitSnapshot,
     request: &TransitRequest,
-    profile: Profile<W>,
+    profile: Profile<A::Walk>,
     direct: Option<Seconds>,
-) -> PlanResponse<W> {
-    let builder = Builder { snapshot, request };
-    let journeys = profile
-        .entries
-        .into_iter()
+    access_egress: &mut A,
+) -> Result<PlanResponse, A::Error> {
+    let mut builder = Builder {
+        snapshot,
+        request,
+        access_egress,
+        access_paths: HashMap::new(),
+        egress_paths: HashMap::new(),
+    };
+    let mut journeys = Vec::new();
+    for entry in profile.entries {
         // A journey no faster than going there directly only adds a wait.
-        .filter(|entry| {
-            let duration = entry.arrival.into_inner() - entry.departure.into_inner();
-            direct.is_none_or(|direct| i64::from(duration) <= i64::from(direct.into_inner()))
-        })
-        .map(|entry| builder.journey(entry))
-        .collect();
+        let duration = entry.arrival.into_inner() - entry.departure.into_inner();
+        if direct.is_some_and(|direct| i64::from(duration) > i64::from(direct.into_inner())) {
+            continue;
+        }
+        journeys.push(builder.journey(entry)?);
+    }
     let feeds: Vec<FeedReport> = snapshot
         .feed_status_at(request.now)
         .iter()
         .map(feed_report)
         .collect();
-    PlanResponse {
+    Ok(PlanResponse {
         generated_at: request.now,
         window: Window {
             earliest: request.departure,
@@ -55,7 +63,13 @@ pub(crate) fn build_response<W: Clone>(
             feeds,
         },
         journeys,
-    }
+        direct_seconds: direct.map(Seconds::into_inner),
+    })
+}
+
+/// Whether Ilúvatar can narrate this language.
+pub(crate) fn language_supported(language: &str) -> bool {
+    illuvatar::is_supported_language(language)
 }
 
 fn realtime_level(feeds: &[FeedReport]) -> RealtimeLevel {
@@ -125,12 +139,16 @@ fn new_stop_name(stop: &valinor_gtfs_rt::NewStop) -> Option<String> {
 }
 
 /// One request's context for building a response.
-struct Builder<'a> {
+struct Builder<'a, A: AccessEgressSearch> {
     snapshot: &'a TransitSnapshot,
     request: &'a TransitRequest,
+    access_egress: &'a mut A,
+    /// Expanded once per stop: many journeys of a window share their access and egress.
+    access_paths: HashMap<StopId, Option<WalkPath>>,
+    egress_paths: HashMap<StopId, Option<WalkPath>>,
 }
 
-impl Builder<'_> {
+impl<A: AccessEgressSearch> Builder<'_, A> {
     fn compiled(&self) -> &CompiledTimetable<'_> {
         self.snapshot.data.loaded.timetable()
     }
@@ -139,7 +157,39 @@ impl Builder<'_> {
         self.snapshot.window.origin_unix
     }
 
-    fn journey<W: Clone>(&self, entry: ProfileEntry<W>) -> Journey<W> {
+    fn access_path(&mut self, stop: StopId) -> Result<Option<WalkPath>, A::Error> {
+        if let Some(path) = self.access_paths.get(&stop) {
+            return Ok(path.clone());
+        }
+        let snapshot = self.snapshot;
+        let request = AccessEgressRequest {
+            origin: self.request.origin,
+            destination: self.request.destination,
+            mode: self.request.mode,
+            snapshot,
+        };
+        let path = self.access_egress.access_path(&request, stop)?;
+        self.access_paths.insert(stop, path.clone());
+        Ok(path)
+    }
+
+    fn egress_path(&mut self, stop: StopId) -> Result<Option<WalkPath>, A::Error> {
+        if let Some(path) = self.egress_paths.get(&stop) {
+            return Ok(path.clone());
+        }
+        let snapshot = self.snapshot;
+        let request = AccessEgressRequest {
+            origin: self.request.origin,
+            destination: self.request.destination,
+            mode: self.request.mode,
+            snapshot,
+        };
+        let path = self.access_egress.egress_path(&request, stop)?;
+        self.egress_paths.insert(stop, path.clone());
+        Ok(path)
+    }
+
+    fn journey(&mut self, entry: ProfileEntry<A::Walk>) -> Result<Journey, A::Error> {
         let origin = self.origin();
         let departure = origin + i64::from(entry.departure.into_inner());
         let arrival = origin + i64::from(entry.arrival.into_inner());
@@ -152,12 +202,15 @@ impl Builder<'_> {
                 Leg::Access { stop, duration } => {
                     let duration = i64::from(duration.into_inner());
                     access += duration;
+                    let walk = self.access_path(stop)?;
                     legs.push(JourneyLeg::Access(AccessEgressLeg {
                         mode,
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
                         stop: self.stop_ref(stop),
+                        walk,
+                        stop_moved: Vec::new(),
                     }));
                     clock += duration;
                 }
@@ -177,6 +230,17 @@ impl Builder<'_> {
                 } => {
                     let duration = i64::from(duration.into_inner());
                     transfers += duration;
+                    let path = {
+                        let snapshot = self.snapshot;
+                        let request = AccessEgressRequest {
+                            origin: self.request.origin,
+                            destination: self.request.destination,
+                            mode: self.request.mode,
+                            snapshot,
+                        };
+                        self.access_egress
+                            .transfer_path(&request, &walk, from, to)?
+                    };
                     legs.push(JourneyLeg::Transfer(Box::new(TransferLeg {
                         mode,
                         duration_seconds: duration,
@@ -184,25 +248,30 @@ impl Builder<'_> {
                         arrival: clock + duration,
                         from: self.stop_ref(from),
                         to: self.stop_ref(to),
-                        walk: Some(walk),
+                        walk: path,
+                        stop_moved: Vec::new(),
                     })));
                     clock += duration;
                 }
                 Leg::Egress { stop, duration } => {
                     let duration = i64::from(duration.into_inner());
                     egress += duration;
+                    let walk = self.egress_path(stop)?;
                     legs.push(JourneyLeg::Egress(AccessEgressLeg {
                         mode,
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
                         stop: self.stop_ref(stop),
+                        walk,
+                        stop_moved: Vec::new(),
                     }));
                     clock += duration;
                 }
             }
         }
-        Journey {
+        mark_moved_stop_walks(&mut legs);
+        Ok(Journey {
             departure,
             arrival,
             duration_seconds: arrival - departure,
@@ -215,7 +284,7 @@ impl Builder<'_> {
             },
             wait_seconds: waiting,
             legs,
-        }
+        })
     }
 
     fn stop_ref(&self, stop: StopId) -> StopRef {
@@ -605,6 +674,60 @@ impl Builder<'_> {
             (chosen, reference) => Some(vehicle_from(self.snapshot, chosen, reference)),
         }
     }
+}
+
+/// Copies each `STOP_MOVED` mark of a ride onto the walk that reaches or leaves that stop.
+fn mark_moved_stop_walks(legs: &mut [JourneyLeg]) {
+    for index in 0..legs.len() {
+        let notices: Vec<(usize, StopMovedNotice)> = match &legs[index] {
+            JourneyLeg::Transit(leg) => leg
+                .alerts
+                .iter()
+                .flat_map(|alert| walks_affected_by(index, alert))
+                .collect(),
+            _ => continue,
+        };
+        for (walk, notice) in notices {
+            if let Some(leg) = legs.get_mut(walk) {
+                match leg {
+                    JourneyLeg::Access(leg) | JourneyLeg::Egress(leg) => {
+                        leg.stop_moved.push(notice);
+                    }
+                    JourneyLeg::Transfer(leg) => leg.stop_moved.push(notice),
+                    JourneyLeg::Transit(_) => {}
+                }
+            }
+        }
+    }
+}
+
+/// The walking legs next to ride `index` that a `STOP_MOVED` alert concerns.
+fn walks_affected_by(index: usize, alert: &LegAlert) -> Vec<(usize, StopMovedNotice)> {
+    let Some(moved) = &alert.moved_stops else {
+        return Vec::new();
+    };
+    moved
+        .iter()
+        .filter_map(|stop| {
+            // Walks run to a boarding and from an alighting.
+            let (walk, walk_end) = match stop.role {
+                "boarding" => (index.checked_sub(1)?, "end"),
+                "alighting" => (index + 1, "start"),
+                _ => return None,
+            };
+            Some((
+                walk,
+                StopMovedNotice {
+                    walk_end,
+                    stop_id: stop.stop_id.clone(),
+                    name: stop.name.clone(),
+                    header: alert.alert.header.clone(),
+                    description: alert.alert.description.clone(),
+                    url: alert.alert.url.clone(),
+                },
+            ))
+        })
+        .collect()
 }
 
 /// What a stop visit needs to know about its ride.

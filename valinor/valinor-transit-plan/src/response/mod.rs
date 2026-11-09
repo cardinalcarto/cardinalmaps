@@ -13,12 +13,14 @@ mod vehicle;
 use serde::Serialize;
 use serde_with::skip_serializing_none;
 
-pub(crate) use build::build_response;
+pub(crate) use build::{build_response, language_supported};
+pub(crate) use vehicle::lower;
 pub(crate) use vehicle::vehicle_update;
 
 /// The answer to one planning query.
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct PlanResponse<W> {
+pub struct PlanResponse {
     /// When the response was generated, in POSIX seconds.
     pub generated_at: i64,
     /// The departures searched.
@@ -26,7 +28,9 @@ pub struct PlanResponse<W> {
     /// What real-time data this answer used, and how old it was.
     pub realtime: RealtimeStatus,
     /// Every Pareto-optimal journey of the window, by departure then trips.
-    pub journeys: Vec<Journey<W>>,
+    pub journeys: Vec<Journey>,
+    /// How long the whole trip takes without transit, in seconds, when a street search found one.
+    pub direct_seconds: Option<u32>,
 }
 
 /// The departure window of a query.
@@ -98,7 +102,7 @@ pub enum FeedState {
 /// One Pareto-optimal way to make the trip.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Journey<W> {
+pub struct Journey {
     /// When the rider leaves the origin, in POSIX seconds.
     pub departure: i64,
     /// When the rider reaches the destination, in POSIX seconds.
@@ -112,7 +116,7 @@ pub struct Journey<W> {
     /// Time spent waiting for a boarding after the access or a transfer.
     pub wait_seconds: i64,
     /// The legs in travel order.
-    pub legs: Vec<JourneyLeg<W>>,
+    pub legs: Vec<JourneyLeg>,
 }
 
 /// How long a journey spends off the vehicle, on foot or on a bicycle.
@@ -131,18 +135,19 @@ pub struct WalkDurations {
 /// One leg of a journey.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum JourneyLeg<W> {
+pub enum JourneyLeg {
     /// From the origin to the first stop.
     Access(AccessEgressLeg),
     /// A ride on one trip.
     Transit(Box<TransitLeg>),
     /// A walk or ride between two different stops.
-    Transfer(Box<TransferLeg<W>>),
+    Transfer(Box<TransferLeg>),
     /// From the last stop to the destination.
     Egress(AccessEgressLeg),
 }
 
 /// A leg on foot or by bicycle between the journey's ends and a stop.
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AccessEgressLeg {
     /// `walking` or `cycling`.
@@ -155,12 +160,17 @@ pub struct AccessEgressLeg {
     pub arrival: i64,
     /// The stop at the transit end of this leg.
     pub stop: StopRef,
+    /// The street path, when a street search expanded it.
+    pub walk: Option<WalkPath>,
+    /// `STOP_MOVED` alerts about the stop this leg walks to or from, to show next to the walk.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stop_moved: Vec<StopMovedNotice>,
 }
 
 /// A leg on foot or by bicycle between two stops.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct TransferLeg<W> {
+pub struct TransferLeg {
     /// `walking` or `cycling`.
     pub mode: &'static str,
     /// How long the leg takes.
@@ -173,8 +183,69 @@ pub struct TransferLeg<W> {
     pub from: StopRef,
     /// The stop reached.
     pub to: StopRef,
-    /// The street path, once a transfer search can expand it.
-    pub walk: Option<W>,
+    /// The street path, when a street search expanded it.
+    pub walk: Option<WalkPath>,
+    /// `STOP_MOVED` alerts about the stop this leg walks to or from, to show next to the walk.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stop_moved: Vec<StopMovedNotice>,
+}
+
+/// A `STOP_MOVED` alert, attached to the walk that goes to or from the moved stop.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StopMovedNotice {
+    /// `end` for a walk to the stop, `start` for a walk from it.
+    pub walk_end: &'static str,
+    /// The moved stop's `stop_id`.
+    pub stop_id: String,
+    /// The moved stop's name.
+    pub name: Option<String>,
+    /// The alert's short text, in every language; the new location is only ever in prose.
+    pub header: Vec<Translation>,
+    /// The alert's long text, in every language.
+    pub description: Vec<Translation>,
+    /// The alert's URL, in every language.
+    pub url: Vec<Translation>,
+}
+
+/// A real street path for a walking or cycling leg.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WalkPath {
+    /// The path's length, in meters.
+    pub distance_meters: f64,
+    /// How long the street search says it takes, in seconds.
+    pub duration_seconds: f64,
+    /// The path as a polyline6 string, as Valhalla's route shapes are.
+    pub shape: String,
+    /// Turn-by-turn directions.
+    pub maneuvers: Vec<WalkManeuver>,
+}
+
+/// One instruction along a walking or cycling path.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WalkManeuver {
+    /// The maneuver's type, as Valhalla's `Maneuver` names it, in `snake_case`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// What to do, in words.
+    pub instruction: String,
+    /// What to say before the maneuver.
+    pub verbal_pre_transition_instruction: Option<String>,
+    /// What to say after the maneuver.
+    pub verbal_post_transition_instruction: Option<String>,
+    /// Streets this maneuver follows.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub street_names: Vec<String>,
+    /// The maneuver's length, in meters.
+    pub distance_meters: f64,
+    /// The maneuver's time, in seconds.
+    pub duration_seconds: f64,
+    /// Its start in the path's decoded shape.
+    pub begin_shape_index: u32,
+    /// Its end in the path's decoded shape.
+    pub end_shape_index: u32,
 }
 
 /// A ride on one trip.

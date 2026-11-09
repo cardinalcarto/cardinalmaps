@@ -3012,16 +3012,26 @@ dependencies = [
 name = "valinor-transit-plan"
 version = "0.1.0"
 dependencies = [
+ "illuvatar",
  "insta",
+ "jiff",
  "proptest",
  "prost",
+ "self_cell",
  "serde",
  "serde_json",
  "serde_with",
  "thiserror 2.0.21",
+ "valhalla-graphtile",
+ "valhalla-proto",
  "valinor-gtfs",
  "valinor-gtfs-rt",
+ "valinor-loki",
+ "valinor-router",
+ "valinor-sif",
+ "valinor-thor",
  "valinor-transit",
+ "valinor-walk",
 ]
 
 [[package]]

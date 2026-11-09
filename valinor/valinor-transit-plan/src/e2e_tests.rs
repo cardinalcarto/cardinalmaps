@@ -16,6 +16,8 @@
     clippy::print_stderr,
     clippy::print_stdout,
     clippy::unwrap_used,
+    clippy::cast_precision_loss,
+    clippy::too_many_lines,
     reason = "reporting tests"
 )]
 
@@ -28,15 +30,15 @@ use valinor_gtfs::{
     FeedId as CompileFeedId, FeedInput as CompileInput, LatLon, LoadedTimetable, ZipSource, compile,
 };
 use valinor_gtfs_rt::FeedKind;
-use valinor_transit::Router;
 
-use crate::plan::{TransitRequest, plan};
-use crate::response::{JourneyLeg, PlanResponse, TransitLeg};
-use crate::state::{FeedUpdate, StateConfig, TransitState};
-use crate::testing::{StraightLineAccess, StraightLineTransfers, StraightWalk};
+use crate::plan::{TransitRequest, TravelMode};
+use crate::response::{JourneyLeg, PlanResponse, TransitLeg, WalkPath};
+use crate::state::{FeedUpdate, TransitState};
+use crate::street::{StreetConfig, StreetPlanner};
 
 const ROOT: &str = "/mnt/maps/cardinal/transit/kcm";
 const FEED: &str = "kcm";
+const TILES: &str = "/mnt/maps/cardinal/routing-elevation-i2b/washington/tiles.tar";
 
 fn compiled_bytes() -> &'static [u8] {
     static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
@@ -53,12 +55,15 @@ fn compiled_bytes() -> &'static [u8] {
     })
 }
 
-fn state() -> TransitState {
+fn planner() -> StreetPlanner {
     let started = Instant::now();
     let loaded = LoadedTimetable::from_bytes(compiled_bytes().to_vec()).unwrap();
-    let state = TransitState::new(loaded, StateConfig::default()).unwrap();
-    println!("TransitState::new: {:?}", started.elapsed());
-    state
+    let planner = StreetPlanner::open(loaded, &[TILES], StreetConfig::default()).unwrap();
+    println!(
+        "StreetPlanner::open (snaps every stop for walking and cycling): {:?}",
+        started.elapsed()
+    );
+    planner
 }
 
 /// The capture directories under `rt/`, oldest first.
@@ -106,7 +111,7 @@ fn ingest_capture(state: &TransitState, directory: &Path) -> i64 {
     newest
 }
 
-fn transit_legs<W>(journey: &crate::response::Journey<W>) -> Vec<&TransitLeg> {
+fn transit_legs(journey: &crate::response::Journey) -> Vec<&TransitLeg> {
     journey
         .legs
         .iter()
@@ -117,33 +122,31 @@ fn transit_legs<W>(journey: &crate::response::Journey<W>) -> Vec<&TransitLeg> {
         .collect()
 }
 
-fn query(
-    state: &TransitState,
+#[allow(clippy::too_many_arguments, reason = "a test helper")]
+fn query_mode(
+    planner: &StreetPlanner,
     name: &str,
     from: LatLon,
     to: LatLon,
     now: i64,
     departure: i64,
-) -> PlanResponse<StraightWalk> {
-    let snapshot = state.pin(now).unwrap();
-    let mut router = Router::new(StraightLineTransfers::new(
-        snapshot.stop_locations(),
-        800.0,
-        1.33,
-    ));
-    let mut access = StraightLineAccess::default();
-    let request = TransitRequest::new(from, to, departure, now);
+    mode: TravelMode,
+) -> PlanResponse {
+    let mut request = TransitRequest::new(from, to, departure, now);
+    request.mode = mode;
     let started = Instant::now();
-    let response = plan(state, &mut router, &mut access, &request, &|| false).unwrap();
+    let response = planner.plan(&request, "en-US", &|| false).unwrap();
     let elapsed = started.elapsed();
     println!(
-        "{name}: {} journeys in {elapsed:?} ({:?})",
+        "{name} ({:?}): {} journeys in {elapsed:?} ({:?}), direct {:?}s",
+        mode,
         response.journeys.len(),
         response.realtime.level,
+        response.direct_seconds,
     );
     for journey in &response.journeys {
         let legs = transit_legs(journey);
-        let route_names: Vec<String> = legs
+        let routes: Vec<String> = legs
             .iter()
             .map(|leg| {
                 leg.route
@@ -160,18 +163,106 @@ fn query(
             journey.departure - departure,
             journey.arrival - departure,
             journey.trips,
-            route_names.join(", "),
+            routes.join(", "),
             journey.walking.total_seconds,
         );
     }
+    check_walks(name, &response);
     response
+}
+
+fn query(
+    planner: &StreetPlanner,
+    name: &str,
+    from: LatLon,
+    to: LatLon,
+    now: i64,
+    departure: i64,
+) -> PlanResponse {
+    query_mode(planner, name, from, to, now, departure, TravelMode::Walking)
+}
+
+/// Every walk has a shape, a distance, instructions, and a duration close to the search's.
+fn check_walks(name: &str, response: &PlanResponse) {
+    let mut checked = 0;
+    let mut check = |what: &str, duration: i64, walk: Option<&WalkPath>| {
+        let Some(walk) = walk else {
+            // A zero-length walk has no edges to draw.
+            assert!(duration <= 1, "{name}: {what} of {duration}s has no path");
+            return;
+        };
+        assert!(!walk.shape.is_empty(), "{name}: {what} has no shape");
+        // A rider already standing at the stop has a walk of no length, but still a shape.
+        assert!(
+            walk.distance_meters > 0.0 || duration <= 1,
+            "{name}: {what} of {duration}s has no distance"
+        );
+        assert!(
+            walk.maneuvers.len() >= 2,
+            "{name}: {what} has too few maneuvers: {walk:?}"
+        );
+        assert!(
+            walk.maneuvers.iter().all(|m| !m.instruction.is_empty()),
+            "{name}: {what} has a maneuver with no instruction"
+        );
+        let difference = (walk.duration_seconds - duration as f64).abs();
+        assert!(
+            difference <= (0.25 * duration as f64).max(45.0),
+            "{name}: {what} lasts {duration}s but its path says {}s",
+            walk.duration_seconds
+        );
+        checked += 1;
+    };
+    for journey in &response.journeys {
+        for leg in &journey.legs {
+            match leg {
+                JourneyLeg::Access(l) => check("access", l.duration_seconds, l.walk.as_ref()),
+                JourneyLeg::Egress(l) => check("egress", l.duration_seconds, l.walk.as_ref()),
+                JourneyLeg::Transfer(l) => check("transfer", l.duration_seconds, l.walk.as_ref()),
+                JourneyLeg::Transit(_) => {}
+            }
+        }
+    }
+    let _ = checked;
+}
+
+/// A transfer that walks along a street and turns, to show it isn't a trivial hop.
+fn turning_transfer(response: &PlanResponse) -> Option<&crate::response::TransferLeg> {
+    response
+        .journeys
+        .iter()
+        .flat_map(|journey| &journey.legs)
+        .find_map(|leg| match leg {
+            JourneyLeg::Transfer(leg)
+                if leg.walk.as_ref().is_some_and(|w| w.maneuvers.len() >= 3) =>
+            {
+                Some(leg.as_ref())
+            }
+            _ => None,
+        })
+}
+
+fn print_walk(label: &str, walk: &WalkPath) {
+    println!(
+        "  {label}: {:.0} m, {:.0} s, shape {} chars",
+        walk.distance_meters,
+        walk.duration_seconds,
+        walk.shape.len()
+    );
+    for maneuver in &walk.maneuvers {
+        println!(
+            "    [{}] {} ({:.0} m)",
+            maneuver.kind, maneuver.instruction, maneuver.distance_meters
+        );
+    }
 }
 
 /// Overnight service, replayed at its own capture time, with real-time data applied.
 #[test]
 #[ignore = "needs the real King County data under /mnt/maps/cardinal/transit"]
 fn e2e_overnight_replay() {
-    let state = state();
+    let planner = planner();
+    let state = planner.state();
     let directory = capture_at("20261109T073000Z");
     println!("capture: {}", directory.display());
     let started = Instant::now();
@@ -211,7 +302,7 @@ fn e2e_overnight_replay() {
     ];
     let mut json_written = false;
     for (name, from, to) in cases {
-        let response = query(&state, name, from, to, now, now);
+        let response = query(&planner, name, from, to, now, now);
         assert!(!response.journeys.is_empty(), "{name} has no journey");
         assert_ne!(
             response.realtime.level,
@@ -257,7 +348,7 @@ fn e2e_overnight_replay() {
         snapshot.stats().vehicles_matched,
     );
     let response = query(
-        &state,
+        &planner,
         "later: 3rd/Pine to U District",
         point(47.6105, -122.3376),
         point(47.6585, -122.3130),
@@ -280,10 +371,10 @@ fn e2e_overnight_replay() {
 #[test]
 #[ignore = "needs the real King County data under /mnt/maps/cardinal/transit"]
 fn e2e_stale_capture_falls_back_to_schedule() {
-    let state = state();
-    let now = ingest_capture(&state, &capture_at("20261109T073000Z"));
+    let planner = planner();
+    let now = ingest_capture(planner.state(), &capture_at("20261109T073000Z"));
     let response = query(
-        &state,
+        &planner,
         "20 minutes after the capture",
         point(47.6105, -122.3376),
         point(47.6585, -122.3130),
@@ -307,7 +398,7 @@ fn e2e_stale_capture_falls_back_to_schedule() {
 #[test]
 #[ignore = "needs the real King County data under /mnt/maps/cardinal/transit"]
 fn e2e_daytime_schedule() {
-    let state = state();
+    let planner = planner();
     // Monday 2026-11-09 08:30 PST.
     // 2026-11-09T00:00:00-08:00 is 1794211200.
     let now = 1_794_211_200 + 8 * 3600 + 30 * 60;
@@ -329,12 +420,44 @@ fn e2e_daytime_schedule() {
         ),
     ];
     for (name, from, to) in cases {
-        let response = query(&state, name, from, to, now, now);
+        let response = query(&planner, name, from, to, now, now);
         assert!(!response.journeys.is_empty(), "{name} has no journey");
         assert_eq!(
             response.realtime.level,
             crate::response::RealtimeLevel::Schedule
         );
+        if let Some(transfer) = turning_transfer(&response) {
+            println!(
+                "real transfer from {:?} to {:?}:",
+                transfer.from.name, transfer.to.name
+            );
+            print_walk("transfer", transfer.walk.as_ref().unwrap());
+        }
+    }
+
+    // A bicycle journey, by the same synthetic daytime clock.
+    let response = query_mode(
+        &planner,
+        "bicycle: U District to Northgate",
+        point(47.6553, -122.3100),
+        point(47.7063, -122.3280),
+        now,
+        now,
+        TravelMode::Cycling,
+    );
+    assert!(!response.journeys.is_empty());
+    for journey in response.journeys.iter().take(1) {
+        for leg in &journey.legs {
+            match leg {
+                JourneyLeg::Access(l) => {
+                    print_walk("cycle to the first stop", l.walk.as_ref().unwrap())
+                }
+                JourneyLeg::Egress(l) => {
+                    print_walk("cycle from the last stop", l.walk.as_ref().unwrap())
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -342,8 +465,9 @@ fn e2e_daytime_schedule() {
 #[test]
 #[ignore = "needs the real King County data under /mnt/maps/cardinal/transit"]
 fn e2e_stop_moved_marks_the_boarding_leg() {
-    let state = state();
-    let now = ingest_capture(&state, &capture_at("20261109T073000Z"));
+    let planner = planner();
+    let state = planner.state();
+    let now = ingest_capture(state, &capture_at("20261109T073000Z"));
     let snapshot = state.refresh(now).unwrap();
     let compiled = *snapshot.data.loaded.timetable();
 
@@ -368,6 +492,7 @@ fn e2e_stop_moved_marks_the_boarding_leg() {
 
     let mut asked = 0;
     let mut marked = Vec::new();
+    let mut walking_notices = 0;
     for (route_id, stop_id) in &moved {
         let Some(route) = compiled.route_by_gtfs_id(FEED, route_id) else {
             continue;
@@ -396,7 +521,7 @@ fn e2e_stop_moved_marks_the_boarding_leg() {
         // Overnight service is thin; ask at midday, on the schedule's times, with the alert.
         let departure = 1_794_211_200 + 12 * 3600;
         let response = query(
-            &state,
+            &planner,
             &format!("board at moved stop {stop_id} on {route_id}"),
             origin,
             destination,
@@ -411,8 +536,22 @@ fn e2e_stop_moved_marks_the_boarding_leg() {
                     }
                 }
             }
+            for leg in &journey.legs {
+                let notices = match leg {
+                    JourneyLeg::Access(l) => &l.stop_moved,
+                    JourneyLeg::Transfer(l) => &l.stop_moved,
+                    JourneyLeg::Egress(l) => &l.stop_moved,
+                    JourneyLeg::Transit(_) => continue,
+                };
+                walking_notices += notices.len();
+            }
         }
     }
+    println!("walking legs with a moved-stop notice: {walking_notices}");
+    assert!(
+        walking_notices > 0,
+        "no walking leg carries a moved-stop notice"
+    );
     println!("asked {asked}; marked legs: {}", marked.len());
     if let Some((stop, moved_stops)) = marked.first() {
         println!("first marked: stop {stop}, {moved_stops:?}");

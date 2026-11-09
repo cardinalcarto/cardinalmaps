@@ -41,9 +41,11 @@ use valinor_gtfs_rt::{
     RiderData, build_overlay,
 };
 use valinor_transit::{Snapshot, StopId, Timetable};
+use valinor_walk::{SnappedStop, StopSnaps, WalkError};
 
 use crate::error::StateError;
 use crate::lookup::CompiledLookup;
+use crate::plan::TravelMode;
 use crate::response::{VehicleUpdate, vehicle_update};
 use crate::window::{WindowData, dates_around, required_dates, service_date_at};
 
@@ -91,6 +93,63 @@ pub enum IngestOutcome {
     Undecodable(DecodeError),
 }
 
+/// Snaps stops to the street network for a travel mode.
+///
+/// The state owner has no tiles; a [`crate::StreetPlanner`] provides this, and tests can fake it.
+pub trait StopSnapper: core::fmt::Debug + Send + Sync {
+    /// Snaps every stop, by position, for building the static table.
+    ///
+    /// # Errors
+    ///
+    /// If a tile can't be read, or a stop lands in a tile of a different build.
+    fn snap_all(&self, mode: TravelMode, stops: &[(f64, f64)]) -> Result<StopSnaps, WalkError>;
+
+    /// Snaps one stop that arrived with a real-time overlay.
+    ///
+    /// # Errors
+    ///
+    /// If a tile can't be read.
+    fn snap_one(&self, mode: TravelMode, ll: (f64, f64)) -> Result<SnappedStop, WalkError>;
+}
+
+/// Each travel mode's snaps of a snapshot's stops.
+#[derive(Debug, Clone)]
+pub struct ModeSnaps {
+    walking: Arc<StopSnaps>,
+    cycling: Arc<StopSnaps>,
+}
+
+impl ModeSnaps {
+    /// The snaps for a travel mode.
+    pub fn for_mode(&self, mode: TravelMode) -> &Arc<StopSnaps> {
+        match mode {
+            TravelMode::Walking => &self.walking,
+            TravelMode::Cycling => &self.cycling,
+        }
+    }
+
+    fn with_new_stops(
+        &self,
+        snapper: &dyn StopSnapper,
+        new_stops: &[NewStop],
+    ) -> Result<Self, WalkError> {
+        if new_stops.is_empty() {
+            return Ok(self.clone());
+        }
+        // Shares the static table's cost only: a new-stop overlay is rare.
+        let (mut walking, mut cycling) = ((*self.walking).clone(), (*self.cycling).clone());
+        for stop in new_stops {
+            let ll = (f64::from(stop.longitude), f64::from(stop.latitude));
+            walking.insert(stop.stop, snapper.snap_one(TravelMode::Walking, ll)?)?;
+            cycling.insert(stop.stop, snapper.snap_one(TravelMode::Cycling, ll)?)?;
+        }
+        Ok(Self {
+            walking: Arc::new(walking),
+            cycling: Arc::new(cycling),
+        })
+    }
+}
+
 /// A stop that a street search can snap: base stops and an overlay's new ones.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StopLocation {
@@ -122,6 +181,7 @@ pub struct TransitSnapshot {
     pub(crate) new_stops: Vec<NewStop>,
     pub(crate) stats: OverlayStats,
     pub(crate) built_at: i64,
+    pub(crate) snaps: Option<ModeSnaps>,
     /// The service date this window is centered on, for a snapshot of the current day.
     ///
     /// `None` for an on-demand window, which never rolls over.
@@ -130,6 +190,13 @@ pub struct TransitSnapshot {
 }
 
 impl TransitSnapshot {
+    /// Each mode's snaps of this snapshot's stops, when a street network is attached.
+    ///
+    /// These cover the overlay's new stops, and are bound to the tile build they were made on.
+    pub fn snaps(&self) -> Option<&ModeSnaps> {
+        self.snaps.as_ref()
+    }
+
     /// The timetable state a search pins.
     pub fn snapshot(&self) -> &Arc<Snapshot> {
         &self.snapshot
@@ -203,6 +270,9 @@ pub struct TransitState {
     config: StateConfig,
     current: RwLock<Option<Arc<TransitSnapshot>>>,
     writer: Mutex<Writer>,
+    snapper: Option<Box<dyn StopSnapper>>,
+    /// The static stops' snaps, made once.
+    base_snaps: Option<ModeSnaps>,
     /// Bumped by every ingest, so a pin can see a snapshot is behind without taking the mutex.
     feed_generation: AtomicU64,
 }
@@ -227,6 +297,33 @@ impl TransitState {
     ///
     /// If `valinor-transit` rejects the file's tables.
     pub fn new(loaded: LoadedTimetable, config: StateConfig) -> Result<Self, StateError> {
+        Self::build(loaded, config, None)
+    }
+
+    /// Takes ownership of a loaded timetable and snaps its stops to a street network.
+    ///
+    /// New stops in overlays are snapped with `snapper` when each overlay is built.
+    ///
+    /// # Performance
+    ///
+    /// Snaps every stop for each travel mode once, which is the slow part of startup.
+    ///
+    /// # Errors
+    ///
+    /// If `valinor-transit` rejects the file's tables, or a stop can't be snapped.
+    pub fn with_snapper(
+        loaded: LoadedTimetable,
+        config: StateConfig,
+        snapper: Box<dyn StopSnapper>,
+    ) -> Result<Self, StateError> {
+        Self::build(loaded, config, Some(snapper))
+    }
+
+    fn build(
+        loaded: LoadedTimetable,
+        config: StateConfig,
+        snapper: Option<Box<dyn StopSnapper>>,
+    ) -> Result<Self, StateError> {
         let timetable = loaded.timetable().to_timetable()?;
         let mut feeds = Vec::new();
         for info in loaded.timetable().feeds() {
@@ -238,6 +335,16 @@ impl TransitState {
             })?;
             feeds.push(feed);
         }
+        let base_snaps = match &snapper {
+            None => None,
+            Some(snapper) => {
+                let points = stop_points(loaded.timetable());
+                Some(ModeSnaps {
+                    walking: Arc::new(snapper.snap_all(TravelMode::Walking, &points)?),
+                    cycling: Arc::new(snapper.snap_all(TravelMode::Cycling, &points)?),
+                })
+            }
+        };
         Ok(Self {
             data: Arc::new(TimetableData {
                 loaded,
@@ -247,6 +354,8 @@ impl TransitState {
             config,
             current: RwLock::new(None),
             writer: Mutex::new(Writer::default()),
+            snapper,
+            base_snaps,
             feed_generation: AtomicU64::new(0),
         })
     }
@@ -465,6 +574,12 @@ impl TransitState {
             now,
             self.config.overlay,
         )?;
+        let snaps = match (&self.base_snaps, &self.snapper) {
+            (Some(base), Some(snapper)) => {
+                Some(base.with_new_stops(snapper.as_ref(), &overlay.new_stops)?)
+            }
+            _ => None,
+        };
         Ok(TransitSnapshot {
             data: Arc::clone(&self.data),
             window,
@@ -473,10 +588,27 @@ impl TransitState {
             new_stops: overlay.new_stops,
             stats: overlay.stats,
             built_at: now,
+            snaps,
             center,
             feed_generation,
         })
     }
+}
+
+/// Every static stop's coordinates as `(lon, lat)`, by stop number.
+///
+/// A stop with no coordinates is at `(0, 0)`, where no tile set has a street, so it stays
+/// unsnapped; the table keeps its numbering.
+fn stop_points(compiled: &valinor_gtfs::CompiledTimetable<'_>) -> Vec<(f64, f64)> {
+    let count = u32::try_from(compiled.stop_count()).unwrap_or(u32::MAX);
+    (0..count)
+        .map(|raw| {
+            compiled
+                .stop(StopId::new(raw))
+                .and_then(|info| info.coordinate)
+                .map_or((0.0, 0.0), |coordinate| (coordinate.lon, coordinate.lat))
+        })
+        .collect()
 }
 
 /// The feeds in a stable order, so overlays and statuses are deterministic.

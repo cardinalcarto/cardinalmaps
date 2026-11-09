@@ -448,6 +448,7 @@ impl Default for StraightLineAccess {
 
 impl AccessEgressSearch for StraightLineAccess {
     type Error = Infallible;
+    type Walk = StraightWalk;
 
     fn tables(
         &mut self,

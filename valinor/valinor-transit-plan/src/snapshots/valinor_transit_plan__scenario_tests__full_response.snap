@@ -69,7 +69,36 @@ expression: "&response"
             "longitude": -122.33,
             "wheelchair_boarding": "yes",
             "time_zone": "America/Los_Angeles"
-          }
+          },
+          "stop_moved": [
+            {
+              "walk_end": "end",
+              "stop_id": "S1",
+              "name": "Alpha",
+              "header": [
+                {
+                  "text": "Stop relocated",
+                  "language": "en"
+                },
+                {
+                  "text": "Parada reubicada",
+                  "language": "es"
+                }
+              ],
+              "description": [
+                {
+                  "text": "The temporary stop is on Pine St just east of the old one.",
+                  "language": "en"
+                }
+              ],
+              "url": [
+                {
+                  "text": "https://m.test/alert",
+                  "language": "en"
+                }
+              ]
+            }
+          ]
         },
         {
           "type": "transit",
@@ -323,9 +352,6 @@ expression: "&response"
             "latitude": 47.6204,
             "longitude": -122.33,
             "time_zone": "America/Los_Angeles"
-          },
-          "walk": {
-            "meters": 44
           }
         },
         {
@@ -438,7 +464,36 @@ expression: "&response"
             "longitude": -122.33,
             "wheelchair_boarding": "yes",
             "time_zone": "America/Los_Angeles"
-          }
+          },
+          "stop_moved": [
+            {
+              "walk_end": "end",
+              "stop_id": "S1",
+              "name": "Alpha",
+              "header": [
+                {
+                  "text": "Stop relocated",
+                  "language": "en"
+                },
+                {
+                  "text": "Parada reubicada",
+                  "language": "es"
+                }
+              ],
+              "description": [
+                {
+                  "text": "The temporary stop is on Pine St just east of the old one.",
+                  "language": "en"
+                }
+              ],
+              "url": [
+                {
+                  "text": "https://m.test/alert",
+                  "language": "en"
+                }
+              ]
+            }
+          ]
         },
         {
           "type": "transit",
@@ -658,9 +713,6 @@ expression: "&response"
             "latitude": 47.6204,
             "longitude": -122.33,
             "time_zone": "America/Los_Angeles"
-          },
-          "walk": {
-            "meters": 44
           }
         },
         {

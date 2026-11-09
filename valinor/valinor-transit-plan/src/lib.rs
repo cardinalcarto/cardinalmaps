@@ -13,10 +13,12 @@
 //! - [`CompiledLookup`] is the bridge that lets the GTFS-RT overlay builder see compiled GTFS.
 
 mod error;
+mod json;
 mod lookup;
 mod plan;
 pub mod response;
 mod state;
+mod street;
 mod window;
 
 #[cfg(test)]
@@ -24,15 +26,20 @@ mod e2e_tests;
 #[cfg(test)]
 mod scenario_tests;
 #[cfg(test)]
+mod street_tests;
+#[cfg(test)]
 mod testing;
 
 pub use error::{PlanError, StateError};
+pub use json::{JsonCoordinate, JsonResponse, PlanRequestBody};
 pub use lookup::CompiledLookup;
 pub use plan::{
     AccessEgressRequest, AccessEgressSearch, AccessEgressTables, MAX_DEPARTURE_WINDOW_SECONDS,
-    TransitOptions, TransitRequest, TravelMode, plan,
+    TransitOptions, TransitRequest, TravelMode, plan, plan_pinned,
 };
-pub use response::{PlanResponse, Vehicle, VehicleUpdate};
+pub use response::{PlanResponse, StopMovedNotice, Vehicle, VehicleUpdate, WalkManeuver, WalkPath};
 pub use state::{
-    FeedUpdate, IngestOutcome, StateConfig, StopLocation, TransitSnapshot, TransitState,
+    FeedUpdate, IngestOutcome, ModeSnaps, StateConfig, StopLocation, StopSnapper, TransitSnapshot,
+    TransitState,
 };
+pub use street::{OpenPlannerError, StreetConfig, StreetError, StreetPlanError, StreetPlanner};

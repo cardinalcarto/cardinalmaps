@@ -13,9 +13,9 @@ use crate::plan::{TransitOptions, TransitRequest, TravelMode, plan};
 use crate::response::{FeedState, JourneyLeg, PlanResponse, RealtimeLevel, TransitLeg};
 use crate::state::{FeedUpdate, IngestOutcome, TransitSnapshot, TransitState};
 use crate::testing::{
-    FEED, JUNE_15, JUNE_16, StraightLineAccess, StraightLineTransfers, StraightWalk, alert_entity,
-    delay_update, encoded_feed, june_15, route_selector, route_stop_selector, stop_selector,
-    synthetic_state, vehicle_entity,
+    FEED, JUNE_15, JUNE_16, StraightLineAccess, StraightLineTransfers, alert_entity, delay_update,
+    encoded_feed, june_15, route_selector, route_stop_selector, stop_selector, synthetic_state,
+    vehicle_entity,
 };
 use valinor_gtfs_rt::proto;
 
@@ -57,7 +57,7 @@ fn trip_feed(
         .expect("known feed")
 }
 
-fn run(state: &TransitState, request: &TransitRequest) -> PlanResponse<StraightWalk> {
+fn run(state: &TransitState, request: &TransitRequest) -> PlanResponse {
     let snapshot = state.pin(request.now).expect("pin");
     let mut router = Router::new(StraightLineTransfers::new(
         snapshot.stop_locations(),
@@ -74,7 +74,7 @@ fn run(state: &TransitState, request: &TransitRequest) -> PlanResponse<StraightW
     .expect("plan succeeds")
 }
 
-fn transit_legs<W>(journey: &crate::response::Journey<W>) -> Vec<&TransitLeg> {
+fn transit_legs(journey: &crate::response::Journey) -> Vec<&TransitLeg> {
     journey
         .legs
         .iter()
@@ -86,9 +86,7 @@ fn transit_legs<W>(journey: &crate::response::Journey<W>) -> Vec<&TransitLeg> {
 }
 
 /// The `S1`-to-`S6` journey with both rides.
-fn two_trip_journey(
-    response: &PlanResponse<StraightWalk>,
-) -> &crate::response::Journey<StraightWalk> {
+fn two_trip_journey(response: &PlanResponse) -> &crate::response::Journey {
     response
         .journeys
         .iter()
@@ -995,7 +993,10 @@ fn a_cycling_query_only_rides_routes_that_allow_bikes() {
             lon: -122.3285,
         },
         mode: TravelMode::Cycling,
-        options: TransitOptions { max_trips: 2 },
+        options: TransitOptions {
+            max_trips: 2,
+            ..TransitOptions::default()
+        },
         ..morning_request()
     };
     let response = run(&state, &request);
@@ -1186,7 +1187,10 @@ fn an_added_trip_gets_a_leg_with_predictions_and_no_schedule() {
         },
         departure: june_15(7, 50),
         now: FEED_TIME,
-        options: TransitOptions { max_trips: 1 },
+        options: TransitOptions {
+            max_trips: 1,
+            ..TransitOptions::default()
+        },
         ..morning_request()
     };
     let response = run(&state, &request);
@@ -1230,7 +1234,10 @@ fn a_replaced_trip_uses_its_own_stops_and_no_static_shape() {
             lon: -122.3300,
         },
         now: FEED_TIME,
-        options: TransitOptions { max_trips: 1 },
+        options: TransitOptions {
+            max_trips: 1,
+            ..TransitOptions::default()
+        },
         ..morning_request()
     };
     let response = run(&state, &request);

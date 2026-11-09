@@ -4,12 +4,12 @@ use core::error::Error;
 
 use valinor_gtfs::LatLon;
 use valinor_transit::{
-    RouteAttributes, RouteFilter, Router, SearchError, Seconds, StopTable, Time, TransferSearch,
-    TransitQuery,
+    RouteAttributes, RouteFilter, Router, SearchError, Seconds, StopId, StopTable, Time,
+    TransferSearch, TransitQuery,
 };
 
 use crate::error::PlanError;
-use crate::response::{PlanResponse, build_response};
+use crate::response::{PlanResponse, WalkPath, build_response};
 use crate::state::{TransitSnapshot, TransitState};
 
 /// The longest departure window a query may ask for.
@@ -49,11 +49,16 @@ impl TravelMode {
 pub struct TransitOptions {
     /// The most trips a journey may use; at most [`valinor_transit::MAX_TRIPS`].
     pub max_trips: u8,
+    /// The longest access or egress leg to consider, in seconds.
+    pub max_walk_seconds: u32,
 }
 
 impl Default for TransitOptions {
     fn default() -> Self {
-        Self { max_trips: 8 }
+        Self {
+            max_trips: 8,
+            max_walk_seconds: 1800,
+        }
     }
 }
 
@@ -117,14 +122,18 @@ pub struct AccessEgressTables {
     pub direct: Option<Seconds>,
 }
 
-/// Computes access and egress tables, once per query.
+/// Computes access and egress tables, once per query, and expands walking legs for the response.
 ///
 /// A table must cover every stop riders could use: the search doesn't walk between it and the
 /// first boarding, or between the last alighting and the destination.
-/// `valinor-walk` implements this over tiles; tests use a straight-line search.
+/// `valinor-walk` implements this over tiles ([`crate::StreetPlanner`]); tests use a
+/// straight-line search. The expansion methods run after the journeys are found.
 pub trait AccessEgressSearch {
     /// A failure of the search itself.
     type Error: Error + 'static;
+
+    /// The transfer search's resolved walk, which [`Self::transfer_path`] expands.
+    type Walk;
 
     /// Computes the tables for one request.
     ///
@@ -136,27 +145,54 @@ pub trait AccessEgressSearch {
         request: &AccessEgressRequest<'_>,
         interrupt: &dyn Fn() -> bool,
     ) -> Result<AccessEgressTables, Self::Error>;
+
+    /// The walking path from the origin to `stop`, or `None` if it has none to show.
+    ///
+    /// # Errors
+    ///
+    /// If the path can't be expanded.
+    fn access_path(
+        &mut self,
+        _request: &AccessEgressRequest<'_>,
+        _stop: StopId,
+    ) -> Result<Option<WalkPath>, Self::Error> {
+        Ok(None)
+    }
+
+    /// The walking path from `stop` to the destination, or `None` if it has none to show.
+    ///
+    /// # Errors
+    ///
+    /// If the path can't be expanded.
+    fn egress_path(
+        &mut self,
+        _request: &AccessEgressRequest<'_>,
+        _stop: StopId,
+    ) -> Result<Option<WalkPath>, Self::Error> {
+        Ok(None)
+    }
+
+    /// The walking path of a transfer between two stops, or `None` if it has none to show.
+    ///
+    /// # Errors
+    ///
+    /// If the path can't be expanded.
+    fn transfer_path(
+        &mut self,
+        _request: &AccessEgressRequest<'_>,
+        _walk: &Self::Walk,
+        _from: StopId,
+        _to: StopId,
+    ) -> Result<Option<WalkPath>, Self::Error> {
+        Ok(None)
+    }
 }
 
-/// Answers a request over one pinned snapshot.
-///
-/// # Errors
-///
-/// If the request is invalid, `interrupt` asks to stop, or a search fails.
-#[expect(
-    clippy::type_complexity,
-    reason = "the one place both search errors meet"
-)]
-pub fn plan<T, A>(
-    state: &TransitState,
-    router: &mut Router<T>,
-    access_egress: &mut A,
-    request: &TransitRequest,
-    interrupt: &dyn Fn() -> bool,
-) -> Result<PlanResponse<T::Walk>, PlanError<T::Error, A::Error>>
+/// Checks a request and returns the last departure of its window.
+pub(crate) fn validated_latest<T, A>(request: &TransitRequest) -> Result<i64, PlanError<T, A>>
 where
-    T: TransferSearch,
-    A: AccessEgressSearch,
+    T: Error + 'static,
+    A: Error + 'static,
 {
     if request.window_seconds > MAX_DEPARTURE_WINDOW_SECONDS {
         return Err(PlanError::InvalidRequest("the window is longer than a day"));
@@ -169,27 +205,66 @@ where
     if request.options.max_trips == 0 || request.options.max_trips > valinor_transit::MAX_TRIPS {
         return Err(PlanError::InvalidRequest("max_trips is out of range"));
     }
-    let latest_unix = request
+    request
         .departure
         .checked_add(i64::from(request.window_seconds))
-        .ok_or(PlanError::InvalidRequest("the departure is out of range"))?;
+        .ok_or(PlanError::InvalidRequest("the departure is out of range"))
+}
 
+/// Answers a request over one pinned snapshot, pinning it first.
+///
+/// # Errors
+///
+/// If the request is invalid, `interrupt` asks to stop, or a search fails.
+pub fn plan<T, A>(
+    state: &TransitState,
+    router: &mut Router<T>,
+    access_egress: &mut A,
+    request: &TransitRequest,
+    interrupt: &dyn Fn() -> bool,
+) -> Result<PlanResponse, PlanError<T::Error, A::Error>>
+where
+    T: TransferSearch,
+    A: AccessEgressSearch<Walk = T::Walk>,
+{
+    let latest_unix = validated_latest(request)?;
     let snapshot = state.pin_for_departure(request.now, request.departure, latest_unix)?;
+    plan_pinned(&snapshot, router, access_egress, request, interrupt)
+}
 
+/// Answers a request over a snapshot the caller has already pinned.
+///
+/// A caller that pins first can prepare per-snapshot state (see [`crate::StreetPlanner`]).
+///
+/// # Errors
+///
+/// If the request is invalid, `interrupt` asks to stop, or a search fails.
+pub fn plan_pinned<T, A>(
+    snapshot: &TransitSnapshot,
+    router: &mut Router<T>,
+    access_egress: &mut A,
+    request: &TransitRequest,
+    interrupt: &dyn Fn() -> bool,
+) -> Result<PlanResponse, PlanError<T::Error, A::Error>>
+where
+    T: TransferSearch,
+    A: AccessEgressSearch<Walk = T::Walk>,
+{
+    let latest_unix = validated_latest(request)?;
     let tables = access_egress
         .tables(
             &AccessEgressRequest {
                 origin: request.origin,
                 destination: request.destination,
                 mode: request.mode,
-                snapshot: &snapshot,
+                snapshot,
             },
             interrupt,
         )
         .map_err(PlanError::AccessEgress)?;
 
-    let earliest = window_time(&snapshot, request.departure)?;
-    let latest = window_time(&snapshot, latest_unix)?;
+    let earliest = window_time(snapshot, request.departure)?;
+    let latest = window_time(snapshot, latest_unix)?;
 
     let query = TransitQuery {
         snapshot: snapshot.snapshot.clone(),
@@ -205,7 +280,8 @@ where
             other => PlanError::Search(other),
         })?;
 
-    Ok(build_response(&snapshot, request, profile, tables.direct))
+    build_response(snapshot, request, profile, tables.direct, access_egress)
+        .map_err(PlanError::AccessEgress)
 }
 
 fn window_time<T: Error + 'static, A: Error + 'static>(

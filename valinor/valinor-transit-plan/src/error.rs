@@ -23,6 +23,9 @@ pub enum StateError {
     /// GTFS-RT bytes arrived for a feed that isn't in the compiled timetable.
     #[error("accept real-time data for unknown feed {0:?}")]
     UnknownFeed(String),
+    /// Stops couldn't be snapped to the street network.
+    #[error("snap stops to the street network: {0}")]
+    Snap(#[from] valinor_walk::WalkError),
     /// A request needs more service days than one window may hold.
     #[error("build a window of {0} service days")]
     WindowTooLong(usize),
