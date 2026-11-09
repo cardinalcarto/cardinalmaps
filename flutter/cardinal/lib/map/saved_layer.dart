@@ -10,6 +10,7 @@ import 'package:sparkle/sparkle.dart';
 
 import '../saved/saved_names.dart';
 import '../store/store.dart';
+import 'overlays.dart';
 
 /// The style's GeoJSON source for the checked saved places.
 const savedSource = 'saved';
@@ -102,19 +103,25 @@ Map<String, Object?> savedGeoJson(SavedTree tree) => {
 /// Draws the marker for [emoji], or the plain one if null, as a sprite image.
 typedef MarkerPainter = Future<SpriteImageInput> Function(String? emoji);
 
-/// Keeps the map's saved places in step with the store.
+/// Keeps the map's saved places in step with the store, and off the map while overlays
+/// are hidden.
 class SavedMapLayer {
   SavedMapLayer({
     required this.store,
     required this.map,
+    required this.overlays,
     required this.painter,
   });
 
   final SavedStore store;
   final SparkleMapController map;
+  final MapOverlays overlays;
   final MarkerPainter painter;
 
   StreamSubscription<SavedTree>? _watch;
+
+  /// The newest tree from the store.
+  SavedTree? _tree;
 
   /// The markers the map has.
   final _painted = <String>{};
@@ -123,13 +130,25 @@ class SavedMapLayer {
   SavedTree? _next;
   bool _showing = false;
 
-  void start() => _watch ??= store.watch().listen(_changed);
+  void start() {
+    if (_watch != null) return;
+    overlays.addListener(_overlaysChanged);
+    _watch = store.watch().listen(_changed);
+  }
 
-  void dispose() => _watch?.cancel();
+  void dispose() {
+    overlays.removeListener(_overlaysChanged);
+    _watch?.cancel();
+  }
 
   void _changed(SavedTree tree) {
+    _tree = tree;
     _next = tree;
     if (!_showing) unawaited(_showNewest());
+  }
+
+  void _overlaysChanged() {
+    if (_tree case final tree?) _changed(tree);
   }
 
   /// Shows trees one at a time, skipping any that a newer one replaced while the
@@ -148,6 +167,10 @@ class SavedMapLayer {
   }
 
   Future<void> _show(SavedTree tree) async {
+    if (!overlays.shown) {
+      map.setGeoJson(savedSource, _empty);
+      return;
+    }
     final places = tree.shownPlaces;
     final missing = {
       for (final place in places)
@@ -158,7 +181,8 @@ class SavedMapLayer {
       map.addImages(images);
       _painted.addAll(images.map((image) => image.name));
     }
-    map.setGeoJson(savedSource, savedGeoJson(tree));
+    // Hidden while the markers were being drawn: the change already queued an empty map.
+    if (overlays.shown) map.setGeoJson(savedSource, savedGeoJson(tree));
   }
 }
 

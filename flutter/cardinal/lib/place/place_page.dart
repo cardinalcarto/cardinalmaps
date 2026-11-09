@@ -12,6 +12,7 @@ import '../saved/destination_picker.dart';
 import '../saved/manage_saved.dart';
 import '../saved/saved_feedback.dart';
 import '../saved/saved_names.dart';
+import '../routes.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
 
@@ -29,7 +30,7 @@ class PlacePage extends StatefulWidget {
   State<PlacePage> createState() => _PlacePageState();
 }
 
-class _PlacePageState extends State<PlacePage> {
+class _PlacePageState extends State<PlacePage> with RouteAware {
   static const _header = #placeHeader;
 
   Place? _place;
@@ -58,6 +59,11 @@ class _PlacePageState extends State<PlacePage> {
   /// Whether the app is in dark mode, which has a pin of its own.
   bool _dark = false;
 
+  /// Whether directions are open over this card, drawing the map's trip themselves.
+  bool _covered = false;
+
+  ModalRoute<Object?>? _modalRoute;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -65,7 +71,7 @@ class _PlacePageState extends State<PlacePage> {
     final dark = Theme.of(context).brightness == Brightness.dark;
     if (dark != _dark) {
       _dark = dark;
-      if (_place != null) showSelection(_map, _place, dark: dark);
+      if (_place != null && !_covered) showSelection(_map, _place, dark: dark);
     }
     if (_watch == null) {
       final places = StoreScope.of(context).places;
@@ -76,7 +82,15 @@ class _PlacePageState extends State<PlacePage> {
     _watchSaved ??= StoreScope.of(context).saved.watch().listen((tree) {
       setState(() => _savedTree = tree);
     });
-    final route = ModalRoute.of(context)?.animation;
+    final modalRoute = ModalRoute.of(context);
+    if (modalRoute != _modalRoute) {
+      sheetPages.unsubscribe(this);
+      if (modalRoute is PageRoute<Object?>) {
+        sheetPages.subscribe(this, modalRoute);
+      }
+      _modalRoute = modalRoute;
+    }
+    final route = modalRoute?.animation;
     if (route != _route) {
       _route?.removeListener(_routeMoved);
       // Only from its changes: before its transition starts, it may say all the way in.
@@ -86,6 +100,7 @@ class _PlacePageState extends State<PlacePage> {
 
   @override
   void dispose() {
+    sheetPages.unsubscribe(this);
     _watch?.cancel();
     _watchSaved?.cancel();
     _route?.removeListener(_routeMoved);
@@ -104,6 +119,18 @@ class _PlacePageState extends State<PlacePage> {
       _missing = false;
     });
     _show();
+  }
+
+  @override
+  void didPushNext() => _covered = true;
+
+  /// Directions closed: the place is what the map shows again.
+  @override
+  void didPopNext() {
+    _covered = false;
+    final place = _place;
+    showSelection(_map, place, dark: _dark);
+    if (place != null) focusPlace(_map, place);
   }
 
   /// Fetch the place from the geocoder, once, into the store.
@@ -244,20 +271,37 @@ class _PlacePageState extends State<PlacePage> {
                             padding: EdgeInsets.only(top: 8),
                             child: LinearProgressIndicator(),
                           ),
-                        if (place != null && _savedTree != null)
+                        if (place != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 8),
-                            child: OutlinedButton.icon(
-                              onPressed: isSaved ? _manage : _save,
-                              style: const ButtonStyle(
-                                visualDensity: VisualDensity.compact,
-                              ),
-                              icon: Icon(
-                                isSaved
-                                    ? Icons.favorite
-                                    : Icons.favorite_border,
-                              ),
-                              label: Text(isSaved ? 'Manage' : 'Save'),
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 4,
+                              children: [
+                                FilledButton.icon(
+                                  onPressed: () => context.push<void>(
+                                    directionsLocation(widget.id),
+                                  ),
+                                  style: const ButtonStyle(
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                  icon: const Icon(Icons.directions),
+                                  label: const Text('Directions'),
+                                ),
+                                if (_savedTree != null)
+                                  OutlinedButton.icon(
+                                    onPressed: isSaved ? _manage : _save,
+                                    style: const ButtonStyle(
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                    icon: Icon(
+                                      isSaved
+                                          ? Icons.favorite
+                                          : Icons.favorite_border,
+                                    ),
+                                    label: Text(isSaved ? 'Manage' : 'Save'),
+                                  ),
+                              ],
                             ),
                           ),
                       ],

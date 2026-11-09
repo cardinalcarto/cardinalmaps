@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/map/saved_layer.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +22,7 @@ void main() {
   late FakePlaceStore places;
   late FakeSavedStore saved;
   late FakeMap map;
+  late MapOverlays overlays;
   late SavedMapLayer layer;
 
   Future<SavedPlace> add(String id, {String? emoji}) async {
@@ -43,10 +45,44 @@ void main() {
     places = FakePlaceStore();
     saved = FakeSavedStore(places);
     map = FakeMap();
-    layer = SavedMapLayer(store: saved, map: map, painter: _stubMarker)
-      ..start();
+    overlays = MapOverlays();
+    layer = SavedMapLayer(
+      store: saved,
+      map: map,
+      overlays: overlays,
+      painter: _stubMarker,
+    )..start();
   });
   tearDown(() => layer.dispose());
+
+  test(
+    'hidden overlays take the places off the map, and they come back',
+    () async {
+      await add('poi:1');
+      await pumpEventQueue();
+      expect(features(), hasLength(1));
+
+      final release = overlays.hide();
+      await pumpEventQueue();
+      expect(features(), isEmpty);
+
+      release();
+      await pumpEventQueue();
+      expect(features(), hasLength(1));
+    },
+  );
+
+  test('a place turned on while overlays are hidden waits for them', () async {
+    final release = overlays.hide();
+    await pumpEventQueue();
+    await add('poi:1');
+    await pumpEventQueue();
+    expect(features(), isEmpty);
+
+    release();
+    await pumpEventQueue();
+    expect(features(), hasLength(1));
+  });
 
   test('a place that is on becomes a feature with its ID and marker', () async {
     final copy = await add('poi:1', emoji: '🍕');

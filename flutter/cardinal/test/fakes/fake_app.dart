@@ -1,8 +1,11 @@
 import 'dart:convert';
 
+import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/geocoder/geocoder.dart';
 import 'package:cardinal/home/navigation_bar.dart';
+import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/map.dart';
+import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
@@ -13,7 +16,9 @@ import 'package:http/testing.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'fake_map.dart';
+import 'fake_location.dart';
 import 'fake_place_store.dart';
+import 'fake_routes.dart';
 import 'fake_saved_store.dart';
 
 const appScreen = Size(400, 800);
@@ -32,6 +37,10 @@ Future<GoRouter> pumpFakeApp(
   WidgetTester tester, {
   Store? store,
   String location = '/',
+  RouteSource? routes,
+  LocationSource? locationSource,
+  FakeMap? map,
+  MapOverlays? overlays,
 }) async {
   tester.view
     ..physicalSize = appScreen * 2
@@ -68,9 +77,14 @@ Future<GoRouter> pumpFakeApp(
             (_) async => http.Response(jsonEncode({'results': []}), 200),
           ),
         ),
-        child: MapScope(
-          controller: FakeMap(),
-          child: MaterialApp.router(routerConfig: router),
+        child: DirectionsScope(
+          routes: routes ?? FakeRoutes(),
+          location: locationSource ?? FakeLocation(),
+          child: MapScope(
+            controller: map ?? FakeMap(),
+            overlays: overlays ?? MapOverlays(),
+            child: MaterialApp.router(routerConfig: router),
+          ),
         ),
       ),
     ),

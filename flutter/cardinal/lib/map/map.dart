@@ -14,22 +14,33 @@ import '../routes.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
 import 'layers.dart';
+import 'overlays.dart';
 import 'poi.dart';
+import 'route_layer.dart';
 import 'saved_layer.dart';
 import 'viewport.dart';
 
 /// Provides the map's controller to the widgets below it.
 class MapScope extends InheritedWidget {
-  const MapScope({super.key, required this.controller, required super.child});
+  const MapScope({
+    super.key,
+    required this.controller,
+    required this.overlays,
+    required super.child,
+  });
 
   final SparkleMapController controller;
+  final MapOverlays overlays;
 
   static SparkleMapController of(BuildContext context) =>
       context.getInheritedWidgetOfExactType<MapScope>()!.controller;
 
+  static MapOverlays overlaysOf(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<MapScope>()!.overlays;
+
   @override
   bool updateShouldNotify(MapScope oldWidget) =>
-      controller != oldWidget.controller;
+      controller != oldWidget.controller || overlays != oldWidget.overlays;
 }
 
 /// The map: [tilesUrl]'s tiles in the style the layer picker chose (see `layers.dart`),
@@ -96,6 +107,7 @@ class _CardinalMapState extends State<CardinalMap> {
     _savedLayer = SavedMapLayer(
       store: StoreScope.of(context).saved,
       map: widget.controller,
+      overlays: MapScope.overlaysOf(context),
       painter: discMarkerPainter(
         WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio,
       ),
@@ -168,9 +180,18 @@ class _CardinalMapState extends State<CardinalMap> {
     );
   }
 
-  /// Opens the card of what [features] has first: a saved place, or else a POI, as a
-  /// search result does, storing what the map knows about it and going to its ID.
+  /// A route's callout selects the route. Otherwise opens the card of what [features]
+  /// has first: a saved place, or else a POI, as a search result does, storing what the
+  /// map knows about it and going to its ID.
   Future<void> _openPoi(List<ClickedFeature> features) async {
+    final callout = features
+        .where((f) => f.source == routeCalloutSource)
+        .firstOrNull;
+    final route = int.tryParse(callout?.properties[routeIndexProperty] ?? '');
+    if (route != null) {
+      routeTaps.add(route);
+      return;
+    }
     final saved = features.where((f) => f.source == savedSource).firstOrNull;
     if (saved?.properties[savedPlaceProperty] case final id?) {
       openPlaceFromMap(GoRouter.of(context), id);

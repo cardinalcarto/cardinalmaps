@@ -7,6 +7,9 @@ const tilesUrl = String.fromEnvironment('CARDINAL_TILES_URL');
 /// Where the geocoder's API is: requests go to `<url>/v1/...`.
 const geocoderUrl = String.fromEnvironment('CARDINAL_GEOCODER_URL');
 
+/// Where the routing server's Valhalla API is: requests go to `<url>/route`.
+const routingUrl = String.fromEnvironment('CARDINAL_ROUTING_URL');
+
 /// The bundled map style, a file in `assets/map`.
 const mapStyle = String.fromEnvironment(
   'CARDINAL_STYLE',

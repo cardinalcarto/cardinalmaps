@@ -2,10 +2,12 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
 
+import 'directions/directions_page.dart';
 import 'home/navigation_bar.dart';
 import 'home/stub_page.dart';
 import 'map/buttons.dart';
 import 'map/map.dart';
+import 'map/overlays.dart';
 import 'place/place_page.dart';
 import 'saved/saved_page.dart';
 import 'search/search_sheet.dart';
@@ -24,6 +26,9 @@ final searchRequests = ValueNotifier<int>(0);
 /// IDs such as `osm:way/123` contain a slash, so the ID is escaped; the route's `id`
 /// parameter is the ID again.
 String placeLocation(String id) => '/place/${Uri.encodeComponent(id)}';
+
+/// The location of the screen with directions to the place with [id].
+String directionsLocation(String id) => '${placeLocation(id)}/directions';
 
 /// Shows the place with [id], tapped on the map. It takes the place of a place card
 /// already open, so that going back leaves the map's places all at once.
@@ -78,6 +83,17 @@ List<RouteBase> sheetRoutes() => [
         path: 'place/:id',
         pageBuilder: (context, state) =>
             _page(state, PlacePage(id: state.pathParameters['id']!)),
+        routes: [
+          GoRoute(
+            path: 'directions',
+            pageBuilder: (context, state) => _page(
+              state,
+              HidesMapOverlays(
+                child: DirectionsPage(to: state.pathParameters['id']!),
+              ),
+            ),
+          ),
+        ],
       ),
     ],
   ),

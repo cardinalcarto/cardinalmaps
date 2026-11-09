@@ -1,12 +1,23 @@
-/// Offline routing on the device: Valinor's Valhalla-compatible router, in process.
+/// Routing for the app: Ferrostar's request generator and parser ([DirectionsAdapter]),
+/// and Valinor's Valhalla-compatible router, in process, for offline use.
 ///
-/// Give [OfflineRouter.route] the body Ferrostar's request generator makes for the
-/// server's `/route`, and hand the response's bytes to Ferrostar's parser: they are
-/// what the server would have sent (see `valinor/docs/flutter-api.md`).
+/// [DirectionsAdapter.request] makes the body for the server's `/route`. Give that body to
+/// [OfflineRouter.route] instead and the response's bytes are what the server would have
+/// sent (see `valinor/docs/flutter-api.md`). Either way, [DirectionsAdapter.parse] reads
+/// them.
 library;
 
 import 'src/rust/frb_generated.dart';
 
+export 'src/rust/api/directions.dart'
+    show
+        DirectionsAdapter,
+        DirectionsError,
+        DirectionsErrorKind,
+        DirectionsPoint,
+        DirectionsRequest,
+        DirectionsRoute,
+        DirectionsStep;
 export 'src/rust/api/router.dart'
     show OfflineRouter, OpenError, OpenErrorKind, RouterResponse;
 

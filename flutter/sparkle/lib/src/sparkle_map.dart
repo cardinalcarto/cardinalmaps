@@ -79,6 +79,11 @@ class _QuickZoom {
 /// Until the map is set up (it waits for its first layout), [camera] and the other queries
 /// return null and [flyTo] does nothing; GeoJSON data set before then is applied once it
 /// is.
+class _CameraMoved extends ChangeNotifier {
+  bool get listened => hasListeners;
+  void moved() => notifyListeners();
+}
+
 class SparkleMapController {
   _SparkleMapState? _state;
 
@@ -102,6 +107,19 @@ class SparkleMapController {
 
   /// Where the camera is.
   rust.CameraState? get camera => _map?.camera();
+
+  /// Notifies its listeners on each frame that shows the camera somewhere new.
+  Listenable get cameraMoved => _cameraMoved;
+  final _cameraMoved = _CameraMoved();
+  rust.CameraState? _drawnCamera;
+
+  void _frameDrawn(rust.SparkleMap map) {
+    if (!_cameraMoved.listened) return;
+    final camera = map.camera();
+    if (camera == _drawnCamera) return;
+    _drawnCamera = camera;
+    _cameraMoved.moved();
+  }
 
   /// The longitude and latitude of the ground at [position] (logical pixels within the
   /// map), if the map shows the ground there.
@@ -182,15 +200,18 @@ class SparkleMapController {
   /// The properties of the feature with [id] in [sourceLayer] of the tile [feature] was
   /// clicked in, if the tile is still loaded and has one. Read it right after the click, as
   /// tiles come and go.
-  Map<String, String>? featureBeside(rust.ClickedFeature feature, String sourceLayer, int id) =>
-      _map?.tileFeature(
-        source: feature.source,
-        sourceLayer: sourceLayer,
-        tileZ: feature.tileZ,
-        tileX: feature.tileX,
-        tileY: feature.tileY,
-        id: BigInt.from(id),
-      );
+  Map<String, String>? featureBeside(
+    rust.ClickedFeature feature,
+    String sourceLayer,
+    int id,
+  ) => _map?.tileFeature(
+    source: feature.source,
+    sourceLayer: sourceLayer,
+    tileZ: feature.tileZ,
+    tileX: feature.tileX,
+    tileY: feature.tileY,
+    id: BigInt.from(id),
+  );
 
   /// Replace the data of the style's GeoJSON source [source] with [geojson], a GeoJSON
   /// object (as decoded JSON).
@@ -226,8 +247,16 @@ class SparkleMapController {
 
   void _attached(rust.SparkleMap map) {
     map.setPadding(padding: _mapPadding(_padding));
-    if (_subject case (final w, final s, final e, final n, final zoom, final margin)?) {
-      map.setSubject(west: w, south: s, east: e, north: n, maxZoom: zoom, margin: margin);
+    if (_subject
+        case (final w, final s, final e, final n, final zoom, final margin)?) {
+      map.setSubject(
+        west: w,
+        south: s,
+        east: e,
+        north: n,
+        maxZoom: zoom,
+        margin: margin,
+      );
     }
     if (_images.isNotEmpty) map.addImages(images: _images.values.toList());
     for (final MapEntry(key: source, value: text) in _pending.entries) {
@@ -240,8 +269,12 @@ class SparkleMapController {
     _pending.clear();
   }
 
-  static rust.MapPadding _mapPadding(EdgeInsets p) =>
-      rust.MapPadding(top: p.top, right: p.right, bottom: p.bottom, left: p.left);
+  static rust.MapPadding _mapPadding(EdgeInsets p) => rust.MapPadding(
+    top: p.top,
+    right: p.right,
+    bottom: p.bottom,
+    left: p.left,
+  );
 }
 
 /// Loads the native library; [SparkleMap] waits for it, so calling this is optional.
@@ -478,7 +511,9 @@ class _SparkleMapState extends State<SparkleMap> {
     if (_benchFrame < 0 || _benchFrame > _benchLeg * 4 * _benchLoops) return;
     final now = _benchClock.elapsedMicroseconds;
     if (_benchFrame == 0) {
-      _benchClock..reset()..start();
+      _benchClock
+        ..reset()
+        ..start();
       _benchLast = 0;
     } else {
       final gap = now - _benchLast;
@@ -491,7 +526,9 @@ class _SparkleMapState extends State<SparkleMap> {
     final inLoop = _benchFrame % (_benchLeg * 4);
     if (_benchFrame > 0 && inLoop == 0) {
       final loop = _benchFrame ~/ (_benchLeg * 4);
-      debugPrint('BENCH loop $loop end ${now ~/ 1000} ms worst ${_benchWorst ~/ 1000} ms missed $_benchOver of ${_benchLeg * 4} at ${View.of(context).display.refreshRate.round()} Hz');
+      debugPrint(
+        'BENCH loop $loop end ${now ~/ 1000} ms worst ${_benchWorst ~/ 1000} ms missed $_benchOver of ${_benchLeg * 4} at ${View.of(context).display.refreshRate.round()} Hz',
+      );
       _benchWorst = 0;
       _benchOver = 0;
       if (loop == _benchLoops) debugPrint('BENCH done');
@@ -525,6 +562,7 @@ class _SparkleMapState extends State<SparkleMap> {
       final gap = _sinceFrame.elapsedMicroseconds; // PERF-TEMP
       _sinceFrame.reset(); // PERF-TEMP
       out = map.frame();
+      widget.controller?._frameDrawn(map);
       if (out.complete) widget.controller?._drewComplete();
       if (_bench && _benchFrame == -2 && out.complete) {
         _benchFrame = -1;
@@ -547,12 +585,20 @@ class _SparkleMapState extends State<SparkleMap> {
       final tExec = sw.elapsedMicroseconds - tRust; // PERF-TEMP
       frame.present(commandBuffer);
       commandBuffer.submit();
-      if (tRust + tExec > 9000) { // PERF-TEMP
-        debugPrint('PERF slow after ${gap ~/ 1000} ms idle: rust ${tRust ~/ 100 / 10} exec ${tExec ~/ 100 / 10} ms, '
-            'uploads ${out.uploads.length ~/ 1024} KB, ${executor.draws} draws, ${out.commands.length} words');
+      if (tRust + tExec > 9000) {
+        // PERF-TEMP
+        debugPrint(
+          'PERF slow after ${gap ~/ 1000} ms idle: rust ${tRust ~/ 100 / 10} exec ${tExec ~/ 100 / 10} ms, '
+          'uploads ${out.uploads.length ~/ 1024} KB, ${executor.draws} draws, ${out.commands.length} words',
+        );
       }
-      _perf.add(tRust, tExec, sw.elapsedMicroseconds - tRust - tExec,
-          out.commands.length, executor.draws); // PERF-TEMP
+      _perf.add(
+        tRust,
+        tExec,
+        sw.elapsedMicroseconds - tRust - tExec,
+        out.commands.length,
+        executor.draws,
+      ); // PERF-TEMP
       executor.draws = 0; // PERF-TEMP
       _perf.lineIndices += executor.lineIndices; // PERF-TEMP
       executor.lineIndices = 0; // PERF-TEMP
@@ -577,7 +623,9 @@ class _SparkleMapState extends State<SparkleMap> {
         return;
       }
     }
-    if (out.animating || const String.fromEnvironment('SPARKLE_EXPERIMENT') == 'spin') { // PERF-TEMP
+    if (out.animating ||
+        const String.fromEnvironment('SPARKLE_EXPERIMENT') == 'spin') {
+      // PERF-TEMP
       _requestFrame();
     } else if (out.complete && _screenshot != null) {
       final path = _screenshot!;
@@ -1054,18 +1102,21 @@ class _PerfLog {
     if (rust + exec > 9000) _slowMap++;
     if (_n < 60) return;
     final f = _frames == 0 ? 1 : _frames;
-    debugPrint('PERF rust ${(_rust / _n / 1000).toStringAsFixed(2)} '
-        '(max ${(_rustMax / 1000).toStringAsFixed(1)}) '
-        'exec ${(_exec / _n / 1000).toStringAsFixed(2)} '
-        'submit ${(_submit / _n / 1000).toStringAsFixed(2)} ms, '
-        '${_words ~/ _n} words ${_draws ~/ _n} draws ${lineIndices ~/ _n} line idx | flutter frames $_frames '
-        'build ${(_build / f / 1000).toStringAsFixed(2)} '
-        'raster ${(_raster / f / 1000).toStringAsFixed(2)} '
-        '(max ${(_rasterMax / 1000).toStringAsFixed(1)}) '
-        'total ${(_total / f / 1000).toStringAsFixed(2)} ms, '
-        'over 11.1: build $_slowBuild raster $_slowRaster | rust+exec max '
-        '${(_mapMax / 1000).toStringAsFixed(1)}, over 9: $_slowMap');
+    debugPrint(
+      'PERF rust ${(_rust / _n / 1000).toStringAsFixed(2)} '
+      '(max ${(_rustMax / 1000).toStringAsFixed(1)}) '
+      'exec ${(_exec / _n / 1000).toStringAsFixed(2)} '
+      'submit ${(_submit / _n / 1000).toStringAsFixed(2)} ms, '
+      '${_words ~/ _n} words ${_draws ~/ _n} draws ${lineIndices ~/ _n} line idx | flutter frames $_frames '
+      'build ${(_build / f / 1000).toStringAsFixed(2)} '
+      'raster ${(_raster / f / 1000).toStringAsFixed(2)} '
+      '(max ${(_rasterMax / 1000).toStringAsFixed(1)}) '
+      'total ${(_total / f / 1000).toStringAsFixed(2)} ms, '
+      'over 11.1: build $_slowBuild raster $_slowRaster | rust+exec max '
+      '${(_mapMax / 1000).toStringAsFixed(1)}, over 9: $_slowMap',
+    );
     _n = _rust = _exec = _submit = _words = _rustMax = _draws = lineIndices = 0;
-    _frames = _build = _raster = _total = _rasterMax = _slowBuild = _slowRaster = _mapMax = _slowMap = 0;
+    _frames = _build = _raster = _total = _rasterMax = _slowBuild =
+        _slowRaster = _mapMax = _slowMap = 0;
   }
 }
