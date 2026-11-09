@@ -52,9 +52,9 @@ use valinor_gtfs::{CompiledTimetable, FeedId, FeedInput, ZipSource, compile, par
 use valinor_router::tiles::TileSets;
 use valinor_sif::AnyCosting;
 use valinor_transit::{
-    DEFAULT_BOOTSTRAP_WALK_LIMIT, DaySlot, Direction, ProfileOptions, RouteFilter, RouteId, Router,
-    ServiceDate, Snapshot, StopId, Time, TransferOutcome, TransferRequest, TransferSearch,
-    TransferSink, TransitQuery,
+    DEFAULT_BOOTSTRAP_WALK_LIMIT, DaySlot, Direction, ProfileEntry, ProfileOptions, RouteFilter,
+    RouteId, Router, ServiceDate, Snapshot, StopId, StopTable, Time, TransferOutcome,
+    TransferRequest, TransferSearch, TransferSink, TransitQuery,
 };
 use valinor_walk::{
     AccessSide, ResolvedWalk, SnapConfig, SnapPoint, StopSnaps, StopTables, TableRequest,
@@ -232,6 +232,19 @@ const PERIODS: [(&str, i32); 4] = [
     ("evening", 17),
     ("night", 23),
 ];
+
+/// A trip tracked by name: its name, then where it starts and ends as `(lon, lat)`.
+type NamedTrip = (&'static str, (f64, f64), (f64, f64));
+
+/// Named trips, tracked by name across changes: `(name, from, to)`, as `(lon, lat)` near a stop.
+const NAMED_TRIPS: [NamedTrip; 1] = [(
+    "Fremont to Central District",
+    (-122.349_869, 47.649_735),
+    (-122.302_605, 47.613_442),
+)];
+
+/// How many times a named trip repeats; its timings are medians.
+const NAMED_REPEATS: usize = 5;
 
 /// One query: a pair of stops and a window.
 #[derive(Clone, Copy, Debug)]
@@ -568,29 +581,9 @@ fn run_query_with(
     sample: Sample,
     options: ProfileOptions,
 ) -> Result<(Measure, Triples), Box<dyn Error>> {
-    let snaps_point = |stop: u32| -> Result<SnapPoint, Box<dyn Error>> { worker_point(env, stop) };
-    let origin = seeds_at(env.provider, snaps_point(sample.from)?)?;
-    let target = seeds_at(env.provider, snaps_point(sample.to)?)?;
-
     let started = Instant::now();
     let before = worker.router.transfers().counters;
-    let stop_count = env.snapshot.stop_count();
-    let table = |worker: &mut Worker, seeds: &[TableSeed], side| -> Result<_, Box<dyn Error>> {
-        worker
-            .tables
-            .compute(
-                stop_count,
-                &TableRequest {
-                    side,
-                    seeds,
-                    max_seconds: env.max_walk,
-                    interrupt: &|| false,
-                },
-            )?
-            .ok_or_else(|| "interrupted".into())
-    };
-    let access = table(worker, &origin, AccessSide::Access)?;
-    let egress = table(worker, &target, AccessSide::Egress)?;
+    let (access, egress) = walk_tables(worker, env, sample)?;
     let tables_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let earliest = Time::try_new(env.day_start + sample.hour * 3600)?;
@@ -625,6 +618,232 @@ fn run_query_with(
         counters,
     };
     Ok((measure, triples))
+}
+
+/// The access and egress tables of a query.
+fn walk_tables(
+    worker: &mut Worker,
+    env: &Env,
+    sample: Sample,
+) -> Result<(StopTable, StopTable), Box<dyn Error>> {
+    let origin = seeds_at(env.provider, worker_point(env, sample.from)?)?;
+    let target = seeds_at(env.provider, worker_point(env, sample.to)?)?;
+    let stop_count = env.snapshot.stop_count();
+    let mut table = |seeds: &[TableSeed], side| -> Result<StopTable, Box<dyn Error>> {
+        worker
+            .tables
+            .compute(
+                stop_count,
+                &TableRequest {
+                    side,
+                    seeds,
+                    max_seconds: env.max_walk,
+                    interrupt: &|| false,
+                },
+            )?
+            .ok_or_else(|| "interrupted".into())
+    };
+    let access = table(&origin, AccessSide::Access)?;
+    let egress = table(&target, AccessSide::Egress)?;
+    Ok((access, egress))
+}
+
+/// A leave-now query, and the query for each way of missing one of its journeys.
+#[derive(Clone, Debug)]
+struct LeaveNow {
+    tables_ms: f64,
+    now_ms: f64,
+    /// All the missed-it queries together; they reuse the tables.
+    misses_ms: f64,
+    worst_miss_ms: f64,
+    options: Triples,
+    /// `(departure missed, the journeys after missing it)`, latest departure first.
+    next: Vec<(i32, Triples)>,
+}
+
+impl LeaveNow {
+    fn first_response_ms(&self) -> f64 {
+        self.tables_ms + self.now_ms
+    }
+
+    fn with_misses_ms(&self) -> f64 {
+        self.first_response_ms() + self.misses_ms
+    }
+}
+
+/// Times a leave-now query at the start of `sample`'s hour, then every missed-it query.
+fn run_leave_now(
+    worker: &mut Worker,
+    env: &Env,
+    sample: Sample,
+) -> Result<LeaveNow, Box<dyn Error>> {
+    let started = Instant::now();
+    let (access, egress) = walk_tables(worker, env, sample)?;
+    let tables_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let query = TransitQuery {
+        snapshot: env.snapshot.clone(),
+        access: &access,
+        egress: &egress,
+        filter: RouteFilter::ALL,
+        max_trips: env.max_trips,
+    };
+    let triples_of = |entries: &[ProfileEntry<_>]| -> Triples {
+        entries
+            .iter()
+            .map(|e| (e.departure.into_inner(), e.arrival.into_inner(), e.trips))
+            .collect()
+    };
+
+    let at = Time::try_new(env.day_start + sample.hour * 3600)?;
+    let now_started = Instant::now();
+    let now = worker
+        .router
+        .leave_at(&query, at, env.options, &|| false)
+        .map_err(|e| e.to_string())?;
+    let now_ms = now_started.elapsed().as_secs_f64() * 1000.0;
+    let options = triples_of(&now.entries);
+
+    let mut departures: Vec<i32> = options.iter().map(|&(d, _, _)| d).collect();
+    departures.sort_unstable_by(|a, b| b.cmp(a));
+    departures.dedup();
+    let (mut misses_ms, mut worst_miss_ms) = (0.0_f64, 0.0_f64);
+    let mut next = Vec::with_capacity(departures.len());
+    for departure in departures {
+        let miss_started = Instant::now();
+        let after = worker
+            .router
+            .leave_at(&query, Time::try_new(departure + 1)?, env.options, &|| {
+                false
+            })
+            .map_err(|e| e.to_string())?;
+        let miss_ms = miss_started.elapsed().as_secs_f64() * 1000.0;
+        misses_ms += miss_ms;
+        worst_miss_ms = worst_miss_ms.max(miss_ms);
+        next.push((departure, triples_of(&after.entries)));
+    }
+    Ok(LeaveNow {
+        tables_ms,
+        now_ms,
+        misses_ms,
+        worst_miss_ms,
+        options,
+        next,
+    })
+}
+
+/// Prints leave-now timings over the sampled queries.
+fn report_leave_now(
+    worker: &mut Worker,
+    env: &Env,
+    samples: &[Sample],
+) -> Result<(), Box<dyn Error>> {
+    let mut runs = Vec::with_capacity(samples.len());
+    for sample in samples {
+        runs.push(run_leave_now(worker, env, *sample)?);
+    }
+    let without = runs.iter().filter(|run| run.options.is_empty()).count();
+    let row = |name: &str, f: &dyn Fn(&LeaveNow) -> f64| {
+        let mut values: Vec<f64> = runs.iter().map(f).collect();
+        values.sort_by(f64::total_cmp);
+        println!(
+            "  {name:<26} {:>8.1} {:>8.1} {:>9.1}",
+            percentile(&values, 0.5),
+            percentile(&values, 0.95),
+            percentile(&values, 1.0),
+        );
+    };
+    println!(
+        "leave now over {} sampled queries ({without} with no journey):",
+        runs.len()
+    );
+    println!("  {:<26} {:>8} {:>8} {:>9}", "metric", "p50", "p95", "max");
+    row("tables ms", &|run| run.tables_ms);
+    row("leave now ms", &|run| run.now_ms);
+    row("first response ms", &LeaveNow::first_response_ms);
+    row("every missed-it query ms", &|run| run.misses_ms);
+    row("slowest missed-it query ms", &|run| run.worst_miss_ms);
+    row("response with misses ms", &LeaveNow::with_misses_ms);
+    row("journeys", &|run| run.options.len() as f64);
+    row("distinct departures", &|run| run.next.len() as f64);
+    println!();
+    Ok(())
+}
+
+/// The stop nearest a point, and how far away it is in meters.
+fn nearest_stop(located: &[Option<(f64, f64)>], point: (f64, f64)) -> Option<(u32, f64)> {
+    located
+        .iter()
+        .enumerate()
+        .filter_map(|(stop, at)| Some((stop as u32, haversine_km((*at)?, point) * 1000.0)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+fn median(mut values: Vec<f64>) -> f64 {
+    values.sort_by(f64::total_cmp);
+    percentile(&values, 0.5)
+}
+
+/// Prints the named trips: leave now, missing each journey, and the 60-minute profile.
+fn report_named(
+    worker: &mut Worker,
+    env: &Env,
+    located: &[Option<(f64, f64)>],
+) -> Result<(), Box<dyn Error>> {
+    let clock = |seconds: i32, hour: i32| {
+        let offset = seconds - (env.day_start + hour * 3600);
+        format!("{:+}m", offset.div_euclid(60))
+    };
+    for (name, from, to) in NAMED_TRIPS {
+        let (from, from_m) = nearest_stop(located, from).ok_or("no stop near the origin")?;
+        let (to, to_m) = nearest_stop(located, to).ok_or("no stop near the destination")?;
+        println!(
+            "{name}: stops {from} ({from_m:.0} m away) to {to} ({to_m:.0} m away), \
+             median of {NAMED_REPEATS}"
+        );
+        for (period, (period_name, hour)) in PERIODS.iter().enumerate() {
+            let sample = Sample {
+                from,
+                to,
+                period,
+                band: 0,
+                hour: *hour,
+            };
+            let (mut runs, mut profiles) = (Vec::new(), Vec::new());
+            for _ in 0..NAMED_REPEATS {
+                runs.push(run_leave_now(worker, env, sample)?);
+                profiles.push(run_query(worker, env, sample)?);
+            }
+            let last = runs.last().ok_or("no runs")?;
+            println!(
+                "  {period_name} {hour:02}:00: tables {:.1}, leave now {:.1}, first response {:.1}, \
+                 all {} missed-it queries {:.1}, with misses {:.1}; 60-minute profile {:.1} ms \
+                 ({} entries)",
+                median(runs.iter().map(|r| r.tables_ms).collect()),
+                median(runs.iter().map(|r| r.now_ms).collect()),
+                median(runs.iter().map(LeaveNow::first_response_ms).collect()),
+                last.next.len(),
+                median(runs.iter().map(|r| r.misses_ms).collect()),
+                median(runs.iter().map(LeaveNow::with_misses_ms).collect()),
+                median(profiles.iter().map(|m| m.total_ms).collect()),
+                profiles.last().map_or(0, |m| m.entries),
+            );
+            let show = |triples: &Triples| {
+                triples
+                    .iter()
+                    .map(|&(d, a, k)| {
+                        format!("leave {} arrive {} ({k})", clock(d, *hour), clock(a, *hour))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            };
+            println!("    now: {}", show(&last.options));
+            for (departure, after) in &last.next {
+                println!("    missed {}: {}", clock(*departure, *hour), show(after));
+            }
+        }
+        println!();
+    }
+    Ok(())
 }
 
 /// Times the two tables of a query with a full flood: a constant workload across code changes,
@@ -992,6 +1211,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             eprintln!("warmup {i}: {:.0} ms", measure.total_ms);
         }
     }
+    if flags.present("named-only") {
+        report_named(&mut worker, &env, &located)?;
+        report_leave_now(&mut worker, &env, &samples)?;
+        return Ok(());
+    }
     let mut measures = Vec::with_capacity(samples.len());
     let run_started = Instant::now();
     for (i, sample) in samples.iter().enumerate() {
@@ -1070,6 +1294,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!();
+    report_named(&mut worker, &env, &located)?;
+    report_leave_now(&mut worker, &env, &samples)?;
     summarize("warm, all queries", &measures);
     for (index, (name, _)) in PERIODS.iter().enumerate() {
         let period: Vec<Measure> = measures

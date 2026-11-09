@@ -1051,6 +1051,85 @@ fn known_journey_bounds_never_change_a_profile() {
     );
 }
 
+/// `(departure, arrival, trips)` of a leave-at query at the start of the window.
+fn leave_at_triples(net: &TestNet, raw: &RawNet, known_journey_bounds: bool) -> Triples {
+    let query = net.query(raw.max_trips, RouteFilter::ALL);
+    let mut router = net.router();
+    router
+        .leave_at(
+            &query,
+            t(WINDOW.0 + raw.shift),
+            crate::ProfileOptions {
+                known_journey_bounds,
+                bootstrap_walk_limit: known_journey_bounds.then_some(600),
+            },
+            &|| false,
+        )
+        .expect("leave at")
+        .entries
+        .iter()
+        .map(|e| (e.departure.into_inner(), e.arrival.into_inner(), e.trips))
+        .collect()
+}
+
+/// A leave-at query reports what a forward search does, and every journey is in the profile.
+#[test]
+fn leave_at_matches_the_forward_search_and_the_profile() {
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
+
+    let mut runner = TestRunner::deterministic();
+    let strategy = raw_net();
+    let mut with_entries = 0;
+    let mut leaving_later = 0;
+    for _ in 0..600 {
+        let raw = strategy.new_tree(&mut runner).expect("sample").current();
+        let net = build_net(&raw);
+        let query = net.query(raw.max_trips, RouteFilter::ALL);
+        let mut router = net.router();
+        let start = WINDOW.0 + raw.shift;
+        let end = WINDOW.1 + raw.shift;
+
+        let triples = leave_at_triples(&net, &raw, true);
+        assert_eq!(
+            triples,
+            leave_at_triples(&net, &raw, false),
+            "with bounds against without"
+        );
+
+        let mut reported: Vec<(u8, i32)> = triples.iter().map(|&(_, a, k)| (k, a)).collect();
+        reported.sort_unstable();
+        let forward = results_of(&mut router, &query, Direction::Forward, start);
+        assert_eq!(
+            reported.into_iter().collect::<Results>(),
+            forward,
+            "one journey per forward report"
+        );
+
+        let profile = triples_with(&net, &raw, true);
+        for triple in &triples {
+            assert!(triple.0 >= start, "left too early: {triple:?}");
+            if triple.0 <= end {
+                assert!(profile.contains(triple), "not in the profile: {triple:?}");
+            }
+            if triple.0 > start {
+                leaving_later += 1;
+            }
+        }
+        if !triples.is_empty() {
+            with_entries += 1;
+        }
+    }
+    assert!(
+        with_entries > 100,
+        "only {with_entries} queries had entries"
+    );
+    assert!(
+        leaving_later > 20,
+        "only {leaving_later} left after the query time"
+    );
+}
+
 #[test]
 fn generated_networks_are_not_trivial() {
     use proptest::strategy::ValueTree;

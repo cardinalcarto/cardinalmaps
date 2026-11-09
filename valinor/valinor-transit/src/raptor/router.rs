@@ -256,6 +256,26 @@ impl<S: TransferSearch> Router<S> {
         profile::run_profile(self, query, earliest, latest, options, interrupt)
     }
 
+    /// Finds the journeys for leaving at `at`, without searching a window of departures.
+    ///
+    /// There is one per number of trips that arrives sooner than fewer trips can:
+    /// the earliest arrival for that many trips, and the latest departure that still makes it.
+    /// A rider who misses one of them can ask again one second after its departure.
+    ///
+    /// # Errors
+    ///
+    /// If the query is invalid, `interrupt` asks to stop, or a transfer search fails.
+    pub fn leave_at(
+        &mut self,
+        query: &TransitQuery<'_>,
+        at: Time,
+        options: ProfileOptions,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<Profile<S::Walk>, SearchError<S::Error>> {
+        query.validate()?;
+        profile::run_leave_at(self, query, at, options, interrupt)
+    }
+
     pub(crate) fn run_forward(
         &mut self,
         query: &TransitQuery<'_>,

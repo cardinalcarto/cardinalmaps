@@ -222,6 +222,81 @@ pub(crate) fn run_profile<S: TransferSearch>(
     })
 }
 
+/// Searches once from `at`: one journey per number of trips that arrives sooner than fewer can.
+///
+/// Each has the earliest arrival for at most that many trips from `at`,
+/// and the latest departure that still makes that arrival with that many trips.
+/// Each is also an entry of the profile of any window starting at `at` and containing it.
+pub(crate) fn run_leave_at<S: TransferSearch>(
+    router: &mut Router<S>,
+    query: &TransitQuery<'_>,
+    at: Time,
+    options: ProfileOptions,
+    interrupt: &dyn Fn() -> bool,
+) -> Result<Profile<S::Walk>, SearchError<S::Error>> {
+    let at_seconds = at.into_inner();
+    let mut known = KnownJourneys::default();
+    let mut bounds = vec![INFINITY; usize::from(query.max_trips) + 1];
+
+    if options.known_journey_bounds
+        && let Some(limit) = options.bootstrap_walk_limit
+    {
+        router.transfers.set_walk_limit(Some(limit));
+        let outcome = router.run_forward(query, at_seconds, &[], interrupt);
+        router.transfers.set_walk_limit(None);
+        outcome?;
+        for result in round_results(&router.forward, Direction::Forward) {
+            known.add(at_seconds, result.time.into_inner(), result.trips);
+        }
+        known.forward_bounds(at_seconds, &mut bounds);
+    }
+
+    router.run_forward(query, at_seconds, &bounds, interrupt)?;
+    let reports: Vec<(u8, i32)> = round_results(&router.forward, Direction::Forward)
+        .into_iter()
+        .map(|result| (result.trips, result.time.into_inner()))
+        .collect();
+
+    let mut entries = Vec::with_capacity(reports.len());
+    for (trips, arrival) in reports {
+        // More trips than the forward search needed could only leave later for the same arrival.
+        let limited = TransitQuery {
+            snapshot: query.snapshot.clone(),
+            access: query.access,
+            egress: query.egress,
+            filter: query.filter,
+            max_trips: trips,
+        };
+        let round_bounds = &mut bounds[..=usize::from(trips)];
+        if options.known_journey_bounds {
+            known.backward_bounds(arrival, at_seconds, round_bounds);
+        } else {
+            round_bounds.fill(INFINITY);
+        }
+        router.run_backward(&limited, arrival, round_bounds, interrupt)?;
+        let Some(result) = round_results(&router.backward, Direction::Backward)
+            .into_iter()
+            .find(|result| result.trips == trips)
+        else {
+            continue;
+        };
+        known.add(result.time.into_inner(), arrival, trips);
+        let Some(trace) = trace_journey(&limited, &router.backward, Direction::Backward, trips)
+        else {
+            continue;
+        };
+        let journey = trace.resolve_walks(|parent| router.transfers.walk(parent));
+        entries.push(ProfileEntry {
+            departure: journey.departure,
+            arrival: journey.arrival,
+            trips: journey.trips,
+            journey,
+        });
+    }
+    entries.sort_by_key(|e| (e.departure, e.trips));
+    Ok(Profile { entries })
+}
+
 fn push_arrivals<S: TransferSearch>(
     router: &Router<S>,
     queue: &mut BinaryHeap<core::cmp::Reverse<i32>>,
