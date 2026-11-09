@@ -8,6 +8,7 @@
 mod arena;
 mod builder;
 mod lanes;
+mod pairs;
 mod window;
 
 pub use arena::ArenaUsage;
@@ -17,5 +18,6 @@ pub use builder::{
     materialize_parts,
 };
 pub use lanes::{ResolvedBlock, ResolvedLane, ResolvedTrip, StopEvent, StopRules};
+pub use pairs::{TransferPair, TransferPairs};
 pub(crate) use window::RouteOccurrence;
 pub use window::{BaseWindow, RouteAttributes, StopRouteIndex};

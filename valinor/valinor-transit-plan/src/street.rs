@@ -469,6 +469,10 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
     type Error = StreetError;
     type Walk = TableWalk;
 
+    fn transfer_seconds(&self, walk: &TableWalk) -> Option<u32> {
+        Some(walk.seconds)
+    }
+
     fn tables(
         &mut self,
         request: &AccessEgressRequest<'_>,

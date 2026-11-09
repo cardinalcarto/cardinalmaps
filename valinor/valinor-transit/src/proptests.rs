@@ -2,6 +2,7 @@
 
 #![allow(clippy::too_many_lines)]
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use proptest::prelude::*;
@@ -55,6 +56,8 @@ struct RawNet {
     min_change: Vec<u8>,
     stop_node: Vec<u8>,
     edges: Vec<(u8, u8, u8)>,
+    /// `transfers.txt`-style floors: `(from, to, seconds)`, by raw stop.
+    pairs: Vec<(u8, u8, u8)>,
     access: Vec<Option<u8>>,
     egress: Vec<Option<u8>>,
     routes: Vec<RawRoute>,
@@ -104,6 +107,7 @@ fn raw_net() -> impl Strategy<Value = RawNet> {
         prop::collection::vec(0_u8..8, 8),
         prop::collection::vec(0_u8..4, 8),
         prop::collection::vec((any::<u8>(), any::<u8>(), 0_u8..10), 2..24),
+        prop::collection::vec((any::<u8>(), any::<u8>(), 0_u8..40), 0..6),
         opt(),
         opt(),
         prop::collection::vec(raw_route(), 2..9),
@@ -117,6 +121,7 @@ fn raw_net() -> impl Strategy<Value = RawNet> {
                 min_change,
                 stop_node,
                 edges,
+                pairs,
                 access,
                 egress,
                 routes,
@@ -128,6 +133,7 @@ fn raw_net() -> impl Strategy<Value = RawNet> {
                 min_change,
                 stop_node,
                 edges,
+                pairs,
                 access,
                 egress,
                 routes,
@@ -220,7 +226,29 @@ fn build_net(raw: &RawNet) -> TestNet {
             next_trip += 1;
         }
     }
+    let mut pair_floors = HashMap::new();
+    let mut raw_floors: HashMap<(usize, usize), u8> = HashMap::new();
+    for &(from, to, floor) in &raw.pairs {
+        let (from, to) = (stop_of(from, raw.stop_count), stop_of(to, raw.stop_count));
+        if from != to {
+            raw_floors.entry((from, to)).or_insert(floor);
+        }
+    }
+    for (&(from, to), &floor) in &raw_floors {
+        builder
+            .add_transfer_pair(keys[from], keys[to], secs(u32::from(floor)))
+            .expect("pair");
+    }
     let timetable = builder.build().expect("build");
+    for (&(from, to), &floor) in &raw_floors {
+        pair_floors.insert(
+            (
+                timetable.stop_id(keys[from]).into_inner(),
+                timetable.stop_id(keys[to]).into_inner(),
+            ),
+            i32::from(floor),
+        );
+    }
     let days: Vec<_> = raw
         .day_offsets
         .iter()
@@ -267,6 +295,7 @@ fn build_net(raw: &RawNet) -> TestNet {
     let dist = graph.distances();
     TestNet {
         min_change,
+        pair_floors,
         routes,
         graph,
         dist,
@@ -743,6 +772,7 @@ fn apply_overlay(net: &TestNet, raw: &RawOverlay) -> TestNet {
     let snapshot = overlay.build().expect("build overlay");
     assert_eq!(snapshot.stop_count(), total_stops);
     TestNet {
+        pair_floors: net.pair_floors.clone(),
         min_change,
         routes,
         graph,

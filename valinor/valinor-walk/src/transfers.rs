@@ -8,6 +8,8 @@
 //! Forward and backward searches read the same entry for a directed pair of stops,
 //! so they agree by construction.
 //! The table holds only times; a transfer that ends up in a result is routed again to draw it.
+//! A search applies each stop's transfer time and any rule for the pair of stops when it reads
+//! a walk (see [`valinor_transit::WalkRules`]); the table itself stays real seconds.
 //! A draw searches with the table's own limit, which sets the search's cost bound,
 //! so that it finds the same route as the table's own search; it stops once that route is final.
 //! A walk from a GTFS-RT new stop's backward search is drawn with that same backward search;
@@ -22,8 +24,8 @@ use std::sync::Arc;
 use valhalla_graphtile::tile_provider::GraphTileProvider;
 use valinor_sif::Costing;
 use valinor_transit::{
-    Clock, Direction, StopId, TransferArrival, TransferOutcome, TransferRequest, TransferSearch,
-    TransferSink,
+    Clock, Direction, SeedRules, StopId, TransferArrival, TransferOutcome, TransferRequest,
+    TransferSearch, TransferSink,
 };
 use zerocopy::little_endian::{U16, U32};
 
@@ -737,53 +739,63 @@ impl TransferSearch for TableTransfers {
         let limit = self.limit;
         let epoch = self.epoch;
         let (stamps, best) = (&mut self.stamps, &mut self.best);
-        let mut visit =
-            |source: StopId, clock: Clock, hop_stop: u32, hop_seconds: u32, from_side| {
-                if hop_seconds > limit {
-                    return;
-                }
-                let Ok(cost) = i32::try_from(hop_seconds) else {
-                    return;
-                };
-                let reached = clock.seconds().saturating_add(cost);
-                if reached >= bound {
-                    return;
-                }
-                let at = hop_stop as usize;
-                let (Some(stamp), Some(best)) = (stamps.get_mut(at), best.get_mut(at)) else {
-                    return;
-                };
-                if *stamp == epoch && *best <= reached {
-                    return;
-                }
-                *stamp = epoch;
-                *best = reached;
-                let stop = StopId::new(hop_stop);
-                let (from, to) = if forward {
-                    (source, stop)
-                } else {
-                    (stop, source)
-                };
-                let search = match side_table {
-                    Some(side_table) if from_side => {
-                        side_table.found_by(from.into_inner(), to.into_inner())
-                    }
-                    _ => AccessSide::Access,
-                };
-                sink.reach(TransferArrival {
-                    stop,
-                    source,
-                    clock: Clock::new(reached),
-                    parent: TableWalk {
-                        from,
-                        to,
-                        seconds: hop_seconds,
-                        search,
-                    },
-                });
+        let direction = request.direction;
+        let rules = request.rules;
+        let mut visit = |source: StopId,
+                         clock: Clock,
+                         hop_stop: u32,
+                         hop_seconds: u32,
+                         from_side,
+                         seed: SeedRules<'_>| {
+            if hop_seconds > limit {
+                return;
+            }
+            let Ok(seconds) = i32::try_from(hop_seconds) else {
+                return;
             };
+            let Some(cost) = seed.cost(StopId::new(hop_stop), seconds) else {
+                return;
+            };
+            let reached = clock.seconds().saturating_add(cost);
+            if reached >= bound {
+                return;
+            }
+            let at = hop_stop as usize;
+            let (Some(stamp), Some(best)) = (stamps.get_mut(at), best.get_mut(at)) else {
+                return;
+            };
+            if *stamp == epoch && *best <= reached {
+                return;
+            }
+            *stamp = epoch;
+            *best = reached;
+            let stop = StopId::new(hop_stop);
+            let (from, to) = if forward {
+                (source, stop)
+            } else {
+                (stop, source)
+            };
+            let search = match side_table {
+                Some(side_table) if from_side => {
+                    side_table.found_by(from.into_inner(), to.into_inner())
+                }
+                _ => AccessSide::Access,
+            };
+            sink.reach(TransferArrival {
+                stop,
+                source,
+                clock: Clock::new(reached),
+                parent: TableWalk {
+                    from,
+                    to,
+                    seconds: hop_seconds,
+                    search,
+                },
+            });
+        };
         for seed in request.seeds {
             let source = seed.stop.into_inner();
+            let seed_rules = rules.of_seed(seed.stop, direction);
             let (stops, seconds) = rows.of(source as usize);
             for (stop, second) in stops.iter().zip(seconds) {
                 visit(
@@ -792,11 +804,19 @@ impl TransferSearch for TableTransfers {
                     stop.get(),
                     u32::from(second.get()),
                     false,
+                    seed_rules,
                 );
             }
             if let Some(extra) = side.and_then(|side| side.get(&source)) {
                 for hop in extra {
-                    visit(seed.stop, seed.clock, hop.stop, hop.seconds, true);
+                    visit(
+                        seed.stop,
+                        seed.clock,
+                        hop.stop,
+                        hop.seconds,
+                        true,
+                        seed_rules,
+                    );
                 }
             }
         }

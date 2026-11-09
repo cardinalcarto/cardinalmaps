@@ -2,7 +2,8 @@
 
 use valinor_transit::{
     BuildError, ResolvedTrip, RouteAttributes, RouteId, Seconds, ServiceDate, ServiceId, StopEvent,
-    StopId, StopRules, StopTime, Time, Timetable, TimetableBuilder, TimetableSource, TripId,
+    StopId, StopRules, StopTime, Time, Timetable, TimetableBuilder, TimetableSource, TransferPair,
+    TripId,
 };
 
 use crate::error::DecodeError;
@@ -150,6 +151,23 @@ impl CompiledTimetable<'_> {
             }
         }
 
+        for row in tables.transfer_pairs {
+            let (Some(&from), Some(&to)) = (
+                keys.get(row.from.get() as usize),
+                keys.get(row.to.get() as usize),
+            ) else {
+                return Err(DecodeError::InvalidReference {
+                    table: "transfer pairs",
+                    reason: "a transfer names an unknown stop",
+                });
+            };
+            let floor =
+                Seconds::try_new(row.floor.get()).map_err(|_| DecodeError::InvalidValue {
+                    table: "transfer pairs",
+                    reason: "a floor is out of range",
+                })?;
+            builder.add_transfer_pair(from, to, floor)?;
+        }
         let timetable = builder.build()?;
         for (index, key) in keys.iter().enumerate() {
             let assigned = timetable.stop_id(*key);
@@ -293,6 +311,20 @@ impl TimetableSource for CompiledTimetable<'_> {
         self.tables.stops.get(stop).map_or(0, |row| {
             i32::try_from(row.min_change.get()).unwrap_or(i32::MAX)
         })
+    }
+
+    fn transfer_pairs(&self) -> Vec<TransferPair> {
+        self.tables
+            .transfer_pairs
+            .iter()
+            .filter_map(|row| {
+                Some(TransferPair {
+                    from: StopId::new(row.from.get()),
+                    to: StopId::new(row.to.get()),
+                    floor: Seconds::try_new(row.floor.get()).ok()?,
+                })
+            })
+            .collect()
     }
 
     fn route_stops_of(&self, route: RouteId) -> Result<Vec<StopId>, BuildError> {

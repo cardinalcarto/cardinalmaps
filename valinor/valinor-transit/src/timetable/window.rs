@@ -5,6 +5,7 @@ use crate::error::BuildError;
 use crate::ids::DaySlot;
 use crate::ids::{RouteId, ServiceDay, StopId};
 use crate::timetable::arena::{Arena, BlockRef, offset_of};
+use crate::timetable::pairs::TransferPairs;
 
 /// Boolean attributes of a route.
 ///
@@ -113,17 +114,24 @@ pub struct BaseWindow {
     pub(crate) route_stops: Vec<(u32, u32)>,
     /// The per-stop minimum change times, in seconds.
     pub(crate) min_change: Vec<i32>,
+    /// The rules for walking between particular stops.
+    pub(crate) pairs: TransferPairs,
     pub(crate) index: StopRouteIndex,
     pub(crate) days: Vec<ServiceDay>,
 }
 
 impl BaseWindow {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one call site, each a distinct table"
+    )]
     pub(crate) fn new(
         arena: Arena,
         directory: Vec<BlockRef>,
         attributes: Vec<RouteAttributes>,
         route_stops: Vec<(u32, u32)>,
         min_change: Vec<i32>,
+        pairs: TransferPairs,
         index: StopRouteIndex,
         days: Vec<ServiceDay>,
     ) -> Self {
@@ -133,6 +141,7 @@ impl BaseWindow {
             attributes,
             route_stops,
             min_change,
+            pairs,
             index,
             days,
         }

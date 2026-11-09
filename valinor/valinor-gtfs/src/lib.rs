@@ -24,7 +24,7 @@ pub use format::reader::{
     StopInfo, TripInfo, TripRun, civil_date_of, parse_service_date, service_date_of,
 };
 pub use format::set::{SetError, TimetablePart, TimetableSet};
-pub use format::{FORMAT_VERSION, MAGIC};
+pub use format::{DEFAULT_TRANSFER_SECONDS, FORMAT_VERSION, MAGIC};
 
 #[cfg(feature = "compile")]
 pub use compile::{

@@ -184,6 +184,14 @@ pub trait AccessEgressSearch {
         Ok(None)
     }
 
+    /// How long a transfer's walk itself takes, or `None` when the search can't say.
+    ///
+    /// A transfer's cost in a journey can be longer, by the stops' transfer times;
+    /// the rest of that cost is waiting at the boarding stop.
+    fn transfer_seconds(&self, _walk: &Self::Walk) -> Option<u32> {
+        None
+    }
+
     /// The walking path of a transfer between two stops, or `None` if it has none to show.
     ///
     /// # Errors

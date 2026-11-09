@@ -75,6 +75,7 @@ pub(crate) fn validate(tables: &Tables<'_>) -> Result<(), DecodeError> {
         tables.routes.len(),
     )?;
     validate_index("stop index", tables, tables.stop_index, tables.stops.len())?;
+    validate_transfer_pairs(tables)?;
     Ok(())
 }
 
@@ -558,6 +559,33 @@ fn validate_shapes(tables: &Tables<'_>) -> Result<(), DecodeError> {
                 reason: "a distance is not finite",
             });
         }
+    }
+    Ok(())
+}
+
+/// Every pair of stops must be boardable, different, and in order, and each floor a real duration.
+fn validate_transfer_pairs(tables: &Tables<'_>) -> Result<(), DecodeError> {
+    let mut previous = None;
+    for row in tables.transfer_pairs {
+        let key = (row.from.get(), row.to.get());
+        for stop in [key.0, key.1] {
+            check_index(
+                "transfer pairs",
+                "a transfer names an unboardable stop",
+                stop,
+                tables.boardable_stops,
+            )?;
+        }
+        if key.0 == key.1 || previous.is_some_and(|before| before >= key) {
+            return Err(fail("transfer pairs", "the rows are out of order"));
+        }
+        if row.floor.get() > valinor_transit::SECONDS_LIMIT {
+            return Err(DecodeError::InvalidValue {
+                table: "transfer pairs",
+                reason: "a floor is out of range",
+            });
+        }
+        previous = Some(key);
     }
     Ok(())
 }

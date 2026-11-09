@@ -12,6 +12,7 @@ use crate::ids::{
 };
 use crate::timetable::arena::{Arena, BlockRef, offset_of};
 use crate::timetable::lanes::{ResolvedBlock, ResolvedTrip, StopEvent, StopRules};
+use crate::timetable::pairs::{TransferPair, TransferPairs};
 use crate::timetable::window::{BaseWindow, RouteAttributes, StopRouteIndex};
 
 /// A stop as the builder knows it; [`Timetable::stop_id`] gives its final number.
@@ -56,6 +57,7 @@ pub struct TimetableBuilder {
     services: Vec<BTreeSet<ServiceDate>>,
     patterns: Vec<PatternRecord>,
     trips: Vec<TripRecord>,
+    pairs: Vec<(u32, u32, Seconds)>,
 }
 
 impl TimetableBuilder {
@@ -73,6 +75,29 @@ impl TimetableBuilder {
         let key = StopKey(offset_of(self.stops.len())?);
         self.stops.push(min_change);
         Ok(key)
+    }
+
+    /// Sets the least a walk from one stop to another may cost, in seconds.
+    ///
+    /// # Errors
+    ///
+    /// If either stop wasn't issued by this builder, or they are the same stop.
+    pub fn add_transfer_pair(
+        &mut self,
+        from: StopKey,
+        to: StopKey,
+        floor: Seconds,
+    ) -> Result<(), BuildError> {
+        for stop in [from, to] {
+            if stop.0 as usize >= self.stops.len() {
+                return Err(BuildError::UnknownStop(stop.0));
+            }
+        }
+        if from == to {
+            return Err(BuildError::TransferToSameStop(StopId::new(from.0)));
+        }
+        self.pairs.push((from.0, to.0, floor));
+        Ok(())
     }
 
     /// Adds a calendar: the dates on which its trips run.
@@ -219,11 +244,21 @@ impl TimetableBuilder {
             });
         }
 
+        let pairs = self
+            .pairs
+            .iter()
+            .map(|&(from, to, floor)| TransferPair {
+                from: stop_map[from as usize],
+                to: stop_map[to as usize],
+                floor,
+            })
+            .collect();
         Ok(Timetable {
             stop_map,
             min_change,
             services: self.services,
             routes,
+            pairs,
         })
     }
 }
@@ -259,6 +294,7 @@ pub struct Timetable {
     min_change: Vec<i32>,
     services: Vec<BTreeSet<ServiceDate>>,
     routes: Vec<RouteRecord>,
+    pairs: Vec<TransferPair>,
 }
 
 impl Timetable {
@@ -363,6 +399,13 @@ pub trait TimetableSource {
     /// The minimum change time at a stop, in seconds.
     fn min_change(&self, stop: usize) -> i32;
 
+    /// The rules for walking between particular stops, in the source's numbering.
+    ///
+    /// Empty by default: most sources have none.
+    fn transfer_pairs(&self) -> Vec<TransferPair> {
+        Vec::new()
+    }
+
     /// The stop sequence of a route, in the source's numbering.
     ///
     /// # Errors
@@ -402,6 +445,10 @@ impl TimetableSource for Timetable {
 
     fn min_change(&self, stop: usize) -> i32 {
         self.min_change.get(stop).copied().unwrap_or(0)
+    }
+
+    fn transfer_pairs(&self) -> Vec<TransferPair> {
+        self.pairs.clone()
     }
 
     fn route_stops_of(&self, route: RouteId) -> Result<Vec<StopId>, BuildError> {
@@ -464,6 +511,10 @@ pub struct WindowPart<'a> {
 ///
 /// If there are too many days, a part's `day_offsets` differs from `days` in length,
 /// a shifted time leaves the supported range, or a table grows past its `u32` offsets.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one linear concatenation of the parts' tables"
+)]
 pub fn materialize_parts(
     parts: &[WindowPart<'_>],
     days: &[ServiceDay],
@@ -493,6 +544,7 @@ pub fn materialize_parts(
     let mut attributes = Vec::with_capacity(route_total);
     let mut route_stops = Vec::with_capacity(route_total);
     let mut min_change = Vec::with_capacity(stop_total);
+    let mut pairs = Vec::new();
     let mut stop_base = 0_u32;
     let mut route_base = 0_u32;
     let mut stops = Vec::new();
@@ -542,10 +594,21 @@ pub fn materialize_parts(
         }
         let stop_count = timetable.stop_count();
         min_change.extend((0..stop_count).map(|stop| timetable.min_change(stop)));
+        pairs.extend(
+            timetable
+                .transfer_pairs()
+                .into_iter()
+                .map(|pair| TransferPair {
+                    from: StopId::new(pair.from.into_inner() + stop_base),
+                    to: StopId::new(pair.to.into_inner() + stop_base),
+                    floor: pair.floor,
+                }),
+        );
         stop_base += offset_of(stop_count)?;
         route_base += offset_of(timetable.route_count())?;
     }
 
+    let pairs = TransferPairs::new(min_change.len(), &pairs)?;
     let index = StopRouteIndex::build(
         min_change.len(),
         route_stops
@@ -563,6 +626,7 @@ pub fn materialize_parts(
         attributes,
         route_stops,
         min_change,
+        pairs,
         index,
         days.to_vec(),
     ))

@@ -1,5 +1,7 @@
 //! Scenarios: the snapshot lifecycle, one test per transition, and response building.
 
+use core::convert::Infallible;
+
 use insta::assert_json_snapshot;
 use proptest::prelude::*;
 use valinor_gtfs::LatLon;
@@ -9,7 +11,10 @@ use valinor_transit::{RouteAttributes, RouteFilter, Router, StopId};
 
 use crate::error::{PlanError, StateError};
 use crate::lookup::CompiledLookup;
-use crate::plan::{TransitOptions, TransitRequest, TravelMode, plan};
+use crate::plan::{
+    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, TransitOptions, TransitRequest,
+    TravelMode, plan,
+};
 use crate::response::{FeedState, JourneyLeg, PlanResponse, RealtimeLevel, TransitLeg};
 use crate::state::{FeedUpdate, IngestOutcome, TransitSnapshot, TransitState};
 use crate::testing::{
@@ -824,6 +829,65 @@ fn the_response_has_everything_a_rider_might_want() {
     );
     // The first journey has both rides, and shows the moved stop, the vehicle, and the delay.
     assert_json_snapshot!("full_response", &response);
+}
+
+/// Tells the response layer a transfer's real walk was short.
+#[derive(Default)]
+struct ShortWalks(StraightLineAccess);
+
+impl AccessEgressSearch for ShortWalks {
+    type Error = Infallible;
+    type Walk = StraightWalk;
+
+    fn tables(
+        &mut self,
+        request: &AccessEgressRequest<'_>,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<AccessEgressTables, Infallible> {
+        self.0.tables(request, interrupt)
+    }
+
+    fn transfer_seconds(&self, _walk: &StraightWalk) -> Option<u32> {
+        Some(17)
+    }
+}
+
+/// A transfer leg shows the walk's own time; a longer transfer time is a wait to board.
+#[test]
+fn a_transfer_leg_is_the_walk_and_the_rest_is_a_wait() {
+    let state = synthetic_state();
+    let request = morning_request();
+    let snapshot = state.pin(request.now).expect("pin");
+    let mut router = Router::new(StraightLineTransfers::new(
+        snapshot.stop_locations(),
+        500.0,
+        1.33,
+    ));
+    let response = plan(
+        &state,
+        &mut router,
+        &mut ShortWalks::default(),
+        &request,
+        &|| false,
+    )
+    .expect("plan");
+    let journey = two_trip_journey(&response);
+    let (index, leg) = journey
+        .legs
+        .iter()
+        .enumerate()
+        .find_map(|(index, leg)| match leg {
+            JourneyLeg::Transfer(leg) => Some((index, leg)),
+            _ => None,
+        })
+        .expect("a transfer");
+    assert_eq!(leg.duration_seconds, 17);
+    assert_eq!(leg.arrival - leg.departure, 17);
+    assert_eq!(journey.walking.transfer_seconds, 17);
+    let JourneyLeg::Transit(next) = &journey.legs[index + 1] else {
+        panic!("a ride follows");
+    };
+    assert_eq!(next.wait_seconds, next.departure - leg.arrival);
 }
 
 #[test]

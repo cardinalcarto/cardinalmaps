@@ -45,6 +45,11 @@ use crate::states::TripState;
 /// a trip that late is canceled, or replaced, in practice.
 pub const DEFAULT_MAX_PREDICTION_OFFSET: i64 = 12 * 3600;
 
+/// The transfer time of a stop that exists only in real-time data, in seconds.
+///
+/// A real-time stop has no `transfers.txt`, so it gets the same 2 minutes as any stop without a row.
+pub const DEFAULT_NEW_STOP_TRANSFER_SECONDS: u32 = 120;
+
 /// Choices the overlay leaves to the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OverlayOptions {
@@ -57,7 +62,8 @@ pub struct OverlayOptions {
 impl Default for OverlayOptions {
     fn default() -> Self {
         Self {
-            new_stop_min_change: Seconds::ZERO,
+            new_stop_min_change: Seconds::try_new(DEFAULT_NEW_STOP_TRANSFER_SECONDS)
+                .unwrap_or(Seconds::ZERO),
             max_prediction_offset: DEFAULT_MAX_PREDICTION_OFFSET,
         }
     }

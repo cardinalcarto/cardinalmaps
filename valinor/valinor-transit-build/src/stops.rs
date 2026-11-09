@@ -4,6 +4,7 @@
 //! This is an in-memory convenience: on disk a stop is always addressed as
 //! `(feed index, stop number)`, so nothing depends on the global numbering.
 
+use std::collections::HashMap;
 use std::fs;
 use std::num::NonZeroUsize;
 use std::path::Path;
@@ -12,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sha2::{Digest, Sha256};
 use valinor_gtfs::CompiledTimetable;
-use valinor_transit::StopId;
+use valinor_transit::{StopId, TimetableSource};
 
 use crate::compile::{FeedOutcome, FeedRecord};
 use crate::error::BuildError;
@@ -37,6 +38,11 @@ pub struct StopList {
     pub feeds: Vec<FeedStops>,
     /// By global stop: `(longitude, latitude)`.
     pub coordinates: Vec<Coordinate>,
+    /// For a global stop with `transfers.txt` rules, the global stops they lead to.
+    ///
+    /// A rule needs a walk on the street network to apply to; the transfer stage counts those
+    /// with none.
+    pub pair_rules: HashMap<u32, Vec<u32>>,
 }
 
 impl StopList {
@@ -53,7 +59,7 @@ impl StopList {
         threads: NonZeroUsize,
     ) -> Result<Self, BuildError> {
         let next = AtomicUsize::new(0);
-        let mut lists: Vec<Option<Vec<Coordinate>>> = vec![None; feeds.len()];
+        let mut lists: Vec<Option<FeedStopData>> = vec![None; feeds.len()];
         let lists_lock = Mutex::new(&mut lists);
         let first_error: Mutex<Option<BuildError>> = Mutex::new(None);
         std::thread::scope(|scope| {
@@ -65,9 +71,9 @@ impl StopList {
                             break;
                         };
                         match load_feed(compiled, feed) {
-                            Ok(coords) => {
+                            Ok(data) => {
                                 if let Ok(mut lists) = lists_lock.lock() {
-                                    lists[index] = Some(coords);
+                                    lists[index] = Some(data);
                                 }
                             }
                             Err(error) => {
@@ -86,13 +92,20 @@ impl StopList {
         let mut list = Self {
             feeds: Vec::with_capacity(feeds.len()),
             coordinates: Vec::new(),
+            pair_rules: HashMap::new(),
         };
-        for coordinates in lists {
-            let coordinates = coordinates.ok_or(BuildError::WorkerPanicked)?;
+        for data in lists {
+            let (coordinates, pairs) = data.ok_or(BuildError::WorkerPanicked)?;
             let first =
                 u32::try_from(list.coordinates.len()).map_err(|_| BuildError::TooManyEntries)?;
             let count = u32::try_from(coordinates.len()).map_err(|_| BuildError::TooManyEntries)?;
             list.coordinates.extend(coordinates);
+            for (from, to) in pairs {
+                list.pair_rules
+                    .entry(first + from)
+                    .or_default()
+                    .push(first + to);
+            }
             list.feeds.push(FeedStops { first, count });
         }
         Ok(list)
@@ -136,12 +149,15 @@ impl StopList {
     }
 }
 
-fn load_feed(compiled: &Path, feed: &FeedRecord) -> Result<Vec<Coordinate>, BuildError> {
+/// One feed's stops: coordinates, and the local `(from, to)` stop pairs that have rules.
+type FeedStopData = (Vec<Coordinate>, Vec<(u32, u32)>);
+
+fn load_feed(compiled: &Path, feed: &FeedRecord) -> Result<FeedStopData, BuildError> {
     if feed.outcome != FeedOutcome::Compiled {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let Some(relative) = &feed.timetable else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
     let path = compiled.join(relative);
     let bytes = fs::read(&path).map_err(|source| BuildError::Read { path, source })?;
@@ -165,7 +181,11 @@ fn load_feed(compiled: &Path, feed: &FeedRecord) -> Result<Vec<Coordinate>, Buil
                 .map(|coordinate| (coordinate.lon, coordinate.lat)),
         );
     }
-    Ok(coordinates)
+    let pairs = TimetableSource::transfer_pairs(&timetable)
+        .into_iter()
+        .map(|pair| (pair.from.into_inner(), pair.to.into_inner()))
+        .collect();
+    Ok((coordinates, pairs))
 }
 
 #[cfg(test)]
@@ -181,6 +201,7 @@ mod tests {
                 FeedStops { first: 2, count: 3 },
             ],
             coordinates: vec![None; 5],
+            pair_rules: HashMap::new(),
         };
         assert_eq!(list.address(0), (0, 0));
         assert_eq!(list.address(1), (0, 1));

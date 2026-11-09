@@ -7,6 +7,9 @@ use crate::ids::{DaySlot, RouteId, ServiceId, StopId, TripId};
 /// Why a timetable or an overlay block could not be built.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum BuildError {
+    /// A transfer rule joins a stop to itself.
+    #[error("use a transfer rule from stop {0} to itself")]
+    TransferToSameStop(StopId),
     /// A stop handle was not issued by this builder.
     #[error("use unknown stop {0}")]
     UnknownStop(u32),

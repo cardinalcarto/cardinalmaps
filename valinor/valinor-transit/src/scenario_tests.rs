@@ -195,7 +195,7 @@ fn minimum_change_time_applies_at_the_same_stop() {
 #[test]
 fn a_zero_length_walk_cannot_bypass_the_change_time() {
     // Stops 1 and 3 are one node; walking between them costs nothing.
-    // Boarding at 3 (a different stop) is free of the change time.
+    // Boarding at 3 (a different stop) still costs the longer of the walk and both transfer times.
     // Boarding back at stop 1 itself must still wait for it.
     let scenario = |bus_stop: u32, bus_departs: i32| {
         Scenario::new(4)
@@ -212,25 +212,118 @@ fn a_zero_length_walk_cannot_bypass_the_change_time() {
             .build()
             .0
     };
-    // Walking to the other stop for nothing is a real walk.
-    assert_eq!(arrivals(&scenario(3, 100), 0), vec![(2, 500)]);
-    assert_eq!(departures(&scenario(3, 100), 500), vec![(2, 0)]);
+    // Walking to the other stop for nothing still costs the transfer time at either end.
+    assert_eq!(arrivals(&scenario(3, 100), 0), vec![]);
+    assert_eq!(departures(&scenario(3, 100), 500), vec![]);
+    assert_eq!(arrivals(&scenario(3, 400), 0), vec![(2, 500)]);
     // At the same stop, 100 seconds to change isn't enough, whatever the walking graph allows.
     assert_eq!(arrivals(&scenario(1, 100), 0), vec![]);
     assert_eq!(departures(&scenario(1, 100), 500), vec![]);
     assert_eq!(arrivals(&scenario(1, 400), 0), vec![(2, 500)]);
 }
 
+/// Two routes meeting two stops apart: the walk between them is what's under test.
+fn two_routes_with_a_walk(walk: i32, times: (u32, u32), pair: Option<u32>) -> (TestNet, Vec<i32>) {
+    let mut scenario = Scenario::new(4)
+        .min_change(1, times.0)
+        .min_change(2, times.1)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[0, 100])])
+        .walk(1, 2, walk)
+        // The second route leaves stop 2 every 20 seconds, so a wait shows in the arrival.
+        .route(
+            &[2, 3],
+            &[
+                ScenarioTrip::simple(2, &[120, 400]),
+                ScenarioTrip::simple(3, &[140, 420]),
+                ScenarioTrip::simple(4, &[160, 440]),
+                ScenarioTrip::simple(5, &[180, 460]),
+                ScenarioTrip::simple(6, &[300, 580]),
+            ],
+        )
+        .access(0, 0)
+        .egress(3, 0);
+    if let Some(floor) = pair {
+        scenario = scenario.pair(1, 2, floor);
+    }
+    let (net, _) = scenario.build();
+    let arrival = arrivals(&net, 0).first().map(|&(_, a)| a).expect("reached");
+    (net, vec![arrival])
+}
+
+#[test]
+fn a_walk_costs_the_longest_of_itself_and_both_transfer_times() {
+    // The walk is the longest: 30 s to the trip at 140 is the first it can make.
+    let (net, arrivals_seen) = two_routes_with_a_walk(30, (10, 20), None);
+    assert_eq!(arrivals_seen, vec![420]);
+    agrees_with_oracle(&net, 0);
+    // A stop's transfer time is longer than the walk, at either end.
+    let (net, arrivals_seen) = two_routes_with_a_walk(30, (65, 20), None);
+    assert_eq!(arrivals_seen, vec![460], "the walk's from stop");
+    agrees_with_oracle(&net, 0);
+    let (net, arrivals_seen) = two_routes_with_a_walk(30, (10, 65), None);
+    assert_eq!(arrivals_seen, vec![460], "the walk's to stop");
+    agrees_with_oracle(&net, 0);
+}
+
+#[test]
+fn a_rule_between_two_stops_is_a_floor_on_the_walk() {
+    let (net, arrivals_seen) = two_routes_with_a_walk(30, (10, 20), Some(70));
+    assert_eq!(arrivals_seen, vec![460]);
+    agrees_with_oracle(&net, 0);
+    // A rule shorter than the walk changes nothing.
+    let (_, arrivals_seen) = two_routes_with_a_walk(30, (10, 20), Some(5));
+    assert_eq!(arrivals_seen, vec![420]);
+}
+
+#[test]
+fn a_rule_only_binds_its_own_direction() {
+    let (net, _) = Scenario::new(4)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[0, 100])])
+        .walk(1, 2, 30)
+        .pair(2, 1, 500) // The reverse direction.
+        .route(&[2, 3], &[ScenarioTrip::simple(2, &[140, 400])])
+        .access(0, 0)
+        .egress(3, 0)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(2, 400)]);
+    agrees_with_oracle(&net, 0);
+}
+
+#[test]
+fn walk_times_mirror_in_a_backward_search() {
+    let (net, _) = two_routes_with_a_walk(30, (65, 20), Some(40));
+    for arrival in [440, 460, 580] {
+        assert_eq!(
+            departures(&net, arrival),
+            oracle(&net, RouteFilter::ALL, Direction::Backward, arrival, 4),
+            "backward from {arrival}"
+        );
+    }
+}
+
+#[test]
+fn a_transfer_leg_keeps_the_cost_and_the_walk_apart() {
+    let (net, _) = two_routes_with_a_walk(30, (65, 20), None);
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router = net.router();
+    let run = router.forward(&query, t(0), &|| false).expect("search");
+    let journey = run.journey(2).expect("journey");
+    assert!(journey.legs.iter().any(|leg| matches!(
+        leg,
+        Leg::Transfer { duration, .. } if duration.into_inner() == 65
+    )));
+}
+
 #[test]
 fn walking_from_another_stop_helps_even_after_a_trip_arrival() {
     // A rider arrives at stop 1 by trip at 100 and at stop 2 by trip at 90,
-    // and the walk from 2 to 1 takes 15 seconds.
-    // Boarding at stop 1 at 105 is possible only on foot; the same-stop rule would wait until 400.
+    // and the walk from 2 to 1 costs the longer of its 15 seconds and stop 1's 30.
+    // Boarding at stop 1 at 125 is possible only on foot; the same-stop rule would wait until 130.
     let (net, _) = Scenario::new(5)
-        .min_change(1, 300)
+        .min_change(1, 30)
         .route(&[0, 1], &[ScenarioTrip::simple(1, &[0, 100])])
         .route(&[0, 2], &[ScenarioTrip::simple(2, &[0, 90])])
-        .route(&[1, 3], &[ScenarioTrip::simple(3, &[105, 200])])
+        .route(&[1, 3], &[ScenarioTrip::simple(3, &[125, 200])])
         .walk(2, 1, 15)
         .access(0, 0)
         .egress(3, 0)

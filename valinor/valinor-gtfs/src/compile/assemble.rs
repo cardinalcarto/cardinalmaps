@@ -19,7 +19,7 @@ use crate::error::CompileError;
 use crate::format::layout::{
     AgencyRow, ColorRow, FeedRow, IdIndexRow, NONE, NoonOffsetRow, PATTERN_BIKES_ALLOWED,
     PatternRow, RouteRow, SectionId, ServiceRow, ShapePointRow, ShapeRow, StopRow, TimePair,
-    TripRiderRow, TripRow, ZoneRow, ZoneTransitionRow,
+    TransferPairRow, TripRiderRow, TripRow, ZoneRow, ZoneTransitionRow,
 };
 use crate::format::reader::{civil_date_of, service_date_of};
 use crate::format::timetable::stop_rules;
@@ -257,6 +257,8 @@ pub(super) fn assemble(
         });
     }
 
+    let transfer_pair_rows = transfer_pair_rows(&feeds, &numbering)?;
+
     let (shapes_table, shape_points, shape_bases) = build_shape_tables(&feeds)?;
     trip_table.fix_shape_bases(&shape_bases);
 
@@ -306,12 +308,39 @@ pub(super) fn assemble(
     writer.table(SectionId::TripIndex, &trip_table.index);
     writer.table(SectionId::RouteIndex, &route_index);
     writer.table(SectionId::StopIndex, &stop_index);
+    writer.table(SectionId::TransferPairs, &transfer_pair_rows);
 
     let boardable =
         u32::try_from(boardable_count).map_err(|_| CompileError::TableTooLarge("stops"))?;
     let bytes = writer.finish(boardable);
     let reports: Vec<FeedReport> = feeds.into_iter().map(|feed| feed.report).collect();
     Ok(CompiledOutput { bytes, reports })
+}
+
+/// The walk rules of every feed, in final stop numbers and in the order a file needs.
+fn transfer_pair_rows(
+    feeds: &[FeedModel],
+    numbering: &StopNumbering,
+) -> Result<Vec<TransferPairRow>, CompileError> {
+    let mut rows = Vec::new();
+    for (feed_index, feed) in feeds.iter().enumerate() {
+        for &(from, to, floor) in &feed.transfer_pairs {
+            rows.push((
+                numbering.final_of(feed_index, from)?,
+                numbering.final_of(feed_index, to)?,
+                floor,
+            ));
+        }
+    }
+    rows.sort_unstable();
+    Ok(rows
+        .into_iter()
+        .map(|(from, to, floor)| TransferPairRow {
+            from: U32::new(from),
+            to: U32::new(to),
+            floor: U32::new(floor),
+        })
+        .collect())
 }
 
 /// Rows of the shape table, rows of the point table, and each feed's first shape.

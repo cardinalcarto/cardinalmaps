@@ -9,7 +9,7 @@ use crate::stop_table::{RouteFilter, StopTable};
 use crate::timetable::{INFINITY, RouteOccurrence};
 use crate::transfer::{
     Clock, TransferArrival, TransferOutcome, TransferRequest, TransferSearch, TransferSeed,
-    TransferSink,
+    TransferSink, WalkRules,
 };
 
 /// The most trips a search may use.
@@ -140,13 +140,7 @@ pub(super) fn run<const BACK: bool, S: TransferSearch>(
         );
         previous_upper_bound = upper_bound;
         let outcome = run_transfers(
-            labels,
-            round,
-            direction,
-            walk_bound,
-            snapshot.max_min_change,
-            transfers,
-            interrupt,
+            labels, round, direction, walk_bound, snapshot, transfers, interrupt,
         )
         .map_err(SearchError::Transfer)?;
         if outcome == TransferOutcome::Interrupted {
@@ -228,7 +222,7 @@ fn run_transfers<S: TransferSearch>(
     round: u8,
     direction: Direction,
     walk_bound: i32,
-    change_margin: i32,
+    snapshot: &Snapshot,
     transfers: &mut S,
     interrupt: &dyn Fn() -> bool,
 ) -> Result<TransferOutcome, S::Error> {
@@ -253,7 +247,12 @@ fn run_transfers<S: TransferSearch>(
         direction,
         seeds: &seeds,
         upper_bound: Clock(labels.best_target.min(walk_bound)),
-        change_margin,
+        change_margin: snapshot.max_min_change,
+        rules: WalkRules {
+            times: &snapshot.min_change,
+            max_time: snapshot.max_min_change,
+            pairs: &snapshot.base.pairs,
+        },
         interrupt,
     };
     let mut sink = LabelSink { labels, round };

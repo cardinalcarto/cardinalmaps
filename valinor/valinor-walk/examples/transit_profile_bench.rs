@@ -55,6 +55,7 @@ use valinor_transit::{
     Clock, DEFAULT_BOOTSTRAP_WALK_LIMIT, DaySlot, Direction, ProfileEntry, ProfileOptions,
     RouteFilter, RouteId, Router, ServiceDate, Snapshot, StopId, StopTable, Time, TransferArrival,
     TransferOutcome, TransferRequest, TransferSearch, TransferSeed, TransferSink, TransitQuery,
+    WalkRules,
 };
 use valinor_walk::{
     AccessSide, ResolvedWalk, SnapConfig, SnapPoint, StopSnaps, StopTables, TableRequest,
@@ -246,6 +247,7 @@ impl Shadow {
                     seeds: &self.long,
                     upper_bound: request.upper_bound,
                     change_margin: request.change_margin,
+                    rules: request.rules,
                     interrupt: request.interrupt,
                 },
                 &mut Discard,
@@ -287,6 +289,7 @@ fn build_walk_table(
                 seeds: &seeds,
                 upper_bound: Clock::new(radius),
                 change_margin: TransferRequest::REPORT_ALL,
+                rules: WalkRules::none(),
                 interrupt: &|| false,
             },
             &mut sink,

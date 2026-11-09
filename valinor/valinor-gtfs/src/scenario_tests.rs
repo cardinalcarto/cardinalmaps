@@ -11,6 +11,7 @@ use valinor_transit::{ServiceDate, StopId, Timetable, TripId};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
+use crate::DEFAULT_TRANSFER_SECONDS;
 use crate::format::layout::checksum_of;
 use crate::{
     Accessibility, CompileError, CompiledOutput, CompiledTimetable, DecodeError, DirectorySource,
@@ -697,14 +698,17 @@ fn min_transfer_times_set_where_the_core_can_use_them() {
             "transfers.txt",
             "from_stop_id,to_stop_id,transfer_type,min_transfer_time,from_route_id\n\
              A,A,2,300,\n\
+             A,A,2,240,\n\
              A,B,2,60,\n\
              B,B,1,,\n\
              C,C,2,120,R\n\
              HUB,HUB,2,90,\n",
         );
     let output = compile_one(source);
-    assert_eq!(output.reports[0].transfers_applied, 2);
-    assert_eq!(output.reports[0].transfers_ignored, 3);
+    assert_eq!(output.reports[0].transfers_applied, 4);
+    assert_eq!(output.reports[0].transfers_ignored, 2);
+    // A to B, and each platform of the hub to the other.
+    assert_eq!(output.reports[0].transfer_pairs, 3);
     let view = CompiledTimetable::parse(&output.bytes).expect("parse");
     let change = |id: &str| {
         let stop = view.stop_by_gtfs_id("kcm", id).expect("stop");
@@ -712,17 +716,63 @@ fn min_transfer_times_set_where_the_core_can_use_them() {
             .min_change
             .get()
     };
-    assert_eq!(change("A"), 300, "same stop, type 2");
-    assert_eq!(change("B"), 0, "not same stop or not type 2");
-    assert_eq!(change("C"), 0, "route-scoped");
+    assert_eq!(change("A"), 240, "same stop, type 2: the smallest row wins");
+    assert_eq!(
+        change("B"),
+        DEFAULT_TRANSFER_SECONDS,
+        "a row between stops sets no time"
+    );
+    assert_eq!(change("C"), DEFAULT_TRANSFER_SECONDS, "route-scoped");
     assert_eq!(
         change("P1"),
         90,
         "a station's minimum reaches its platforms"
     );
     assert_eq!(change("P2"), 90);
+    let stop = |id: &str| view.stop_by_gtfs_id("kcm", id).expect("stop");
+    let pairs: Vec<_> = valinor_transit::TimetableSource::transfer_pairs(&view)
+        .into_iter()
+        .map(|pair| (pair.from, pair.to, pair.floor.into_inner()))
+        .collect();
+    assert_eq!(pairs.len(), 3);
+    assert!(pairs.contains(&(stop("A"), stop("B"), 60)));
+    assert!(pairs.contains(&(stop("P1"), stop("P2"), 90)));
+    assert!(pairs.contains(&(stop("P2"), stop("P1"), 90)));
     let timetable = view.to_timetable().expect("timetable");
     assert_eq!(timetable.stop_count(), view.stop_count());
+}
+
+#[test]
+fn a_rule_between_stops_keeps_the_first_row() {
+    let source = InMemorySource::new()
+        .with("agency.txt", AGENCY)
+        .with("routes.txt", "route_id,route_type\nR,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_lat,stop_lon\nA,47.0,-122.0\nB,47.1,-122.0\n",
+        )
+        .with(
+            "calendar_dates.txt",
+            "service_id,date,exception_type\nS,20260602,1\n",
+        )
+        .with("trips.txt", "route_id,service_id,trip_id\nR,S,X\n")
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             X,10:00:00,10:00:00,A,1\nX,11:00:00,11:00:00,B,2\n",
+        )
+        .with(
+            "transfers.txt",
+            "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n\
+             A,B,2,200\n\
+             A,B,2,100\n",
+        );
+    let output = compile_one(source);
+    assert_eq!(output.reports[0].transfer_pairs, 1);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let pairs = valinor_transit::TimetableSource::transfer_pairs(&view);
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].floor.into_inner(), 200);
 }
 
 #[test]

@@ -86,6 +86,8 @@ pub struct FeedReport {
     pub transfers_applied: usize,
     /// Rows of `transfers.txt` the core can't express.
     pub transfers_ignored: usize,
+    /// Directed stop pairs given a minimum time by `transfers.txt` rows between different stops.
+    pub transfer_pairs: usize,
     /// Trips left out, by reason.
     pub dropped_trips: BTreeMap<DropReason, usize>,
     /// How many non-fatal problems were found.
@@ -125,6 +127,7 @@ impl FeedReport {
             shape_points: 0,
             transfers_applied: 0,
             transfers_ignored: 0,
+            transfer_pairs: 0,
             dropped_trips: BTreeMap::new(),
             warning_count: 0,
             warnings: Vec::new(),

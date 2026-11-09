@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -266,6 +266,7 @@ fn run_mode(
         TransferMode::Cycling => options.max_seconds_cycling,
     };
 
+    let pair_rules_without_walk = AtomicU64::new(0);
     let context = Context {
         options,
         mode,
@@ -277,9 +278,11 @@ fn run_mode(
         order,
         staging,
         manifest_id: id,
+        pair_rules_without_walk: &pair_rules_without_walk,
     };
     let outcomes = run_jobs(&context, jobs)?;
     let mut result = summarize(outcomes, stops, &unsnapped_list, &disconnected_stops);
+    result.totals.pair_rules_without_walk = pair_rules_without_walk.load(Ordering::Relaxed);
     result.seconds = started.elapsed().as_secs_f64();
     result.unsnapped = core::mem::take(&mut unsnapped_list);
     result.feed_snaps = feed_snaps;
@@ -474,6 +477,7 @@ struct Context<'a> {
     order: &'a [u32],
     staging: &'a Path,
     manifest_id: u64,
+    pair_rules_without_walk: &'a AtomicU64,
 }
 
 fn run_jobs(context: &Context<'_>, jobs: &[TileJob]) -> Result<Vec<TileOutcome>, BuildError> {
@@ -550,6 +554,15 @@ fn build_tile(
             interrupt: &|| false,
         })?;
         let hops: Vec<Hop> = sorted_walks_from(tables, origin_id);
+        if let Some(targets) = context.stops.pair_rules.get(&origin) {
+            let missing = targets
+                .iter()
+                .filter(|&&to| hops.binary_search_by_key(&to, |hop| hop.stop).is_err())
+                .count();
+            context
+                .pair_rules_without_walk
+                .fetch_add(missing as u64, Ordering::Relaxed);
+        }
         if hops.is_empty() {
             continue;
         }

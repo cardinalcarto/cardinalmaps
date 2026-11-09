@@ -16,7 +16,7 @@ use valhalla_graphtile::tile_provider::{
 use valinor_sif::{AnyCosting, Costing};
 use valinor_transit::{
     Clock, Direction, StopId, TransferArrival, TransferOutcome, TransferRequest, TransferSearch,
-    TransferSeed, TransferSink,
+    TransferSeed, TransferSink, WalkRules,
 };
 
 use super::*;
@@ -93,6 +93,7 @@ fn run_search<P: GraphTileProvider, C: Costing>(
         seeds,
         upper_bound: Clock::new(upper_bound),
         change_margin: TransferRequest::REPORT_ALL,
+        rules: WalkRules::none(),
         interrupt: &|| false,
     };
     let outcome = search.search(&request, &mut sink).expect("search");
@@ -471,6 +472,7 @@ fn interrupts_stop_the_search() {
         seeds: &seeds,
         upper_bound: Clock::new(i32::MAX / 2),
         change_margin: TransferRequest::REPORT_ALL,
+        rules: WalkRules::none(),
         interrupt: &|| true,
     };
     let outcome = search.search(&request, &mut sink).expect("search");
@@ -1244,6 +1246,7 @@ fn bench_row<P: GraphTileProvider, C: Costing>(
             seeds: &seeds,
             upper_bound: Clock::new(upper_bound),
             change_margin: TransferRequest::REPORT_ALL,
+            rules: WalkRules::none(),
             interrupt: &|| false,
         };
         search.begin_run(dir);
@@ -1302,6 +1305,7 @@ fn benchmark_king_county_multi_source_searches() {
         seeds: &cold_seeds,
         upper_bound: Clock::new(3600),
         change_margin: TransferRequest::REPORT_ALL,
+        rules: WalkRules::none(),
         interrupt: &|| false,
     };
     search.begin_run(Direction::Forward);
@@ -1390,6 +1394,7 @@ fn bench_run_rounds<P: GraphTileProvider, C: Costing>(
                 seeds: &seeds,
                 upper_bound: Clock::new(upper),
                 change_margin: TransferRequest::REPORT_ALL,
+                rules: WalkRules::none(),
                 interrupt: &|| false,
             };
             search.search(&request, &mut sink).expect("search");
@@ -1523,6 +1528,7 @@ fn run_pruning_keeps_every_improving_arrival_across_rounds() {
                 seeds: &seeds,
                 upper_bound: Clock::new(i32::MAX / 2),
                 change_margin: TransferRequest::REPORT_ALL,
+                rules: WalkRules::none(),
                 interrupt: &|| false,
             };
             let mut sink_p = Sink::default();
@@ -1574,6 +1580,7 @@ fn board_clocks_of_rounds<P: GraphTileProvider, C: Costing>(
             seeds: &seeds,
             upper_bound: Clock::new(i32::MAX / 2),
             change_margin: margin,
+            rules: WalkRules::none(),
             interrupt: &|| false,
         };
         let mut sink = Sink::default();

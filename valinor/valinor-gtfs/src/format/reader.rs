@@ -22,7 +22,7 @@ use crate::format::layout::{
     AgencyRow, DIRECTION_NONE, FORMAT_VERSION, FeedRow, FileHeader, IdIndexRow, MAGIC, NONE,
     NoonOffsetRow, PATTERN_BIKES_ALLOWED, PatternRow, RULE_APPROXIMATE, RULE_DROP_OFF_SHIFT,
     RULE_PICKUP_MASK, RUN_HEADWAY_FREQUENCY, RUN_SCHEDULED, RouteRow, SectionEntry, SectionId,
-    ServiceRow, ShapePointRow, ShapeRow, StopRow, TimePair, TripRiderRow, TripRow,
+    ServiceRow, ShapePointRow, ShapeRow, StopRow, TimePair, TransferPairRow, TripRiderRow, TripRow,
     UNCHECKSUMMED_PREFIX, ZoneRow, ZoneTransitionRow, checksum_of,
 };
 use crate::format::validate::validate;
@@ -108,6 +108,7 @@ pub(crate) struct Tables<'a> {
     pub(crate) trip_index: &'a [IdIndexRow],
     pub(crate) route_index: &'a [IdIndexRow],
     pub(crate) stop_index: &'a [IdIndexRow],
+    pub(crate) transfer_pairs: &'a [TransferPairRow],
 }
 
 /// Casts a slice of bytes to a slice of records, naming the section on failure.
@@ -270,6 +271,7 @@ impl<'a> Tables<'a> {
         let trip_index = table!(TripIndex);
         let route_index = table!(RouteIndex);
         let stop_index = table!(StopIndex);
+        let transfer_pairs = table!(TransferPairs);
 
         let strings = core::str::from_utf8(strings_bytes)
             .map_err(|_| DecodeError::InvalidStrings("the pool is not UTF-8"))?;
@@ -302,6 +304,7 @@ impl<'a> Tables<'a> {
             trip_index,
             route_index,
             stop_index,
+            transfer_pairs,
         })
     }
 

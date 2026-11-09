@@ -7,7 +7,7 @@
 
 use std::cell::Cell;
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -176,6 +176,10 @@ impl TransferSearch for SyntheticSearch {
         if (request.interrupt)() {
             return Ok(TransferOutcome::Interrupted);
         }
+        if request.rules.max_time > 0 || request.rules.pairs.has_rows() {
+            self.search_each_seed(request, sink);
+            return Ok(TransferOutcome::Completed);
+        }
         let node_count = self.graph.edges_out.len();
         let mut slots: Vec<[Option<NodeLabel>; 2]> = vec![[None; 2]; node_count];
         let mut reported = vec![false; self.graph.stop_node.len()];
@@ -296,6 +300,75 @@ impl TransferSearch for SyntheticSearch {
     }
 }
 
+impl SyntheticSearch {
+    /// The transfer rules make a walk's cost depend on its seed, so seeds can't share labels:
+    /// this runs a plain Dijkstra from each one. It's only for small test graphs.
+    fn search_each_seed<K: TransferSink<TraceId>>(
+        &mut self,
+        request: &TransferRequest<'_>,
+        sink: &mut K,
+    ) {
+        let node_count = self.graph.edges_out.len();
+        for seed in request.seeds {
+            let rules = request.rules.of_seed(seed.stop, request.direction);
+            let source = seed.stop.into_inner();
+            let start = self.graph.stop_node[seed.stop.index()];
+            let mut dist = vec![i32::MAX; node_count];
+            let mut trace_of = vec![u32::MAX; node_count];
+            let mut queue = BinaryHeap::new();
+            dist[start as usize] = 0;
+            let first = u32::try_from(self.trace.len()).expect("trace fits u32");
+            self.trace.push(Trace {
+                node: start,
+                previous: None,
+            });
+            trace_of[start as usize] = first;
+            queue.push(Reverse((0, start)));
+            while let Some(Reverse((walked, node))) = queue.pop() {
+                if walked > dist[node as usize] {
+                    continue;
+                }
+                for &stop in &self.graph.node_stops[node as usize] {
+                    let other = StopId::new(stop);
+                    if stop == source {
+                        continue;
+                    }
+                    let Some(cost) = rules.cost(other, walked) else {
+                        continue;
+                    };
+                    let clock = seed.clock.seconds() + cost;
+                    if clock >= request.upper_bound.seconds() {
+                        continue;
+                    }
+                    sink.reach(TransferArrival {
+                        stop: other,
+                        source: seed.stop,
+                        clock: Clock(clock),
+                        parent: TraceId(trace_of[node as usize]),
+                    });
+                }
+                let edges = match request.direction {
+                    Direction::Forward => &self.graph.edges_out[node as usize],
+                    Direction::Backward => &self.graph.edges_in[node as usize],
+                };
+                for &(next, weight) in edges {
+                    let total = walked + weight;
+                    if total < dist[next as usize] {
+                        dist[next as usize] = total;
+                        let id = u32::try_from(self.trace.len()).expect("trace fits u32");
+                        self.trace.push(Trace {
+                            node: next,
+                            previous: Some(trace_of[node as usize]),
+                        });
+                        trace_of[next as usize] = id;
+                        queue.push(Reverse((total, next)));
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// A route in test form: every trip of every day, resolved.
 #[derive(Debug, Clone)]
 pub(crate) struct TestRoute {
@@ -309,6 +382,8 @@ pub(crate) struct TestRoute {
 #[derive(Debug, Clone)]
 pub(crate) struct TestNet {
     pub(crate) min_change: Vec<i32>,
+    /// Floors on walks between particular stops, by final stop number.
+    pub(crate) pair_floors: HashMap<(u32, u32), i32>,
     pub(crate) routes: Vec<TestRoute>,
     pub(crate) graph: Arc<Graph>,
     /// Stop-to-stop walking distances, following edges as directed.
@@ -319,6 +394,23 @@ pub(crate) struct TestNet {
 }
 
 impl TestNet {
+    /// What a walk from `u` to `v` costs: the longest of the walk and both transfer times,
+    /// and at least any rule for this pair. `None` when there is no such walk.
+    pub(crate) fn walk_cost(&self, u: usize, v: usize) -> Option<i32> {
+        let seconds = *self.dist.get(u)?.get(v)?;
+        if u == v || seconds >= NO_WALK {
+            return None;
+        }
+        let mut cost = seconds.max(self.min_change[u]).max(self.min_change[v]);
+        if let Some(&floor) = self.pair_floors.get(&(
+            u32::try_from(u).expect("few stops"),
+            u32::try_from(v).expect("few stops"),
+        )) {
+            cost = cost.max(floor);
+        }
+        Some(cost)
+    }
+
     pub(crate) fn query(&self, max_trips: u8, filter: RouteFilter) -> TransitQuery<'_> {
         TransitQuery {
             snapshot: Arc::clone(&self.snapshot),
@@ -361,7 +453,11 @@ pub(crate) fn oracle(
         }
     }
     let walk = |u: usize, v: usize| {
-        if back { net.dist[v][u] } else { net.dist[u][v] }
+        if back {
+            net.walk_cost(v, u)
+        } else {
+            net.walk_cost(u, v)
+        }
     };
 
     let mut best = INF;
@@ -415,8 +511,8 @@ pub(crate) fn oracle(
                 continue;
             }
             for v in 0..n {
-                if u != v && walk(u, v) < NO_WALK {
-                    foot[v] = foot[v].min(trip[u] + walk(u, v));
+                if let Some(cost) = walk(u, v) {
+                    foot[v] = foot[v].min(trip[u] + cost);
                 }
             }
         }
@@ -522,9 +618,9 @@ pub(crate) fn check_journey(net: &TestNet, journey: &Journey<Vec<u32>>) {
                 assert_ne!(from, to, "walks join different stops");
                 assert_eq!(*from, position_stop);
                 assert_eq!(
-                    net.dist[from.index()][to.index()],
-                    duration.as_i32(),
-                    "walk costs the shortest path"
+                    net.walk_cost(from.index(), to.index()),
+                    Some(duration.as_i32()),
+                    "a walk costs the longest of its seconds and both stops' times"
                 );
                 let first = *walk.first().expect("non-empty path");
                 let last = *walk.last().expect("non-empty path");
@@ -568,6 +664,7 @@ pub(crate) struct Scenario {
     min_change: Vec<u32>,
     routes: Vec<(Vec<u32>, RouteAttributes, Vec<ScenarioTrip>)>,
     edges: Vec<(u32, u32, i32)>,
+    pairs: Vec<(u32, u32, u32)>,
     access: Vec<(u32, u32)>,
     egress: Vec<(u32, u32)>,
     days: Vec<(ServiceDate, i32)>,
@@ -639,6 +736,12 @@ impl Scenario {
         self
     }
 
+    /// A rule from `transfers.txt`: walking from `from` to `to` costs at least `seconds`.
+    pub(crate) fn pair(mut self, from: u32, to: u32, seconds: u32) -> Self {
+        self.pairs.push((from, to, seconds));
+        self
+    }
+
     pub(crate) fn access(mut self, stop: u32, seconds: u32) -> Self {
         self.access.push((stop, seconds));
         self
@@ -665,6 +768,11 @@ impl Scenario {
             .iter()
             .map(|&(date, _)| builder.add_service([date]).expect("service"))
             .collect();
+        for &(from, to, seconds) in &self.pairs {
+            builder
+                .add_transfer_pair(keys[from as usize], keys[to as usize], secs(seconds))
+                .expect("pair");
+        }
         for (stops, attributes, trips) in &self.routes {
             let stop_keys: Vec<_> = stops.iter().map(|&s| keys[s as usize]).collect();
             let pattern = builder
@@ -730,9 +838,23 @@ impl Scenario {
         }
         let routes = routes_from_timetable(&timetable, &window);
         let dist = graph.distances();
+        let pair_floors = self
+            .pairs
+            .iter()
+            .map(|&(from, to, seconds)| {
+                (
+                    (
+                        ids[from as usize].into_inner(),
+                        ids[to as usize].into_inner(),
+                    ),
+                    i32::try_from(seconds).expect("small"),
+                )
+            })
+            .collect();
         (
             TestNet {
                 min_change,
+                pair_floors,
                 routes,
                 graph,
                 dist,

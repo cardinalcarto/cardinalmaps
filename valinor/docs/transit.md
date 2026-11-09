@@ -15,7 +15,8 @@ searching the street network during a query cost too much time and memory (see "
 - Profile queries: all journeys in a departure window,
   Pareto-optimal on arrival time and number of trips.
 - A leave-now query for the first answer, with the profile as the slower "more routes".
-- Transfers within a bound, each costed by Sif the way any route on the graph is.
+- Transfers within a bound, each costed by Sif the way any route on the graph is,
+  and at least as long as the transfer times of its two stops.
 - GTFS-RT trip updates, vehicle positions, and service alerts.
 - The same router on the server and on the client.
   There is no tokio or network access in the routing crates.
@@ -136,10 +137,31 @@ Each stop occurrence on a route is indexed, so loop routes work.
 `pickup_type` and `drop_off_type` are honored, and mirrored in backward searches.
 
 A stop has separate labels for arriving by trip and arriving on foot.
-Boarding the same stop after arriving by trip requires the minimum change time,
+Boarding the same stop after arriving by trip requires the stop's transfer time,
 so a zero-length walk can't bypass it.
-A walk joins two different stops, so it never leads from a stop back to itself;
-a rider reaching a stop on foot from another stop owes no change time there.
+A walk joins two different stops, so it never leads from a stop back to itself.
+
+### Transfer times
+
+This follows MOTIS (nigiri).
+Each stop has a transfer time of 2 minutes,
+unless a `transfers.txt` `transfer_type=2` row with the same from and to stop sets one;
+the smallest of several rows wins.
+A station's row covers each of its stops, as GTFS says. Rows naming a route or a trip are ignored
+and counted in the compile report.
+
+A transfer at the same stop costs that stop's transfer time.
+A walk between two stops costs the longest of the walk and both stops' transfer times.
+A type 2 row between two different stops is a floor on that walk, the first row winning, as in
+nigiri: nigiri would add a footpath for such a row even with no other way to get there,
+but a transfer here comes from a walk on the street network, so a row with no walk in the table
+has nothing to apply to. The transfer stage counts those rows in the manifest's totals
+(`pair_rules_without_walk`).
+
+Tables keep real walk seconds; the longer value applies when a search reads a walk,
+so a walk drawn in a response still takes as long as it really does,
+and what's left of the transfer's cost is a wait to board, shown as the next ride's `wait_seconds`.
+Nothing here depends on the request: there is no per-request slack.
 
 ## Memory layout
 

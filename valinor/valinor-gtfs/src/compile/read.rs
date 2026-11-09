@@ -17,8 +17,8 @@ use crate::compile::table::{Table, field};
 use crate::compile::time::{parse_date, parse_time};
 use crate::error::CompileError;
 use crate::format::layout::{
-    DIRECTION_NONE, MAX_SERVICE_DAYS, RULE_APPROXIMATE, RUN_EXACT_FREQUENCY, RUN_HEADWAY_FREQUENCY,
-    RUN_SCHEDULED,
+    DEFAULT_TRANSFER_SECONDS, DIRECTION_NONE, MAX_SERVICE_DAYS, RULE_APPROXIMATE,
+    RUN_EXACT_FREQUENCY, RUN_HEADWAY_FREQUENCY, RUN_SCHEDULED,
 };
 use crate::format::reader::service_date_of;
 
@@ -106,6 +106,8 @@ pub(super) struct FeedModel {
     pub(super) services: Vec<ServiceModel>,
     pub(super) shapes: Vec<ShapeModel>,
     pub(super) trips: Vec<TripModel>,
+    /// `(from, to, floor seconds)` for walking between two different stops, by feed-local stop.
+    pub(super) transfer_pairs: Vec<(u32, u32, u32)>,
     pub(super) report: FeedReport,
 }
 
@@ -124,7 +126,7 @@ pub(super) fn read_feed(
     let (routes, route_ids) =
         read_routes(source.as_mut(), pool, &agency_ids, &agencies, &mut report)?;
     let (mut stops, stop_ids) = read_stops(source.as_mut(), pool, &time_zone, &mut report)?;
-    apply_transfers(source.as_mut(), &stop_ids, &mut stops, &mut report)?;
+    let transfer_pairs = apply_transfers(source.as_mut(), &stop_ids, &mut stops, &mut report)?;
 
     let shapes = read_shapes(source.as_mut(), pool, &mut report)?;
     let frequencies = read_frequencies(source.as_mut(), &mut report)?;
@@ -190,6 +192,7 @@ pub(super) fn read_feed(
         services,
         shapes,
         trips,
+        transfer_pairs,
         report,
     })
 }
@@ -655,7 +658,7 @@ fn read_stops(
                 timezone: field(&record, zone).to_owned(),
                 location_type: kind,
                 wheelchair,
-                min_change: 0,
+                min_change: DEFAULT_TRANSFER_SECONDS,
                 boardable: false,
                 used: false,
             },
@@ -743,14 +746,25 @@ fn read_stops(
     Ok((stops, ids))
 }
 
+/// The most directed stop pairs one `transfers.txt` row may expand into.
+///
+/// A station has a handful of platforms; only a mistaken row names thousands.
+const MAX_ROW_PAIRS: usize = 4096;
+
+/// Applies `transfers.txt` to the stops, as MOTIS does, returning rules for pairs of stops.
+///
+/// A `transfer_type=2` row with the same `from_stop_id` and `to_stop_id` sets that stop's
+/// transfer time; the smallest of several rows wins, and every other stop keeps the default.
+/// A row between two different stops sets a floor on that walk; the first such row wins.
+/// A station in a row covers each of its boardable stops.
 fn apply_transfers(
     source: &mut dyn GtfsSource,
     stop_ids: &StopIds,
     stops: &mut [StopModel],
     report: &mut FeedReport,
-) -> Result<(), CompileError> {
+) -> Result<Vec<(u32, u32, u32)>, CompileError> {
     let Some(mut table) = Table::open(source, "transfers.txt")? else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let from = table.column("from_stop_id")?;
     let to = table.column("to_stop_id")?;
@@ -761,39 +775,90 @@ fn apply_transfers(
         .map(|name| table.optional(name))
         .collect();
     let children = children_of(stops);
+    let mut stop_times: HashMap<u32, u32> = HashMap::new();
+    let mut pairs: BTreeMap<(u32, u32), u32> = BTreeMap::new();
     let mut row = ByteRecord::new();
     while table.read(&mut row, report)? {
         let (from_id, to_id) = (field(&row, Some(from)), field(&row, Some(to)));
         let time = field(&row, min_time).parse::<u32>().ok();
         let unscoped = scoped.iter().all(|column| field(&row, *column).is_empty());
-        let same_stop = !from_id.is_empty() && from_id == to_id;
-        let applies = same_stop
-            && unscoped
-            && field(&row, Some(kind)) == "2"
-            && time.is_some_and(|time| time <= SECONDS_LIMIT);
-        let target = applies.then(|| stop_ids.get(from_id).copied()).flatten();
-        let Some(index) = target else {
+        let (from_stop, to_stop) = (stop_ids.get(from_id).copied(), stop_ids.get(to_id).copied());
+        let (Some(from_stop), Some(to_stop), Some(seconds)) = (
+            from_stop,
+            to_stop,
+            time.filter(|&time| time <= SECONDS_LIMIT),
+        ) else {
             report.transfers_ignored += 1;
             continue;
         };
-        report.transfers_applied += 1;
-        let seconds = time.unwrap_or(0);
-        // A station's minimum applies to every stop inside it.
-        let mut pending = vec![index];
-        let mut visited = 0;
-        while let Some(stop) = pending.pop() {
-            visited += 1;
-            if visited > stops.len() {
-                break;
+        if field(&row, Some(kind)) != "2" || !unscoped {
+            report.transfers_ignored += 1;
+            continue;
+        }
+        let from_members = members_of(from_stop, stops, &children);
+        let to_members = members_of(to_stop, stops, &children);
+        if from_members.is_empty() || to_members.is_empty() {
+            report.transfers_ignored += 1;
+            continue;
+        }
+        if from_stop == to_stop {
+            for &stop in &from_members {
+                let entry = stop_times.entry(stop).or_insert(seconds);
+                *entry = (*entry).min(seconds);
             }
-            let model = &mut stops[stop as usize];
-            model.min_change = model.min_change.max(seconds);
-            if let Some(list) = children.get(&stop) {
-                pending.extend(list.iter().copied());
+            report.transfers_applied += 1;
+        }
+        if from_members.len().saturating_mul(to_members.len()) > MAX_ROW_PAIRS {
+            report.transfers_ignored += 1;
+            continue;
+        }
+        let mut added = false;
+        for &a in &from_members {
+            for &b in &to_members {
+                if a != b {
+                    pairs.entry((a, b)).or_insert(seconds);
+                    added = true;
+                }
             }
         }
+        if added && from_stop != to_stop {
+            report.transfers_applied += 1;
+        }
     }
-    Ok(())
+    for (stop, seconds) in stop_times {
+        stops[stop as usize].min_change = seconds;
+    }
+    report.transfer_pairs = pairs.len();
+    Ok(pairs
+        .into_iter()
+        .map(|((from, to), seconds)| (from, to, seconds))
+        .collect())
+}
+
+/// The boardable stops a location stands for: itself if boardable, and its descendants.
+fn members_of(stop: u32, stops: &[StopModel], children: &HashMap<u32, Vec<u32>>) -> Vec<u32> {
+    let mut members = Vec::new();
+    let mut pending = vec![stop];
+    let mut visited = 0;
+    while let Some(next) = pending.pop() {
+        visited += 1;
+        // A feed could make a cycle of parents, which must end rather than hang.
+        if visited > stops.len() {
+            break;
+        }
+        if stops
+            .get(next as usize)
+            .is_some_and(|model| model.boardable)
+        {
+            members.push(next);
+        }
+        if let Some(list) = children.get(&next) {
+            pending.extend(list.iter().copied());
+        }
+    }
+    members.sort_unstable();
+    members.dedup();
+    members
 }
 
 /// Each location's direct children, for walking a station's hierarchy.

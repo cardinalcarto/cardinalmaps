@@ -282,7 +282,12 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     duration,
                     walk,
                 } => {
-                    let duration = i64::from(duration.into_inner());
+                    // The walk's own seconds: any more the transfer cost is a wait to board,
+                    // which the next ride's `wait_seconds` shows.
+                    let duration = self
+                        .access_egress
+                        .transfer_seconds(&walk)
+                        .map_or_else(|| i64::from(duration.into_inner()), i64::from);
                     transfers += duration;
                     let path = {
                         let snapshot = self.snapshot;

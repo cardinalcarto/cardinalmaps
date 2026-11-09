@@ -4,6 +4,7 @@
 #![allow(clippy::too_many_lines, clippy::too_many_arguments)]
 
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::ids::{DaySlot, Direction, ServiceDate, ServiceDay, StopId};
@@ -162,6 +163,7 @@ fn random_net(rng: &mut Rng) -> TestNet {
     let dist = graph.distances();
     let routes = routes_from_timetable(&timetable, &window);
     TestNet {
+        pair_floors: HashMap::new(),
         min_change,
         routes,
         graph,
@@ -211,6 +213,7 @@ fn apply_random_overlay(rng: &mut Rng, net: &TestNet) -> TestNet {
     }
     let snapshot = overlay.build().unwrap();
     TestNet {
+        pair_floors: HashMap::new(),
         min_change: net.min_change.clone(),
         routes,
         graph: Arc::clone(&net.graph),
@@ -339,13 +342,12 @@ fn enumerate(net: &TestNet, max_trips: u8) -> BTreeSet<(i32, i32, u8)> {
                                 max_trips,
                             );
                             for v in 0..net.min_change.len() {
-                                let walk = net.dist[i][v];
-                                if v != i && walk < crate::testing::NO_WALK {
+                                if let Some(cost) = net.walk_cost(i, v) {
                                     go(
                                         net,
                                         out,
                                         v,
-                                        clock + walk,
+                                        clock + cost,
                                         Some(departure),
                                         access,
                                         rides + 1,

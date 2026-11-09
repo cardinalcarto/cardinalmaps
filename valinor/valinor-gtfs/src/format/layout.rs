@@ -16,7 +16,10 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 pub const MAGIC: [u8; 8] = *b"VLNRGTFS";
 
 /// The only format version this build reads.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
+
+/// A transfer time for a stop that `transfers.txt` doesn't set one for, as MOTIS does: 2 minutes.
+pub const DEFAULT_TRANSFER_SECONDS: u32 = 120;
 
 /// The longest calendar a file may hold, in days (over a hundred years).
 pub(crate) const MAX_SERVICE_DAYS: u32 = 40_000;
@@ -91,11 +94,12 @@ pub(crate) enum SectionId {
     TripIndex,
     RouteIndex,
     StopIndex,
+    TransferPairs,
 }
 
 impl SectionId {
     /// Every section, in file order.
-    pub(crate) const ALL: [Self; 27] = [
+    pub(crate) const ALL: [Self; 28] = [
         Self::Feeds,
         Self::Zones,
         Self::ZoneTransitions,
@@ -123,6 +127,7 @@ impl SectionId {
         Self::TripIndex,
         Self::RouteIndex,
         Self::StopIndex,
+        Self::TransferPairs,
     ];
 
     /// The section's name, for error messages.
@@ -155,6 +160,7 @@ impl SectionId {
             Self::TripIndex => "trip index",
             Self::RouteIndex => "route index",
             Self::StopIndex => "stop index",
+            Self::TransferPairs => "transfer pairs",
         }
     }
 }
@@ -371,6 +377,18 @@ pub(crate) struct ShapePointRow {
     pub(crate) lat_e7: I32,
     pub(crate) lon_e7: I32,
     pub(crate) dist: F32,
+}
+
+/// A `transfers.txt` rule for walking between two different stops, sorted by `(from, to)`.
+#[derive(Clone, Copy, Debug, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(C)]
+pub(crate) struct TransferPairRow {
+    /// The stop the walk starts at, as a `StopId`.
+    pub(crate) from: U32,
+    /// The stop the walk ends at, as a `StopId`.
+    pub(crate) to: U32,
+    /// The walk costs at least this many seconds.
+    pub(crate) floor: U32,
 }
 
 /// Maps a feed-scoped GTFS identifier to a row, sorted by feed and then by string.
