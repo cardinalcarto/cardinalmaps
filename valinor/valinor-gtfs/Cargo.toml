@@ -39,5 +39,9 @@ name = "valinor-gtfs"
 path = "src/bin/valinor-gtfs.rs"
 required-features = ["compile"]
 
+[[example]]
+name = "measure"
+required-features = ["compile"]
+
 [lints]
 workspace = true
