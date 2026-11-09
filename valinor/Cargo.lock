@@ -2753,6 +2753,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "valinor-gtfs-rt"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "prost",
+ "prost-build",
+ "protobuf-src",
+ "protoc-bin-vendored",
+ "thiserror 2.0.21",
+ "valinor-transit",
+]
+
+[[package]]
 name = "valinor-loki"
 version = "0.1.0"
 dependencies = [
