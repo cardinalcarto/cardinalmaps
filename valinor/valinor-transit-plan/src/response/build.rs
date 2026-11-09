@@ -13,7 +13,7 @@ use valinor_gtfs_rt::{
 use valinor_transit::{Leg, Profile, ProfileEntry, Ride, Seconds, StopEvent, StopId, StopRules};
 
 use crate::plan::{AccessEgressRequest, AccessEgressSearch, TransitRequest};
-use crate::response::alerts::{LegSelectorContext, LegStop, leg_alerts};
+use crate::response::alerts::{LegSelectorContext, LegStop, ServiceRun, leg_alerts};
 use crate::response::vehicle::{lower, vehicle_from};
 use crate::response::{
     AccessEgressLeg, AgencyResponse, FeedReport, FeedState, Journey, JourneyLeg, LegAlert,
@@ -415,6 +415,14 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                         .or_else(|| details.and_then(|d| d.direction_id)),
                     trip_id: &trip_id,
                     date: calendar_date(ride.trip.date),
+                    run: Some(ServiceRun {
+                        trip: static_trip.map(|_| ride.trip.trip),
+                        date: ride.trip.date,
+                        start_time: details.and_then(|d| d.start_time).or_else(|| {
+                            let (_, first) = static_trip?.time_at(0)?;
+                            u32::try_from(first).ok()
+                        }),
+                    }),
                     stops: leg_stops,
                     from: board_unix,
                     to: alight_unix,

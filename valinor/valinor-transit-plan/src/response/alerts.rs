@@ -12,13 +12,25 @@ use valinor_gtfs_rt::proto::alert::Effect;
 use valinor_gtfs_rt::{
     AlertDetails, CalendarDate, FeedId, InformedEntity, Period, RiderData, ScopedId,
 };
-use valinor_transit::StopId;
+use valinor_transit::{ServiceDate, StopId, TripId};
 
 use crate::response::vehicle::lower;
 use crate::response::{
     AlertResponse, ImageResponse, InformedEntityResponse, LegAlert, MovedStop, PeriodResponse,
     Translation,
 };
+
+/// Which run of a trip a leg rides, to compare with a selector's `start_time`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ServiceRun {
+    /// The static trip, if the run has one.
+    pub(crate) trip: Option<TripId>,
+    /// The service date, in the compiled file's numbering.
+    pub(crate) date: ServiceDate,
+    /// The run's start in seconds from the start of its service day:
+    /// a real-time descriptor's value, else the trip's first departure.
+    pub(crate) start_time: Option<u32>,
+}
 
 /// A stop on the leg, with its feed-scoped identity.
 #[derive(Debug, Clone, Copy)]
@@ -37,6 +49,8 @@ pub(crate) struct LegSelectorContext<'a> {
     pub(crate) direction_id: Option<u32>,
     pub(crate) trip_id: &'a str,
     pub(crate) date: Option<CalendarDate>,
+    /// The run on the service date, for telling apart runs of a frequency trip.
+    pub(crate) run: Option<ServiceRun>,
     /// Every stop of the leg, the boarding first and the alighting last.
     pub(crate) stops: Vec<LegStop<'a>>,
     /// When the ride starts, in POSIX seconds.
@@ -162,6 +176,9 @@ fn selector_matches(
     if selector.trip_date.is_some() && selector.trip_date != context.date {
         return None;
     }
+    if !start_time_matches(compiled, feed, selector, context) {
+        return None;
+    }
     let Some(stop_id) = selector.stop_id.as_deref() else {
         return Some(Vec::new());
     };
@@ -182,6 +199,36 @@ fn selector_matches(
         .map(|(index, _)| index)
         .collect();
     (!indices.is_empty()).then_some(indices)
+}
+
+/// Whether a selector's `start_time` names the run this leg rides.
+///
+/// A descriptor with a `trip_id` resolves through the timetable as routing does:
+/// to the run itself for a scheduled trip, and to a frequency run by its start.
+/// One without a `trip_id` compares starts directly, as routing's run search does.
+fn start_time_matches(
+    compiled: &CompiledTimetable<'_>,
+    feed: &FeedId,
+    selector: &InformedEntity,
+    context: &LegSelectorContext<'_>,
+) -> bool {
+    let Some(start) = selector.trip_start_time else {
+        return true;
+    };
+    let Some(run) = context.run else {
+        return false;
+    };
+    let Some(trip_id) = selector.trip_id.as_deref() else {
+        return run.start_time == Some(start);
+    };
+    let Some(static_trip) = run.trip else {
+        // A trip only real-time data knows, so only its own start can identify it.
+        return run.start_time == Some(start);
+    };
+    let start = i32::try_from(start).ok();
+    compiled
+        .trip_run_for_start_time(feed.as_str(), trip_id, run.date, start)
+        .is_some_and(|found| found.trip == static_trip)
 }
 
 fn moved_stops(
@@ -279,6 +326,7 @@ fn informed_entity(entity: &InformedEntity) -> InformedEntityResponse {
         direction_id: entity.direction_id,
         trip_id: entity.trip_id.clone(),
         trip_date: entity.trip_date.map(|date| date.to_string()),
+        trip_start_time: entity.trip_start_time,
         stop_id: entity.stop_id.clone(),
     }
 }

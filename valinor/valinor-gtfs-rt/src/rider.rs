@@ -165,6 +165,11 @@ pub struct InformedEntity {
     pub trip_id: Option<String>,
     /// Service date of the trip, when the selector named one.
     pub trip_date: Option<CalendarDate>,
+    /// Start of the trip in seconds from the start of its day, when the selector named one run.
+    ///
+    /// For a trip with its own schedule this is the descriptor's value; for a frequency trip
+    /// a selector with no `start_time` covers every run.
+    pub trip_start_time: Option<u32>,
     /// Stop.
     pub stop_id: Option<String>,
 }

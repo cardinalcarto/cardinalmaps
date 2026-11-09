@@ -575,6 +575,8 @@ pub struct InformedEntityResponse {
     pub trip_id: Option<String>,
     /// `start_date` of the trip selector.
     pub trip_date: Option<String>,
+    /// `start_time` of the trip selector, in seconds from the start of its service day.
+    pub trip_start_time: Option<u32>,
     /// `stop_id`.
     pub stop_id: Option<String>,
 }

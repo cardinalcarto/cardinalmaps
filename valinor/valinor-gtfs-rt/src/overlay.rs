@@ -1948,15 +1948,35 @@ fn vehicle_ref(vehicle: &proto::VehicleDescriptor) -> VehicleRef {
 
 fn informed_entity(selector: &proto::EntitySelector) -> InformedEntity {
     let trip = selector.trip.as_ref();
+    // A descriptor names one run only with a `trip_id`, or with route, direction, date, and
+    // start time together, which is how routing compiles it; anything less selects by route.
+    let names_run = trip.is_some_and(|t| {
+        t.trip_id.is_some()
+            || (t.route_id.is_some()
+                && t.direction_id.is_some()
+                && t.start_date.is_some()
+                && t.start_time.is_some())
+    });
     InformedEntity {
         agency_id: selector.agency_id.clone(),
-        route_id: selector.route_id.clone(),
+        // A descriptor's own route and direction count too, as they do for routing.
+        route_id: selector
+            .route_id
+            .clone()
+            .or_else(|| trip.and_then(|t| t.route_id.clone())),
         route_type: selector.route_type,
-        direction_id: selector.direction_id,
+        direction_id: selector
+            .direction_id
+            .or_else(|| trip.and_then(|t| t.direction_id)),
         trip_id: trip.and_then(|t| t.trip_id.clone()),
         trip_date: trip
+            .filter(|_| names_run)
             .and_then(|t| t.start_date.as_deref())
             .and_then(CalendarDate::parse),
+        trip_start_time: trip
+            .filter(|_| names_run)
+            .and_then(|t| t.start_time.as_deref())
+            .and_then(parse_start_time),
         stop_id: selector.stop_id.clone(),
     }
 }

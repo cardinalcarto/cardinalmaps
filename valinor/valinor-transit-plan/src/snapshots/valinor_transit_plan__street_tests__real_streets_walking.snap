@@ -387,7 +387,7 @@ expression: "&response"
                 "verbal_pre_transition_instruction": "Turn left onto the walkway.",
                 "verbal_post_transition_instruction": "Continue for 30 meters.",
                 "distance_meters": 32.0,
-                "duration_seconds": 23.6,
+                "duration_seconds": 22.6,
                 "begin_shape_index": 5,
                 "end_shape_index": 8
               },
@@ -400,7 +400,7 @@ expression: "&response"
                   "Carrer de la Mosquera"
                 ],
                 "distance_meters": 25.0,
-                "duration_seconds": 17.6,
+                "duration_seconds": 18.6,
                 "begin_shape_index": 8,
                 "end_shape_index": 10
               },
