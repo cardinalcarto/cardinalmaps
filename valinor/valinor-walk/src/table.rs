@@ -961,6 +961,12 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             (seed_span.0, best.percent)
         } else {
             edges.reverse();
+            // A label holds the transition onto its edge in search order, which for egress is
+            // the turn after that edge in real order: move each to the edge the rider enters.
+            let mut entered = Cost::ZERO;
+            for edge in &mut edges {
+                entered = core::mem::replace(&mut edge.transition, entered);
+            }
             (best.percent, seed_span.1)
         };
         Some(AccessLeg {
