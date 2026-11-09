@@ -1,6 +1,6 @@
 //! Builds real-time overlays from service that has already been resolved.
 //!
-//! Decoding GTFS-RT is the job of `valinor-gtfs`. This builder takes the outcome: per-route,
+//! Decoding GTFS-RT is the job of `valinor-gtfs-rt`. This builder takes the outcome: per-route,
 //! per-day [`ResolvedBlock`]s (lanes already split for overtaking and skips),
 //! removals of service, added routes, and added stops.
 //!
