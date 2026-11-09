@@ -23,6 +23,7 @@ members = [
     "valinor-thor-service",
     "valinor-transit",
     "valinor-transit-plan",
+    "valinor-walk",
     "valinor-tyr",
 ]
 
