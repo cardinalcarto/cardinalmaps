@@ -348,6 +348,18 @@ fn a_route_cycle_terminates() {
 }
 
 #[test]
+fn a_stop_with_no_target_entry_is_never_a_result() {
+    // At the limit a backward clock is `-TIME_LIMIT`, so an unreachable stop's sum would
+    // land inside the valid time range. Stop 0 has no access entry; there is no journey at all.
+    let limit = crate::TIME_LIMIT;
+    let (net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[limit, limit])])
+        .egress(1, 0)
+        .build();
+    assert_eq!(departures(&net, limit), vec![]);
+}
+
+#[test]
 fn an_interrupt_stops_the_search() {
     let (net, _) = Scenario::new(2)
         .route(&[0, 1], &[ScenarioTrip::simple(1, &[10, 20])])
