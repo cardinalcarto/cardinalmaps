@@ -136,6 +136,8 @@ impl StaticLookup for Lookup {
             day: DaySlot::new(u8::try_from(slot).ok()?),
             first_departure: found.events.first()?.departure,
             last_arrival: found.events.last()?.arrival,
+            // This harness reads King County, which has no `frequencies.txt`.
+            headway_start: None,
         })
     }
 
