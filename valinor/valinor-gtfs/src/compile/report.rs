@@ -88,6 +88,12 @@ pub struct FeedReport {
     pub transfers_ignored: usize,
     /// Directed stop pairs given a minimum time by `transfers.txt` rows between different stops.
     pub transfer_pairs: usize,
+    /// Stops where `transfer_type=3` forbids changing at the stop.
+    pub transfers_forbidden_same_stop: usize,
+    /// Directed stop pairs whose walk `transfer_type=3` forbids.
+    pub transfers_forbidden_pairs: usize,
+    /// `transfer_type=3` rows qualified by route or trip, which aren't expressible cheaply.
+    pub transfers_forbidden_qualified: usize,
     /// Trips left out, by reason.
     pub dropped_trips: BTreeMap<DropReason, usize>,
     /// How many non-fatal problems were found.
@@ -128,6 +134,9 @@ impl FeedReport {
             transfers_applied: 0,
             transfers_ignored: 0,
             transfer_pairs: 0,
+            transfers_forbidden_same_stop: 0,
+            transfers_forbidden_pairs: 0,
+            transfers_forbidden_qualified: 0,
             dropped_trips: BTreeMap::new(),
             warning_count: 0,
             warnings: Vec::new(),

@@ -17,7 +17,7 @@ use crate::compile::table::{Table, field};
 use crate::compile::time::{parse_date, parse_time};
 use crate::error::CompileError;
 use crate::format::layout::{
-    DEFAULT_TRANSFER_SECONDS, DIRECTION_NONE, MAX_SERVICE_DAYS, RULE_APPROXIMATE,
+    DEFAULT_TRANSFER_SECONDS, DIRECTION_NONE, MAX_SERVICE_DAYS, NONE, RULE_APPROXIMATE,
     RUN_EXACT_FREQUENCY, RUN_HEADWAY_FREQUENCY, RUN_SCHEDULED,
 };
 use crate::format::reader::service_date_of;
@@ -58,6 +58,8 @@ pub(super) struct StopModel {
     pub(super) location_type: u8,
     pub(super) wheelchair: u8,
     pub(super) min_change: u32,
+    /// `transfer_type=3` at this stop: a rider arriving by trip can't board another here.
+    pub(super) no_change: bool,
     pub(super) boardable: bool,
     pub(super) used: bool,
 }
@@ -106,7 +108,8 @@ pub(super) struct FeedModel {
     pub(super) services: Vec<ServiceModel>,
     pub(super) shapes: Vec<ShapeModel>,
     pub(super) trips: Vec<TripModel>,
-    /// `(from, to, floor seconds)` for walking between two different stops, by feed-local stop.
+    /// `(from, to, floor seconds)` for walking between two different stops, by feed-local stop;
+    /// a floor of [`NONE`] forbids that walk.
     pub(super) transfer_pairs: Vec<(u32, u32, u32)>,
     pub(super) report: FeedReport,
 }
@@ -659,6 +662,7 @@ fn read_stops(
                 location_type: kind,
                 wheelchair,
                 min_change: DEFAULT_TRANSFER_SECONDS,
+                no_change: false,
                 boardable: false,
                 used: false,
             },
@@ -783,18 +787,27 @@ fn apply_transfers(
         let time = field(&row, min_time).parse::<u32>().ok();
         let unscoped = scoped.iter().all(|column| field(&row, *column).is_empty());
         let (from_stop, to_stop) = (stop_ids.get(from_id).copied(), stop_ids.get(to_id).copied());
-        let (Some(from_stop), Some(to_stop), Some(seconds)) = (
-            from_stop,
-            to_stop,
-            time.filter(|&time| time <= SECONDS_LIMIT),
-        ) else {
+        let row_kind = field(&row, Some(kind));
+        if row_kind == "3" && !unscoped {
+            report.transfers_forbidden_qualified += 1;
+            continue;
+        }
+        let forbidden = row_kind == "3";
+        let (Some(from_stop), Some(to_stop)) = (from_stop, to_stop) else {
             report.transfers_ignored += 1;
             continue;
         };
-        if field(&row, Some(kind)) != "2" || !unscoped {
-            report.transfers_ignored += 1;
-            continue;
-        }
+        let seconds = if forbidden {
+            NONE
+        } else {
+            match time.filter(|&time| time <= SECONDS_LIMIT) {
+                Some(seconds) if row_kind == "2" && unscoped => seconds,
+                _ => {
+                    report.transfers_ignored += 1;
+                    continue;
+                }
+            }
+        };
         let from_members = members_of(from_stop, stops, &children);
         let to_members = members_of(to_stop, stops, &children);
         if from_members.is_empty() || to_members.is_empty() {
@@ -803,8 +816,13 @@ fn apply_transfers(
         }
         if from_stop == to_stop {
             for &stop in &from_members {
-                let entry = stop_times.entry(stop).or_insert(seconds);
-                *entry = (*entry).min(seconds);
+                if forbidden {
+                    stops[stop as usize].no_change = true;
+                    report.transfers_forbidden_same_stop += 1;
+                } else {
+                    let entry = stop_times.entry(stop).or_insert(seconds);
+                    *entry = (*entry).min(seconds);
+                }
             }
             report.transfers_applied += 1;
         }
@@ -815,10 +833,16 @@ fn apply_transfers(
         let mut added = false;
         for &a in &from_members {
             for &b in &to_members {
-                if a != b {
-                    pairs.entry((a, b)).or_insert(seconds);
-                    added = true;
+                if a == b {
+                    continue;
                 }
+                // A row forbidding the walk outranks any floor, whichever row comes first.
+                if forbidden {
+                    pairs.insert((a, b), NONE);
+                } else {
+                    pairs.entry((a, b)).or_insert(seconds);
+                }
+                added = true;
             }
         }
         if added && from_stop != to_stop {
@@ -828,7 +852,8 @@ fn apply_transfers(
     for (stop, seconds) in stop_times {
         stops[stop as usize].min_change = seconds;
     }
-    report.transfer_pairs = pairs.len();
+    report.transfers_forbidden_pairs = pairs.values().filter(|&&s| s == NONE).count();
+    report.transfer_pairs = pairs.len() - report.transfers_forbidden_pairs;
     Ok(pairs
         .into_iter()
         .map(|((from, to), seconds)| (from, to, seconds))

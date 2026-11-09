@@ -12,7 +12,8 @@ use crate::ids::{
 };
 use crate::timetable::arena::{Arena, BlockRef, offset_of};
 use crate::timetable::lanes::{ResolvedBlock, ResolvedTrip, StopEvent, StopRules};
-use crate::timetable::pairs::{TransferPair, TransferPairs};
+use crate::timetable::pairs::{PairRule, TransferPair, TransferPairs};
+use crate::timetable::window::NO_CHANGE;
 use crate::timetable::window::{BaseWindow, RouteAttributes, StopRouteIndex};
 
 /// A stop as the builder knows it; [`Timetable::stop_id`] gives its final number.
@@ -57,7 +58,9 @@ pub struct TimetableBuilder {
     services: Vec<BTreeSet<ServiceDate>>,
     patterns: Vec<PatternRecord>,
     trips: Vec<TripRecord>,
-    pairs: Vec<(u32, u32, Seconds)>,
+    pairs: Vec<(u32, u32, PairRule)>,
+    /// Stops where a rider arriving by trip can't board another there.
+    no_change: Vec<bool>,
 }
 
 impl TimetableBuilder {
@@ -74,10 +77,24 @@ impl TimetableBuilder {
     pub fn add_stop(&mut self, min_change: Seconds) -> Result<StopKey, BuildError> {
         let key = StopKey(offset_of(self.stops.len())?);
         self.stops.push(min_change);
+        self.no_change.push(false);
         Ok(key)
     }
 
-    /// Sets the least a walk from one stop to another may cost, in seconds.
+    /// Forbids changing at a stop: a rider arriving there by trip can't board another there.
+    ///
+    /// # Errors
+    ///
+    /// If the stop wasn't issued by this builder.
+    pub fn forbid_change_at(&mut self, stop: StopKey) -> Result<(), BuildError> {
+        *self
+            .no_change
+            .get_mut(stop.0 as usize)
+            .ok_or(BuildError::UnknownStop(stop.0))? = true;
+        Ok(())
+    }
+
+    /// Adds a rule for walking from one stop to another.
     ///
     /// # Errors
     ///
@@ -86,7 +103,7 @@ impl TimetableBuilder {
         &mut self,
         from: StopKey,
         to: StopKey,
-        floor: Seconds,
+        rule: PairRule,
     ) -> Result<(), BuildError> {
         for stop in [from, to] {
             if stop.0 as usize >= self.stops.len() {
@@ -96,7 +113,7 @@ impl TimetableBuilder {
         if from == to {
             return Err(BuildError::TransferToSameStop(StopId::new(from.0)));
         }
-        self.pairs.push((from.0, to.0, floor));
+        self.pairs.push((from.0, to.0, rule));
         Ok(())
     }
 
@@ -221,8 +238,10 @@ impl TimetableBuilder {
         }
 
         let mut min_change = vec![0_i32; self.stops.len()];
+        let mut no_change = vec![false; self.stops.len()];
         for (old, &id) in stop_map.iter().enumerate() {
             min_change[id.index()] = self.stops[old].as_i32();
+            no_change[id.index()] = self.no_change[old];
         }
 
         let mut routes = Vec::with_capacity(self.patterns.len());
@@ -247,15 +266,16 @@ impl TimetableBuilder {
         let pairs = self
             .pairs
             .iter()
-            .map(|&(from, to, floor)| TransferPair {
+            .map(|&(from, to, rule)| TransferPair {
                 from: stop_map[from as usize],
                 to: stop_map[to as usize],
-                floor,
+                rule,
             })
             .collect();
         Ok(Timetable {
             stop_map,
             min_change,
+            no_change,
             services: self.services,
             routes,
             pairs,
@@ -292,6 +312,7 @@ pub struct Timetable {
     /// From builder order to the final stop number.
     stop_map: Vec<StopId>,
     min_change: Vec<i32>,
+    no_change: Vec<bool>,
     services: Vec<BTreeSet<ServiceDate>>,
     routes: Vec<RouteRecord>,
     pairs: Vec<TransferPair>,
@@ -399,6 +420,13 @@ pub trait TimetableSource {
     /// The minimum change time at a stop, in seconds.
     fn min_change(&self, stop: usize) -> i32;
 
+    /// Whether a rider arriving at this stop by trip may not board another there.
+    ///
+    /// False by default: most stops have no such rule.
+    fn no_change_at(&self, _stop: usize) -> bool {
+        false
+    }
+
     /// The rules for walking between particular stops, in the source's numbering.
     ///
     /// Empty by default: most sources have none.
@@ -445,6 +473,10 @@ impl TimetableSource for Timetable {
 
     fn min_change(&self, stop: usize) -> i32 {
         self.min_change.get(stop).copied().unwrap_or(0)
+    }
+
+    fn no_change_at(&self, stop: usize) -> bool {
+        self.no_change.get(stop).copied().unwrap_or(false)
     }
 
     fn transfer_pairs(&self) -> Vec<TransferPair> {
@@ -544,6 +576,7 @@ pub fn materialize_parts(
     let mut attributes = Vec::with_capacity(route_total);
     let mut route_stops = Vec::with_capacity(route_total);
     let mut min_change = Vec::with_capacity(stop_total);
+    let mut transfer_times = Vec::with_capacity(stop_total);
     let mut pairs = Vec::new();
     let mut stop_base = 0_u32;
     let mut route_base = 0_u32;
@@ -593,7 +626,15 @@ pub fn materialize_parts(
             }
         }
         let stop_count = timetable.stop_count();
-        min_change.extend((0..stop_count).map(|stop| timetable.min_change(stop)));
+        for stop in 0..stop_count {
+            let time = timetable.min_change(stop);
+            transfer_times.push(time);
+            min_change.push(if timetable.no_change_at(stop) {
+                NO_CHANGE
+            } else {
+                time
+            });
+        }
         pairs.extend(
             timetable
                 .transfer_pairs()
@@ -601,7 +642,7 @@ pub fn materialize_parts(
                 .map(|pair| TransferPair {
                     from: StopId::new(pair.from.into_inner() + stop_base),
                     to: StopId::new(pair.to.into_inner() + stop_base),
-                    floor: pair.floor,
+                    rule: pair.rule,
                 }),
         );
         stop_base += offset_of(stop_count)?;
@@ -626,6 +667,7 @@ pub fn materialize_parts(
         attributes,
         route_stops,
         min_change,
+        transfer_times,
         pairs,
         index,
         days.to_vec(),

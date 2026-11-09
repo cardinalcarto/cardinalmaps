@@ -17,8 +17,8 @@ use crate::testing::{
     check_journey, day_slot, oracle, oracle_every_second, routes_from_timetable, secs, t,
 };
 use crate::timetable::{
-    ResolvedBlock, ResolvedLane, ResolvedTrip, RouteAttributes, StopEvent, StopRules, StopTime,
-    TimetableBuilder,
+    FORBIDDEN_WALK, PairRule, ResolvedBlock, ResolvedLane, ResolvedTrip, RouteAttributes,
+    StopEvent, StopRules, StopTime, TimetableBuilder,
 };
 use crate::{RouteId, Router, TripId};
 
@@ -56,8 +56,10 @@ struct RawNet {
     min_change: Vec<u8>,
     stop_node: Vec<u8>,
     edges: Vec<(u8, u8, u8)>,
-    /// `transfers.txt`-style floors: `(from, to, seconds)`, by raw stop.
+    /// `transfers.txt`-style rules: `(from, to, seconds)`, by raw stop, 255 forbidding the walk.
     pairs: Vec<(u8, u8, u8)>,
+    /// Which raw stops forbid changing there.
+    no_change: Vec<bool>,
     access: Vec<Option<u8>>,
     egress: Vec<Option<u8>>,
     routes: Vec<RawRoute>,
@@ -107,7 +109,15 @@ fn raw_net() -> impl Strategy<Value = RawNet> {
         prop::collection::vec(0_u8..8, 8),
         prop::collection::vec(0_u8..4, 8),
         prop::collection::vec((any::<u8>(), any::<u8>(), 0_u8..10), 2..24),
-        prop::collection::vec((any::<u8>(), any::<u8>(), 0_u8..40), 0..6),
+        prop::collection::vec(
+            (
+                any::<u8>(),
+                any::<u8>(),
+                prop_oneof![9 => 0_u8..40, 1 => Just(255)],
+            ),
+            0..6,
+        ),
+        prop::collection::vec(prop::bool::weighted(0.1), 8),
         opt(),
         opt(),
         prop::collection::vec(raw_route(), 2..9),
@@ -122,6 +132,7 @@ fn raw_net() -> impl Strategy<Value = RawNet> {
                 stop_node,
                 edges,
                 pairs,
+                no_change,
                 access,
                 egress,
                 routes,
@@ -134,6 +145,7 @@ fn raw_net() -> impl Strategy<Value = RawNet> {
                 stop_node,
                 edges,
                 pairs,
+                no_change,
                 access,
                 egress,
                 routes,
@@ -235,9 +247,19 @@ fn build_net(raw: &RawNet) -> TestNet {
         }
     }
     for (&(from, to), &floor) in &raw_floors {
+        let rule = if floor == 255 {
+            PairRule::Forbidden
+        } else {
+            PairRule::Floor(secs(u32::from(floor)))
+        };
         builder
-            .add_transfer_pair(keys[from], keys[to], secs(u32::from(floor)))
+            .add_transfer_pair(keys[from], keys[to], rule)
             .expect("pair");
+    }
+    for (index, &key) in keys.iter().enumerate() {
+        if raw.no_change[index] {
+            builder.forbid_change_at(key).expect("stop");
+        }
     }
     let timetable = builder.build().expect("build");
     for (&(from, to), &floor) in &raw_floors {
@@ -246,7 +268,11 @@ fn build_net(raw: &RawNet) -> TestNet {
                 timetable.stop_id(keys[from]).into_inner(),
                 timetable.stop_id(keys[to]).into_inner(),
             ),
-            i32::from(floor),
+            if floor == 255 {
+                FORBIDDEN_WALK
+            } else {
+                i32::from(floor)
+            },
         );
     }
     let days: Vec<_> = raw
@@ -264,6 +290,7 @@ fn build_net(raw: &RawNet) -> TestNet {
     let count = usize::from(raw.stop_count);
     let mut stop_node = vec![0; count];
     let mut min_change = vec![0; count];
+    let mut no_change_final = vec![false; count];
     let mut access = StopTable::new(count);
     let mut egress = StopTable::new(count);
     let node_count = count + 2;
@@ -272,6 +299,7 @@ fn build_net(raw: &RawNet) -> TestNet {
         // Stops 0 to 3 of the node table may collapse together: zero-length walks.
         stop_node[id.index()] = u32::from(raw.stop_node[index]) % u32::from(raw.stop_count + 2);
         min_change[id.index()] = i32::from(raw.min_change[index]);
+        no_change_final[id.index()] = raw.no_change[index];
         if let Some(cost) = raw.access[index] {
             access.set(id, secs(u32::from(cost))).expect("in range");
         }
@@ -295,6 +323,7 @@ fn build_net(raw: &RawNet) -> TestNet {
     let dist = graph.distances();
     TestNet {
         min_change,
+        no_change: no_change_final,
         pair_floors,
         routes,
         graph,
@@ -772,6 +801,11 @@ fn apply_overlay(net: &TestNet, raw: &RawOverlay) -> TestNet {
     let snapshot = overlay.build().expect("build overlay");
     assert_eq!(snapshot.stop_count(), total_stops);
     TestNet {
+        no_change: {
+            let mut no_change = net.no_change.clone();
+            no_change.resize(total_stops, false);
+            no_change
+        },
         pair_floors: net.pair_floors.clone(),
         min_change,
         routes,

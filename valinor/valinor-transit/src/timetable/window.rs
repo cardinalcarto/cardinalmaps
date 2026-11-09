@@ -7,6 +7,9 @@ use crate::ids::{RouteId, ServiceDay, StopId};
 use crate::timetable::arena::{Arena, BlockRef, offset_of};
 use crate::timetable::pairs::TransferPairs;
 
+/// A [`BaseWindow::min_change`] for a stop where a rider arriving by trip can't board another.
+pub(crate) const NO_CHANGE: i32 = i32::MAX;
+
 /// Boolean attributes of a route.
 ///
 /// The set is held as bits so a [`crate::RouteFilter`] is a mask test on the route,
@@ -112,8 +115,12 @@ pub struct BaseWindow {
     pub(crate) attributes: Vec<RouteAttributes>,
     /// Each route's `(start, length)` in the arena's stop sequences.
     pub(crate) route_stops: Vec<(u32, u32)>,
-    /// The per-stop minimum change times, in seconds.
+    /// Per stop, what boarding after arriving by trip costs, in seconds, or [`NO_CHANGE`].
     pub(crate) min_change: Vec<i32>,
+    /// Per stop, its transfer time, in seconds: what a walk to or from it costs at least.
+    ///
+    /// Equal to `min_change` at every stop that allows a change.
+    pub(crate) transfer_times: Vec<i32>,
     /// The rules for walking between particular stops.
     pub(crate) pairs: TransferPairs,
     pub(crate) index: StopRouteIndex,
@@ -131,6 +138,7 @@ impl BaseWindow {
         attributes: Vec<RouteAttributes>,
         route_stops: Vec<(u32, u32)>,
         min_change: Vec<i32>,
+        transfer_times: Vec<i32>,
         pairs: TransferPairs,
         index: StopRouteIndex,
         days: Vec<ServiceDay>,
@@ -141,6 +149,7 @@ impl BaseWindow {
             attributes,
             route_stops,
             min_change,
+            transfer_times,
             pairs,
             index,
             days,

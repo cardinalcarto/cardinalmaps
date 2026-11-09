@@ -7,6 +7,15 @@ use crate::error::BuildError;
 use crate::ids::{Direction, Seconds, StopId};
 use crate::timetable::arena::offset_of;
 
+/// What a `transfers.txt` row says about walking from one stop to another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PairRule {
+    /// The walk costs at least this long.
+    Floor(Seconds),
+    /// `transfer_type=3`: this walk doesn't exist.
+    Forbidden,
+}
+
 /// A rule for walking from one stop to another, by stop numbers of its timetable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TransferPair {
@@ -14,9 +23,12 @@ pub struct TransferPair {
     pub from: StopId,
     /// The stop the walk ends at; never the same as `from`.
     pub to: StopId,
-    /// The walk's cost is at least this.
-    pub floor: Seconds,
+    /// The rule.
+    pub rule: PairRule,
 }
+
+/// A floor column's value for a forbidden walk.
+pub(crate) const FORBIDDEN_WALK: i32 = i32::MAX;
 
 /// One direction of [`TransferPairs`], as flat columns keyed by stop.
 #[derive(Debug, Clone, Default)]
@@ -80,7 +92,10 @@ impl TransferPairs {
             if row.from == row.to {
                 return Err(BuildError::TransferToSameStop(row.from));
             }
-            let floor = row.floor.as_i32();
+            let floor = match row.rule {
+                PairRule::Floor(seconds) => seconds.as_i32(),
+                PairRule::Forbidden => FORBIDDEN_WALK,
+            };
             outgoing.push((row.from.into_inner(), row.to.into_inner(), floor));
             incoming.push((row.to.into_inner(), row.from.into_inner(), floor));
         }
@@ -117,7 +132,7 @@ mod tests {
         TransferPair {
             from: StopId::new(from),
             to: StopId::new(to),
-            floor: Seconds::try_new(floor).expect("in range"),
+            rule: PairRule::Floor(Seconds::try_new(floor).expect("in range")),
         }
     }
 
@@ -141,6 +156,23 @@ mod tests {
         assert_eq!(
             pairs.of_seed(StopId::new(9), Direction::Forward),
             (&[][..], &[][..])
+        );
+    }
+
+    #[test]
+    fn a_forbidden_pair_reads_as_the_sentinel() {
+        let pairs = TransferPairs::new(
+            2,
+            &[TransferPair {
+                from: StopId::new(0),
+                to: StopId::new(1),
+                rule: PairRule::Forbidden,
+            }],
+        )
+        .expect("ok");
+        assert_eq!(
+            pairs.of_seed(StopId::new(0), Direction::Forward),
+            (&[1][..], &[FORBIDDEN_WALK][..])
         );
     }
 

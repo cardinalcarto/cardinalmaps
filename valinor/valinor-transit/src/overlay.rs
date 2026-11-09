@@ -30,6 +30,7 @@ pub struct OverlayBuilder {
     directory: Vec<BlockRef>,
     attributes: Vec<RouteAttributes>,
     min_change: Vec<i32>,
+    transfer_times: Vec<i32>,
     /// `(route, start, length)` of each added route's stops in the overlay arena.
     added_routes: Vec<(usize, u32, u32)>,
     /// The start of each base route's stop sequence in the overlay arena, once copied there.
@@ -45,6 +46,7 @@ impl OverlayBuilder {
             directory: base.directory.clone(),
             attributes: base.attributes.clone(),
             min_change: base.min_change.clone(),
+            transfer_times: base.transfer_times.clone(),
             added_routes: Vec::new(),
             base_route_stops,
             base,
@@ -62,6 +64,7 @@ impl OverlayBuilder {
     pub fn add_stop(&mut self, min_change: Seconds) -> Result<StopId, BuildError> {
         let id = StopId::new(offset_of(self.min_change.len())?);
         self.min_change.push(min_change.as_i32());
+        self.transfer_times.push(min_change.as_i32());
         Ok(id)
     }
 
@@ -163,8 +166,9 @@ impl OverlayBuilder {
             additions,
             directory: self.directory,
             attributes: self.attributes,
-            max_min_change: self.min_change.iter().copied().max().unwrap_or(0),
+            max_transfer_time: self.transfer_times.iter().copied().max().unwrap_or(0),
             min_change: self.min_change,
+            transfer_times: self.transfer_times,
             added_route_stops,
         }))
     }

@@ -18,8 +18,8 @@ use crate::raptor::{Router, TransitQuery};
 use crate::snapshot::Snapshot;
 use crate::stop_table::{RouteFilter, StopTable};
 use crate::timetable::{
-    BaseWindow, ResolvedBlock, ResolvedTrip, RouteAttributes, StopRules, StopTime, Timetable,
-    TimetableBuilder,
+    BaseWindow, FORBIDDEN_WALK, PairRule, ResolvedBlock, ResolvedTrip, RouteAttributes, StopRules,
+    StopTime, Timetable, TimetableBuilder,
 };
 use crate::transfer::{
     Clock, TransferArrival, TransferOutcome, TransferRequest, TransferSearch, TransferSink,
@@ -382,7 +382,9 @@ pub(crate) struct TestRoute {
 #[derive(Debug, Clone)]
 pub(crate) struct TestNet {
     pub(crate) min_change: Vec<i32>,
-    /// Floors on walks between particular stops, by final stop number.
+    /// Stops where a rider arriving by trip can't board another there.
+    pub(crate) no_change: Vec<bool>,
+    /// Floors on walks between particular stops, by final stop number, or [`FORBIDDEN_WALK`].
     pub(crate) pair_floors: HashMap<(u32, u32), i32>,
     pub(crate) routes: Vec<TestRoute>,
     pub(crate) graph: Arc<Graph>,
@@ -406,6 +408,9 @@ impl TestNet {
             u32::try_from(u).expect("few stops"),
             u32::try_from(v).expect("few stops"),
         )) {
+            if floor == FORBIDDEN_WALK {
+                return None;
+            }
             cost = cost.max(floor);
         }
         Some(cost)
@@ -464,7 +469,13 @@ pub(crate) fn oracle(
     let mut results = Vec::new();
     for round in 1..=max_trips {
         let board: Vec<i32> = (0..n)
-            .map(|s| (trip[s] + net.min_change[s]).min(foot[s]))
+            .map(|s| {
+                if net.no_change[s] {
+                    foot[s]
+                } else {
+                    (trip[s] + net.min_change[s]).min(foot[s])
+                }
+            })
             .collect();
         let mut improved_trip = trip.clone();
         for route in &net.routes {
@@ -596,6 +607,10 @@ pub(crate) fn check_journey(net: &TestNet, journey: &Journey<Vec<u32>>) {
                         assert!(arrived + walked <= board_time, "walked too slowly");
                     } else {
                         assert!(
+                            !net.no_change[ride.board_stop.index()],
+                            "changed where changing is forbidden"
+                        );
+                        assert!(
                             arrived + net.min_change[ride.board_stop.index()] <= board_time,
                             "change time ignored"
                         );
@@ -665,6 +680,7 @@ pub(crate) struct Scenario {
     routes: Vec<(Vec<u32>, RouteAttributes, Vec<ScenarioTrip>)>,
     edges: Vec<(u32, u32, i32)>,
     pairs: Vec<(u32, u32, u32)>,
+    no_change: Vec<u32>,
     access: Vec<(u32, u32)>,
     egress: Vec<(u32, u32)>,
     days: Vec<(ServiceDate, i32)>,
@@ -742,6 +758,18 @@ impl Scenario {
         self
     }
 
+    /// `transfer_type=3` between two stops: that walk doesn't exist.
+    pub(crate) fn forbid_walk(mut self, from: u32, to: u32) -> Self {
+        self.pairs.push((from, to, u32::MAX));
+        self
+    }
+
+    /// `transfer_type=3` at one stop: a rider arriving by trip can't board another there.
+    pub(crate) fn forbid_change(mut self, stop: u32) -> Self {
+        self.no_change.push(stop);
+        self
+    }
+
     pub(crate) fn access(mut self, stop: u32, seconds: u32) -> Self {
         self.access.push((stop, seconds));
         self
@@ -769,9 +797,17 @@ impl Scenario {
             .map(|&(date, _)| builder.add_service([date]).expect("service"))
             .collect();
         for &(from, to, seconds) in &self.pairs {
+            let rule = if seconds == u32::MAX {
+                PairRule::Forbidden
+            } else {
+                PairRule::Floor(secs(seconds))
+            };
             builder
-                .add_transfer_pair(keys[from as usize], keys[to as usize], secs(seconds))
+                .add_transfer_pair(keys[from as usize], keys[to as usize], rule)
                 .expect("pair");
+        }
+        for &stop in &self.no_change {
+            builder.forbid_change_at(keys[stop as usize]).expect("stop");
         }
         for (stops, attributes, trips) in &self.routes {
             let stop_keys: Vec<_> = stops.iter().map(|&s| keys[s as usize]).collect();
@@ -847,13 +883,22 @@ impl Scenario {
                         ids[from as usize].into_inner(),
                         ids[to as usize].into_inner(),
                     ),
-                    i32::try_from(seconds).expect("small"),
+                    if seconds == u32::MAX {
+                        FORBIDDEN_WALK
+                    } else {
+                        i32::try_from(seconds).expect("small")
+                    },
                 )
             })
             .collect();
+        let mut no_change = vec![false; stop_count];
+        for &stop in &self.no_change {
+            no_change[ids[stop as usize].index()] = true;
+        }
         (
             TestNet {
                 min_change,
+                no_change,
                 pair_floors,
                 routes,
                 graph,

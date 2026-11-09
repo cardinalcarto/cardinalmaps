@@ -7,12 +7,12 @@ use std::io::{Cursor, Write};
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
 use proptest::prelude::*;
-use valinor_transit::{ServiceDate, StopId, Timetable, TripId};
+use valinor_transit::{PairRule, ServiceDate, StopId, Timetable, TripId};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 use crate::DEFAULT_TRANSFER_SECONDS;
-use crate::format::layout::checksum_of;
+use crate::format::layout::{STOP_NO_CHANGE, checksum_of};
 use crate::{
     Accessibility, CompileError, CompiledOutput, CompiledTimetable, DecodeError, DirectorySource,
     DropReason, FORMAT_VERSION, FeedId, FeedInput, InMemorySource, LatLon, LoadedTimetable,
@@ -732,12 +732,77 @@ fn min_transfer_times_set_where_the_core_can_use_them() {
     let stop = |id: &str| view.stop_by_gtfs_id("kcm", id).expect("stop");
     let pairs: Vec<_> = valinor_transit::TimetableSource::transfer_pairs(&view)
         .into_iter()
-        .map(|pair| (pair.from, pair.to, pair.floor.into_inner()))
+        .map(|pair| (pair.from, pair.to, pair.rule))
         .collect();
     assert_eq!(pairs.len(), 3);
-    assert!(pairs.contains(&(stop("A"), stop("B"), 60)));
-    assert!(pairs.contains(&(stop("P1"), stop("P2"), 90)));
-    assert!(pairs.contains(&(stop("P2"), stop("P1"), 90)));
+    let floor = |s: u32| PairRule::Floor(valinor_transit::Seconds::try_new(s).expect("in range"));
+    assert!(pairs.contains(&(stop("A"), stop("B"), floor(60))));
+    assert!(pairs.contains(&(stop("P1"), stop("P2"), floor(90))));
+    assert!(pairs.contains(&(stop("P2"), stop("P1"), floor(90))));
+    let timetable = view.to_timetable().expect("timetable");
+    assert_eq!(timetable.stop_count(), view.stop_count());
+}
+
+#[test]
+fn forbidden_transfers_apply_to_stops_and_pairs_and_qualified_rows_are_counted() {
+    let source = InMemorySource::new()
+        .with("agency.txt", AGENCY)
+        .with("routes.txt", "route_id,route_type\nR,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_lat,stop_lon,location_type,parent_station\n\
+             A,47.0,-122.0,,\nB,47.1,-122.0,,\nC,47.2,-122.0,,\n\
+             HUB,47.3,-122.0,1,\nP1,47.3,-122.0,,HUB\nP2,47.3,-122.0,,HUB\n",
+        )
+        .with(
+            "calendar_dates.txt",
+            "service_id,date,exception_type\nS,20260602,1\n",
+        )
+        .with("trips.txt", "route_id,service_id,trip_id\nR,S,X\n")
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             X,10:00:00,10:00:00,A,1\nX,11:00:00,11:00:00,B,2\n",
+        )
+        .with(
+            "transfers.txt",
+            "from_stop_id,to_stop_id,transfer_type,min_transfer_time,from_route_id\n\
+             A,A,3,,\n\
+             A,B,2,90,\n\
+             A,B,3,,\n\
+             B,C,3,,\n\
+             C,B,3,,R\n\
+             HUB,HUB,3,,\n",
+        );
+    let output = compile_one(source);
+    let report = &output.reports[0];
+    assert_eq!(report.transfers_forbidden_qualified, 1);
+    // A, and both platforms of the hub.
+    assert_eq!(report.transfers_forbidden_same_stop, 3);
+    // A to B, B to C, and the two platform pairs inside the hub.
+    assert_eq!(report.transfers_forbidden_pairs, 4);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let stop = |id: &str| view.stop_by_gtfs_id("kcm", id).expect("stop");
+    let no_change =
+        |id: &str| view.tables.stops[stop(id).into_inner() as usize].flags & STOP_NO_CHANGE != 0;
+    assert!(no_change("A"));
+    assert!(no_change("P1"));
+    assert!(no_change("P2"));
+    assert!(!no_change("B"));
+    let pairs: Vec<_> = valinor_transit::TimetableSource::transfer_pairs(&view)
+        .into_iter()
+        .map(|pair| (pair.from, pair.to, pair.rule))
+        .collect();
+    assert!(pairs.contains(&(stop("A"), stop("B"), PairRule::Forbidden)));
+    assert!(pairs.contains(&(stop("B"), stop("C"), PairRule::Forbidden)));
+    assert!(pairs.contains(&(stop("P1"), stop("P2"), PairRule::Forbidden)));
+    assert!(pairs.contains(&(stop("P2"), stop("P1"), PairRule::Forbidden)));
+    // A qualified row forbids nothing, only reports itself.
+    assert!(
+        !pairs
+            .iter()
+            .any(|&(from, to, _)| (from, to) == (stop("C"), stop("B")))
+    );
     let timetable = view.to_timetable().expect("timetable");
     assert_eq!(timetable.stop_count(), view.stop_count());
 }
@@ -772,7 +837,10 @@ fn a_rule_between_stops_keeps_the_first_row() {
     let view = CompiledTimetable::parse(&output.bytes).expect("parse");
     let pairs = valinor_transit::TimetableSource::transfer_pairs(&view);
     assert_eq!(pairs.len(), 1);
-    assert_eq!(pairs[0].floor.into_inner(), 200);
+    assert_eq!(
+        pairs[0].rule,
+        PairRule::Floor(valinor_transit::Seconds::try_new(200).expect("in range"))
+    );
 }
 
 #[test]

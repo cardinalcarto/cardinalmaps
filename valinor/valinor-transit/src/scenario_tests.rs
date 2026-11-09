@@ -314,6 +314,65 @@ fn a_transfer_leg_keeps_the_cost_and_the_walk_apart() {
     )));
 }
 
+/// A rider reaches stop 1 by trip and could continue from stop 1 or walk to stop 2.
+fn change_or_walk(forbid_change: bool, forbid_walk: bool) -> TestNet {
+    let mut scenario = Scenario::new(4)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[0, 100])])
+        .route(&[1, 3], &[ScenarioTrip::simple(2, &[150, 300])])
+        .route(&[2, 3], &[ScenarioTrip::simple(3, &[150, 400])])
+        .walk(1, 2, 30)
+        .access(0, 0)
+        .egress(3, 0);
+    if forbid_change {
+        scenario = scenario.forbid_change(1);
+    }
+    if forbid_walk {
+        scenario = scenario.forbid_walk(1, 2);
+    }
+    scenario.build().0
+}
+
+#[test]
+fn a_forbidden_change_at_a_stop_can_only_be_walked_around() {
+    // Allowed: change at stop 1 and arrive at 300.
+    assert_eq!(arrivals(&change_or_walk(false, false), 0), vec![(2, 300)]);
+    // Forbidden: the only way on is to walk to stop 2.
+    let net = change_or_walk(true, false);
+    assert_eq!(arrivals(&net, 0), vec![(2, 400)]);
+    agrees_with_oracle(&net, 0);
+    assert_eq!(
+        departures(&net, 400),
+        oracle(&net, RouteFilter::ALL, Direction::Backward, 400, 4),
+        "the mirror is forbidden too"
+    );
+}
+
+#[test]
+fn a_forbidden_walk_between_stops_does_not_exist() {
+    let net = change_or_walk(false, true);
+    // The change at stop 1 is still allowed.
+    assert_eq!(arrivals(&net, 0), vec![(2, 300)]);
+    let net = change_or_walk(true, true);
+    // With both forbidden there is no way on, in either direction of search.
+    assert_eq!(arrivals(&net, 0), vec![]);
+    agrees_with_oracle(&net, 0);
+    assert_eq!(departures(&net, 400), vec![]);
+}
+
+#[test]
+fn a_forbidden_rule_binds_only_its_own_walk() {
+    let (net, _) = Scenario::new(4)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[0, 100])])
+        .route(&[2, 3], &[ScenarioTrip::simple(3, &[150, 400])])
+        .walk(1, 2, 30)
+        .forbid_walk(2, 1) // The reverse direction.
+        .access(0, 0)
+        .egress(3, 0)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(2, 400)]);
+    agrees_with_oracle(&net, 0);
+}
+
 #[test]
 fn walking_from_another_stop_helps_even_after_a_trip_arrival() {
     // A rider arrives at stop 1 by trip at 100 and at stop 2 by trip at 90,

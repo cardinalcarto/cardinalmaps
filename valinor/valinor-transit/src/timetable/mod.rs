@@ -18,6 +18,8 @@ pub use builder::{
     materialize_parts,
 };
 pub use lanes::{ResolvedBlock, ResolvedLane, ResolvedTrip, StopEvent, StopRules};
-pub use pairs::{TransferPair, TransferPairs};
+pub(crate) use pairs::FORBIDDEN_WALK;
+pub use pairs::{PairRule, TransferPair, TransferPairs};
+pub(crate) use window::NO_CHANGE;
 pub(crate) use window::RouteOccurrence;
 pub use window::{BaseWindow, RouteAttributes, StopRouteIndex};

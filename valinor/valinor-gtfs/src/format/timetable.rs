@@ -1,13 +1,15 @@
 //! Replays a compiled file into `valinor-transit`'s builder.
 
 use valinor_transit::{
-    BuildError, ResolvedTrip, RouteAttributes, RouteId, Seconds, ServiceDate, ServiceId, StopEvent,
-    StopId, StopRules, StopTime, Time, Timetable, TimetableBuilder, TimetableSource, TransferPair,
-    TripId,
+    BuildError, PairRule, ResolvedTrip, RouteAttributes, RouteId, Seconds, ServiceDate, ServiceId,
+    StopEvent, StopId, StopRules, StopTime, Time, Timetable, TimetableBuilder, TimetableSource,
+    TransferPair, TripId,
 };
 
 use crate::error::DecodeError;
-use crate::format::layout::{NONE, PATTERN_BIKES_ALLOWED, RULE_DROP_OFF_SHIFT, RULE_PICKUP_MASK};
+use crate::format::layout::{
+    NONE, PATTERN_BIKES_ALLOWED, RULE_DROP_OFF_SHIFT, RULE_PICKUP_MASK, STOP_NO_CHANGE,
+};
 use crate::format::reader::CompiledTimetable;
 
 /// Does a GTFS pickup or drop-off type admit riders?
@@ -63,7 +65,11 @@ impl CompiledTimetable<'_> {
                     table: "stops",
                     reason: "a minimum change time is out of range",
                 })?;
-            keys.push(builder.add_stop(min_change)?);
+            let key = builder.add_stop(min_change)?;
+            if stop.flags & STOP_NO_CHANGE != 0 {
+                builder.forbid_change_at(key)?;
+            }
+            keys.push(key);
         }
 
         for service in tables.services {
@@ -161,12 +167,17 @@ impl CompiledTimetable<'_> {
                     reason: "a transfer names an unknown stop",
                 });
             };
-            let floor =
-                Seconds::try_new(row.floor.get()).map_err(|_| DecodeError::InvalidValue {
-                    table: "transfer pairs",
-                    reason: "a floor is out of range",
-                })?;
-            builder.add_transfer_pair(from, to, floor)?;
+            let rule = if row.floor.get() == NONE {
+                PairRule::Forbidden
+            } else {
+                PairRule::Floor(Seconds::try_new(row.floor.get()).map_err(|_| {
+                    DecodeError::InvalidValue {
+                        table: "transfer pairs",
+                        reason: "a floor is out of range",
+                    }
+                })?)
+            };
+            builder.add_transfer_pair(from, to, rule)?;
         }
         let timetable = builder.build()?;
         for (index, key) in keys.iter().enumerate() {
@@ -313,6 +324,13 @@ impl TimetableSource for CompiledTimetable<'_> {
         })
     }
 
+    fn no_change_at(&self, stop: usize) -> bool {
+        self.tables
+            .stops
+            .get(stop)
+            .is_some_and(|row| row.flags & STOP_NO_CHANGE != 0)
+    }
+
     fn transfer_pairs(&self) -> Vec<TransferPair> {
         self.tables
             .transfer_pairs
@@ -321,7 +339,11 @@ impl TimetableSource for CompiledTimetable<'_> {
                 Some(TransferPair {
                     from: StopId::new(row.from.get()),
                     to: StopId::new(row.to.get()),
-                    floor: Seconds::try_new(row.floor.get()).ok()?,
+                    rule: if row.floor.get() == NONE {
+                        PairRule::Forbidden
+                    } else {
+                        PairRule::Floor(Seconds::try_new(row.floor.get()).ok()?)
+                    },
                 })
             })
             .collect()

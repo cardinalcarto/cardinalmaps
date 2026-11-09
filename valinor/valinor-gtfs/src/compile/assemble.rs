@@ -18,8 +18,8 @@ use crate::compile::report::FeedReport;
 use crate::error::CompileError;
 use crate::format::layout::{
     AgencyRow, ColorRow, FeedRow, IdIndexRow, NONE, NoonOffsetRow, PATTERN_BIKES_ALLOWED,
-    PatternRow, RouteRow, SectionId, ServiceRow, ShapePointRow, ShapeRow, StopRow, TimePair,
-    TransferPairRow, TripRiderRow, TripRow, ZoneRow, ZoneTransitionRow,
+    PatternRow, RouteRow, STOP_NO_CHANGE, SectionId, ServiceRow, ShapePointRow, ShapeRow, StopRow,
+    TimePair, TransferPairRow, TripRiderRow, TripRow, ZoneRow, ZoneTransitionRow,
 };
 use crate::format::reader::{civil_date_of, service_date_of};
 use crate::format::timetable::stop_rules;
@@ -919,6 +919,7 @@ fn sort_index(index: &mut [IdIndexRow], pool: &StringPool) {
     });
 }
 
+#[allow(clippy::too_many_lines, reason = "one linear pass over the stop table")]
 fn build_stop_rows(
     feeds: &[FeedModel],
     numbering: &StopNumbering,
@@ -961,7 +962,8 @@ fn build_stop_rows(
         child_count: U32::new(0),
         location_type: 0,
         wheelchair_boarding: 0,
-        _pad: [0; 2],
+        flags: 0,
+        _pad: 0,
     };
     rows.resize(total, blank);
 
@@ -1016,7 +1018,8 @@ fn build_stop_rows(
                 child_count: U32::new(0),
                 location_type: stop.location_type,
                 wheelchair_boarding: stop.wheelchair,
-                _pad: [0; 2],
+                flags: if stop.no_change { STOP_NO_CHANGE } else { 0 },
+                _pad: 0,
             };
         }
     }

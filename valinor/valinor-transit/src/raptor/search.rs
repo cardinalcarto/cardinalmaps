@@ -247,10 +247,10 @@ fn run_transfers<S: TransferSearch>(
         direction,
         seeds: &seeds,
         upper_bound: Clock(labels.best_target.min(walk_bound)),
-        change_margin: snapshot.max_min_change,
+        change_margin: snapshot.change_margin(),
         rules: WalkRules {
-            times: &snapshot.min_change,
-            max_time: snapshot.max_min_change,
+            times: &snapshot.transfer_times,
+            max_time: snapshot.max_transfer_time,
             pairs: &snapshot.base.pairs,
         },
         interrupt,

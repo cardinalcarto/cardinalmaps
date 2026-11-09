@@ -10,7 +10,7 @@ use std::sync::Arc;
 use valinor_router::tiles::TileSets;
 use valinor_sif::AnyCosting;
 use valinor_transit::{
-    Clock, Direction, Seconds, StopId, TransferArrival, TransferOutcome, TransferPair,
+    Clock, Direction, PairRule, Seconds, StopId, TransferArrival, TransferOutcome, TransferPair,
     TransferPairs, TransferRequest, TransferSearch, TransferSeed, TransferSink, WalkRules,
 };
 
@@ -798,7 +798,7 @@ fn a_table_search_applies_transfer_times_and_rules_when_it_reads_a_walk() {
         &[TransferPair {
             from: StopId::new(0),
             to: StopId::new(2),
-            floor: Seconds::try_new(150).expect("in range"),
+            rule: PairRule::Floor(Seconds::try_new(150).expect("in range")),
         }],
     )
     .expect("pairs");

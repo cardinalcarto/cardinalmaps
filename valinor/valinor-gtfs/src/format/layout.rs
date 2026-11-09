@@ -16,7 +16,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 pub const MAGIC: [u8; 8] = *b"VLNRGTFS";
 
 /// The only format version this build reads.
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 
 /// A transfer time for a stop that `transfers.txt` doesn't set one for, as MOTIS does: 2 minutes.
 pub const DEFAULT_TRANSFER_SECONDS: u32 = 120;
@@ -265,8 +265,13 @@ pub(crate) struct StopRow {
     pub(crate) child_count: U32,
     pub(crate) location_type: u8,
     pub(crate) wheelchair_boarding: u8,
-    pub(crate) _pad: [u8; 2],
+    /// [`STOP_NO_CHANGE`] or zero.
+    pub(crate) flags: u8,
+    pub(crate) _pad: u8,
 }
+
+/// A stop flag: `transfer_type=3` forbids changing here.
+pub(crate) const STOP_NO_CHANGE: u8 = 1;
 
 /// A calendar: `first_date + i` runs when bit `i` is set.
 #[derive(Clone, Copy, Debug, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
@@ -387,7 +392,7 @@ pub(crate) struct TransferPairRow {
     pub(crate) from: U32,
     /// The stop the walk ends at, as a `StopId`.
     pub(crate) to: U32,
-    /// The walk costs at least this many seconds.
+    /// The walk costs at least this many seconds; [`NONE`] means the walk is forbidden.
     pub(crate) floor: U32,
 }
 

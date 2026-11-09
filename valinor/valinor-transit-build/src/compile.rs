@@ -93,6 +93,15 @@ pub struct FeedRecord {
     pub dropped_trips: BTreeMap<String, usize>,
     /// How many warnings the compiler raised.
     pub warning_count: usize,
+    /// Stops where `transfer_type=3` forbids changing at the stop.
+    #[serde(default)]
+    pub transfers_forbidden_same_stop: usize,
+    /// Directed stop pairs whose walk `transfer_type=3` forbids.
+    #[serde(default)]
+    pub transfers_forbidden_pairs: usize,
+    /// `transfer_type=3` rows qualified by route or trip, counted because they can't be honored.
+    #[serde(default)]
+    pub transfers_forbidden_qualified: usize,
     /// How long this feed took to compile, in seconds.
     pub seconds: f64,
     /// Whether this run reused a previous result without compiling.
@@ -366,6 +375,9 @@ fn compile_archive(
         last_service_date: last,
         dropped_trips,
         warning_count: report.map_or(0, |r| r.warning_count),
+        transfers_forbidden_same_stop: report.map_or(0, |r| r.transfers_forbidden_same_stop),
+        transfers_forbidden_pairs: report.map_or(0, |r| r.transfers_forbidden_pairs),
+        transfers_forbidden_qualified: report.map_or(0, |r| r.transfers_forbidden_qualified),
         seconds: started.elapsed().as_secs_f64(),
         reused: false,
     })
@@ -426,6 +438,9 @@ fn finish_failed(
         has_current_service: false,
         dropped_trips: BTreeMap::new(),
         warning_count: 0,
+        transfers_forbidden_same_stop: 0,
+        transfers_forbidden_pairs: 0,
+        transfers_forbidden_qualified: 0,
         seconds: started.elapsed().as_secs_f64(),
         reused: false,
     };

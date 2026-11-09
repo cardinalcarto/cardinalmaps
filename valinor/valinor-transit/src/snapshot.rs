@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::ids::{DaySlot, LaneRef, RouteId, ServiceDay, StopId, Time, TripKey};
 use crate::timetable::{
-    Arena, ArenaUsage, BaseWindow, BlockRef, Lane, RouteAttributes, StopEvent, StopRouteIndex,
-    StopRules,
+    Arena, ArenaUsage, BaseWindow, BlockRef, Lane, NO_CHANGE, RouteAttributes, StopEvent,
+    StopRouteIndex, StopRules,
 };
 
 /// A timetable window together with any real-time changes to it.
@@ -21,10 +21,12 @@ pub struct Snapshot {
     pub(crate) additions: StopRouteIndex,
     pub(crate) directory: Vec<BlockRef>,
     pub(crate) attributes: Vec<RouteAttributes>,
-    /// Per stop, base stops first and then the overlay's.
+    /// Per stop, base stops first and then the overlay's; see [`BaseWindow::min_change`].
     pub(crate) min_change: Vec<i32>,
-    /// The largest of [`Self::min_change`], or zero with no stops.
-    pub(crate) max_min_change: i32,
+    /// Per stop, its transfer time: what a walk to or from it costs at least.
+    pub(crate) transfer_times: Vec<i32>,
+    /// The largest of [`Self::transfer_times`], or zero with no stops.
+    pub(crate) max_transfer_time: i32,
     /// `(start, length)` of each added route's stops in the overlay arena.
     pub(crate) added_route_stops: Vec<(u32, u32)>,
 }
@@ -36,7 +38,8 @@ impl Snapshot {
             directory: base.directory.clone(),
             attributes: base.attributes.clone(),
             min_change: base.min_change.clone(),
-            max_min_change: base.min_change.iter().copied().max().unwrap_or(0),
+            transfer_times: base.transfer_times.clone(),
+            max_transfer_time: base.transfer_times.iter().copied().max().unwrap_or(0),
             overlay_arena: Arena::new(),
             additions: StopRouteIndex::default(),
             added_route_stops: Vec::new(),
@@ -85,9 +88,20 @@ impl Snapshot {
         self.attributes.get(route.index()).copied()
     }
 
-    /// The minimum change time at `stop`, in seconds.
+    /// The transfer time at `stop`, in seconds.
     pub fn min_change(&self, stop: StopId) -> Option<i32> {
-        self.min_change.get(stop.index()).copied()
+        self.transfer_times.get(stop.index()).copied()
+    }
+
+    /// The change margin a transfer search is told: a change at a seed's own stop, however
+    /// long, is never better than this, or [`crate::TransferRequest::REPORT_ALL`] if a stop
+    /// forbids changing, since then a walk to that stop can always help.
+    pub(crate) fn change_margin(&self) -> i32 {
+        if self.min_change.contains(&NO_CHANGE) {
+            crate::transfer::TransferRequest::REPORT_ALL
+        } else {
+            self.max_transfer_time
+        }
     }
 
     /// The trip at `row` of a lane, as it ran on its service date.

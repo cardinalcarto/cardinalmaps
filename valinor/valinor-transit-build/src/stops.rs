@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sha2::{Digest, Sha256};
 use valinor_gtfs::CompiledTimetable;
-use valinor_transit::{StopId, TimetableSource};
+use valinor_transit::{PairRule, StopId, TimetableSource};
 
 use crate::compile::{FeedOutcome, FeedRecord};
 use crate::error::BuildError;
@@ -183,6 +183,7 @@ fn load_feed(compiled: &Path, feed: &FeedRecord) -> Result<FeedStopData, BuildEr
     }
     let pairs = TimetableSource::transfer_pairs(&timetable)
         .into_iter()
+        .filter(|pair| matches!(pair.rule, PairRule::Floor(_)))
         .map(|pair| (pair.from.into_inner(), pair.to.into_inner()))
         .collect();
     Ok((coordinates, pairs))

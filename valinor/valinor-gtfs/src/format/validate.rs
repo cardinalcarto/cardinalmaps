@@ -12,6 +12,7 @@
 use crate::error::DecodeError;
 use crate::format::layout::{
     MAX_SERVICE_DAYS, NONE, PATTERN_BIKES_ALLOWED, RULE_VALID_BITS, RUN_HEADWAY_FREQUENCY,
+    STOP_NO_CHANGE,
 };
 use crate::format::reader::Tables;
 use zerocopy::little_endian::U32;
@@ -169,6 +170,12 @@ fn validate_stops(tables: &Tables<'_>) -> Result<(), DecodeError> {
     }
     let mut next_child = 0_usize;
     for stop in tables.stops {
+        if stop.flags & !STOP_NO_CHANGE != 0 {
+            return Err(DecodeError::InvalidValue {
+                table: "stops",
+                reason: "a stop has a flag this version does not define",
+            });
+        }
         check_index(
             "stops",
             "a feed reference is out of range",
@@ -579,7 +586,7 @@ fn validate_transfer_pairs(tables: &Tables<'_>) -> Result<(), DecodeError> {
         if key.0 == key.1 || previous.is_some_and(|before| before >= key) {
             return Err(fail("transfer pairs", "the rows are out of order"));
         }
-        if row.floor.get() > valinor_transit::SECONDS_LIMIT {
+        if row.floor.get() != NONE && row.floor.get() > valinor_transit::SECONDS_LIMIT {
             return Err(DecodeError::InvalidValue {
                 table: "transfer pairs",
                 reason: "a floor is out of range",

@@ -163,6 +163,16 @@ so a walk drawn in a response still takes as long as it really does,
 and what's left of the transfer's cost is a wait to board, shown as the next ride's `wait_seconds`.
 Nothing here depends on the request: there is no per-request slack.
 
+### Forbidden transfers
+
+`transfer_type=3` is honored at stop level. Between two different stops, that walk doesn't exist.
+At one stop, a rider arriving by trip can't board another trip there; walking to another stop
+and boarding there is still possible, because a rider boards on foot.
+A station in a row covers each of its stops, and every pair of them.
+Rows naming a route or a trip can't be expressed cheaply (a route or trip check on every
+boarding would be a per-trip branch in the scan); they are counted in the compile report
+as `transfers_forbidden_qualified`, and otherwise ignored.
+
 ## Memory layout
 
 RAPTOR is fast because of cache hits on data the prefetcher can predict. Nothing may jeopardize this.

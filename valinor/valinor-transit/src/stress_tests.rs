@@ -163,6 +163,7 @@ fn random_net(rng: &mut Rng) -> TestNet {
     let dist = graph.distances();
     let routes = routes_from_timetable(&timetable, &window);
     TestNet {
+        no_change: vec![false; stops],
         pair_floors: HashMap::new(),
         min_change,
         routes,
@@ -213,6 +214,7 @@ fn apply_random_overlay(rng: &mut Rng, net: &TestNet) -> TestNet {
     }
     let snapshot = overlay.build().unwrap();
     TestNet {
+        no_change: net.no_change.clone(),
         pair_floors: HashMap::new(),
         min_change: net.min_change.clone(),
         routes,
@@ -335,7 +337,11 @@ fn enumerate(net: &TestNet, max_trips: u8) -> BTreeSet<(i32, i32, u8)> {
                                 net,
                                 out,
                                 i,
-                                clock + net.min_change[i],
+                                if net.no_change[i] {
+                                    i32::MAX
+                                } else {
+                                    clock + net.min_change[i]
+                                },
                                 Some(departure),
                                 access,
                                 rides + 1,

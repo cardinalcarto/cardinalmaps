@@ -9,7 +9,7 @@
 //! Everything else comes through borrowed slices and a sink.
 
 use crate::ids::{Direction, Seconds, StopId};
-use crate::timetable::TransferPairs;
+use crate::timetable::{FORBIDDEN_WALK, TransferPairs};
 
 /// A search's clock, in seconds: it grows as the search moves away from its seeds.
 ///
@@ -46,7 +46,8 @@ impl Clock {
 /// What a window of service says about walking between stops, read by a transfer search.
 ///
 /// A walk between two stops costs the longest of its own seconds and both stops' transfer times,
-/// and at least any `transfers.txt` rule for that pair of stops, the same in either direction.
+/// and at least any `transfers.txt` rule for that pair of stops, the same in either direction;
+/// a `transfer_type=3` row for the pair means the walk doesn't exist.
 ///
 /// Transfer tables keep real walk seconds; the search applies this when it reads a walk,
 /// so a walk that's drawn is still as long as it really is.
@@ -119,6 +120,9 @@ impl SeedRules<'_> {
         let mut cost = seconds.max(self.time).max(time);
         if let Ok(index) = self.stops.binary_search(&other.into_inner()) {
             let floor = *self.floors.get(index)?;
+            if floor == FORBIDDEN_WALK {
+                return None;
+            }
             cost = cost.max(floor);
         }
         Some(cost)
