@@ -10,8 +10,11 @@ use valinor_gtfs_rt::proto::alert::Effect;
 use valinor_gtfs_rt::proto::trip_update::stop_time_update::ScheduleRelationship;
 use valinor_gtfs_rt::{
     FeedId, FeedKind, FeedStatus, ScopedId, StopTimeDetails, TripDetails, TripState,
+    VehicleDetails, VehicleRef,
 };
-use valinor_transit::{Leg, Profile, ProfileEntry, Ride, StopEvent, StopId, StopRules, TripKey};
+use valinor_transit::{
+    Leg, Profile, ProfileEntry, Ride, StopEvent, StopId, StopRules, TripId, TripKey,
+};
 
 use crate::plan::{
     AccessEgressRequest, AccessEgressSearch, DirectSearch, PlanStage, TransitRequest, TravelMode,
@@ -22,7 +25,7 @@ use crate::response::{
     AccessEgressLeg, Accessibility, AgencyResponse, DirectResponse, FeedReport, FeedState, Journey,
     JourneyLeg, LegAlert, NoJourneysReason, PlanResponse, RealtimeLevel, RealtimeStatus,
     RideSegment, RouteResponse, StopMovedNotice, StopRef, StopVisit, TransferLeg, TransitLeg,
-    TripResponse, Vehicle, WalkDurations, WalkPath, Window,
+    TripResponse, WalkDurations, WalkPath, Window,
 };
 use crate::state::TransitSnapshot;
 use crate::window::calendar_date;
@@ -195,21 +198,60 @@ fn new_stop_name(stop: &valinor_gtfs_rt::NewStop) -> Option<String> {
 }
 
 /// One request's context for building a response.
-struct Builder<'a, A: AccessEgressSearch> {
-    snapshot: &'a TransitSnapshot,
-    request: &'a TransitRequest,
+pub(super) struct Builder<'a, A: AccessEgressSearch> {
+    pub(super) snapshot: &'a TransitSnapshot,
+    pub(super) request: &'a TransitRequest,
     access_egress: &'a mut A,
     /// Expanded once per stop: many journeys of a window share their access and egress.
     access_paths: HashMap<StopId, Option<WalkPath>>,
     egress_paths: HashMap<StopId, Option<WalkPath>>,
 }
 
-impl<A: AccessEgressSearch> Builder<'_, A> {
-    fn set(&self) -> &TimetableSet {
+/// What a ride's trip is, resolved once from the timetable and real-time data.
+pub(super) struct RideView<'a> {
+    /// The file and the file's number of the ride's trip, unless only real-time data knows it.
+    trip_part: Option<(TimetablePart<'a>, TripId)>,
+    pub(super) static_trip: Option<TripInfo<'a>>,
+    /// The original trips of a combined stay-seated trip; empty for a plain one.
+    trip_segments: Vec<TripSegmentInfo<'a>>,
+    /// The original trip the ride boards, on a combined trip.
+    pub(super) boarded_segment: Option<TripSegmentInfo<'a>>,
+    /// The real-time details of the stretch the rider boards.
+    pub(super) details: Option<&'a TripDetails>,
+    /// The original trips the ride rides, in order; empty for a ride on one plain trip.
+    ridden_segments: Vec<TripSegmentInfo<'a>>,
+    /// Whether the ride is on its trip's own stop pattern, so static positions are valid.
+    on_base_pattern: bool,
+    /// The file that answers for the ride.
+    pub(super) part: Option<TimetablePart<'a>>,
+    route: Option<RouteInfo<'a>>,
+    agency: Option<AgencyInfo<'a>>,
+    pub(super) feed: Option<FeedId>,
+    pub(super) trip_id: String,
+}
+
+/// A stop visit's times, from the window, the schedule, and real-time data.
+pub(super) struct VisitTimes {
+    /// As routing used them, in POSIX seconds.
+    pub(super) arrival: i64,
+    pub(super) departure: i64,
+    /// Scheduled `(arrival, departure)`, in POSIX seconds.
+    pub(super) scheduled: Option<(i64, i64)>,
+    pub(super) predicted_arrival: Option<i64>,
+    pub(super) predicted_departure: Option<i64>,
+    pub(super) arrival_delay: Option<i32>,
+    pub(super) departure_delay: Option<i32>,
+}
+
+/// The vehicle running a ride: what the overlay stored, and the trip update's descriptor.
+type ChosenVehicle<'a> = (Option<&'a VehicleDetails>, Option<&'a VehicleRef>);
+
+impl<'a, A: AccessEgressSearch> Builder<'a, A> {
+    fn set(&self) -> &'a TimetableSet {
         &self.snapshot.data.set
     }
 
-    fn origin(&self) -> i64 {
+    pub(super) fn origin(&self) -> i64 {
         self.snapshot.window.origin_unix
     }
 
@@ -431,11 +473,8 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         }
     }
 
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one linear assembly of a leg from its sources"
-    )]
-    fn transit_leg(&self, ride: &Ride, wait: i64) -> TransitLeg {
+    /// Resolves what a ride's trip is, for a leg or for one of a leg's departures.
+    pub(super) fn ride_view(&self, ride: &Ride) -> RideView<'a> {
         let set = self.set();
         let rider = &self.snapshot.rider;
         let trip_part = set.trip_part(ride.trip.trip);
@@ -493,7 +532,24 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             .or_else(|| static_trip.map(|info| info.gtfs_id.to_owned()))
             .or_else(|| details.map(|d| d.trip_id.clone()))
             .unwrap_or_default();
+        RideView {
+            trip_part,
+            static_trip,
+            trip_segments,
+            boarded_segment,
+            details,
+            ridden_segments,
+            on_base_pattern,
+            part,
+            route,
+            agency,
+            feed,
+            trip_id,
+        }
+    }
 
+    fn transit_leg(&self, ride: &Ride, wait: i64) -> TransitLeg {
+        let view = self.ride_view(ride);
         let events = self
             .snapshot
             .snapshot
@@ -504,11 +560,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             .snapshot
             .route_stops(ride.route)
             .unwrap_or(&[]);
-        let day_start = part.and_then(|part| {
-            self.snapshot
-                .window
-                .day_start_unix(part.index(), ride.trip.date)
-        });
+        let context = self.visit_context(&view, ride.trip);
 
         let mut stops = Vec::new();
         // For each ridden position, its index in `stops`, where a same-stop join appears once.
@@ -518,21 +570,13 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             let (Some(stop), Some(event)) = (route_stops.get(index), events.get(index)) else {
                 continue;
             };
-            let context = VisitContext {
-                feed: feed.as_ref(),
-                part,
-                static_trip: static_trip.filter(|_| on_base_pattern),
-                details,
-                day_start,
-                key: ride.trip,
-            };
             let visit = self.stop_visit(&context, index, *stop, *event);
             // Where one original trip ends and the next starts at the same stop,
             // a rider sees one stop: the arrival of the first and the departure of the next.
             let joins_previous = stops.last().is_some_and(|previous: &StopVisit| {
                 previous.stop.stop_id == visit.stop.stop_id
                     && previous.stop.feed == visit.stop.feed
-                    && is_segment_start(&trip_segments, position)
+                    && is_segment_start(&view.trip_segments, position)
             });
             stop_indices.push(stops.len().saturating_sub(usize::from(joins_previous)));
             if joins_previous {
@@ -550,115 +594,14 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
 
         let board_unix = self.origin() + i64::from(ride.board_time.into_inner());
         let alight_unix = self.origin() + i64::from(ride.alight_time.into_inner());
-        let headway_based = static_trip.map(|info| info.headway_based);
+        let vehicle = self
+            .ride_vehicle(&view, ride)
+            .map(|(chosen, reference)| vehicle_from(self.snapshot, chosen, reference));
+        let alerts = self.ride_alerts(&view, ride, route_stops, (board_unix, alight_unix));
 
-        let vehicle = feed.as_ref().and_then(|feed| {
-            self.vehicle_for(
-                feed,
-                &trip_id,
-                ride,
-                details,
-                headway_based.unwrap_or(false),
-            )
-            .or_else(|| {
-                // On a combined trip the vehicle may be reporting another original trip's ID.
-                trip_segments
-                    .iter()
-                    .find_map(|segment| self.vehicle_for(feed, segment.gtfs_id, ride, None, false))
-            })
-        });
-
-        let leg_stops: Vec<LegStop<'_>> = (ride.board_position..=ride.alight_position)
-            .filter_map(|position| {
-                let stop = *route_stops.get(position as usize)?;
-                Some(LegStop {
-                    stop,
-                    gtfs_id: self.stop_gtfs_id_of(stop),
-                })
-            })
-            .collect();
-        let alerts = match (feed.as_ref(), part) {
-            (Some(feed), Some(part)) if !trip_segments.is_empty() => {
-                let mut alerts: Vec<LegAlert> = Vec::new();
-                for segment in &trip_segments {
-                    let from = segment.first_position.max(ride.board_position);
-                    let to = segment.last_position.min(ride.alight_position);
-                    if from > to {
-                        continue;
-                    }
-                    let stops: Vec<LegStop<'_>> = (from..=to)
-                        .filter_map(|position| {
-                            let stop = *route_stops.get(position as usize)?;
-                            Some(LegStop {
-                                stop,
-                                gtfs_id: self.stop_gtfs_id_of(stop),
-                            })
-                        })
-                        .collect();
-                    let route = part.compiled().route(segment.route);
-                    let found = leg_alerts(
-                        part,
-                        rider,
-                        &LegSelectorContext {
-                            feed,
-                            agency_id: agency.and_then(|a| a.gtfs_id),
-                            route_id: route.map(|r| r.gtfs_id),
-                            route_type: route.map(|r| i32::from(r.route_type)),
-                            direction_id: segment.direction.map(u32::from),
-                            trip_id: segment.gtfs_id,
-                            date: calendar_date(ride.trip.date),
-                            run: Some(ServiceRun {
-                                trip: static_trip.map(|_| ride.trip.trip),
-                                date: ride.trip.date,
-                                start_time: static_trip
-                                    .and_then(|info| info.time_at(segment.first_position as usize))
-                                    .and_then(|(_, first)| u32::try_from(first).ok()),
-                            }),
-                            stops,
-                            from: board_unix,
-                            to: alight_unix,
-                        },
-                    );
-                    for alert in found {
-                        if !alerts.contains(&alert) {
-                            alerts.push(alert);
-                        }
-                    }
-                }
-                alerts
-            }
-            (Some(feed), Some(part)) => leg_alerts(
-                part,
-                rider,
-                &LegSelectorContext {
-                    feed,
-                    agency_id: agency.and_then(|a| a.gtfs_id),
-                    route_id: route.map(|r| r.gtfs_id),
-                    route_type: route.map(|r| i32::from(r.route_type)),
-                    direction_id: static_trip
-                        .and_then(|i| i.direction)
-                        .map(u32::from)
-                        .or_else(|| details.and_then(|d| d.direction_id)),
-                    trip_id: &trip_id,
-                    date: calendar_date(ride.trip.date),
-                    run: Some(ServiceRun {
-                        trip: static_trip.map(|_| ride.trip.trip),
-                        date: ride.trip.date,
-                        start_time: details.and_then(|d| d.start_time).or_else(|| {
-                            let (_, first) = static_trip?.time_at(0)?;
-                            u32::try_from(first).ok()
-                        }),
-                    }),
-                    stops: leg_stops,
-                    from: board_unix,
-                    to: alight_unix,
-                },
-            ),
-            _ => Vec::new(),
-        };
-
-        let shape = trip_part
-            .filter(|_| on_base_pattern)
+        let shape = view
+            .trip_part
+            .filter(|_| view.on_base_pattern)
             .and_then(|(part, local)| {
                 part.compiled().shape_points_between(
                     local,
@@ -672,24 +615,17 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                 self.access_egress.enter_stage(PlanStage::TransitLeg);
                 shape
             });
-        let segments = Self::ride_segments(part, &trip_segments, ride, &stop_indices);
+        let segments = Self::ride_segments(view.part, &view.trip_segments, ride, &stop_indices);
 
         let realtime = stops
             .iter()
             .any(|s| s.predicted_arrival.is_some() || s.predicted_departure.is_some());
         let delay_seconds = stops.first().and_then(|s| s.departure_delay_seconds);
-
-        // A stay-seated ride is as accessible as its least accessible ridden stretch.
-        let trip_accessibility = if ridden_segments.is_empty() {
-            static_trip.map(|info| accessibility_of(info.wheelchair_accessible))
-        } else {
-            Some(combined_accessibility(
-                ridden_segments
-                    .iter()
-                    .map(|s| accessibility_of(s.wheelchair_accessible)),
-            ))
-        };
-        let accessibility = leg_accessibility(trip_accessibility, &stops);
+        let accessibility = leg_accessibility(
+            trip_accessibility(&view),
+            stops.first().map(|visit| visit.stop.accessibility),
+            stops.last().map(|visit| visit.stop.accessibility),
+        );
         TransitLeg {
             accessibility,
             departure: board_unix,
@@ -698,24 +634,145 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             wait_seconds: wait,
             delay_seconds,
             realtime,
-            route: route.map(route_response),
-            agency: agency.map(agency_response),
-            trip: trip_response(
-                ride,
-                &trip_id,
-                static_trip,
-                boarded_segment,
-                &ridden_segments,
-                details,
-                feed.as_ref(),
-                self.snapshot,
-            ),
+            route: view.route.map(route_response),
+            agency: view.agency.map(agency_response),
+            trip: trip_response(ride, &view, self.snapshot),
             stops,
             segments,
             shape,
             vehicle,
             alerts,
         }
+    }
+
+    /// What a stop visit of this ride needs to know about it.
+    pub(super) fn visit_context<'v>(
+        &self,
+        view: &'v RideView<'a>,
+        key: TripKey,
+    ) -> VisitContext<'v> {
+        VisitContext {
+            feed: view.feed.as_ref(),
+            part: view.part,
+            static_trip: view.static_trip.filter(|_| view.on_base_pattern),
+            details: view.details,
+            day_start: view
+                .part
+                .and_then(|part| self.snapshot.window.day_start_unix(part.index(), key.date)),
+            key,
+        }
+    }
+
+    /// The vehicle running a ride, or `None` if nothing names one.
+    pub(super) fn ride_vehicle(
+        &self,
+        view: &RideView<'a>,
+        ride: &Ride,
+    ) -> Option<ChosenVehicle<'a>> {
+        let feed = view.feed.as_ref()?;
+        let headway_based = view.static_trip.is_some_and(|info| info.headway_based);
+        self.vehicle_for(feed, &view.trip_id, ride, view.details, headway_based)
+            .or_else(|| {
+                // On a combined trip the vehicle may be reporting another original trip's ID.
+                view.trip_segments
+                    .iter()
+                    .find_map(|segment| self.vehicle_for(feed, segment.gtfs_id, ride, None, false))
+            })
+    }
+
+    /// The alerts that apply to a ride between its boarding and alighting, `times` in POSIX seconds.
+    ///
+    /// A stay-seated ride is matched stretch by stretch, each as its own original trip.
+    pub(super) fn ride_alerts(
+        &self,
+        view: &RideView<'a>,
+        ride: &Ride,
+        route_stops: &[StopId],
+        (board_unix, alight_unix): (i64, i64),
+    ) -> Vec<LegAlert> {
+        let rider = &self.snapshot.rider;
+        let (Some(feed), Some(part)) = (view.feed.as_ref(), view.part) else {
+            return Vec::new();
+        };
+        let (static_trip, details) = (view.static_trip, view.details);
+        let leg_stops = |from: u32, to: u32| -> Vec<LegStop<'a>> {
+            (from..=to)
+                .filter_map(|position| {
+                    let stop = *route_stops.get(position as usize)?;
+                    Some(LegStop {
+                        stop,
+                        gtfs_id: self.stop_gtfs_id_of(stop),
+                    })
+                })
+                .collect()
+        };
+        if view.trip_segments.is_empty() {
+            return leg_alerts(
+                part,
+                rider,
+                &LegSelectorContext {
+                    feed,
+                    agency_id: view.agency.and_then(|a| a.gtfs_id),
+                    route_id: view.route.map(|r| r.gtfs_id),
+                    route_type: view.route.map(|r| i32::from(r.route_type)),
+                    direction_id: static_trip
+                        .and_then(|i| i.direction)
+                        .map(u32::from)
+                        .or_else(|| details.and_then(|d| d.direction_id)),
+                    trip_id: &view.trip_id,
+                    date: calendar_date(ride.trip.date),
+                    run: Some(ServiceRun {
+                        trip: static_trip.map(|_| ride.trip.trip),
+                        date: ride.trip.date,
+                        start_time: details.and_then(|d| d.start_time).or_else(|| {
+                            let (_, first) = static_trip?.time_at(0)?;
+                            u32::try_from(first).ok()
+                        }),
+                    }),
+                    stops: leg_stops(ride.board_position, ride.alight_position),
+                    from: board_unix,
+                    to: alight_unix,
+                },
+            );
+        }
+        let mut alerts: Vec<LegAlert> = Vec::new();
+        for segment in &view.trip_segments {
+            let from = segment.first_position.max(ride.board_position);
+            let to = segment.last_position.min(ride.alight_position);
+            if from > to {
+                continue;
+            }
+            let route = part.compiled().route(segment.route);
+            let found = leg_alerts(
+                part,
+                rider,
+                &LegSelectorContext {
+                    feed,
+                    agency_id: view.agency.and_then(|a| a.gtfs_id),
+                    route_id: route.map(|r| r.gtfs_id),
+                    route_type: route.map(|r| i32::from(r.route_type)),
+                    direction_id: segment.direction.map(u32::from),
+                    trip_id: segment.gtfs_id,
+                    date: calendar_date(ride.trip.date),
+                    run: Some(ServiceRun {
+                        trip: static_trip.map(|_| ride.trip.trip),
+                        date: ride.trip.date,
+                        start_time: static_trip
+                            .and_then(|info| info.time_at(segment.first_position as usize))
+                            .and_then(|(_, first)| u32::try_from(first).ok()),
+                    }),
+                    stops: leg_stops(from, to),
+                    from: board_unix,
+                    to: alight_unix,
+                },
+            );
+            for alert in found {
+                if !alerts.contains(&alert) {
+                    alerts.push(alert);
+                }
+            }
+        }
+        alerts
     }
 
     /// The original trips a stay-seated ride spans; empty for a ride on one trip.
@@ -778,7 +835,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         })
     }
 
-    fn stop_gtfs_id_of(&self, stop: StopId) -> Option<&str> {
+    fn stop_gtfs_id_of(&self, stop: StopId) -> Option<&'a str> {
         self.set()
             .stop_part(stop)
             .and_then(|(part, local)| part.compiled().stop(local))
@@ -799,25 +856,16 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         stop: StopId,
         event: StopEvent,
     ) -> StopVisit {
-        let origin = self.origin();
-        let live = u32::try_from(index)
-            .ok()
-            .and_then(|position| self.snapshot.rider.stop_details_at(visit.key, position));
-        let scheduled = visit.scheduled(index).or_else(|| {
-            let live = live?;
-            Some((live.scheduled_arrival?, live.scheduled_departure?))
-        });
-        let unix_of = |time: i32| origin + i64::from(time);
-        // A trip that exists only in real-time data has no schedule; its times are predictions.
-        let added_only = visit.static_trip.is_none() && live.is_none() && visit.details.is_some();
-        let predicted_arrival = live
-            .and_then(|s| s.predicted_arrival)
-            .or_else(|| added_only.then(|| unix_of(event.arrival.into_inner())));
-        let predicted_departure = live
-            .and_then(|s| s.predicted_departure)
-            .or_else(|| added_only.then(|| unix_of(event.departure.into_inner())));
-        let arrival = unix_of(event.arrival.into_inner());
-        let departure = unix_of(event.departure.into_inner());
+        let live = self.live_at(visit.key, index);
+        let times = self.visit_times(visit, index, live, event);
+        let VisitTimes {
+            arrival,
+            departure,
+            scheduled,
+            predicted_arrival,
+            predicted_departure,
+            ..
+        } = times;
 
         let stop_ref = self.stop_ref(stop);
         let (skipped, removed_by_alert) =
@@ -828,11 +876,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             .and_then(|info| info.time_is_approximate_at(index))
             .filter(|&approximate| approximate);
 
-        let headsign = live.and_then(|s| s.stop_headsign.clone()).or_else(|| {
-            let info = visit.static_trip?;
-            let text = visit.part?.compiled().stop_headsign(&info, index)?;
-            (Some(text) != info.headsign).then(|| text.to_owned())
-        });
+        let headsign = stop_headsign(visit, index, live);
 
         let (pickup_type, drop_off_type) = visit.static_trip.map_or((None, None), |info| {
             (
@@ -854,12 +898,8 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             scheduled_departure: scheduled.map(|(_, d)| d),
             predicted_arrival,
             predicted_departure,
-            arrival_delay_seconds: live
-                .and_then(|s| s.arrival_delay)
-                .or_else(|| delay_between(predicted_arrival, scheduled.map(|(a, _)| a))),
-            departure_delay_seconds: live
-                .and_then(|s| s.departure_delay)
-                .or_else(|| delay_between(predicted_departure, scheduled.map(|(_, d)| d))),
+            arrival_delay_seconds: times.arrival_delay,
+            departure_delay_seconds: times.departure_delay,
             arrival_uncertainty_seconds: live.and_then(|s| s.arrival_uncertainty),
             departure_uncertainty_seconds: live.and_then(|s| s.departure_uncertainty),
             approximate,
@@ -879,6 +919,50 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                 .set()
                 .stop_part(stop)
                 .and_then(|(part, local)| part.compiled().stop_utc_offset_at(local, departure)),
+        }
+    }
+
+    /// A run's real-time details at one position, from whichever of its updates has it.
+    pub(super) fn live_at(&self, key: TripKey, index: usize) -> Option<&'a StopTimeDetails> {
+        u32::try_from(index)
+            .ok()
+            .and_then(|position| self.snapshot.rider.stop_details_at(key, position))
+    }
+
+    /// A visit's times at one position of a ride, given its stop event in the window.
+    pub(super) fn visit_times(
+        &self,
+        visit: &VisitContext<'_>,
+        index: usize,
+        live: Option<&StopTimeDetails>,
+        event: StopEvent,
+    ) -> VisitTimes {
+        let origin = self.origin();
+        let scheduled = visit.scheduled(index).or_else(|| {
+            let live = live?;
+            Some((live.scheduled_arrival?, live.scheduled_departure?))
+        });
+        let unix_of = |time: i32| origin + i64::from(time);
+        // A trip that exists only in real-time data has no schedule; its times are predictions.
+        let added_only = visit.static_trip.is_none() && live.is_none() && visit.details.is_some();
+        let predicted_arrival = live
+            .and_then(|s| s.predicted_arrival)
+            .or_else(|| added_only.then(|| unix_of(event.arrival.into_inner())));
+        let predicted_departure = live
+            .and_then(|s| s.predicted_departure)
+            .or_else(|| added_only.then(|| unix_of(event.departure.into_inner())));
+        VisitTimes {
+            arrival: unix_of(event.arrival.into_inner()),
+            departure: unix_of(event.departure.into_inner()),
+            scheduled,
+            predicted_arrival,
+            predicted_departure,
+            arrival_delay: live
+                .and_then(|s| s.arrival_delay)
+                .or_else(|| delay_between(predicted_arrival, scheduled.map(|(a, _)| a))),
+            departure_delay: live
+                .and_then(|s| s.departure_delay)
+                .or_else(|| delay_between(predicted_departure, scheduled.map(|(_, d)| d))),
         }
     }
 
@@ -938,9 +1022,9 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         feed: &FeedId,
         trip_id: &str,
         ride: &Ride,
-        details: Option<&TripDetails>,
+        details: Option<&'a TripDetails>,
         headway_based: bool,
-    ) -> Option<Vehicle> {
+    ) -> Option<ChosenVehicle<'a>> {
         let rider = &self.snapshot.rider;
         let candidates: Vec<_> = rider
             .vehicles_on_trip(&ScopedId::new(feed, trip_id))
@@ -970,7 +1054,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         });
         match (chosen, reference) {
             (None, None) => None,
-            (chosen, reference) => Some(vehicle_from(self.snapshot, chosen, reference)),
+            pair => Some(pair),
         }
     }
 }
@@ -1030,7 +1114,7 @@ fn walks_affected_by(index: usize, alert: &LegAlert) -> Vec<(usize, StopMovedNot
 }
 
 /// What a stop visit needs to know about its ride.
-struct VisitContext<'a> {
+pub(super) struct VisitContext<'a> {
     feed: Option<&'a FeedId>,
     /// The file this leg's trip is in, when it has one.
     part: Option<TimetablePart<'a>>,
@@ -1055,6 +1139,19 @@ impl VisitContext<'_> {
     }
 }
 
+/// A visit's headsign when it differs from the trip's: from real-time data, or the schedule's.
+pub(super) fn stop_headsign(
+    visit: &VisitContext<'_>,
+    index: usize,
+    live: Option<&StopTimeDetails>,
+) -> Option<String> {
+    live.and_then(|s| s.stop_headsign.clone()).or_else(|| {
+        let info = visit.static_trip?;
+        let text = visit.part?.compiled().stop_headsign(&info, index)?;
+        (Some(text) != info.headsign).then(|| text.to_owned())
+    })
+}
+
 /// Whether a position is the start of a later original trip on a combined one.
 fn is_segment_start(segments: &[TripSegmentInfo<'_>], position: u32) -> bool {
     segments
@@ -1063,7 +1160,7 @@ fn is_segment_start(segments: &[TripSegmentInfo<'_>], position: u32) -> bool {
         .any(|segment| segment.first_position == position)
 }
 
-fn gtfs_route_of(
+pub(super) fn gtfs_route_of(
     set: &TimetableSet,
     part: TimetablePart<'_>,
     static_trip: Option<TripInfo<'_>>,
@@ -1109,36 +1206,25 @@ fn agency_response(agency: AgencyInfo<'_>) -> AgencyResponse {
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "one leg's sources")]
-fn trip_response(
-    ride: &Ride,
-    trip_id: &str,
-    static_trip: Option<TripInfo<'_>>,
-    boarded_segment: Option<TripSegmentInfo<'_>>,
-    ridden_segments: &[TripSegmentInfo<'_>],
-    details: Option<&TripDetails>,
-    feed: Option<&FeedId>,
-    snapshot: &TransitSnapshot,
-) -> TripResponse {
+fn trip_response(ride: &Ride, view: &RideView<'_>, snapshot: &TransitSnapshot) -> TripResponse {
+    let (static_trip, boarded_segment, details) =
+        (view.static_trip, view.boarded_segment, view.details);
     // A ride shows what real-time data did to the stretches it rides, and no others.
-    let state = if ridden_segments.is_empty() {
+    let state = if view.ridden_segments.is_empty() {
         snapshot.rider.trip_state(ride.trip)
     } else {
-        ridden_segments
+        view.ridden_segments
             .iter()
             .map(|s| snapshot.rider.stretch_state(ride.trip, s.first_position))
             .find(|state| *state != TripState::Scheduled)
             .unwrap_or(TripState::Scheduled)
     };
     TripResponse {
-        feed: feed.map(ToString::to_string),
-        trip_id: trip_id.to_owned(),
+        feed: view.feed.as_ref().map(ToString::to_string),
+        trip_id: view.trip_id.clone(),
         start_date: calendar_date(ride.trip.date).map(|date| date.to_string()),
         start_time: details.and_then(|d| d.start_time),
-        headsign: details
-            .and_then(|d| d.headsign.clone())
-            .or_else(|| boarded_segment.and_then(|s| s.headsign.map(str::to_owned)))
-            .or_else(|| static_trip.and_then(|i| i.headsign.map(str::to_owned))),
+        headsign: trip_headsign(view),
         direction_id: boarded_segment
             .and_then(|s| s.direction)
             .or_else(|| static_trip.and_then(|i| i.direction))
@@ -1150,10 +1236,7 @@ fn trip_response(
             .map(|s| s.wheelchair_accessible)
             .or_else(|| static_trip.map(|i| i.wheelchair_accessible))
             .and_then(accessibility),
-        bikes_allowed: boarded_segment
-            .map(|s| s.bikes_allowed)
-            .or_else(|| static_trip.map(|i| i.bikes_allowed))
-            .and_then(accessibility),
+        bikes_allowed: trip_bikes_allowed(view),
         schedule_relationship: details
             .and_then(|d| d.relationship)
             .map(|relationship| lower(relationship.as_str_name())),
@@ -1166,6 +1249,40 @@ fn trip_response(
         },
         delay_seconds: details.and_then(|d| d.delay),
         updated_at: details.and_then(|d| d.timestamp),
+    }
+}
+
+/// A ride's headsign: from real-time data, the boarded stretch, or the trip.
+pub(super) fn trip_headsign(view: &RideView<'_>) -> Option<String> {
+    view.details
+        .and_then(|d| d.headsign.clone())
+        .or_else(|| {
+            view.boarded_segment
+                .and_then(|s| s.headsign.map(str::to_owned))
+        })
+        .or_else(|| view.static_trip.and_then(|i| i.headsign.map(str::to_owned)))
+}
+
+/// A ride's `bikes_allowed`: the boarded stretch's, or the trip's.
+pub(super) fn trip_bikes_allowed(view: &RideView<'_>) -> Option<&'static str> {
+    view.boarded_segment
+        .map(|s| s.bikes_allowed)
+        .or_else(|| view.static_trip.map(|i| i.bikes_allowed))
+        .and_then(accessibility)
+}
+
+/// What the trip of a ride says about wheelchairs; a stay-seated ride is as accessible as its
+/// least accessible ridden stretch.
+pub(super) fn trip_accessibility(view: &RideView<'_>) -> Option<Accessibility> {
+    if view.ridden_segments.is_empty() {
+        view.static_trip
+            .map(|info| accessibility_of(info.wheelchair_accessible))
+    } else {
+        Some(combined_accessibility(
+            view.ridden_segments
+                .iter()
+                .map(|s| accessibility_of(s.wheelchair_accessible)),
+        ))
     }
 }
 
@@ -1201,11 +1318,12 @@ fn combined_accessibility(parts: impl Iterator<Item = Accessibility>) -> Accessi
 }
 
 /// A transit leg's accessibility: its trip's and its boarding and alighting stops'.
-fn leg_accessibility(trip: Option<Accessibility>, stops: &[StopVisit]) -> Accessibility {
-    let parts = trip
-        .into_iter()
-        .chain(stops.first().map(|visit| visit.stop.accessibility))
-        .chain(stops.last().map(|visit| visit.stop.accessibility));
+pub(super) fn leg_accessibility(
+    trip: Option<Accessibility>,
+    board: Option<Accessibility>,
+    alight: Option<Accessibility>,
+) -> Accessibility {
+    let parts = trip.into_iter().chain(board).chain(alight);
     let mut all_accessible = true;
     let mut seen_any = false;
     for part in parts {
