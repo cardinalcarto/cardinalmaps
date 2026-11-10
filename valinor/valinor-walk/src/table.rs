@@ -525,6 +525,14 @@ pub(crate) const WALKING_COST_FACTOR: f32 = 1.2;
 /// measured over 39,499 real cycling routes in Washington, where the minimum was over 1.19.
 pub(crate) const CYCLING_COST_FACTOR: f32 = 3.6;
 
+/// The cost bound of a cycling access or egress search, per second of its limit.
+///
+/// Tighter than [`CYCLING_COST_FACTOR`], which transfer tables keep: access and egress run on every
+/// plan, while transfers are paid for once, offline. 2.4 is about the median whole-route cost over
+/// time measured for cycling (2.39), so a typical route is kept to the full limit and a costlier one
+/// only when it's shorter. Set through [`StopTables::set_cost_factor_override`].
+pub const CYCLING_ACCESS_COST_FACTOR: f32 = 2.4;
+
 /// The cost bound of a wheelchair search, per second of its limit.
 ///
 /// Covers the 95th percentile of whole-route cost over time on Sif's pedestrian `wheelchair` type:

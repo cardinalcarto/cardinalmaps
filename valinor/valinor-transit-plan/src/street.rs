@@ -38,8 +38,9 @@ use valinor_thor::{Leg as ThorLeg, Retention, Thor, ThorConfig, Workspace};
 use valinor_transit::{Router, Seconds, StopId, StopTable};
 use valinor_walk::paths::{access_leg, route_paths};
 use valinor_walk::{
-    AccessSide, DEFAULT_TRANSFER_SECONDS, SnapConfig, SnappedStop, StopSnaps, StopTables,
-    TableRequest, TableSeed, TableTransfers, TableWalk, TransferTable, WalkError, snap_stop,
+    AccessSide, CYCLING_ACCESS_COST_FACTOR, DEFAULT_TRANSFER_SECONDS, SnapConfig, SnappedStop,
+    StopSnaps, StopTables, TableRequest, TableSeed, TableTransfers, TableWalk, TransferTable,
+    WalkError, snap_stop,
 };
 
 #[cfg(any(test, feature = "test-support"))]
@@ -262,10 +263,17 @@ struct ModeWorker<'a> {
 
 impl<'a> ModeWorker<'a> {
     fn new(tiles: &'a TileSets, mode: TravelMode) -> Result<Self, StreetError> {
+        let mut access = StopTables::new(tiles, any_costing(mode)?);
+        let mut egress = StopTables::new(tiles, any_costing(mode)?);
+        // Access and egress run on every plan; transfers and their draws keep the table's factor.
+        if mode == TravelMode::Cycling {
+            access.set_cost_factor_override(Some(CYCLING_ACCESS_COST_FACTOR));
+            egress.set_cost_factor_override(Some(CYCLING_ACCESS_COST_FACTOR));
+        }
         Ok(Self {
             router: Router::new(TableTransfers::empty()),
-            access: StopTables::new(tiles, any_costing(mode)?),
-            egress: StopTables::new(tiles, any_costing(mode)?),
+            access,
+            egress,
             transfer: StopTables::new(tiles, any_costing(mode)?),
             costing: any_costing(mode)?,
         })

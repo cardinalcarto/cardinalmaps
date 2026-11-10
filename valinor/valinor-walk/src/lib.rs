@@ -41,8 +41,8 @@ pub use snap::{
 };
 pub use snap_file::{SavedSnap, SnapFileError, decode_snap_file, encode_snap_file};
 pub use table::{
-    AccessEdge, AccessLeg, AccessSide, StopAttachments, StopTables, TableRequest, TableSeed,
-    TableStats,
+    AccessEdge, AccessLeg, AccessSide, CYCLING_ACCESS_COST_FACTOR, StopAttachments, StopTables,
+    TableRequest, TableSeed, TableStats,
 };
 pub use transfers::{
     DEFAULT_TRANSFER_SECONDS, Hop, TableTransfers, TableWalk, TransferTable, sorted_walks_from,
