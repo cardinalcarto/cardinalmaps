@@ -86,6 +86,30 @@ pub struct FeedReport {
     pub transfers_applied: usize,
     /// Rows of `transfers.txt` the core can't express.
     pub transfers_ignored: usize,
+    /// Directed stop pairs given a minimum time by `transfers.txt` rows between different stops.
+    pub transfer_pairs: usize,
+    /// Stops where `transfer_type=3` forbids changing at the stop.
+    pub transfers_forbidden_same_stop: usize,
+    /// Directed stop pairs whose walk `transfer_type=3` forbids.
+    pub transfers_forbidden_pairs: usize,
+    /// `transfer_type=3` rows qualified by route or trip, which aren't expressible cheaply.
+    pub transfers_forbidden_qualified: usize,
+    /// `transfer_type` 4 or 5 rows naming two trips.
+    pub seated_rows: usize,
+    /// `transfer_type` 4 or 5 rows whose trips weren't found, or that name one trip twice.
+    pub seated_rows_unmatched: usize,
+    /// Stay-seated links considered across every date.
+    pub seated_links_tried: usize,
+    /// Of those, the links that passed every check.
+    pub seated_links_valid: usize,
+    /// Chains cut short by the most trips one combined trip may hold.
+    pub seated_chains_cut: usize,
+    /// Combined trips written.
+    pub seated_trips_merged: usize,
+    /// Trips that only run as part of a combined trip, so have no row of their own.
+    pub seated_trips_absorbed: usize,
+    /// Trips with some days in a combined trip and other days alone.
+    pub seated_trips_partial: usize,
     /// Trips left out, by reason.
     pub dropped_trips: BTreeMap<DropReason, usize>,
     /// How many non-fatal problems were found.
@@ -125,6 +149,18 @@ impl FeedReport {
             shape_points: 0,
             transfers_applied: 0,
             transfers_ignored: 0,
+            transfer_pairs: 0,
+            transfers_forbidden_same_stop: 0,
+            transfers_forbidden_pairs: 0,
+            transfers_forbidden_qualified: 0,
+            seated_rows: 0,
+            seated_rows_unmatched: 0,
+            seated_links_tried: 0,
+            seated_links_valid: 0,
+            seated_chains_cut: 0,
+            seated_trips_merged: 0,
+            seated_trips_absorbed: 0,
+            seated_trips_partial: 0,
             dropped_trips: BTreeMap::new(),
             warning_count: 0,
             warnings: Vec::new(),

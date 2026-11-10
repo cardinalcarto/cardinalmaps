@@ -21,15 +21,17 @@ pub use error::{DecodeError, LoadError};
 pub use format::reader::{
     Accessibility, AgencyIndex, AgencyInfo, CompiledTimetable, FeedInfo, GtfsRoute, LatLon,
     LoadedTimetable, LocationId, LocationType, PatternInfo, RouteInfo, ServiceWindow, ShapeSlice,
-    StopInfo, TripInfo, TripRun, civil_date_of, parse_service_date, service_date_of,
+    StopInfo, TripInfo, TripRun, TripSegmentInfo, civil_date_of, parse_service_date,
+    service_date_of,
 };
 pub use format::set::{SetError, TimetablePart, TimetableSet};
-pub use format::{FORMAT_VERSION, MAGIC};
+pub use format::{DEFAULT_TRANSFER_SECONDS, FORMAT_VERSION, MAGIC};
 
 #[cfg(feature = "compile")]
 pub use compile::{
-    CompiledOutput, DirectorySource, DropReason, FeedId, FeedIdError, FeedInput, FeedReport,
-    GtfsSource, InMemorySource, WARNING_LIMIT, ZipSource, compile,
+    CompileOptions, CompiledOutput, DEFAULT_MAX_SEATED_CHAIN, DEFAULT_SEATED_WAIT_SECONDS,
+    DirectorySource, DropReason, FeedId, FeedIdError, FeedInput, FeedReport, GtfsSource,
+    InMemorySource, WARNING_LIMIT, ZipSource, compile, compile_with,
 };
 #[cfg(feature = "compile")]
 pub use error::CompileError;

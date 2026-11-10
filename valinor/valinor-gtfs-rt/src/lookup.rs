@@ -54,6 +54,22 @@ pub struct TripRef {
     /// Such a run is a template laid out by the compiler, and two real vehicles can resolve
     /// to the same one, so the run alone does not identify a vehicle. `None` for any other run.
     pub headway_start: Option<u32>,
+    /// For an original trip that is part of a combined stay-seated trip,
+    /// its inclusive `(first, last)` positions in that trip.
+    pub segment: Option<(u32, u32)>,
+}
+
+/// One original trip's stretch of a combined stay-seated trip, in a schedule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledSegment {
+    /// The first position of this trip's stretch.
+    pub first: u32,
+    /// The last position of this trip's stretch, inclusive.
+    pub last: u32,
+    /// The GTFS `route_id` of the original trip.
+    pub route_id: String,
+    /// The GTFS `direction_id`, when given.
+    pub direction_id: Option<u32>,
 }
 
 /// The GTFS identity of a stop pattern.
@@ -82,6 +98,8 @@ pub struct ScheduledTrip {
     ///
     /// GTFS-RT addresses a trip's stops by these, and they needn't be consecutive.
     pub stop_sequences: Vec<u32>,
+    /// For a combined stay-seated trip, each original trip's stretch; empty for any other trip.
+    pub segments: Vec<ScheduledSegment>,
 }
 
 /// The static timetable, as seen by the overlay builder.
@@ -114,6 +132,11 @@ pub trait StaticLookup {
 
     /// The GTFS identity of a stop pattern.
     fn route_info(&self, route: RouteId) -> Option<RouteInfo<'_>>;
+
+    /// The GTFS identity of a route by its `route_id`, for one original trip of a combined one.
+    fn route_info_by_id(&self, _feed: &FeedId, _route_id: &str) -> Option<RouteInfo<'_>> {
+        None
+    }
 
     /// Finds a static stop.
     fn stop(&self, feed: &FeedId, stop_id: &str) -> Option<StopId>;

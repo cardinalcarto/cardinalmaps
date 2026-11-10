@@ -8,7 +8,7 @@
 //! from the per-round cells, which are written only when a label improves.
 
 use crate::ids::{LaneRef, StopId};
-use crate::timetable::INFINITY;
+use crate::timetable::{INFINITY, NO_CHANGE};
 
 /// Which kind of label a boarding used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -356,6 +356,9 @@ impl<P: Copy> Labels<P> {
         for i in 0..self.improved.len() {
             let stop = self.improved[i] as usize;
             let change = min_change[stop];
+            if change == NO_CHANGE {
+                continue;
+            }
             let hot = &mut self.hot[stop];
             let boardable = hot.best_trip + change;
             if boardable < hot.board {

@@ -138,6 +138,7 @@ impl StaticLookup for Lookup {
             last_arrival: found.events.last()?.arrival,
             // This harness reads King County, which has no `frequencies.txt`.
             headway_start: None,
+            segment: None,
         })
     }
 
@@ -190,6 +191,7 @@ impl StaticLookup for Lookup {
                     direction_id: direction,
                     events: trip.events,
                     stop_sequences: sequences,
+                    segments: Vec::new(),
                 }
             })
             .collect()

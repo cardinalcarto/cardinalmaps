@@ -4,6 +4,7 @@
 #![allow(clippy::too_many_lines, clippy::too_many_arguments)]
 
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::ids::{DaySlot, Direction, ServiceDate, ServiceDay, StopId};
@@ -162,6 +163,9 @@ fn random_net(rng: &mut Rng) -> TestNet {
     let dist = graph.distances();
     let routes = routes_from_timetable(&timetable, &window);
     TestNet {
+        no_change: vec![false; stops],
+        stop_access: vec![true; stops],
+        pair_floors: HashMap::new(),
         min_change,
         routes,
         graph,
@@ -211,6 +215,9 @@ fn apply_random_overlay(rng: &mut Rng, net: &TestNet) -> TestNet {
     }
     let snapshot = overlay.build().unwrap();
     TestNet {
+        no_change: net.no_change.clone(),
+        stop_access: net.stop_access.clone(),
+        pair_floors: HashMap::new(),
         min_change: net.min_change.clone(),
         routes,
         graph: Arc::clone(&net.graph),
@@ -332,20 +339,23 @@ fn enumerate(net: &TestNet, max_trips: u8) -> BTreeSet<(i32, i32, u8)> {
                                 net,
                                 out,
                                 i,
-                                clock + net.min_change[i],
+                                if net.no_change[i] {
+                                    i32::MAX
+                                } else {
+                                    clock + net.min_change[i]
+                                },
                                 Some(departure),
                                 access,
                                 rides + 1,
                                 max_trips,
                             );
                             for v in 0..net.min_change.len() {
-                                let walk = net.dist[i][v];
-                                if v != i && walk < crate::testing::NO_WALK {
+                                if let Some(cost) = net.walk_cost(i, v) {
                                     go(
                                         net,
                                         out,
                                         v,
-                                        clock + walk,
+                                        clock + cost,
                                         Some(departure),
                                         access,
                                         rides + 1,

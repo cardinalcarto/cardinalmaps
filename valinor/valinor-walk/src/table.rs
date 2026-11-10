@@ -518,13 +518,27 @@ pub(crate) const WALKING_COST_FACTOR: f32 = 1.2;
 /// measured over 39,499 real cycling routes in Washington, where the minimum was over 1.19.
 pub(crate) const CYCLING_COST_FACTOR: f32 = 3.6;
 
+/// The cost bound of a wheelchair search, per second of its limit.
+///
+/// Covers the 95th percentile of whole-route cost over time on Sif's pedestrian `wheelchair` type:
+/// 1.175 over 5,338 real wheelchair routes in Washington, the same as walking's 1.176.
+pub(crate) const WHEELCHAIR_COST_FACTOR: f32 = 1.2;
+
+/// Sif's pedestrian type number for wheelchairs (`PedestrianType::Wheelchair`).
+const PEDESTRIAN_TYPE_WHEELCHAIR: u8 = 1;
+
 /// The factor taking a time limit to a cost bound for a travel mode.
 ///
-/// Only walking and cycling are searched today, and only they are measured;
-/// any other mode takes the larger factor, since a bound too tight loses routes.
+/// `travel_type` is the costing's pedestrian or vehicle type: a wheelchair is measured
+/// apart from walking because it avoids different things.
+/// Any mode without a measured factor takes the larger cycling factor, since a bound too tight
+/// loses routes.
 #[inline]
-pub(crate) fn cost_factor(mode: TravelMode) -> f32 {
+pub(crate) fn cost_factor(mode: TravelMode, travel_type: u8) -> f32 {
     match mode {
+        TravelMode::Pedestrian if travel_type == PEDESTRIAN_TYPE_WHEELCHAIR => {
+            WHEELCHAIR_COST_FACTOR
+        }
         TravelMode::Pedestrian => WALKING_COST_FACTOR,
         TravelMode::Bicycle | TravelMode::Drive | TravelMode::PublicTransit => CYCLING_COST_FACTOR,
     }
@@ -573,6 +587,8 @@ pub struct StopTables<P: GraphTileProvider, C: Costing> {
     limit: f32,
     /// The cost bound of the current search.
     max_cost: f32,
+    /// Replaces [`cost_factor`], for measuring it.
+    cost_factor_override: Option<f32>,
     stop_best: Vec<StopBest>,
     /// `(epoch, number of the stop's two directed edges settled so far)`.
     stop_visits: Vec<(u32, u8)>,
@@ -596,6 +612,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             queue: BinaryHeap::new(),
             limit: 0.0,
             max_cost: 0.0,
+            cost_factor_override: None,
             stop_best: Vec::new(),
             stop_visits: Vec::new(),
             stops_pending: 0,
@@ -741,6 +758,12 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         self.run(request, Some(target))
     }
 
+    /// Replaces the table search's cost factor; for measuring a mode's factor on real routes.
+    #[doc(hidden)]
+    pub fn set_cost_factor_override(&mut self, factor: Option<f32>) {
+        self.cost_factor_override = factor;
+    }
+
     fn run(
         &mut self,
         request: &TableRequest<'_>,
@@ -748,7 +771,11 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     ) -> Result<bool, WalkError> {
         self.side = request.side;
         self.limit = limit_secs(request.max_seconds);
-        self.max_cost = self.limit * cost_factor(self.graph.costing.base().travel_mode());
+        let costing = &self.graph.costing;
+        let factor = self
+            .cost_factor_override
+            .unwrap_or_else(|| cost_factor(costing.base().travel_mode(), costing.travel_type()));
+        self.max_cost = self.limit * factor;
         self.epoch = self.epoch.wrapping_add(1);
         if self.epoch == 0 {
             self.stop_best.iter_mut().for_each(|s| s.stamp = 0);

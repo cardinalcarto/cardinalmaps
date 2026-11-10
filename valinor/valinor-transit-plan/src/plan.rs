@@ -25,6 +25,8 @@ pub enum TravelMode {
     Walking,
     /// With a bicycle on board; only routes that allow bikes may be ridden.
     Cycling,
+    /// In a wheelchair: only trips and stops not marked inaccessible may be used.
+    Wheelchair,
 }
 
 impl TravelMode {
@@ -32,6 +34,7 @@ impl TravelMode {
         match self {
             Self::Walking => RouteFilter::ALL,
             Self::Cycling => RouteFilter::requiring(RouteAttributes::BIKES_ALLOWED),
+            Self::Wheelchair => RouteFilter::WHEELCHAIR,
         }
     }
 
@@ -40,6 +43,7 @@ impl TravelMode {
         match self {
             Self::Walking => "walking",
             Self::Cycling => "cycling",
+            Self::Wheelchair => "wheelchair",
         }
     }
 }
@@ -182,6 +186,14 @@ pub trait AccessEgressSearch {
         _stop: StopId,
     ) -> Result<Option<WalkPath>, Self::Error> {
         Ok(None)
+    }
+
+    /// How long a transfer's walk itself takes, or `None` when the search can't say.
+    ///
+    /// A transfer's cost in a journey can be longer, by the stops' transfer times;
+    /// the rest of that cost is waiting at the boarding stop.
+    fn transfer_seconds(&self, _walk: &Self::Walk) -> Option<u32> {
+        None
     }
 
     /// The walking path of a transfer between two stops, or `None` if it has none to show.

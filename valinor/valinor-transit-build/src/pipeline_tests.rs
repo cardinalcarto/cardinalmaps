@@ -136,6 +136,7 @@ fn compile_options(input: &Path, output: &Path) -> CompileOptions {
         output: output.to_path_buf(),
         threads: threads(4),
         retry_failed: false,
+        seated_wait_seconds: valinor_gtfs::DEFAULT_SEATED_WAIT_SECONDS,
     }
 }
 
@@ -147,6 +148,7 @@ fn transfer_options(compiled: &Path, output: &Path) -> TransferOptions {
         threads: threads(4),
         max_seconds_walking: BOUND,
         max_seconds_cycling: BOUND,
+        max_seconds_wheelchair: BOUND,
         zstd_level: 3,
         modes: TransferMode::ALL.to_vec(),
     }

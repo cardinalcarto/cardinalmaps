@@ -11,7 +11,8 @@
 
 use crate::error::DecodeError;
 use crate::format::layout::{
-    MAX_SERVICE_DAYS, NONE, PATTERN_BIKES_ALLOWED, RULE_VALID_BITS, RUN_HEADWAY_FREQUENCY,
+    MAX_SERVICE_DAYS, NONE, PATTERN_BIKES_ALLOWED, PATTERN_WHEELCHAIR_ACCESSIBLE, RULE_VALID_BITS,
+    RUN_HEADWAY_FREQUENCY, STOP_NO_CHANGE,
 };
 use crate::format::reader::Tables;
 use zerocopy::little_endian::U32;
@@ -75,6 +76,8 @@ pub(crate) fn validate(tables: &Tables<'_>) -> Result<(), DecodeError> {
         tables.routes.len(),
     )?;
     validate_index("stop index", tables, tables.stop_index, tables.stops.len())?;
+    validate_transfer_pairs(tables)?;
+    validate_trip_segments(tables)?;
     Ok(())
 }
 
@@ -168,6 +171,12 @@ fn validate_stops(tables: &Tables<'_>) -> Result<(), DecodeError> {
     }
     let mut next_child = 0_usize;
     for stop in tables.stops {
+        if stop.flags & !STOP_NO_CHANGE != 0 {
+            return Err(DecodeError::InvalidValue {
+                table: "stops",
+                reason: "a stop has a flag this version does not define",
+            });
+        }
         check_index(
             "stops",
             "a feed reference is out of range",
@@ -372,7 +381,7 @@ fn validate_trips(tables: &Tables<'_>) -> Result<(), DecodeError> {
                 reason: "a pattern has fewer than two stops",
             });
         }
-        if pattern.attributes & !PATTERN_BIKES_ALLOWED != 0 {
+        if pattern.attributes & !(PATTERN_BIKES_ALLOWED | PATTERN_WHEELCHAIR_ACCESSIBLE) != 0 {
             return Err(DecodeError::InvalidValue {
                 table: "patterns",
                 reason: "a pattern has an attribute this version does not define",
@@ -558,6 +567,100 @@ fn validate_shapes(tables: &Tables<'_>) -> Result<(), DecodeError> {
                 reason: "a distance is not finite",
             });
         }
+    }
+    Ok(())
+}
+
+/// Each combined trip's segments must tile its positions exactly, in order,
+/// so a segment's stops and times are always a valid slice of the trip.
+fn validate_trip_segments(tables: &Tables<'_>) -> Result<(), DecodeError> {
+    let mut row = 0;
+    while row < tables.trip_segments.len() {
+        let trip = tables.trip_segments[row].trip.get();
+        let trip_row = tables
+            .trips
+            .get(trip as usize)
+            .ok_or_else(|| fail("trip segments", "a segment names an unknown trip"))?;
+        let pattern = tables
+            .patterns
+            .get(trip_row.pattern.get() as usize)
+            .ok_or_else(|| fail("trip segments", "a segment's trip has no pattern"))?;
+        let stop_count = pattern.stop_count.get();
+        let mut next_first = 0_u32;
+        let start = row;
+        while let Some(segment) = tables
+            .trip_segments
+            .get(row)
+            .filter(|segment| segment.trip.get() == trip)
+        {
+            if segment.first_position.get() != next_first
+                || segment.last_position.get() < next_first
+                || segment.last_position.get() >= stop_count
+            {
+                return Err(fail("trip segments", "the segments do not tile the trip"));
+            }
+            next_first = segment.last_position.get() + 1;
+            for id in [segment.gtfs_id, segment.headsign] {
+                check_string("trip segments", tables, id)?;
+            }
+            check_index(
+                "trip segments",
+                "a route reference is out of range",
+                segment.route.get(),
+                tables.routes.len(),
+            )?;
+            if segment.shape.get() != NONE {
+                check_index(
+                    "trip segments",
+                    "a shape reference is out of range",
+                    segment.shape.get(),
+                    tables.shapes.len(),
+                )?;
+            }
+            if segment.wheelchair > 2 || segment.bikes > 2 {
+                return Err(DecodeError::InvalidValue {
+                    table: "trip segments",
+                    reason: "an accessibility flag is not defined by GTFS",
+                });
+            }
+            row += 1;
+        }
+        if next_first != stop_count {
+            return Err(fail("trip segments", "the segments do not cover the trip"));
+        }
+        if row - start < 2 {
+            return Err(fail(
+                "trip segments",
+                "a combined trip has fewer than two trips",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Every pair of stops must be boardable, different, and in order, and each floor a real duration.
+fn validate_transfer_pairs(tables: &Tables<'_>) -> Result<(), DecodeError> {
+    let mut previous = None;
+    for row in tables.transfer_pairs {
+        let key = (row.from.get(), row.to.get());
+        for stop in [key.0, key.1] {
+            check_index(
+                "transfer pairs",
+                "a transfer names an unboardable stop",
+                stop,
+                tables.boardable_stops,
+            )?;
+        }
+        if key.0 == key.1 || previous.is_some_and(|before| before >= key) {
+            return Err(fail("transfer pairs", "the rows are out of order"));
+        }
+        if row.floor.get() != NONE && row.floor.get() > valinor_transit::SECONDS_LIMIT {
+            return Err(DecodeError::InvalidValue {
+                table: "transfer pairs",
+                reason: "a floor is out of range",
+            });
+        }
+        previous = Some(key);
     }
     Ok(())
 }

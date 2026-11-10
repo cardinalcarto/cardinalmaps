@@ -12,9 +12,6 @@
 use crate::raptor::labels::Labels;
 use crate::timetable::{Arena, INFINITY, Lane};
 
-const PICKUP: u8 = 1;
-const DROP_OFF: u8 = 2;
-
 /// The grid of one lane, read through the search's direction.
 struct Grid<'a, const BACK: bool> {
     times: &'a [i32],
@@ -91,6 +88,10 @@ impl<const BACK: bool> Grid<'_, BACK> {
     clippy::cast_possible_truncation,
     reason = "rows and positions fit the u32 lane fields, checked when the lane was built"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the hot path, inlined into its one caller"
+)]
 pub(super) fn scan_lane<const BACK: bool, P: Copy>(
     labels: &mut Labels<P>,
     arena: &Arena,
@@ -99,6 +100,7 @@ pub(super) fn scan_lane<const BACK: bool, P: Copy>(
     start: usize,
     round: u8,
     target_costs: &[i32],
+    (can_alight, can_board): (u8, u8),
 ) {
     let stop_count = lane.stop_count as usize;
     let stops = arena.lane_stops(lane);
@@ -115,16 +117,12 @@ pub(super) fn scan_lane<const BACK: bool, P: Copy>(
     let mut board_position = 0_u32;
     let mut origin = (0_u8, crate::raptor::labels::LabelKind::Foot);
 
-    let (can_alight, can_board) = if BACK {
-        (PICKUP, DROP_OFF)
-    } else {
-        (DROP_OFF, PICKUP)
-    };
-
     let first = if BACK { stop_count - 1 - start } else { start };
     for step in first..stop_count {
         let position = if BACK { stop_count - 1 - step } else { step };
         let stop = stops[position].index();
+        // A byte holds the stop's rules twice; `can_alight` and `can_board` pick which copy
+        // to read, so a wheelchair exclusion costs nothing here beyond this same bit test.
         let flags = rules[position];
         let read = labels.read(stop);
 

@@ -44,11 +44,11 @@ pub use raptor::{MAX_TRIPS, RoundResult, Router, SearchRun, TransitQuery};
 pub use snapshot::Snapshot;
 pub use stop_table::{RouteFilter, StopTable};
 pub use timetable::{
-    ArenaUsage, BaseWindow, PatternKey, ResolvedBlock, ResolvedLane, ResolvedTrip, RouteAttributes,
-    StopEvent, StopKey, StopRouteIndex, StopRules, StopTime, Timetable, TimetableBuilder,
-    TimetableSource, WindowPart, materialize_parts,
+    ArenaUsage, BaseWindow, PairRule, PatternKey, ResolvedBlock, ResolvedLane, ResolvedTrip,
+    RouteAttributes, StopEvent, StopKey, StopRouteIndex, StopRules, StopTime, Timetable,
+    TimetableBuilder, TimetableSource, TransferPair, TransferPairs, WindowPart, materialize_parts,
 };
 pub use transfer::{
-    Clock, TransferArrival, TransferOutcome, TransferRequest, TransferSearch, TransferSeed,
-    TransferSink,
+    Clock, SeedRules, TransferArrival, TransferOutcome, TransferRequest, TransferSearch,
+    TransferSeed, TransferSink, WalkRules,
 };

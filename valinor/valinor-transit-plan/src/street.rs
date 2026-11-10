@@ -64,6 +64,8 @@ const DIRECT_SEARCH_MAX_SECONDS: f64 = 2.0 * 3600.0;
 
 const WALKING_SPEED_MPS: f64 = 1.4;
 const CYCLING_SPEED_MPS: f64 = 5.0;
+/// Sif's default for a wheelchair is slower than walking, around 3.6 km/h.
+const WHEELCHAIR_SPEED_MPS: f64 = 1.0;
 
 /// Why a street-based query couldn't be served.
 #[derive(Debug, Error)]
@@ -131,6 +133,8 @@ pub struct StreetConfig {
     pub max_walking_transfer_seconds: u32,
     /// The longest transfer between two stops by bicycle, in seconds.
     pub max_cycling_transfer_seconds: u32,
+    /// The longest transfer between two stops in a wheelchair, in seconds.
+    pub max_wheelchair_transfer_seconds: u32,
 }
 
 impl Default for StreetConfig {
@@ -143,26 +147,26 @@ impl Default for StreetConfig {
             retention: Retention::default(),
             max_walking_transfer_seconds: DEFAULT_TRANSFER_SECONDS,
             max_cycling_transfer_seconds: DEFAULT_TRANSFER_SECONDS,
+            max_wheelchair_transfer_seconds: DEFAULT_TRANSFER_SECONDS,
         }
     }
 }
 
-/// The pedestrian or bicycle costing, as Thor's options and a Sif costing.
+/// The pedestrian, bicycle, or wheelchair costing, as Thor's options and a Sif costing.
 fn costing_parts(mode: TravelMode) -> Result<(CostingProto, i32), StreetError> {
-    let costing_type = match mode {
-        TravelMode::Walking => CostingType::Pedestrian,
-        TravelMode::Cycling => CostingType::Bicycle,
+    let (costing_type, options, key): (_, &[u8], _) = match mode {
+        TravelMode::Walking => (CostingType::Pedestrian, b"{}", "/none"),
+        TravelMode::Cycling => (CostingType::Bicycle, b"{}", "/none"),
+        TravelMode::Wheelchair => (
+            CostingType::Pedestrian,
+            br#"{"o":{"type":"wheelchair"}}"#,
+            "/o",
+        ),
     };
-    let doc = JsonValue::parse(b"{}").map_err(|e| StreetError::Costing(format!("{e:?}")))?;
+    let doc = JsonValue::parse(options).map_err(|e| StreetError::Costing(format!("{e:?}")))?;
     let mut proto = CostingProto::default();
-    parse_costing(
-        &doc,
-        "/none",
-        &mut proto,
-        &mut Vec::new(),
-        Some(costing_type),
-    )
-    .map_err(|e| StreetError::Costing(format!("{e:?}")))?;
+    parse_costing(&doc, key, &mut proto, &mut Vec::new(), Some(costing_type))
+        .map_err(|e| StreetError::Costing(format!("{e:?}")))?;
     Ok((proto, costing_type as i32))
 }
 
@@ -185,7 +189,7 @@ fn trip_options(mode: TravelMode, language: &str) -> Result<Options, StreetError
 
 fn sif_mode(mode: TravelMode) -> SifMode {
     match mode {
-        TravelMode::Walking => SifMode::Pedestrian,
+        TravelMode::Walking | TravelMode::Wheelchair => SifMode::Pedestrian,
         TravelMode::Cycling => SifMode::Bicycle,
     }
 }
@@ -282,6 +286,7 @@ impl ModeWorker<'_> {
 struct Worker<'a> {
     walking: ModeWorker<'a>,
     cycling: ModeWorker<'a>,
+    wheelchair: ModeWorker<'a>,
     thor: Thor<&'a TileSets>,
     workspace: Workspace,
 }
@@ -291,6 +296,7 @@ impl<'a> Worker<'a> {
         Ok(Self {
             walking: ModeWorker::new(tiles, TravelMode::Walking)?,
             cycling: ModeWorker::new(tiles, TravelMode::Cycling)?,
+            wheelchair: ModeWorker::new(tiles, TravelMode::Wheelchair)?,
             thor: Thor::new(ThorConfig::default(), tiles),
             workspace: Workspace::new(retention),
         })
@@ -298,7 +304,7 @@ impl<'a> Worker<'a> {
 
     /// What this worker's street searches keep for the next query, in bytes.
     fn retained_bytes(&self) -> usize {
-        [&self.walking, &self.cycling]
+        [&self.walking, &self.cycling, &self.wheelchair]
             .into_iter()
             .map(ModeWorker::retained_bytes)
             .sum()
@@ -368,6 +374,7 @@ impl StreetSearch<'_, '_> {
         let speed = match self.mode {
             TravelMode::Walking => WALKING_SPEED_MPS,
             TravelMode::Cycling => CYCLING_SPEED_MPS,
+            TravelMode::Wheelchair => WHEELCHAIR_SPEED_MPS,
         };
         if approximate_meters(from, to) / speed > DIRECT_SEARCH_MAX_SECONDS {
             return DirectSearch::NotSearched;
@@ -468,6 +475,10 @@ fn non_empty(text: String) -> Option<String> {
 impl AccessEgressSearch for StreetSearch<'_, '_> {
     type Error = StreetError;
     type Walk = TableWalk;
+
+    fn transfer_seconds(&self, walk: &TableWalk) -> Option<u32> {
+        Some(walk.seconds)
+    }
 
     fn tables(
         &mut self,
@@ -688,14 +699,17 @@ enum BaseTransfers {
     Loaded {
         walking: Arc<TransferTable>,
         cycling: Arc<TransferTable>,
+        wheelchair: Arc<TransferTable>,
         walking_snaps: Arc<StopSnaps>,
         cycling_snaps: Arc<StopSnaps>,
+        wheelchair_snaps: Arc<StopSnaps>,
     },
     /// Built in memory from the street network, for tests.
     #[cfg(any(test, feature = "test-support"))]
     Build {
         walking_seconds: u32,
         cycling_seconds: u32,
+        wheelchair_seconds: u32,
     },
 }
 
@@ -715,12 +729,14 @@ impl StopSnapper for TileSnapper {
             BaseTransfers::Loaded {
                 walking_snaps,
                 cycling_snaps,
+                wheelchair_snaps,
                 ..
             } => {
                 let _ = stops;
                 Ok(Arc::clone(match mode {
                     TravelMode::Walking => walking_snaps,
                     TravelMode::Cycling => cycling_snaps,
+                    TravelMode::Wheelchair => wheelchair_snaps,
                 }))
             }
             #[cfg(any(test, feature = "test-support"))]
@@ -747,15 +763,20 @@ impl StopSnapper for TileSnapper {
         let _ = snaps;
         match &self.transfers {
             BaseTransfers::Loaded {
-                walking, cycling, ..
+                walking,
+                cycling,
+                wheelchair,
+                ..
             } => Ok(Arc::clone(match mode {
                 TravelMode::Walking => walking,
                 TravelMode::Cycling => cycling,
+                TravelMode::Wheelchair => wheelchair,
             })),
             #[cfg(any(test, feature = "test-support"))]
             BaseTransfers::Build {
                 walking_seconds,
                 cycling_seconds,
+                wheelchair_seconds,
             } => {
                 let tiles: &TileSets = &self.tiles;
                 let costing = any_costing(mode).map_err(snap_setup_error)?;
@@ -763,6 +784,7 @@ impl StopSnapper for TileSnapper {
                 let seconds = match mode {
                     TravelMode::Walking => *walking_seconds,
                     TravelMode::Cycling => *cycling_seconds,
+                    TravelMode::Wheelchair => *wheelchair_seconds,
                 };
                 TransferTable::build(&tiles, &costing, snaps, seconds, threads, &|| false)?
                     .map(Arc::new)
@@ -854,8 +876,10 @@ impl StreetPlanner {
         let transfers = BaseTransfers::Loaded {
             walking: Arc::new(build.walking),
             cycling: Arc::new(build.cycling),
+            wheelchair: Arc::new(build.wheelchair),
             walking_snaps: Arc::new(build.walking_snaps),
             cycling_snaps: Arc::new(build.cycling_snaps),
+            wheelchair_snaps: Arc::new(build.wheelchair_snaps),
         };
         Self::open_tiles(build.set, tiles, transfers, config)
     }
@@ -877,6 +901,7 @@ impl StreetPlanner {
         let transfers = BaseTransfers::Build {
             walking_seconds: config.max_walking_transfer_seconds,
             cycling_seconds: config.max_cycling_transfer_seconds,
+            wheelchair_seconds: config.max_wheelchair_transfer_seconds,
         };
         Self::open_tiles(set, tiles, transfers, config)
     }
@@ -975,12 +1000,14 @@ impl StreetPlanner {
         let Worker {
             walking,
             cycling,
+            wheelchair,
             thor,
             workspace,
         } = worker;
         let mode_worker = match request.mode {
             TravelMode::Walking => walking,
             TravelMode::Cycling => cycling,
+            TravelMode::Wheelchair => wheelchair,
         };
         let snaps = snapshot
             .snaps()

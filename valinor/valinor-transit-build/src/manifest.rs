@@ -85,6 +85,9 @@ pub struct ModeTotals {
     pub bytes: u64,
     /// Total decompressed bytes.
     pub raw_bytes: u64,
+    /// `transfers.txt` rules between two stops with no walk on the street network between them.
+    #[serde(default)]
+    pub pair_rules_without_walk: u64,
 }
 
 /// The totals of one feed for one mode.
@@ -172,6 +175,8 @@ pub struct Manifest {
     pub walking_bound_seconds: u32,
     /// The cycling bound, in seconds.
     pub cycling_bound_seconds: u32,
+    /// The wheelchair bound, in seconds, if the build has wheelchair transfers.
+    pub wheelchair_bound_seconds: Option<u32>,
     /// The feeds, in index order.
     pub feeds: Vec<ManifestFeed>,
     /// Every tile written, by mode, sorted by `(x, y)`.

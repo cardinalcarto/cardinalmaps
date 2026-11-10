@@ -7,15 +7,17 @@ use std::io::{Cursor, Write};
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
 use proptest::prelude::*;
-use valinor_transit::{ServiceDate, StopId, Timetable, TripId};
+use valinor_transit::{PairRule, ServiceDate, StopId, Timetable, TripId};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
-use crate::format::layout::checksum_of;
+use crate::DEFAULT_TRANSFER_SECONDS;
+use crate::format::layout::{STOP_NO_CHANGE, checksum_of};
 use crate::{
-    Accessibility, CompileError, CompiledOutput, CompiledTimetable, DecodeError, DirectorySource,
-    DropReason, FORMAT_VERSION, FeedId, FeedInput, InMemorySource, LatLon, LoadedTimetable,
-    LocationType, ZipSource, compile, parse_service_date, service_date_of,
+    Accessibility, CompileError, CompileOptions, CompiledOutput, CompiledTimetable, DecodeError,
+    DirectorySource, DropReason, FORMAT_VERSION, FeedId, FeedInput, InMemorySource, LatLon,
+    LoadedTimetable, LocationType, ZipSource, compile, compile_with, parse_service_date,
+    service_date_of,
 };
 
 const AGENCY: &str = "agency_name,agency_timezone,agency_url,agency_phone,agency_fare_url\n\
@@ -697,14 +699,17 @@ fn min_transfer_times_set_where_the_core_can_use_them() {
             "transfers.txt",
             "from_stop_id,to_stop_id,transfer_type,min_transfer_time,from_route_id\n\
              A,A,2,300,\n\
+             A,A,2,240,\n\
              A,B,2,60,\n\
              B,B,1,,\n\
              C,C,2,120,R\n\
              HUB,HUB,2,90,\n",
         );
     let output = compile_one(source);
-    assert_eq!(output.reports[0].transfers_applied, 2);
-    assert_eq!(output.reports[0].transfers_ignored, 3);
+    assert_eq!(output.reports[0].transfers_applied, 4);
+    assert_eq!(output.reports[0].transfers_ignored, 2);
+    // A to B, and each platform of the hub to the other.
+    assert_eq!(output.reports[0].transfer_pairs, 3);
     let view = CompiledTimetable::parse(&output.bytes).expect("parse");
     let change = |id: &str| {
         let stop = view.stop_by_gtfs_id("kcm", id).expect("stop");
@@ -712,17 +717,483 @@ fn min_transfer_times_set_where_the_core_can_use_them() {
             .min_change
             .get()
     };
-    assert_eq!(change("A"), 300, "same stop, type 2");
-    assert_eq!(change("B"), 0, "not same stop or not type 2");
-    assert_eq!(change("C"), 0, "route-scoped");
+    assert_eq!(change("A"), 240, "same stop, type 2: the smallest row wins");
+    assert_eq!(
+        change("B"),
+        DEFAULT_TRANSFER_SECONDS,
+        "a row between stops sets no time"
+    );
+    assert_eq!(change("C"), DEFAULT_TRANSFER_SECONDS, "route-scoped");
     assert_eq!(
         change("P1"),
         90,
         "a station's minimum reaches its platforms"
     );
     assert_eq!(change("P2"), 90);
+    let stop = |id: &str| view.stop_by_gtfs_id("kcm", id).expect("stop");
+    let pairs: Vec<_> = valinor_transit::TimetableSource::transfer_pairs(&view)
+        .into_iter()
+        .map(|pair| (pair.from, pair.to, pair.rule))
+        .collect();
+    assert_eq!(pairs.len(), 3);
+    let floor = |s: u32| PairRule::Floor(valinor_transit::Seconds::try_new(s).expect("in range"));
+    assert!(pairs.contains(&(stop("A"), stop("B"), floor(60))));
+    assert!(pairs.contains(&(stop("P1"), stop("P2"), floor(90))));
+    assert!(pairs.contains(&(stop("P2"), stop("P1"), floor(90))));
     let timetable = view.to_timetable().expect("timetable");
     assert_eq!(timetable.stop_count(), view.stop_count());
+}
+
+#[test]
+fn forbidden_transfers_apply_to_stops_and_pairs_and_qualified_rows_are_counted() {
+    let source = InMemorySource::new()
+        .with("agency.txt", AGENCY)
+        .with("routes.txt", "route_id,route_type\nR,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_lat,stop_lon,location_type,parent_station\n\
+             A,47.0,-122.0,,\nB,47.1,-122.0,,\nC,47.2,-122.0,,\n\
+             HUB,47.3,-122.0,1,\nP1,47.3,-122.0,,HUB\nP2,47.3,-122.0,,HUB\n",
+        )
+        .with(
+            "calendar_dates.txt",
+            "service_id,date,exception_type\nS,20260602,1\n",
+        )
+        .with("trips.txt", "route_id,service_id,trip_id\nR,S,X\n")
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             X,10:00:00,10:00:00,A,1\nX,11:00:00,11:00:00,B,2\n",
+        )
+        .with(
+            "transfers.txt",
+            "from_stop_id,to_stop_id,transfer_type,min_transfer_time,from_route_id\n\
+             A,A,3,,\n\
+             A,B,2,90,\n\
+             A,B,3,,\n\
+             B,C,3,,\n\
+             C,B,3,,R\n\
+             HUB,HUB,3,,\n",
+        );
+    let output = compile_one(source);
+    let report = &output.reports[0];
+    assert_eq!(report.transfers_forbidden_qualified, 1);
+    // A, and both platforms of the hub.
+    assert_eq!(report.transfers_forbidden_same_stop, 3);
+    // A to B, B to C, and the two platform pairs inside the hub.
+    assert_eq!(report.transfers_forbidden_pairs, 4);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let stop = |id: &str| view.stop_by_gtfs_id("kcm", id).expect("stop");
+    let no_change =
+        |id: &str| view.tables.stops[stop(id).into_inner() as usize].flags & STOP_NO_CHANGE != 0;
+    assert!(no_change("A"));
+    assert!(no_change("P1"));
+    assert!(no_change("P2"));
+    assert!(!no_change("B"));
+    let pairs: Vec<_> = valinor_transit::TimetableSource::transfer_pairs(&view)
+        .into_iter()
+        .map(|pair| (pair.from, pair.to, pair.rule))
+        .collect();
+    assert!(pairs.contains(&(stop("A"), stop("B"), PairRule::Forbidden)));
+    assert!(pairs.contains(&(stop("B"), stop("C"), PairRule::Forbidden)));
+    assert!(pairs.contains(&(stop("P1"), stop("P2"), PairRule::Forbidden)));
+    assert!(pairs.contains(&(stop("P2"), stop("P1"), PairRule::Forbidden)));
+    // A qualified row forbids nothing, only reports itself.
+    assert!(
+        !pairs
+            .iter()
+            .any(|&(from, to, _)| (from, to) == (stop("C"), stop("B")))
+    );
+    let timetable = view.to_timetable().expect("timetable");
+    assert_eq!(timetable.stop_count(), view.stop_count());
+}
+
+#[test]
+fn trips_split_by_wheelchair_rule_and_stops_inherit_from_their_station() {
+    let source = InMemorySource::new()
+        .with("agency.txt", AGENCY)
+        .with("routes.txt", "route_id,route_type\nR,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_lat,stop_lon,location_type,parent_station,wheelchair_boarding\n\
+             HUB,47.0,-122.0,1,,2\n\
+             P1,47.0,-122.0,,HUB,\n\
+             P2,47.0,-122.0,,HUB,1\n\
+             B,47.1,-122.0,,,\n\
+             C,47.2,-122.0,,,2\n",
+        )
+        .with(
+            "calendar_dates.txt",
+            "service_id,date,exception_type\nS,20260602,1\n",
+        )
+        .with(
+            "trips.txt",
+            "route_id,service_id,trip_id,wheelchair_accessible\nR,S,OPEN,1\nR,S,UNKNOWN,\nR,S,CLOSED,2\n",
+        )
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             OPEN,10:00:00,10:00:00,P1,1\nOPEN,11:00:00,11:00:00,B,2\n\
+             UNKNOWN,10:30:00,10:30:00,P1,1\nUNKNOWN,11:30:00,11:30:00,B,2\n\
+             CLOSED,10:15:00,10:15:00,P1,1\nCLOSED,11:15:00,11:15:00,B,2\n",
+        );
+    let output = compile_one(source);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let stop = |id: &str| view.stop_by_gtfs_id("kcm", id).expect("stop");
+    let accessible = |id: &str| {
+        valinor_transit::TimetableSource::wheelchair_stop_accessible(
+            &view,
+            stop(id).into_inner() as usize,
+        )
+    };
+    assert!(!accessible("P1"), "an empty child inherits its station's 2");
+    assert!(
+        accessible("P2"),
+        "a child's own value wins over its station's"
+    );
+    assert!(accessible("B"), "unknown is allowed");
+    assert!(!accessible("C"), "an explicit 2 excludes the stop");
+    // Trips with and without the rule are in separate patterns; unknown shares the open pattern.
+    let wheelchair_patterns: Vec<_> = (0..view.pattern_count())
+        .filter(|&p| {
+            view.pattern(valinor_transit::RouteId::new(
+                u32::try_from(p).expect("few"),
+            ))
+            .expect("pattern")
+            .wheelchair_accessible
+        })
+        .collect();
+    assert_eq!(view.pattern_count(), 2);
+    assert_eq!(wheelchair_patterns.len(), 1);
+    let trip = |id: &str| {
+        view.trip_run_for_start_time(
+            "kcm",
+            id,
+            parse_service_date("20260602").expect("date"),
+            None,
+        )
+        .expect("trip")
+        .trip
+    };
+    let pattern_of = |id: &str| view.trip(trip(id)).expect("trip").pattern;
+    assert_eq!(pattern_of("OPEN"), pattern_of("UNKNOWN"));
+    assert_ne!(pattern_of("OPEN"), pattern_of("CLOSED"));
+    let timetable = view.to_timetable().expect("timetable");
+    assert_eq!(timetable.stop_count(), view.stop_count());
+}
+
+/// Two trips of one vehicle: `T1` (route `R1`, A to M) and `T2` (route `R2`, M to B).
+fn seated_feed(
+    t2_start: &str,
+    t2_end: &str,
+    t2_first_stop: &str,
+    trips: &str,
+    transfers: Option<&str>,
+    calendar_dates: &str,
+) -> InMemorySource {
+    let mut source = InMemorySource::new()
+        .with("agency.txt", AGENCY)
+        .with(
+            "routes.txt",
+            "route_id,route_short_name,route_type\nR1,1,3\nR2,2,3\n",
+        )
+        .with(
+            "stops.txt",
+            "stop_id,stop_lat,stop_lon\nA,47.0,-122.0\nM,47.1,-122.0\nN,47.11,-122.0\nB,47.2,-122.0\n",
+        )
+        .with("calendar_dates.txt", calendar_dates)
+        .with("trips.txt", trips)
+        .with(
+            "stop_times.txt",
+            &format!(
+                "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+                 T1,08:00:00,08:00:00,A,1\nT1,08:30:00,08:30:00,M,2\n\
+                 T2,{t2_start},{t2_start},{t2_first_stop},1\nT2,{t2_end},{t2_end},B,2\n"
+            ),
+        );
+    if let Some(transfers) = transfers {
+        source = source.with("transfers.txt", transfers);
+    }
+    source
+}
+
+const BLOCK_TRIPS: &str = "route_id,service_id,trip_id,block_id,trip_headsign\n\
+R1,D,T1,X,To M\nR2,D,T2,X,To B\n";
+const DAY_ONE: &str = "service_id,date,exception_type\nD,20260602,1\n";
+
+#[test]
+fn a_block_merges_consecutive_trips_within_the_wait_limit() {
+    let output = compile_one(seated_feed(
+        "08:35:00",
+        "09:00:00",
+        "M",
+        BLOCK_TRIPS,
+        None,
+        DAY_ONE,
+    ));
+    let report = &output.reports[0];
+    assert_eq!(report.seated_trips_merged, 1);
+    assert_eq!(report.seated_trips_absorbed, 2);
+    assert_eq!(report.seated_trips_partial, 0);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    // One combined trip, keeping every position of both trips: M twice, so RT finds each.
+    assert_eq!(view.trip_count(), 1);
+    assert_eq!(view.pattern_count(), 1);
+    let date = date("20260602");
+    let first = view
+        .trip_run_for_start_time("kcm", "T1", date, None)
+        .expect("T1 resolves");
+    let second = view
+        .trip_run_for_start_time("kcm", "T2", date, None)
+        .expect("T2 resolves");
+    assert_eq!(first.trip, second.trip, "one row serves both trips");
+    assert_eq!(first.segment, Some((0, 1)));
+    assert_eq!(second.segment, Some((2, 3)));
+    let info = view.trip(first.trip).expect("trip");
+    assert_eq!(info.stop_count(), 4);
+    assert_eq!(info.time_at(1), Some((30 * 60 + 28_800, 30 * 60 + 28_800)));
+    assert_eq!(second.first_departure, 35 * 60 + 28_800);
+    // No boarding at the end of T1, no alighting at the start of T2.
+    assert_eq!(info.pickup_type_at(1), 1);
+    assert_eq!(info.drop_off_type_at(2), 1);
+    let segments = view.trip_segments(first.trip);
+    let summary: Vec<_> = segments
+        .iter()
+        .map(|s| {
+            (
+                s.gtfs_id,
+                view.route(s.route).expect("route").gtfs_id,
+                s.headsign,
+                s.first_position,
+                s.last_position,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("T1", "R1", Some("To M"), 0, 1),
+            ("T2", "R2", Some("To B"), 2, 3)
+        ]
+    );
+    let timetable = view.to_timetable().expect("timetable");
+    assert_eq!(timetable.stop_count(), view.stop_count());
+}
+
+#[test]
+fn a_block_leaves_trips_apart_past_the_wait_limit_or_stop() {
+    // Eleven minutes is past the default ten.
+    let output = compile_one(seated_feed(
+        "08:41:00",
+        "09:00:00",
+        "M",
+        BLOCK_TRIPS,
+        None,
+        DAY_ONE,
+    ));
+    assert_eq!(output.reports[0].seated_trips_merged, 0);
+    assert_eq!(
+        CompiledTimetable::parse(&output.bytes)
+            .expect("parse")
+            .trip_count(),
+        2
+    );
+    // The next trip starts at a different stop.
+    let output = compile_one(seated_feed(
+        "08:35:00",
+        "09:00:00",
+        "N",
+        BLOCK_TRIPS,
+        None,
+        DAY_ONE,
+    ));
+    assert_eq!(output.reports[0].seated_trips_merged, 0);
+}
+
+#[test]
+fn a_type_4_row_merges_past_the_wait_limit_and_beats_a_block() {
+    // 25 minutes is well past ten, and the block says one thing: the row decides.
+    let transfers = "from_stop_id,to_stop_id,from_trip_id,to_trip_id,transfer_type,min_transfer_time\n\
+                     M,M,T1,T2,4,0\n";
+    let output = compile_one(seated_feed(
+        "08:55:00",
+        "09:20:00",
+        "M",
+        BLOCK_TRIPS,
+        Some(transfers),
+        DAY_ONE,
+    ));
+    assert_eq!(output.reports[0].seated_trips_merged, 1);
+    assert_eq!(output.reports[0].seated_rows, 1);
+
+    // A type 4 row names trips at different stops, as nigiri allows.
+    let output = compile_one(seated_feed(
+        "08:40:00",
+        "09:20:00",
+        "N",
+        BLOCK_TRIPS,
+        Some(transfers),
+        DAY_ONE,
+    ));
+    assert_eq!(output.reports[0].seated_trips_merged, 1);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let run = view
+        .trip_run_for_start_time("kcm", "T2", date("20260602"), None)
+        .expect("resolves");
+    assert_eq!(run.segment, Some((2, 3)));
+}
+
+#[test]
+fn a_type_5_row_forbids_a_merge() {
+    let transfers = "from_stop_id,to_stop_id,from_trip_id,to_trip_id,transfer_type\n\
+                     M,M,T1,T2,5\n";
+    let output = compile_one(seated_feed(
+        "08:35:00",
+        "09:00:00",
+        "M",
+        BLOCK_TRIPS,
+        Some(transfers),
+        DAY_ONE,
+    ));
+    assert_eq!(output.reports[0].seated_trips_merged, 0);
+    assert_eq!(output.reports[0].seated_rows, 1);
+}
+
+#[test]
+fn a_merge_only_covers_the_days_both_trips_run() {
+    // T1 runs two days; T2 only the first.
+    let trips = "route_id,service_id,trip_id,block_id\nR1,D,T1,X\nR2,E,T2,X\n";
+    let dates = "service_id,date,exception_type\nD,20260602,1\nD,20260603,1\nE,20260602,1\n";
+    let output = compile_one(seated_feed("08:35:00", "09:00:00", "M", trips, None, dates));
+    let report = &output.reports[0];
+    assert_eq!(report.seated_trips_merged, 1);
+    assert_eq!(report.seated_trips_absorbed, 1, "T2 only runs merged");
+    assert_eq!(report.seated_trips_partial, 1, "T1 also runs alone");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let merged_day = date("20260602");
+    let alone_day = date("20260603");
+    let merged = view
+        .trip_run_for_start_time("kcm", "T1", merged_day, None)
+        .expect("merged");
+    let alone = view
+        .trip_run_for_start_time("kcm", "T1", alone_day, None)
+        .expect("alone");
+    assert_eq!(merged.segment, Some((0, 1)));
+    assert_eq!(alone.segment, None);
+    assert_ne!(merged.trip, alone.trip);
+    // T2 doesn't exist on the second day.
+    assert!(
+        view.trip_run_for_start_time("kcm", "T2", alone_day, None)
+            .is_none()
+    );
+}
+
+#[test]
+fn long_chains_are_cut_at_the_limit_and_reported() {
+    let source = InMemorySource::new()
+        .with("agency.txt", AGENCY)
+        .with("routes.txt", "route_id,route_type\nR,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_lat,stop_lon\nA,47.0,-122.0\nB,47.1,-122.0\nC,47.2,-122.0\nD,47.3,-122.0\n",
+        )
+        .with("calendar_dates.txt", DAY_ONE)
+        .with(
+            "trips.txt",
+            "route_id,service_id,trip_id,block_id\nR,D,T1,X\nR,D,T2,X\nR,D,T3,X\n",
+        )
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             T1,08:00:00,08:00:00,A,1\nT1,08:30:00,08:30:00,B,2\n\
+             T2,08:31:00,08:31:00,B,1\nT2,09:00:00,09:00:00,C,2\n\
+             T3,09:01:00,09:01:00,C,1\nT3,09:30:00,09:30:00,D,2\n",
+        );
+    let output = compile_with(
+        vec![FeedInput {
+            id: FeedId::try_new("kcm".to_owned()).expect("id"),
+            source: Box::new(source),
+        }],
+        CompileOptions {
+            max_seated_chain: 2,
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile");
+    let report = &output.reports[0];
+    assert_eq!(report.seated_chains_cut, 1);
+    assert_eq!(report.seated_trips_merged, 1, "T1+T2, with T3 left over");
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    assert_eq!(view.trip_count(), 2);
+}
+
+#[test]
+fn trips_with_different_bike_rules_stay_apart() {
+    let trips = "route_id,service_id,trip_id,block_id,bikes_allowed\n\
+                 R1,D,T1,X,1\nR2,D,T2,X,2\n";
+    let output = compile_one(seated_feed(
+        "08:35:00", "09:00:00", "M", trips, None, DAY_ONE,
+    ));
+    assert_eq!(output.reports[0].seated_trips_merged, 0);
+}
+
+#[test]
+fn a_block_can_be_turned_off() {
+    let output = compile_with(
+        vec![FeedInput {
+            id: FeedId::try_new("kcm".to_owned()).expect("id"),
+            source: Box::new(seated_feed(
+                "08:35:00",
+                "09:00:00",
+                "M",
+                BLOCK_TRIPS,
+                None,
+                DAY_ONE,
+            )),
+        }],
+        CompileOptions {
+            merge_seated_trips: false,
+            ..CompileOptions::default()
+        },
+    )
+    .expect("compile");
+    assert_eq!(output.reports[0].seated_trips_merged, 0);
+}
+
+#[test]
+fn a_rule_between_stops_keeps_the_first_row() {
+    let source = InMemorySource::new()
+        .with("agency.txt", AGENCY)
+        .with("routes.txt", "route_id,route_type\nR,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_lat,stop_lon\nA,47.0,-122.0\nB,47.1,-122.0\n",
+        )
+        .with(
+            "calendar_dates.txt",
+            "service_id,date,exception_type\nS,20260602,1\n",
+        )
+        .with("trips.txt", "route_id,service_id,trip_id\nR,S,X\n")
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             X,10:00:00,10:00:00,A,1\nX,11:00:00,11:00:00,B,2\n",
+        )
+        .with(
+            "transfers.txt",
+            "from_stop_id,to_stop_id,transfer_type,min_transfer_time\n\
+             A,B,2,200\n\
+             A,B,2,100\n",
+        );
+    let output = compile_one(source);
+    assert_eq!(output.reports[0].transfer_pairs, 1);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let pairs = valinor_transit::TimetableSource::transfer_pairs(&view);
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(
+        pairs[0].rule,
+        PairRule::Floor(valinor_transit::Seconds::try_new(200).expect("in range"))
+    );
 }
 
 #[test]

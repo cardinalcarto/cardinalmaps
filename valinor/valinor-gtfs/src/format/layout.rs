@@ -16,7 +16,10 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 pub const MAGIC: [u8; 8] = *b"VLNRGTFS";
 
 /// The only format version this build reads.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 6;
+
+/// A transfer time for a stop that `transfers.txt` doesn't set one for, as MOTIS does: 2 minutes.
+pub const DEFAULT_TRANSFER_SECONDS: u32 = 120;
 
 /// The longest calendar a file may hold, in days (over a hundred years).
 pub(crate) const MAX_SERVICE_DAYS: u32 = 40_000;
@@ -91,11 +94,13 @@ pub(crate) enum SectionId {
     TripIndex,
     RouteIndex,
     StopIndex,
+    TransferPairs,
+    TripSegments,
 }
 
 impl SectionId {
     /// Every section, in file order.
-    pub(crate) const ALL: [Self; 27] = [
+    pub(crate) const ALL: [Self; 29] = [
         Self::Feeds,
         Self::Zones,
         Self::ZoneTransitions,
@@ -123,6 +128,8 @@ impl SectionId {
         Self::TripIndex,
         Self::RouteIndex,
         Self::StopIndex,
+        Self::TransferPairs,
+        Self::TripSegments,
     ];
 
     /// The section's name, for error messages.
@@ -155,6 +162,8 @@ impl SectionId {
             Self::TripIndex => "trip index",
             Self::RouteIndex => "route index",
             Self::StopIndex => "stop index",
+            Self::TransferPairs => "transfer pairs",
+            Self::TripSegments => "trip segments",
         }
     }
 }
@@ -259,8 +268,13 @@ pub(crate) struct StopRow {
     pub(crate) child_count: U32,
     pub(crate) location_type: u8,
     pub(crate) wheelchair_boarding: u8,
-    pub(crate) _pad: [u8; 2],
+    /// [`STOP_NO_CHANGE`] or zero.
+    pub(crate) flags: u8,
+    pub(crate) _pad: u8,
 }
+
+/// A stop flag: `transfer_type=3` forbids changing here.
+pub(crate) const STOP_NO_CHANGE: u8 = 1;
 
 /// A calendar: `first_date + i` runs when bit `i` is set.
 #[derive(Clone, Copy, Debug, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
@@ -288,6 +302,8 @@ pub(crate) struct PatternRow {
 
 /// The attribute bit for a pattern on which bicycles are allowed.
 pub(crate) const PATTERN_BIKES_ALLOWED: u8 = 1;
+/// The attribute bit for a pattern whose trips aren't marked `wheelchair_accessible=2`.
+pub(crate) const PATTERN_WHEELCHAIR_ACCESSIBLE: u8 = 2;
 
 /// One run of a trip. A frequency-based trip has one row per expanded run.
 #[derive(Clone, Copy, Debug, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
@@ -371,6 +387,43 @@ pub(crate) struct ShapePointRow {
     pub(crate) lat_e7: I32,
     pub(crate) lon_e7: I32,
     pub(crate) dist: F32,
+}
+
+/// A `transfers.txt` rule for walking between two different stops, sorted by `(from, to)`.
+#[derive(Clone, Copy, Debug, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(C)]
+pub(crate) struct TransferPairRow {
+    /// The stop the walk starts at, as a `StopId`.
+    pub(crate) from: U32,
+    /// The stop the walk ends at, as a `StopId`.
+    pub(crate) to: U32,
+    /// The walk costs at least this many seconds; [`NONE`] means the walk is forbidden.
+    pub(crate) floor: U32,
+}
+
+/// One original trip's stretch of a combined stay-seated trip, sorted by `(trip, first_position)`.
+///
+/// A combined trip's rider row holds its first original trip;
+/// each stretch here has what that one original trip's riders see.
+#[derive(Clone, Copy, Debug, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(C)]
+pub(crate) struct TripSegmentRow {
+    /// The combined trip's row.
+    pub(crate) trip: U32,
+    pub(crate) first_position: U32,
+    /// Inclusive.
+    pub(crate) last_position: U32,
+    pub(crate) gtfs_id: U32,
+    /// The original trip's route, as a [`RouteRow`].
+    pub(crate) route: U32,
+    pub(crate) headsign: U32,
+    /// The original trip's shape, or [`NONE`].
+    pub(crate) shape: U32,
+    pub(crate) wheelchair: u8,
+    pub(crate) bikes: u8,
+    /// GTFS `direction_id`, or [`DIRECTION_NONE`].
+    pub(crate) direction: u8,
+    pub(crate) _pad: u8,
 }
 
 /// Maps a feed-scoped GTFS identifier to a row, sorted by feed and then by string.

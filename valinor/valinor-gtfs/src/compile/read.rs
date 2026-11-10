@@ -11,14 +11,15 @@ use crate::compile::FeedInput;
 use crate::compile::assemble::StringPool;
 use crate::compile::interpolate::{RawTime, interpolate};
 use crate::compile::report::{DropReason, FeedReport};
+use crate::compile::seated::{CompileOptions, SeatedRow, merge_seated_trips};
 use crate::compile::shape_match::{ShapePoint, project};
 use crate::compile::source::GtfsSource;
 use crate::compile::table::{Table, field};
 use crate::compile::time::{parse_date, parse_time};
 use crate::error::CompileError;
 use crate::format::layout::{
-    DIRECTION_NONE, MAX_SERVICE_DAYS, RULE_APPROXIMATE, RUN_EXACT_FREQUENCY, RUN_HEADWAY_FREQUENCY,
-    RUN_SCHEDULED,
+    DEFAULT_TRANSFER_SECONDS, DIRECTION_NONE, MAX_SERVICE_DAYS, NONE, RULE_APPROXIMATE,
+    RUN_EXACT_FREQUENCY, RUN_HEADWAY_FREQUENCY, RUN_SCHEDULED,
 };
 use crate::format::reader::service_date_of;
 
@@ -58,6 +59,8 @@ pub(super) struct StopModel {
     pub(super) location_type: u8,
     pub(super) wheelchair: u8,
     pub(super) min_change: u32,
+    /// `transfer_type=3` at this stop: a rider arriving by trip can't board another here.
+    pub(super) no_change: bool,
     pub(super) boardable: bool,
     pub(super) used: bool,
 }
@@ -93,6 +96,23 @@ pub(super) struct TripModel {
     pub(super) stop_headsigns: Vec<u32>,
     pub(super) sequences: Vec<u32>,
     pub(super) stop_dists: Option<Vec<f32>>,
+    /// For a combined stay-seated trip, each original trip's stretch, in order.
+    pub(super) segments: Option<Vec<SegmentModel>>,
+}
+
+/// One original trip's stretch of a combined stay-seated trip.
+#[derive(Clone)]
+pub(super) struct SegmentModel {
+    pub(super) gtfs_id: u32,
+    /// A feed-local route.
+    pub(super) route: u32,
+    pub(super) headsign: u32,
+    pub(super) shape: Option<u32>,
+    pub(super) direction: u8,
+    pub(super) wheelchair: u8,
+    pub(super) bikes: u8,
+    pub(super) first_position: u32,
+    pub(super) last_position: u32,
 }
 
 /// One feed, with feed-local indices.
@@ -106,6 +126,9 @@ pub(super) struct FeedModel {
     pub(super) services: Vec<ServiceModel>,
     pub(super) shapes: Vec<ShapeModel>,
     pub(super) trips: Vec<TripModel>,
+    /// `(from, to, floor seconds)` for walking between two different stops, by feed-local stop;
+    /// a floor of [`NONE`] forbids that walk.
+    pub(super) transfer_pairs: Vec<(u32, u32, u32)>,
     pub(super) report: FeedReport,
 }
 
@@ -113,6 +136,7 @@ pub(super) struct FeedModel {
 pub(super) fn read_feed(
     feed: FeedInput<'_>,
     pool: &mut StringPool,
+    options: CompileOptions,
 ) -> Result<FeedModel, CompileError> {
     let id = feed.id.into_inner();
     let mut source = feed.source;
@@ -124,7 +148,8 @@ pub(super) fn read_feed(
     let (routes, route_ids) =
         read_routes(source.as_mut(), pool, &agency_ids, &agencies, &mut report)?;
     let (mut stops, stop_ids) = read_stops(source.as_mut(), pool, &time_zone, &mut report)?;
-    apply_transfers(source.as_mut(), &stop_ids, &mut stops, &mut report)?;
+    let (transfer_pairs, seated_rows) =
+        apply_transfers(source.as_mut(), &stop_ids, &mut stops, &mut report)?;
 
     let shapes = read_shapes(source.as_mut(), pool, &mut report)?;
     let frequencies = read_frequencies(source.as_mut(), &mut report)?;
@@ -140,12 +165,21 @@ pub(super) fn read_feed(
         &mut report,
     )?;
 
+    merge_seated_trips(
+        &mut trips,
+        &mut services,
+        &seated_rows,
+        options,
+        pool,
+        &mut report,
+    )?;
+
     // Keep only the calendars and shapes that some kept trip uses.
     let mut used_services = vec![false; services.len()];
     let mut used_shapes = vec![false; shapes.len()];
     for trip in &trips {
         used_services[trip.service as usize] = true;
-        if let Some(shape) = trip.shape {
+        for shape in trip_shapes(trip) {
             used_shapes[shape as usize] = true;
         }
     }
@@ -155,10 +189,17 @@ pub(super) fn read_feed(
         trip.service = service_remap[trip.service as usize].ok_or(CompileError::OutOfRange(
             "a kept trip's service was not retained".to_owned(),
         ))?;
+        let not_retained =
+            || CompileError::OutOfRange("a kept trip's shape was not retained".to_owned());
         if let Some(shape) = trip.shape {
-            trip.shape = Some(shape_remap[shape as usize].ok_or(CompileError::OutOfRange(
-                "a kept trip's shape was not retained".to_owned(),
-            ))?);
+            trip.shape = Some(shape_remap[shape as usize].ok_or_else(not_retained)?);
+        }
+        if let Some(segments) = &mut trip.segments {
+            for segment in segments {
+                if let Some(shape) = segment.shape {
+                    segment.shape = Some(shape_remap[shape as usize].ok_or_else(not_retained)?);
+                }
+            }
         }
     }
     let mut indexed_shapes: Vec<(u32, ShapeModel)> = shapes.into_values().collect();
@@ -190,8 +231,19 @@ pub(super) fn read_feed(
         services,
         shapes,
         trips,
+        transfer_pairs,
         report,
     })
+}
+
+/// Every shape a trip uses: its own, and those of the original trips of a combined one.
+fn trip_shapes(trip: &TripModel) -> impl Iterator<Item = u32> + '_ {
+    trip.shape.into_iter().chain(
+        trip.segments
+            .iter()
+            .flatten()
+            .filter_map(|segment| segment.shape),
+    )
 }
 
 fn remap_used(used: &[bool]) -> Vec<Option<u32>> {
@@ -655,7 +707,8 @@ fn read_stops(
                 timezone: field(&record, zone).to_owned(),
                 location_type: kind,
                 wheelchair,
-                min_change: 0,
+                min_change: DEFAULT_TRANSFER_SECONDS,
+                no_change: false,
                 boardable: false,
                 used: false,
             },
@@ -743,14 +796,32 @@ fn read_stops(
     Ok((stops, ids))
 }
 
+/// The most directed stop pairs one `transfers.txt` row may expand into.
+///
+/// A station has a handful of platforms; only a mistaken row names thousands.
+const MAX_ROW_PAIRS: usize = 4096;
+
+/// Applies `transfers.txt` to the stops, as MOTIS does, returning rules for pairs of stops.
+///
+/// A `transfer_type=2` row with the same `from_stop_id` and `to_stop_id` sets that stop's
+/// transfer time; the smallest of several rows wins, and every other stop keeps the default.
+/// A row between two different stops sets a floor on that walk; the first such row wins.
+/// A station in a row covers each of its boardable stops.
+/// A feed's rules for walking between stops, and its stay-seated rows.
+type TransferRules = (Vec<(u32, u32, u32)>, Vec<SeatedRow>);
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one linear pass over the rows of transfers.txt"
+)]
 fn apply_transfers(
     source: &mut dyn GtfsSource,
     stop_ids: &StopIds,
     stops: &mut [StopModel],
     report: &mut FeedReport,
-) -> Result<(), CompileError> {
+) -> Result<TransferRules, CompileError> {
     let Some(mut table) = Table::open(source, "transfers.txt")? else {
-        return Ok(());
+        return Ok((Vec::new(), Vec::new()));
     };
     let from = table.column("from_stop_id")?;
     let to = table.column("to_stop_id")?;
@@ -761,39 +832,129 @@ fn apply_transfers(
         .map(|name| table.optional(name))
         .collect();
     let children = children_of(stops);
+    let mut seated_rows = Vec::new();
+    let mut stop_times: HashMap<u32, u32> = HashMap::new();
+    let mut pairs: BTreeMap<(u32, u32), u32> = BTreeMap::new();
     let mut row = ByteRecord::new();
     while table.read(&mut row, report)? {
         let (from_id, to_id) = (field(&row, Some(from)), field(&row, Some(to)));
         let time = field(&row, min_time).parse::<u32>().ok();
         let unscoped = scoped.iter().all(|column| field(&row, *column).is_empty());
-        let same_stop = !from_id.is_empty() && from_id == to_id;
-        let applies = same_stop
-            && unscoped
-            && field(&row, Some(kind)) == "2"
-            && time.is_some_and(|time| time <= SECONDS_LIMIT);
-        let target = applies.then(|| stop_ids.get(from_id).copied()).flatten();
-        let Some(index) = target else {
+        let (from_stop, to_stop) = (stop_ids.get(from_id).copied(), stop_ids.get(to_id).copied());
+        let row_kind = field(&row, Some(kind));
+        if row_kind == "4" || row_kind == "5" {
+            let (from_trip, to_trip) = (field(&row, scoped[2]), field(&row, scoped[3]));
+            if from_trip.is_empty() || to_trip.is_empty() {
+                report.transfers_ignored += 1;
+            } else {
+                report.seated_rows += 1;
+                seated_rows.push(SeatedRow {
+                    from_trip: from_trip.to_owned(),
+                    to_trip: to_trip.to_owned(),
+                    stay_seated: row_kind == "4",
+                });
+            }
+            continue;
+        }
+        if row_kind == "3" && !unscoped {
+            report.transfers_forbidden_qualified += 1;
+            continue;
+        }
+        let forbidden = row_kind == "3";
+        let (Some(from_stop), Some(to_stop)) = (from_stop, to_stop) else {
             report.transfers_ignored += 1;
             continue;
         };
-        report.transfers_applied += 1;
-        let seconds = time.unwrap_or(0);
-        // A station's minimum applies to every stop inside it.
-        let mut pending = vec![index];
-        let mut visited = 0;
-        while let Some(stop) = pending.pop() {
-            visited += 1;
-            if visited > stops.len() {
-                break;
+        let seconds = if forbidden {
+            NONE
+        } else {
+            match time.filter(|&time| time <= SECONDS_LIMIT) {
+                Some(seconds) if row_kind == "2" && unscoped => seconds,
+                _ => {
+                    report.transfers_ignored += 1;
+                    continue;
+                }
             }
-            let model = &mut stops[stop as usize];
-            model.min_change = model.min_change.max(seconds);
-            if let Some(list) = children.get(&stop) {
-                pending.extend(list.iter().copied());
+        };
+        let from_members = members_of(from_stop, stops, &children);
+        let to_members = members_of(to_stop, stops, &children);
+        if from_members.is_empty() || to_members.is_empty() {
+            report.transfers_ignored += 1;
+            continue;
+        }
+        if from_stop == to_stop {
+            for &stop in &from_members {
+                if forbidden {
+                    stops[stop as usize].no_change = true;
+                    report.transfers_forbidden_same_stop += 1;
+                } else {
+                    let entry = stop_times.entry(stop).or_insert(seconds);
+                    *entry = (*entry).min(seconds);
+                }
+            }
+            report.transfers_applied += 1;
+        }
+        if from_members.len().saturating_mul(to_members.len()) > MAX_ROW_PAIRS {
+            report.transfers_ignored += 1;
+            continue;
+        }
+        let mut added = false;
+        for &a in &from_members {
+            for &b in &to_members {
+                if a == b {
+                    continue;
+                }
+                // A row forbidding the walk outranks any floor, whichever row comes first.
+                if forbidden {
+                    pairs.insert((a, b), NONE);
+                } else {
+                    pairs.entry((a, b)).or_insert(seconds);
+                }
+                added = true;
             }
         }
+        if added && from_stop != to_stop {
+            report.transfers_applied += 1;
+        }
     }
-    Ok(())
+    for (stop, seconds) in stop_times {
+        stops[stop as usize].min_change = seconds;
+    }
+    report.transfers_forbidden_pairs = pairs.values().filter(|&&s| s == NONE).count();
+    report.transfer_pairs = pairs.len() - report.transfers_forbidden_pairs;
+    Ok((
+        pairs
+            .into_iter()
+            .map(|((from, to), seconds)| (from, to, seconds))
+            .collect(),
+        seated_rows,
+    ))
+}
+
+/// The boardable stops a location stands for: itself if boardable, and its descendants.
+fn members_of(stop: u32, stops: &[StopModel], children: &HashMap<u32, Vec<u32>>) -> Vec<u32> {
+    let mut members = Vec::new();
+    let mut pending = vec![stop];
+    let mut visited = 0;
+    while let Some(next) = pending.pop() {
+        visited += 1;
+        // A feed could make a cycle of parents, which must end rather than hang.
+        if visited > stops.len() {
+            break;
+        }
+        if stops
+            .get(next as usize)
+            .is_some_and(|model| model.boardable)
+        {
+            members.push(next);
+        }
+        if let Some(list) = children.get(&next) {
+            pending.extend(list.iter().copied());
+        }
+    }
+    members.sort_unstable();
+    members.dedup();
+    members
 }
 
 /// Each location's direct children, for walking a station's hierarchy.
@@ -1293,6 +1454,7 @@ fn read_trips(
             stop_headsigns: headsigns,
             sequences,
             stop_dists,
+            segments: None,
         };
 
         if let Some(spans) = frequencies.get(header.name.as_str()) {
@@ -1350,6 +1512,7 @@ impl TripModel {
             stop_headsigns: self.stop_headsigns.clone(),
             sequences: self.sequences.clone(),
             stop_dists: self.stop_dists.clone(),
+            segments: None,
         }
     }
 }

@@ -18,8 +18,9 @@ use crate::compile::report::FeedReport;
 use crate::error::CompileError;
 use crate::format::layout::{
     AgencyRow, ColorRow, FeedRow, IdIndexRow, NONE, NoonOffsetRow, PATTERN_BIKES_ALLOWED,
-    PatternRow, RouteRow, SectionId, ServiceRow, ShapePointRow, ShapeRow, StopRow, TimePair,
-    TripRiderRow, TripRow, ZoneRow, ZoneTransitionRow,
+    PATTERN_WHEELCHAIR_ACCESSIBLE, PatternRow, RouteRow, STOP_NO_CHANGE, SectionId, ServiceRow,
+    ShapePointRow, ShapeRow, StopRow, TimePair, TransferPairRow, TripRiderRow, TripRow,
+    TripSegmentRow, ZoneRow, ZoneTransitionRow,
 };
 use crate::format::reader::{civil_date_of, service_date_of};
 use crate::format::timetable::stop_rules;
@@ -54,6 +55,10 @@ impl StringPool {
         self.offsets.push(end);
         self.index.insert(text.to_owned(), index);
         Ok(index)
+    }
+
+    pub(crate) fn text(&self, index: u32) -> &str {
+        self.get(index)
     }
 
     fn get(&self, index: u32) -> &str {
@@ -165,6 +170,24 @@ pub(super) fn assemble(
             .entry(pattern.route)
             .or_default()
             .push(pattern_u32);
+        // A combined trip is filed under each of its original routes, so alerts and lookups
+        // by route find it; the pattern's own route is the first original's.
+        let extra_routes: HashSet<u32> = pattern
+            .trips
+            .iter()
+            .filter_map(|&trip| feeds[pattern.feed].trips[trip].segments.as_ref())
+            .flatten()
+            .map(|segment| segment.route + bases[pattern.feed].route_base)
+            .filter(|&route| route != pattern.route)
+            .collect();
+        let mut extra_routes: Vec<u32> = extra_routes.into_iter().collect();
+        extra_routes.sort_unstable();
+        for route in extra_routes {
+            route_pattern_lists
+                .entry(route)
+                .or_default()
+                .push(pattern_u32);
+        }
 
         let mut seen = HashSet::with_capacity(pattern.stops.len());
         let mut is_loop = false;
@@ -186,6 +209,7 @@ pub(super) fn assemble(
                 pattern.feed,
                 pattern_u32,
                 bases[pattern.feed].service_base,
+                bases[pattern.feed].route_base,
                 model,
             )?;
         }
@@ -205,11 +229,7 @@ pub(super) fn assemble(
                 u32::try_from(pattern.trips.len())
                     .map_err(|_| CompileError::TableTooLarge("trips"))?,
             ),
-            attributes: if pattern.bikes {
-                PATTERN_BIKES_ALLOWED
-            } else {
-                0
-            },
+            attributes: pattern_attribute_bits(pattern.bikes, pattern.wheelchair),
             _pad: [0; 3],
         });
     }
@@ -256,6 +276,8 @@ pub(super) fn assemble(
             row: U32::new(table_index(row, "stops")?),
         });
     }
+
+    let transfer_pair_rows = transfer_pair_rows(&feeds, &numbering)?;
 
     let (shapes_table, shape_points, shape_bases) = build_shape_tables(&feeds)?;
     trip_table.fix_shape_bases(&shape_bases);
@@ -306,12 +328,40 @@ pub(super) fn assemble(
     writer.table(SectionId::TripIndex, &trip_table.index);
     writer.table(SectionId::RouteIndex, &route_index);
     writer.table(SectionId::StopIndex, &stop_index);
+    writer.table(SectionId::TransferPairs, &transfer_pair_rows);
+    writer.table(SectionId::TripSegments, &trip_table.segments);
 
     let boardable =
         u32::try_from(boardable_count).map_err(|_| CompileError::TableTooLarge("stops"))?;
     let bytes = writer.finish(boardable);
     let reports: Vec<FeedReport> = feeds.into_iter().map(|feed| feed.report).collect();
     Ok(CompiledOutput { bytes, reports })
+}
+
+/// The walk rules of every feed, in final stop numbers and in the order a file needs.
+fn transfer_pair_rows(
+    feeds: &[FeedModel],
+    numbering: &StopNumbering,
+) -> Result<Vec<TransferPairRow>, CompileError> {
+    let mut rows = Vec::new();
+    for (feed_index, feed) in feeds.iter().enumerate() {
+        for &(from, to, floor) in &feed.transfer_pairs {
+            rows.push((
+                numbering.final_of(feed_index, from)?,
+                numbering.final_of(feed_index, to)?,
+                floor,
+            ));
+        }
+    }
+    rows.sort_unstable();
+    Ok(rows
+        .into_iter()
+        .map(|(from, to, floor)| TransferPairRow {
+            from: U32::new(from),
+            to: U32::new(to),
+            floor: U32::new(floor),
+        })
+        .collect())
 }
 
 /// Rows of the shape table, rows of the point table, and each feed's first shape.
@@ -594,27 +644,46 @@ struct Pattern {
     feed: usize,
     route: u32,
     bikes: bool,
+    /// Whether a rider in a wheelchair may ride, because no trip is marked inaccessible.
+    wheelchair: bool,
     stops: Vec<u32>,
     trips: Vec<usize>,
 }
 
-/// Groups each feed's trips by route, stop sequence, and bike rule, in a fixed order.
+/// The attribute bits of a pattern, from the trips it was grouped for.
+fn pattern_attribute_bits(bikes: bool, wheelchair: bool) -> u8 {
+    (if bikes { PATTERN_BIKES_ALLOWED } else { 0 })
+        | (if wheelchair {
+            PATTERN_WHEELCHAIR_ACCESSIBLE
+        } else {
+            0
+        })
+}
+
+/// Trips a pattern groups together: the feed, route, stop sequence, and bike and wheelchair rules.
+type PatternKeyParts = (usize, u32, Vec<u32>, bool, bool);
+
+/// Groups each feed's trips by route, stop sequence, and bike and wheelchair rules, in a fixed order.
+///
+/// Trips differing in those two rules go in different patterns, because a filter tests a pattern.
 fn build_patterns(feeds: &[FeedModel], bases: &[FeedBases]) -> Vec<Pattern> {
-    let mut map: BTreeMap<(usize, u32, Vec<u32>, bool), Vec<usize>> = BTreeMap::new();
+    let mut map: BTreeMap<PatternKeyParts, Vec<usize>> = BTreeMap::new();
     for (feed_index, feed) in feeds.iter().enumerate() {
         for (trip_index, trip) in feed.trips.iter().enumerate() {
             let route = trip.route + bases[feed_index].route_base;
             let bikes = trip.bikes == 1;
-            map.entry((feed_index, route, trip.stops.clone(), bikes))
+            let wheelchair = trip.wheelchair != 2;
+            map.entry((feed_index, route, trip.stops.clone(), bikes, wheelchair))
                 .or_default()
                 .push(trip_index);
         }
     }
     map.into_iter()
-        .map(|((feed, route, stops, bikes), trips)| Pattern {
+        .map(|((feed, route, stops, bikes, wheelchair), trips)| Pattern {
             feed,
             route,
             bikes,
+            wheelchair,
             stops,
             trips,
         })
@@ -696,11 +765,14 @@ fn number_stops(
                 })
             })
             .collect::<Result<_, _>>()?;
-        let attributes = if pattern.bikes {
+        let mut attributes = if pattern.bikes {
             RouteAttributes::BIKES_ALLOWED
         } else {
             RouteAttributes::NONE
         };
+        if pattern.wheelchair {
+            attributes = attributes | RouteAttributes::WHEELCHAIR_ACCESSIBLE;
+        }
         let key = builder.add_pattern(&keys, attributes)?;
         for &trip_index in &pattern.trips {
             let trip = &feeds[pattern.feed].trips[trip_index];
@@ -747,6 +819,9 @@ struct TripTables {
     dist_starts: HashMap<Vec<u32>, u32>,
     /// Per emitted trip: feed index and shape, patched once shape bases are known.
     shapes: Vec<(usize, Option<u32>)>,
+    segments: Vec<TripSegmentRow>,
+    /// Per segment: feed index and shape, patched as `shapes` is.
+    segment_shapes: Vec<(usize, Option<u32>)>,
 }
 
 impl TripTables {
@@ -754,6 +829,11 @@ impl TripTables {
         for (rider, (feed, shape)) in self.riders.iter_mut().zip(&self.shapes) {
             if let Some(shape) = shape {
                 rider.shape = U32::new(bases[*feed] + shape);
+            }
+        }
+        for (segment, (feed, shape)) in self.segments.iter_mut().zip(&self.segment_shapes) {
+            if let Some(shape) = shape {
+                segment.shape = U32::new(bases[*feed] + shape);
             }
         }
     }
@@ -773,11 +853,13 @@ fn dedupe_start<K: Eq + core::hash::Hash>(
     Ok((start, true))
 }
 
+#[allow(clippy::too_many_lines, reason = "one linear write of a trip's rows")]
 fn emit_trip(
     tables: &mut TripTables,
     feed: usize,
     pattern: u32,
     service_base: u32,
+    route_base: u32,
     model: &TripModel,
 ) -> Result<(), CompileError> {
     let trip_row =
@@ -872,11 +954,34 @@ fn emit_trip(
     tables.shapes.push((feed, model.shape));
 
     let feed_row = u32::try_from(feed).map_err(|_| CompileError::TableTooLarge("feeds"))?;
-    tables.index.push(IdIndexRow {
-        feed: U32::new(feed_row),
-        id: U32::new(model.gtfs_id),
-        row: U32::new(trip_row),
-    });
+    // A combined trip is found under each of its original trips, by their own identifiers.
+    let ids: Vec<u32> = model.segments.as_ref().map_or_else(
+        || vec![model.gtfs_id],
+        |segments| segments.iter().map(|segment| segment.gtfs_id).collect(),
+    );
+    for id in ids {
+        tables.index.push(IdIndexRow {
+            feed: U32::new(feed_row),
+            id: U32::new(id),
+            row: U32::new(trip_row),
+        });
+    }
+    for segment in model.segments.iter().flatten() {
+        tables.segments.push(TripSegmentRow {
+            trip: U32::new(trip_row),
+            first_position: U32::new(segment.first_position),
+            last_position: U32::new(segment.last_position),
+            gtfs_id: U32::new(segment.gtfs_id),
+            route: U32::new(segment.route + route_base),
+            headsign: U32::new(segment.headsign),
+            shape: U32::new(NONE),
+            wheelchair: segment.wheelchair,
+            bikes: segment.bikes,
+            direction: segment.direction,
+            _pad: 0,
+        });
+        tables.segment_shapes.push((feed, segment.shape));
+    }
     Ok(())
 }
 
@@ -890,6 +995,7 @@ fn sort_index(index: &mut [IdIndexRow], pool: &StringPool) {
     });
 }
 
+#[allow(clippy::too_many_lines, reason = "one linear pass over the stop table")]
 fn build_stop_rows(
     feeds: &[FeedModel],
     numbering: &StopNumbering,
@@ -932,7 +1038,8 @@ fn build_stop_rows(
         child_count: U32::new(0),
         location_type: 0,
         wheelchair_boarding: 0,
-        _pad: [0; 2],
+        flags: 0,
+        _pad: 0,
     };
     rows.resize(total, blank);
 
@@ -987,7 +1094,8 @@ fn build_stop_rows(
                 child_count: U32::new(0),
                 location_type: stop.location_type,
                 wheelchair_boarding: stop.wheelchair,
-                _pad: [0; 2],
+                flags: if stop.no_change { STOP_NO_CHANGE } else { 0 },
+                _pad: 0,
             };
         }
     }

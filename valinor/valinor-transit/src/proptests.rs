@@ -2,6 +2,7 @@
 
 #![allow(clippy::too_many_lines)]
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use proptest::prelude::*;
@@ -16,8 +17,8 @@ use crate::testing::{
     check_journey, day_slot, oracle, oracle_every_second, routes_from_timetable, secs, t,
 };
 use crate::timetable::{
-    ResolvedBlock, ResolvedLane, ResolvedTrip, RouteAttributes, StopEvent, StopRules, StopTime,
-    TimetableBuilder,
+    FORBIDDEN_WALK, PairRule, ResolvedBlock, ResolvedLane, ResolvedTrip, RouteAttributes,
+    StopEvent, StopRules, StopTime, TimetableBuilder,
 };
 use crate::{RouteId, Router, TripId};
 
@@ -46,6 +47,7 @@ struct RawTrip {
 struct RawRoute {
     stops: Vec<u8>,
     bikes: bool,
+    wheelchair: bool,
     trips: Vec<RawTrip>,
 }
 
@@ -55,6 +57,12 @@ struct RawNet {
     min_change: Vec<u8>,
     stop_node: Vec<u8>,
     edges: Vec<(u8, u8, u8)>,
+    /// `transfers.txt`-style rules: `(from, to, seconds)`, by raw stop, 255 forbidding the walk.
+    pairs: Vec<(u8, u8, u8)>,
+    /// Which raw stops forbid changing there.
+    no_change: Vec<bool>,
+    /// Which raw stops a rider in a wheelchair can't use.
+    inaccessible: Vec<bool>,
     access: Vec<Option<u8>>,
     egress: Vec<Option<u8>>,
     routes: Vec<RawRoute>,
@@ -87,12 +95,14 @@ fn raw_route() -> impl Strategy<Value = RawRoute> {
     (
         prop::collection::vec(any::<u8>(), 2..10),
         prop::bool::weighted(0.8),
+        prop::bool::weighted(0.7),
         // Up to 20 trips in a lane, so the binary search over rows has rows to search.
         prop::collection::vec(raw_trip(), 1..20),
     )
-        .prop_map(|(stops, bikes, trips)| RawRoute {
+        .prop_map(|(stops, bikes, wheelchair, trips)| RawRoute {
             stops,
             bikes,
+            wheelchair,
             trips,
         })
 }
@@ -104,6 +114,18 @@ fn raw_net() -> impl Strategy<Value = RawNet> {
         prop::collection::vec(0_u8..8, 8),
         prop::collection::vec(0_u8..4, 8),
         prop::collection::vec((any::<u8>(), any::<u8>(), 0_u8..10), 2..24),
+        (
+            prop::collection::vec(
+                (
+                    any::<u8>(),
+                    any::<u8>(),
+                    prop_oneof![9 => 0_u8..40, 1 => Just(255)],
+                ),
+                0..6,
+            ),
+            prop::collection::vec(prop::bool::weighted(0.1), 8),
+            prop::collection::vec(prop::bool::weighted(0.2), 8),
+        ),
         opt(),
         opt(),
         prop::collection::vec(raw_route(), 2..9),
@@ -117,6 +139,7 @@ fn raw_net() -> impl Strategy<Value = RawNet> {
                 min_change,
                 stop_node,
                 edges,
+                (pairs, no_change, inaccessible),
                 access,
                 egress,
                 routes,
@@ -128,6 +151,9 @@ fn raw_net() -> impl Strategy<Value = RawNet> {
                 min_change,
                 stop_node,
                 edges,
+                pairs,
+                no_change,
+                inaccessible,
                 access,
                 egress,
                 routes,
@@ -197,11 +223,14 @@ fn build_net(raw: &RawNet) -> TestNet {
             .iter()
             .map(|&s| keys[stop_of(s, raw.stop_count)])
             .collect();
-        let attributes = if route.bikes {
+        let mut attributes = if route.bikes {
             RouteAttributes::BIKES_ALLOWED
         } else {
             RouteAttributes::NONE
         };
+        if route.wheelchair {
+            attributes = attributes | RouteAttributes::WHEELCHAIR_ACCESSIBLE;
+        }
         let pattern = builder.add_pattern(&stops, attributes).expect("pattern");
         for trip in &route.trips {
             let service = services[usize::from(trip.days) - 1];
@@ -220,7 +249,46 @@ fn build_net(raw: &RawNet) -> TestNet {
             next_trip += 1;
         }
     }
+    let mut pair_floors = HashMap::new();
+    let mut raw_floors: HashMap<(usize, usize), u8> = HashMap::new();
+    for &(from, to, floor) in &raw.pairs {
+        let (from, to) = (stop_of(from, raw.stop_count), stop_of(to, raw.stop_count));
+        if from != to {
+            raw_floors.entry((from, to)).or_insert(floor);
+        }
+    }
+    for (&(from, to), &floor) in &raw_floors {
+        let rule = if floor == 255 {
+            PairRule::Forbidden
+        } else {
+            PairRule::Floor(secs(u32::from(floor)))
+        };
+        builder
+            .add_transfer_pair(keys[from], keys[to], rule)
+            .expect("pair");
+    }
+    for (index, &key) in keys.iter().enumerate() {
+        if raw.no_change[index] {
+            builder.forbid_change_at(key).expect("stop");
+        }
+        if raw.inaccessible[index] {
+            builder.mark_stop_inaccessible(key).expect("stop");
+        }
+    }
     let timetable = builder.build().expect("build");
+    for (&(from, to), &floor) in &raw_floors {
+        pair_floors.insert(
+            (
+                timetable.stop_id(keys[from]).into_inner(),
+                timetable.stop_id(keys[to]).into_inner(),
+            ),
+            if floor == 255 {
+                FORBIDDEN_WALK
+            } else {
+                i32::from(floor)
+            },
+        );
+    }
     let days: Vec<_> = raw
         .day_offsets
         .iter()
@@ -236,6 +304,8 @@ fn build_net(raw: &RawNet) -> TestNet {
     let count = usize::from(raw.stop_count);
     let mut stop_node = vec![0; count];
     let mut min_change = vec![0; count];
+    let mut no_change_final = vec![false; count];
+    let mut stop_access = vec![true; count];
     let mut access = StopTable::new(count);
     let mut egress = StopTable::new(count);
     let node_count = count + 2;
@@ -244,6 +314,8 @@ fn build_net(raw: &RawNet) -> TestNet {
         // Stops 0 to 3 of the node table may collapse together: zero-length walks.
         stop_node[id.index()] = u32::from(raw.stop_node[index]) % u32::from(raw.stop_count + 2);
         min_change[id.index()] = i32::from(raw.min_change[index]);
+        no_change_final[id.index()] = raw.no_change[index];
+        stop_access[id.index()] = !raw.inaccessible[index];
         if let Some(cost) = raw.access[index] {
             access.set(id, secs(u32::from(cost))).expect("in range");
         }
@@ -267,6 +339,9 @@ fn build_net(raw: &RawNet) -> TestNet {
     let dist = graph.distances();
     TestNet {
         min_change,
+        no_change: no_change_final,
+        stop_access,
+        pair_floors,
         routes,
         graph,
         dist,
@@ -639,7 +714,7 @@ fn apply_overlay(net: &TestNet, raw: &RawOverlay) -> TestNet {
     }
     for (i, stop) in raw.added_stops.iter().enumerate() {
         let id = overlay
-            .add_stop(secs(u32::from(stop.min_change)))
+            .add_stop(secs(u32::from(stop.min_change)), true)
             .expect("add stop");
         assert_eq!(
             id.index(),
@@ -743,6 +818,17 @@ fn apply_overlay(net: &TestNet, raw: &RawOverlay) -> TestNet {
     let snapshot = overlay.build().expect("build overlay");
     assert_eq!(snapshot.stop_count(), total_stops);
     TestNet {
+        no_change: {
+            let mut no_change = net.no_change.clone();
+            no_change.resize(total_stops, false);
+            no_change
+        },
+        stop_access: {
+            let mut stop_access = net.stop_access.clone();
+            stop_access.resize(total_stops, true);
+            stop_access
+        },
+        pair_floors: net.pair_floors.clone(),
         min_change,
         routes,
         graph,
@@ -839,6 +925,7 @@ fn check_both_filters(net: &TestNet, raw: &RawNet) {
         raw.max_trips,
         raw.shift,
     );
+    check_network(net, RouteFilter::WHEELCHAIR, raw.max_trips, raw.shift);
 }
 
 proptest! {

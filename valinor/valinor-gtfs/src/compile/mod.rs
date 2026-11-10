@@ -13,12 +13,14 @@ mod assemble;
 mod interpolate;
 mod read;
 mod report;
+mod seated;
 mod shape_match;
 mod source;
 mod table;
 mod time;
 
 pub use report::{DropReason, FeedReport, WARNING_LIMIT};
+pub use seated::{CompileOptions, DEFAULT_MAX_SEATED_CHAIN, DEFAULT_SEATED_WAIT_SECONDS};
 pub use source::{DirectorySource, GtfsSource, InMemorySource, ZipSource};
 
 /// The namespace for all of a feed's GTFS identifiers.
@@ -68,6 +70,18 @@ pub struct CompiledOutput {
 ///
 /// If a feed can't be read, is structurally invalid, or can't be represented.
 pub fn compile(feeds: Vec<FeedInput<'_>>) -> Result<CompiledOutput, CompileError> {
+    compile_with(feeds, CompileOptions::default())
+}
+
+/// As [`compile`], with chosen options.
+///
+/// # Errors
+///
+/// As [`compile`].
+pub fn compile_with(
+    feeds: Vec<FeedInput<'_>>,
+    options: CompileOptions,
+) -> Result<CompiledOutput, CompileError> {
     let mut pool = assemble::StringPool::new();
     let mut models = Vec::with_capacity(feeds.len());
     for feed in feeds {
@@ -77,7 +91,7 @@ pub fn compile(feeds: Vec<FeedInput<'_>>) -> Result<CompiledOutput, CompileError
         {
             return Err(CompileError::DuplicateFeedId(feed.id.into_inner()));
         }
-        models.push(read::read_feed(feed, &mut pool)?);
+        models.push(read::read_feed(feed, &mut pool, options)?);
     }
     assemble::assemble(models, pool)
 }

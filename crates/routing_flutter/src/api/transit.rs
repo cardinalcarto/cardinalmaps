@@ -405,6 +405,23 @@ mod tests {
     }
 
     #[test]
+    fn a_wheelchair_request_is_answered_and_reports_accessibility() {
+        let (_dir, path) = timetable();
+        let transit = OfflineTransit::open_timetable(path, vec![tiles()])
+            .ok()
+            .unwrap();
+        let now = 1_781_506_440;
+        let request = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.5100,"lon":1.5350},"max_walk_seconds":600,"departure":1781506500,"mode":"wheelchair"}"#;
+        let answer = transit.plan_at(request, Vec::new(), now, &|| false);
+        assert_eq!(answer.status, 200);
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        let journey = &body["journeys"][0];
+        assert_eq!(journey["legs"][0]["accessibility"], "accessible");
+        assert_eq!(journey["legs"][1]["accessibility"], "unknown");
+        assert!(journey["legs"][1]["stops"][0]["accessibility"].is_string());
+    }
+
+    #[test]
     fn a_request_above_the_device_limit_is_refused() {
         let (_dir, path) = timetable();
         let transit = OfflineTransit::open_timetable(path, vec![tiles()])

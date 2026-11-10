@@ -9,6 +9,7 @@
 //! Everything else comes through borrowed slices and a sink.
 
 use crate::ids::{Direction, Seconds, StopId};
+use crate::timetable::{FORBIDDEN_WALK, TransferPairs};
 
 /// A search's clock, in seconds: it grows as the search moves away from its seeds.
 ///
@@ -39,6 +40,92 @@ impl Clock {
     #[inline]
     pub const fn seconds(self) -> i32 {
         self.0
+    }
+}
+
+/// What a window of service says about walking between stops, read by a transfer search.
+///
+/// A walk between two stops costs the longest of its own seconds and both stops' transfer times,
+/// and at least any `transfers.txt` rule for that pair of stops, the same in either direction;
+/// a `transfer_type=3` row for the pair means the walk doesn't exist.
+///
+/// Transfer tables keep real walk seconds; the search applies this when it reads a walk,
+/// so a walk that's drawn is still as long as it really is.
+#[derive(Debug, Clone, Copy)]
+pub struct WalkRules<'a> {
+    /// Each stop's transfer time in seconds; a stop past the slice has none.
+    pub times: &'a [i32],
+    /// The largest of `times`, so a long walk needn't look them up.
+    pub max_time: i32,
+    /// Rules for particular pairs of stops.
+    pub pairs: &'a TransferPairs,
+}
+
+impl WalkRules<'static> {
+    /// No transfer times and no rules: a walk costs its own seconds.
+    pub fn none() -> Self {
+        static NO_PAIRS: std::sync::LazyLock<TransferPairs> =
+            std::sync::LazyLock::new(TransferPairs::default);
+        Self {
+            times: &[],
+            max_time: 0,
+            pairs: &NO_PAIRS,
+        }
+    }
+}
+
+impl<'a> WalkRules<'a> {
+    /// The rules for walks from `seed` in one search direction.
+    #[inline]
+    pub fn of_seed(&self, seed: StopId, direction: Direction) -> SeedRules<'a> {
+        let (stops, floors) = self.pairs.of_seed(seed, direction);
+        SeedRules {
+            time: self.times.get(seed.index()).copied().unwrap_or(0),
+            times: self.times,
+            max_time: self.max_time,
+            stops,
+            floors,
+        }
+    }
+}
+
+/// [`WalkRules`] for walks from one seed.
+///
+/// # Performance
+///
+/// [`Self::cost`] is on the transfer search's path, one call per table entry. Almost every entry
+/// is a walk longer than every transfer time from a seed with no pair rules, so it is one
+/// comparison with no memory access; a shorter walk reads one more stop's transfer time.
+#[derive(Debug, Clone, Copy)]
+pub struct SeedRules<'a> {
+    time: i32,
+    times: &'a [i32],
+    max_time: i32,
+    stops: &'a [u32],
+    floors: &'a [i32],
+}
+
+impl SeedRules<'_> {
+    /// What a walk of `seconds` from this seed to `other` costs, or `None` if it is forbidden.
+    #[inline]
+    pub fn cost(&self, other: StopId, seconds: i32) -> Option<i32> {
+        if self.stops.is_empty() && seconds >= self.max_time {
+            return Some(seconds);
+        }
+        self.cost_read(other, seconds)
+    }
+
+    fn cost_read(&self, other: StopId, seconds: i32) -> Option<i32> {
+        let time = self.times.get(other.index()).copied().unwrap_or(0);
+        let mut cost = seconds.max(self.time).max(time);
+        if let Ok(index) = self.stops.binary_search(&other.into_inner()) {
+            let floor = *self.floors.get(index)?;
+            if floor == FORBIDDEN_WALK {
+                return None;
+            }
+            cost = cost.max(floor);
+        }
+        Some(cost)
     }
 }
 
@@ -94,6 +181,11 @@ pub struct TransferRequest<'a> {
     /// so the search may leave such arrivals unreported.
     /// [`Self::REPORT_ALL`] asks for every arrival of the contract on [`TransferSearch`].
     pub change_margin: i32,
+    /// How walks between stops are costed; see [`WalkRules`].
+    ///
+    /// A search over tables applies these for every walk it reads.
+    /// A street search with no table, such as `valinor-walk`'s `WalkSearch`, ignores them.
+    pub rules: WalkRules<'a>,
     /// Whether the caller wants this search to stop.
     /// Check it periodically and return [`TransferOutcome::Interrupted`].
     pub interrupt: &'a dyn Fn() -> bool,

@@ -159,8 +159,10 @@ pub trait StopSnapper: core::fmt::Debug + Send + Sync {
 pub struct ModeSnaps {
     walking: Arc<StopSnaps>,
     cycling: Arc<StopSnaps>,
+    wheelchair: Arc<StopSnaps>,
     walking_transfers: Arc<TransferTable>,
     cycling_transfers: Arc<TransferTable>,
+    wheelchair_transfers: Arc<TransferTable>,
 }
 
 impl ModeSnaps {
@@ -169,6 +171,7 @@ impl ModeSnaps {
         match mode {
             TravelMode::Walking => &self.walking,
             TravelMode::Cycling => &self.cycling,
+            TravelMode::Wheelchair => &self.wheelchair,
         }
     }
 
@@ -177,6 +180,7 @@ impl ModeSnaps {
         match mode {
             TravelMode::Walking => &self.walking_transfers,
             TravelMode::Cycling => &self.cycling_transfers,
+            TravelMode::Wheelchair => &self.wheelchair_transfers,
         }
     }
 
@@ -189,13 +193,19 @@ impl ModeSnaps {
             return Ok(self.clone());
         }
         // Shares the static table's cost only: a new-stop overlay is rare.
-        let (mut walking, mut cycling) = ((*self.walking).clone(), (*self.cycling).clone());
+        let (mut walking, mut cycling, mut wheelchair) = (
+            (*self.walking).clone(),
+            (*self.cycling).clone(),
+            (*self.wheelchair).clone(),
+        );
         for stop in new_stops {
             let ll = (f64::from(stop.longitude), f64::from(stop.latitude));
             walking.insert(stop.stop, snapper.snap_one(TravelMode::Walking, ll)?)?;
             cycling.insert(stop.stop, snapper.snap_one(TravelMode::Cycling, ll)?)?;
+            wheelchair.insert(stop.stop, snapper.snap_one(TravelMode::Wheelchair, ll)?)?;
         }
-        let (walking, cycling) = (Arc::new(walking), Arc::new(cycling));
+        let (walking, cycling, wheelchair) =
+            (Arc::new(walking), Arc::new(cycling), Arc::new(wheelchair));
         let stops: Vec<StopId> = new_stops.iter().map(|stop| stop.stop).collect();
         let walking_transfers = snapper.add_transfers(
             TravelMode::Walking,
@@ -209,11 +219,19 @@ impl ModeSnaps {
             &cycling,
             &stops,
         )?;
+        let wheelchair_transfers = snapper.add_transfers(
+            TravelMode::Wheelchair,
+            &self.wheelchair_transfers,
+            &wheelchair,
+            &stops,
+        )?;
         Ok(Self {
             walking,
             cycling,
+            wheelchair,
             walking_transfers: Arc::new(walking_transfers),
             cycling_transfers: Arc::new(cycling_transfers),
+            wheelchair_transfers: Arc::new(wheelchair_transfers),
         })
     }
 }
@@ -429,13 +447,18 @@ impl TransitState {
                 let points = stop_points(&set);
                 let walking = snapper.snap_all(TravelMode::Walking, &points)?;
                 let cycling = snapper.snap_all(TravelMode::Cycling, &points)?;
+                let wheelchair = snapper.snap_all(TravelMode::Wheelchair, &points)?;
                 let walking_transfers = snapper.base_transfers(TravelMode::Walking, &walking)?;
                 let cycling_transfers = snapper.base_transfers(TravelMode::Cycling, &cycling)?;
+                let wheelchair_transfers =
+                    snapper.base_transfers(TravelMode::Wheelchair, &wheelchair)?;
                 Some(ModeSnaps {
                     walking,
                     cycling,
+                    wheelchair,
                     walking_transfers,
                     cycling_transfers,
+                    wheelchair_transfers,
                 })
             }
         };

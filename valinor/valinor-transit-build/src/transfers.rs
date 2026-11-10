@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -68,6 +68,8 @@ pub struct TransferOptions {
     pub max_seconds_walking: u32,
     /// The bound for cycling transfers, in seconds.
     pub max_seconds_cycling: u32,
+    /// The bound for wheelchair transfers, in seconds.
+    pub max_seconds_wheelchair: u32,
     /// The zstd level of the tiles.
     pub zstd_level: i32,
     /// Which modes to build.
@@ -264,8 +266,10 @@ fn run_mode(
     let max_seconds = match mode {
         TransferMode::Walking => options.max_seconds_walking,
         TransferMode::Cycling => options.max_seconds_cycling,
+        TransferMode::Wheelchair => options.max_seconds_wheelchair,
     };
 
+    let pair_rules_without_walk = AtomicU64::new(0);
     let context = Context {
         options,
         mode,
@@ -277,9 +281,11 @@ fn run_mode(
         order,
         staging,
         manifest_id: id,
+        pair_rules_without_walk: &pair_rules_without_walk,
     };
     let outcomes = run_jobs(&context, jobs)?;
     let mut result = summarize(outcomes, stops, &unsnapped_list, &disconnected_stops);
+    result.totals.pair_rules_without_walk = pair_rules_without_walk.load(Ordering::Relaxed);
     result.seconds = started.elapsed().as_secs_f64();
     result.unsnapped = core::mem::take(&mut unsnapped_list);
     result.feed_snaps = feed_snaps;
@@ -364,20 +370,19 @@ pub fn costing_for(mode: TransferMode) -> Result<AnyCosting, BuildError> {
         mode: mode_name,
         reason,
     };
-    let costing_type = match mode {
-        TransferMode::Walking => valhalla_proto::costing::Type::Pedestrian,
-        TransferMode::Cycling => valhalla_proto::costing::Type::Bicycle,
+    let (costing_type, options, key): (_, &[u8], _) = match mode {
+        TransferMode::Walking => (valhalla_proto::costing::Type::Pedestrian, b"{}", "/none"),
+        TransferMode::Cycling => (valhalla_proto::costing::Type::Bicycle, b"{}", "/none"),
+        TransferMode::Wheelchair => (
+            valhalla_proto::costing::Type::Pedestrian,
+            br#"{"o":{"type":"wheelchair"}}"#,
+            "/o",
+        ),
     };
-    let doc = JsonValue::parse(b"{}").map_err(|e| error(format!("{e:?}")))?;
+    let doc = JsonValue::parse(options).map_err(|e| error(format!("{e:?}")))?;
     let mut proto = CostingProto::default();
-    parse_costing(
-        &doc,
-        "/none",
-        &mut proto,
-        &mut Vec::new(),
-        Some(costing_type),
-    )
-    .map_err(|e| error(format!("{e:?}")))?;
+    parse_costing(&doc, key, &mut proto, &mut Vec::new(), Some(costing_type))
+        .map_err(|e| error(format!("{e:?}")))?;
     AnyCosting::new(&proto).map_err(|e| error(e.to_string()))
 }
 
@@ -474,6 +479,7 @@ struct Context<'a> {
     order: &'a [u32],
     staging: &'a Path,
     manifest_id: u64,
+    pair_rules_without_walk: &'a AtomicU64,
 }
 
 fn run_jobs(context: &Context<'_>, jobs: &[TileJob]) -> Result<Vec<TileOutcome>, BuildError> {
@@ -550,6 +556,15 @@ fn build_tile(
             interrupt: &|| false,
         })?;
         let hops: Vec<Hop> = sorted_walks_from(tables, origin_id);
+        if let Some(targets) = context.stops.pair_rules.get(&origin) {
+            let missing = targets
+                .iter()
+                .filter(|&&to| hops.binary_search_by_key(&to, |hop| hop.stop).is_err())
+                .count();
+            context
+                .pair_rules_without_walk
+                .fetch_add(missing as u64, Ordering::Relaxed);
+        }
         if hops.is_empty() {
             continue;
         }
@@ -750,6 +765,9 @@ fn assemble_manifest(
         zoom: TILE_ZOOM,
         walking_bound_seconds: options.max_seconds_walking,
         cycling_bound_seconds: options.max_seconds_cycling,
+        wheelchair_bound_seconds: by_mode
+            .contains_key(&TransferMode::Wheelchair)
+            .then_some(options.max_seconds_wheelchair),
         feeds: manifest_feeds,
         tiles,
         totals,

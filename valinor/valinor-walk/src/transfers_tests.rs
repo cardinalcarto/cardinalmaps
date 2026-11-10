@@ -10,8 +10,8 @@ use std::sync::Arc;
 use valinor_router::tiles::TileSets;
 use valinor_sif::AnyCosting;
 use valinor_transit::{
-    Clock, Direction, StopId, TransferArrival, TransferOutcome, TransferRequest, TransferSearch,
-    TransferSeed, TransferSink,
+    Clock, Direction, PairRule, Seconds, StopId, TransferArrival, TransferOutcome, TransferPair,
+    TransferPairs, TransferRequest, TransferSearch, TransferSeed, TransferSink, WalkRules,
 };
 
 use super::review_tests::snaps_of;
@@ -68,6 +68,7 @@ fn search(
                 seeds,
                 upper_bound: Clock::new(bound),
                 change_margin: TransferRequest::REPORT_ALL,
+                rules: WalkRules::none(),
                 interrupt: &|| false,
             },
             &mut sink,
@@ -446,7 +447,7 @@ fn a_tables_entries_are_a_wider_searchs_within_its_bound() {
                     .collect();
                 for limit in [30_u32, 60, 120, 240, 480, 900, 1800, 3600] {
                     run(&mut narrow, limit);
-                    let bound = limit as f32 * crate::table::cost_factor(mode);
+                    let bound = limit as f32 * crate::table::cost_factor(mode, 0);
                     let got: HashMap<StopId, (f32, f32)> = narrow
                         .reached_stops()
                         .map(|(to, _)| {
@@ -748,11 +749,109 @@ fn a_table_round_trips_through_a_flat_file() {
                 }],
                 upper_bound: Clock::new(10_000),
                 change_margin: TransferRequest::REPORT_ALL,
+                rules: WalkRules::none(),
                 interrupt: &|| false,
             },
             &mut sink,
         )
         .expect("searches");
+}
+
+/// A search reads a table's real seconds and applies the rules when it uses each walk,
+/// the same forward and backward.
+#[test]
+fn a_table_search_applies_transfer_times_and_rules_when_it_reads_a_walk() {
+    let table = Arc::new(
+        TransferTable::from_sorted_walks(
+            3,
+            900,
+            &[
+                (
+                    0,
+                    Hop {
+                        stop: 1,
+                        seconds: 30,
+                    },
+                ),
+                (
+                    0,
+                    Hop {
+                        stop: 2,
+                        seconds: 40,
+                    },
+                ),
+                (
+                    1,
+                    Hop {
+                        stop: 0,
+                        seconds: 25,
+                    },
+                ),
+            ],
+        )
+        .expect("table"),
+    );
+    let mut transfers = TableTransfers::new(table);
+    let times = [90, 10, 10];
+    let pairs = TransferPairs::new(
+        3,
+        &[TransferPair {
+            from: StopId::new(0),
+            to: StopId::new(2),
+            rule: PairRule::Floor(Seconds::try_new(150).expect("in range")),
+        }],
+    )
+    .expect("pairs");
+    let search = |transfers: &mut TableTransfers, direction, stop: u32| {
+        let mut sink = Sink::default();
+        transfers.begin_run(direction);
+        transfers
+            .search(
+                &TransferRequest {
+                    direction,
+                    seeds: &[seed(stop, 1_000)],
+                    upper_bound: Clock::new(10_000),
+                    change_margin: TransferRequest::REPORT_ALL,
+                    rules: WalkRules {
+                        times: &times,
+                        max_time: 90,
+                        pairs: &pairs,
+                    },
+                    interrupt: &|| false,
+                },
+                &mut sink,
+            )
+            .expect("search");
+        let mut reached: Vec<(u32, i32, u32)> = sink
+            .0
+            .iter()
+            .map(|arrival| {
+                (
+                    arrival.stop.into_inner(),
+                    arrival.clock.seconds(),
+                    arrival.parent.seconds,
+                )
+            })
+            .collect();
+        reached.sort_unstable();
+        reached
+    };
+    // The cost is the longest of the walk and both transfer times, and the rule between 0 and 2;
+    // the walk's own seconds stay as they are.
+    assert_eq!(
+        search(&mut transfers, Direction::Forward, 0),
+        vec![(1, 1_090, 30), (2, 1_150, 40)]
+    );
+    assert_eq!(
+        search(&mut transfers, Direction::Backward, 2),
+        vec![(0, 1_150, 40)],
+        "the same cost walking into stop 2 backward"
+    );
+    assert_eq!(
+        search(&mut transfers, Direction::Forward, 1),
+        vec![(0, 1_090, 25)],
+        "a rule only binds its own pair"
+    );
 }
 
 #[derive(Default)]

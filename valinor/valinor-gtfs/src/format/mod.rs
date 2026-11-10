@@ -19,4 +19,4 @@ pub(crate) mod validate;
 #[cfg(feature = "compile")]
 pub(crate) mod writer;
 
-pub use layout::{FORMAT_VERSION, MAGIC};
+pub use layout::{DEFAULT_TRANSFER_SECONDS, FORMAT_VERSION, MAGIC};

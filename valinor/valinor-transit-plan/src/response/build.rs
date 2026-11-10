@@ -3,24 +3,26 @@
 use std::collections::HashMap;
 
 use valinor_gtfs::{
-    Accessibility, AgencyInfo, GtfsRoute, LatLon, RouteInfo, StopInfo, TimetablePart, TimetableSet,
-    TripInfo,
+    Accessibility as GtfsAccessibility, AgencyInfo, GtfsRoute, LatLon, RouteInfo, StopInfo,
+    TimetablePart, TimetableSet, TripInfo, TripSegmentInfo,
 };
 use valinor_gtfs_rt::proto::alert::Effect;
 use valinor_gtfs_rt::proto::trip_update::stop_time_update::ScheduleRelationship;
 use valinor_gtfs_rt::{
     FeedId, FeedKind, FeedStatus, ScopedId, StopTimeDetails, TripDetails, TripState,
 };
-use valinor_transit::{Leg, Profile, ProfileEntry, Ride, StopEvent, StopId, StopRules};
+use valinor_transit::{Leg, Profile, ProfileEntry, Ride, StopEvent, StopId, StopRules, TripKey};
 
-use crate::plan::{AccessEgressRequest, AccessEgressSearch, DirectSearch, TransitRequest};
+use crate::plan::{
+    AccessEgressRequest, AccessEgressSearch, DirectSearch, TransitRequest, TravelMode,
+};
 use crate::response::alerts::{LegSelectorContext, LegStop, ServiceRun, leg_alerts};
 use crate::response::vehicle::{lower, vehicle_from};
 use crate::response::{
-    AccessEgressLeg, AgencyResponse, DirectResponse, FeedReport, FeedState, Journey, JourneyLeg,
-    LegAlert, NoJourneysReason, PlanResponse, RealtimeLevel, RealtimeStatus, RouteResponse,
-    StopMovedNotice, StopRef, StopVisit, TransferLeg, TransitLeg, TripResponse, Vehicle,
-    WalkDurations, WalkPath, Window,
+    AccessEgressLeg, Accessibility, AgencyResponse, DirectResponse, FeedReport, FeedState, Journey,
+    JourneyLeg, LegAlert, NoJourneysReason, PlanResponse, RealtimeLevel, RealtimeStatus,
+    RideSegment, RouteResponse, StopMovedNotice, StopRef, StopVisit, TransferLeg, TransitLeg,
+    TripResponse, Vehicle, WalkDurations, WalkPath, Window,
 };
 use crate::state::TransitSnapshot;
 use crate::window::calendar_date;
@@ -243,11 +245,26 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         Ok(path)
     }
 
+    /// What is known about a walking or cycling leg: a wheelchair search routes on streets
+    /// that allow a wheelchair; a search on foot or by bicycle says nothing about access.
+    fn walking_accessibility(&self) -> Accessibility {
+        if self.request.mode == TravelMode::Wheelchair {
+            Accessibility::Accessible
+        } else {
+            Accessibility::Unknown
+        }
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one linear assembly of a journey's legs"
+    )]
     fn journey(&mut self, entry: ProfileEntry<A::Walk>) -> Result<Journey, A::Error> {
         let origin = self.origin();
         let departure = origin + i64::from(entry.departure.into_inner());
         let arrival = origin + i64::from(entry.arrival.into_inner());
         let mode = self.request.mode.name();
+        let walking_accessibility = self.walking_accessibility();
         let mut legs = Vec::with_capacity(entry.journey.legs.len());
         let mut clock = departure;
         let (mut access, mut transfers, mut egress, mut waiting) = (0_i64, 0_i64, 0_i64, 0_i64);
@@ -259,6 +276,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     let walk = self.access_path(stop)?;
                     legs.push(JourneyLeg::Access(AccessEgressLeg {
                         mode,
+                        accessibility: walking_accessibility,
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
@@ -282,7 +300,12 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     duration,
                     walk,
                 } => {
-                    let duration = i64::from(duration.into_inner());
+                    // The walk's own seconds: any more the transfer cost is a wait to board,
+                    // which the next ride's `wait_seconds` shows.
+                    let duration = self
+                        .access_egress
+                        .transfer_seconds(&walk)
+                        .map_or_else(|| i64::from(duration.into_inner()), i64::from);
                     transfers += duration;
                     let path = {
                         let snapshot = self.snapshot;
@@ -297,6 +320,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     };
                     legs.push(JourneyLeg::Transfer(Box::new(TransferLeg {
                         mode,
+                        accessibility: walking_accessibility,
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
@@ -313,6 +337,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     let walk = self.egress_path(stop)?;
                     legs.push(JourneyLeg::Egress(AccessEgressLeg {
                         mode,
+                        accessibility: walking_accessibility,
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
@@ -349,6 +374,19 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         }
         let new = self.snapshot.new_stops.iter().find(|s| s.stop == stop);
         StopRef {
+            accessibility: new.map_or(Accessibility::Unknown, |s| {
+                match s.details.wheelchair_boarding() {
+                    valinor_gtfs_rt::proto::stop::WheelchairBoarding::Available => {
+                        Accessibility::Accessible
+                    }
+                    valinor_gtfs_rt::proto::stop::WheelchairBoarding::NotAvailable => {
+                        Accessibility::Inaccessible
+                    }
+                    valinor_gtfs_rt::proto::stop::WheelchairBoarding::Unknown => {
+                        Accessibility::Unknown
+                    }
+                }
+            }),
             feed: new.map(|s| s.id.feed.to_string()),
             stop_id: new.map_or_else(|| stop.to_string(), |s| s.id.id.to_string()),
             name: new.and_then(new_stop_name),
@@ -372,6 +410,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             .parent_station
             .and_then(|id| part.compiled().location(id));
         StopRef {
+            accessibility: accessibility_of(info.wheelchair_boarding),
             feed: Some(info.feed.to_owned()),
             stop_id: info.gtfs_id.to_owned(),
             name: info.name.map(str::to_owned),
@@ -395,7 +434,19 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         let rider = &self.snapshot.rider;
         let trip_part = set.trip_part(ride.trip.trip);
         let static_trip = trip_part.and_then(|(part, local)| part.compiled().trip(local));
-        let details = rider.trip_by_key(ride.trip);
+        // The original trip this ride boards, on a combined stay-seated trip.
+        let trip_segments = trip_part
+            .map(|(part, local)| part.compiled().trip_segments(local))
+            .unwrap_or_default();
+        let boarded_segment = trip_segments
+            .iter()
+            .find(|s| {
+                s.first_position <= ride.board_position && ride.board_position <= s.last_position
+            })
+            .copied();
+        let details = boarded_segment
+            .and_then(|segment| rider.trip_details_named(ride.trip, segment.gtfs_id))
+            .or_else(|| rider.trip_by_key(ride.trip));
         // Static positions are valid only when the ride is on the trip's own stop pattern.
         let on_base_pattern = trip_part
             .zip(static_trip)
@@ -410,7 +461,9 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     .and_then(|feed| set.part_of_feed(feed.as_str()))
             })
             .or_else(|| set.route_part(ride.route).map(|(part, _)| part));
-        let gtfs_route = part.and_then(|part| gtfs_route_of(set, part, static_trip, details));
+        let gtfs_route = boarded_segment
+            .map(|segment| segment.route)
+            .or_else(|| part.and_then(|part| gtfs_route_of(set, part, static_trip, details)));
         let route = part
             .zip(gtfs_route)
             .and_then(|(part, route)| part.compiled().route(route));
@@ -418,8 +471,9 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             .zip(route.and_then(|r| r.agency))
             .and_then(|(part, agency)| part.compiled().agency(agency));
         let feed = self.feed_of(route, details);
-        let trip_id = static_trip
-            .map(|info| info.gtfs_id.to_owned())
+        let trip_id = boarded_segment
+            .map(|segment| segment.gtfs_id.to_owned())
+            .or_else(|| static_trip.map(|info| info.gtfs_id.to_owned()))
             .or_else(|| details.map(|d| d.trip_id.clone()))
             .unwrap_or_default();
 
@@ -440,6 +494,8 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         });
 
         let mut stops = Vec::new();
+        // For each ridden position, its index in `stops`, where a same-stop join appears once.
+        let mut stop_indices = Vec::new();
         for position in ride.board_position..=ride.alight_position {
             let index = position as usize;
             let (Some(stop), Some(event)) = (route_stops.get(index), events.get(index)) else {
@@ -451,8 +507,28 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                 static_trip: static_trip.filter(|_| on_base_pattern),
                 details,
                 day_start,
+                key: ride.trip,
             };
-            stops.push(self.stop_visit(&context, index, *stop, *event));
+            let visit = self.stop_visit(&context, index, *stop, *event);
+            // Where one original trip ends and the next starts at the same stop,
+            // a rider sees one stop: the arrival of the first and the departure of the next.
+            let joins_previous = stops.last().is_some_and(|previous: &StopVisit| {
+                previous.stop.stop_id == visit.stop.stop_id
+                    && previous.stop.feed == visit.stop.feed
+                    && is_segment_start(&trip_segments, position)
+            });
+            stop_indices.push(stops.len().saturating_sub(usize::from(joins_previous)));
+            if joins_previous {
+                if let Some(previous) = stops.last_mut() {
+                    previous.departure = visit.departure;
+                    previous.scheduled_departure = visit.scheduled_departure;
+                    previous.predicted_departure = visit.predicted_departure;
+                    previous.departure_delay_seconds = visit.departure_delay_seconds;
+                    previous.departure_uncertainty_seconds = visit.departure_uncertainty_seconds;
+                }
+            } else {
+                stops.push(visit);
+            }
         }
 
         let board_unix = self.origin() + i64::from(ride.board_time.into_inner());
@@ -467,6 +543,12 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                 details,
                 headway_based.unwrap_or(false),
             )
+            .or_else(|| {
+                // On a combined trip the vehicle may be reporting another original trip's ID.
+                trip_segments
+                    .iter()
+                    .find_map(|segment| self.vehicle_for(feed, segment.gtfs_id, ride, None, false))
+            })
         });
 
         let leg_stops: Vec<LegStop<'_>> = (ride.board_position..=ride.alight_position)
@@ -479,6 +561,53 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             })
             .collect();
         let alerts = match (feed.as_ref(), part) {
+            (Some(feed), Some(part)) if !trip_segments.is_empty() => {
+                let mut alerts: Vec<LegAlert> = Vec::new();
+                for segment in &trip_segments {
+                    let from = segment.first_position.max(ride.board_position);
+                    let to = segment.last_position.min(ride.alight_position);
+                    if from > to {
+                        continue;
+                    }
+                    let stops: Vec<LegStop<'_>> = (from..=to)
+                        .filter_map(|position| {
+                            let stop = *route_stops.get(position as usize)?;
+                            Some(LegStop {
+                                stop,
+                                gtfs_id: self.stop_gtfs_id_of(stop),
+                            })
+                        })
+                        .collect();
+                    let route = part.compiled().route(segment.route);
+                    let found = leg_alerts(
+                        part,
+                        rider,
+                        &LegSelectorContext {
+                            feed,
+                            agency_id: agency.and_then(|a| a.gtfs_id),
+                            route_id: route.map(|r| r.gtfs_id),
+                            route_type: route.map(|r| i32::from(r.route_type)),
+                            direction_id: segment.direction.map(u32::from),
+                            trip_id: segment.gtfs_id,
+                            date: calendar_date(ride.trip.date),
+                            run: Some(ServiceRun {
+                                trip: static_trip.map(|_| ride.trip.trip),
+                                date: ride.trip.date,
+                                start_time: None,
+                            }),
+                            stops,
+                            from: board_unix,
+                            to: alight_unix,
+                        },
+                    );
+                    for alert in found {
+                        if !alerts.contains(&alert) {
+                            alerts.push(alert);
+                        }
+                    }
+                }
+                alerts
+            }
             (Some(feed), Some(part)) => leg_alerts(
                 part,
                 rider,
@@ -512,20 +641,26 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         let shape = trip_part
             .filter(|_| on_base_pattern)
             .and_then(|(part, local)| {
-                part.compiled().shape_between(
+                part.compiled().shape_points_between(
                     local,
                     ride.board_position as usize,
                     ride.alight_position as usize,
                 )
             })
-            .map(|slice| encode_polyline6(&slice.points()));
+            .map(|points| encode_polyline6(&points));
+        let segments = Self::ride_segments(part, &trip_segments, ride, &stop_indices);
 
         let realtime = stops
             .iter()
             .any(|s| s.predicted_arrival.is_some() || s.predicted_departure.is_some());
         let delay_seconds = stops.first().and_then(|s| s.departure_delay_seconds);
 
+        let accessibility = leg_accessibility(
+            static_trip.map(|info| accessibility_of(info.wheelchair_accessible)),
+            &stops,
+        );
         TransitLeg {
+            accessibility,
             departure: board_unix,
             arrival: alight_unix,
             duration_seconds: alight_unix - board_unix,
@@ -538,15 +673,59 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                 ride,
                 &trip_id,
                 static_trip,
+                boarded_segment,
                 details,
                 feed.as_ref(),
                 self.snapshot,
             ),
             stops,
+            segments,
             shape,
             vehicle,
             alerts,
         }
+    }
+
+    /// The original trips a stay-seated ride spans; empty for a ride on one trip.
+    fn ride_segments(
+        part: Option<TimetablePart<'_>>,
+        segments: &[TripSegmentInfo<'_>],
+        ride: &Ride,
+        stop_indices: &[usize],
+    ) -> Vec<RideSegment> {
+        let Some(part) = part else {
+            return Vec::new();
+        };
+        if segments.len() < 2 {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for segment in segments {
+            let from = segment.first_position.max(ride.board_position);
+            let to = segment.last_position.min(ride.alight_position);
+            if from > to {
+                continue;
+            }
+            let route = part.compiled().route(segment.route).map(route_response);
+            let index_of = |position: u32| {
+                stop_indices
+                    .get((position - ride.board_position) as usize)
+                    .copied()
+                    .unwrap_or(0)
+            };
+            out.push(RideSegment {
+                trip_id: segment.gtfs_id.to_owned(),
+                route,
+                headsign: segment.headsign.map(str::to_owned),
+                first_stop_index: index_of(from),
+                last_stop_index: index_of(to),
+            });
+        }
+        // A ride within one original trip is just a ride on that trip.
+        if out.len() < 2 {
+            out.clear();
+        }
+        out
     }
 
     /// The feed a trip belongs to, from its route or its real-time record.
@@ -589,11 +768,9 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         event: StopEvent,
     ) -> StopVisit {
         let origin = self.origin();
-        let live = visit.details.and_then(|d| {
-            d.stops
-                .iter()
-                .find(|s| s.position == u32::try_from(index).ok())
-        });
+        let live = u32::try_from(index)
+            .ok()
+            .and_then(|position| self.snapshot.rider.stop_details_at(visit.key, position));
         let scheduled = visit.scheduled(index).or_else(|| {
             let live = live?;
             Some((live.scheduled_arrival?, live.scheduled_departure?))
@@ -829,6 +1006,8 @@ struct VisitContext<'a> {
     static_trip: Option<TripInfo<'a>>,
     details: Option<&'a TripDetails>,
     day_start: Option<i64>,
+    /// The ride's run, for finding its real-time details position by position.
+    key: TripKey,
 }
 
 impl VisitContext<'_> {
@@ -842,6 +1021,14 @@ impl VisitContext<'_> {
             day_start + i64::from(departure),
         ))
     }
+}
+
+/// Whether a position is the start of a later original trip on a combined one.
+fn is_segment_start(segments: &[TripSegmentInfo<'_>], position: u32) -> bool {
+    segments
+        .iter()
+        .skip(1)
+        .any(|segment| segment.first_position == position)
 }
 
 fn gtfs_route_of(
@@ -890,10 +1077,12 @@ fn agency_response(agency: AgencyInfo<'_>) -> AgencyResponse {
     }
 }
 
+#[allow(clippy::too_many_arguments, reason = "one leg's sources")]
 fn trip_response(
     ride: &Ride,
     trip_id: &str,
     static_trip: Option<TripInfo<'_>>,
+    boarded_segment: Option<TripSegmentInfo<'_>>,
     details: Option<&TripDetails>,
     feed: Option<&FeedId>,
     snapshot: &TransitSnapshot,
@@ -906,15 +1095,23 @@ fn trip_response(
         start_time: details.and_then(|d| d.start_time),
         headsign: details
             .and_then(|d| d.headsign.clone())
+            .or_else(|| boarded_segment.and_then(|s| s.headsign.map(str::to_owned)))
             .or_else(|| static_trip.and_then(|i| i.headsign.map(str::to_owned))),
-        direction_id: static_trip
-            .and_then(|i| i.direction)
+        direction_id: boarded_segment
+            .and_then(|s| s.direction)
+            .or_else(|| static_trip.and_then(|i| i.direction))
             .map(u32::from)
             .or_else(|| details.and_then(|d| d.direction_id)),
         block_id: static_trip.and_then(|i| i.block_id.map(str::to_owned)),
         headway_based: static_trip.map(|i| i.headway_based).filter(|&based| based),
-        wheelchair_accessible: static_trip.and_then(|i| accessibility(i.wheelchair_accessible)),
-        bikes_allowed: static_trip.and_then(|i| accessibility(i.bikes_allowed)),
+        wheelchair_accessible: boarded_segment
+            .map(|s| s.wheelchair_accessible)
+            .or_else(|| static_trip.map(|i| i.wheelchair_accessible))
+            .and_then(accessibility),
+        bikes_allowed: boarded_segment
+            .map(|s| s.bikes_allowed)
+            .or_else(|| static_trip.map(|i| i.bikes_allowed))
+            .and_then(accessibility),
         schedule_relationship: details
             .and_then(|d| d.relationship)
             .map(|relationship| lower(relationship.as_str_name())),
@@ -930,11 +1127,42 @@ fn trip_response(
     }
 }
 
-fn accessibility(value: Accessibility) -> Option<&'static str> {
+fn accessibility(value: GtfsAccessibility) -> Option<&'static str> {
     match value {
-        Accessibility::Unknown => None,
-        Accessibility::Yes => Some("yes"),
-        Accessibility::No => Some("no"),
+        GtfsAccessibility::Unknown => None,
+        GtfsAccessibility::Yes => Some("yes"),
+        GtfsAccessibility::No => Some("no"),
+    }
+}
+
+fn accessibility_of(value: GtfsAccessibility) -> Accessibility {
+    match value {
+        GtfsAccessibility::Unknown => Accessibility::Unknown,
+        GtfsAccessibility::Yes => Accessibility::Accessible,
+        GtfsAccessibility::No => Accessibility::Inaccessible,
+    }
+}
+
+/// A transit leg's accessibility: its trip's and its boarding and alighting stops'.
+fn leg_accessibility(trip: Option<Accessibility>, stops: &[StopVisit]) -> Accessibility {
+    let parts = trip
+        .into_iter()
+        .chain(stops.first().map(|visit| visit.stop.accessibility))
+        .chain(stops.last().map(|visit| visit.stop.accessibility));
+    let mut all_accessible = true;
+    let mut seen_any = false;
+    for part in parts {
+        seen_any = true;
+        match part {
+            Accessibility::Inaccessible => return Accessibility::Inaccessible,
+            Accessibility::Unknown => all_accessible = false,
+            Accessibility::Accessible => {}
+        }
+    }
+    if seen_any && all_accessible {
+        Accessibility::Accessible
+    } else {
+        Accessibility::Unknown
     }
 }
 

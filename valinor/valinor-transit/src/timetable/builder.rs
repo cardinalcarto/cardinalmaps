@@ -12,6 +12,8 @@ use crate::ids::{
 };
 use crate::timetable::arena::{Arena, BlockRef, offset_of};
 use crate::timetable::lanes::{ResolvedBlock, ResolvedTrip, StopEvent, StopRules};
+use crate::timetable::pairs::{PairRule, TransferPair, TransferPairs};
+use crate::timetable::window::NO_CHANGE;
 use crate::timetable::window::{BaseWindow, RouteAttributes, StopRouteIndex};
 
 /// A stop as the builder knows it; [`Timetable::stop_id`] gives its final number.
@@ -56,6 +58,11 @@ pub struct TimetableBuilder {
     services: Vec<BTreeSet<ServiceDate>>,
     patterns: Vec<PatternRecord>,
     trips: Vec<TripRecord>,
+    pairs: Vec<(u32, u32, PairRule)>,
+    /// Stops where a rider arriving by trip can't board another there.
+    no_change: Vec<bool>,
+    /// Stops marked as not accessible to a rider in a wheelchair.
+    inaccessible: Vec<bool>,
 }
 
 impl TimetableBuilder {
@@ -72,7 +79,58 @@ impl TimetableBuilder {
     pub fn add_stop(&mut self, min_change: Seconds) -> Result<StopKey, BuildError> {
         let key = StopKey(offset_of(self.stops.len())?);
         self.stops.push(min_change);
+        self.no_change.push(false);
+        self.inaccessible.push(false);
         Ok(key)
+    }
+
+    /// Forbids changing at a stop: a rider arriving there by trip can't board another there.
+    ///
+    /// # Errors
+    ///
+    /// If the stop wasn't issued by this builder.
+    pub fn forbid_change_at(&mut self, stop: StopKey) -> Result<(), BuildError> {
+        *self
+            .no_change
+            .get_mut(stop.0 as usize)
+            .ok_or(BuildError::UnknownStop(stop.0))? = true;
+        Ok(())
+    }
+
+    /// Marks a stop as not accessible: a rider in a wheelchair can't board or alight there.
+    ///
+    /// # Errors
+    ///
+    /// If the stop wasn't issued by this builder.
+    pub fn mark_stop_inaccessible(&mut self, stop: StopKey) -> Result<(), BuildError> {
+        *self
+            .inaccessible
+            .get_mut(stop.0 as usize)
+            .ok_or(BuildError::UnknownStop(stop.0))? = true;
+        Ok(())
+    }
+
+    /// Adds a rule for walking from one stop to another.
+    ///
+    /// # Errors
+    ///
+    /// If either stop wasn't issued by this builder, or they are the same stop.
+    pub fn add_transfer_pair(
+        &mut self,
+        from: StopKey,
+        to: StopKey,
+        rule: PairRule,
+    ) -> Result<(), BuildError> {
+        for stop in [from, to] {
+            if stop.0 as usize >= self.stops.len() {
+                return Err(BuildError::UnknownStop(stop.0));
+            }
+        }
+        if from == to {
+            return Err(BuildError::TransferToSameStop(StopId::new(from.0)));
+        }
+        self.pairs.push((from.0, to.0, rule));
+        Ok(())
     }
 
     /// Adds a calendar: the dates on which its trips run.
@@ -196,8 +254,12 @@ impl TimetableBuilder {
         }
 
         let mut min_change = vec![0_i32; self.stops.len()];
+        let mut no_change = vec![false; self.stops.len()];
+        let mut stop_access = vec![true; self.stops.len()];
         for (old, &id) in stop_map.iter().enumerate() {
             min_change[id.index()] = self.stops[old].as_i32();
+            no_change[id.index()] = self.no_change[old];
+            stop_access[id.index()] = !self.inaccessible[old];
         }
 
         let mut routes = Vec::with_capacity(self.patterns.len());
@@ -219,11 +281,23 @@ impl TimetableBuilder {
             });
         }
 
+        let pairs = self
+            .pairs
+            .iter()
+            .map(|&(from, to, rule)| TransferPair {
+                from: stop_map[from as usize],
+                to: stop_map[to as usize],
+                rule,
+            })
+            .collect();
         Ok(Timetable {
             stop_map,
             min_change,
+            no_change,
+            stop_access,
             services: self.services,
             routes,
+            pairs,
         })
     }
 }
@@ -257,8 +331,11 @@ pub struct Timetable {
     /// From builder order to the final stop number.
     stop_map: Vec<StopId>,
     min_change: Vec<i32>,
+    no_change: Vec<bool>,
+    stop_access: Vec<bool>,
     services: Vec<BTreeSet<ServiceDate>>,
     routes: Vec<RouteRecord>,
+    pairs: Vec<TransferPair>,
 }
 
 impl Timetable {
@@ -363,6 +440,25 @@ pub trait TimetableSource {
     /// The minimum change time at a stop, in seconds.
     fn min_change(&self, stop: usize) -> i32;
 
+    /// Whether a rider arriving at this stop by trip may not board another there.
+    ///
+    /// False by default: most stops have no such rule.
+    fn no_change_at(&self, _stop: usize) -> bool {
+        false
+    }
+
+    /// Whether a rider in a wheelchair may use this stop (only an explicit `2` says no).
+    fn wheelchair_stop_accessible(&self, _stop: usize) -> bool {
+        true
+    }
+
+    /// The rules for walking between particular stops, in the source's numbering.
+    ///
+    /// Empty by default: most sources have none.
+    fn transfer_pairs(&self) -> Vec<TransferPair> {
+        Vec::new()
+    }
+
     /// The stop sequence of a route, in the source's numbering.
     ///
     /// # Errors
@@ -402,6 +498,18 @@ impl TimetableSource for Timetable {
 
     fn min_change(&self, stop: usize) -> i32 {
         self.min_change.get(stop).copied().unwrap_or(0)
+    }
+
+    fn no_change_at(&self, stop: usize) -> bool {
+        self.no_change.get(stop).copied().unwrap_or(false)
+    }
+
+    fn wheelchair_stop_accessible(&self, stop: usize) -> bool {
+        self.stop_access.get(stop).copied().unwrap_or(true)
+    }
+
+    fn transfer_pairs(&self) -> Vec<TransferPair> {
+        self.pairs.clone()
     }
 
     fn route_stops_of(&self, route: RouteId) -> Result<Vec<StopId>, BuildError> {
@@ -464,6 +572,10 @@ pub struct WindowPart<'a> {
 ///
 /// If there are too many days, a part's `day_offsets` differs from `days` in length,
 /// a shifted time leaves the supported range, or a table grows past its `u32` offsets.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one linear concatenation of the parts' tables"
+)]
 pub fn materialize_parts(
     parts: &[WindowPart<'_>],
     days: &[ServiceDay],
@@ -493,6 +605,14 @@ pub fn materialize_parts(
     let mut attributes = Vec::with_capacity(route_total);
     let mut route_stops = Vec::with_capacity(route_total);
     let mut min_change = Vec::with_capacity(stop_total);
+    let mut transfer_times = Vec::with_capacity(stop_total);
+    let mut pairs = Vec::new();
+    let mut stop_access = Vec::with_capacity(stop_total);
+    for part in parts {
+        let timetable = part.timetable;
+        stop_access
+            .extend((0..timetable.stop_count()).map(|s| timetable.wheelchair_stop_accessible(s)));
+    }
     let mut stop_base = 0_u32;
     let mut route_base = 0_u32;
     let mut stops = Vec::new();
@@ -533,6 +653,7 @@ pub fn materialize_parts(
                     stops_start,
                     stops.len(),
                     &block,
+                    &stop_access,
                 )?;
                 directory.push(BlockRef {
                     arena: 0,
@@ -541,11 +662,30 @@ pub fn materialize_parts(
             }
         }
         let stop_count = timetable.stop_count();
-        min_change.extend((0..stop_count).map(|stop| timetable.min_change(stop)));
+        for stop in 0..stop_count {
+            let time = timetable.min_change(stop);
+            transfer_times.push(time);
+            min_change.push(if timetable.no_change_at(stop) {
+                NO_CHANGE
+            } else {
+                time
+            });
+        }
+        pairs.extend(
+            timetable
+                .transfer_pairs()
+                .into_iter()
+                .map(|pair| TransferPair {
+                    from: StopId::new(pair.from.into_inner() + stop_base),
+                    to: StopId::new(pair.to.into_inner() + stop_base),
+                    rule: pair.rule,
+                }),
+        );
         stop_base += offset_of(stop_count)?;
         route_base += offset_of(timetable.route_count())?;
     }
 
+    let pairs = TransferPairs::new(min_change.len(), &pairs)?;
     let index = StopRouteIndex::build(
         min_change.len(),
         route_stops
@@ -563,6 +703,9 @@ pub fn materialize_parts(
         attributes,
         route_stops,
         min_change,
+        transfer_times,
+        pairs,
+        stop_access,
         index,
         days.to_vec(),
     ))

@@ -15,7 +15,8 @@ searching the street network during a query cost too much time and memory (see "
 - Profile queries: all journeys in a departure window,
   Pareto-optimal on arrival time and number of trips.
 - A leave-now query for the first answer, with the profile as the slower "more routes".
-- Transfers within a bound, each costed by Sif the way any route on the graph is.
+- Transfers within a bound, each costed by Sif the way any route on the graph is,
+  and at least as long as the transfer times of its two stops.
 - GTFS-RT trip updates, vehicle positions, and service alerts.
 - The same router on the server and on the client.
   There is no tokio or network access in the routing crates.
@@ -122,6 +123,7 @@ of the street network during the query, at about one hundredth of the search tim
 |---|---|---|---|---|
 | Walk | walk | walk | all | walk |
 | Bike on board | bike | bike | `bikes_allowed` | bike |
+| Wheelchair | wheelchair | wheelchair | not `wheelchair_accessible=2` | wheelchair |
 | Bike and park | bike, park, walk | walk | all | walk |
 | Park and ride (deferred) | drive, park, walk | walk | all | walk |
 
@@ -136,10 +138,60 @@ Each stop occurrence on a route is indexed, so loop routes work.
 `pickup_type` and `drop_off_type` are honored, and mirrored in backward searches.
 
 A stop has separate labels for arriving by trip and arriving on foot.
-Boarding the same stop after arriving by trip requires the minimum change time,
+Boarding the same stop after arriving by trip requires the stop's transfer time,
 so a zero-length walk can't bypass it.
-A walk joins two different stops, so it never leads from a stop back to itself;
-a rider reaching a stop on foot from another stop owes no change time there.
+A walk joins two different stops, so it never leads from a stop back to itself.
+
+### Transfer times
+
+This follows MOTIS (nigiri).
+Each stop has a transfer time of 2 minutes,
+unless a `transfers.txt` `transfer_type=2` row with the same from and to stop sets one;
+the smallest of several rows wins.
+A station's row covers each of its stops, as GTFS says. Rows naming a route or a trip are ignored
+and counted in the compile report.
+
+A transfer at the same stop costs that stop's transfer time.
+A walk between two stops costs the longest of the walk and both stops' transfer times.
+A type 2 row between two different stops is a floor on that walk, the first row winning, as in
+nigiri: nigiri would add a footpath for such a row even with no other way to get there,
+but a transfer here comes from a walk on the street network, so a row with no walk in the table
+has nothing to apply to. The transfer stage counts those rows in the manifest's totals
+(`pair_rules_without_walk`).
+
+Tables keep real walk seconds; the longer value applies when a search reads a walk,
+so a walk drawn in a response still takes as long as it really does,
+and what's left of the transfer's cost is a wait to board, shown as the next ride's `wait_seconds`.
+Nothing here depends on the request: there is no per-request slack.
+
+### Wheelchair
+
+`wheelchair` is a third travel mode, using Sif's pedestrian `wheelchair` type for access, egress,
+and transfer tiles and stop snaps, built offline by the same stages as walking and cycling.
+Only what a feed explicitly marks inaccessible is excluded:
+a stop with `wheelchair_boarding=2` (a stop's empty value inherits its parent station's,
+as GTFS says), and a trip with `wheelchair_accessible=2`. Unknown is allowed, and no feed is
+special-cased. An excluded stop can't be boarded, alighted, or changed at.
+Trips with and without `wheelchair_accessible=2` go in separate patterns, as `bikes_allowed` does,
+so a route filter tests one attribute. A stop's exclusion is one more pair of bits in each lane
+position's rule byte, set when the lane is laid out, and the scan reads the bits its query chose
+with the same test as before, so a query on foot or by bicycle pays nothing.
+
+Forward and backward searches mirror the wheelchair bits exactly as they mirror pickup and drop-off.
+
+A table search's cost bound for a wheelchair is `1.2`, the same as walking;
+measured over 5,338 real wheelchair routes in Washington, whole-route cost over time has
+p50 1.03, p95 1.175, p99 2.2 (walking p95 1.176, cycling 3.49 over the same sample).
+
+### Forbidden transfers
+
+`transfer_type=3` is honored at stop level. Between two different stops, that walk doesn't exist.
+At one stop, a rider arriving by trip can't board another trip there; walking to another stop
+and boarding there is still possible, because a rider boards on foot.
+A station in a row covers each of its stops, and every pair of them.
+Rows naming a route or a trip can't be expressed cheaply (a route or trip check on every
+boarding would be a per-trip branch in the scan); they are counted in the compile report
+as `transfers_forbidden_qualified`, and otherwise ignored.
 
 ## Memory layout
 
@@ -240,11 +292,39 @@ at whatever scope it is declared.
 Fields within one entity selector are combined with AND, and selectors with OR.
 `DETOUR`, `STOP_MOVED`, and other effects don't change routing; they are displayed on the legs.
 
+## Stay-seated transfers
+
+A vehicle that continues as a new trip is one ride, not a transfer. In the compiler, consecutive
+trips of a `block_id` merge into one trip on a combined stop pattern when the first's last stop is
+the same stop as the next's first and the wait there is at most 10 minutes (`--seated-wait-seconds`,
+600 by default). A chain holds at most 8 trips by default; what the cap cuts is counted.
+A `transfer_type=4` row merges its two trips whatever the wait (up to a sanity limit of two hours,
+as nigiri has) and whatever their stops, and takes precedence over `block_id`: a block with any trip
+in a type 4 row doesn't merge by `block_id`. A `transfer_type=5` row forbids its pair's merge.
+Trips also merge only when both run that day, and only when their bike and wheelchair rules agree,
+because a pattern has one of each.
+
+A merged trip keeps each original trip's positions as they were, so the last stop of one and the
+first stop of the next are two consecutive positions of the combined pattern.
+A rider can't board at the former or alight at the latter, so staying on is the only way through.
+Each original trip keeps its `trip_id`, route, headsign, stop sequences, and shape, per segment
+in the file. GTFS-RT applies to the original trip's stretch: a delay moves only that stretch (times
+stay in order across the join, since the vehicle can't leave before it has arrived), and
+a cancellation leaves it unusable, so a ride can still board on another stretch and end at the join.
+A response shows one ride with `segments`, and the join as one stop.
+
 ## Responses
 
 Transit has its own endpoint and JSON, separate from Valhalla's `Api` and `multimodal`.
 Walking and cycling legs are built from the search's parent pointers through Thor's `Paths` and
 `build_trip`, and narrated by Ilúvatar.
+
+Every stop and every leg, in every response and for every mode, carries `accessibility`:
+`accessible`, `inaccessible`, or `unknown`.
+A stop's is its GTFS `wheelchair_boarding`, a child's empty value inheriting its parent station's.
+A transit leg's covers its trip and its boarding and alighting stops: `inaccessible` if any says so,
+`accessible` if all do, otherwise `unknown`. A walk or ride to a stop states what's known of it:
+`accessible` for a leg a wheelchair search routed on streets that allow one, and `unknown` otherwise.
 
 Transit legs carry everything a rider may want, each field optional where feeds may omit it:
 scheduled and predicted times, delay, schedule relationship, route names and colors, agency details,

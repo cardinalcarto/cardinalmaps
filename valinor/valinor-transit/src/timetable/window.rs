@@ -5,6 +5,10 @@ use crate::error::BuildError;
 use crate::ids::DaySlot;
 use crate::ids::{RouteId, ServiceDay, StopId};
 use crate::timetable::arena::{Arena, BlockRef, offset_of};
+use crate::timetable::pairs::TransferPairs;
+
+/// A [`BaseWindow::min_change`] for a stop where a rider arriving by trip can't board another.
+pub(crate) const NO_CHANGE: i32 = i32::MAX;
 
 /// Boolean attributes of a route.
 ///
@@ -18,6 +22,8 @@ impl RouteAttributes {
     pub const NONE: Self = Self(0);
     /// Bicycles may be taken on board.
     pub const BIKES_ALLOWED: Self = Self(1);
+    /// A rider in a wheelchair may ride: the trips aren't marked `wheelchair_accessible=2`.
+    pub const WHEELCHAIR_ACCESSIBLE: Self = Self(2);
 
     /// Whether every attribute in `other` is present.
     #[inline]
@@ -111,19 +117,34 @@ pub struct BaseWindow {
     pub(crate) attributes: Vec<RouteAttributes>,
     /// Each route's `(start, length)` in the arena's stop sequences.
     pub(crate) route_stops: Vec<(u32, u32)>,
-    /// The per-stop minimum change times, in seconds.
+    /// Per stop, what boarding after arriving by trip costs, in seconds, or [`NO_CHANGE`].
     pub(crate) min_change: Vec<i32>,
+    /// Per stop, its transfer time, in seconds: what a walk to or from it costs at least.
+    ///
+    /// Equal to `min_change` at every stop that allows a change.
+    pub(crate) transfer_times: Vec<i32>,
+    /// The rules for walking between particular stops.
+    pub(crate) pairs: TransferPairs,
+    /// Per stop, whether a rider in a wheelchair may board and alight there.
+    pub(crate) stop_access: Vec<bool>,
     pub(crate) index: StopRouteIndex,
     pub(crate) days: Vec<ServiceDay>,
 }
 
 impl BaseWindow {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one call site, each a distinct table"
+    )]
     pub(crate) fn new(
         arena: Arena,
         directory: Vec<BlockRef>,
         attributes: Vec<RouteAttributes>,
         route_stops: Vec<(u32, u32)>,
         min_change: Vec<i32>,
+        transfer_times: Vec<i32>,
+        pairs: TransferPairs,
+        stop_access: Vec<bool>,
         index: StopRouteIndex,
         days: Vec<ServiceDay>,
     ) -> Self {
@@ -133,6 +154,9 @@ impl BaseWindow {
             attributes,
             route_stops,
             min_change,
+            transfer_times,
+            pairs,
+            stop_access,
             index,
             days,
         }

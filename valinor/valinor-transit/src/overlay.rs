@@ -30,6 +30,8 @@ pub struct OverlayBuilder {
     directory: Vec<BlockRef>,
     attributes: Vec<RouteAttributes>,
     min_change: Vec<i32>,
+    transfer_times: Vec<i32>,
+    stop_access: Vec<bool>,
     /// `(route, start, length)` of each added route's stops in the overlay arena.
     added_routes: Vec<(usize, u32, u32)>,
     /// The start of each base route's stop sequence in the overlay arena, once copied there.
@@ -45,6 +47,8 @@ impl OverlayBuilder {
             directory: base.directory.clone(),
             attributes: base.attributes.clone(),
             min_change: base.min_change.clone(),
+            transfer_times: base.transfer_times.clone(),
+            stop_access: base.stop_access.clone(),
             added_routes: Vec::new(),
             base_route_stops,
             base,
@@ -56,12 +60,20 @@ impl OverlayBuilder {
     /// The number follows every base stop, and is valid in this overlay's snapshot only.
     /// Stop tables must be built from [`Snapshot::stop_count`] to address it.
     ///
+    /// `wheelchair_accessible` is `false` only for a stop the feed marks as not accessible.
+    ///
     /// # Errors
     ///
     /// If stops can no longer be numbered by a `u32`.
-    pub fn add_stop(&mut self, min_change: Seconds) -> Result<StopId, BuildError> {
+    pub fn add_stop(
+        &mut self,
+        min_change: Seconds,
+        wheelchair_accessible: bool,
+    ) -> Result<StopId, BuildError> {
         let id = StopId::new(offset_of(self.min_change.len())?);
         self.min_change.push(min_change.as_i32());
+        self.transfer_times.push(min_change.as_i32());
+        self.stop_access.push(wheelchair_accessible);
         Ok(id)
     }
 
@@ -111,9 +123,14 @@ impl OverlayBuilder {
     ) -> Result<(), BuildError> {
         let slot = self.slot(route, day)?;
         let (stops_start, stop_count) = self.route_stops_in_arena(route)?;
-        let index = self
-            .arena
-            .push_block(route, day, stops_start, stop_count as usize, block)?;
+        let index = self.arena.push_block(
+            route,
+            day,
+            stops_start,
+            stop_count as usize,
+            block,
+            &self.stop_access,
+        )?;
         self.directory[slot] = if index == 0 {
             BlockRef::EMPTY
         } else {
@@ -163,8 +180,9 @@ impl OverlayBuilder {
             additions,
             directory: self.directory,
             attributes: self.attributes,
-            max_min_change: self.min_change.iter().copied().max().unwrap_or(0),
+            max_transfer_time: self.transfer_times.iter().copied().max().unwrap_or(0),
             min_change: self.min_change,
+            transfer_times: self.transfer_times,
             added_route_stops,
         }))
     }

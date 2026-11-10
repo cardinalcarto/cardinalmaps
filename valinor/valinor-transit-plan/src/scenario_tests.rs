@@ -1,17 +1,24 @@
 //! Scenarios: the snapshot lifecycle, one test per transition, and response building.
 
+use core::convert::Infallible;
+
 use insta::assert_json_snapshot;
 use proptest::prelude::*;
-use valinor_gtfs::LatLon;
+use valinor_gtfs::{
+    FeedId as CompileFeedId, FeedInput, InMemorySource, LatLon, LoadedTimetable, compile,
+};
 use valinor_gtfs_rt::proto::alert::Effect;
 use valinor_gtfs_rt::{FeedId, FeedKind, StaticLookup, TripQuery};
 use valinor_transit::{RouteAttributes, RouteFilter, Router, StopId};
 
 use crate::error::{PlanError, StateError};
 use crate::lookup::CompiledLookup;
-use crate::plan::{TransitOptions, TransitRequest, TravelMode, plan};
+use crate::plan::{
+    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, TransitOptions, TransitRequest,
+    TravelMode, plan,
+};
 use crate::response::{FeedState, JourneyLeg, PlanResponse, RealtimeLevel, TransitLeg};
-use crate::state::{FeedUpdate, IngestOutcome, TransitSnapshot, TransitState};
+use crate::state::{FeedUpdate, IngestOutcome, StateConfig, TransitSnapshot, TransitState};
 use crate::testing::{
     FEED, JUNE_15, JUNE_16, StraightLineAccess, StraightLineTransfers, StraightWalk, alert_entity,
     delay_update, encoded_feed, june_15, route_selector, route_stop_selector, stop_selector,
@@ -826,6 +833,65 @@ fn the_response_has_everything_a_rider_might_want() {
     assert_json_snapshot!("full_response", &response);
 }
 
+/// Tells the response layer a transfer's real walk was short.
+#[derive(Default)]
+struct ShortWalks(StraightLineAccess);
+
+impl AccessEgressSearch for ShortWalks {
+    type Error = Infallible;
+    type Walk = StraightWalk;
+
+    fn tables(
+        &mut self,
+        request: &AccessEgressRequest<'_>,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<AccessEgressTables, Infallible> {
+        self.0.tables(request, interrupt)
+    }
+
+    fn transfer_seconds(&self, _walk: &StraightWalk) -> Option<u32> {
+        Some(17)
+    }
+}
+
+/// A transfer leg shows the walk's own time; a longer transfer time is a wait to board.
+#[test]
+fn a_transfer_leg_is_the_walk_and_the_rest_is_a_wait() {
+    let state = synthetic_state();
+    let request = morning_request();
+    let snapshot = state.pin(request.now).expect("pin");
+    let mut router = Router::new(StraightLineTransfers::new(
+        snapshot.stop_locations(),
+        500.0,
+        1.33,
+    ));
+    let response = plan(
+        &state,
+        &mut router,
+        &mut ShortWalks::default(),
+        &request,
+        &|| false,
+    )
+    .expect("plan");
+    let journey = two_trip_journey(&response);
+    let (index, leg) = journey
+        .legs
+        .iter()
+        .enumerate()
+        .find_map(|(index, leg)| match leg {
+            JourneyLeg::Transfer(leg) => Some((index, leg)),
+            _ => None,
+        })
+        .expect("a transfer");
+    assert_eq!(leg.duration_seconds, 17);
+    assert_eq!(leg.arrival - leg.departure, 17);
+    assert_eq!(journey.walking.transfer_seconds, 17);
+    let JourneyLeg::Transit(next) = &journey.legs[index + 1] else {
+        panic!("a ride follows");
+    };
+    assert_eq!(next.wait_seconds, next.departure - leg.arrival);
+}
+
 #[test]
 fn stop_moved_marks_the_boarding_stop() {
     let state = synthetic_state();
@@ -1065,6 +1131,423 @@ fn removed_stops_carry_their_marks_without_a_trip_update() {
             .iter()
             .any(|a| a.alert.effect.as_deref() == Some("no_service"))
     );
+}
+
+/// Stops with every wheelchair value, and trips with and without the accessible flag.
+fn wheelchair_state() -> TransitState {
+    let source = InMemorySource::new()
+        .with(
+            "agency.txt",
+            "agency_id,agency_name,agency_timezone,agency_url\n\
+             A,Metro,America/Los_Angeles,https://m.test\n",
+        )
+        .with("routes.txt", "route_id,agency_id,route_type\nR,A,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_name,stop_lat,stop_lon,wheelchair_boarding\n\
+             ORG,Origin,47.5995,-122.3300,1\n\
+             BAD,Stairs,47.6100,-122.3200,2\n\
+             GOOD,Unknown,47.6100,-122.3100,\n\
+             DST,Destination,47.6204,-122.3098,1\n",
+        )
+        .with(
+            "calendar.txt",
+            "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n\
+             WK,1,1,1,1,1,0,0,20260601,20260630\n",
+        )
+        .with(
+            "trips.txt",
+            "route_id,service_id,trip_id,wheelchair_accessible\n\
+             R,WK,T1,1\nR,WK,T2,1\nR,WK,T3,1\nR,WK,T4,1\nR,WK,T5,2\n",
+        )
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             T1,08:05:00,08:05:00,ORG,1\nT1,08:15:00,08:15:00,BAD,2\n\
+             T2,08:20:00,08:20:00,BAD,1\nT2,08:30:00,08:30:00,DST,2\n\
+             T3,08:10:00,08:10:00,ORG,1\nT3,08:25:00,08:25:00,GOOD,2\n\
+             T4,08:30:00,08:30:00,GOOD,1\nT4,08:45:00,08:45:00,DST,2\n\
+             T5,08:20:00,08:20:00,ORG,1\nT5,08:36:00,08:36:00,DST,2\n",
+        );
+    let compiled = compile(vec![FeedInput {
+        id: CompileFeedId::try_new("w".to_owned()).expect("id"),
+        source: Box::new(source),
+    }])
+    .expect("compiles");
+    TransitState::new(
+        LoadedTimetable::from_bytes(compiled.bytes).expect("loads"),
+        StateConfig::default(),
+    )
+    .expect("state")
+}
+
+/// A rider in a wheelchair can't change at an inaccessible stop, but unknown ones are fine,
+/// and a trip marked inaccessible is out of the question.
+#[test]
+fn a_wheelchair_query_avoids_an_inaccessible_stop_and_uses_unknown_ones() {
+    let state = wheelchair_state();
+    let run_mode = |mode| {
+        let request = TransitRequest {
+            mode,
+            options: TransitOptions {
+                max_trips: 3,
+                ..TransitOptions::default()
+            },
+            ..morning_request()
+        };
+        run(&state, &request)
+    };
+    let stops_of = |response: &PlanResponse| -> Vec<String> {
+        response
+            .journeys
+            .iter()
+            .flat_map(transit_legs)
+            .flat_map(|leg| leg.stops.iter().map(|visit| visit.stop.stop_id.clone()))
+            .collect()
+    };
+    let walking = run_mode(TravelMode::Walking);
+    assert!(
+        stops_of(&walking).contains(&"BAD".to_owned()),
+        "a rider on foot may use it"
+    );
+    assert!(
+        walking
+            .journeys
+            .iter()
+            .flat_map(transit_legs)
+            .any(|leg| leg.trip.trip_id == "T5")
+    );
+    let wheelchair = run_mode(TravelMode::Wheelchair);
+    assert!(!wheelchair.journeys.is_empty());
+    let trips: Vec<&str> = wheelchair
+        .journeys
+        .iter()
+        .flat_map(transit_legs)
+        .map(|leg| leg.trip.trip_id.as_str())
+        .collect();
+    assert!(
+        !stops_of(&wheelchair).contains(&"BAD".to_owned()),
+        "a rider in a wheelchair can't use it"
+    );
+    assert!(!trips.contains(&"T5"), "a trip marked inaccessible is out");
+    assert!(trips.contains(&"T3"), "{trips:?}");
+    assert!(
+        stops_of(&wheelchair).contains(&"GOOD".to_owned()),
+        "a stop with no accessibility information is allowed"
+    );
+}
+
+#[test]
+fn every_stop_and_leg_reports_accessibility() {
+    use crate::response::Accessibility;
+    let state = wheelchair_state();
+    let request = |mode| TransitRequest {
+        mode,
+        options: TransitOptions {
+            max_trips: 3,
+            ..TransitOptions::default()
+        },
+        ..morning_request()
+    };
+    let wheelchair = run(&state, &request(TravelMode::Wheelchair));
+    let journey = wheelchair
+        .journeys
+        .iter()
+        .find(|journey| {
+            transit_legs(journey)
+                .iter()
+                .any(|leg| leg.trip.trip_id == "T3")
+        })
+        .expect("T3 journey");
+    // T3 runs ORG (accessible) to GOOD (unknown), so the leg is unknown; the access is on streets
+    // routed for a wheelchair, so it's accessible.
+    let JourneyLeg::Access(access) = &journey.legs[0] else {
+        panic!("access first");
+    };
+    assert_eq!(access.accessibility, Accessibility::Accessible);
+    let leg = transit_legs(journey)[0];
+    assert_eq!(leg.accessibility, Accessibility::Unknown);
+    let visits: Vec<_> = leg
+        .stops
+        .iter()
+        .map(|visit| (visit.stop.stop_id.as_str(), visit.stop.accessibility))
+        .collect();
+    assert_eq!(
+        visits,
+        vec![
+            ("ORG", Accessibility::Accessible),
+            ("GOOD", Accessibility::Unknown)
+        ]
+    );
+
+    let walking = run(&state, &request(TravelMode::Walking));
+    let journey = walking
+        .journeys
+        .iter()
+        .find(|journey| {
+            transit_legs(journey)
+                .iter()
+                .any(|leg| leg.trip.trip_id == "T5")
+        })
+        .expect("T5 journey");
+    // T5 is marked inaccessible, so the leg is, whatever its stops are; a walk is unknown.
+    let leg = transit_legs(journey)
+        .into_iter()
+        .find(|leg| leg.trip.trip_id == "T5")
+        .expect("T5");
+    assert_eq!(leg.accessibility, Accessibility::Inaccessible);
+    let JourneyLeg::Access(access) = &journey.legs[0] else {
+        panic!("access first");
+    };
+    assert_eq!(access.accessibility, Accessibility::Unknown);
+    let body = serde_json::to_value(&walking.journeys).expect("json");
+    assert!(body[0]["legs"][0]["accessibility"].is_string());
+}
+
+/// `T1` (route R1) from the origin to a middle stop, staying seated into `T2` (route R2) on
+/// to the destination.
+fn seated_state() -> TransitState {
+    let source = InMemorySource::new()
+        .with(
+            "agency.txt",
+            "agency_id,agency_name,agency_timezone,agency_url\n\
+             A,Metro,America/Los_Angeles,https://m.test\n",
+        )
+        .with(
+            "routes.txt",
+            "route_id,agency_id,route_short_name,route_type\nR1,A,1,3\nR2,A,2,3\n",
+        )
+        .with(
+            "stops.txt",
+            "stop_id,stop_name,stop_lat,stop_lon\n\
+             ORG,Origin,47.5995,-122.3300\n\
+             MID,Middle,47.6100,-122.3200\n\
+             DST,Destination,47.6204,-122.3098\n",
+        )
+        .with(
+            "calendar.txt",
+            "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n\
+             WK,1,1,1,1,1,0,0,20260601,20260630\n",
+        )
+        .with(
+            "trips.txt",
+            "route_id,service_id,trip_id,block_id,trip_headsign\n\
+             R1,WK,T1,X,To Middle\nR2,WK,T2,X,To Destination\n",
+        )
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             T1,08:05:00,08:05:00,ORG,1\nT1,08:20:00,08:20:00,MID,2\n\
+             T2,08:25:00,08:25:00,MID,1\nT2,08:50:00,08:50:00,DST,2\n",
+        );
+    let compiled = compile(vec![FeedInput {
+        id: CompileFeedId::try_new("seated".to_owned()).expect("id"),
+        source: Box::new(source),
+    }])
+    .expect("compiles");
+    TransitState::new(
+        LoadedTimetable::from_bytes(compiled.bytes).expect("loads"),
+        StateConfig::default(),
+    )
+    .expect("state")
+}
+
+/// The rider's one ride, and how it's reported.
+fn seated_leg(response: &PlanResponse) -> &TransitLeg {
+    let journey = response
+        .journeys
+        .iter()
+        .find(|journey| journey.trips == 1)
+        .expect("a journey with one ride");
+    transit_legs(journey)[0]
+}
+
+#[test]
+fn a_stay_seated_ride_is_one_leg_with_its_segments() {
+    let state = seated_state();
+    let response = run(&state, &morning_request());
+    let leg = seated_leg(&response);
+    assert_eq!(leg.trip.trip_id, "T1", "the segment the rider boards");
+    assert_eq!(leg.route.as_ref().expect("route").route_id, "R1");
+    assert_eq!(leg.segments.len(), 2);
+    assert_eq!(leg.segments[0].trip_id, "T1");
+    assert_eq!(
+        leg.segments[0].route.as_ref().expect("route").route_id,
+        "R1"
+    );
+    assert_eq!(leg.segments[0].headsign.as_deref(), Some("To Middle"));
+    assert_eq!(leg.segments[1].trip_id, "T2");
+    assert_eq!(
+        leg.segments[1].route.as_ref().expect("route").route_id,
+        "R2"
+    );
+    // The join shows once, with the first trip's arrival and the next one's departure.
+    let names: Vec<_> = leg.stops.iter().map(|s| s.stop.stop_id.as_str()).collect();
+    assert_eq!(names, vec!["ORG", "MID", "DST"]);
+    let middle = &leg.stops[1];
+    assert_eq!(middle.arrival, june_15(8, 20));
+    assert_eq!(middle.departure, june_15(8, 25));
+    assert_eq!(leg.segments[0].first_stop_index, 0);
+    assert_eq!(leg.segments[0].last_stop_index, 1);
+    assert_eq!(leg.segments[1].first_stop_index, 1);
+    assert_eq!(leg.segments[1].last_stop_index, 2);
+}
+
+fn seated_trip_update(
+    trip: &str,
+    relationship: proto::trip_descriptor::ScheduleRelationship,
+    stop_sequence: u32,
+    delay: i32,
+) -> proto::FeedEntity {
+    proto::FeedEntity {
+        trip_update: Some(proto::TripUpdate {
+            trip: proto::TripDescriptor {
+                trip_id: Some(trip.to_owned()),
+                start_date: Some(JUNE_15.to_owned()),
+                schedule_relationship: Some(relationship as i32),
+                ..proto::TripDescriptor::default()
+            },
+            stop_time_update: if delay == 0 {
+                Vec::new()
+            } else {
+                vec![proto::trip_update::StopTimeUpdate {
+                    stop_sequence: Some(stop_sequence),
+                    arrival: Some(proto::trip_update::StopTimeEvent {
+                        delay: Some(delay),
+                        ..proto::trip_update::StopTimeEvent::default()
+                    }),
+                    departure: Some(proto::trip_update::StopTimeEvent {
+                        delay: Some(delay),
+                        ..proto::trip_update::StopTimeEvent::default()
+                    }),
+                    ..proto::trip_update::StopTimeUpdate::default()
+                }]
+            },
+            ..proto::TripUpdate::default()
+        }),
+        ..entity_for(trip)
+    }
+}
+
+fn entity_for(id: &str) -> proto::FeedEntity {
+    proto::FeedEntity {
+        id: id.to_owned(),
+        ..proto::FeedEntity::default()
+    }
+}
+
+/// A plan with the stay-seated feed's one update applied.
+fn seated_plan_with(entity: proto::FeedEntity) -> PlanResponse {
+    let state = seated_state();
+    let bytes = encoded_feed(FEED_TIME, vec![entity]);
+    state
+        .ingest(FeedUpdate {
+            feed: "seated",
+            kind: FeedKind::TripUpdates,
+            bytes: Some(&bytes),
+            received_at: FEED_TIME,
+            stale_after: None,
+        })
+        .expect("known feed");
+    run(
+        &state,
+        &TransitRequest {
+            now: FEED_TIME + 15,
+            ..morning_request()
+        },
+    )
+}
+
+#[test]
+fn a_delay_on_either_original_trip_moves_only_its_part() {
+    use proto::trip_descriptor::ScheduleRelationship;
+    // T2 (the second part) five minutes late: T1's part keeps its times.
+    let response = seated_plan_with(seated_trip_update(
+        "T2",
+        ScheduleRelationship::Scheduled,
+        1,
+        300,
+    ));
+    let leg = seated_leg(&response);
+    assert_eq!(leg.departure, june_15(8, 5), "the first part is on time");
+    assert_eq!(leg.arrival, june_15(8, 55), "the second part is late");
+    let middle = &leg.stops[1];
+    assert_eq!(middle.arrival, june_15(8, 20), "T1's arrival is unchanged");
+    assert_eq!(middle.departure, june_15(8, 30));
+
+    // Updates for both original trips of one run in the same feed both apply.
+    let state = seated_state();
+    let bytes = encoded_feed(
+        FEED_TIME,
+        vec![
+            seated_trip_update("T1", ScheduleRelationship::Scheduled, 2, 60),
+            seated_trip_update("T2", ScheduleRelationship::Scheduled, 1, 300),
+        ],
+    );
+    state
+        .ingest(FeedUpdate {
+            feed: "seated",
+            kind: FeedKind::TripUpdates,
+            bytes: Some(&bytes),
+            received_at: FEED_TIME,
+            stale_after: None,
+        })
+        .expect("known feed");
+    let response = run(
+        &state,
+        &TransitRequest {
+            now: FEED_TIME + 15,
+            ..morning_request()
+        },
+    );
+    let leg = seated_leg(&response);
+    assert_eq!(leg.stops[1].arrival, june_15(8, 21), "T1's own delay");
+    assert_eq!(leg.arrival, june_15(8, 55), "T2's own delay");
+
+    // T1 late past T2's departure from the join: T2 can't leave before T1 arrives.
+    let response = seated_plan_with(seated_trip_update(
+        "T1",
+        ScheduleRelationship::Scheduled,
+        2,
+        600,
+    ));
+    let leg = seated_leg(&response);
+    assert_eq!(leg.stops[1].arrival, june_15(8, 30));
+    assert_eq!(leg.stops[1].departure, june_15(8, 30));
+}
+
+#[test]
+fn a_cancelled_second_part_ends_the_ride_at_the_join() {
+    use proto::trip_descriptor::ScheduleRelationship;
+    let response = seated_plan_with(seated_trip_update(
+        "T2",
+        ScheduleRelationship::Canceled,
+        1,
+        0,
+    ));
+    // Nothing reaches the destination by staying on.
+    for journey in &response.journeys {
+        for leg in transit_legs(journey) {
+            assert_ne!(
+                leg.stops.last().map(|s| s.stop.stop_id.as_str()),
+                Some("DST"),
+                "the ride can't reach the end of the cancelled part"
+            );
+        }
+    }
+    // A cancelled first part leaves the second part running, boarded at the join.
+    let response = seated_plan_with(seated_trip_update(
+        "T1",
+        ScheduleRelationship::Canceled,
+        1,
+        0,
+    ));
+    let boarded_at_origin = response
+        .journeys
+        .iter()
+        .flat_map(transit_legs)
+        .any(|leg| leg.stops.first().map(|s| s.stop.stop_id.as_str()) == Some("ORG"));
+    assert!(!boarded_at_origin, "the first part is gone");
 }
 
 #[test]
