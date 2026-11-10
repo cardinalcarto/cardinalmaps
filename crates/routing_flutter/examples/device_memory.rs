@@ -26,6 +26,8 @@
 //! glibc's mapped heap (`mallinfo2`: what the allocator holds from the system, freed or not);
 //! the process's resident anonymous memory, PSS, and file-backed PSS (`/proc/self/smaps_rollup`);
 //! and resident pages of the area's files (`/proc/self/smaps`).
+//! So it runs on Linux with glibc, which has `mallinfo2`; under another allocator
+//! (`LD_PRELOAD` of scudo, as Android uses) the mapped column is that allocator's `mallinfo2`.
 
 #![allow(
     clippy::print_stdout,
