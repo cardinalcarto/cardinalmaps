@@ -39,6 +39,53 @@ void main() {
     expect(journey.accessibility, Accessibility.unknown);
   });
 
+  test('reads a ride\'s departures, with their alerts resolved', () {
+    final bus = fakePlan().journeys.single.rides.first;
+    final departures = bus.departures;
+    expect(departures.map((d) => d.tripId), [
+      't40a',
+      't40b',
+      't40',
+      't40c',
+      't40d',
+      't40e',
+    ]);
+    expect(departures.map((d) => d.missed), [
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(bus.suggested!.tripId, 't40');
+    expect(bus.suggested!.status, DepartureStatus.live);
+    expect(bus.suggested!.delaySeconds, 240);
+    // Indices into the leg's own alerts and into its departures' pool.
+    expect(bus.suggested!.alerts.single.header, 'Route 40 detoured');
+    expect(departures[3].alerts.single.header, 'Trip 40c ends at Westlake');
+    expect(departures[3].accessibility, Accessibility.inaccessible);
+    expect(departures[4].status, DepartureStatus.canceled);
+    expect(departures[4].status.runs, isFalse);
+    expect(departures.last.lastOfDay, isTrue);
+    expect(fakePlan().journeys.single.rides.last.suggested!.lastOfDay, isTrue);
+  });
+
+  test('real-time feeds are counted by feed, not by message', () {
+    final json = fakePlanJson();
+    final realtime = json['realtime']! as Map<String, Object?>;
+    final feeds = realtime['feeds']! as List;
+    final metro = feeds.first as Map<String, Object?>;
+    // Metro sends alerts and vehicles too; Sound Transit's one message is stale.
+    realtime['feeds'] = [
+      ...feeds,
+      {...metro, 'kind': 'alerts'},
+      {...metro, 'kind': 'vehicle_positions', 'state': 'stale'},
+    ];
+    final plan = TransitPlan.fromJson(json);
+    expect((plan.feedsApplied, plan.feedsReported), (1, 2));
+  });
+
   test('a plan with no journeys says why', () {
     final plan = emptyPlan('slower_than_direct');
     expect(plan.journeys, isEmpty);

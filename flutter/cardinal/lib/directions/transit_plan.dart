@@ -78,12 +78,19 @@ class TransitPlan {
 
   factory TransitPlan.fromJson(Map<String, Object?> json) {
     final realtime = _map(json['realtime']);
-    final feeds = _list(realtime['feeds']).map(_map).toList();
+    // One entry per message (a feed may send trip updates, alerts, and vehicles), so
+    // feeds are counted by name.
+    final messages = _list(realtime['feeds']).map(_map).toList();
+    final feeds = {for (final m in messages) m['feed']};
+    final applied = {
+      for (final m in messages)
+        if (m['state'] == 'applied') m['feed'],
+    };
     final direct = _map(json['direct']);
     return TransitPlan(
       journeys: [for (final j in _list(json['journeys'])) Journey._(_map(j))],
       realtime: RealtimeLevel.parse(realtime['level']),
-      feedsApplied: feeds.where((f) => f['state'] == 'applied').length,
+      feedsApplied: applied.length,
       feedsReported: feeds.length,
       noJourneysReason: NoJourneysReason.parse(json['no_journeys_reason']),
       directSeconds: direct['status'] == 'found'
@@ -99,7 +106,8 @@ class TransitPlan {
   final List<Journey> journeys;
   final RealtimeLevel realtime;
 
-  /// How many real-time messages were used, of [feedsReported] given.
+  /// How many feeds' real-time data was used (any of their messages), of
+  /// [feedsReported] feeds that have some.
   final int feedsApplied;
   final int feedsReported;
   final NoJourneysReason? noJourneysReason;
@@ -243,7 +251,19 @@ class TransitLeg extends JourneyLeg {
       vehicle = json['vehicle'] == null
           ? null
           : TransitVehicle._(_map(json['vehicle'])),
-      alerts = [for (final a in _list(json['alerts'])) LegAlert._(_map(a))];
+      alerts = [for (final a in _list(json['alerts'])) LegAlert._(_map(a))],
+      departures = _departures(json);
+
+  static List<RideDeparture> _departures(Map<String, Object?> json) {
+    final own = [for (final a in _list(json['alerts'])) LegAlert._(_map(a))];
+    final others = [
+      for (final a in _list(json['departure_alerts'])) LegAlert._(_map(a)),
+    ];
+    return [
+      for (final d in _list(json['departures']))
+        RideDeparture._(_map(d), own, others),
+    ];
+  }
 
   final int waitSeconds;
 
@@ -271,6 +291,15 @@ class TransitLeg extends JourneyLeg {
   final String? _shape;
   final TransitVehicle? vehicle;
   final List<LegAlert> alerts;
+
+  /// Departures of the same route between the same two stops, by departure, around and
+  /// including this ride's own: what's left if the rider misses it. Empty if the plan
+  /// didn't list any.
+  final List<RideDeparture> departures;
+
+  /// This ride's own departure among [departures], if they're listed.
+  RideDeparture? get suggested =>
+      departures.where((d) => d.suggested).firstOrNull;
 
   StopVisit get boarding => stops.first;
   StopVisit get alighting => stops.last;
@@ -303,8 +332,19 @@ class TransitRoute {
   final String? color;
   final String? textColor;
 
+  TransitRoute._copy(TransitRoute other, {this.color, this.textColor})
+    : shortName = other.shortName,
+      longName = other.longName,
+      type = other.type;
+
   /// What a rider calls it: the short name, else the long one.
   String get name => shortName ?? longName ?? '';
+
+  /// This route in [color] and [textColor] if it has no color of its own.
+  TransitRoute withColors(String? color, String? textColor) =>
+      this.color != null
+      ? this
+      : TransitRoute._copy(this, color: color, textColor: textColor);
 
   VehicleKind get kind => VehicleKind.of(type);
 }
@@ -403,6 +443,90 @@ class RideSegment {
   /// The range of the leg's stops it covers, inclusive.
   final int firstStop;
   final int lastStop;
+}
+
+/// Whether a departure runs, and whether real-time data has seen it.
+enum DepartureStatus {
+  scheduled,
+  live,
+  canceled,
+  skipped;
+
+  static DepartureStatus parse(Object? value) => switch (value) {
+    'live' => live,
+    'canceled' => canceled,
+    'skipped' => skipped,
+    _ => scheduled,
+  };
+
+  /// Whether it runs and lets riders on and off at the ride's stops.
+  bool get runs => this == scheduled || this == live;
+}
+
+/// One departure of a ride's route from its boarding stop to its alighting stop.
+class RideDeparture {
+  RideDeparture._(
+    Map<String, Object?> json,
+    List<LegAlert> legAlerts,
+    List<LegAlert> departureAlerts,
+  ) : tripId = json['trip_id'] as String? ?? '',
+      headsign = json['headsign'] as String?,
+      status = DepartureStatus.parse(json['status']),
+      departure = _time(json['departure']),
+      arrival = _time(json['arrival']),
+      scheduledDeparture = _optionalTime(json['scheduled_departure']),
+      scheduledArrival = _optionalTime(json['scheduled_arrival']),
+      delaySeconds = (json['delay_seconds'] as num?)?.toInt(),
+      realtime = json['realtime'] == true,
+      vehicleId = json['vehicle_id'] as String?,
+      accessibility = Accessibility.parse(json['accessibility']),
+      bikesAllowed = json['bikes_allowed'] as String?,
+      suggested = json['suggested'] == true,
+      missed = json['missed'] == true,
+      lastOfDay = json['last_of_day'] == true,
+      alerts = [
+        for (final i in _list(json['alerts']))
+          if (i is int && i >= 0 && i < legAlerts.length) legAlerts[i],
+        for (final i in _list(json['departure_alerts']))
+          if (i is int && i >= 0 && i < departureAlerts.length)
+            departureAlerts[i],
+      ];
+
+  final String tripId;
+
+  /// Its headsign at the boarding stop, or null when it's the ride's own.
+  final String? headsign;
+  final DepartureStatus status;
+
+  /// When it leaves the boarding stop and reaches the alighting stop: predictions when
+  /// there are any, the schedule for a canceled or skipped one.
+  final DateTime departure;
+  final DateTime arrival;
+  final DateTime? scheduledDeparture;
+  final DateTime? scheduledArrival;
+
+  /// How late (or, below zero, early) it leaves the boarding stop, when known.
+  final int? delaySeconds;
+
+  /// Whether either time came from real-time data.
+  final bool realtime;
+  final String? vehicleId;
+  final Accessibility accessibility;
+
+  /// `yes`, `no`, or null when the feed doesn't say.
+  final String? bikesAllowed;
+
+  /// Whether it's the one the journey takes.
+  final bool suggested;
+
+  /// Whether it leaves before the rider can be at the stop.
+  final bool missed;
+
+  /// Whether it's the route's last between these stops on its service day.
+  final bool lastOfDay;
+
+  /// The service alerts that apply to it.
+  final List<LegAlert> alerts;
 }
 
 /// The vehicle running a ride, when real-time data names it.

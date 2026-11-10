@@ -83,8 +83,57 @@ Map<String, Object?> _stop(String name, double lng, double lat, int time) => {
   'utc_offset_seconds': -8 * 3600,
 };
 
+Map<String, Object?> _alert(String id, String header, {String? description}) =>
+    {
+      'id': id,
+      'effect': 'detour',
+      'active_periods': <Object>[],
+      'communication_periods': <Object>[],
+      'impact_periods': <Object>[],
+      'header': [
+        {'text': header},
+      ],
+      'description': [
+        if (description != null) {'text': description},
+      ],
+      'url': <Object>[],
+    };
+
+Map<String, Object?> _departure(
+  String trip,
+  int departure,
+  int ride, {
+  String status = 'scheduled',
+  int delay = 0,
+  bool suggested = false,
+  bool missed = false,
+  bool last = false,
+  String accessibility = 'accessible',
+  List<int> alerts = const [],
+  List<int> departureAlerts = const [],
+}) => {
+  'trip_id': trip,
+  'status': status,
+  'departure': departure,
+  'arrival': departure + ride,
+  'scheduled_departure': departure - delay,
+  'scheduled_arrival': departure + ride - delay,
+  if (delay != 0) 'delay_seconds': delay,
+  if (status == 'live') 'realtime': true,
+  'accessibility': accessibility,
+  if (suggested) 'suggested': true,
+  if (missed) 'missed': true,
+  if (last) 'last_of_day': true,
+  if (alerts.isNotEmpty) 'alerts': alerts,
+  if (departureAlerts.isNotEmpty) 'departure_alerts': departureAlerts,
+};
+
 /// A plan's JSON with one journey: a walk to a moved stop, a stay-seated bus ride that
 /// runs 4 minutes late under a detour alert, a transfer, a ride on Link, and a walk.
+///
+/// The bus lists departures around its own: two the rider misses, then its own, one 12
+/// minutes later with an alert of its own, a canceled one, and the day's last. Link's
+/// own departure is the day's last, after one the rider misses.
 Map<String, Object?> fakePlanJson({int journeys = 1}) {
   final t = fakeStart;
   Map<String, Object?> journey(int shift) => {
@@ -217,6 +266,42 @@ Map<String, Object?> fakePlanJson({int journeys = 1}) {
             'informed': <Object>[],
           },
         ],
+        'departures': [
+          _departure('t40a', t + shift, 1200, missed: true),
+          _departure(
+            't40b',
+            t + shift + 300,
+            1200,
+            status: 'live',
+            delay: 60,
+            missed: true,
+          ),
+          _departure(
+            't40',
+            t + shift + 600,
+            1200,
+            status: 'live',
+            delay: 240,
+            suggested: true,
+            alerts: [0],
+          ),
+          _departure(
+            't40c',
+            t + shift + 1320,
+            1200,
+            accessibility: 'inaccessible',
+            departureAlerts: [0],
+          ),
+          _departure('t40d', t + shift + 1800, 1200, status: 'canceled'),
+          _departure('t40e', t + shift + 2040, 1200, last: true),
+        ],
+        'departure_alerts': [
+          _alert(
+            'a2',
+            'Trip 40c ends at Westlake',
+            description: 'Riders continuing south should transfer.',
+          ),
+        ],
       },
       {
         'type': 'transfer',
@@ -249,6 +334,17 @@ Map<String, Object?> fakePlanJson({int journeys = 1}) {
           _stop('Capitol Hill Station', 1, 3.8, t + shift + 2580),
         ],
         'alerts': <Object>[],
+        'departures': [
+          _departure('link0', t + shift + 1500, 540, missed: true),
+          _departure(
+            'link',
+            t + shift + 2040,
+            540,
+            suggested: true,
+            last: true,
+            accessibility: 'unknown',
+          ),
+        ],
       },
       {
         'type': 'egress',
