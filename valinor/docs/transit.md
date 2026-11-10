@@ -93,6 +93,12 @@ Entries slower than the direct journey in the query's mode are removed afterward
 Access reaches a first boarding directly, and egress leaves from the last alighting stop.
 A journey is access, trips joined by walks, and egress.
 
+Stops are snapped to an edge from which the mode's costing reaches at least 250 nodes,
+and which at least 250 reach (a route request's default is 50).
+A journey leaves and enters a stop, and a smaller pocket that can be entered but not left
+passes a smaller bound: by bicycle, SeaTac/Airport's southbound platform landed in the airport
+garage, so no ride could end there.
+
 ## Transfers
 
 A table holds, for each stop, the stops within a bound (15 minutes by default) for a travel mode.

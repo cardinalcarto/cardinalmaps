@@ -1,7 +1,7 @@
 //! Snapping stops onto the street network.
 //!
 //! A stop lands on an edge with a fraction along it, via Loki's search and reach filter,
-//! so that it doesn't land on a disconnected footpath.
+//! so that it doesn't land on a disconnected footpath, or in a garage it can't ride out of.
 //! The result is bound to the build of the tiles it was snapped on, like
 //! [`TileSets`](https://docs.rs/valinor-router) refuses to mix tile builds.
 //! Snapping one stop is cheap and needs no global state,
@@ -25,7 +25,16 @@ use crate::error::WalkError;
 pub const DEFAULT_MAX_SNAP_DISTANCE_M: u32 = 400;
 
 /// How many nodes a snap must be able to reach, in and out, to count as connected.
-pub const DEFAULT_MIN_REACHABILITY: u32 = 50;
+///
+/// Above a route request's 50 (mainline's default), because a stop is ridden from and to:
+/// its edge must lead out to the network as well as in. A pocket the mode can enter but not
+/// leave passes a smaller bound when it has enough nodes of its own. By bicycle, SeaTac/Airport
+/// station's southbound platform landed in the airport garage, whose 50 to 100 nodes have no
+/// exit a bicycle may take, so no ride could end there; an airport road with 100 to 250 did the
+/// same to King County Metro's airport stop. Over Washington's 19,866 stops, 250 moves those two
+/// snaps and no others, and 1,000 moves none more, in any mode. Stops are snapped offline, apart
+/// from a GTFS-RT overlay's new stops, and that takes about four times as long as at 50.
+pub const DEFAULT_MIN_REACHABILITY: u32 = 250;
 
 /// Options for snapping stops.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,7 +42,27 @@ pub struct SnapConfig {
     /// The farthest a stop may be from its edge, in meters.
     pub max_distance_m: u32,
     /// The reachability, in nodes, a snap must have to count as connected.
+    ///
+    /// Loki counts reach in 16 bits, as mainline does, so above 65,535 no edge counts as
+    /// connected and every stop keeps its closest edge.
     pub min_reachability: u32,
+}
+
+impl SnapConfig {
+    /// Loki's configuration for locations snapped with this reachability.
+    ///
+    /// A request's `minimum_reachability` is capped by `service_limits.max_reachability`
+    /// (100 by default), which bounds what one HTTP request may ask a server for.
+    /// A snap isn't such a request, so the cap is raised to [`Self::min_reachability`].
+    #[must_use]
+    pub fn loki_config(&self) -> LokiConfig {
+        let mut loki = LokiConfig::default();
+        loki.service_limits.max_reachability = loki
+            .service_limits
+            .max_reachability
+            .max(self.min_reachability);
+        loki
+    }
 }
 
 impl Default for SnapConfig {
@@ -310,7 +339,7 @@ pub fn snap_stop<P: GraphTileProvider, C: Costing>(
     config: &SnapConfig,
     ll: (f64, f64),
 ) -> Result<SnappedStop, WalkError> {
-    let loki = LokiConfig::default();
+    let loki = config.loki_config();
     let mut locations = [location_for(ll, *config, &loki)];
     search(&mut locations, provider, costing)?;
     snap_of(&locations[0], *config, provider)
@@ -331,7 +360,7 @@ pub fn snap_stops<P: GraphTileProvider, C: Costing>(
     build_id: BuildId,
     stops: &[(f64, f64)],
 ) -> Result<StopSnaps, WalkError> {
-    let loki = LokiConfig::default();
+    let loki = config.loki_config();
     let mut locations: Vec<Location> = stops
         .iter()
         .map(|&ll| location_for(ll, *config, &loki))
@@ -343,4 +372,53 @@ pub fn snap_stops<P: GraphTileProvider, C: Costing>(
         table.insert(stop, snap_of(location, *config, provider)?)?;
     }
     Ok(table)
+}
+
+#[cfg(test)]
+mod tests {
+    use valhalla_proto::location::{HasMinimumInboundReachability, HasMinimumOutboundReachability};
+
+    use super::*;
+
+    /// The reachability Loki will check for a location snapped with `config`.
+    fn checked_reachability(config: SnapConfig) -> (u32, u32) {
+        let location = location_for((0.0, 0.0), config, &config.loki_config());
+        let Some(HasMinimumInboundReachability::MinimumInboundReachability(inbound)) =
+            location.has_minimum_inbound_reachability
+        else {
+            panic!("no inbound reachability");
+        };
+        let Some(HasMinimumOutboundReachability::MinimumOutboundReachability(outbound)) =
+            location.has_minimum_outbound_reachability
+        else {
+            panic!("no outbound reachability");
+        };
+        (inbound, outbound)
+    }
+
+    #[test]
+    fn a_snap_checks_all_the_reach_it_asks_for() {
+        // A request's minimum reachability is capped at 100 nodes, which would let a stop
+        // land in a pocket of 100 to 250, such as an airport road a bicycle can't leave.
+        assert!(DEFAULT_MIN_REACHABILITY > LokiConfig::default().service_limits.max_reachability);
+        assert_eq!(
+            checked_reachability(SnapConfig::default()),
+            (DEFAULT_MIN_REACHABILITY, DEFAULT_MIN_REACHABILITY)
+        );
+        let config = SnapConfig {
+            min_reachability: 5000,
+            ..SnapConfig::default()
+        };
+        assert_eq!(checked_reachability(config), (5000, 5000));
+    }
+
+    #[test]
+    fn a_small_reachability_keeps_lokis_own_cap() {
+        let config = SnapConfig {
+            min_reachability: 10,
+            ..SnapConfig::default()
+        };
+        assert_eq!(config.loki_config(), LokiConfig::default());
+        assert_eq!(checked_reachability(config), (10, 10));
+    }
 }
