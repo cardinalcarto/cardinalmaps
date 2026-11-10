@@ -430,6 +430,12 @@ mod tests {
         assert_eq!(journey["legs"][0]["accessibility"], "accessible");
         assert_eq!(journey["legs"][1]["accessibility"], "unknown");
         assert!(journey["legs"][1]["stops"][0]["accessibility"].is_string());
+        // A ride's departures reach the app in the same JSON: here only its own runs, the day's last.
+        let departures = &journey["legs"][1]["departures"];
+        assert_eq!(departures.as_array().map(Vec::len), Some(1));
+        assert_eq!(departures[0]["suggested"], true);
+        assert_eq!(departures[0]["last_of_day"], true);
+        assert_eq!(departures[0]["departure"], journey["legs"][1]["departure"]);
     }
 
     #[test]

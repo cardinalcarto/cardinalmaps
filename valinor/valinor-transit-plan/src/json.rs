@@ -6,7 +6,7 @@ use valinor_gtfs::LatLon;
 use valinor_walk::WalkError;
 
 use crate::error::{PlanError, StateError};
-use crate::plan::{TransitOptions, TransitRequest, TravelMode};
+use crate::plan::{DepartureRange, TransitOptions, TransitRequest, TravelMode};
 use crate::response::{PlanResponse, language_supported};
 use crate::street::{StreetError, StreetPlanner};
 
@@ -58,9 +58,27 @@ pub struct PlanRequestBody {
     /// The longest access or egress walk, in seconds.
     #[serde(default)]
     pub max_walk_seconds: Option<u32>,
+    /// How many departures before its own each ride lists; two when absent.
+    #[serde(default)]
+    pub departures_before: Option<u8>,
+    /// How many departures after its own each ride lists; three when absent.
+    #[serde(default)]
+    pub departures_after: Option<u8>,
     /// The narration language for walking and cycling legs (a BCP 47 tag); `en-US` when absent.
     #[serde(default)]
     pub language: Option<String>,
+}
+
+/// [`parse_body`] for tests, which expect the body to parse.
+#[cfg(test)]
+pub(crate) fn parse_body_for_test(body: &[u8], now: i64) -> (TransitRequest, String) {
+    match parse_body(body, now) {
+        Ok(parsed) => parsed,
+        Err(response) => panic!(
+            "the body doesn't parse: {}",
+            String::from_utf8_lossy(&response.body)
+        ),
+    }
 }
 
 fn parse_body(body: &[u8], now: i64) -> Result<(TransitRequest, String), JsonResponse> {
@@ -109,6 +127,13 @@ fn parse_body(body: &[u8], now: i64) -> Result<(TransitRequest, String), JsonRes
     request.options = TransitOptions {
         max_trips: parsed.max_trips.unwrap_or(defaults.max_trips),
         max_walk_seconds: parsed.max_walk_seconds.unwrap_or(defaults.max_walk_seconds),
+        departures: DepartureRange {
+            before: parsed
+                .departures_before
+                .unwrap_or(defaults.departures.before),
+            after: parsed.departures_after.unwrap_or(defaults.departures.after),
+            ..defaults.departures
+        },
     };
     Ok((request, language))
 }

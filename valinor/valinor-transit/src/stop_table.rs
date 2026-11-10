@@ -3,7 +3,7 @@
 use crate::error::BuildError;
 use crate::ids::{Seconds, StopId};
 use crate::timetable::{
-    INFINITY, RULE_DROP_OFF, RULE_PICKUP, RULE_WHEELCHAIR_SHIFT, RouteAttributes,
+    INFINITY, RULE_DROP_OFF, RULE_PICKUP, RULE_WHEELCHAIR_SHIFT, RouteAttributes, StopRules,
 };
 
 /// Time-independent costs between one end of a journey and every reachable stop.
@@ -122,8 +122,20 @@ impl RouteFilter {
 
     /// Whether a route with these attributes may be ridden.
     #[inline]
-    pub(crate) fn allows(self, attributes: RouteAttributes) -> bool {
+    pub fn allows(self, attributes: RouteAttributes) -> bool {
         attributes.contains(self.required)
+    }
+
+    /// The rules a lane's rule byte gives a rider of this query: its wheelchair copy for a
+    /// wheelchair query, which a lane clears where a stop or trip is marked inaccessible.
+    #[inline]
+    pub(crate) fn stop_rules(self, bits: u8) -> StopRules {
+        let shift = if self.wheelchair {
+            RULE_WHEELCHAIR_SHIFT
+        } else {
+            0
+        };
+        StopRules::decode(bits >> shift)
     }
 
     /// Whether this query uses the wheelchair rule bits.

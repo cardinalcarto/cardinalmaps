@@ -915,3 +915,101 @@ fn journey_is_recorded_leg_by_leg() {
     ");
     let _ = ids;
 }
+
+/// The response layer reads lanes, rules, and the schedule's blocks as the route scan does.
+#[test]
+fn the_response_layer_reads_the_timetable_as_the_scan_does() {
+    let (net, ids) = Scenario::new(3)
+        .inaccessible(1)
+        .route(
+            &[0, 1, 2],
+            &[
+                ScenarioTrip::simple(1, &[100, 200, 300]),
+                ScenarioTrip::simple(2, &[400, 500, 600]),
+            ],
+        )
+        // A loop: it serves stop 0 twice.
+        .route(&[0, 2, 0], &[ScenarioTrip::simple(3, &[700, 800, 900])])
+        .build();
+    let snapshot = &net.snapshot;
+    let (straight, loop_route) = (crate::RouteId::new(0), crate::RouteId::new(1));
+    let mut at_first: Vec<(crate::RouteId, u32)> = snapshot.route_occurrences(ids[0]).collect();
+    at_first.sort_unstable();
+    assert_eq!(
+        at_first,
+        vec![(straight, 0), (loop_route, 0), (loop_route, 2)]
+    );
+
+    let day = day_slot(0);
+    let lanes = snapshot.block_lanes(straight, day).expect("a block");
+    assert_eq!(
+        snapshot.base_block_lanes(straight, day),
+        Some(lanes.clone())
+    );
+    assert!(!snapshot.block_changed(straight, day));
+    let lane = lanes[0];
+    let event = snapshot.lane_event(lane, 1, 1).expect("row 1, position 1");
+    assert_eq!((event.arrival, event.departure), (t(500), t(500)));
+    assert_eq!(event.rules, StopRules::REGULAR);
+    assert_eq!(snapshot.lane_event(lane, 2, 0), None, "past the last row");
+    assert_eq!(
+        snapshot.lane_event(lane, 0, 3),
+        None,
+        "past the last position"
+    );
+    // The scan's wheelchair bits: stop 1 is marked inaccessible.
+    assert_eq!(
+        snapshot.lane_rules(lane, 1, RouteFilter::ALL),
+        Some(StopRules::REGULAR)
+    );
+    assert_eq!(
+        snapshot.lane_rules(lane, 1, RouteFilter::WHEELCHAIR),
+        Some(StopRules::SKIPPED)
+    );
+    assert_eq!(
+        snapshot.lane_rules(lane, 0, RouteFilter::WHEELCHAIR),
+        Some(StopRules::REGULAR)
+    );
+    assert!(RouteFilter::ALL.allows(RouteAttributes::NONE));
+    assert!(!RouteFilter::WHEELCHAIR.allows(RouteAttributes::NONE));
+
+    // An overlay that drops trip 1 leaves the schedule's block readable beside its own.
+    let event = |time| StopEvent {
+        arrival: t(time),
+        departure: t(time),
+        rules: StopRules::REGULAR,
+    };
+    let kept = ResolvedTrip {
+        trip: TripId::new(2),
+        events: vec![event(460), event(560), event(660)],
+    };
+    let mut overlay = OverlayBuilder::new(snapshot.base().clone());
+    overlay
+        .replace_block(straight, day, &block_of(vec![kept]))
+        .expect("replace");
+    let changed = overlay.build().expect("build");
+    assert!(changed.block_changed(straight, day));
+    assert!(!changed.block_changed(loop_route, day));
+    let now = changed.block_lanes(straight, day).expect("a block")[0];
+    assert!(now.is_overlay());
+    assert_eq!(changed.lane_trip_count(now), Some(1));
+    assert_eq!(
+        changed.lane_event(now, 0, 0).map(|e| e.departure),
+        Some(t(460))
+    );
+    let scheduled = changed
+        .base_block_lanes(straight, day)
+        .expect("the schedule's");
+    assert_eq!(scheduled, lanes);
+    assert_eq!(changed.lane_trip_count(scheduled[0]), Some(2));
+    assert_eq!(
+        changed.trip_key(scheduled[0], 0).map(|key| key.trip),
+        Some(TripId::new(1))
+    );
+    assert_eq!(
+        changed.lane_event(scheduled[0], 0, 0).map(|e| e.departure),
+        Some(t(100))
+    );
+    assert_eq!(changed.base_block_lanes(crate::RouteId::new(2), day), None);
+    assert!(!changed.block_changed(crate::RouteId::new(2), day));
+}

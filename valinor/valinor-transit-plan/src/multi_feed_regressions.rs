@@ -788,11 +788,19 @@ fn realtime_on_a_far_zone_feed_matches_it_alone() {
         "no journeys: {got}"
     );
     assert_eq!(got, want);
-    let text = got.to_string();
-    assert!(text.contains("T03"), "{text}");
+    // The trips ridden; a leg's `departures` also name the runs around it, which may be others.
+    let ridden: Vec<&str> = got
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|journey| journey["legs"].as_array().into_iter().flatten())
+        .filter(|leg| leg["type"] == "transit")
+        .filter_map(|leg| leg["trip"]["trip_id"].as_str())
+        .collect();
+    assert!(ridden.contains(&"T03"), "{got}");
     assert!(
-        !text.contains("T04"),
-        "the no-service run was still offered: {text}"
+        !ridden.contains(&"T04"),
+        "the no-service run was still offered: {got}"
     );
 }
 

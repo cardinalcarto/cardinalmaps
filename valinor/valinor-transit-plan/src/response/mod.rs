@@ -8,6 +8,7 @@
 
 mod alerts;
 mod build;
+mod departures;
 mod vehicle;
 
 use serde::Serialize;
@@ -336,6 +337,99 @@ pub struct TransitLeg {
     pub vehicle: Option<Vehicle>,
     /// Alerts that apply to this leg.
     pub alerts: Vec<LegAlert>,
+    /// Departures of this ride's route from its boarding stop to its alighting stop, in order of
+    /// departure, around and including this leg's own: what a rider has if they miss it.
+    ///
+    /// Empty when the request's departure range lists none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub departures: Vec<RideDeparture>,
+    /// Alerts that apply to some of `departures` but not to this leg itself.
+    ///
+    /// A departure's `departure_alerts` index this list, and its `alerts` index `alerts`,
+    /// so an alert shared with the leg isn't repeated.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub departure_alerts: Vec<AlertResponse>,
+}
+
+/// One departure of a ride's route between the ride's boarding and alighting stops.
+///
+/// The route is the GTFS route the ride is on. A ride that stays seated as its vehicle
+/// continues as another route lists departures that make the same change between the two stops;
+/// a ride on one route also lists combined trips that ride that route between the two stops.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent flags of the JSON a client reads, each omitted when false"
+)]
+pub struct RideDeparture {
+    /// `trip_id` of the trip boarded.
+    pub trip_id: String,
+    /// `start_date`, as `YYYYMMDD`; absent when it is the leg's own trip's.
+    pub start_date: Option<String>,
+    /// The headsign at the boarding stop: its `stop_headsign`, or else `trip_headsign`.
+    ///
+    /// Absent when it is the leg's own: its first stop's `headsign`, or else its trip's.
+    pub headsign: Option<String>,
+    /// Whether it runs, and whether real-time data has seen it.
+    pub status: DepartureStatus,
+    /// When it leaves the boarding stop, as routing would use it (the prediction when there is
+    /// one), in POSIX seconds; the scheduled time for a canceled or skipped departure.
+    pub departure: i64,
+    /// When it reaches the alighting stop, in the same way.
+    pub arrival: i64,
+    /// Scheduled departure from the boarding stop, in POSIX seconds.
+    pub scheduled_departure: Option<i64>,
+    /// Scheduled arrival at the alighting stop, in POSIX seconds.
+    pub scheduled_arrival: Option<i64>,
+    /// The departure's delay from the schedule at the boarding stop, when known.
+    pub delay_seconds: Option<i32>,
+    /// Whether `departure` or `arrival` came from real-time data; absent when neither did.
+    #[serde(skip_serializing_if = "is_false")]
+    pub realtime: bool,
+    /// The vehicle's ID, when real-time data names one.
+    pub vehicle_id: Option<String>,
+    /// Whether the trip and both stops are accessible, as a leg's `accessibility` is.
+    pub accessibility: Accessibility,
+    /// `bikes_allowed`: `yes`, `no`, or absent when unknown.
+    pub bikes_allowed: Option<&'static str>,
+    /// Whether this is the journey's own departure; absent on the others.
+    #[serde(skip_serializing_if = "is_false")]
+    pub suggested: bool,
+    /// Whether it leaves the boarding stop before the rider can be there:
+    /// before the arrival there plus the time a change needs, or for the first ride,
+    /// before the request's departure plus the walk from the origin.
+    #[serde(skip_serializing_if = "is_false")]
+    pub missed: bool,
+    /// Whether no later departure of the route between these stops runs on its service date.
+    #[serde(skip_serializing_if = "is_false")]
+    pub last_of_day: bool,
+    /// Indices into the leg's `alerts` that apply to this departure.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub alerts: Vec<usize>,
+    /// Indices into the leg's `departure_alerts` that apply to this departure.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub departure_alerts: Vec<usize>,
+}
+
+/// Whether a departure runs, and whether real-time data has seen it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DepartureStatus {
+    /// It runs on its schedule, as far as anything says.
+    Scheduled,
+    /// It runs, with times from real-time data.
+    Live,
+    /// Real-time data or a `NO_SERVICE` alert says it doesn't run.
+    Canceled,
+    /// It runs, but no longer lets riders on at the boarding stop or off at the alighting stop.
+    Skipped,
+}
+
+// `serde` passes a reference.
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde's signature")]
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// One original trip of a stay-seated ride.

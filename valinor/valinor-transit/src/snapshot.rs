@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::ids::{DaySlot, LaneRef, RouteId, ServiceDay, StopId, Time, TripKey};
+use crate::stop_table::RouteFilter;
 use crate::timetable::{
     Arena, ArenaUsage, BaseWindow, BlockRef, Lane, NO_CHANGE, RouteAttributes, StopEvent,
     StopRouteIndex, StopRules,
@@ -185,6 +186,100 @@ impl Snapshot {
             });
         }
         Some(events)
+    }
+
+    /// Every route serving `stop`, with its position there:
+    /// the base window's routes first, then the overlay's added ones.
+    ///
+    /// A loop route appears once for each time it visits the stop.
+    /// The route scan reads the same two indexes.
+    pub fn route_occurrences(&self, stop: StopId) -> impl Iterator<Item = (RouteId, u32)> + '_ {
+        let index = stop.index();
+        self.base
+            .index
+            .occurrences(index)
+            .iter()
+            .chain(self.additions.occurrences(index))
+            .map(|occurrence| (RouteId::new(occurrence.route), occurrence.position))
+    }
+
+    /// The lanes of a base route's block on a day as the schedule has it,
+    /// whatever the overlay did to that block.
+    ///
+    /// `None` means the route or day is unknown, or the route exists only in the overlay.
+    ///
+    /// # Performance
+    ///
+    /// Allocates. This is for the response layer, not the route scan.
+    pub fn base_block_lanes(&self, route: RouteId, day: DaySlot) -> Option<Vec<LaneRef>> {
+        let days = self.base.days.len();
+        if route.index() >= self.base.route_count() || day.index() >= days {
+            return None;
+        }
+        let reference = *self
+            .base
+            .directory
+            .get(route.index() * days + day.index())?;
+        let block = self.base.arena.blocks.get(reference.block as usize)?;
+        Some(
+            (0..block.lane_count)
+                .map(|lane| LaneRef::new(0, block.lanes_start + lane))
+                .collect(),
+        )
+    }
+
+    /// Whether the overlay replaced or removed a route's service on a day.
+    ///
+    /// Always `true` for a route that exists only in the overlay, and `false` for an unknown one.
+    pub fn block_changed(&self, route: RouteId, day: DaySlot) -> bool {
+        let days = self.base.days.len();
+        if route.index() >= self.route_count() || day.index() >= days {
+            return false;
+        }
+        let slot = route.index() * days + day.index();
+        self.base.directory.get(slot) != self.directory.get(slot)
+    }
+
+    /// The stop event at one position of the trip at `row` of a lane.
+    ///
+    /// # Performance
+    ///
+    /// Reads two times and a rule byte without allocating,
+    /// so the response layer can binary-search a lane's rows by time.
+    pub fn lane_event(&self, lane: LaneRef, row: u32, position: u32) -> Option<StopEvent> {
+        let record = self.lane(lane)?;
+        if row >= record.trip_count || position >= record.stop_count {
+            return None;
+        }
+        let arena = self.arena(lane.arena());
+        let stride = record.stop_count as usize * 2;
+        // Row zero of the grid is the leading sentinel.
+        let at = (row as usize + 1) * stride + position as usize * 2;
+        let times = arena.lane_times(record);
+        let (&arrival, &departure) = (times.get(at)?, times.get(at + 1)?);
+        Some(StopEvent {
+            arrival: Time::try_new(arrival).ok()?,
+            departure: Time::try_new(departure).ok()?,
+            rules: StopRules::decode(*arena.lane_rules(record).get(position as usize)?),
+        })
+    }
+
+    /// What a rider may do at one position of a lane, as a query with `filter` reads it.
+    ///
+    /// For a wheelchair query, this is the lane's wheelchair copy of the rules,
+    /// which also excludes a stop or trip marked inaccessible.
+    pub fn lane_rules(
+        &self,
+        lane: LaneRef,
+        position: u32,
+        filter: RouteFilter,
+    ) -> Option<StopRules> {
+        let record = self.lane(lane)?;
+        let bits = *self
+            .arena(lane.arena())
+            .lane_rules(record)
+            .get(position as usize)?;
+        Some(filter.stop_rules(bits))
     }
 
     /// How much the overlay's arena holds; all zero for a schedule-only snapshot.
