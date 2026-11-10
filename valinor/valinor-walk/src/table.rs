@@ -480,21 +480,28 @@ struct StopBest {
     percent: f32,
 }
 
-/// A queue key: the sort cost, with `total_cmp` order.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Key(f32);
+/// A queue key: the sort cost, ordered as `f32::total_cmp` orders it.
+///
+/// `total_cmp` compares the sign-folded bits as integers; holding those here keeps the same order
+/// while making the comparison a heap repeats on every push and pop a single integer one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Key(i32);
 
-impl Eq for Key {}
-
-impl PartialOrd for Key {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        Some(self.cmp(other))
+impl Key {
+    #[inline]
+    fn new(cost: f32) -> Self {
+        Self(Self::fold(cost.to_bits().cast_signed()))
     }
-}
 
-impl Ord for Key {
-    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.0.total_cmp(&other.0)
+    /// The sign-folding `f32::total_cmp` applies; applying it twice restores its input.
+    #[inline]
+    fn fold(bits: i32) -> i32 {
+        bits ^ ((bits >> 31).cast_unsigned() >> 1).cast_signed()
+    }
+
+    #[inline]
+    fn cost(self) -> f32 {
+        f32::from_bits(Self::fold(self.0).cast_unsigned())
     }
 }
 
@@ -868,7 +875,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 && self
                     .queue
                     .peek()
-                    .is_none_or(|Reverse((Key(key), _))| *key >= best.key + tail)
+                    .is_none_or(|Reverse((key, _))| key.cost() >= best.key + tail)
         })
     }
 
@@ -1027,21 +1034,21 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             };
             if label.cost.cost < existing.cost.cost {
                 *existing = label;
-                self.queue.push(Reverse((Key(label.cost.cost), state)));
+                self.queue.push(Reverse((Key::new(label.cost.cost), state)));
             }
             return;
         }
         let index = u32::try_from(self.labels.len()).unwrap_or(NONE);
         self.edge_states.set(label.dense_edge, index);
         self.labels.push(label);
-        self.queue.push(Reverse((Key(label.cost.cost), index)));
+        self.queue.push(Reverse((Key::new(label.cost.cost), index)));
     }
 
     /// Queues a seed's label, which has no edge status.
     fn push_seed(&mut self, label: TableLabel) {
         let index = u32::try_from(self.labels.len()).unwrap_or(NONE);
         self.labels.push(label);
-        self.queue.push(Reverse((Key(label.cost.cost), index)));
+        self.queue.push(Reverse((Key::new(label.cost.cost), index)));
     }
 
     /// Settles a label, reaches the stops on its edge, and expands from its far node.
@@ -1666,6 +1673,36 @@ mod sparse_tests {
         trim(&mut buffer, 100, 200);
         assert!(buffer.capacity() >= 200 && buffer.capacity() < 1000);
         assert_eq!(buffer.len(), 100);
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    /// The heap key must order exactly as `f32::total_cmp` and give its cost back unchanged.
+    #[test]
+    fn a_key_orders_as_total_cmp_and_recovers_its_cost() {
+        let values = [
+            f32::NEG_INFINITY,
+            -1.5,
+            -f32::MIN_POSITIVE,
+            -0.0,
+            0.0,
+            f32::MIN_POSITIVE,
+            1.0,
+            1.5,
+            2160.0,
+            f32::MAX,
+            f32::INFINITY,
+            f32::NAN,
+        ];
+        for a in values {
+            assert_eq!(Key::new(a).cost().to_bits(), a.to_bits());
+            for b in values {
+                assert_eq!(Key::new(a).cmp(&Key::new(b)), a.total_cmp(&b), "{a} {b}");
+            }
+        }
     }
 }
 
