@@ -785,6 +785,86 @@ fn access_tables_reach_stops_and_legs_add_up() {
     assert!(reached > 50, "only {reached} stops reached");
 }
 
+#[test]
+fn releasing_a_search_gives_back_its_storage_and_changes_no_answer() {
+    let (mut tables, snaps, points) = tables_fixture();
+    let stops = snaps.stop_count();
+    let legs = |tables: &StopTables<_, _>| -> Vec<_> {
+        (0..stops)
+            .map(|i| tables.leg(StopId::new(i as u32)))
+            .collect()
+    };
+    let costs = |table: &valinor_transit::StopTable| -> Vec<Option<u32>> {
+        (0..stops)
+            .map(|i| {
+                table
+                    .cost(StopId::new(i as u32))
+                    .map(valinor_transit::Seconds::into_inner)
+            })
+            .collect()
+    };
+    let first = costs(&access_table_for(
+        &mut tables,
+        AccessSide::Access,
+        points[0],
+        stops,
+    ));
+    let first_legs = legs(&tables);
+    assert!(first_legs.iter().filter(|leg| leg.is_some()).count() > 50);
+    let held = tables.bytes_without_attachments();
+
+    tables.release_search();
+    let released = tables.bytes_without_attachments();
+    assert!(
+        released < held / 2,
+        "released to {released} bytes of {held}"
+    );
+    // The search is gone, so none of its legs can be read.
+    assert!(legs(&tables).iter().all(Option::is_none));
+    assert_eq!(tables.reached_stops().count(), 0);
+    // Attachments stay bound.
+    assert!(tables.attachments().is_some());
+
+    // The next search finds exactly the same walks, in both directions.
+    let again = costs(&access_table_for(
+        &mut tables,
+        AccessSide::Access,
+        points[0],
+        stops,
+    ));
+    assert_eq!(again, first);
+    assert_eq!(legs(&tables), first_legs);
+    let egress = costs(&access_table_for(
+        &mut tables,
+        AccessSide::Egress,
+        points[0],
+        stops,
+    ));
+    let egress_legs = legs(&tables);
+    tables.release_search();
+    let (mut fresh, _, _) = tables_fixture();
+    assert_eq!(
+        costs(&access_table_for(
+            &mut fresh,
+            AccessSide::Egress,
+            points[0],
+            stops
+        )),
+        egress
+    );
+    assert_eq!(legs(&fresh), egress_legs);
+    assert_eq!(
+        costs(&access_table_for(
+            &mut tables,
+            AccessSide::Egress,
+            points[0],
+            stops
+        )),
+        egress
+    );
+    assert_eq!(legs(&tables), egress_legs);
+}
+
 /// Whether two directed edges are each other's opposing edges, in the Andorra fixture.
 fn is_opposing_of(a: GraphId, b: GraphId) -> bool {
     let provider = andorra();

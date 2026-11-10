@@ -103,6 +103,14 @@ impl<const FORWARD: bool> UnidirectionalAStar<FORWARD> {
         "time_dependent_reverse_a*"
     };
 
+    /// Bytes of storage the search holds, used or not.
+    pub(crate) fn bytes(&self) -> usize {
+        self.labels.capacity() * size_of::<ThorLabel>()
+            + self.queue.bytes()
+            + self.status.bytes()
+            + self.destinations.capacity() * size_of::<Destination>()
+    }
+
     /// The labels and edge statuses the search has room for (for tests).
     #[cfg(test)]
     pub(crate) fn retained(&self) -> usize {

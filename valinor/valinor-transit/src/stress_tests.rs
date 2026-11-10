@@ -479,3 +479,49 @@ fn router_matches_exhaustive_enumeration() {
         "enumeration is near-empty"
     );
 }
+
+/// Giving back the labels between searches changes no answer.
+#[test]
+fn released_labels_give_the_same_answers() {
+    for seed in 1..=60_u64 {
+        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let net = small_net(&mut rng);
+        let query = net.query(3, RouteFilter::ALL);
+        let mut kept = net.router();
+        let mut released = net.router();
+        assert_eq!(released.label_bytes(), 0);
+        for _ in 0..6 {
+            let time = t(rng.range(-100, 240));
+            let answers = |run: crate::raptor::SearchRun<'_, SyntheticSearch>| -> Vec<_> {
+                run.results()
+                    .iter()
+                    .map(|r| (r.trips, r.time, run.journey(r.trips)))
+                    .collect()
+            };
+            let want = answers(kept.forward(&query, time, &|| false).unwrap());
+            let got = answers(released.forward(&query, time, &|| false).unwrap());
+            assert_eq!(got, want, "seed {seed} forward");
+            assert!(released.label_bytes() > 0);
+            released.release_labels();
+            assert_eq!(released.label_bytes(), 0);
+
+            let want = answers(kept.backward(&query, time, &|| false).unwrap());
+            let got = answers(released.backward(&query, time, &|| false).unwrap());
+            assert_eq!(got, want, "seed {seed} backward");
+            released.release_labels();
+        }
+        let (a, b) = (t(rng.range(-80, 60)), t(rng.range(60, 200)));
+        let entries = |router: &mut Router<SyntheticSearch>| -> Vec<_> {
+            router
+                .profile(&query, a, b, &|| false)
+                .unwrap()
+                .entries
+                .iter()
+                .map(|e| (e.departure, e.arrival, e.trips))
+                .collect()
+        };
+        let want = entries(&mut kept);
+        released.release_labels();
+        assert_eq!(entries(&mut released), want, "seed {seed} profile");
+    }
+}

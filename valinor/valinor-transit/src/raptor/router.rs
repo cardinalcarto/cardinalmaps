@@ -140,6 +140,25 @@ impl<S: TransferSearch> Router<S> {
         }
     }
 
+    /// Bytes of label storage both directions' searches hold, used or not.
+    ///
+    /// The labels are sized by the snapshot's stops and the query's rounds,
+    /// and kept between searches so a search doesn't fill them anew.
+    #[must_use]
+    pub fn label_bytes(&self) -> usize {
+        self.forward.bytes() + self.backward.bytes()
+    }
+
+    /// Gives back both directions' label storage.
+    ///
+    /// The next search allocates and fills its labels again, which costs time in proportion
+    /// to the snapshot's stops and the query's rounds; its results are the same.
+    /// No [`SearchRun`] can be alive meanwhile: each one borrows the router.
+    pub fn release_labels(&mut self) {
+        self.forward = Labels::new();
+        self.backward = Labels::new();
+    }
+
     /// The transfer search, to reconstruct walks from a journey's parent handles.
     pub fn transfers(&self) -> &S {
         &self.transfers

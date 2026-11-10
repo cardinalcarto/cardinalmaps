@@ -325,3 +325,60 @@ fn a_modes_tables_share_one_copy_of_their_stop_attachments() {
     assert!(cycling.0 >= 2);
     assert_eq!(wheelchair, (0, 0), "wheelchair wasn't planned");
 }
+
+/// A planner over [`timetable`] with this limit on what an idle worker keeps,
+/// whose Thor workspace keeps nothing (so the limit is about the other searches).
+fn planner_keeping(max_retained_worker_bytes: usize) -> StreetPlanner {
+    let mut config = StreetConfig::default();
+    config.limits.max_retained_worker_bytes = max_retained_worker_bytes;
+    config.retention = valinor_thor::Retention {
+        bidirectional_labels: 0,
+        unidirectional_labels: 0,
+    };
+    StreetPlanner::open_with_built_transfers(
+        TimetableSet::single(timetable()).expect("set"),
+        &[tiles()],
+        config,
+    )
+    .expect("opens")
+}
+
+#[test]
+fn a_worker_over_its_limit_gives_back_search_storage_and_plans_the_same() {
+    let modes = [
+        TravelMode::Walking,
+        TravelMode::Cycling,
+        TravelMode::Wheelchair,
+    ];
+    // Plenty of room: the worker keeps everything its searches grew to.
+    let roomy = planner_keeping(usize::MAX);
+    let mut kept = Vec::new();
+    let mut held = 0;
+    for mode in modes {
+        kept.push(plan(&roomy, &request(mode)));
+        let idle = roomy.idle_workers();
+        assert_eq!(idle.len(), 1);
+        assert!(idle[0].retained_bytes > held, "each mode adds its storage");
+        held = idle[0].retained_bytes;
+    }
+
+    // Too little room for that, but enough for what the searches keep without their storage.
+    let tight = planner_keeping(held / 2);
+    for (mode, want) in modes.into_iter().zip(&kept) {
+        assert_eq!(&plan(&tight, &request(mode)), want, "{mode:?}");
+        let idle = tight.idle_workers();
+        assert_eq!(idle.len(), 1, "the worker is kept, not dropped");
+        assert!(idle[0].retained_bytes <= held / 2);
+    }
+    // Planned again, on the released storage: the same answers.
+    for (mode, want) in modes.into_iter().zip(&kept) {
+        assert_eq!(&plan(&tight, &request(mode)), want, "{mode:?} again");
+    }
+
+    // No room at all: the worker goes, and plans are still the same.
+    let none = planner_keeping(0);
+    for (mode, want) in modes.into_iter().zip(&kept) {
+        assert_eq!(&plan(&none, &request(mode)), want, "{mode:?}");
+        assert!(none.idle_workers().is_empty());
+    }
+}

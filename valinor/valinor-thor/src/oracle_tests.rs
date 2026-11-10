@@ -747,18 +747,57 @@ fn trimmed_workspaces_keep_only_their_retention() {
         if workspace.retained() > bound {
             grew += 1;
         }
+        let held = workspace.retained_bytes();
+        // Every label and edge status counted, at least 4 bytes each (a status is 4, a label 72).
+        assert!(held >= workspace.retained() * 4, "{id}: {held} bytes");
         workspace.trim();
         assert!(
             workspace.retained() <= bound,
             "{id}: {}",
             workspace.retained()
         );
+        assert!(workspace.retained_bytes() <= held, "{id}: trimming grew");
     }
     assert!(routes >= 100, "only {routes} routes");
     assert!(
         grew > 0,
         "no search grew beyond the retention, so trimming went untested"
     );
+}
+
+#[test]
+fn a_workspace_that_retains_nothing_keeps_only_its_queues() {
+    let dir = fixtures();
+    let tiles = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../valhalla-graphtile/fixtures/andorra-tiles");
+    let provider = DirectoryGraphTileProvider::new(tiles, NonZeroUsize::new(64).expect("64"));
+    let thor = Thor::new(ThorConfig::default(), provider);
+    let inputs = read_inputs(&dir.join("andorra-loki.tsv"));
+    let now = Timestamp::from_second(1_794_116_280).expect("a time");
+    let mut workspace = Workspace::new(Retention {
+        bidirectional_labels: 0,
+        unidirectional_labels: 0,
+    });
+    assert_eq!(workspace.retained_bytes(), 0);
+    let (mut routed, mut released) = (0, 0);
+    for input in inputs.values().take(100) {
+        let mut api = input.clone();
+        if thor.route_at(&mut workspace, &mut api, now).is_err() {
+            continue;
+        }
+        routed += 1;
+        let held = workspace.retained_bytes();
+        workspace.trim();
+        assert_eq!(
+            workspace.retained(),
+            0,
+            "no labels or edge statuses are kept"
+        );
+        assert!(workspace.retained_bytes() <= held);
+        released += usize::from(workspace.retained_bytes() < held);
+    }
+    assert!(routed >= 10, "only {routed} routes");
+    assert!(released > 0, "no route left anything to give back");
 }
 
 /// The reference a captured Thor→Odin message gives: its warnings, location times,

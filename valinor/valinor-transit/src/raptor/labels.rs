@@ -133,6 +133,18 @@ impl<P: Copy> Labels<P> {
         }
     }
 
+    /// Bytes of storage the labels hold, used or not.
+    pub(crate) fn bytes(&self) -> usize {
+        self.hot.capacity() * size_of::<StopHot>()
+            + self.trips.capacity() * size_of::<TripCell>()
+            + self.foot.capacity() * size_of::<FootCell<P>>()
+            + self.targets.capacity() * size_of::<TargetCell>()
+            + (self.marked.capacity() + self.improved.capacity() + self.touched_routes.capacity())
+                * size_of::<u32>()
+            + self.route_marks.capacity() * size_of::<(u32, u32)>()
+            + self.seeds.capacity() * size_of::<crate::transfer::TransferSeed>()
+    }
+
     /// Prepares for a search over `stop_count` stops and `rounds` rounds of trips.
     ///
     /// Sized from the pinned snapshot: overlay stops share these arrays with base stops.

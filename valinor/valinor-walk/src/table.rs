@@ -237,6 +237,14 @@ impl EdgeStates {
             + self.touched.capacity() * size_of::<u32>()
     }
 
+    /// Forgets the current search's states and gives back all of their storage,
+    /// keeping only the page index, which is sized by the graph's numbering.
+    fn release(&mut self) {
+        self.reset(0);
+        self.storage = Vec::new();
+        self.touched = Vec::new();
+    }
+
     /// Gives back storage beyond what this search used, unless that is small.
     fn trim(&mut self) {
         // `trim` can't shrink below the length, and the storage keeps its length between searches.
@@ -455,6 +463,9 @@ impl StopAttachments {
         self.edges.bytes() + self.edge_stops.capacity() * size_of::<EdgeStop>()
     }
 }
+
+/// The part of [`StopTables::memory_parts`] that [`StopTables::bind_shared`] may share.
+const STOP_ATTACHMENTS: &str = "stop attachments";
 
 /// How many labels a search keeps room for between queries (72 bytes each, about 5 MB).
 const RETAINED_LABELS: usize = 1 << 16;
@@ -694,6 +705,41 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         self.attachments.as_ref()
     }
 
+    /// Gives back the storage of the last search: its labels, queue, edge states,
+    /// and the list of stops it reached.
+    ///
+    /// Keeps what doesn't depend on a search: the bound stops (their attachments and per-stop
+    /// arrays) and the graph's dense numbering. The next search allocates again what it needs,
+    /// rather than reusing the room the last one left, and finds the same walks.
+    /// The last search's legs and reached stops can't be read after this.
+    pub fn release_search(&mut self) {
+        self.advance_epoch();
+        self.labels = Vec::new();
+        self.queue = BinaryHeap::new();
+        self.touched_stops = Vec::new();
+        self.edge_states.release();
+    }
+
+    /// Bytes retained by this search's arrays besides its stop attachments,
+    /// which [`Self::bind_shared`] may share with other searches.
+    pub fn bytes_without_attachments(&self) -> usize {
+        self.memory_parts()
+            .iter()
+            .filter(|(part, _)| *part != STOP_ATTACHMENTS)
+            .map(|(_, bytes)| bytes)
+            .sum()
+    }
+
+    /// Starts a new epoch, so that no stop's entry from an earlier search looks current.
+    fn advance_epoch(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        if self.epoch == 0 {
+            self.stop_best.iter_mut().for_each(|s| s.stamp = 0);
+            self.stop_visits.fill((0, 0));
+            self.epoch = 1;
+        }
+    }
+
     /// Gives back the tile slots and dense numbers this search has built up.
     ///
     /// A long-running build calls this between batches of searches, so that a worker's memory
@@ -797,12 +843,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             .cost_factor_override
             .unwrap_or_else(|| cost_factor(costing.base().travel_mode(), costing.travel_type()));
         self.max_cost = self.limit * factor;
-        self.epoch = self.epoch.wrapping_add(1);
-        if self.epoch == 0 {
-            self.stop_best.iter_mut().for_each(|s| s.stamp = 0);
-            self.stop_visits.fill((0, 0));
-            self.epoch = 1;
-        }
+        self.advance_epoch();
         self.labels.clear();
         trim(&mut self.labels, 0, RETAINED_LABELS);
         self.queue.clear();
@@ -1535,7 +1576,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             ("labels", self.labels.capacity() * size_of::<TableLabel>()),
             ("edge_state", self.edge_states.bytes()),
             (
-                "stop attachments",
+                STOP_ATTACHMENTS,
                 self.attachments.as_ref().map_or(0, |a| a.bytes()),
             ),
             (

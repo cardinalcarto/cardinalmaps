@@ -39,8 +39,8 @@ use valinor_transit::{Router, Seconds, StopId, StopTable};
 use valinor_walk::paths::{access_leg, route_paths};
 use valinor_walk::{
     AccessSide, CYCLING_ACCESS_COST_FACTOR, DEFAULT_TRANSFER_SECONDS, SnapConfig, SnappedStop,
-    StopSnaps, StopTables, TableRequest, TableSeed, TableTransfers, TableWalk, TransferTable,
-    WalkError, snap_stop,
+    StopAttachments, StopSnaps, StopTables, TableRequest, TableSeed, TableTransfers, TableWalk,
+    TransferTable, WalkError, snap_stop,
 };
 
 #[cfg(any(test, feature = "test-support"))]
@@ -97,9 +97,12 @@ pub struct ServiceLimits {
     /// Table work and the street graph retained after a query grow with the area it covers,
     /// so an unbounded value is an unbounded query.
     pub max_walk_seconds: u32,
-    /// The most street data one idle worker may keep for the next query, in bytes.
+    /// The most search storage one idle worker may keep for the next query, in bytes.
     ///
-    /// A worker that retains more is dropped after the query, returning that memory.
+    /// A worker that retains more after a query gives back its searches' storage
+    /// (street table labels and edge states, and transit labels),
+    /// which the next query allocates again;
+    /// if what is left is still more, the worker is dropped.
     pub max_retained_worker_bytes: usize,
     /// How many idle workers are kept. Concurrent queries beyond this make temporary workers,
     /// so the caller bounds them by how many queries it runs at once.
@@ -299,13 +302,38 @@ impl<'a> ModeWorker<'a> {
 }
 
 impl ModeWorker<'_> {
+    /// What this mode's searches keep for the next query, in bytes,
+    /// counting stop attachments that its tables share once.
     fn retained_bytes(&self) -> usize {
-        self.router
-            .transfers()
-            .working_memory_bytes()
-            .saturating_add(self.access.stats().bytes)
-            .saturating_add(self.egress.stats().bytes)
-            .saturating_add(self.transfer.stats().bytes)
+        let tables = [&self.access, &self.egress, &self.transfer];
+        let mut attachments: Vec<&Arc<StopAttachments>> = Vec::new();
+        for table in tables {
+            if let Some(a) = table.attachments()
+                && !attachments.iter().any(|seen| Arc::ptr_eq(seen, a))
+            {
+                attachments.push(a);
+            }
+        }
+        tables
+            .iter()
+            .map(|table| table.bytes_without_attachments())
+            .chain(attachments.iter().map(|a| a.bytes()))
+            .fold(
+                self.router
+                    .transfers()
+                    .working_memory_bytes()
+                    .saturating_add(self.router.label_bytes()),
+                usize::saturating_add,
+            )
+    }
+
+    /// Gives back what this mode's searches keep from their last query,
+    /// keeping the bound stops and the graph's numbering.
+    fn release_search(&mut self) {
+        self.router.release_labels();
+        self.access.release_search();
+        self.egress.release_search();
+        self.transfer.release_search();
     }
 }
 
@@ -329,12 +357,19 @@ impl<'a> Worker<'a> {
         })
     }
 
-    /// What this worker's street searches keep for the next query, in bytes.
+    /// What this worker's searches keep for the next query, in bytes.
     fn retained_bytes(&self) -> usize {
         [&self.walking, &self.cycling, &self.wheelchair]
             .into_iter()
             .map(ModeWorker::retained_bytes)
-            .sum()
+            .fold(self.workspace.retained_bytes(), usize::saturating_add)
+    }
+
+    /// Gives back what every mode's searches keep from their last query.
+    fn release_search(&mut self) {
+        self.walking.release_search();
+        self.cycling.release_search();
+        self.wheelchair.release_search();
     }
 }
 
@@ -731,9 +766,14 @@ impl<'a> WorkerPool<'a> {
         // Thor's searches keep their storage until their next start; give it back now.
         worker.workspace.trim();
         if worker.retained_bytes() > self.limits.max_retained_worker_bytes {
-            // There is no trimming the street searches, so a query this large gives
-            // back what it grew to by letting its worker go.
-            return;
+            // The searches' storage is what grows from query to query (and from mode to mode);
+            // the next query allocates what it needs again.
+            worker.release_search();
+            if worker.retained_bytes() > self.limits.max_retained_worker_bytes {
+                // What is left (bound stops, the graph's numbering, Thor's retention)
+                // is still too much: let the worker go.
+                return;
+            }
         }
         let mut idle = self.idle.lock().unwrap_or_else(PoisonError::into_inner);
         if idle.len() < self.limits.max_idle_workers {
@@ -1161,6 +1201,8 @@ impl StreetPlanner {
 #[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct IdleWorker {
+    /// [`Worker::retained_bytes`].
+    pub(crate) retained_bytes: usize,
     /// Per mode: how many of its tables are bound, and how many distinct stop attachments
     /// they hold between them.
     pub(crate) attachments: [(usize, usize); 3],
@@ -1171,11 +1213,10 @@ impl StreetPlanner {
     /// The pool's idle workers, most recently returned last.
     pub(crate) fn idle_workers(&self) -> Vec<IdleWorker> {
         fn attachments(mode: &ModeWorker<'_>) -> (usize, usize) {
-            let bound: Vec<&Arc<valinor_walk::StopAttachments>> =
-                [&mode.access, &mode.egress, &mode.transfer]
-                    .into_iter()
-                    .filter_map(|table| table.attachments())
-                    .collect();
+            let bound: Vec<&Arc<StopAttachments>> = [&mode.access, &mode.egress, &mode.transfer]
+                .into_iter()
+                .filter_map(|table| table.attachments())
+                .collect();
             let distinct = bound
                 .iter()
                 .enumerate()
@@ -1189,6 +1230,7 @@ impl StreetPlanner {
                 .unwrap_or_else(PoisonError::into_inner)
                 .iter()
                 .map(|worker| IdleWorker {
+                    retained_bytes: worker.retained_bytes(),
                     attachments: [
                         attachments(&worker.walking),
                         attachments(&worker.cycling),
