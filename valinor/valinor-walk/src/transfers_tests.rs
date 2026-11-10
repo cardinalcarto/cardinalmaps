@@ -757,6 +757,46 @@ fn a_table_round_trips_through_a_flat_file() {
         .expect("searches");
 }
 
+/// A table mapped from an open file is that file's, whatever its path names afterward.
+#[test]
+fn a_table_mapped_from_an_open_file_outlives_its_path() {
+    use crate::flat_table::FlatTableError;
+    use crate::transfers::Hop as TransferHop;
+
+    let walks = [(
+        0,
+        TransferHop {
+            stop: 1,
+            seconds: 40,
+        },
+    )];
+    let table = TransferTable::from_sorted_walks(2, 900, &walks).expect("valid");
+    let other = TransferTable::from_sorted_walks(2, 900, &[]).expect("valid");
+    let dir = tempfile::tempdir().expect("temp");
+    let path = dir.path().join("table.bin");
+    let key = [5; 32];
+    let mut bytes = Vec::new();
+    table.write_flat(&mut bytes, &key).expect("write");
+    std::fs::write(&path, &bytes).expect("write");
+    let file = std::fs::File::open(&path).expect("open");
+
+    // The path is replaced by another table, then removed, before the open file is mapped.
+    let mut replacement = Vec::new();
+    other.write_flat(&mut replacement, &key).expect("write");
+    let next = dir.path().join("next.bin");
+    std::fs::write(&next, &replacement).expect("write");
+    std::fs::rename(&next, &path).expect("rename");
+    std::fs::remove_file(&path).expect("remove");
+
+    // SAFETY: neither file is modified; one is replaced by renaming, and then unlinked.
+    let mapped = unsafe { TransferTable::map_flat_file(&file, &key) }.expect("maps");
+    assert_eq!(mapped, table);
+    assert_eq!(mapped.seconds(StopId::new(0), StopId::new(1)), Some(40));
+    // SAFETY: as above.
+    let error = unsafe { TransferTable::map_flat_file(&file, &[6; 32]) }.expect_err("wrong key");
+    assert!(matches!(error, FlatTableError::KeyMismatch));
+}
+
 /// A search reads a table's real seconds and applies the rules when it uses each walk,
 /// the same forward and backward.
 #[test]

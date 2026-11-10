@@ -16,6 +16,7 @@
 //! [`TableWalk::search`] records which search found a walk.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::File;
 use std::io::{self, Write};
 use std::num::NonZeroUsize;
 use std::path::Path;
@@ -30,7 +31,9 @@ use valinor_transit::{
 use zerocopy::little_endian::{U16, U32};
 
 use crate::error::WalkError;
-use crate::flat_table::{Columns, FlatTableError, MappedTable, TableKey, map_flat, write_flat};
+use crate::flat_table::{
+    Columns, FlatTableError, MappedTable, TableKey, map_flat, map_flat_file, write_flat,
+};
 use crate::snap::StopSnaps;
 use crate::table::{AccessSide, StopTables, TableRequest};
 
@@ -474,12 +477,35 @@ impl TransferTable {
     pub unsafe fn map_flat(path: &Path, key: &TableKey) -> Result<Self, FlatTableError> {
         // SAFETY: passed on to the caller's promise.
         let mapped = unsafe { map_flat(path, key) }?;
-        Ok(Self {
+        Ok(Self::from_mapped(mapped))
+    }
+
+    /// As [`Self::map_flat`], for a file already open for reading.
+    ///
+    /// The mapping is of the open file, not of whatever its path names later,
+    /// so a caller that opened or wrote the file can map it even if another process has since
+    /// renamed over its path or unlinked it.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::map_flat`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::map_flat`].
+    pub unsafe fn map_flat_file(file: &File, key: &TableKey) -> Result<Self, FlatTableError> {
+        // SAFETY: passed on to the caller's promise.
+        let mapped = unsafe { map_flat_file(file, key) }?;
+        Ok(Self::from_mapped(mapped))
+    }
+
+    fn from_mapped(mapped: MappedTable) -> Self {
+        Self {
             max_seconds: mapped.max_seconds(),
             stop_count: mapped.stop_count(),
             storage: Storage::Mapped(Arc::new(mapped)),
             side: None,
-        })
+        }
     }
 
     /// How many stops the table covers.
