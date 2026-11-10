@@ -45,7 +45,7 @@ use crate::graph::LazyGraph;
 use crate::snap::StopSnaps;
 
 /// Which table a [`StopTables`] search fills, and thus which way it runs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AccessSide {
     /// Forward from the origin to each stop.
     Access,

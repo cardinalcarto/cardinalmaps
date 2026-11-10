@@ -1,5 +1,6 @@
 //! Real walking on the repository's Andorra tile fixture, with a synthetic feed.
 
+use core::cell::Cell;
 use std::path::PathBuf;
 
 use insta::assert_json_snapshot;
@@ -10,7 +11,7 @@ use valinor_gtfs_rt::FeedKind;
 use valinor_gtfs_rt::proto;
 use valinor_gtfs_rt::proto::alert::Effect;
 
-use crate::plan::{TransitRequest, TravelMode};
+use crate::plan::{PlanStage, TransitRequest, TravelMode};
 use crate::response::{JourneyLeg, PlanResponse};
 use crate::state::FeedUpdate;
 use crate::street::{StreetConfig, StreetPlanner};
@@ -31,6 +32,11 @@ fn tiles() -> PathBuf {
 }
 
 fn timetable() -> LoadedTimetable {
+    timetable_with("", "")
+}
+
+/// [`timetable`], with these rows added to `trips.txt` and `stop_times.txt`.
+fn timetable_with(trips: &str, stop_times: &str) -> LoadedTimetable {
     let source = InMemorySource::new()
         .with(
             "agency.txt",
@@ -56,15 +62,20 @@ fn timetable() -> LoadedTimetable {
         )
         .with(
             "trips.txt",
-            "route_id,service_id,trip_id,bikes_allowed\nL1,WK,T1,1\nL2,WK,T2,1\n",
+            &format!(
+                "route_id,service_id,trip_id,bikes_allowed\nL1,WK,T1,1\nL2,WK,T2,1\n{trips}"
+            ),
         )
         .with(
             "stop_times.txt",
-            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+            &format!(
+                "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
              T1,09:00:00,09:00:00,A,1\n\
              T1,09:08:00,09:08:00,B,2\n\
              T2,09:20:00,09:20:00,C,1\n\
-             T2,09:25:00,09:25:00,D,2\n",
+             T2,09:25:00,09:25:00,D,2\n\
+             {stop_times}"
+            ),
         );
     let compiled = compile(vec![FeedInput {
         id: FeedId::try_new(FEED.to_owned()).expect("valid id"),
@@ -128,6 +139,47 @@ fn real_streets_expand_every_walking_leg() {
     }
     assert_eq!(walks, 3, "access, transfer, and egress");
     assert_json_snapshot!("real_streets_walking", &response);
+}
+
+#[test]
+fn a_transfer_shared_by_journeys_is_drawn_once() {
+    let planner = StreetPlanner::open_with_built_transfers(
+        TimetableSet::single(timetable_with(
+            "L1,WK,T1b,1\nL2,WK,T2b,1\n",
+            "T1b,09:10:00,09:10:00,A,1\n\
+             T1b,09:18:00,09:18:00,B,2\n\
+             T2b,09:30:00,09:30:00,C,1\n\
+             T2b,09:35:00,09:35:00,D,2\n",
+        ))
+        .expect("set"),
+        &[tiles()],
+        StreetConfig::default(),
+    )
+    .expect("opens");
+    let draws = Cell::new(0);
+    let response = planner
+        .plan_probed(
+            &request(TravelMode::Walking),
+            "en-US",
+            &|| false,
+            &|stage| {
+                draws.set(draws.get() + u32::from(stage == PlanStage::DrawTransfer));
+            },
+        )
+        .expect("plans");
+    let walks: Vec<_> = response
+        .journeys
+        .iter()
+        .flat_map(|journey| &journey.legs)
+        .filter_map(|leg| match leg {
+            JourneyLeg::Transfer(leg) => leg.walk.as_ref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(response.journeys.len(), 2);
+    assert_eq!(walks.len(), 2, "each journey has its transfer's path");
+    assert_eq!(walks[0], walks[1]);
+    assert_eq!(draws.get(), 1);
 }
 
 #[test]

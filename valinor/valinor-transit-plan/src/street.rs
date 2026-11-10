@@ -12,6 +12,7 @@
 
 use core::fmt;
 use core::num::NonZeroUsize;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -327,6 +328,9 @@ struct StreetSearch<'w, 'a> {
     interrupt: &'w dyn Fn() -> bool,
     probe: &'w dyn Fn(PlanStage),
     max_walk_seconds: u32,
+    /// Transfers drawn so far: journeys of a window share them, and a draw is a street search.
+    /// Keyed by everything a draw depends on within one query.
+    transfer_paths: HashMap<(AccessSide, StopId, StopId), Option<WalkPath>>,
 }
 
 impl StreetSearch<'_, '_> {
@@ -365,6 +369,61 @@ impl StreetSearch<'_, '_> {
             .and_then(|route| route.legs.into_iter().next())
             .ok_or_else(|| StreetError::Path("narration produced no legs".to_owned()))?;
         Ok(walk_path(leg))
+    }
+
+    /// Routes a transfer again by the search that found it, and builds its path.
+    fn draw_transfer(
+        &mut self,
+        request: &AccessEgressRequest<'_>,
+        walk: &TableWalk,
+        from: StopId,
+        to: StopId,
+    ) -> Result<Option<WalkPath>, StreetError> {
+        (self.probe)(PlanStage::DrawTransfer);
+        let snaps = self.snaps(request.snapshot)?;
+        let (Some(start), Some(end)) = (Self::stop_point(snaps, from), Self::stop_point(snaps, to))
+        else {
+            return Ok(None);
+        };
+        // The search that found this walk, so the drawn route matches its seconds: a walk from a
+        // base stop to a GTFS-RT new stop was found by a backward search from the new stop.
+        // It runs at the table's own limit, which sets the search's cost bound.
+        self.mode_worker_transfer.bind(Arc::clone(
+            request
+                .snapshot
+                .snaps()
+                .ok_or(StreetError::NoSnaps)?
+                .for_mode(request.mode),
+        ))?;
+        let (seed_stop, target_stop) = match walk.search {
+            AccessSide::Access => (walk.from, walk.to),
+            AccessSide::Egress => (walk.to, walk.from),
+        };
+        let max_seconds = request
+            .snapshot
+            .snaps()
+            .ok_or(StreetError::NoSnaps)?
+            .transfers_for_mode(request.mode)
+            .max_seconds();
+        let seeds = self.mode_worker_transfer.stop_seeds(seed_stop)?;
+        if !self.mode_worker_transfer.search_to_stop(
+            &TableRequest {
+                side: walk.search,
+                seeds: &seeds,
+                max_seconds,
+                interrupt: self.interrupt,
+            },
+            target_stop,
+        )? {
+            return Ok(None);
+        }
+        let Some(leg) = self.mode_worker_transfer.leg(target_stop) else {
+            return Ok(None);
+        };
+        let Some(thor_leg) = access_leg(&leg, sif_mode(self.mode), 0, 1, start, end) else {
+            return Ok(None);
+        };
+        self.build_path(thor_leg).map(Some)
     }
 
     /// How a direct search for the whole trip fares, when it is worth running.
@@ -607,51 +666,13 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
         from: StopId,
         to: StopId,
     ) -> Result<Option<WalkPath>, StreetError> {
-        (self.probe)(PlanStage::DrawTransfer);
-        let snaps = self.snaps(request.snapshot)?;
-        let (Some(start), Some(end)) = (Self::stop_point(snaps, from), Self::stop_point(snaps, to))
-        else {
-            return Ok(None);
-        };
-        // The search that found this walk, so the drawn route matches its seconds: a walk from a
-        // base stop to a GTFS-RT new stop was found by a backward search from the new stop.
-        // It runs at the table's own limit, which sets the search's cost bound.
-        self.mode_worker_transfer.bind(Arc::clone(
-            request
-                .snapshot
-                .snaps()
-                .ok_or(StreetError::NoSnaps)?
-                .for_mode(request.mode),
-        ))?;
-        let (seed_stop, target_stop) = match walk.search {
-            AccessSide::Access => (walk.from, walk.to),
-            AccessSide::Egress => (walk.to, walk.from),
-        };
-        let max_seconds = request
-            .snapshot
-            .snaps()
-            .ok_or(StreetError::NoSnaps)?
-            .transfers_for_mode(request.mode)
-            .max_seconds();
-        let seeds = self.mode_worker_transfer.stop_seeds(seed_stop)?;
-        if !self.mode_worker_transfer.search_to_stop(
-            &TableRequest {
-                side: walk.search,
-                seeds: &seeds,
-                max_seconds,
-                interrupt: self.interrupt,
-            },
-            target_stop,
-        )? {
-            return Ok(None);
+        let key = (walk.search, from, to);
+        if let Some(path) = self.transfer_paths.get(&key) {
+            return Ok(path.clone());
         }
-        let Some(leg) = self.mode_worker_transfer.leg(target_stop) else {
-            return Ok(None);
-        };
-        let Some(thor_leg) = access_leg(&leg, sif_mode(self.mode), 0, 1, start, end) else {
-            return Ok(None);
-        };
-        self.build_path(thor_leg).map(Some)
+        let path = self.draw_transfer(request, walk, from, to)?;
+        self.transfer_paths.insert(key, path.clone());
+        Ok(path)
     }
 }
 
@@ -1079,6 +1100,7 @@ impl StreetPlanner {
             interrupt,
             probe,
             max_walk_seconds: request.options.max_walk_seconds,
+            transfer_paths: HashMap::new(),
         };
         plan_pinned(snapshot, router, &mut search, request, interrupt)
     }
