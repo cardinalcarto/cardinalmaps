@@ -1,5 +1,6 @@
 //! Turns a profile's journeys into rider-facing legs.
 
+use core::cell::RefCell;
 use std::collections::HashMap;
 
 use valinor_gtfs::{
@@ -20,6 +21,7 @@ use crate::plan::{
     AccessEgressRequest, AccessEgressSearch, DirectSearch, PlanStage, TransitRequest, TravelMode,
 };
 use crate::response::alerts::{LegSelectorContext, LegStop, ServiceRun, leg_alerts};
+use crate::response::departures::DepartureCache;
 use crate::response::vehicle::{lower, vehicle_from};
 use crate::response::{
     AccessEgressLeg, Accessibility, AgencyResponse, DirectResponse, FeedReport, FeedState, Journey,
@@ -44,6 +46,7 @@ pub(crate) fn build_response<A: AccessEgressSearch>(
         access_egress,
         access_paths: HashMap::new(),
         egress_paths: HashMap::new(),
+        departure_cache: RefCell::new(DepartureCache::default()),
     };
     let mut journeys = Vec::new();
     for entry in profile.entries {
@@ -205,6 +208,8 @@ pub(super) struct Builder<'a, A: AccessEgressSearch> {
     /// Expanded once per stop: many journeys of a window share their access and egress.
     access_paths: HashMap<StopId, Option<WalkPath>>,
     egress_paths: HashMap<StopId, Option<WalkPath>>,
+    /// What the journeys' rides have already worked out about their departures.
+    pub(super) departure_cache: RefCell<DepartureCache>,
 }
 
 /// What a ride's trip is, resolved once from the timetable and real-time data.
@@ -312,10 +317,16 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         let mut legs = Vec::with_capacity(entry.journey.legs.len());
         let mut clock = departure;
         let (mut access, mut transfers, mut egress, mut waiting) = (0_i64, 0_i64, 0_i64, 0_i64);
+        // The earliest the rider can board at the next ride's stop, as routing counts it:
+        // the request's departure plus the access, or the last alighting plus the walk's cost or,
+        // with no walk, the stop's change time. A departure before this is one the rider misses.
+        let mut ready = self.request.departure;
+        let mut alighted: Option<(i64, StopId)> = None;
         for leg in entry.journey.legs {
             match leg {
                 Leg::Access { stop, duration } => {
                     let duration = i64::from(duration.into_inner());
+                    ready = self.request.departure + duration;
                     access += duration;
                     let walk = self.access_path(stop)?;
                     legs.push(JourneyLeg::Access(AccessEgressLeg {
@@ -335,11 +346,24 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                     let alight = origin + i64::from(ride.alight_time.into_inner());
                     let wait = board - clock;
                     waiting += wait;
+                    if let Some((alighted_at, stop)) = alighted.take() {
+                        // Two rides in a row change at one stop.
+                        debug_assert_eq!(stop, ride.board_stop, "a change without a walk");
+                        let change = self.snapshot.snapshot.min_change(stop).unwrap_or(0);
+                        ready = alighted_at + i64::from(change);
+                    }
                     self.access_egress.enter_stage(PlanStage::TransitLeg);
-                    let leg = self.transit_leg(&ride, wait);
+                    let mut leg = self.transit_leg(&ride, wait);
+                    if !self.request.options.departures.is_empty() {
+                        self.access_egress.enter_stage(PlanStage::Departures);
+                        let (departures, alerts) = self.ride_departures(&ride, ready, &leg);
+                        leg.departures = departures;
+                        leg.departure_alerts = alerts;
+                    }
                     self.access_egress.enter_stage(PlanStage::Assemble);
                     legs.push(JourneyLeg::Transit(Box::new(leg)));
                     clock = alight;
+                    alighted = Some((alight, ride.alight_stop));
                 }
                 Leg::Transfer {
                     from,
@@ -347,6 +371,10 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                     duration,
                     walk,
                 } => {
+                    // Routing's cost of the walk, which includes any minimum transfer time.
+                    if let Some((alighted_at, _)) = alighted.take() {
+                        ready = alighted_at + i64::from(duration.into_inner());
+                    }
                     // The walk's own seconds: any more the transfer cost is a wait to board,
                     // which the next ride's `wait_seconds` shows.
                     let duration = self
@@ -642,6 +670,8 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
             shape,
             vehicle,
             alerts,
+            departures: Vec::new(),
+            departure_alerts: Vec::new(),
         }
     }
 

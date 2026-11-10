@@ -339,6 +339,41 @@ expression: "&response"
                 }
               ]
             }
+          ],
+          "departures": [
+            {
+              "trip_id": "T1",
+              "status": "live",
+              "departure": 1781535750,
+              "arrival": 1781536920,
+              "scheduled_departure": 1781535630,
+              "scheduled_arrival": 1781536800,
+              "delay_seconds": 120,
+              "realtime": true,
+              "vehicle_id": "7033",
+              "accessibility": "unknown",
+              "bikes_allowed": "no",
+              "suggested": true,
+              "alerts": [
+                0,
+                1
+              ]
+            },
+            {
+              "trip_id": "T2",
+              "status": "scheduled",
+              "departure": 1781537430,
+              "arrival": 1781538600,
+              "scheduled_departure": 1781537430,
+              "scheduled_arrival": 1781538600,
+              "accessibility": "unknown",
+              "bikes_allowed": "no",
+              "last_of_day": true,
+              "alerts": [
+                0,
+                1
+              ]
+            }
           ]
         },
         {
@@ -438,7 +473,29 @@ expression: "&response"
               "utc_offset_seconds": -25200
             }
           ],
-          "alerts": []
+          "alerts": [],
+          "departures": [
+            {
+              "trip_id": "T3",
+              "status": "scheduled",
+              "departure": 1781538000,
+              "arrival": 1781539200,
+              "scheduled_departure": 1781538000,
+              "scheduled_arrival": 1781539200,
+              "accessibility": "inaccessible",
+              "suggested": true
+            },
+            {
+              "trip_id": "T4",
+              "status": "scheduled",
+              "departure": 1781539800,
+              "arrival": 1781541000,
+              "scheduled_departure": 1781539800,
+              "scheduled_arrival": 1781541000,
+              "accessibility": "inaccessible",
+              "last_of_day": true
+            }
+          ]
         },
         {
           "type": "egress",
@@ -723,6 +780,41 @@ expression: "&response"
                 }
               ]
             }
+          ],
+          "departures": [
+            {
+              "trip_id": "T1",
+              "status": "live",
+              "departure": 1781535750,
+              "arrival": 1781536920,
+              "scheduled_departure": 1781535630,
+              "scheduled_arrival": 1781536800,
+              "delay_seconds": 120,
+              "realtime": true,
+              "vehicle_id": "7033",
+              "accessibility": "unknown",
+              "bikes_allowed": "no",
+              "alerts": [
+                0,
+                1
+              ]
+            },
+            {
+              "trip_id": "T2",
+              "status": "scheduled",
+              "departure": 1781537430,
+              "arrival": 1781538600,
+              "scheduled_departure": 1781537430,
+              "scheduled_arrival": 1781538600,
+              "accessibility": "unknown",
+              "bikes_allowed": "no",
+              "suggested": true,
+              "last_of_day": true,
+              "alerts": [
+                0,
+                1
+              ]
+            }
           ]
         },
         {
@@ -822,7 +914,30 @@ expression: "&response"
               "utc_offset_seconds": -25200
             }
           ],
-          "alerts": []
+          "alerts": [],
+          "departures": [
+            {
+              "trip_id": "T3",
+              "status": "scheduled",
+              "departure": 1781538000,
+              "arrival": 1781539200,
+              "scheduled_departure": 1781538000,
+              "scheduled_arrival": 1781539200,
+              "accessibility": "inaccessible",
+              "missed": true
+            },
+            {
+              "trip_id": "T4",
+              "status": "scheduled",
+              "departure": 1781539800,
+              "arrival": 1781541000,
+              "scheduled_departure": 1781539800,
+              "scheduled_arrival": 1781541000,
+              "accessibility": "inaccessible",
+              "suggested": true,
+              "last_of_day": true
+            }
+          ]
         },
         {
           "type": "egress",

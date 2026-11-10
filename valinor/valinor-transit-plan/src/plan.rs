@@ -55,6 +55,8 @@ pub struct TransitOptions {
     pub max_trips: u8,
     /// The longest access or egress leg to consider, in seconds.
     pub max_walk_seconds: u32,
+    /// Which other departures each ride lists; see [`DepartureRange`].
+    pub departures: DepartureRange,
 }
 
 impl Default for TransitOptions {
@@ -62,6 +64,55 @@ impl Default for TransitOptions {
         Self {
             max_trips: 8,
             max_walk_seconds: 1800,
+            departures: DepartureRange::default(),
+        }
+    }
+}
+
+/// The most departures a ride may list on either side of its own; see [`DepartureRange`].
+pub const MAX_RANGE_DEPARTURES: u8 = 10;
+
+/// Which other departures of a ride's route each ride lists, around the one the journey takes.
+///
+/// A ride lists up to `before` departures leaving its boarding stop before its own,
+/// and up to `after` leaving after it, no further from its own than the two bounds.
+/// Zero on both sides lists none, not even the ride's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DepartureRange {
+    /// The most departures before the ride's own; at most [`MAX_RANGE_DEPARTURES`].
+    pub before: u8,
+    /// The most departures after the ride's own; at most [`MAX_RANGE_DEPARTURES`].
+    pub after: u8,
+    /// How long before the ride's own departure to look, in seconds.
+    pub before_seconds: u32,
+    /// How long after the ride's own departure to look, in seconds.
+    pub after_seconds: u32,
+}
+
+impl DepartureRange {
+    /// A range that lists nothing.
+    pub const NONE: Self = Self {
+        before: 0,
+        after: 0,
+        before_seconds: 0,
+        after_seconds: 0,
+    };
+
+    /// Whether this range lists anything at all.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.before == 0 && self.after == 0
+    }
+}
+
+impl Default for DepartureRange {
+    /// Two before and three after, within an hour before and two hours after.
+    fn default() -> Self {
+        Self {
+            before: 2,
+            after: 3,
+            before_seconds: 3600,
+            after_seconds: 2 * 3600,
         }
     }
 }
@@ -170,6 +221,8 @@ pub enum PlanStage {
     TransitLeg,
     /// Encoding a ride's shape.
     TransitShape,
+    /// Finding a ride's other departures, and describing them.
+    Departures,
     /// Assembling journeys from their legs, and the rest of the response.
     Assemble,
     /// Returning the search worker to its pool.
@@ -269,6 +322,19 @@ where
     }
     if request.options.max_trips == 0 || request.options.max_trips > valinor_transit::MAX_TRIPS {
         return Err(PlanError::InvalidRequest("max_trips is out of range"));
+    }
+    let range = request.options.departures;
+    if range.before > MAX_RANGE_DEPARTURES || range.after > MAX_RANGE_DEPARTURES {
+        return Err(PlanError::InvalidRequest(
+            "a departure range lists more than ten departures on one side",
+        ));
+    }
+    if range.before_seconds > MAX_DEPARTURE_WINDOW_SECONDS
+        || range.after_seconds > MAX_DEPARTURE_WINDOW_SECONDS
+    {
+        return Err(PlanError::InvalidRequest(
+            "a departure range looks further than a day",
+        ));
     }
     request
         .departure

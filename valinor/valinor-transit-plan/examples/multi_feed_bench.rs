@@ -226,7 +226,7 @@ impl StageClock {
 }
 
 /// The stages, in the order a plan runs them, with the name used in the table.
-const STAGES: [(PlanStage, &str); 15] = [
+const STAGES: [(PlanStage, &str); 16] = [
     (PlanStage::Setup, "pin, worker, options"),
     (PlanStage::Locate, "locate origin and destination"),
     (PlanStage::AccessTable, "access table"),
@@ -240,6 +240,7 @@ const STAGES: [(PlanStage, &str); 15] = [
     (PlanStage::ConvertWalkPath, "walk path conversion"),
     (PlanStage::TransitLeg, "ride legs"),
     (PlanStage::TransitShape, "ride shape encoding"),
+    (PlanStage::Departures, "ride departure ranges"),
     (PlanStage::Assemble, "journey assembly"),
     (PlanStage::Release, "release worker"),
 ];
@@ -261,6 +262,7 @@ struct LegCounts {
     distinct_rides: usize,
     distinct_transfers: usize,
     distinct_egress: usize,
+    departures: usize,
     json_bytes: usize,
 }
 
@@ -288,6 +290,7 @@ fn leg_counts(response: &PlanResponse, json_bytes: usize) -> LegCounts {
             }
             JourneyLeg::Transit(leg) => {
                 counts.rides += 1;
+                counts.departures += leg.departures.len();
                 let ends = leg
                     .stops
                     .first()
@@ -389,6 +392,9 @@ fn print_split(name: &str, mode_name: &str, splits: &[PeriodSplit], repeat: usiz
     });
     row("rides (distinct)", &|split| {
         format!("{} ({})", split.counts.rides, split.counts.distinct_rides)
+    });
+    row("departures listed", &|split| {
+        split.counts.departures.to_string()
     });
     row("transfers (distinct)", &|split| {
         format!(
