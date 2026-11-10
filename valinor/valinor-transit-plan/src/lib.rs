@@ -47,7 +47,8 @@ pub use json::{JsonCoordinate, JsonResponse, PlanRequestBody};
 pub use lookup::CompiledLookup;
 pub use plan::{
     AccessEgressRequest, AccessEgressSearch, AccessEgressTables, DirectSearch,
-    MAX_DEPARTURE_WINDOW_SECONDS, TransitOptions, TransitRequest, TravelMode, plan, plan_pinned,
+    MAX_DEPARTURE_WINDOW_SECONDS, PlanStage, TransitOptions, TransitRequest, TravelMode, plan,
+    plan_pinned,
 };
 pub use response::{
     Accessibility, PlanResponse, StopMovedNotice, Vehicle, VehicleUpdate, WalkManeuver, WalkPath,

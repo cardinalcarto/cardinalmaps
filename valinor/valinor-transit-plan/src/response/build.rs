@@ -14,7 +14,7 @@ use valinor_gtfs_rt::{
 use valinor_transit::{Leg, Profile, ProfileEntry, Ride, StopEvent, StopId, StopRules, TripKey};
 
 use crate::plan::{
-    AccessEgressRequest, AccessEgressSearch, DirectSearch, TransitRequest, TravelMode,
+    AccessEgressRequest, AccessEgressSearch, DirectSearch, PlanStage, TransitRequest, TravelMode,
 };
 use crate::response::alerts::{LegSelectorContext, LegStop, ServiceRun, leg_alerts};
 use crate::response::vehicle::{lower, vehicle_from};
@@ -225,6 +225,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             snapshot,
         };
         let path = self.access_egress.access_path(&request, stop)?;
+        self.access_egress.enter_stage(PlanStage::Assemble);
         self.access_paths.insert(stop, path.clone());
         Ok(path)
     }
@@ -241,6 +242,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             snapshot,
         };
         let path = self.access_egress.egress_path(&request, stop)?;
+        self.access_egress.enter_stage(PlanStage::Assemble);
         self.egress_paths.insert(stop, path.clone());
         Ok(path)
     }
@@ -291,7 +293,10 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     let alight = origin + i64::from(ride.alight_time.into_inner());
                     let wait = board - clock;
                     waiting += wait;
-                    legs.push(JourneyLeg::Transit(Box::new(self.transit_leg(&ride, wait))));
+                    self.access_egress.enter_stage(PlanStage::TransitLeg);
+                    let leg = self.transit_leg(&ride, wait);
+                    self.access_egress.enter_stage(PlanStage::Assemble);
+                    legs.push(JourneyLeg::Transit(Box::new(leg)));
                     clock = alight;
                 }
                 Leg::Transfer {
@@ -318,6 +323,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                         self.access_egress
                             .transfer_path(&request, &walk, from, to)?
                     };
+                    self.access_egress.enter_stage(PlanStage::Assemble);
                     legs.push(JourneyLeg::Transfer(Box::new(TransferLeg {
                         mode,
                         accessibility: walking_accessibility,
@@ -647,7 +653,12 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                     ride.alight_position as usize,
                 )
             })
-            .map(|points| encode_polyline6(&points));
+            .map(|points| {
+                self.access_egress.enter_stage(PlanStage::TransitShape);
+                let shape = encode_polyline6(&points);
+                self.access_egress.enter_stage(PlanStage::TransitLeg);
+                shape
+            });
         let segments = Self::ride_segments(part, &trip_segments, ride, &stop_indices);
 
         let realtime = stops

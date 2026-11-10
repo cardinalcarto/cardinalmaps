@@ -47,8 +47,8 @@ use valinor_walk::snap_stops;
 use crate::build::{BuildLoadError, TransitBuild};
 use crate::error::{PlanError, StateError};
 use crate::plan::{
-    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, DirectSearch, TransitRequest,
-    TravelMode, plan_pinned, validated_latest,
+    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, DirectSearch, PlanStage,
+    TransitRequest, TravelMode, plan_pinned, validated_latest,
 };
 use crate::response::{PlanResponse, VehicleUpdate, WalkManeuver, WalkPath, lower};
 use crate::state::{StateConfig, StopSnapper, TransitSnapshot, TransitState};
@@ -325,6 +325,7 @@ struct StreetSearch<'w, 'a> {
     options: Options,
     now: Timestamp,
     interrupt: &'w dyn Fn() -> bool,
+    probe: &'w dyn Fn(PlanStage),
     max_walk_seconds: u32,
 }
 
@@ -343,6 +344,7 @@ impl StreetSearch<'_, '_> {
 
     /// Thor builds the leg's shape and Ilúvatar narrates it.
     fn build_path(&mut self, leg: ThorLeg) -> Result<WalkPath, StreetError> {
+        (self.probe)(PlanStage::ThorTrip);
         let mut api = Api {
             options: Some(self.options.clone()),
             ..Api::default()
@@ -350,12 +352,14 @@ impl StreetSearch<'_, '_> {
         self.thor
             .build_trip_interruptible(&mut api, &route_paths(vec![leg]), self.now, self.interrupt)
             .map_err(|e| StreetError::Path(e.to_string()))?;
+        (self.probe)(PlanStage::Narrate);
         self.odin
             .narrate(&mut api)
             .map_err(|e| StreetError::Path(e.to_string()))?;
         let directions = api
             .directions
             .ok_or_else(|| StreetError::Path("narration produced no directions".to_owned()))?;
+        (self.probe)(PlanStage::ConvertWalkPath);
         let route = directions.routes.into_iter().next();
         let leg = route
             .and_then(|route| route.legs.into_iter().next())
@@ -476,6 +480,10 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
     type Error = StreetError;
     type Walk = TableWalk;
 
+    fn enter_stage(&self, stage: PlanStage) {
+        (self.probe)(stage);
+    }
+
     fn transfer_seconds(&self, walk: &TableWalk) -> Option<u32> {
         Some(walk.seconds)
     }
@@ -494,6 +502,7 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
         self.mode_worker_access.bind(Arc::clone(snaps))?;
         self.mode_worker_egress.bind(Arc::clone(snaps))?;
 
+        (self.probe)(PlanStage::Locate);
         let origin = correlated(self.tiles, self.costing, request.origin)?;
         let destination = correlated(self.tiles, self.costing, request.destination)?;
         let origin_seeds = seeds_of(&origin);
@@ -505,6 +514,7 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
             return Err(StreetError::NoStreetNearby("destination"));
         }
 
+        (self.probe)(PlanStage::AccessTable);
         let access = self.mode_worker_access.compute(
             stop_count,
             &TableRequest {
@@ -514,6 +524,7 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
                 interrupt,
             },
         )?;
+        (self.probe)(PlanStage::EgressTable);
         let egress = self.mode_worker_egress.compute(
             stop_count,
             &TableRequest {
@@ -528,6 +539,7 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
             // Interrupted: empty tables, and the profile reports the interrupt.
             _ => (StopTable::new(stop_count), StopTable::new(stop_count)),
         };
+        (self.probe)(PlanStage::DirectRoute);
         let direct = self.direct(&origin, &destination, request.origin, request.destination);
         Ok(AccessEgressTables {
             access,
@@ -541,6 +553,7 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
         request: &AccessEgressRequest<'_>,
         stop: StopId,
     ) -> Result<Option<WalkPath>, StreetError> {
+        (self.probe)(PlanStage::DrawAccessEgress);
         let snaps = self.snaps(request.snapshot)?;
         let Some(end) = Self::stop_point(snaps, stop) else {
             return Ok(None);
@@ -566,6 +579,7 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
         request: &AccessEgressRequest<'_>,
         stop: StopId,
     ) -> Result<Option<WalkPath>, StreetError> {
+        (self.probe)(PlanStage::DrawAccessEgress);
         let snaps = self.snaps(request.snapshot)?;
         let Some(start) = Self::stop_point(snaps, stop) else {
             return Ok(None);
@@ -593,6 +607,7 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
         from: StopId,
         to: StopId,
     ) -> Result<Option<WalkPath>, StreetError> {
+        (self.probe)(PlanStage::DrawTransfer);
         let snaps = self.snaps(request.snapshot)?;
         let (Some(start), Some(end)) = (Self::stop_point(snaps, from), Self::stop_point(snaps, to))
         else {
@@ -952,6 +967,23 @@ impl StreetPlanner {
         language: &str,
         interrupt: &dyn Fn() -> bool,
     ) -> Result<PlanResponse, StreetPlanError> {
+        self.plan_probed(request, language, interrupt, &|_| {})
+    }
+
+    /// [`Self::plan`], telling `probe` as each stage of the work begins,
+    /// so that a tool can see where a plan's time goes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::plan`].
+    pub fn plan_probed(
+        &self,
+        request: &TransitRequest,
+        language: &str,
+        interrupt: &dyn Fn() -> bool,
+        probe: &dyn Fn(PlanStage),
+    ) -> Result<PlanResponse, StreetPlanError> {
+        probe(PlanStage::Setup);
         let latest_unix = validated_latest::<WalkError, StreetError>(request)?;
         if request.options.max_walk_seconds > self.limits.max_walk_seconds {
             return Err(PlanError::InvalidRequest(
@@ -973,7 +1005,9 @@ impl StreetPlanner {
                 language,
                 now,
                 interrupt,
+                probe,
             );
+            probe(PlanStage::Release);
             pool.put(worker);
             result
         })
@@ -988,6 +1022,10 @@ impl StreetPlanner {
         self.state.vehicle(now, feed, id)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one query's context, for one call"
+    )]
     fn plan_with<'a>(
         pool: &WorkerPool<'a>,
         worker: &mut Worker<'a>,
@@ -996,6 +1034,7 @@ impl StreetPlanner {
         language: &str,
         now: Timestamp,
         interrupt: &dyn Fn() -> bool,
+        probe: &dyn Fn(PlanStage),
     ) -> Result<PlanResponse, StreetPlanError> {
         let Worker {
             walking,
@@ -1038,6 +1077,7 @@ impl StreetPlanner {
             options: trip_options(request.mode, language).map_err(PlanError::AccessEgress)?,
             now,
             interrupt,
+            probe,
             max_walk_seconds: request.options.max_walk_seconds,
         };
         plan_pinned(snapshot, router, &mut search, request, interrupt)

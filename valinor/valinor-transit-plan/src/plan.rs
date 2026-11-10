@@ -138,6 +138,44 @@ pub enum DirectSearch {
     Failed(String),
 }
 
+/// A part of answering a query, so that a caller can see where the time goes.
+///
+/// A probe hears each stage as it begins; what runs until the next one belongs to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum PlanStage {
+    /// Pinning a snapshot, taking a search worker, and building trip options.
+    Setup,
+    /// Correlating the origin and destination to the streets.
+    Locate,
+    /// The access table, from the origin to every stop.
+    AccessTable,
+    /// The egress table, from every stop to the destination.
+    EgressTable,
+    /// The direct street route for the whole trip.
+    DirectRoute,
+    /// The transit search over the access and egress tables.
+    Search,
+    /// Reconstructing an access or egress leg from a table's labels.
+    DrawAccessEgress,
+    /// Searching a transfer again, to draw it, and reconstructing its leg.
+    DrawTransfer,
+    /// Thor building a walking leg's trip, including its encoded polyline.
+    ThorTrip,
+    /// Ilúvatar narrating a walking leg.
+    Narrate,
+    /// Turning a narrated leg into a response's walk path.
+    ConvertWalkPath,
+    /// A ride's stops, alerts, and route details.
+    TransitLeg,
+    /// Encoding a ride's shape.
+    TransitShape,
+    /// Assembling journeys from their legs, and the rest of the response.
+    Assemble,
+    /// Returning the search worker to its pool.
+    Release,
+}
+
 /// Computes access and egress tables, once per query, and expands walking legs for the response.
 ///
 /// A table must cover every stop riders could use: the search doesn't walk between it and the
@@ -147,6 +185,9 @@ pub enum DirectSearch {
 pub trait AccessEgressSearch {
     /// A failure of the search itself.
     type Error: Error + 'static;
+
+    /// Notes that the work from here on belongs to `stage`. By default, nothing listens.
+    fn enter_stage(&self, _stage: PlanStage) {}
 
     /// The transfer search's resolved walk, which [`Self::transfer_path`] expands.
     type Walk;
@@ -299,6 +340,7 @@ where
         return Ok(empty_response(snapshot, request, reason, &tables.direct));
     }
 
+    access_egress.enter_stage(PlanStage::Search);
     let earliest = window_time(snapshot, request.departure)?;
     let latest = window_time(snapshot, latest_unix)?;
 
@@ -316,6 +358,7 @@ where
             other => PlanError::Search(other),
         })?;
 
+    access_egress.enter_stage(PlanStage::Assemble);
     build_response(snapshot, request, profile, &tables.direct, access_egress)
         .map_err(PlanError::AccessEgress)
 }

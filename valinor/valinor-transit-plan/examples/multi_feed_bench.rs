@@ -7,6 +7,9 @@
 //!
 //! `--rt DIR` ingests `tripupdates.pb`, `vehiclepositions.pb`, and `alerts.pb` for King County
 //! Metro before planning, and plans at the capture's own time.
+//!
+//! After the named trips it prints where a full plan's time goes:
+//! one table per trip and travel mode, of the median stage times across `--repeat` warm plans.
 
 #![allow(
     clippy::print_stdout,
@@ -18,7 +21,9 @@
     reason = "a reporting tool"
 )]
 
+use core::cell::{Cell, RefCell};
 use core::num::NonZeroUsize;
+use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,9 +38,10 @@ use valinor_sif::AnyCosting;
 use valinor_sif::costing_options::parse_costing;
 use valinor_sif::json::JsonValue;
 use valinor_transit::{ProfileOptions, RouteFilter, Router, StopId, StopTable, Time, TransitQuery};
-use valinor_transit_plan::response::{JourneyLeg, TransitLeg};
+use valinor_transit_plan::response::{JourneyLeg, StopRef, TransitLeg};
 use valinor_transit_plan::{
-    FeedUpdate, StreetConfig, StreetPlanner, TransitBuild, TransitRequest, TravelMode,
+    FeedUpdate, PlanResponse, PlanStage, StreetConfig, StreetPlanner, TransitBuild, TransitRequest,
+    TravelMode,
 };
 use valinor_walk::{AccessSide, StopTables, TableRequest, TableTransfers};
 
@@ -182,6 +188,257 @@ fn ingest_rt(planner: &StreetPlanner, directory: &Path) -> Result<i64, Box<dyn E
         println!("ingest {file}: {:?}", result.outcome);
     }
     Ok(now)
+}
+
+/// Where each stage of a plan's time went, attributing each interval to the stage it was in.
+struct StageClock {
+    at: Cell<Instant>,
+    current: Cell<PlanStage>,
+    /// Milliseconds and entries per stage.
+    totals: RefCell<BTreeMap<PlanStage, (f64, u32)>>,
+}
+
+impl StageClock {
+    fn new() -> Self {
+        Self {
+            at: Cell::new(Instant::now()),
+            current: Cell::new(PlanStage::Setup),
+            totals: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    /// Closes the current interval.
+    fn tick(&self) {
+        let now = Instant::now();
+        let ms = (now - self.at.replace(now)).as_secs_f64() * 1000.0;
+        self.totals
+            .borrow_mut()
+            .entry(self.current.get())
+            .or_insert((0.0, 0))
+            .0 += ms;
+    }
+
+    fn enter(&self, stage: PlanStage) {
+        self.tick();
+        self.current.set(stage);
+        self.totals.borrow_mut().entry(stage).or_insert((0.0, 0)).1 += 1;
+    }
+}
+
+/// The stages, in the order a plan runs them, with the name used in the table.
+const STAGES: [(PlanStage, &str); 15] = [
+    (PlanStage::Setup, "pin, worker, options"),
+    (PlanStage::Locate, "locate origin and destination"),
+    (PlanStage::AccessTable, "access table"),
+    (PlanStage::EgressTable, "egress table"),
+    (PlanStage::DirectRoute, "direct street route"),
+    (PlanStage::Search, "transit search (profile)"),
+    (PlanStage::DrawAccessEgress, "draw access and egress"),
+    (PlanStage::DrawTransfer, "draw transfers (search)"),
+    (PlanStage::ThorTrip, "Thor trip (with polyline)"),
+    (PlanStage::Narrate, "narration"),
+    (PlanStage::ConvertWalkPath, "walk path conversion"),
+    (PlanStage::TransitLeg, "ride legs"),
+    (PlanStage::TransitShape, "ride shape encoding"),
+    (PlanStage::Assemble, "journey assembly"),
+    (PlanStage::Release, "release worker"),
+];
+
+/// A leg's stop as `(feed, stop ID)`: two legs repeat when these are the same.
+fn stop_key(stop: &StopRef) -> (Option<String>, String) {
+    (stop.feed.clone(), stop.stop_id.clone())
+}
+
+/// How many legs a plan has, how many of them are distinct, and what its JSON weighs.
+#[derive(Default)]
+struct LegCounts {
+    journeys: usize,
+    access: usize,
+    rides: usize,
+    transfers: usize,
+    egress: usize,
+    distinct_access: usize,
+    distinct_rides: usize,
+    distinct_transfers: usize,
+    distinct_egress: usize,
+    json_bytes: usize,
+}
+
+fn leg_counts(response: &PlanResponse, json_bytes: usize) -> LegCounts {
+    let mut counts = LegCounts {
+        journeys: response.journeys.len(),
+        json_bytes,
+        ..LegCounts::default()
+    };
+    let (mut access, mut egress) = (HashSet::new(), HashSet::new());
+    let (mut rides, mut transfers) = (HashSet::new(), HashSet::new());
+    for leg in response.journeys.iter().flat_map(|journey| &journey.legs) {
+        match leg {
+            JourneyLeg::Access(leg) => {
+                counts.access += 1;
+                access.insert(stop_key(&leg.stop));
+            }
+            JourneyLeg::Egress(leg) => {
+                counts.egress += 1;
+                egress.insert(stop_key(&leg.stop));
+            }
+            JourneyLeg::Transfer(leg) => {
+                counts.transfers += 1;
+                transfers.insert((stop_key(&leg.from), stop_key(&leg.to)));
+            }
+            JourneyLeg::Transit(leg) => {
+                counts.rides += 1;
+                let ends = leg
+                    .stops
+                    .first()
+                    .zip(leg.stops.last())
+                    .map(|(first, last)| (stop_key(&first.stop), stop_key(&last.stop)));
+                rides.insert((
+                    leg.trip.feed.clone(),
+                    leg.trip.trip_id.clone(),
+                    leg.trip.start_date.clone(),
+                    ends,
+                ));
+            }
+        }
+    }
+    (counts.distinct_access, counts.distinct_egress) = (access.len(), egress.len());
+    (counts.distinct_rides, counts.distinct_transfers) = (rides.len(), transfers.len());
+    counts
+}
+
+/// One period's medians of a plan's split, in milliseconds, with its leg counts.
+struct PeriodSplit {
+    stages: BTreeMap<PlanStage, f64>,
+    /// How many times each stage began, in the last plan.
+    entries: BTreeMap<PlanStage, u32>,
+    plan_ms: f64,
+    json_ms: f64,
+    counts: LegCounts,
+}
+
+/// Plans one request `repeat` times, keeping the median of each stage.
+fn split_period(
+    planner: &StreetPlanner,
+    request: &TransitRequest,
+    repeat: usize,
+) -> Result<PeriodSplit, Box<dyn Error>> {
+    let mut samples: BTreeMap<PlanStage, Vec<f64>> = BTreeMap::new();
+    let (mut plan_ms, mut json_ms) = (Vec::new(), Vec::new());
+    let mut entries = BTreeMap::new();
+    let mut counts = LegCounts::default();
+    for _ in 0..repeat {
+        let clock = StageClock::new();
+        let started = Instant::now();
+        let response = planner.plan_probed(request, "en-US", &|| false, &|s| clock.enter(s))?;
+        plan_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        clock.tick();
+        let started = Instant::now();
+        let json = serde_json::to_vec(&response)?;
+        json_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        counts = leg_counts(&response, json.len());
+        let totals = clock.totals.borrow();
+        for (stage, _) in STAGES {
+            let (ms, entered) = totals.get(&stage).copied().unwrap_or((0.0, 0));
+            samples.entry(stage).or_default().push(ms);
+            entries.insert(stage, entered);
+        }
+    }
+    Ok(PeriodSplit {
+        stages: samples.into_iter().map(|(s, v)| (s, median(v))).collect(),
+        entries,
+        plan_ms: median(plan_ms),
+        json_ms: median(json_ms),
+        counts,
+    })
+}
+
+const PERIODS: [(&str, i64); 3] = [("morning", 8), ("midday", 12), ("evening", 17)];
+
+/// Prints where a full plan's time goes for one trip and travel mode.
+fn print_split(name: &str, mode_name: &str, splits: &[PeriodSplit], repeat: usize) {
+    println!("== split: {name}, {mode_name} (median ms of {repeat} warm plans)");
+    print!("  {:32}", "stage");
+    for (period, _) in PERIODS {
+        print!("{period:>12}");
+    }
+    println!();
+    let row = |name: &str, value: &dyn Fn(&PeriodSplit) -> String| {
+        print!("  {name:32}");
+        for split in splits {
+            print!("{:>12}", value(split));
+        }
+        println!();
+    };
+    for (stage, stage_name) in STAGES {
+        row(stage_name, &|split| format!("{:.2}", split.stages[&stage]));
+    }
+    row("sum of stages", &|split| {
+        format!("{:.1}", split.stages.values().sum::<f64>())
+    });
+    row("full plan", &|split| format!("{:.1}", split.plan_ms));
+    row("JSON serialization", &|split| {
+        format!("{:.2}", split.json_ms)
+    });
+    row("JSON KB", &|split| {
+        format!("{:.0}", split.counts.json_bytes as f64 / 1024.0)
+    });
+    row("journeys", &|split| split.counts.journeys.to_string());
+    row("access legs (distinct)", &|split| {
+        format!("{} ({})", split.counts.access, split.counts.distinct_access)
+    });
+    row("rides (distinct)", &|split| {
+        format!("{} ({})", split.counts.rides, split.counts.distinct_rides)
+    });
+    row("transfers (distinct)", &|split| {
+        format!(
+            "{} ({})",
+            split.counts.transfers, split.counts.distinct_transfers
+        )
+    });
+    row("egress legs (distinct)", &|split| {
+        format!("{} ({})", split.counts.egress, split.counts.distinct_egress)
+    });
+    row("paths drawn by Thor", &|split| {
+        split.entries[&PlanStage::ThorTrip].to_string()
+    });
+}
+
+/// Prints the split for each named trip and travel mode.
+fn print_splits(
+    planner: &StreetPlanner,
+    rt_now: Option<i64>,
+    midnight: i64,
+    repeat: usize,
+) -> Result<(), Box<dyn Error>> {
+    for (name, from, to) in NAMED {
+        for (mode_name, mode) in [
+            ("walking", TravelMode::Walking),
+            ("cycling", TravelMode::Cycling),
+            ("wheelchair", TravelMode::Wheelchair),
+        ] {
+            let mut splits = Vec::new();
+            for (_, hour) in PERIODS {
+                let departure = rt_now.unwrap_or(midnight + hour * 3600);
+                let mut request = TransitRequest::new(
+                    LatLon {
+                        lat: from.1,
+                        lon: from.0,
+                    },
+                    LatLon {
+                        lat: to.1,
+                        lon: to.0,
+                    },
+                    departure,
+                    departure - 60,
+                );
+                request.mode = mode;
+                splits.push(split_period(planner, &request, repeat)?);
+            }
+            print_split(name, mode_name, &splits, repeat);
+        }
+    }
+    Ok(())
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -372,6 +629,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    print_splits(&planner, rt_now, midnight, repeat)?;
     println!("at the end: {}", rss());
     Ok(())
 }
