@@ -310,10 +310,22 @@ A merged trip keeps each original trip's positions as they were, so the last sto
 first stop of the next are two consecutive positions of the combined pattern.
 A rider can't board at the former or alight at the latter, so staying on is the only way through.
 Each original trip keeps its `trip_id`, route, headsign, stop sequences, and shape, per segment
-in the file. GTFS-RT applies to the original trip's stretch: a delay moves only that stretch (times
-stay in order across the join, since the vehicle can't leave before it has arrived), and
-a cancellation leaves it unusable, so a ride can still board on another stretch and end at the join.
+in the file. GTFS-RT applies to the original trip's stretch, read against that trip's own schedule
+whatever order the updates come in. A delay moves that stretch, and since the next stretch is the
+same vehicle, a stretch with no update of its own (or its stops before its first update) takes the
+previous stretch's arrival delay, keeping its scheduled running times; an early arrival waits.
+Times stay in order across the join, since the vehicle can't leave before it has arrived.
+A cancellation or a `NO_SERVICE` alert for one original trip leaves its stretch unusable,
+so a ride can still board on another stretch and end at the join; alert selectors match each
+stretch by its own trip, route, agency, route type, direction, and start time.
+A `REPLACEMENT` (or `NEW`, or `ADDED`) of one original trip runs as a trip of its own, and its
+stretch of the merged trip is unusable, because nothing says the vehicle stays the same.
+A `DUPLICATED` copy of one original trip copies only that trip's stops.
+An `assigned_stop_id` moves the whole merged trip to an added pattern, its stretches kept.
 A response shows one ride with `segments`, and the join as one stop.
+Its `trip` fields are those of the original trip boarded, its state covers the stretches ridden,
+and its accessibility the least accessible of them. A stretch with no shape of its own is drawn
+straight from stop to stop.
 
 ## Responses
 

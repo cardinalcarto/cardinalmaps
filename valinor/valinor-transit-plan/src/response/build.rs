@@ -444,9 +444,20 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                 s.first_position <= ride.board_position && ride.board_position <= s.last_position
             })
             .copied();
-        let details = boarded_segment
-            .and_then(|segment| rider.trip_details_named(ride.trip, segment.gtfs_id))
-            .or_else(|| rider.trip_by_key(ride.trip));
+        // A combined trip's update is about one original trip, so a leg on another reads nothing
+        // from it: `details` belongs to the stretch the rider boards.
+        let details = match boarded_segment {
+            Some(segment) => rider.trip_details_named(ride.trip, segment.gtfs_id),
+            None => rider.trip_by_key(ride.trip),
+        };
+        // The stretches this ride actually rides, in order; empty for a ride on one plain trip.
+        let ridden_segments: Vec<TripSegmentInfo<'_>> = trip_segments
+            .iter()
+            .filter(|s| {
+                s.first_position <= ride.alight_position && ride.board_position <= s.last_position
+            })
+            .copied()
+            .collect();
         // Static positions are valid only when the ride is on the trip's own stop pattern.
         let on_base_pattern = trip_part
             .zip(static_trip)
@@ -593,7 +604,9 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                             run: Some(ServiceRun {
                                 trip: static_trip.map(|_| ride.trip.trip),
                                 date: ride.trip.date,
-                                start_time: None,
+                                start_time: static_trip
+                                    .and_then(|info| info.time_at(segment.first_position as usize))
+                                    .and_then(|(_, first)| u32::try_from(first).ok()),
                             }),
                             stops,
                             from: board_unix,
@@ -655,10 +668,17 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             .any(|s| s.predicted_arrival.is_some() || s.predicted_departure.is_some());
         let delay_seconds = stops.first().and_then(|s| s.departure_delay_seconds);
 
-        let accessibility = leg_accessibility(
-            static_trip.map(|info| accessibility_of(info.wheelchair_accessible)),
-            &stops,
-        );
+        // A stay-seated ride is as accessible as its least accessible ridden stretch.
+        let trip_accessibility = if ridden_segments.is_empty() {
+            static_trip.map(|info| accessibility_of(info.wheelchair_accessible))
+        } else {
+            Some(combined_accessibility(
+                ridden_segments
+                    .iter()
+                    .map(|s| accessibility_of(s.wheelchair_accessible)),
+            ))
+        };
+        let accessibility = leg_accessibility(trip_accessibility, &stops);
         TransitLeg {
             accessibility,
             departure: board_unix,
@@ -674,6 +694,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                 &trip_id,
                 static_trip,
                 boarded_segment,
+                &ridden_segments,
                 details,
                 feed.as_ref(),
                 self.snapshot,
@@ -1083,11 +1104,21 @@ fn trip_response(
     trip_id: &str,
     static_trip: Option<TripInfo<'_>>,
     boarded_segment: Option<TripSegmentInfo<'_>>,
+    ridden_segments: &[TripSegmentInfo<'_>],
     details: Option<&TripDetails>,
     feed: Option<&FeedId>,
     snapshot: &TransitSnapshot,
 ) -> TripResponse {
-    let state = snapshot.rider.trip_state(ride.trip);
+    // A ride shows what real-time data did to the stretches it rides, and no others.
+    let state = if ridden_segments.is_empty() {
+        snapshot.rider.trip_state(ride.trip)
+    } else {
+        ridden_segments
+            .iter()
+            .map(|s| snapshot.rider.stretch_state(ride.trip, s.first_position))
+            .find(|state| *state != TripState::Scheduled)
+            .unwrap_or(TripState::Scheduled)
+    };
     TripResponse {
         feed: feed.map(ToString::to_string),
         trip_id: trip_id.to_owned(),
@@ -1141,6 +1172,21 @@ fn accessibility_of(value: GtfsAccessibility) -> Accessibility {
         GtfsAccessibility::Yes => Accessibility::Accessible,
         GtfsAccessibility::No => Accessibility::Inaccessible,
     }
+}
+
+/// The least accessible of several values: known-inaccessible beats unknown beats accessible.
+fn combined_accessibility(parts: impl Iterator<Item = Accessibility>) -> Accessibility {
+    let mut combined = Accessibility::Accessible;
+    for part in parts {
+        combined = match (combined, part) {
+            (Accessibility::Inaccessible, _) | (_, Accessibility::Inaccessible) => {
+                Accessibility::Inaccessible
+            }
+            (Accessibility::Unknown, _) | (_, Accessibility::Unknown) => Accessibility::Unknown,
+            _ => Accessibility::Accessible,
+        };
+    }
+    combined
 }
 
 /// A transit leg's accessibility: its trip's and its boarding and alighting stops'.

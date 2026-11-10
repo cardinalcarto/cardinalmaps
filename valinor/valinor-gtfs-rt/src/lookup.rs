@@ -66,10 +66,14 @@ pub struct ScheduledSegment {
     pub first: u32,
     /// The last position of this trip's stretch, inclusive.
     pub last: u32,
+    /// The GTFS `trip_id` of the original trip.
+    pub trip_id: String,
     /// The GTFS `route_id` of the original trip.
     pub route_id: String,
     /// The GTFS `direction_id`, when given.
     pub direction_id: Option<u32>,
+    /// The original trip's headsign, when it has one.
+    pub headsign: Option<String>,
 }
 
 /// The GTFS identity of a stop pattern.
@@ -136,6 +140,19 @@ pub trait StaticLookup {
     /// The GTFS identity of a route by its `route_id`, for one original trip of a combined one.
     fn route_info_by_id(&self, _feed: &FeedId, _route_id: &str) -> Option<RouteInfo<'_>> {
         None
+    }
+
+    /// The stop patterns of combined trips that run some stretch as `route_id`.
+    ///
+    /// A combined trip's pattern is listed under its first original trip's route only,
+    /// so [`Self::route_patterns`] alone misses its later stretches.
+    fn combined_patterns_of_route(&self, _feed: &FeedId, _route_id: &str) -> Vec<RouteId> {
+        Vec::new()
+    }
+
+    /// The GTFS identities of the original trips' routes on one combined trip's pattern.
+    fn combined_routes_of_pattern(&self, _pattern: RouteId) -> Vec<RouteInfo<'_>> {
+        Vec::new()
     }
 
     /// Finds a static stop.

@@ -37,14 +37,14 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError, RwLock, TryLockError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock, TryLockError};
 
-use valinor_gtfs::{LoadedTimetable, TimetableSet};
+use valinor_gtfs::{GtfsRoute, LoadedTimetable, TimetableSet};
 use valinor_gtfs_rt::{
     DecodeError, FeedId, FeedInput, FeedKind, FeedStatus, NewStop, OverlayOptions, OverlayStats,
     RiderData, build_overlay,
 };
-use valinor_transit::{Snapshot, StopId};
+use valinor_transit::{RouteId, Snapshot, StopId};
 use valinor_walk::{SnappedStop, StopSnaps, TransferTable, WalkError};
 
 use crate::error::StateError;
@@ -254,6 +254,54 @@ pub(crate) struct TimetableData {
     pub(crate) set: TimetableSet,
     /// Every feed in the set.
     pub(crate) feeds: Vec<FeedId>,
+    /// Which routes each combined trip's pattern runs, worked out when an alert first asks.
+    seated: OnceLock<SeatedPatterns>,
+}
+
+/// Which GTFS routes each combined trip's pattern runs, in both directions.
+#[derive(Debug, Default)]
+pub(crate) struct SeatedPatterns {
+    by_route: HashMap<(usize, GtfsRoute), Vec<RouteId>>,
+    by_pattern: HashMap<RouteId, Vec<(usize, GtfsRoute)>>,
+}
+
+impl SeatedPatterns {
+    /// The combined patterns running `route` of file `part`.
+    pub(crate) fn patterns_of_route(&self, part: usize, route: GtfsRoute) -> Vec<RouteId> {
+        self.by_route
+            .get(&(part, route))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The `(file, route)` pairs a combined pattern runs.
+    pub(crate) fn routes_of_pattern(&self, pattern: RouteId) -> &[(usize, GtfsRoute)] {
+        self.by_pattern.get(&pattern).map_or(&[], Vec::as_slice)
+    }
+}
+
+impl TimetableData {
+    /// The combined patterns' routes; the first caller pays to read every file's segments.
+    pub(crate) fn seated(&self) -> &SeatedPatterns {
+        self.seated.get_or_init(|| {
+            let mut seated = SeatedPatterns::default();
+            for part in self.set.parts() {
+                for (pattern, route) in part.compiled().combined_pattern_routes() {
+                    let pattern = part.global_route(pattern);
+                    let entry = (part.index(), route);
+                    let routes = seated.by_pattern.entry(pattern).or_default();
+                    if !routes.contains(&entry) {
+                        routes.push(entry);
+                    }
+                    let patterns = seated.by_route.entry(entry).or_default();
+                    if !patterns.contains(&pattern) {
+                        patterns.push(pattern);
+                    }
+                }
+            }
+            seated
+        })
+    }
 }
 
 /// Immutable timetable state: everything one query reads.
@@ -463,7 +511,11 @@ impl TransitState {
             }
         };
         Ok(Self {
-            data: Arc::new(TimetableData { set, feeds }),
+            data: Arc::new(TimetableData {
+                set,
+                feeds,
+                seated: OnceLock::new(),
+            }),
             config,
             current: RwLock::new(None),
             writer: Mutex::new(Writer::default()),

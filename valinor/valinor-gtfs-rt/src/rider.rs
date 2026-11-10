@@ -242,6 +242,8 @@ pub struct RiderData {
     alerts_by_agency: HashMap<ScopedId, Vec<usize>>,
     alerts_by_route_type: HashMap<(FeedId, i32), Vec<usize>>,
     states: HashMap<TripKey, TripState>,
+    /// What the overlay did to each original trip of a combined run, by the stretch's first position.
+    stretch_states: HashMap<(TripKey, u32), TripState>,
     feeds: Vec<FeedStatus>,
 }
 
@@ -306,7 +308,7 @@ impl RiderData {
 
     /// Records the route a trip ended up on, once added routes are numbered.
     pub(crate) fn set_trip_route(&mut self, key: TripKey, route: RouteId) {
-        if let Some(&index) = self.trips_by_key.get(&key) {
+        for &index in self.trips_of_key.get(&key).into_iter().flatten() {
             self.trips[index].route = Some(route);
         }
     }
@@ -318,20 +320,44 @@ impl RiderData {
         }
     }
 
+    /// A combined run's state; each original trip's update keeps its own [`TripDetails::state`].
+    pub(crate) fn set_run_state(&mut self, key: TripKey, state: TripState) {
+        self.states.insert(key, state);
+    }
+
+    /// Records what the overlay did to the original trip whose stretch starts at `first_position`.
+    pub(crate) fn set_stretch_state(
+        &mut self,
+        key: TripKey,
+        first_position: u32,
+        state: TripState,
+    ) {
+        self.stretch_states.insert((key, first_position), state);
+    }
+
+    /// What the overlay did to one original trip of a combined run; scheduled if nothing.
+    pub fn stretch_state(&self, key: TripKey, first_position: u32) -> TripState {
+        self.stretch_states
+            .get(&(key, first_position))
+            .copied()
+            .unwrap_or(TripState::Scheduled)
+    }
+
     /// Marks stops that an alert removed from a trip with real-time details.
+    ///
+    /// A combined run holds one update per original trip, each knowing only its own positions.
     pub(crate) fn mark_stops_removed(&mut self, key: TripKey, positions: &[usize]) {
-        let Some(&index) = self.trips_by_key.get(&key) else {
-            return;
-        };
-        let Some(trip) = self.trips.get_mut(index) else {
-            return;
-        };
-        for &position in positions {
-            let position = u32::try_from(position).ok();
-            if let Some(stop) = trip.stops.iter_mut().find(|s| s.position == position) {
-                stop.relationship =
-                    Some(proto::trip_update::stop_time_update::ScheduleRelationship::Skipped);
-                stop.removed_by_alert = true;
+        for &index in self.trips_of_key.get(&key).into_iter().flatten() {
+            let Some(trip) = self.trips.get_mut(index) else {
+                continue;
+            };
+            for &position in positions {
+                let position = u32::try_from(position).ok();
+                if let Some(stop) = trip.stops.iter_mut().find(|s| s.position == position) {
+                    stop.relationship =
+                        Some(proto::trip_update::stop_time_update::ScheduleRelationship::Skipped);
+                    stop.removed_by_alert = true;
+                }
             }
         }
     }

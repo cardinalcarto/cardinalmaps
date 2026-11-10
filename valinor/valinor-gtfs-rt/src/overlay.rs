@@ -24,9 +24,9 @@ use crate::alerts::{
 };
 use crate::date::{CalendarDate, parse_start_time};
 use crate::feed::{FeedId, FeedInput, ScopedId};
-use crate::lookup::{DayClock, ScheduledTrip, StaticLookup, TripQuery, TripRef};
+use crate::lookup::{DayClock, ScheduledSegment, ScheduledTrip, StaticLookup, TripQuery, TripRef};
 use crate::modifications::{ModifiedLayout, apply_modifications};
-use crate::propagate::{Propagated, Trip, propagate, repair, rules_of, window_time};
+use crate::propagate::{Prediction, Propagated, Trip, propagate, repair, rules_of, window_time};
 use crate::proto;
 use crate::proto::trip_descriptor::ScheduleRelationship as TripRelationship;
 use crate::proto::trip_update::stop_time_update::ScheduleRelationship as StopRelationship;
@@ -331,6 +331,43 @@ struct AddedTrip {
     route_id: Option<String>,
     direction_id: Option<u32>,
     state: TripState,
+    /// The stretches of a combined run moved to an added pattern; empty for any other trip.
+    segments: Vec<ScheduledSegment>,
+}
+
+/// What a trip update says about one original trip of a combined stay-seated run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PartKind {
+    /// Times or per-stop changes.
+    Times,
+    /// Canceled or deleted: the stretch can't be used.
+    Canceled,
+    /// Replaced by a trip of its own elsewhere: the stretch itself can't be used.
+    Replaced,
+}
+
+/// One original trip's message, kept until every message about its run has been seen.
+#[derive(Debug, Clone)]
+struct PartMessage {
+    trip_id: String,
+    date: Option<CalendarDate>,
+    start_time: Option<u32>,
+    update: TripUpdate,
+    kind: PartKind,
+}
+
+/// A combined run, and what real-time data has said about its original trips.
+///
+/// Parts are composed only after all of them are known, in position order, so each is read
+/// against its own schedule and the result doesn't depend on the order the updates arrive.
+#[derive(Debug)]
+struct CombinedRun {
+    feed: FeedId,
+    reference: TripRef,
+    scheduled: ScheduledTrip,
+    key: TripKey,
+    /// By the stretch's first position.
+    parts: BTreeMap<usize, PartMessage>,
 }
 
 /// The run a trip update applies to; see [`TripRef::headway_start`] for the third field.
@@ -359,6 +396,7 @@ struct Context<'a, L: StaticLookup + ?Sized> {
     modified: HashMap<(TripId, DaySlot), ModifiedLayout>,
     modified_refs: HashMap<(TripId, DaySlot), (TripRef, FeedId)>,
     added_index: HashMap<(ScopedId, CalendarDate), (TripId, DaySlot)>,
+    combined: BTreeMap<(TripId, DaySlot), CombinedRun>,
     changes: BTreeMap<(RouteId, DaySlot), BlockChange>,
     added: BTreeMap<(Vec<StopId>, RouteAttributes), AddedDays>,
     rider: RiderData,
@@ -435,6 +473,7 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
         modified: HashMap::new(),
         modified_refs: HashMap::new(),
         added_index: HashMap::new(),
+        combined: BTreeMap::new(),
         changes: BTreeMap::new(),
         added: BTreeMap::new(),
         rider: RiderData::default(),
@@ -444,6 +483,7 @@ pub fn build_overlay<L: StaticLookup + ?Sized>(
     let new_stops = context.add_new_stops(fresh.stops, &mut overlay, options)?;
     context.apply_modifications(fresh.modifications);
     context.apply_trip_updates(fresh.trip_updates)?;
+    context.compose_combined_runs();
     context.apply_remaining_modifications();
     context.add_vehicles(fresh.vehicles);
     let alerts = context.add_alerts(fresh.alerts);
@@ -951,17 +991,16 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
 
         // An original trip of a combined one applies only to its own stretch.
         if let Some(span) = reference.segment {
-            self.apply_to_segment(
-                feed,
-                trip_id,
-                date,
-                start_time,
+            let kind = if matches!(
                 relationship,
-                update,
-                reference,
-                &scheduled,
-                key,
-                (span.0 as usize, span.1 as usize),
+                TripRelationship::Canceled | TripRelationship::Deleted
+            ) {
+                PartKind::Canceled
+            } else {
+                PartKind::Times
+            };
+            self.record_part(
+                feed, trip_id, date, start_time, update, reference, scheduled, key, span, kind,
             );
             return;
         }
@@ -1011,37 +1050,12 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 ),
             };
         // `assigned_stop_id` changes which stop a position calls at, so the stop pattern changes.
-        let mut pattern_changed = was_modified;
-        for stop_update in &update.stop_time_update {
-            let Some(assigned) = stop_update
-                .stop_time_properties
-                .as_ref()
-                .and_then(|p| p.assigned_stop_id.as_deref())
-            else {
-                continue;
-            };
-            let Some(new_stop) = resolve(assigned) else {
-                self.stats.stop_updates_unmatched += 1;
-                continue;
-            };
-            // Locate the position the same way an update matches it.
-            let position = stop_update
-                .stop_sequence
-                .and_then(|sequence| sequences.iter().position(|&s| s == Some(sequence)))
-                .or_else(|| {
-                    stop_update
-                        .stop_id
-                        .as_deref()
-                        .and_then(&resolve)
-                        .and_then(|old| stops.iter().position(|&s| s == old))
-                });
-            if let Some(position) = position
-                && stops.get(position) != Some(&new_stop)
-            {
-                stops[position] = new_stop;
-                pattern_changed = true;
-            }
-        }
+        // Updates still name the original stop, so `propagate` reads the original pattern.
+        let original_stops = stops.clone();
+        let (assigned, unresolved) =
+            apply_assigned_stops(&update.stop_time_update, &sequences, &mut stops, &resolve);
+        self.stats.stop_updates_unmatched += unresolved;
+        let pattern_changed = was_modified || assigned;
 
         if pattern_changed && !self.take_added_slot(feed) {
             self.modified.remove(&(reference.trip, reference.day));
@@ -1056,7 +1070,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             &Trip {
                 events: &base_events,
                 sequences: &sequences,
-                stops: &stops,
+                stops: &original_stops,
                 max_offset: self.options.max_prediction_offset,
             },
             &update.stop_time_update,
@@ -1119,6 +1133,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 state,
                 key,
                 &update.trip,
+                Vec::new(),
             );
         } else {
             self.changes
@@ -1136,6 +1151,8 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
     }
 
     /// Moves a static trip off its route block and onto an added pattern.
+    ///
+    /// `segments` keeps a combined run's stretches, which alerts still need to find on the pattern.
     #[allow(clippy::too_many_arguments)]
     fn push_moved(
         &mut self,
@@ -1146,6 +1163,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         state: TripState,
         key: TripKey,
         trip: &TripDescriptor,
+        segments: Vec<ScheduledSegment>,
     ) {
         self.changes
             .entry((reference.route, reference.day))
@@ -1178,10 +1196,12 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 }),
                 direction_id,
                 state,
+                segments,
             });
     }
 
     /// A `NEW`, `ADDED`, or `REPLACEMENT` trip: its stop time updates define the whole trip.
+    #[allow(clippy::too_many_lines, reason = "one linear pass over one update")]
     fn apply_added(
         &mut self,
         feed: &FeedId,
@@ -1224,6 +1244,17 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         };
         let (stops, events, clock) = built;
 
+        // A replacement of one original trip affects only its stretch: the combined run stays,
+        // and the replacement runs as a trip of its own. The vehicle's continuity isn't known.
+        if let Some(reference) = original
+            && let Some(span) = reference.segment
+        {
+            self.stats.trip_updates_matched += 1;
+            return self.replace_part(
+                feed, trip_id, date, start_time, update, reference, span, stops, events, clock,
+            );
+        }
+
         let (trip, route, state) = match (original, relationship) {
             (Some(reference), _) => (reference.trip, Some(reference), TripState::Replaced),
             (None, TripRelationship::Replacement) => {
@@ -1250,18 +1281,41 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             self.stats.trip_updates_matched += 1;
             // This update defines the whole trip, so any planned detour is superseded.
             self.modified.remove(&(reference.trip, reference.day));
-            self.push_moved(feed, reference, stops, events, state, key, &update.trip);
+            self.push_moved(
+                feed,
+                reference,
+                stops,
+                events,
+                state,
+                key,
+                &update.trip,
+                Vec::new(),
+            );
             return Ok(());
         }
 
-        // A brand-new trip: copy its route's attributes if its route is known.
+        // A brand-new trip copies its route's bicycle rule if its route is known. It says nothing
+        // about wheelchairs unless its vehicle does, and unknown accessibility is allowed.
         let route_id = update.trip.route_id.clone();
-        let attributes = route_id
+        let bikes = route_id
             .as_deref()
             .and_then(|id| self.lookup.route_patterns(feed, id).first().copied())
             .and_then(|route| self.base.route_attributes(route))
-            // Unknown accessibility is allowed; a brand-new trip says nothing about bicycles.
-            .unwrap_or(RouteAttributes::WHEELCHAIR_ACCESSIBLE);
+            .is_some_and(|attributes| attributes.contains(RouteAttributes::BIKES_ALLOWED));
+        let wheelchair_refused = update.vehicle.as_ref().is_some_and(|vehicle| {
+            vehicle.wheelchair_accessible.is_some()
+                && vehicle.wheelchair_accessible()
+                    == proto::vehicle_descriptor::WheelchairAccessible::WheelchairInaccessible
+        });
+        let attributes = if wheelchair_refused {
+            RouteAttributes::NONE
+        } else {
+            RouteAttributes::WHEELCHAIR_ACCESSIBLE
+        } | if bikes {
+            RouteAttributes::BIKES_ALLOWED
+        } else {
+            RouteAttributes::NONE
+        };
         self.added
             .entry((stops, attributes))
             .or_default()
@@ -1275,6 +1329,100 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 route_id,
                 direction_id: update.trip.direction_id,
                 state,
+                segments: Vec::new(),
+            });
+        Ok(())
+    }
+
+    /// The route, direction, and headsign of the original trip whose stretch is `span`.
+    fn part_of(trip: &ScheduledTrip, span: (u32, u32)) -> Option<&ScheduledSegment> {
+        trip.segments
+            .iter()
+            .find(|segment| (segment.first, segment.last) == span)
+    }
+
+    /// Runs a `NEW`, `ADDED`, or `REPLACEMENT` of one original trip as a trip of its own.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the unpacked parts of one update"
+    )]
+    fn replace_part(
+        &mut self,
+        feed: &FeedId,
+        trip_id: &str,
+        date: Option<CalendarDate>,
+        start_time: Option<u32>,
+        update: &TripUpdate,
+        reference: TripRef,
+        span: (u32, u32),
+        stops: Vec<StopId>,
+        events: Vec<StopEvent>,
+        clock: DayClock,
+    ) -> Result<(), OverlayError> {
+        let Some(scheduled) = self.find_trip(reference) else {
+            self.stats.invalid_added_trips += 1;
+            self.push_unmatched(feed, trip_id, date, start_time, update);
+            return Ok(());
+        };
+        let combined_key = self.trip_key(reference.trip, reference.day);
+        let part = Self::part_of(&scheduled, span).cloned();
+        let trip = self.allocate_trip_id()?;
+        let key = self.trip_key(trip, reference.day);
+        self.record_part(
+            feed,
+            trip_id,
+            date,
+            start_time,
+            update,
+            reference,
+            scheduled,
+            combined_key,
+            span,
+            PartKind::Replaced,
+        );
+        let route_id = update
+            .trip
+            .route_id
+            .clone()
+            .or_else(|| part.as_ref().map(|part| part.route_id.clone()));
+        let direction_id = update
+            .trip
+            .direction_id
+            .or_else(|| part.as_ref().and_then(|part| part.direction_id));
+        let details = trip_details(feed, trip_id, date, start_time, update, Some(key), None);
+        self.rider.push_trip(TripDetails {
+            state: Some(TripState::Replaced),
+            route_id: route_id.clone(),
+            direction_id,
+            headsign: details
+                .headsign
+                .clone()
+                .or_else(|| part.and_then(|part| part.headsign)),
+            ..details
+        });
+        self.rider.set_state(key, TripState::Replaced);
+        self.added_index.insert(
+            (ScopedId::new(feed, trip_id), date.unwrap_or(clock.date)),
+            (trip, reference.day),
+        );
+        let attributes = self
+            .base
+            .route_attributes(reference.route)
+            .unwrap_or(RouteAttributes::NONE);
+        self.added
+            .entry((stops, attributes))
+            .or_default()
+            .entry(reference.day)
+            .or_default()
+            .push(AddedTrip {
+                trip,
+                key,
+                events,
+                feed: feed.clone(),
+                route_id,
+                direction_id,
+                state: TripState::Replaced,
+                segments: Vec::new(),
             });
         Ok(())
     }
@@ -1332,14 +1480,28 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             return Ok(());
         };
         let source_clock = self.clocks_of(feed)[usize::from(template.day.into_inner())];
-        let first = scheduled.events.first().map(|e| e.departure.into_inner());
+        // A copy of one original trip of a combined run is only that stretch.
+        let template_part = template
+            .segment
+            .and_then(|span| Self::part_of(&scheduled, span))
+            .cloned();
+        let span = template.segment.map_or(
+            0..=scheduled.events.len().saturating_sub(1),
+            |(first, last)| first as usize..=last as usize,
+        );
+        let Some(template_events) = scheduled.events.get(span.clone()) else {
+            self.stats.invalid_added_trips += 1;
+            self.push_unmatched(feed, trip_id, date, None, update);
+            return Ok(());
+        };
+        let first = template_events.first().map(|e| e.departure.into_inner());
         // With no new start time the copy keeps the template's time of day.
         let shift = match (new_time, first) {
             (Some(new_time), Some(first)) => i64::from(new_time) - source_clock.relative(first),
             _ => 0,
         };
 
-        let Some(events) = shifted_events(&scheduled.events, source_clock, target_clock, shift)
+        let Some(events) = shifted_events(template_events, source_clock, target_clock, shift)
         else {
             self.stats.invalid_added_trips += 1;
             self.push_unmatched(feed, trip_id, date, None, update);
@@ -1354,10 +1516,16 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         let stops = self
             .base
             .route_stops(template.route)
+            .and_then(|stops| stops.get(span.clone()))
             .map(<[StopId]>::to_vec)
             .unwrap_or_default();
-        let sequences: Vec<Option<u32>> =
-            scheduled.stop_sequences.iter().map(|&s| Some(s)).collect();
+        let sequences: Vec<Option<u32>> = scheduled
+            .stop_sequences
+            .get(span.clone())
+            .unwrap_or(&[])
+            .iter()
+            .map(|&s| Some(s))
+            .collect();
         let Ok(propagated) = propagate(
             &Trip {
                 events: &events,
@@ -1391,9 +1559,26 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             Some((&propagated, &events, &sequences, target_clock)),
         );
         let details = self.with_stop_names(feed, details, &stops);
+        // A stretch's stops aren't the combined run's, so it needs a pattern of its own.
+        let route = template_part.is_none().then_some(template.route);
+        let route_id = template_part
+            .as_ref()
+            .map(|part| part.route_id.clone())
+            .or_else(|| details.route_id.clone());
+        let direction_id = template_part
+            .as_ref()
+            .map_or(scheduled.direction_id, |part| part.direction_id);
+        let headsign = details.headsign.clone().or_else(|| {
+            template_part
+                .as_ref()
+                .and_then(|part| part.headsign.clone())
+        });
         self.rider.push_trip(TripDetails {
             state: Some(TripState::Added),
-            route: Some(template.route),
+            route,
+            route_id: route_id.clone(),
+            direction_id,
+            headsign,
             ..details
         });
         self.rider.set_state(key, TripState::Added);
@@ -1402,6 +1587,28 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 (ScopedId::new(feed, &new_trip_id), date),
                 (new_id, target_clock.slot),
             );
+        }
+        if template.segment.is_some() {
+            let attributes = self
+                .base
+                .route_attributes(template.route)
+                .unwrap_or(RouteAttributes::NONE);
+            self.added
+                .entry((stops, attributes))
+                .or_default()
+                .entry(target_clock.slot)
+                .or_default()
+                .push(AddedTrip {
+                    trip: new_id,
+                    key,
+                    events: propagated.events,
+                    feed: feed.clone(),
+                    route_id,
+                    direction_id,
+                    state: TripState::Added,
+                    segments: Vec::new(),
+                });
+            return Ok(());
         }
         self.changes
             .entry((template.route, target_clock.slot))
@@ -1418,139 +1625,185 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
         Ok(())
     }
 
-    /// A trip the feed mentions but we could not use: still shown to riders.
-    /// Applies an update to one original trip's stretch of a combined stay-seated trip.
-    ///
-    /// A delay moves only that stretch; a cancellation leaves the stretch unusable, so a ride can
-    /// still board on another stretch and end, or start, at the join. Times stay in order across
-    /// the join, because the vehicle can't leave before it has arrived.
+    /// Keeps one original trip's message until every message about its run has been seen.
     #[allow(
         clippy::too_many_arguments,
-        clippy::too_many_lines,
-        reason = "the unpacked parts of one update, handled in one linear pass"
+        reason = "the unpacked parts of one update"
     )]
-    fn apply_to_segment(
+    fn record_part(
         &mut self,
         feed: &FeedId,
         trip_id: &str,
         date: Option<CalendarDate>,
         start_time: Option<u32>,
-        relationship: TripRelationship,
         update: &TripUpdate,
         reference: TripRef,
-        scheduled: &ScheduledTrip,
+        scheduled: ScheduledTrip,
         key: TripKey,
-        (first, last): (usize, usize),
+        (first, last): (u32, u32),
+        kind: PartKind,
     ) {
+        let (first, last) = (first as usize, last as usize);
         if first > last || last >= scheduled.events.len() {
             self.push_unmatched(feed, trip_id, date, start_time, update);
             return;
         }
-        // Another original trip may already have changed this run; build on that.
-        let change = self
-            .changes
-            .get(&(reference.route, reference.day))
-            .and_then(|change| change.trips.get(&reference.trip));
-        let mut events = match change {
-            Some(TripChange::Times { events, .. }) => events.clone(),
-            Some(TripChange::Removed { .. } | TripChange::Moved) => return,
-            None => scheduled.events.clone(),
-        };
-        if matches!(
-            relationship,
-            TripRelationship::Canceled | TripRelationship::Deleted
-        ) {
-            for event in &mut events[first..=last] {
-                event.rules = StopRules::SKIPPED;
-            }
-            self.changes
-                .entry((reference.route, reference.day))
-                .or_default()
-                .trips
-                .insert(
-                    reference.trip,
-                    TripChange::Times {
-                        events,
-                        state: TripState::StopSkipped,
-                    },
-                );
-            let details = trip_details(feed, trip_id, date, start_time, update, Some(key), None);
-            self.rider.push_trip(TripDetails {
-                state: Some(TripState::Canceled),
-                route: Some(reference.route),
-                ..details
-            });
-            self.rider.set_state(key, TripState::StopSkipped);
-            return;
+        self.combined
+            .entry((reference.trip, reference.day))
+            .or_insert_with(|| CombinedRun {
+                feed: feed.clone(),
+                reference,
+                scheduled,
+                key,
+                parts: BTreeMap::new(),
+            })
+            .parts
+            .insert(
+                first,
+                PartMessage {
+                    trip_id: trip_id.to_owned(),
+                    date,
+                    start_time,
+                    update: update.clone(),
+                    kind,
+                },
+            );
+    }
+
+    /// Applies each combined run's messages in position order; see [`CombinedRun`].
+    fn compose_combined_runs(&mut self) {
+        for run in core::mem::take(&mut self.combined).into_values() {
+            self.compose_combined_run(run);
         }
-        let sequences: Vec<Option<u32>> = scheduled.stop_sequences[first..=last]
-            .iter()
-            .map(|&s| Some(s))
-            .collect();
-        let stops: Vec<StopId> = self
+    }
+
+    /// Works out one combined run's times from its parts' messages, each read against its schedule.
+    ///
+    /// A part's update applies only to its stretch, with one exception: a stretch with no update
+    /// of its own, or the stops before its first update, take the arrival delay of the stretch
+    /// before it, because they are the same vehicle. A cancellation or replacement leaves its
+    /// stretch unusable, so a ride can still board on another stretch and end, or start, at the join.
+    /// Times stay in order across the joins, because the vehicle can't leave before it has arrived.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one linear pass over a run's stretches"
+    )]
+    fn compose_combined_run(&mut self, run: CombinedRun) {
+        let CombinedRun {
+            feed,
+            reference,
+            scheduled,
+            key,
+            parts,
+        } = run;
+        let clock = self.clocks_of(&feed)[usize::from(reference.day.into_inner())];
+        let lookup = self.lookup;
+        let new_stops = &self.new_stops;
+        let resolve = |id: &str| find_stop(lookup, new_stops, &feed, id);
+        let original_stops: Vec<StopId> = self
             .base
             .route_stops(reference.route)
             .map(<[StopId]>::to_vec)
             .unwrap_or_default();
-        let segment_stops = stops.get(first..=last).unwrap_or(&[]);
-        let clock = self.clocks_of(feed)[usize::from(reference.day.into_inner())];
-        let lookup = self.lookup;
-        let new_stops = &self.new_stops;
-        let resolve = |id: &str| find_stop(lookup, new_stops, feed, id);
-        let base_events = events[first..=last].to_vec();
-        let Ok(propagated) = propagate(
-            &Trip {
-                events: &base_events,
+        let mut stops = original_stops.clone();
+        let mut events = scheduled.events.clone();
+        let mut outcomes = Vec::with_capacity(scheduled.segments.len());
+        // How late the vehicle is when it reaches the next stretch; early arrivals wait.
+        let mut carry: i64 = 0;
+        let mut unresolved = 0;
+        // Stretches whose update couldn't be used, and which run as if they had none.
+        let mut unusable: Vec<usize> = Vec::new();
+        for segment in &scheduled.segments {
+            let (first, last) = (segment.first as usize, segment.last as usize);
+            let (Some(part_stops), Some(part_scheduled)) = (
+                original_stops.get(first..=last),
+                scheduled.events.get(first..=last),
+            ) else {
+                continue;
+            };
+            let sequences: Vec<Option<u32>> = scheduled
+                .stop_sequences
+                .get(first..=last)
+                .unwrap_or(&[])
+                .iter()
+                .map(|&s| Some(s))
+                .collect();
+            let message = parts.get(&first);
+            let times = message.filter(|message| message.kind == PartKind::Times);
+            let carried_delay = i32::try_from(carry).ok().filter(|&delay| delay > 0);
+            let trip = Trip {
+                events: part_scheduled,
                 sequences: &sequences,
-                stops: segment_stops,
+                stops: part_stops,
                 max_offset: self.options.max_prediction_offset,
-            },
-            &update.stop_time_update,
-            update.delay,
-            clock,
-            &resolve,
-        ) else {
-            self.stats.times_out_of_range += 1;
-            self.push_unmatched(feed, trip_id, date, start_time, update);
-            return;
-        };
-        self.stats.stop_updates_unmatched += u64::from(propagated.unmatched);
-        self.stats.times_repaired += u64::from(propagated.repaired);
-        self.stats.times_out_of_range += u64::from(propagated.out_of_range);
+            };
+            let propagated = match times {
+                Some(message) => {
+                    let (_, missing) = apply_assigned_stops(
+                        &message.update.stop_time_update,
+                        &sequences,
+                        &mut stops[first..=last],
+                        &resolve,
+                    );
+                    unresolved += missing;
+                    propagate(
+                        &trip,
+                        &message.update.stop_time_update,
+                        message.update.delay.or(carried_delay),
+                        clock,
+                        &resolve,
+                    )
+                }
+                None => propagate(&trip, &[], carried_delay, clock, &resolve),
+            };
+            // An update whose times leave the window's range isn't usable: the stretch then runs
+            // as if it had none, so the vehicle's delay still carries through it.
+            let propagated = propagated.or_else(|()| {
+                self.stats.times_out_of_range += 1;
+                unusable.push(first);
+                stops[first..=last].copy_from_slice(part_stops);
+                if let Some(message) = times {
+                    let details = trip_details(
+                        &feed,
+                        &message.trip_id,
+                        message.date,
+                        message.start_time,
+                        &message.update,
+                        None,
+                        None,
+                    );
+                    self.rider.push_trip(details);
+                }
+                propagate(&trip, &[], carried_delay, clock, &resolve)
+            });
+            let Ok(mut propagated) = propagated else {
+                self.stats.times_out_of_range += 1;
+                continue;
+            };
+            if message.is_some_and(|message| message.kind != PartKind::Times) {
+                for event in &mut propagated.events {
+                    event.rules = StopRules::SKIPPED;
+                }
+            }
+            if times.is_some() {
+                self.stats.stop_updates_unmatched += u64::from(propagated.unmatched);
+                self.stats.times_repaired += u64::from(propagated.repaired);
+                self.stats.times_out_of_range += u64::from(propagated.out_of_range);
+            }
+            events[first..=last].copy_from_slice(&propagated.events);
+            let last_arrival = i64::from(propagated.events[last - first].arrival.into_inner());
+            let scheduled_arrival = i64::from(part_scheduled[last - first].arrival.into_inner());
+            carry = (last_arrival - scheduled_arrival).max(0);
+            outcomes.push((segment, first, last, sequences, propagated));
+        }
+        self.stats.stop_updates_unmatched += unresolved;
+        let mut pattern_changed = stops != original_stops;
+        if pattern_changed && !self.take_added_slot(&feed) {
+            // Out of added-pattern budget: keep the times, on the scheduled stops.
+            stops.clone_from(&original_stops);
+            pattern_changed = false;
+        }
 
-        let scheduled_slice = &scheduled.events[first..=last];
-        let changed = propagated.events != scheduled_slice;
-        let skipped = propagated
-            .events
-            .iter()
-            .any(|event| event.rules == StopRules::SKIPPED);
-        let state = if skipped {
-            TripState::StopSkipped
-        } else {
-            TripState::Delayed
-        };
-        let mut details = trip_details(
-            feed,
-            trip_id,
-            date,
-            start_time,
-            update,
-            Some(key),
-            Some((&propagated, &base_events, &sequences, clock)),
-        );
-        for stop in &mut details.stops {
-            stop.position = stop.position.map(|p| p + u32::try_from(first).unwrap_or(0));
-        }
-        let details = self.with_stop_names(feed, details, segment_stops);
-        self.rider.push_trip(TripDetails {
-            state: changed.then_some(state),
-            route: Some(reference.route),
-            ..details
-        });
-        if !changed {
-            return;
-        }
-        events[first..=last].copy_from_slice(&propagated.events);
         // The stretches share one vehicle: keep the whole trip in order.
         let mut arrivals: Vec<i64> = events
             .iter()
@@ -1560,7 +1813,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             .iter()
             .map(|event| i64::from(event.departure.into_inner()))
             .collect();
-        repair(&mut arrivals, &mut departures, Some(0));
+        self.stats.times_repaired += u64::from(repair(&mut arrivals, &mut departures, Some(0)));
         for (index, event) in events.iter_mut().enumerate() {
             if let (Ok(arrival), Ok(departure)) =
                 (window_time(arrivals[index]), window_time(departures[index]))
@@ -1569,12 +1822,150 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 event.departure = departure;
             }
         }
-        self.rider.set_state(key, state);
-        self.changes
-            .entry((reference.route, reference.day))
-            .or_default()
-            .trips
-            .insert(reference.trip, TripChange::Times { events, state });
+
+        let run_changed = events != scheduled.events || pattern_changed;
+        let mut all_gone = !outcomes.is_empty();
+        let mut any_skipped = false;
+        for (segment, first, last, sequences, mut propagated) in outcomes {
+            let message = parts.get(&first).filter(|_| !unusable.contains(&first));
+            let kind = message.map(|message| message.kind);
+            let gone = matches!(kind, Some(PartKind::Canceled | PartKind::Replaced));
+            all_gone &= gone;
+            let part_events = &events[first..=last];
+            let part_scheduled = &scheduled.events[first..=last];
+            let part_changed = part_events != part_scheduled;
+            // The time routing used wins: a repair may have moved it from what the feed said.
+            for (position, (prediction, event)) in propagated
+                .predictions
+                .iter_mut()
+                .zip(part_events)
+                .enumerate()
+            {
+                let scheduled_event = part_scheduled[position];
+                *prediction = Prediction {
+                    arrival: (prediction.arrival.is_some()
+                        || event.arrival != scheduled_event.arrival)
+                        .then_some(event.arrival),
+                    departure: (prediction.departure.is_some()
+                        || event.departure != scheduled_event.departure)
+                        .then_some(event.departure),
+                    update: prediction.update,
+                };
+            }
+            propagated.events = part_events.to_vec();
+            let skipped = part_events
+                .iter()
+                .any(|event| event.rules == StopRules::SKIPPED);
+            any_skipped |= skipped;
+            let assigned_here = stops[first..=last] != original_stops[first..=last];
+            let state = match kind {
+                Some(PartKind::Canceled) => TripState::Canceled,
+                Some(PartKind::Replaced) => TripState::Replaced,
+                _ if assigned_here => TripState::Replaced,
+                _ if skipped => TripState::StopSkipped,
+                _ => TripState::Delayed,
+            };
+            if part_changed || assigned_here || gone {
+                self.rider.set_stretch_state(key, segment.first, state);
+            }
+            let default_update;
+            let (trip_id, date, start_time, update, has_update) = if let Some(message) = message {
+                (
+                    message.trip_id.as_str(),
+                    message.date,
+                    message.start_time,
+                    &message.update,
+                    true,
+                )
+            } else {
+                // A stretch with no update of its own, described by what was derived for it.
+                default_update = TripUpdate::default();
+                (
+                    segment.trip_id.as_str(),
+                    Some(clock.date),
+                    None,
+                    &default_update,
+                    false,
+                )
+            };
+            // A stretch only ever appears in the rider data if something said it should.
+            if !has_update && !part_changed && !pattern_changed {
+                continue;
+            }
+            if matches!(kind, Some(PartKind::Replaced)) {
+                continue;
+            }
+            let mut details = if matches!(kind, Some(PartKind::Canceled)) {
+                trip_details(&feed, trip_id, date, start_time, update, Some(key), None)
+            } else {
+                trip_details(
+                    &feed,
+                    trip_id,
+                    date,
+                    start_time,
+                    update,
+                    Some(key),
+                    Some((&propagated, part_scheduled, &sequences, clock)),
+                )
+            };
+            for stop in &mut details.stops {
+                stop.position = stop.position.map(|p| p + u32::try_from(first).unwrap_or(0));
+            }
+            let details = self.with_stop_names(&feed, details, &stops[first..=last]);
+            self.rider.push_trip(TripDetails {
+                state: (part_changed || gone || assigned_here).then_some(state),
+                route: Some(reference.route),
+                route_id: details
+                    .route_id
+                    .clone()
+                    .or_else(|| Some(segment.route_id.clone())),
+                direction_id: details.direction_id.or(segment.direction_id),
+                ..details
+            });
+        }
+        if !run_changed {
+            return;
+        }
+        if all_gone {
+            self.rider.set_run_state(key, TripState::Canceled);
+            self.changes
+                .entry((reference.route, reference.day))
+                .or_default()
+                .trips
+                .insert(
+                    reference.trip,
+                    TripChange::Removed {
+                        state: TripState::Canceled,
+                    },
+                );
+            return;
+        }
+        let state = if pattern_changed {
+            TripState::Replaced
+        } else if any_skipped {
+            TripState::StopSkipped
+        } else {
+            TripState::Delayed
+        };
+        self.rider.set_run_state(key, state);
+        if pattern_changed {
+            self.push_moved(
+                &feed,
+                reference,
+                stops,
+                events,
+                state,
+                key,
+                &TripDescriptor::default(),
+                scheduled.segments.clone(),
+            );
+        } else {
+            self.changes
+                .entry((reference.route, reference.day))
+                .or_default()
+                .trips
+                .insert(reference.trip, TripChange::Times { events, state });
+        }
     }
 
     fn push_unmatched(
@@ -1612,6 +2003,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                 TripState::Replaced,
                 key,
                 &TripDescriptor::default(),
+                Vec::new(),
             );
         }
     }
@@ -1875,7 +2267,8 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                         relevant.iter().filter_map(|&i| alerts.get(i)),
                         lookup,
                         info.feed,
-                        trip,
+                        trip.trip,
+                        segments,
                         day,
                         stops,
                         &events,
@@ -1895,12 +2288,20 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                     changed = true;
                     self.rider
                         .mark_stops_removed(key_of_trip, &effect.stops_removed);
+                    if segments.is_empty() {
+                        self.rider.set_state(key_of_trip, TripState::StopSkipped);
+                    } else {
+                        self.note_stretches_lost_stops(
+                            key_of_trip,
+                            segments,
+                            &effect.stops_removed,
+                        );
+                    }
                     for position in effect.stops_removed {
                         if let Some(event) = events.get_mut(position) {
                             event.rules = StopRules::SKIPPED;
                         }
                     }
-                    self.rider.set_state(key_of_trip, TripState::StopSkipped);
                 }
                 if plan.is_some() || events != trip.events {
                     self.stats.trips_updated += 1;
@@ -1932,6 +2333,7 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                             direction: direction_id,
                             trip: resolved.trip,
                             day,
+                            segment: None,
                         },
                         stops,
                         &resolved.events,
@@ -1976,6 +2378,10 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
     }
 
     /// Lays out added patterns after every base route, so route order holds in the arena.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one linear pass over the added patterns"
+    )]
     fn lay_out_added_routes(
         &mut self,
         overlay: &mut OverlayBuilder,
@@ -2005,16 +2411,33 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                         direction: trip.direction_id,
                         trip: trip.trip,
                         day,
+                        segment: None,
                     };
-                    let effect = combined_effect(
-                        alerts.iter(),
-                        identity,
-                        &stops,
-                        &trip.events,
-                        clock,
-                        &mut self.stats.alert_impacts,
-                        &mut self.budgets,
-                    );
+                    let effect = if trip.segments.is_empty() {
+                        combined_effect(
+                            alerts.iter(),
+                            identity,
+                            &stops,
+                            &trip.events,
+                            clock,
+                            &mut self.stats.alert_impacts,
+                            &mut self.budgets,
+                        )
+                    } else {
+                        combined_segment_effect(
+                            alerts.iter(),
+                            lookup,
+                            &trip.feed,
+                            trip.trip,
+                            &trip.segments,
+                            day,
+                            &stops,
+                            &trip.events,
+                            clock,
+                            &mut self.stats.alert_impacts,
+                            &mut self.budgets,
+                        )
+                    };
                     if effect.remove {
                         self.stats.trips_removed += 1;
                         self.rider.set_state(trip.key, TripState::NoService);
@@ -2023,12 +2446,21 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
                     let mut events = trip.events;
                     self.rider
                         .mark_stops_removed(trip.key, &effect.stops_removed);
+                    if trip.segments.is_empty() {
+                        self.rider.set_state(trip.key, trip.state);
+                    } else {
+                        self.rider.set_run_state(trip.key, trip.state);
+                        self.note_stretches_lost_stops(
+                            trip.key,
+                            &trip.segments,
+                            &effect.stops_removed,
+                        );
+                    }
                     for position in effect.stops_removed {
                         if let Some(event) = events.get_mut(position) {
                             event.rules = StopRules::SKIPPED;
                         }
                     }
-                    self.rider.set_state(trip.key, trip.state);
                     self.stats.trips_added += 1;
                     keys.push(trip.key);
                     resolved.push(ResolvedTrip {
@@ -2057,6 +2489,26 @@ impl<L: StaticLookup + ?Sized> Context<'_, L> {
             }
         }
         Ok(())
+    }
+
+    /// A combined run lost these stops to an alert: the state of the stretches they belong to.
+    fn note_stretches_lost_stops(
+        &mut self,
+        key: TripKey,
+        segments: &[ScheduledSegment],
+        positions: &[usize],
+    ) {
+        if positions.is_empty() {
+            return;
+        }
+        self.rider.set_run_state(key, TripState::StopSkipped);
+        for segment in segments {
+            let span = segment.first as usize..=segment.last as usize;
+            if positions.iter().any(|position| span.contains(position)) {
+                self.rider
+                    .set_stretch_state(key, segment.first, TripState::StopSkipped);
+            }
+        }
     }
 
     fn record_block(&mut self, lanes: usize, rule_groups: usize, base_extra: usize) {
@@ -2119,7 +2571,8 @@ fn combined_segment_effect<'a, L: StaticLookup + ?Sized>(
     alerts: impl Iterator<Item = &'a NoServiceAlert>,
     lookup: &L,
     feed: &FeedId,
-    trip: &ScheduledTrip,
+    trip: TripId,
+    segments: &[ScheduledSegment],
     day: DaySlot,
     stops: &[StopId],
     events: &[StopEvent],
@@ -2130,24 +2583,36 @@ fn combined_segment_effect<'a, L: StaticLookup + ?Sized>(
     let alerts: Vec<&NoServiceAlert> = alerts.collect();
     let mut combined = AlertEffect::default();
     let mut removed_segments = 0;
-    for segment in &trip.segments {
+    // A stretch's impact is credited in stops, and a whole trip only if the alert took all of it.
+    let mut stretches_removed: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
+    for segment in segments {
         let (first, last) = (segment.first as usize, segment.last as usize);
         let identity = TripIdentity {
             feed,
             route: lookup.route_info_by_id(feed, &segment.route_id),
             direction: segment.direction_id,
-            trip: trip.trip,
+            trip,
             day,
+            segment: Some((segment.first, segment.last)),
         };
+        let mut segment_impacts = BTreeMap::new();
         let effect = combined_effect(
             alerts.iter().copied(),
             identity,
             stops.get(first..=last).unwrap_or(&[]),
             events.get(first..=last).unwrap_or(&[]),
             clock,
-            impacts,
+            &mut segment_impacts,
             budgets,
         );
+        for (alert, impact) in segment_impacts {
+            impacts.entry(alert).or_default().stops_removed += impact.stops_removed;
+            let removed = stretches_removed.entry(alert).or_default();
+            if impact.trips_removed > 0 {
+                removed.0 += 1;
+                removed.1 += last - first + 1;
+            }
+        }
         if effect.remove {
             removed_segments += 1;
             combined.stops_removed.extend(first..=last);
@@ -2160,7 +2625,15 @@ fn combined_segment_effect<'a, L: StaticLookup + ?Sized>(
             );
         }
     }
-    if removed_segments == trip.segments.len() {
+    for (alert, (stretches, stops_of_stretches)) in stretches_removed {
+        let impact = impacts.entry(alert).or_default();
+        if stretches == segments.len() {
+            impact.trips_removed += 1;
+        } else {
+            impact.stops_removed += stops_of_stretches;
+        }
+    }
+    if removed_segments == segments.len() {
         combined.remove = true;
         combined.stops_removed.clear();
     }
@@ -2238,6 +2711,50 @@ fn newness(update: &TripUpdate) -> (u64, bool) {
             TripRelationship::Canceled | TripRelationship::Deleted
         ),
     )
+}
+
+/// Applies each update's `assigned_stop_id` to `stops`, parallel to `sequences`.
+///
+/// Returns whether any position changed, and how many assignments named an unknown stop.
+fn apply_assigned_stops(
+    updates: &[StopTimeUpdate],
+    sequences: &[Option<u32>],
+    stops: &mut [StopId],
+    resolve: &dyn Fn(&str) -> Option<StopId>,
+) -> (bool, u64) {
+    let mut changed = false;
+    let mut unresolved = 0;
+    for stop_update in updates {
+        let Some(assigned) = stop_update
+            .stop_time_properties
+            .as_ref()
+            .and_then(|p| p.assigned_stop_id.as_deref())
+        else {
+            continue;
+        };
+        let Some(new_stop) = resolve(assigned) else {
+            unresolved += 1;
+            continue;
+        };
+        // Locate the position the same way an update matches it.
+        let position = stop_update
+            .stop_sequence
+            .and_then(|sequence| sequences.iter().position(|&s| s == Some(sequence)))
+            .or_else(|| {
+                stop_update
+                    .stop_id
+                    .as_deref()
+                    .and_then(resolve)
+                    .and_then(|old| stops.iter().position(|&s| s == old))
+            });
+        if let Some(position) = position
+            && stops.get(position) != Some(&new_stop)
+        {
+            stops[position] = new_stop;
+            changed = true;
+        }
+    }
+    (changed, unresolved)
 }
 
 fn valid_coordinates(latitude: f32, longitude: f32) -> bool {
