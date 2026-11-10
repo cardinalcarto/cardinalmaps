@@ -2,7 +2,7 @@
 
 #![allow(clippy::all, clippy::pedantic)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::num::NonZeroUsize;
@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use valinor_router::tiles::TileSets;
 use valinor_transit::StopId;
+use valinor_transit_plan::{BuildLoadError, TransitBuild};
 use valinor_walk::transfer_tile::{
     DecodeLimits, FeedPlacement, LoadRequest, StopPlacement, TransferMode, TransferTile,
     assemble_transfer_table, decode_tile,
@@ -23,7 +24,7 @@ use zip::write::SimpleFileOptions;
 use crate::compile::{self, COMPILE_REPORT, CompileOptions, FeedOutcome, FeedRecord};
 use crate::error::BuildError;
 use crate::feeds::hex_digest;
-use crate::manifest::{Manifest, read_manifest};
+use crate::manifest::{Manifest, manifest_id, read_manifest};
 use crate::stops::StopList;
 use crate::transfers::{self, TransferOptions, costing_for, tile_path};
 
@@ -151,6 +152,7 @@ fn transfer_options(compiled: &Path, output: &Path) -> TransferOptions {
         max_seconds_wheelchair: BOUND,
         zstd_level: 3,
         modes: TransferMode::ALL.to_vec(),
+        snap: SnapConfig::default(),
     }
 }
 
@@ -971,4 +973,163 @@ fn changing_the_seated_wait_recompiles_an_unchanged_archive() {
         !record(&second, "good").reused,
         "--seated-wait-seconds changed but the old timetable was reused"
     );
+}
+
+/// Every file under `root`, by its path relative to `root`.
+fn tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = BTreeMap::new();
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(&directory).expect("read dir") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                directories.push(path);
+            } else {
+                let relative = path.strip_prefix(root).expect("under root").to_path_buf();
+                files.insert(relative, fs::read(&path).expect("read"));
+            }
+        }
+    }
+    files
+}
+
+/// The snapping change that moves exactly one of [`one_feed_build`]'s stops: at 390 m rather than
+/// 400 m, one stop no longer reaches a street, as a stop-snapping fix might move one stop.
+fn one_snap_moved(options: &mut TransferOptions) {
+    options.snap.max_distance_m = 390;
+}
+
+/// One feed compiled into a directory a client can load: its compile output is the build's.
+fn one_feed_build() -> (TempDir, TempDir) {
+    let (input, compiled, _report) = compiled_feeds(&[Feed {
+        id: "good",
+        stops: &grid(0.0, 24),
+    }]);
+    (input, compiled)
+}
+
+#[test]
+fn the_manifest_id_changes_exactly_when_what_a_client_reads_does() {
+    let (_input, build) = one_feed_build();
+    let options = transfer_options(build.path(), build.path());
+    let first = transfers::run(&options).expect("first");
+    let first_files = tree(&build.path().join("transfers"));
+    assert_eq!(
+        format!(
+            "{:016x}",
+            manifest_id(&read_manifest(build.path()).expect("read"))
+        ),
+        first.manifest_id,
+        "the published manifest's ID is the one its contents give"
+    );
+    assert!(
+        first.tiles["walking"]
+            .iter()
+            .all(|tile| tile.content_sha256.len() == 64)
+    );
+
+    // An unchanged rebuild is the same build, byte for byte.
+    let again = transfers::run(&options).expect("again");
+    assert_eq!(again.manifest_id, first.manifest_id);
+    assert!(tree(&build.path().join("transfers")) == first_files);
+
+    // One stop's snap moves, and with it its walks.
+    let mut moved_options = options.clone();
+    one_snap_moved(&mut moved_options);
+    let moved = transfers::run(&moved_options).expect("moved");
+    assert_eq!(
+        moved.totals["walking"].unsnapped,
+        first.totals["walking"].unsnapped + 1,
+        "the fixture moved: this should unsnap exactly one stop"
+    );
+    assert_ne!(moved.manifest_id, first.manifest_id);
+    for tile in load_tiles(build.path(), &moved, TransferMode::Walking) {
+        assert_eq!(format!("{:016x}", tile.manifest_id), moved.manifest_id);
+    }
+    // Exactly the snap file of the moved stop's feed changed, in each mode it moved in.
+    let snap_sha = |manifest: &Manifest| manifest.feeds[0].stop_snaps["walking"].sha256.clone();
+    assert_ne!(snap_sha(&moved), snap_sha(&first));
+}
+
+#[test]
+fn a_build_is_byte_identical_for_any_thread_count() {
+    let (_input, compiled) = one_feed_build();
+    let mut published = Vec::new();
+    for count in [1, 3, 8] {
+        let output = tempfile::tempdir().expect("output");
+        let mut options = transfer_options(compiled.path(), output.path());
+        options.threads = threads(count);
+        transfers::run(&options).expect("transfers");
+        published.push(tree(&output.path().join("transfers")));
+    }
+    assert!(!published[0].is_empty());
+    assert!(published.iter().all(|files| *files == published[0]));
+}
+
+/// The names of a client's prepared tables.
+fn prepared_tables(build: &Path) -> BTreeSet<String> {
+    fs::read_dir(build.join("prepared"))
+        .expect("prepared")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn a_rebuild_with_one_snap_moved_replaces_a_clients_prepared_tables() {
+    let (_input, build) = one_feed_build();
+    let options = transfer_options(build.path(), build.path());
+    let first = transfers::run(&options).expect("first");
+    let loaded = TransitBuild::load(build.path(), None).expect("loads");
+    assert_eq!(
+        loaded.walking.walk_count() as u64,
+        first.totals["walking"].walks
+    );
+    drop(loaded);
+    let first_tables = prepared_tables(build.path());
+    let first_transfers = tempfile::tempdir().expect("copy");
+    for (relative, bytes) in tree(&build.path().join("transfers")) {
+        let path = first_transfers.path().join(relative);
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(path, bytes).expect("write");
+    }
+
+    // The rebuild lands in place, under a client that has prepared the first.
+    let mut moved_options = options.clone();
+    one_snap_moved(&mut moved_options);
+    let moved = transfers::run(&moved_options).expect("moved");
+    assert_ne!(moved.totals["walking"].walks, first.totals["walking"].walks);
+    let loaded = TransitBuild::load(build.path(), None).expect("loads");
+    assert_eq!(
+        loaded.walking.walk_count() as u64,
+        moved.totals["walking"].walks
+    );
+    assert_eq!(
+        loaded.cycling.walk_count() as u64,
+        moved.totals["cycling"].walks
+    );
+    drop(loaded);
+    let moved_tables = prepared_tables(build.path());
+    assert_eq!(moved_tables.len(), first_tables.len());
+    assert!(
+        moved_tables.is_disjoint(&first_tables),
+        "every mode's table was prepared again: {first_tables:?} then {moved_tables:?}"
+    );
+
+    // A tile of the first build among the rebuild's is refused, not mixed in.
+    fs::remove_dir_all(build.path().join("prepared")).expect("remove");
+    let entry = &moved.tiles["walking"][0];
+    let tile = |root: &Path| tile_path(root, TransferMode::Walking, entry.x, entry.y);
+    fs::copy(
+        tile(first_transfers.path()),
+        tile(&build.path().join("transfers")),
+    )
+    .expect("copy");
+    let error = TransitBuild::load(build.path(), None).expect_err("a tile of another build");
+    assert!(matches!(error, BuildLoadError::Assemble { .. }), "{error}");
 }

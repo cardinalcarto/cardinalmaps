@@ -6,7 +6,7 @@ use thiserror::Error;
 use valinor_gtfs::LoadError;
 use valinor_router::tiles::OpenError;
 use valinor_walk::WalkError;
-use valinor_walk::transfer_tile::TileEncodeError;
+use valinor_walk::transfer_tile::{TileDecodeError, TileEncodeError};
 
 /// A failure that stops a stage.
 ///
@@ -83,6 +83,17 @@ pub enum BuildError {
     /// A tile couldn't be encoded.
     #[error("encode a tile: {0}")]
     Encode(#[from] TileEncodeError),
+    /// A tile kept for the manifest ID didn't read back as a valid tile.
+    #[error("read back the pending tile {path}: {source}")]
+    PendingTile {
+        /// The path.
+        path: PathBuf,
+        /// The cause.
+        source: TileDecodeError,
+    },
+    /// A tile kept for the manifest ID isn't the one the search hashed, so the ID wouldn't cover it.
+    #[error("seal the pending tile {0}: its contents changed after they were hashed")]
+    PendingTileChanged(PathBuf),
     /// A tile couldn't be compressed.
     #[error("compress a tile: {0}")]
     Compress(std::io::Error),

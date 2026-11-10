@@ -9,6 +9,13 @@
 //! `transfers/` only once everything has succeeded and been flushed to disk.
 //! That one rename is the stage's commit point, so a failed or killed run leaves the previous
 //! `transfers/` exactly as it was, and no reader can pair one run's tiles with another's manifest.
+//!
+//! The [manifest ID](crate::manifest::manifest_id) covers every tile's and snap file's contents,
+//! and every tile carries it, so tiles are written in two passes. The searches encode each tile
+//! with no ID, record its content digest, and keep it uncompressed under the staging directory;
+//! once every mode is done and the ID is known, each tile is given the ID, compressed, and
+//! written in its place. A tile is compressed once, and the output doesn't depend on the order
+//! tiles finish in, so a build is byte-identical for any thread count.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -49,6 +56,11 @@ use sha2::{Digest, Sha256};
 const STAGING_DIR: &str = "transfers.staging";
 /// Where the previous published directory goes during the swap.
 const RETIRED_DIR: &str = "transfers.replaced";
+/// Where tiles wait for the manifest ID, uncompressed, relative to the staging directory.
+const PENDING_DIR: &str = "pending";
+
+/// The ID a tile is encoded with before the build's is known; [`seal_tiles`] replaces it.
+const PENDING_MANIFEST_ID: u64 = 0;
 
 /// How many stops one snapping batch covers: sized for tile-neighbour batches, not memory.
 const SNAP_BATCH: usize = 2048;
@@ -74,6 +86,8 @@ pub struct TransferOptions {
     pub zstd_level: i32,
     /// Which modes to build.
     pub modes: Vec<TransferMode>,
+    /// How stops are snapped to the street network.
+    pub snap: SnapConfig,
 }
 
 /// The default zstd level: tiles are read far more than written.
@@ -139,7 +153,6 @@ pub fn run(options: &TransferOptions) -> Result<Manifest, BuildError> {
         "loaded stop lists"
     );
 
-    let id = manifest_id(&feeds, build_id.value());
     let staging = options.output.join(STAGING_DIR);
     if staging.exists() {
         fs::remove_dir_all(&staging).map_err(|source| BuildError::Write {
@@ -165,7 +178,7 @@ pub fn run(options: &TransferOptions) -> Result<Manifest, BuildError> {
     let mut by_mode = BTreeMap::new();
     for &mode in &options.modes {
         let result = run_mode(
-            options, mode, &tiles, build_id, &stops, &order, &jobs, &staging, id,
+            options, mode, &tiles, build_id, &stops, &order, &jobs, &staging,
         )?;
         let unsnapped_path = staging.join(format!("unsnapped-{}.jsonl", mode.as_str()));
         write_unsnapped(
@@ -178,7 +191,10 @@ pub fn run(options: &TransferOptions) -> Result<Manifest, BuildError> {
         by_mode.insert(mode, result);
     }
 
-    let manifest = assemble_manifest(&report, &feeds, build_id, id, &by_mode, options)?;
+    let mut manifest = assemble_manifest(&report, &feeds, build_id, &by_mode, options)?;
+    let id = manifest_id(&manifest);
+    manifest.manifest_id = format!("{id:016x}");
+    seal_tiles(options, &staging, id, &mut manifest)?;
     write_manifest(&staging, &manifest)?;
     sync_tree(&staging)?;
     publish_staging(&options.output, &staging)?;
@@ -242,11 +258,10 @@ fn run_mode(
     order: &[u32],
     jobs: &[TileJob],
     staging: &Path,
-    id: u64,
 ) -> Result<ModeResult, BuildError> {
     let started = Instant::now();
     let costing = costing_for(mode)?;
-    let snaps = snap_all(options.threads, tiles, &costing, build_id, stops, order)?;
+    let snaps = snap_all(options, tiles, &costing, build_id, stops, order)?;
     let snap_count = snaps.reports().len();
     let (mut unsnapped_list, disconnected_stops) = split_reports(&snaps, stops);
     tracing::info!(
@@ -280,7 +295,6 @@ fn run_mode(
         stops,
         order,
         staging,
-        manifest_id: id,
         pair_rules_without_walk: &pair_rules_without_walk,
     };
     let outcomes = run_jobs(&context, jobs)?;
@@ -293,7 +307,7 @@ fn run_mode(
         mode = mode.as_str(),
         tiles = result.tiles.len(),
         walks = result.totals.walks,
-        bytes = result.totals.bytes,
+        raw_bytes = result.totals.raw_bytes,
         seconds = result.seconds,
         "built transfers"
     );
@@ -387,7 +401,7 @@ pub fn costing_for(mode: TransferMode) -> Result<AnyCosting, BuildError> {
 }
 
 fn snap_all(
-    threads: NonZeroUsize,
+    options: &TransferOptions,
     tiles: &TileSets,
     costing: &AnyCosting,
     build_id: BuildId,
@@ -400,9 +414,9 @@ fn snap_all(
     let first_error: Mutex<Option<BuildError>> = Mutex::new(None);
     let failed = AtomicBool::new(false);
     std::thread::scope(|scope| {
-        for _ in 0..threads.get() {
+        for _ in 0..options.threads.get() {
             scope.spawn(|| {
-                let config = SnapConfig::default();
+                let config = options.snap;
                 while !failed.load(Ordering::Relaxed) {
                     let Some(batch) = batches.get(next.fetch_add(1, Ordering::Relaxed)) else {
                         break;
@@ -478,7 +492,6 @@ struct Context<'a> {
     stops: &'a StopList,
     order: &'a [u32],
     staging: &'a Path,
-    manifest_id: u64,
     pair_rules_without_walk: &'a AtomicU64,
 }
 
@@ -531,7 +544,7 @@ fn run_jobs(context: &Context<'_>, jobs: &[TileJob]) -> Result<Vec<TileOutcome>,
         .map_err(|_| BuildError::WorkerPanicked)
 }
 
-/// Computes one tile's walks and writes its file, if any stop in it has a walk.
+/// Computes one tile's walks and keeps it for [`seal_tiles`], if any stop in it has a walk.
 fn build_tile(
     context: &Context<'_>,
     tables: &mut StopTables<&TileSets, AnyCosting>,
@@ -604,21 +617,20 @@ fn build_tile(
     let tile = TransferTile::from_rows(
         context.mode,
         (job.x, job.y),
-        context.manifest_id,
+        PENDING_MANIFEST_ID,
         context.max_seconds,
         &rows_view,
     )?;
     let raw = tile.as_bytes();
-    let compressed =
-        zstd::bulk::compress(raw, context.options.zstd_level).map_err(BuildError::Compress)?;
-    let path = tile_path(context.staging, context.mode, job.x, job.y);
+    let path = pending_path(context.staging, context.mode, job.x, job.y);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| BuildError::Write {
             path: parent.to_path_buf(),
             source,
         })?;
     }
-    write_synced(&path, &compressed).map_err(|source| BuildError::Write {
+    // Not synced: it's read back by this run and removed before anything is published.
+    fs::write(&path, raw).map_err(|source| BuildError::Write {
         path: path.clone(),
         source,
     })?;
@@ -629,7 +641,9 @@ fn build_tile(
             origins: u32::try_from(rows.len()).map_err(|_| BuildError::TooManyEntries)?,
             walks: walk_total,
             cross_feed_walks: cross_total,
-            bytes: compressed.len() as u64,
+            content_sha256: hex_digest(&tile.content_digest()),
+            // Known once the tile is sealed.
+            bytes: 0,
             raw_bytes: raw.len() as u64,
         },
         feeds: per_feed
@@ -648,6 +662,149 @@ pub fn tile_path(root: &Path, mode: TransferMode, x: u32, y: u32) -> PathBuf {
         .join(format!("{y}.bin.zst"))
 }
 
+/// Where a tile waits for [`seal_tiles`] under the staging directory.
+fn pending_path(staging: &Path, mode: TransferMode, x: u32, y: u32) -> PathBuf {
+    staging
+        .join(PENDING_DIR)
+        .join(mode.as_str())
+        .join(x.to_string())
+        .join(format!("{y}.bin"))
+}
+
+/// One tile [`seal_tiles`] writes.
+#[derive(Clone, Copy, Debug)]
+struct SealJob<'a> {
+    mode: TransferMode,
+    /// Its index in the manifest's list for the mode.
+    index: usize,
+    entry: &'a TileEntry,
+}
+
+/// Gives every pending tile the build's manifest ID, then compresses and writes it in its place,
+/// filling in its compressed size and the modes' totals, and removes the pending tiles.
+///
+/// # Errors
+///
+/// If a pending tile can't be read, isn't the one the search recorded, or can't be compressed
+/// or written.
+fn seal_tiles(
+    options: &TransferOptions,
+    staging: &Path,
+    id: u64,
+    manifest: &mut Manifest,
+) -> Result<(), BuildError> {
+    let started = Instant::now();
+    let mut jobs = Vec::new();
+    for mode in TransferMode::ALL {
+        for (index, entry) in manifest
+            .tiles
+            .get(mode.as_str())
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            jobs.push(SealJob { mode, index, entry });
+        }
+    }
+    let next = AtomicUsize::new(0);
+    let sizes: Mutex<Vec<(TransferMode, usize, u64)>> = Mutex::new(Vec::with_capacity(jobs.len()));
+    let first_error: Mutex<Option<BuildError>> = Mutex::new(None);
+    let failed = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        for _ in 0..options.threads.get() {
+            scope.spawn(|| {
+                while !failed.load(Ordering::Relaxed) {
+                    let Some(&job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                        break;
+                    };
+                    let outcome = seal_tile(options, staging, id, job).and_then(|bytes| {
+                        let mut sizes = sizes.lock().map_err(|_| BuildError::WorkerPanicked)?;
+                        sizes.push((job.mode, job.index, bytes));
+                        Ok(())
+                    });
+                    if let Err(error) = outcome {
+                        failed.store(true, Ordering::Relaxed);
+                        if let Ok(mut first) = first_error.lock() {
+                            first.get_or_insert(error);
+                        }
+                    }
+                }
+            });
+        }
+    });
+    if let Some(error) = first_error.into_inner().ok().flatten() {
+        return Err(error);
+    }
+    let sizes = sizes.into_inner().map_err(|_| BuildError::WorkerPanicked)?;
+    let tile_count = sizes.len();
+    for (mode, index, bytes) in sizes {
+        if let Some(entry) = manifest
+            .tiles
+            .get_mut(mode.as_str())
+            .and_then(|tiles| tiles.get_mut(index))
+        {
+            entry.bytes = bytes;
+        }
+    }
+    for (mode, tiles) in &manifest.tiles {
+        if let Some(totals) = manifest.totals.get_mut(mode) {
+            totals.bytes = tiles.iter().map(|tile| tile.bytes).sum();
+        }
+    }
+    let pending = staging.join(PENDING_DIR);
+    if pending.exists() {
+        fs::remove_dir_all(&pending).map_err(|source| BuildError::Write {
+            path: pending.clone(),
+            source,
+        })?;
+    }
+    tracing::info!(
+        tiles = tile_count,
+        seconds = started.elapsed().as_secs_f64(),
+        "sealed tiles with the manifest ID"
+    );
+    Ok(())
+}
+
+/// Seals one tile, returning its compressed size.
+fn seal_tile(
+    options: &TransferOptions,
+    staging: &Path,
+    id: u64,
+    job: SealJob<'_>,
+) -> Result<u64, BuildError> {
+    let (x, y) = (job.entry.x, job.entry.y);
+    let pending = pending_path(staging, job.mode, x, y);
+    let raw = fs::read(&pending).map_err(|source| BuildError::Read {
+        path: pending.clone(),
+        source,
+    })?;
+    let tile = TransferTile::from_bytes(&raw).map_err(|source| BuildError::PendingTile {
+        path: pending.clone(),
+        source,
+    })?;
+    // The digest is what the ID covers, so the tile sealed must be the one that was hashed.
+    if hex_digest(&tile.content_digest()) != job.entry.content_sha256 {
+        return Err(BuildError::PendingTileChanged(pending));
+    }
+    drop(raw);
+    let tile = tile.with_manifest_id(id);
+    let compressed =
+        zstd::bulk::compress(tile.as_bytes(), options.zstd_level).map_err(BuildError::Compress)?;
+    let path = tile_path(staging, job.mode, x, y);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| BuildError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    write_synced(&path, &compressed).map_err(|source| BuildError::Write {
+        path: path.clone(),
+        source,
+    })?;
+    Ok(compressed.len() as u64)
+}
+
 /// Gathers one mode's tile outcomes into its totals and per-feed lists.
 fn summarize(
     outcomes: Vec<TileOutcome>,
@@ -662,7 +819,6 @@ fn summarize(
         totals.origins += u64::from(outcome.entry.origins);
         totals.walks += outcome.entry.walks;
         totals.cross_feed_walks += outcome.entry.cross_feed_walks;
-        totals.bytes += outcome.entry.bytes;
         totals.raw_bytes += outcome.entry.raw_bytes;
         let tile = (outcome.entry.x, outcome.entry.y);
         for (feed, walks, cross) in outcome.feeds {
@@ -704,7 +860,6 @@ fn assemble_manifest(
     report: &CompileReport,
     feeds: &[crate::compile::FeedRecord],
     build_id: BuildId,
-    id: u64,
     by_mode: &BTreeMap<TransferMode, ModeResult>,
     options: &TransferOptions,
 ) -> Result<Manifest, BuildError> {
@@ -759,7 +914,8 @@ fn assemble_manifest(
     Ok(Manifest {
         transitous_commit: report.transitous_commit.clone(),
         fetched_at: report.fetched_at.clone(),
-        manifest_id: format!("{id:016x}"),
+        // Set once the manifest is complete, since the ID covers it.
+        manifest_id: String::new(),
         valhalla_build_id: u32::from(build_id.value()),
         tile_format_version: TILE_FORMAT_VERSION,
         zoom: TILE_ZOOM,

@@ -10,7 +10,7 @@
 //! | mode | 1 | [`TransferMode`] |
 //! | zoom | 1 | [`TILE_ZOOM`] |
 //! | x, y | 4 each | The tile |
-//! | manifest ID | 8 | Fingerprint of the build manifest's feed list |
+//! | manifest ID | 8 | The build manifest's ID |
 //! | max seconds | 4 | The bound the tile was built with |
 //! | origins | 4 | Walk origins in the tile |
 //! | walks | 4 | Walks in the tile |
@@ -25,11 +25,19 @@
 //! `(feed, stop)`. Nothing is implied by what's left out: the file records exactly what is read.
 //!
 //! Any change to the layout gets a new version.
+//!
+//! The manifest ID covers every tile's contents ([`TransferTile::content_digest`]),
+//! so a tile can't be written with it until all of a build's tiles are known.
+//! The digest leaves out the ID and the checksum, which covers it, so a build can encode
+//! and hash its tiles first and set the ID afterward ([`TransferTile::with_manifest_id`]).
 
 use std::io::Read;
 
+use core::ops::Range;
+
 use crc32fast::Hasher;
 use ruzstd::decoding::StreamingDecoder;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 /// The first bytes of a decompressed tile.
@@ -44,6 +52,10 @@ const TILES_PER_AXIS: u32 = 1 << TILE_ZOOM;
 
 /// The fixed part of a decompressed tile.
 const HEADER_LEN: usize = 40;
+/// Where the manifest ID is in the header.
+const MANIFEST_ID_FIELD: Range<usize> = 16..24;
+/// Where the checksum is in the header: last, so it covers everything before and after it.
+const CHECKSUM_FIELD: Range<usize> = 36..HEADER_LEN;
 
 /// How much of a tile to take from the zstd decoder at a time.
 const READ_CHUNK: usize = 64 * 1024;
@@ -284,12 +296,39 @@ impl TransferTile {
                 write_varint(walk.seconds, &mut out);
             }
         }
-        let mut hasher = Hasher::new();
-        hasher.update(&out);
-        let crc = hasher.finalize();
-        out[HEADER_LEN - 4..HEADER_LEN].copy_from_slice(&crc.to_le_bytes());
+        let crc = checksum(&out);
+        out[CHECKSUM_FIELD].copy_from_slice(&crc.to_le_bytes());
         // The same validation a decoder runs, so a tile that encodes is one that decodes.
         Ok(Self::from_vec(out)?)
+    }
+
+    /// The SHA-256 of everything the tile says but which manifest it belongs to:
+    /// its decompressed bytes, with the manifest ID and the checksum as zeros.
+    ///
+    /// Two tiles have the same digest exactly when they are the same apart from their
+    /// manifest IDs, so a build can fold its tiles' digests into the ID they will carry.
+    #[must_use]
+    pub fn content_digest(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(&self.raw[..MANIFEST_ID_FIELD.start]);
+        hasher.update([0; MANIFEST_ID_FIELD.end - MANIFEST_ID_FIELD.start]);
+        hasher.update(&self.raw[MANIFEST_ID_FIELD.end..CHECKSUM_FIELD.start]);
+        hasher.update([0; CHECKSUM_FIELD.end - CHECKSUM_FIELD.start]);
+        hasher.update(&self.raw[CHECKSUM_FIELD.end..]);
+        hasher.finalize().into()
+    }
+
+    /// This tile as it would have been encoded with `manifest_id`, its checksum updated.
+    ///
+    /// Its [`Self::content_digest`] doesn't change.
+    #[must_use]
+    pub fn with_manifest_id(mut self, manifest_id: u64) -> Self {
+        self.manifest_id = manifest_id;
+        self.raw[MANIFEST_ID_FIELD].copy_from_slice(&manifest_id.to_le_bytes());
+        self.raw[CHECKSUM_FIELD].copy_from_slice(&[0; 4]);
+        let crc = checksum(&self.raw);
+        self.raw[CHECKSUM_FIELD].copy_from_slice(&crc.to_le_bytes());
+        self
     }
 
     /// How many origin stops this tile has.
@@ -354,11 +393,11 @@ impl TransferTile {
                 supported: TILE_FORMAT_VERSION,
             });
         }
-        let stored_crc = le_u32(&raw[36..40]);
+        let stored_crc = le_u32(&raw[CHECKSUM_FIELD]);
         let mut hasher = Hasher::new();
-        hasher.update(&raw[..36]);
+        hasher.update(&raw[..CHECKSUM_FIELD.start]);
         hasher.update(&[0; 4]);
-        hasher.update(&raw[40..]);
+        hasher.update(&raw[CHECKSUM_FIELD.end..]);
         let computed = hasher.finalize();
         if stored_crc != computed {
             return Err(TileDecodeError::ChecksumMismatch {
@@ -383,7 +422,7 @@ impl TransferTile {
             mode,
             x,
             y,
-            manifest_id: u64::from_le_bytes(raw[16..24].try_into().unwrap_or([0; 8])),
+            manifest_id: u64::from_le_bytes(raw[MANIFEST_ID_FIELD].try_into().unwrap_or([0; 8])),
             max_seconds,
             origins,
             walks,
@@ -634,6 +673,13 @@ fn decompress_bounded(compressed: &[u8], limit: usize) -> Result<Vec<u8>, TileDe
     Ok(out)
 }
 
+/// The CRC-32 of a tile whose checksum field is zero.
+fn checksum(raw: &[u8]) -> u32 {
+    let mut hasher = Hasher::new();
+    hasher.update(raw);
+    hasher.finalize()
+}
+
 fn le_u16(bytes: &[u8]) -> u16 {
     u16::from_le_bytes(bytes.try_into().unwrap_or([0; 2]))
 }
@@ -857,6 +903,53 @@ mod tests {
             })
             .collect();
         insta::assert_snapshot!(hex.join("\n"));
+    }
+
+    #[test]
+    fn setting_the_manifest_id_is_encoding_with_it() {
+        let tile = sample();
+        let other = sample_with(|_| {})
+            .expect("valid")
+            .with_manifest_id(0x0123_4567_89ab_cdef);
+        assert_eq!(other.manifest_id, 0x0123_4567_89ab_cdef);
+        assert_ne!(other.as_bytes(), tile.as_bytes());
+        assert_eq!(
+            TransferTile::from_bytes(other.as_bytes()).expect("its checksum holds"),
+            other
+        );
+        let back = other.with_manifest_id(tile.manifest_id);
+        assert_eq!(back, tile);
+    }
+
+    #[test]
+    fn the_content_digest_covers_everything_but_the_manifest_id() {
+        let tile = sample();
+        let digest = tile.content_digest();
+        assert_eq!(tile.clone().with_manifest_id(7).content_digest(), digest);
+        // One walk's seconds.
+        let slower = sample_with(|rows| rows[0].2[0].seconds += 1).expect("valid");
+        assert_ne!(slower.content_digest(), digest);
+        // One walk's destination.
+        let elsewhere = sample_with(|rows| rows[2].2[0].stop += 1).expect("valid");
+        assert_ne!(elsewhere.content_digest(), digest);
+        // The header: the bound and the tile.
+        let rows = sample_rows();
+        let views: Vec<TransferTileRow<'_>> = rows
+            .iter()
+            .map(|(feed, stop, walks)| TransferTileRow {
+                feed: *feed,
+                stop: *stop,
+                walks,
+            })
+            .collect();
+        let encode = |xy, max_seconds| {
+            TransferTile::from_rows(tile.mode, xy, tile.manifest_id, max_seconds, &views)
+                .expect("valid")
+                .content_digest()
+        };
+        assert_eq!(encode((656, 1422), 900), digest);
+        assert_ne!(encode((656, 1422), 901), digest);
+        assert_ne!(encode((656, 1423), 900), digest);
     }
 
     #[test]

@@ -12,6 +12,7 @@ rust-version.workspace = true
 crc32fast = { workspace = true }
 memmap2 = { workspace = true }
 ruzstd = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 valhalla-graphtile = { workspace = true }
 valhalla-proto = { workspace = true }

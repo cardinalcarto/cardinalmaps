@@ -244,8 +244,11 @@ and a stale or broken feed degrades only itself.
 New overlay stops number after every file's stops.
 
 A build is loaded from a directory (`TransitBuild::load`), optionally for a subset of its feeds.
-The manifest is checked three ways: tiles carry its ID, each timetable must match its SHA-256,
-and opening refuses street tiles of a different build.
+The manifest is checked three ways: tiles carry its ID, each timetable and stop snap file must
+match its SHA-256, and opening refuses street tiles of a different build.
+The manifest ID covers everything a client reads to plan, including every tile's contents and
+every snap file's SHA-256, so any rebuild that would plan differently has a new ID,
+a tile from another build is refused, and prepared tables (keyed by the ID) are made again.
 Transfers come only from tiles; none are built at open, and any tile not on disk is left out,
 so an offline area needn't include a large agency's whole network:
 a stop in a tile that wasn't downloaded just has no walks from it.
@@ -379,6 +382,14 @@ so a tile can walk to stops of any feed, and one mode's tiles are at
 and its saved stop snaps (`transfers/snaps/<mode>/<feed index>.bin`),
 since clients choose which feeds to download, and `transfers/unsnapped-<mode>.jsonl` the stops
 with no walks. A run is staged, and appears only by one rename when everything has succeeded.
+
+The manifest ID (`manifest::manifest_id`) hashes the street build, tile format, zoom, bounds,
+each feed's archive, timetable, snap files, and tile list, and each tile's content digest:
+the SHA-256 of the decompressed tile with its manifest ID and checksum fields as zeros.
+Since tiles carry the ID, they're written in two passes: the searches keep each tile
+uncompressed with no ID and record its digest, and once the ID is known each tile is given it,
+compressed, and written. Names, licenses, statistics, and compressed sizes aren't covered.
+A build is byte-identical across reruns and thread counts.
 
 Stops are addressed as `(feed index, stop number)` where the feed index is the position
 in the manifest. A client decodes the tiles of its feeds, and

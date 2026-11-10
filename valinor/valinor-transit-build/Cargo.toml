@@ -28,6 +28,7 @@ zstd = { workspace = true }
 [dev-dependencies]
 insta = { workspace = true }
 tempfile = { workspace = true }
+valinor-transit-plan = { path = "../valinor-transit-plan" }
 zip = { workspace = true }
 
 [lints]

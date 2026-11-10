@@ -652,6 +652,8 @@ fn prepared_name(
     local_stop_count: u32,
     present: &[[u32; 2]],
 ) -> PreparedName {
+    // The manifest ID covers every tile's contents and every snap file, so a rebuild that would
+    // plan differently gets new tables, while an identical one keeps them.
     let mut set = Sha256::new();
     set.update(b"transfer-table-set-1\n");
     set.update(mode.as_str().as_bytes());

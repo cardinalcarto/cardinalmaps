@@ -7,8 +7,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use valinor_transit_build::compile::{self, CompileOptions, FeedOutcome};
 use valinor_transit_build::transfers::{self, DEFAULT_ZSTD_LEVEL, TransferOptions};
-use valinor_walk::DEFAULT_TRANSFER_SECONDS;
 use valinor_walk::transfer_tile::TransferMode;
+use valinor_walk::{DEFAULT_TRANSFER_SECONDS, SnapConfig};
 
 /// Offline stages of the transit pipeline.
 #[derive(Parser, Debug)]
@@ -139,6 +139,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn core::error::Error>> {
                 max_seconds_cycling,
                 max_seconds_wheelchair,
                 zstd_level,
+                snap: SnapConfig::default(),
                 modes: modes
                     .into_iter()
                     .map(|mode| match mode {
