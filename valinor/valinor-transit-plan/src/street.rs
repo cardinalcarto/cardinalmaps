@@ -28,7 +28,7 @@ use valhalla_proto::options::HasLanguage;
 use valhalla_proto::{Api, Costing as CostingProto, LatLng, Location, Options};
 use valhalla_response::ErrorCode;
 use valinor_gtfs::{LatLon, TimetableSet};
-use valinor_loki::{LokiConfig, parse_location, search as loki_search};
+use valinor_loki::{parse_location, search as loki_search};
 use valinor_router::OpenError;
 use valinor_router::tiles::TileSets;
 use valinor_sif::costing_options::parse_costing;
@@ -121,7 +121,9 @@ impl Default for ServiceLimits {
 pub struct StreetConfig {
     /// Passed through to the state owner.
     pub state: StateConfig,
-    /// How stops are snapped.
+    /// How GTFS-RT new stops are snapped, and how a query's origin and destination are correlated.
+    ///
+    /// A build's stops come snapped by the offline build.
     pub snap: SnapConfig,
     /// How many tiles each tile directory keeps in memory.
     pub tile_cache_size: NonZeroUsize,
@@ -197,18 +199,25 @@ fn sif_mode(mode: TravelMode) -> SifMode {
 }
 
 /// A location at a point, correlated to the streets by Loki.
+///
+/// Its edges must reach as far as a stop's (see [`SnapConfig::min_reachability`]):
+/// a journey leaves its origin and enters its destination as it does a stop, and an edge into a
+/// pocket the mode can't leave, such as a garage with no exit for a bicycle, would strand it.
 fn correlated(
     tiles: &TileSets,
     costing: &AnyCosting,
+    snap: SnapConfig,
     point: LatLon,
 ) -> Result<Location, StreetError> {
-    let loki = LokiConfig::default();
+    let loki = snap.loki_config();
     let mut location = Location {
         ll: Some(LatLng {
             has_lat: Some(HasLat::Lat(point.lat)),
             has_lng: Some(HasLng::Lng(point.lon)),
         }),
-        has_minimum_reachability: Some(HasMinimumReachability::MinimumReachability(50)),
+        has_minimum_reachability: Some(HasMinimumReachability::MinimumReachability(
+            snap.min_reachability,
+        )),
         has_search_cutoff: Some(HasSearchCutoff::SearchCutoff(LOCATION_SEARCH_CUTOFF_M)),
         ..Location::default()
     };
@@ -336,6 +345,8 @@ struct StreetSearch<'w, 'a> {
     interrupt: &'w dyn Fn() -> bool,
     probe: &'w dyn Fn(PlanStage),
     max_walk_seconds: u32,
+    /// How the origin and destination are correlated, as stops are snapped.
+    snap: SnapConfig,
     /// Transfers drawn so far: journeys of a window share them, and a draw is a street search.
     /// Keyed by everything a draw depends on within one query.
     transfer_paths: HashMap<(AccessSide, StopId, StopId), Option<WalkPath>>,
@@ -570,8 +581,8 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
         self.mode_worker_egress.bind(Arc::clone(snaps))?;
 
         (self.probe)(PlanStage::Locate);
-        let origin = correlated(self.tiles, self.costing, request.origin)?;
-        let destination = correlated(self.tiles, self.costing, request.destination)?;
+        let origin = correlated(self.tiles, self.costing, self.snap, request.origin)?;
+        let destination = correlated(self.tiles, self.costing, self.snap, request.destination)?;
         let origin_seeds = seeds_of(&origin);
         let destination_seeds = seeds_of(&destination);
         if origin_seeds.is_empty() {
@@ -691,6 +702,7 @@ struct WorkerPool<'a> {
     odin: Odin,
     limits: ServiceLimits,
     retention: Retention,
+    snap: SnapConfig,
 }
 
 impl<'a> WorkerPool<'a> {
@@ -989,6 +1001,7 @@ impl StreetPlanner {
             odin: Odin::default(),
             limits: config.limits,
             retention: config.retention,
+            snap: config.snap,
         });
         Ok(Self {
             cell,
@@ -1131,6 +1144,7 @@ impl StreetPlanner {
             interrupt,
             probe,
             max_walk_seconds: request.options.max_walk_seconds,
+            snap: pool.snap,
             transfer_paths: HashMap::new(),
         };
         plan_pinned(snapshot, router, &mut search, request, interrupt)

@@ -34,6 +34,7 @@ pub const DEFAULT_MAX_SNAP_DISTANCE_M: u32 = 400;
 /// same to King County Metro's airport stop. Over Washington's 19,866 stops, 250 moves those two
 /// snaps and no others, and 1,000 moves none more, in any mode. Stops are snapped offline, apart
 /// from a GTFS-RT overlay's new stops, and that takes about four times as long as at 50.
+/// A plan correlates its origin and destination by the same bound.
 pub const DEFAULT_MIN_REACHABILITY: u32 = 250;
 
 /// Options for snapping stops.
