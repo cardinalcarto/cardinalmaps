@@ -250,6 +250,24 @@ fn approximate_meters(a: LatLon, b: LatLon) -> f64 {
     (dx * dx + dy * dy).sqrt() * EARTH_RADIUS_METERS
 }
 
+/// Binds `table` to `snaps`, sharing `bound`'s attachments if it is bound to the same snaps.
+///
+/// A mode's access, egress, and transfer tables reach the same stops, and attachments are keyed
+/// by graph ID rather than by a table's own numbering, so one copy serves all three.
+fn bind_like(
+    table: &mut StopTables<&TileSets, AnyCosting>,
+    bound: &StopTables<&TileSets, AnyCosting>,
+    snaps: &Arc<StopSnaps>,
+) -> Result<(), WalkError> {
+    match bound.attachments() {
+        Some(attachments) if Arc::ptr_eq(attachments.snaps(), snaps) => {
+            table.bind_shared(Arc::clone(attachments));
+            Ok(())
+        }
+        _ => table.bind(Arc::clone(snaps)),
+    }
+}
+
 /// One travel mode's search storage in one worker.
 struct ModeWorker<'a> {
     router: Router<TableTransfers>,
@@ -396,13 +414,15 @@ impl StreetSearch<'_, '_> {
         // The search that found this walk, so the drawn route matches its seconds: a walk from a
         // base stop to a GTFS-RT new stop was found by a backward search from the new stop.
         // It runs at the table's own limit, which sets the search's cost bound.
-        self.mode_worker_transfer.bind(Arc::clone(
+        bind_like(
+            self.mode_worker_transfer,
+            self.mode_worker_access,
             request
                 .snapshot
                 .snaps()
                 .ok_or(StreetError::NoSnaps)?
                 .for_mode(request.mode),
-        ))?;
+        )?;
         let (seed_stop, target_stop) = match walk.search {
             AccessSide::Access => (walk.from, walk.to),
             AccessSide::Egress => (walk.to, walk.from),
@@ -567,7 +587,7 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
             .for_mode(request.mode);
         let stop_count = request.snapshot.snapshot().stop_count();
         self.mode_worker_access.bind(Arc::clone(snaps))?;
-        self.mode_worker_egress.bind(Arc::clone(snaps))?;
+        bind_like(self.mode_worker_egress, self.mode_worker_access, snaps)?;
 
         (self.probe)(PlanStage::Locate);
         let origin = correlated(self.tiles, self.costing, request.origin)?;
@@ -1134,5 +1154,48 @@ impl StreetPlanner {
             transfer_paths: HashMap::new(),
         };
         plan_pinned(snapshot, router, &mut search, request, interrupt)
+    }
+}
+
+/// What an idle worker keeps, for tests of the pool.
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct IdleWorker {
+    /// Per mode: how many of its tables are bound, and how many distinct stop attachments
+    /// they hold between them.
+    pub(crate) attachments: [(usize, usize); 3],
+}
+
+#[cfg(test)]
+impl StreetPlanner {
+    /// The pool's idle workers, most recently returned last.
+    pub(crate) fn idle_workers(&self) -> Vec<IdleWorker> {
+        fn attachments(mode: &ModeWorker<'_>) -> (usize, usize) {
+            let bound: Vec<&Arc<valinor_walk::StopAttachments>> =
+                [&mode.access, &mode.egress, &mode.transfer]
+                    .into_iter()
+                    .filter_map(|table| table.attachments())
+                    .collect();
+            let distinct = bound
+                .iter()
+                .enumerate()
+                .filter(|(i, a)| !bound[..*i].iter().any(|b| Arc::ptr_eq(a, b)))
+                .count();
+            (bound.len(), distinct)
+        }
+        self.cell.with_dependent(|_, pool| {
+            pool.idle
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .map(|worker| IdleWorker {
+                    attachments: [
+                        attachments(&worker.walking),
+                        attachments(&worker.cycling),
+                        attachments(&worker.wheelchair),
+                    ],
+                })
+                .collect()
+        })
     }
 }

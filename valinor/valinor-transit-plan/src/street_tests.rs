@@ -308,3 +308,20 @@ fn json_requests_round_trip_and_report_errors() {
     assert_eq!(vehicle.status, 200);
     assert!(String::from_utf8_lossy(&vehicle.body).contains("built_at"));
 }
+
+#[test]
+fn a_modes_tables_share_one_copy_of_their_stop_attachments() {
+    let planner = planner();
+    for mode in [TravelMode::Walking, TravelMode::Cycling] {
+        plan(&planner, &request(mode));
+    }
+    let idle = planner.idle_workers();
+    assert_eq!(idle.len(), 1, "plans one at a time share a worker");
+    let [walking, cycling, wheelchair] = idle[0].attachments;
+    // Access, egress, and the drawn transfer's table, all on one copy.
+    assert_eq!(walking, (3, 1));
+    // Cycling draws no transfer here; access and egress share.
+    assert_eq!(cycling.1, 1);
+    assert!(cycling.0 >= 2);
+    assert_eq!(wheelchair, (0, 0), "wheelchair wasn't planned");
+}

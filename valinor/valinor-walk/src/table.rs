@@ -688,6 +688,12 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         self.attachments = Some(attachments);
     }
 
+    /// The attachments of the bound stops, to bind another search of the same stops to
+    /// with [`Self::bind_shared`] rather than build them again.
+    pub fn attachments(&self) -> Option<&Arc<StopAttachments>> {
+        self.attachments.as_ref()
+    }
+
     /// Gives back the tile slots and dense numbers this search has built up.
     ///
     /// A long-running build calls this between batches of searches, so that a worker's memory
