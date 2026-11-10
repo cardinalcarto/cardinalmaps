@@ -11,6 +11,8 @@
 //!
 //! Each query's `now` is the capture's own header timestamp, so its real-time data is fresh.
 //! Daytime queries use the schedule alone, because captures only exist overnight.
+//!
+//! Sound Transit's feed, from the Washington build's fetch, serves regressions found on Link.
 
 #![allow(
     clippy::print_stderr,
@@ -568,4 +570,100 @@ fn e2e_stop_moved_marks_the_boarding_leg() {
 
 fn point(lat: f64, lon: f64) -> LatLon {
     LatLon { lat, lon }
+}
+
+const SOUND_TRANSIT: &str =
+    "/mnt/maps/cardinal/transit/global/us-wa-2026-11-09/feeds/us-wa-Sound-Transit.gtfs.zip";
+
+/// A planner over Sound Transit alone, its stops snapped with `snap`.
+fn sound_transit_planner(snap: valinor_walk::SnapConfig) -> StreetPlanner {
+    let output = compile(vec![CompileInput {
+        id: CompileFeedId::try_new("us-wa-Sound-Transit".to_owned()).unwrap(),
+        source: Box::new(ZipSource::from_path(Path::new(SOUND_TRANSIT)).unwrap()),
+    }])
+    .unwrap();
+    let loaded = LoadedTimetable::from_bytes(output.bytes).unwrap();
+    StreetPlanner::open_with_built_transfers(
+        TimetableSet::single(loaded).unwrap(),
+        &[TILES],
+        StreetConfig {
+            snap,
+            ..StreetConfig::default()
+        },
+    )
+    .unwrap()
+}
+
+/// Where each journey's last ride ends.
+fn last_alightings(response: &PlanResponse) -> Vec<String> {
+    response
+        .journeys
+        .iter()
+        .filter_map(|journey| {
+            let ride = transit_legs(journey).pop()?;
+            ride.stops.last()?.stop.name.clone()
+        })
+        .collect()
+}
+
+/// By bicycle, SeaTac/Airport station's southbound platform was snapped into the airport
+/// garage, which a bicycle can enter but not leave. Riders to the airport were sent to
+/// Tukwila International Boulevard, a stop early, to cycle 4.5 km on Air Cargo Road,
+/// arriving later than staying on to SeaTac/Airport and cycling 2.4 km.
+/// A rider starting on that platform was stranded the same way, and so was one starting in
+/// Cal Anderson Park, on a service road that reaches 63 nodes by bicycle.
+#[test]
+#[ignore = "needs the Washington data under /mnt/maps/cardinal"]
+fn e2e_bicycles_ride_link_to_the_airport_station() {
+    // Monday 2026-11-09 17:52 PST, as on the phone.
+    let now = 1_794_275_520;
+    // Cardinal's geocoder's points for Hattie's Hat and the main terminal.
+    let ballard = point(47.666_124_5, -122.383_093_1);
+    let terminal = point(47.442_500_6, -122.301_326_5);
+    let platform = point(47.444_97, -122.297_03);
+    let tukwila = point(47.464_27, -122.2884);
+    let cal_anderson = point(47.6173, -122.3196);
+    let cycle = |planner: &StreetPlanner, name: &str, from: LatLon, to: LatLon| {
+        query_mode(planner, name, from, to, now, now, TravelMode::Cycling)
+    };
+
+    let old = sound_transit_planner(valinor_walk::SnapConfig {
+        min_reachability: 50,
+        ..valinor_walk::SnapConfig::default()
+    });
+    let before = cycle(&old, "reach 50: to the airport", ballard, terminal);
+    let ends = last_alightings(&before);
+    assert!(!ends.is_empty());
+    assert!(
+        ends.iter().all(|name| name == "Tukwila Int'l Blvd"),
+        "the old snaps let a ride end elsewhere: the fixture moved: {ends:?}"
+    );
+    let stranded = cycle(&old, "reach 50: from the park", cal_anderson, terminal);
+    assert!(stranded.journeys.is_empty());
+
+    let planner = sound_transit_planner(valinor_walk::SnapConfig::default());
+    let response = cycle(&planner, "to the airport", ballard, terminal);
+    let ends = last_alightings(&response);
+    assert!(!ends.is_empty());
+    assert!(
+        ends.iter().all(|name| name == "SeaTac/Airport"),
+        "a ride ends elsewhere: {ends:?}"
+    );
+    let first = |r: &PlanResponse| r.journeys.iter().map(|j| j.arrival).min();
+    assert!(first(&response) < first(&before));
+
+    // From the platform: the direct ride exists, and Link goes north, not to Angle Lake first.
+    let response = cycle(&planner, "from the platform", platform, tukwila);
+    assert_eq!(response.direct.status, "found");
+    assert!(!response.journeys.is_empty());
+    assert!(
+        !last_alightings(&response)
+            .iter()
+            .any(|name| name == "Angle Lake"),
+        "a journey rides south first"
+    );
+
+    let response = cycle(&planner, "from the park", cal_anderson, terminal);
+    assert_eq!(response.direct.status, "found");
+    assert!(!response.journeys.is_empty());
 }

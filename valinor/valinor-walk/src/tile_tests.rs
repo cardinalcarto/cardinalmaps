@@ -1796,3 +1796,67 @@ fn ending_a_table_search_early_changes_no_entry() {
         "no walking search ended early, so this tested nothing"
     );
 }
+
+/// Stops a bicycle reaches from SeaTac/Airport station's southbound platform (stop 99904),
+/// as a table of walks from it, with the stops snapped by `config`.
+///
+/// The second stop is on Air Cargo Road at the main terminal, where Cardinal's geocoder puts it.
+fn seatac_rides_from_the_platform(config: crate::SnapConfig) -> (SnapPoint, Option<u32>) {
+    let provider = tar_provider(WA_TILES);
+    let costing = bicycle();
+    let stops = [(-122.297_03, 47.444_97), (-122.301_326_5, 47.442_500_6)];
+    let probe = crate::snap_stop(&provider, &costing, &config, stops[0]).expect("snap");
+    let build = probe.build_id.expect("build");
+    let snaps =
+        Arc::new(crate::snap_stops(&provider, &costing, &config, build, &stops).expect("snap"));
+    let mut tables = StopTables::new(provider, costing);
+    tables.bind(snaps.clone()).expect("bind");
+    let platform = StopId::new(0);
+    let seeds = tables.stop_seeds(platform).expect("seeds");
+    let table = tables
+        .compute(
+            snaps.stop_count(),
+            &crate::TableRequest {
+                side: AccessSide::Access,
+                seeds: &seeds,
+                max_seconds: 1800,
+                interrupt: &|| false,
+            },
+        )
+        .expect("search")
+        .expect("not interrupted");
+    (
+        snaps.point(platform).expect("snapped"),
+        table
+            .cost(StopId::new(1))
+            .map(valinor_transit::Seconds::into_inner),
+    )
+}
+
+/// By bicycle, the platform's nearest edge that reaches 50 nodes each way is in the airport
+/// garage, which a bicycle can enter but not leave: no ride could end there, so Link riders
+/// to the airport were sent to Tukwila International Boulevard to cycle 4.5 km instead.
+#[test]
+#[ignore = "needs /mnt/maps/cardinal data"]
+fn a_bicycle_can_ride_away_from_seatac_airport_station() {
+    let old = crate::SnapConfig {
+        min_reachability: 50,
+        ..crate::SnapConfig::default()
+    };
+    let (garage, stranded) = seatac_rides_from_the_platform(old);
+    println!("reach 50: {garage:?}, terminal {stranded:?}");
+    assert_eq!(
+        stranded, None,
+        "the garage has a way out: the fixture moved"
+    );
+
+    let (snap, terminal) = seatac_rides_from_the_platform(crate::SnapConfig::default());
+    println!("default: {snap:?}, terminal {terminal:?}");
+    assert_ne!(snap.edge, garage.edge);
+    // International Boulevard, then S 170th St and Air Cargo Road: about 2.4 km.
+    let seconds = terminal.expect("the terminal is reachable from the platform");
+    assert!(
+        (300..=700).contains(&seconds),
+        "{seconds} s to the terminal"
+    );
+}
