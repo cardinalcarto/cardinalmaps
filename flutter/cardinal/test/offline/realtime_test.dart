@@ -32,6 +32,17 @@ void main() {
       source('https://example.org/gtfs-rt').kind,
       TransitFeedKind.combined,
     );
+    // The bucket's name isn't what's in it.
+    expect(
+      source('https://s3.amazonaws.com/kcm-alerts-realtime-prod/tripupdates.pb')
+          .kind,
+      TransitFeedKind.tripUpdates,
+    );
+    expect(
+      source('https://s3.amazonaws.com/kcm-alerts-realtime-prod/alerts.pb')
+          .kind,
+      TransitFeedKind.alerts,
+    );
   });
 
   test('fetches each message, then only once it is old', () async {

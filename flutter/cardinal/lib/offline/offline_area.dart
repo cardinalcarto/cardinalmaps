@@ -141,18 +141,21 @@ class RealtimeSource {
   final String feed;
   final Uri url;
 
-  /// What the message carries. `realtime.json` doesn't say, so it's read from the URL;
-  /// a message that's none of these, or several, is combined.
+  /// What the message carries. `realtime.json` doesn't say, so it's read from the URL's
+  /// file name or its `feed_type`, never the rest of the URL: King County's trip updates
+  /// are in a bucket named `kcm-alerts-realtime-prod`. A message that's none of these, or
+  /// several, is combined.
   TransitFeedKind get kind {
-    final text = url.toString().toLowerCase();
-    if (text.contains('alert')) return TransitFeedKind.alerts;
-    if (text.contains('vehicle')) return TransitFeedKind.vehiclePositions;
-    if (text.contains('tripupdate') ||
-        text.contains('trip_update') ||
-        url.queryParameters['feed_type'] == 'trip') {
-      return TransitFeedKind.tripUpdates;
-    }
-    return TransitFeedKind.combined;
+    final name = [
+      url.pathSegments.lastOrNull ?? '',
+      url.queryParameters['feed_type'] ?? '',
+    ].join(' ').toLowerCase().replaceAll(RegExp('[^a-z ]'), '');
+    final kinds = {
+      if (name.contains('alert')) TransitFeedKind.alerts,
+      if (name.contains('vehicle')) TransitFeedKind.vehiclePositions,
+      if (name.contains('trip')) TransitFeedKind.tripUpdates,
+    };
+    return kinds.length == 1 ? kinds.single : TransitFeedKind.combined;
   }
 }
 
