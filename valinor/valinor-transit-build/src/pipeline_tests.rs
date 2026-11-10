@@ -954,3 +954,21 @@ fn real_tiles_equal_a_fresh_table() {
         assert_eq!(loaded, built, "{mode:?}");
     }
 }
+
+#[test]
+fn changing_the_seated_wait_recompiles_an_unchanged_archive() {
+    let (input, output, first) = compiled_feeds(&[Feed {
+        id: "good",
+        stops: &grid(0.0, 16),
+    }]);
+    assert!(!record(&first, "good").reused);
+    let options = CompileOptions {
+        seated_wait_seconds: 1,
+        ..compile_options(input.path(), output.path())
+    };
+    let second = compile::run(&options).expect("second run");
+    assert!(
+        !record(&second, "good").reused,
+        "--seated-wait-seconds changed but the old timetable was reused"
+    );
+}

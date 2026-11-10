@@ -146,14 +146,15 @@ A walk joins two different stops, so it never leads from a stop back to itself.
 
 This follows MOTIS (nigiri).
 Each stop has a transfer time of 2 minutes,
-unless a `transfers.txt` `transfer_type=2` row with the same from and to stop sets one;
+unless a `transfers.txt` row with the same from and to stop sets one;
 the smallest of several rows wins.
-A station's row covers each of its stops, as GTFS says. Rows naming a route or a trip are ignored
-and counted in the compile report.
+As in nigiri, `min_transfer_time` is read from a row of any type except 3 and 4,
+whether or not it names a route or a trip; a row with no `min_transfer_time` sets nothing.
+A station's row covers each of its stops, as GTFS says.
 
 A transfer at the same stop costs that stop's transfer time.
 A walk between two stops costs the longest of the walk and both stops' transfer times.
-A type 2 row between two different stops is a floor on that walk, the first row winning, as in
+Such a row between two different stops is a floor on that walk, the first row winning, as in
 nigiri: nigiri would add a footpath for such a row even with no other way to get there,
 but a transfer here comes from a walk on the street network, so a row with no walk in the table
 has nothing to apply to. The transfer stage counts those rows in the manifest's totals
@@ -302,7 +303,8 @@ A `transfer_type=4` row merges its two trips whatever the wait (up to a sanity l
 as nigiri has) and whatever their stops, and takes precedence over `block_id`: a block with any trip
 in a type 4 row doesn't merge by `block_id`. A `transfer_type=5` row forbids its pair's merge.
 Trips also merge only when both run that day, and only when their bike and wheelchair rules agree,
-because a pattern has one of each.
+because a pattern has one of each. A merged trip's `wheelchair_accessible` is `2` if its trips are,
+`1` only if all of them are, and unknown otherwise; each original trip keeps its own value too.
 
 A merged trip keeps each original trip's positions as they were, so the last stop of one and the
 first stop of the next are two consecutive positions of the combined pattern.

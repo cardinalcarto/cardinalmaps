@@ -702,12 +702,12 @@ fn min_transfer_times_set_where_the_core_can_use_them() {
              A,A,2,240,\n\
              A,B,2,60,\n\
              B,B,1,,\n\
-             C,C,2,120,R\n\
+             C,C,2,150,R\n\
              HUB,HUB,2,90,\n",
         );
     let output = compile_one(source);
-    assert_eq!(output.reports[0].transfers_applied, 4);
-    assert_eq!(output.reports[0].transfers_ignored, 2);
+    assert_eq!(output.reports[0].transfers_applied, 5);
+    assert_eq!(output.reports[0].transfers_ignored, 1);
     // A to B, and each platform of the hub to the other.
     assert_eq!(output.reports[0].transfer_pairs, 3);
     let view = CompiledTimetable::parse(&output.bytes).expect("parse");
@@ -723,7 +723,11 @@ fn min_transfer_times_set_where_the_core_can_use_them() {
         DEFAULT_TRANSFER_SECONDS,
         "a row between stops sets no time"
     );
-    assert_eq!(change("C"), DEFAULT_TRANSFER_SECONDS, "route-scoped");
+    assert_eq!(
+        change("C"),
+        150,
+        "a route-scoped row still sets the stop's time, as in nigiri"
+    );
     assert_eq!(
         change("P1"),
         90,
@@ -1883,4 +1887,128 @@ fn the_king_county_feed_reconciles() {
         }
     }
     assert_eq!((trips, events), (12_938, 449_039));
+}
+
+#[test]
+fn min_transfer_time_comes_from_any_row_except_types_3_and_4() {
+    let source = InMemorySource::new()
+        .with("agency.txt", AGENCY)
+        .with("routes.txt", "route_id,route_type\nR,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_lat,stop_lon\n\
+             A,47.0,-122.0\nB,47.1,-122.0\nC,47.2,-122.0\nD,47.3,-122.0\nE,47.4,-122.0\nF,47.5,-122.0\n",
+        )
+        .with(
+            "calendar_dates.txt",
+            "service_id,date,exception_type\nS,20260602,1\n",
+        )
+        .with("trips.txt", "route_id,service_id,trip_id\nR,S,X\n")
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             X,10:00:00,10:00:00,A,1\nX,11:00:00,11:00:00,B,2\n",
+        )
+        .with(
+            "transfers.txt",
+            "from_stop_id,to_stop_id,transfer_type,min_transfer_time,from_trip_id,to_trip_id\n\
+             A,A,0,240,,\n\
+             B,B,1,180,,\n\
+             C,C,4,60,X,Y\n\
+             D,D,5,300,,\n\
+             E,E,0,,,\n\
+             F,F,,120,,\n",
+        );
+    let output = compile_one(source);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let change = |id: &str| {
+        let stop = view.stop_by_gtfs_id("kcm", id).expect("stop");
+        view.tables.stops[stop.into_inner() as usize]
+            .min_change
+            .get()
+    };
+    assert_eq!(change("A"), 240, "type 0");
+    assert_eq!(change("B"), 180, "type 1");
+    assert_eq!(change("C"), DEFAULT_TRANSFER_SECONDS, "type 4 sets no time");
+    assert_eq!(change("D"), 300, "type 5");
+    assert_eq!(
+        change("E"),
+        DEFAULT_TRANSFER_SECONDS,
+        "a blank time says nothing"
+    );
+    assert_eq!(change("F"), 120, "a blank type is recommended");
+}
+
+fn seated_source() -> InMemorySource {
+    InMemorySource::new()
+        .with("agency.txt", AGENCY)
+        .with("routes.txt", "route_id,route_type\nR,3\nR2,3\n")
+        .with(
+            "stops.txt",
+            "stop_id,stop_lat,stop_lon\nA,47.0,-122.0\nM,47.1,-122.0\nB,47.2,-122.0\n",
+        )
+        .with(
+            "calendar_dates.txt",
+            "service_id,date,exception_type\nS,20260602,1\n",
+        )
+}
+
+#[test]
+fn a_second_stay_seated_row_from_a_trip_is_counted() {
+    let source = seated_source()
+        .with(
+            "trips.txt",
+            "route_id,service_id,trip_id\nR,S,T1\nR2,S,T2\nR2,S,T3\n",
+        )
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             T1,10:00:00,10:00:00,A,1\nT1,10:30:00,10:30:00,M,2\n\
+             T2,10:31:00,10:31:00,M,1\nT2,11:00:00,11:00:00,B,2\n\
+             T3,10:32:00,10:32:00,M,1\nT3,11:02:00,11:02:00,B,2\n",
+        )
+        .with(
+            "transfers.txt",
+            "from_stop_id,to_stop_id,from_trip_id,to_trip_id,transfer_type\n,,T1,T2,4\n,,T1,T3,4\n",
+        );
+    let output = compile_one(source);
+    assert_eq!(output.reports[0].seated_trips_merged, 1);
+    assert_eq!(output.reports[0].seated_rows_conflicting, 1);
+}
+
+#[test]
+fn a_merged_trip_with_a_shapeless_part_draws_straight_across_it() {
+    use valinor_transit::TripId;
+    let source = seated_source()
+        .with(
+            "shapes.txt",
+            "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled\n\
+             S1,47.0,-122.0,1,0\nS1,47.1,-122.0,2,1000\n",
+        )
+        .with(
+            "trips.txt",
+            "route_id,service_id,trip_id,block_id,shape_id\nR,S,T1,X,S1\nR2,S,T2,X,\n",
+        )
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence,shape_dist_traveled\n\
+             T1,10:00:00,10:00:00,A,1,0\nT1,10:30:00,10:30:00,M,2,1000\n\
+             T2,10:31:00,10:31:00,M,1,\nT2,11:00:00,11:00:00,B,2,\n",
+        );
+    let output = compile_one(source);
+    let view = CompiledTimetable::parse(&output.bytes).expect("parse");
+    let trip = (0..u32::try_from(view.trip_count()).expect("fits"))
+        .map(TripId::new)
+        .find(|&t| !view.trip_segments(t).is_empty())
+        .expect("a merged trip");
+    let points = view.shape_points_between(trip, 0, 3).expect("a line");
+    // The shape's stretch to M, then straight on to B, with no gap.
+    let last = points.last().expect("points");
+    assert!((last.lat - 47.2).abs() < 1e-6, "ends at B: {points:?}");
+    assert!(
+        points.iter().any(|p| (p.lat - 47.1).abs() < 1e-6),
+        "passes M"
+    );
+    // No original trip's shape at all means nothing to draw.
+    assert!(view.shape_points_between(trip, 2, 3).is_none());
 }
