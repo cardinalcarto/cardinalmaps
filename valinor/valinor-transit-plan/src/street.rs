@@ -857,6 +857,8 @@ pub struct StreetPlanner {
     cell: Cell,
     state: Arc<TransitState>,
     limits: ServiceLimits,
+    /// Whether the transit build has wheelchair tables; a build may be made without them.
+    has_wheelchair: bool,
 }
 
 impl fmt::Debug for StreetPlanner {
@@ -865,6 +867,23 @@ impl fmt::Debug for StreetPlanner {
             .field("state", &self.state)
             .finish_non_exhaustive()
     }
+}
+
+/// A mode the build has no tables for is a bad request, not a search that finds nothing.
+pub(crate) fn require_mode_built<T, A>(
+    mode: TravelMode,
+    has_wheelchair: bool,
+) -> Result<(), PlanError<T, A>>
+where
+    T: core::error::Error + 'static,
+    A: core::error::Error + 'static,
+{
+    if mode == TravelMode::Wheelchair && !has_wheelchair {
+        return Err(PlanError::InvalidRequest(
+            "wheelchair routing, which this build has no tables for",
+        ));
+    }
+    Ok(())
 }
 
 /// Why a [`StreetPlanner`] couldn't open.
@@ -909,6 +928,7 @@ impl StreetPlanner {
                 },
             ));
         }
+        let has_wheelchair = build.has_wheelchair;
         let transfers = BaseTransfers::Loaded {
             walking: Arc::new(build.walking),
             cycling: Arc::new(build.cycling),
@@ -917,7 +937,7 @@ impl StreetPlanner {
             cycling_snaps: Arc::new(build.cycling_snaps),
             wheelchair_snaps: Arc::new(build.wheelchair_snaps),
         };
-        Self::open_tiles(build.set, tiles, transfers, config)
+        Self::open_tiles(build.set, tiles, transfers, config, has_wheelchair)
     }
 
     /// Opens a compiled timetable over tile sets, building its walks in memory.
@@ -939,7 +959,7 @@ impl StreetPlanner {
             cycling_seconds: config.max_cycling_transfer_seconds,
             wheelchair_seconds: config.max_wheelchair_transfer_seconds,
         };
-        Self::open_tiles(set, tiles, transfers, config)
+        Self::open_tiles(set, tiles, transfers, config, true)
     }
 
     fn open_tiles(
@@ -947,6 +967,7 @@ impl StreetPlanner {
         tiles: Arc<TileSets>,
         transfers: BaseTransfers,
         config: StreetConfig,
+        has_wheelchair: bool,
     ) -> Result<Self, OpenPlannerError> {
         let snapper = TileSnapper {
             tiles: Arc::clone(&tiles),
@@ -965,6 +986,7 @@ impl StreetPlanner {
             cell,
             state: Arc::new(state),
             limits: config.limits,
+            has_wheelchair,
         })
     }
 
@@ -1011,6 +1033,7 @@ impl StreetPlanner {
                 "max_walk_seconds exceeds the service limit",
             ));
         }
+        require_mode_built(request.mode, self.has_wheelchair)?;
         let snapshot = self
             .state
             .pin_for_departure(request.now, request.departure, latest_unix)?;

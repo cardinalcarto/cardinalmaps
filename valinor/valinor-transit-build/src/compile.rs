@@ -64,6 +64,9 @@ pub struct SeatedOutcome {
     pub chains_cut: usize,
     /// `transfer_type` 4 or 5 rows that named a trip this feed doesn't have.
     pub rows_unmatched: usize,
+    /// Valid `transfer_type=4` rows dropped because their trip already had another row's link.
+    #[serde(default)]
+    pub rows_conflicting: usize,
     /// Patterns: trips with the same route, stop sequence, and attributes.
     pub patterns: usize,
 }
@@ -130,6 +133,32 @@ pub struct FeedRecord {
     /// Whether this run reused a previous result without compiling.
     #[serde(default)]
     pub reused: bool,
+    /// Every compile setting the output depends on, so a change in any of them forces a recompile.
+    ///
+    /// `None` from an earlier version of this tool; such a record is never reused.
+    #[serde(default)]
+    pub settings: Option<CompileSettings>,
+}
+
+/// The compile settings a timetable depends on, for deciding whether an old one can be reused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompileSettings {
+    /// See [`valinor_gtfs::CompileOptions::seated_wait_seconds`].
+    pub seated_wait_seconds: i32,
+    /// See [`valinor_gtfs::CompileOptions::max_seated_chain`].
+    pub max_seated_chain: usize,
+    /// See [`valinor_gtfs::CompileOptions::merge_seated_trips`].
+    pub merge_seated_trips: bool,
+}
+
+impl From<GtfsCompileOptions> for CompileSettings {
+    fn from(options: GtfsCompileOptions) -> Self {
+        Self {
+            seated_wait_seconds: options.seated_wait_seconds,
+            max_seated_chain: options.max_seated_chain,
+            merge_seated_trips: options.merge_seated_trips,
+        }
+    }
 }
 
 /// The whole stage's report.
@@ -285,6 +314,19 @@ fn compile_feed(
     }
 }
 
+/// The GTFS compiler's options for this run; everything not set here is the compiler's default.
+fn gtfs_options_of(options: &CompileOptions) -> GtfsCompileOptions {
+    GtfsCompileOptions {
+        seated_wait_seconds: options.seated_wait_seconds,
+        ..GtfsCompileOptions::default()
+    }
+}
+
+/// What this run's output depends on besides the archive and the compiler itself.
+fn settings_of(options: &CompileOptions) -> CompileSettings {
+    gtfs_options_of(options).into()
+}
+
 /// What a previous run left for this feed, if it can stand in for compiling.
 fn reusable(
     options: &CompileOptions,
@@ -294,7 +336,10 @@ fn reusable(
 ) -> Option<FeedRecord> {
     let bytes = fs::read(sidecar_path(options, &feed.id)).ok()?;
     let mut record: FeedRecord = serde_json::from_slice(&bytes).ok()?;
-    if record.sha256 != sha256 || record.format_version != FORMAT_VERSION {
+    if record.sha256 != sha256
+        || record.format_version != FORMAT_VERSION
+        || record.settings != Some(settings_of(options))
+    {
         return None;
     }
     match &record.outcome {
@@ -343,10 +388,7 @@ fn compile_archive(
         id: feed_id,
         source: Box::new(source),
     }];
-    let gtfs_options = GtfsCompileOptions {
-        seated_wait_seconds: options.seated_wait_seconds,
-        ..GtfsCompileOptions::default()
-    };
+    let gtfs_options = gtfs_options_of(options);
     let compiled = panic::catch_unwind(AssertUnwindSafe(|| compile_with(input, gtfs_options)))
         .map_err(|payload| {
             Failed::Feed(format!(
@@ -414,10 +456,12 @@ fn compile_archive(
             links_valid: r.seated_links_valid,
             chains_cut: r.seated_chains_cut,
             rows_unmatched: r.seated_rows_unmatched,
+            rows_conflicting: r.seated_rows_conflicting,
             patterns: r.patterns,
         }),
         seconds: started.elapsed().as_secs_f64(),
         reused: false,
+        settings: Some(settings_of(options)),
     })
 }
 
@@ -482,6 +526,7 @@ fn finish_failed(
         seated: None,
         seconds: started.elapsed().as_secs_f64(),
         reused: false,
+        settings: Some(settings_of(options)),
     };
     if matches_listing {
         write_sidecar(options, &record)?;

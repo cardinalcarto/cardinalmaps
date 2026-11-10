@@ -60,3 +60,5 @@ pub use state::{
 pub use street::{
     OpenPlannerError, ServiceLimits, StreetConfig, StreetError, StreetPlanError, StreetPlanner,
 };
+#[cfg(test)]
+mod seated_realtime_tests;

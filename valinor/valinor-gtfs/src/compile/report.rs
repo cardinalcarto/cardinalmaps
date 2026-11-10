@@ -98,6 +98,8 @@ pub struct FeedReport {
     pub seated_rows: usize,
     /// `transfer_type` 4 or 5 rows whose trips weren't found, or that name one trip twice.
     pub seated_rows_unmatched: usize,
+    /// Valid `transfer_type=4` rows dropped because their trip already had another row's link.
+    pub seated_rows_conflicting: usize,
     /// Stay-seated links considered across every date.
     pub seated_links_tried: usize,
     /// Of those, the links that passed every check.
@@ -155,6 +157,7 @@ impl FeedReport {
             transfers_forbidden_qualified: 0,
             seated_rows: 0,
             seated_rows_unmatched: 0,
+            seated_rows_conflicting: 0,
             seated_links_tried: 0,
             seated_links_valid: 0,
             seated_chains_cut: 0,

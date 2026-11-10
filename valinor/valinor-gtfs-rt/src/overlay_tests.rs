@@ -456,6 +456,35 @@ fn assigned_stop_id_replaces_the_pattern() {
     assert_eq!(stops[1], net.lookup.stop_number(KCM, "D"));
 }
 
+/// An update naming its stop by `stop_id` names the original stop, so its times still apply.
+#[test]
+fn an_assigned_stop_named_by_stop_id_keeps_its_times() {
+    let net = NetBuilder::new()
+        .route("R1", &["A", "B", "C"], &[("t1", &[100, 200, 300])])
+        .route("R2", &["D", "E"], &[("x", &[100, 200])])
+        .build();
+    let mut moved = time_at("B", unix_on_today(260));
+    moved.stop_time_properties = Some(proto::trip_update::stop_time_update::StopTimeProperties {
+        assigned_stop_id: Some("D".into()),
+        ..Default::default()
+    });
+    let overlay = run(&net, vec![fresh(vec![update("t1", DATE_1, vec![moved])])]);
+    assert_eq!(overlay.stats.stop_updates_unmatched, 0);
+    let stops = overlay
+        .snapshot
+        .route_stops(RouteId::new(2))
+        .expect("added");
+    assert_eq!(stops[1], net.lookup.stop_number(KCM, "D"));
+    assert_eq!(
+        arrivals_of(&overlay.snapshot, 2, TODAY, 0),
+        Some(vec![
+            window_seconds(TODAY, 100),
+            window_seconds(TODAY, 260),
+            window_seconds(TODAY, 360),
+        ])
+    );
+}
+
 #[test]
 fn an_added_trip_at_an_absurd_time_is_unusable() {
     let net = three_stop_net();

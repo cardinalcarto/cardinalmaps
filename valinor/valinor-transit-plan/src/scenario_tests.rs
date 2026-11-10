@@ -1459,7 +1459,7 @@ fn seated_plan_with(entity: proto::FeedEntity) -> PlanResponse {
 }
 
 #[test]
-fn a_delay_on_either_original_trip_moves_only_its_part() {
+fn a_delay_moves_its_own_part_and_carries_into_a_later_part_with_no_update() {
     use proto::trip_descriptor::ScheduleRelationship;
     // T2 (the second part) five minutes late: T1's part keeps its times.
     let response = seated_plan_with(seated_trip_update(
@@ -1504,7 +1504,8 @@ fn a_delay_on_either_original_trip_moves_only_its_part() {
     assert_eq!(leg.stops[1].arrival, june_15(8, 21), "T1's own delay");
     assert_eq!(leg.arrival, june_15(8, 55), "T2's own delay");
 
-    // T1 late past T2's departure from the join: T2 can't leave before T1 arrives.
+    // T1 ten minutes late with no word on T2: it's the same vehicle, so T2's run is ten minutes
+    // late too, and keeps its scheduled running time.
     let response = seated_plan_with(seated_trip_update(
         "T1",
         ScheduleRelationship::Scheduled,
@@ -1513,7 +1514,8 @@ fn a_delay_on_either_original_trip_moves_only_its_part() {
     ));
     let leg = seated_leg(&response);
     assert_eq!(leg.stops[1].arrival, june_15(8, 30));
-    assert_eq!(leg.stops[1].departure, june_15(8, 30));
+    assert_eq!(leg.stops[1].departure, june_15(8, 35));
+    assert_eq!(leg.arrival, june_15(9, 0));
 }
 
 #[test]

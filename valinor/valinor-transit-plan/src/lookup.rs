@@ -145,6 +145,37 @@ impl StaticLookup for CompiledLookup<'_> {
         })
     }
 
+    fn combined_patterns_of_route(&self, feed: &FeedId, route_id: &str) -> Vec<RouteId> {
+        let Some(part) = self.data.set.part_of_feed(feed.as_str()) else {
+            return Vec::new();
+        };
+        part.compiled()
+            .route_by_gtfs_id(feed.as_str(), route_id)
+            .map(|route| self.data.seated().patterns_of_route(part.index(), route))
+            .unwrap_or_default()
+    }
+
+    fn combined_routes_of_pattern(&self, pattern: RouteId) -> Vec<RouteInfo<'_>> {
+        self.data
+            .seated()
+            .routes_of_pattern(pattern)
+            .iter()
+            .filter_map(|&(part, route)| {
+                let compiled = self.data.set.parts().nth(part)?.compiled();
+                let info = compiled.route(route)?;
+                Some(RouteInfo {
+                    feed: self.feed_id(info.feed)?,
+                    route_id: info.gtfs_id,
+                    agency_id: info
+                        .agency
+                        .and_then(|agency| compiled.agency(agency))
+                        .and_then(|agency| agency.gtfs_id),
+                    route_type: i32::from(info.route_type),
+                })
+            })
+            .collect()
+    }
+
     fn stop(&self, feed: &FeedId, stop_id: &str) -> Option<StopId> {
         let part = self.data.set.part_of_feed(feed.as_str())?;
         part.compiled()
@@ -213,6 +244,7 @@ impl StaticLookup for CompiledLookup<'_> {
                         .trip_segments(trip.trip)
                         .into_iter()
                         .map(|segment| ScheduledSegment {
+                            trip_id: segment.gtfs_id.to_owned(),
                             first: segment.first_position,
                             last: segment.last_position,
                             route_id: compiled
@@ -220,6 +252,7 @@ impl StaticLookup for CompiledLookup<'_> {
                                 .map(|route| route.gtfs_id.to_owned())
                                 .unwrap_or_default(),
                             direction_id: segment.direction.map(u32::from),
+                            headsign: segment.headsign.map(str::to_owned),
                         })
                         .collect(),
                     stop_sequences: (0..stop_count)

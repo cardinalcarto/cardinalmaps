@@ -40,3 +40,5 @@ pub use error::CompileError;
 mod regression_tests;
 #[cfg(test)]
 mod scenario_tests;
+#[cfg(test)]
+mod seated_corruption_tests;

@@ -803,9 +803,10 @@ const MAX_ROW_PAIRS: usize = 4096;
 
 /// Applies `transfers.txt` to the stops, as MOTIS does, returning rules for pairs of stops.
 ///
-/// A `transfer_type=2` row with the same `from_stop_id` and `to_stop_id` sets that stop's
-/// transfer time; the smallest of several rows wins, and every other stop keeps the default.
-/// A row between two different stops sets a floor on that walk; the first such row wins.
+/// Any row except types 3 and 4 that states a `min_transfer_time` applies, as in nigiri;
+/// route and trip columns don't matter to it. With the same `from_stop_id` and `to_stop_id`
+/// it sets that stop's transfer time; the smallest of several rows wins, and every other stop
+/// keeps the default. Between two different stops it sets a floor on that walk; the first wins.
 /// A station in a row covers each of its boardable stops.
 /// A feed's rules for walking between stops, and its stay-seated rows.
 type TransferRules = (Vec<(u32, u32, u32)>, Vec<SeatedRow>);
@@ -854,7 +855,10 @@ fn apply_transfers(
                     stay_seated: row_kind == "4",
                 });
             }
-            continue;
+            // Only a type 5 row can also state a minimum change time, as in nigiri.
+            if row_kind == "4" || time.is_none() || from_stop.is_none() || to_stop.is_none() {
+                continue;
+            }
         }
         if row_kind == "3" && !unscoped {
             report.transfers_forbidden_qualified += 1;
@@ -868,13 +872,12 @@ fn apply_transfers(
         let seconds = if forbidden {
             NONE
         } else {
-            match time.filter(|&time| time <= SECONDS_LIMIT) {
-                Some(seconds) if row_kind == "2" && unscoped => seconds,
-                _ => {
-                    report.transfers_ignored += 1;
-                    continue;
-                }
-            }
+            // A row without a time (or an absurd one) says nothing about how long a change takes.
+            let Some(seconds) = time.filter(|&time| time <= SECONDS_LIMIT) else {
+                report.transfers_ignored += 1;
+                continue;
+            };
+            seconds
         };
         let from_members = members_of(from_stop, stops, &children);
         let to_members = members_of(to_stop, stops, &children);

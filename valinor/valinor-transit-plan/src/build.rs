@@ -243,6 +243,8 @@ pub struct TransitBuild {
     pub cycling_snaps: StopSnaps,
     /// Every stop's snap in a wheelchair; all unsnapped if the build has no wheelchair mode.
     pub wheelchair_snaps: StopSnaps,
+    /// Whether this build has wheelchair transfers and stop snaps at all.
+    pub has_wheelchair: bool,
     /// The manifest's street build, checked when opening a planner.
     pub valhalla_build_id: u32,
     /// What was found on disk.
@@ -433,6 +435,7 @@ impl TransitBuild {
             walking_snaps,
             cycling_snaps,
             wheelchair_snaps,
+            has_wheelchair: manifest.wheelchair_bound_seconds.is_some(),
             valhalla_build_id: manifest.valhalla_build_id,
             report,
         })

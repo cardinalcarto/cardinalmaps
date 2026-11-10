@@ -753,6 +753,21 @@ impl<'a> CompiledTimetable<'a> {
             .collect()
     }
 
+    /// Each combined trip's pattern, with the GTFS route of each of its original trips.
+    ///
+    /// A pattern is listed under its first original trip's route only,
+    /// so this is how an alert about a later trip's route reaches it.
+    pub fn combined_pattern_routes(&self) -> impl Iterator<Item = (RouteId, GtfsRoute)> + 'a {
+        let tables = self.tables;
+        tables.trip_segments.iter().filter_map(move |segment| {
+            let trip = tables.trips.get(segment.trip.get() as usize)?;
+            Some((
+                RouteId::new(trip.pattern.get()),
+                GtfsRoute(segment.route.get()),
+            ))
+        })
+    }
+
     /// A headsign for a stop of a trip: the stop's own, or else the trip's.
     pub fn stop_headsign(&self, trip: &TripInfo<'a>, position: usize) -> Option<&'a str> {
         if let Some(headsigns) = trip.stop_headsigns
@@ -908,7 +923,9 @@ impl<'a> CompiledTimetable<'a> {
 
     /// A trip's shape between two positions as points, across every original trip if combined.
     ///
-    /// `None` means the part of the trip between the positions has no shape to draw.
+    /// `None` means no original trip between the positions has a shape to draw.
+    /// A stretch without one of its own is drawn straight from stop to stop,
+    /// so a merged trip's line never has a gap in it.
     pub fn shape_points_between(
         &self,
         trip: TripId,
@@ -924,9 +941,10 @@ impl<'a> CompiledTimetable<'a> {
         if from >= to {
             return None;
         }
-        let (_, rider) = self.trip_rows(trip)?;
+        let (row, rider) = self.trip_rows(trip)?;
         let dists_start = reference(rider.stop_dists_start)? as usize;
         let mut points = Vec::new();
+        let mut any_shape = false;
         for segment in segments {
             let (first, last) = (
                 segment.first_position as usize,
@@ -936,29 +954,75 @@ impl<'a> CompiledTimetable<'a> {
             if from_position >= to_position {
                 continue;
             }
-            let Some(shape_index) = segment.shape else {
-                continue;
-            };
-            let shape = self.tables.shapes.get(shape_index as usize)?;
-            let start = shape.points_start.get() as usize;
-            let count = shape.point_count.get() as usize;
-            let shape_points = self
-                .tables
-                .shape_points
-                .get(start..start.checked_add(count)?)?;
-            let from_dist = self
-                .tables
-                .stop_dists
-                .get(dists_start.checked_add(from_position)?)?
-                .get();
-            let to_dist = self
-                .tables
-                .stop_dists
-                .get(dists_start.checked_add(to_position)?)?
-                .get();
-            points.extend(slice_shape(shape_points, from_dist, to_dist).points());
+            let stretch = segment.shape.and_then(|shape_index| {
+                self.shape_of_stretch(shape_index, dists_start, from_position, to_position)
+            });
+            match stretch {
+                Some(stretch) => {
+                    any_shape = true;
+                    points.extend(stretch);
+                }
+                None => {
+                    points.extend(self.straight_between_stops(row, from_position, to_position)?);
+                }
+            }
         }
-        (!points.is_empty()).then_some(points)
+        any_shape.then_some(points)
+    }
+
+    /// One original trip's shape between two of the combined trip's stop positions.
+    ///
+    /// `None` when its stop distances can't place the stretch on the shape.
+    fn shape_of_stretch(
+        &self,
+        shape_index: u32,
+        dists_start: usize,
+        from_position: usize,
+        to_position: usize,
+    ) -> Option<Vec<LatLon>> {
+        let shape = self.tables.shapes.get(shape_index as usize)?;
+        let start = shape.points_start.get() as usize;
+        let count = shape.point_count.get() as usize;
+        let shape_points = self
+            .tables
+            .shape_points
+            .get(start..start.checked_add(count)?)?;
+        let from_dist = self
+            .tables
+            .stop_dists
+            .get(dists_start.checked_add(from_position)?)?
+            .get();
+        let to_dist = self
+            .tables
+            .stop_dists
+            .get(dists_start.checked_add(to_position)?)?
+            .get();
+        if to_dist <= from_dist {
+            return None;
+        }
+        Some(slice_shape(shape_points, from_dist, to_dist).points())
+    }
+
+    /// The coordinates of a trip's stops from one position to another, inclusive.
+    fn straight_between_stops(
+        &self,
+        row: &TripRow,
+        from_position: usize,
+        to_position: usize,
+    ) -> Option<Vec<LatLon>> {
+        let pattern = self.trip_pattern(row)?;
+        let stops_start = pattern.stops_start.get() as usize;
+        Some(
+            (from_position..=to_position)
+                .filter_map(|position| {
+                    let stop = self
+                        .tables
+                        .pattern_stops
+                        .get(stops_start.checked_add(position)?)?;
+                    self.stop(StopId::new(stop.get()))?.coordinate
+                })
+                .collect(),
+        )
     }
 }
 

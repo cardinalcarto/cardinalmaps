@@ -146,14 +146,15 @@ A walk joins two different stops, so it never leads from a stop back to itself.
 
 This follows MOTIS (nigiri).
 Each stop has a transfer time of 2 minutes,
-unless a `transfers.txt` `transfer_type=2` row with the same from and to stop sets one;
+unless a `transfers.txt` row with the same from and to stop sets one;
 the smallest of several rows wins.
-A station's row covers each of its stops, as GTFS says. Rows naming a route or a trip are ignored
-and counted in the compile report.
+As in nigiri, `min_transfer_time` is read from a row of any type except 3 and 4,
+whether or not it names a route or a trip; a row with no `min_transfer_time` sets nothing.
+A station's row covers each of its stops, as GTFS says.
 
 A transfer at the same stop costs that stop's transfer time.
 A walk between two stops costs the longest of the walk and both stops' transfer times.
-A type 2 row between two different stops is a floor on that walk, the first row winning, as in
+Such a row between two different stops is a floor on that walk, the first row winning, as in
 nigiri: nigiri would add a footpath for such a row even with no other way to get there,
 but a transfer here comes from a walk on the street network, so a row with no walk in the table
 has nothing to apply to. The transfer stage counts those rows in the manifest's totals
@@ -178,6 +179,8 @@ position's rule byte, set when the lane is laid out, and the scan reads the bits
 with the same test as before, so a query on foot or by bicycle pays nothing.
 
 Forward and backward searches mirror the wheelchair bits exactly as they mirror pickup and drop-off.
+A build made without wheelchair tables refuses a wheelchair request as invalid,
+rather than answering that nothing is reachable.
 
 A table search's cost bound for a wheelchair is `1.2`, the same as walking;
 measured over 5,338 real wheelchair routes in Washington, whole-route cost over time has
@@ -302,16 +305,29 @@ A `transfer_type=4` row merges its two trips whatever the wait (up to a sanity l
 as nigiri has) and whatever their stops, and takes precedence over `block_id`: a block with any trip
 in a type 4 row doesn't merge by `block_id`. A `transfer_type=5` row forbids its pair's merge.
 Trips also merge only when both run that day, and only when their bike and wheelchair rules agree,
-because a pattern has one of each.
+because a pattern has one of each. A merged trip's `wheelchair_accessible` is `2` if its trips are,
+`1` only if all of them are, and unknown otherwise; each original trip keeps its own value too.
 
 A merged trip keeps each original trip's positions as they were, so the last stop of one and the
 first stop of the next are two consecutive positions of the combined pattern.
 A rider can't board at the former or alight at the latter, so staying on is the only way through.
 Each original trip keeps its `trip_id`, route, headsign, stop sequences, and shape, per segment
-in the file. GTFS-RT applies to the original trip's stretch: a delay moves only that stretch (times
-stay in order across the join, since the vehicle can't leave before it has arrived), and
-a cancellation leaves it unusable, so a ride can still board on another stretch and end at the join.
+in the file. GTFS-RT applies to the original trip's stretch, read against that trip's own schedule
+whatever order the updates come in. A delay moves that stretch, and since the next stretch is the
+same vehicle, a stretch with no update of its own (or its stops before its first update) takes the
+previous stretch's arrival delay, keeping its scheduled running times; an early arrival waits.
+Times stay in order across the join, since the vehicle can't leave before it has arrived.
+A cancellation or a `NO_SERVICE` alert for one original trip leaves its stretch unusable,
+so a ride can still board on another stretch and end at the join; alert selectors match each
+stretch by its own trip, route, agency, route type, direction, and start time.
+A `REPLACEMENT` (or `NEW`, or `ADDED`) of one original trip runs as a trip of its own, and its
+stretch of the merged trip is unusable, because nothing says the vehicle stays the same.
+A `DUPLICATED` copy of one original trip copies only that trip's stops.
+An `assigned_stop_id` moves the whole merged trip to an added pattern, its stretches kept.
 A response shows one ride with `segments`, and the join as one stop.
+Its `trip` fields are those of the original trip boarded, its state covers the stretches ridden,
+and its accessibility the least accessible of them. A stretch with no shape of its own is drawn
+straight from stop to stop.
 
 ## Responses
 

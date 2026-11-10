@@ -27,6 +27,11 @@ use crate::format::layout::{RULE_DROP_OFF_SHIFT, RULE_PICKUP_MASK, RUN_SCHEDULED
 /// The longest wait a `transfer_type=4` row may bridge, in seconds, as nigiri has it.
 const MAX_SEATED_DWELL_SECONDS: i32 = 2 * 3600;
 
+/// GTFS `wheelchair_accessible` values, as trips hold them.
+const WHEELCHAIR_UNKNOWN: u8 = 0;
+const WHEELCHAIR_YES: u8 = 1;
+const WHEELCHAIR_NO: u8 = 2;
+
 /// The default for [`CompileOptions::seated_wait_seconds`], in seconds.
 pub const DEFAULT_SEATED_WAIT_SECONDS: i32 = 600;
 
@@ -150,6 +155,7 @@ pub(super) fn merge_seated_trips(
     let mut cover: HashMap<usize, HashSet<u32>> = HashMap::new();
     let mut links_tried = 0_usize;
     let mut links_ok = 0_usize;
+    let mut conflicting: HashSet<(usize, usize)> = HashSet::new();
     let mut cut_chains: HashSet<Vec<usize>> = HashSet::new();
     for (_, mut members) in components {
         members.sort_unstable();
@@ -174,10 +180,13 @@ pub(super) fn merge_seated_trips(
 
             let mut next: HashMap<usize, usize> = HashMap::new();
             let mut has_prev: HashSet<usize> = HashSet::new();
-            let mut link = |from: usize, to: usize| {
+            let mut link = |from: usize, to: usize, explicit: bool| {
                 if !next.contains_key(&from) && !has_prev.contains(&to) {
                     next.insert(from, to);
                     has_prev.insert(to);
+                } else if explicit {
+                    // A trip's second type 4 row: the first row in the file wins, as in nigiri.
+                    conflicting.insert((from, to));
                 }
             };
             // Type 4 rows first, then each block's trips in departure order.
@@ -189,7 +198,7 @@ pub(super) fn merge_seated_trips(
                     links_tried += 1;
                     if seated_link_valid(&trips[link_row.from], &trips[link_row.to]) {
                         links_ok += 1;
-                        link(link_row.from, link_row.to);
+                        link(link_row.from, link_row.to, true);
                     }
                 }
             }
@@ -205,7 +214,7 @@ pub(super) fn merge_seated_trips(
                     links_tried += 1;
                     if block_link_valid(&trips[a], &trips[b], options.seated_wait_seconds) {
                         links_ok += 1;
-                        link(a, b);
+                        link(a, b, false);
                     }
                 }
             }
@@ -235,6 +244,7 @@ pub(super) fn merge_seated_trips(
     report.seated_links_tried = links_tried;
     report.seated_links_valid = links_ok;
     report.seated_chains_cut = cut_chains.len();
+    report.seated_rows_conflicting = conflicting.len();
     if seated_chains.is_empty() {
         return Ok(());
     }
@@ -296,6 +306,18 @@ fn block_link_valid(a: &TripModel, b: &TripModel, wait_seconds: i32) -> bool {
         && attributes_match(a, b)
 }
 
+/// A combined trip's `wheelchair_accessible`, adding one more original trip's value.
+///
+/// A trip marked inaccessible dominates, unknown comes next, and only all-yes is yes:
+/// routing and the leg's value both read this, so a chain of `2`s must stay `2`.
+fn combined_wheelchair(so_far: u8, part: u8) -> u8 {
+    match (so_far, part) {
+        (WHEELCHAIR_NO, _) | (_, WHEELCHAIR_NO) => WHEELCHAIR_NO,
+        (WHEELCHAIR_YES, WHEELCHAIR_YES) => WHEELCHAIR_YES,
+        _ => WHEELCHAIR_UNKNOWN,
+    }
+}
+
 /// One route's pattern carries one bike and wheelchair rule, so differing trips stay apart.
 fn attributes_match(a: &TripModel, b: &TripModel) -> bool {
     (a.bikes == 1) == (b.bikes == 1) && (a.wheelchair != 2) == (b.wheelchair != 2)
@@ -312,7 +334,7 @@ fn combine(chain: &[usize], trips: &[TripModel], service: u32) -> TripModel {
     let mut stop_dists = Vec::new();
     let mut segments = Vec::with_capacity(chain.len());
     let has_dists = chain.iter().any(|&t| trips[t].stop_dists.is_some());
-    let mut wheelchair = 1;
+    let mut wheelchair = WHEELCHAIR_YES;
     for (position_in_chain, &trip_index) in chain.iter().enumerate() {
         let trip = &trips[trip_index];
         let first_position = u32::try_from(stops.len()).unwrap_or(u32::MAX);
@@ -354,7 +376,7 @@ fn combine(chain: &[usize], trips: &[TripModel], service: u32) -> TripModel {
                 );
             }
         }
-        wheelchair = wheelchair.min(u8::from(trip.wheelchair == 1));
+        wheelchair = combined_wheelchair(wheelchair, trip.wheelchair);
         segments.push(SegmentModel {
             gtfs_id: trip.gtfs_id,
             route: trip.route,

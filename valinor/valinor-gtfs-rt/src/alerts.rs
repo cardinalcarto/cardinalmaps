@@ -106,6 +106,14 @@ impl AlertBudget {
     }
 }
 
+/// The run a selector names on one service day.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NamedRun {
+    trip: TripId,
+    /// The original trip's stretch, when the selector names one trip of a combined run.
+    segment: Option<(u32, u32)>,
+}
+
 /// One informed entity, compiled against the timetable: all fields present must match.
 #[derive(Debug)]
 struct CompiledSelector {
@@ -113,8 +121,8 @@ struct CompiledSelector {
     route: Option<String>,
     route_type: Option<i32>,
     direction: Option<u32>,
-    /// Per day, the trip this selector names; `None` when the selector names no trip.
-    trip: Option<HashMap<DaySlot, TripId>>,
+    /// Per day, the run this selector names; `None` when the selector names no trip.
+    trip: Option<HashMap<DaySlot, NamedRun>>,
     /// The static patterns of the trip this selector names.
     trip_routes: Vec<RouteId>,
     /// The stops this selector names, with a station's platforms; `None` when it names no stop.
@@ -219,13 +227,17 @@ fn compile_selector<L: StaticLookup + ?Sized>(
                         date: clock.date,
                         start_time,
                     };
-                    if let Some(found) = lookup.trip(feed, &query) {
-                        days.insert(found.day, found.trip);
+                    if let Some(&(trip, day)) = added.get(&(ScopedId::new(feed, id), clock.date)) {
+                        // An added or replaced trip stands in for any static one of that name.
+                        let segment = None;
+                        days.insert(day, NamedRun { trip, segment });
+                    } else if let Some(found) = lookup.trip(feed, &query) {
+                        let run = NamedRun {
+                            trip: found.trip,
+                            segment: found.segment,
+                        };
+                        days.insert(found.day, run);
                         trip_routes.push(found.route);
-                    } else if let Some(&(trip, day)) =
-                        added.get(&(ScopedId::new(feed, id), clock.date))
-                    {
-                        days.insert(day, trip);
                     }
                 }
                 days
@@ -283,6 +295,9 @@ struct OneRun<'a> {
 }
 
 /// Finds the scheduled trip a [`OneRun`] names.
+///
+/// A combined run is found by each original trip's own route, direction, and start;
+/// such a selector names that stretch.
 fn find_run<L: StaticLookup + ?Sized>(
     run: &OneRun<'_>,
     feed: &FeedId,
@@ -290,25 +305,49 @@ fn find_run<L: StaticLookup + ?Sized>(
     clocks: &[DayClock],
     routes: &mut Vec<RouteId>,
     budget: &mut AlertBudget,
-) -> HashMap<DaySlot, TripId> {
+) -> HashMap<DaySlot, NamedRun> {
     let mut days = HashMap::new();
     let Some(clock) = clocks.iter().copied().find(|c| c.date == run.date) else {
         return days;
     };
-    for pattern in lookup.route_patterns(feed, run.route_id) {
+    let patterns = lookup
+        .route_patterns(feed, run.route_id)
+        .into_iter()
+        .chain(lookup.combined_patterns_of_route(feed, run.route_id));
+    for pattern in patterns {
         let block = lookup.scheduled_block(pattern, clock.slot);
-        if !budget.charge(block.len()) {
+        let work: usize = block.iter().map(|trip| 1 + trip.segments.len()).sum();
+        if !budget.charge(work) {
             break;
         }
         for trip in block {
-            let departs = trip
-                .events
-                .first()
-                .map(|event| clock.relative(event.departure.into_inner()));
-            if trip.direction_id == Some(run.direction)
-                && departs == Some(i64::from(run.start_time))
-            {
-                days.insert(clock.slot, trip.trip);
+            let departs_at = |position: usize| {
+                trip.events
+                    .get(position)
+                    .map(|event| clock.relative(event.departure.into_inner()))
+            };
+            let named = if trip.segments.is_empty() {
+                (trip.direction_id == Some(run.direction)
+                    && departs_at(0) == Some(i64::from(run.start_time)))
+                .then_some(NamedRun {
+                    trip: trip.trip,
+                    segment: None,
+                })
+            } else {
+                trip.segments
+                    .iter()
+                    .find(|segment| {
+                        segment.route_id == run.route_id
+                            && segment.direction_id == Some(run.direction)
+                            && departs_at(segment.first as usize) == Some(i64::from(run.start_time))
+                    })
+                    .map(|segment| NamedRun {
+                        trip: trip.trip,
+                        segment: Some((segment.first, segment.last)),
+                    })
+            };
+            if let Some(named) = named {
+                days.insert(clock.slot, named);
                 routes.push(pattern);
             }
         }
@@ -324,6 +363,8 @@ pub(crate) struct TripIdentity<'a> {
     pub(crate) direction: Option<u32>,
     pub(crate) trip: TripId,
     pub(crate) day: DaySlot,
+    /// The original trip's stretch, when this asks about one trip of a combined run.
+    pub(crate) segment: Option<(u32, u32)>,
 }
 
 /// What an alert does to a trip.
@@ -359,6 +400,9 @@ impl NoServiceAlert {
         for selector in &self.selectors {
             if let Some(route_id) = &selector.route {
                 out.extend(lookup.route_patterns(&self.feed, route_id));
+                // A combined trip's pattern is its first original trip's route, not this one.
+                out.extend(lookup.combined_patterns_of_route(&self.feed, route_id));
+                out.extend(selector.trip_routes.iter().copied());
                 continue;
             }
             if selector.trip.is_some() {
@@ -374,9 +418,16 @@ impl NoServiceAlert {
             // Agency, route type, or direction alone: check every route.
             for raw in 0..base_routes {
                 let route = RouteId::new(raw);
-                if lookup.route_info(route).is_some_and(|info| {
+                let on_this_route = |info: RouteInfo<'_>| {
                     info.feed == &self.feed && selector.route_level_matches(info)
-                }) {
+                };
+                // A combined trip's parts can differ from its pattern's route in agency or type.
+                if lookup.route_info(route).is_some_and(on_this_route)
+                    || lookup
+                        .combined_routes_of_pattern(route)
+                        .into_iter()
+                        .any(on_this_route)
+                {
                     out.insert(route);
                 }
             }
@@ -463,11 +514,12 @@ impl CompiledSelector {
         {
             return false;
         }
-        if self
-            .trip
-            .as_ref()
-            .is_some_and(|days| days.get(&identity.day) != Some(&identity.trip))
-        {
+        if self.trip.as_ref().is_some_and(|days| {
+            !days.get(&identity.day).is_some_and(|run| {
+                run.trip == identity.trip
+                    && (run.segment.is_none() || run.segment == identity.segment)
+            })
+        }) {
             return false;
         }
         match identity.route {
@@ -491,6 +543,7 @@ pub(crate) fn scheduled_identity<'a>(
         direction: trip.direction_id,
         trip: trip.trip,
         day,
+        segment: None,
     }
 }
 
