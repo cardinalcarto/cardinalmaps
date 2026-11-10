@@ -722,6 +722,7 @@ fn cancel_run(route: &str, date: &str, start: &str) -> proto::FeedEntity {
 /// `NO_SERVICE` alert on the same-named route in another feed never reaches it.
 #[test]
 fn realtime_on_a_far_zone_feed_matches_it_alone() {
+    // Bravo's service day in New Zealand, a day ahead of alpha's in Los Angeles.
     let date = "20261102";
     let a = || {
         loaded(
@@ -744,8 +745,11 @@ fn realtime_on_a_far_zone_feed_matches_it_alone() {
         )
     };
     // 2026-11-02 03:00 NZDT is 2026-11-01 14:00Z.
-    let depart = 1_793_628_000_i64;
-    let t03_start = depart + 1800;
+    let three_am = 1_793_541_600_i64;
+    let t03_start = three_am + 1800;
+    // Just after T03 is scheduled to leave, so that only its delay makes it catchable,
+    // and with an hour's window that reaches T04 at 04:30, which is canceled.
+    let depart = t03_start + 60;
     let now = depart - 300;
     let entities = || {
         vec![
@@ -798,6 +802,19 @@ fn realtime_on_a_far_zone_feed_matches_it_alone() {
         .filter_map(|leg| leg["trip"]["trip_id"].as_str())
         .collect();
     assert!(ridden.contains(&"T03"), "{got}");
+    // T03 is caught only because its real-time time was applied.
+    let t03_delays: Vec<&Value> = got
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|journey| journey["legs"].as_array().into_iter().flatten())
+        .filter(|leg| leg["trip"]["trip_id"] == "T03")
+        .map(|leg| &leg["delay_seconds"])
+        .collect();
+    assert!(
+        !t03_delays.is_empty() && t03_delays.iter().all(|delay| **delay == 180),
+        "{got}"
+    );
     assert!(
         !ridden.contains(&"T04"),
         "the no-service run was still offered: {got}"
