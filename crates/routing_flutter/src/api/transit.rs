@@ -24,14 +24,21 @@ use valinor_transit_plan::{
 /// what a phone keeps grows with the area a query covers.
 const MAX_WALK_SECONDS: u32 = 2700;
 
-/// How much street data one idle worker may keep between plans, in bytes.
-const MAX_RETAINED_WORKER_BYTES: usize = 64 * 1024 * 1024;
+/// How much search storage one idle worker may keep between plans, in bytes.
+///
+/// One plan's searches grow to 20 to 50 MB on a metro area (Seattle's seven feeds), and a
+/// worker keeps each travel mode's separately, so after nearly every plan a worker is over this
+/// and gives back its searches' storage. What it keeps then, its bound stops and the graph's
+/// numbering, is a few megabytes. The next plan allocates its storage again, which cost a short
+/// plan 2 to 10 ms on a desktop; keeping it would take this limit to about 130 MB.
+const MAX_RETAINED_WORKER_BYTES: usize = 16 * 1024 * 1024;
 
 /// How many workers stay idle between plans; more only while plans run at once.
 const MAX_IDLE_WORKERS: usize = 2;
 
-/// Labels a Thor workspace keeps between plans, per search tree (72 bytes each).
-const RETAINED_LABELS: usize = 1 << 16;
+/// Labels a Thor workspace keeps between plans, per search tree: none, as for street routes
+/// (see `router.rs`). Thor draws a plan's walks; a search reserves its starting room anyway.
+const RETAINED_LABELS: usize = 0;
 
 /// How long a plan may run on a device before it is abandoned.
 const PLAN_DEADLINE: Duration = Duration::from_secs(30);

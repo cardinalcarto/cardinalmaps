@@ -15,15 +15,18 @@ use valinor_thor::{Retention, ThorConfig};
 /// needs (tens of megabytes for a long route), so a phone keeps few.
 const WORKSPACES: NonZeroUsize = NonZeroUsize::new(2).unwrap();
 
-/// The search storage each idle workspace keeps between routes, in labels per search tree.
+/// The search storage each idle workspace keeps between routes, in labels per search tree:
+/// none.
 ///
-/// A search starts with room for this many labels anyway, so ordinary routes don't allocate
-/// as they go. After a longer search, the rest is given back as soon as the route finishes,
-/// rather than kept for the next one as mainline's server defaults (a million labels or more)
-/// would. A label is 72 bytes, so an idle workspace holds at most about 5 MB per search tree
-/// (20 MB across its two bidirectional trees and two time-dependent searches).
+/// A search reserves room for 65,536 labels (72 bytes each) when it starts, so ordinary routes
+/// still don't allocate as they go; what any search used is given back as soon as the route
+/// finishes, rather than kept for the next one as mainline's server defaults
+/// (a million labels or more) would. Keeping the starting room instead held 9 MB in an idle
+/// workspace, and giving it back costs the next route one allocation per tree,
+/// which measured within noise of keeping it.
+/// An idle workspace still keeps its queues' buckets, a few megabytes after a long route.
 /// This only bounds idle memory, not how far a search can go.
-const RETAINED_LABELS: usize = 1 << 16;
+const RETAINED_LABELS: usize = 0;
 
 /// The router over the device's offline regions. Opaque to Dart.
 #[frb(opaque)]
