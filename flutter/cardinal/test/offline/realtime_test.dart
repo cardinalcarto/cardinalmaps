@@ -83,4 +83,14 @@ void main() {
     final (a, b) = await (feeds.fresh(), feeds.fresh()).wait;
     expect(a.length + b.length, 1);
   });
+
+  test('a prefetch leaves what it fetched for the next plan', () async {
+    final feeds = RealtimeFeeds(
+      Future.value([source('https://a.test/alerts.pb')]),
+      client: MockClient((request) async => http.Response.bytes([1], 200)),
+    );
+    await feeds.prefetch();
+    expect(await feeds.fresh(), hasLength(1));
+    expect(await feeds.fresh(), isEmpty);
+  });
 }

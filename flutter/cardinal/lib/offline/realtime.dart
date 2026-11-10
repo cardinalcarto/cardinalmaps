@@ -48,15 +48,19 @@ class RealtimeFeeds {
   /// data if it's to be had. After that it never waits: a plan takes what has arrived,
   /// and what's being fetched goes to the next one.
   Future<List<TransitFeed>> fresh() async {
-    final fetch = _inFlight ??= _fetch().whenComplete(() {
-      _inFlight = null;
-      _firstDone = true;
-    });
+    final fetch = prefetch();
     if (!_firstDone) await fetch;
     final arrived = _arrived;
     _arrived = [];
     return arrived;
   }
+
+  /// Starts fetching the messages older than [maxAge], if that isn't under way, for the
+  /// next plan to take with [fresh]. Completes when the fetch does.
+  Future<void> prefetch() => _inFlight ??= _fetch().whenComplete(() {
+    _inFlight = null;
+    _firstDone = true;
+  });
 
   Future<void> _fetch() async {
     final sources = await _sources;
