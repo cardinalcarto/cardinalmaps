@@ -1052,6 +1052,10 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     }
 
     /// Settles a label, reaches the stops on its edge, and expands from its far node.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the search's inner loop, kept in one place so its reads stay together"
+    )]
     fn settle(&mut self, index: u32) -> Result<(), WalkError> {
         let Some(label) = self.labels.get(index as usize).copied() else {
             return Ok(());
