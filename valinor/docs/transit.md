@@ -261,7 +261,11 @@ Opening a build maps almost everything rather than copying it:
   assembles one flat file per travel mode under `prepared/`, holding each direction's
   offsets, stop numbers, and seconds in the loaded feeds' stop numbering, and maps it.
   A table is keyed by the manifest, the loaded feeds, the bound, and which tiles are present,
-  and is rebuilt and published atomically when that changes. A GTFS-RT new stop goes in a small
+  and is rebuilt and published atomically when that changes. Several threads or processes may
+  open a build at once: each writes its own temporary file, renames it into place, and maps the
+  file it wrote. Publishing a table removes the ones it supersedes, those of the same feeds
+  made from other tiles and those of an earlier manifest, but never another feed set's, which
+  another opener may be using. A GTFS-RT new stop goes in a small
   in-memory side table, since a mapped file can't change. Keep tile files if a new area might
   be added later: a rebuild reads only tiles still on disk, unless no tile of the mode remains.
 - Stop snaps are saved by the offline build, one file per feed and mode, bound to the street

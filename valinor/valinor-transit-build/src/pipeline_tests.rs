@@ -1133,3 +1133,122 @@ fn a_rebuild_with_one_snap_moved_replaces_a_clients_prepared_tables() {
     let error = TransitBuild::load(build.path(), None).expect_err("a tile of another build");
     assert!(matches!(error, BuildLoadError::Assemble { .. }), "{error}");
 }
+
+/// A copy of a build directory, without anything a client has prepared in it.
+fn copy_build(root: &Path) -> TempDir {
+    let copy = tempfile::tempdir().expect("copy");
+    for (relative, bytes) in tree(root) {
+        if relative.starts_with("prepared") {
+            continue;
+        }
+        let path = copy.path().join(relative);
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(path, bytes).expect("write");
+    }
+    copy
+}
+
+/// Each answer as JSON, from a fresh planner over a load of `build` with `feeds`.
+fn plans_of(
+    build: &Path,
+    feeds: Option<&[String]>,
+    requests: &[valinor_transit_plan::TransitRequest],
+) -> Result<Vec<serde_json::Value>, String> {
+    use valinor_transit_plan::{StreetConfig, StreetPlanner};
+    let loaded = TransitBuild::load(build, feeds).map_err(|error| format!("load: {error}"))?;
+    let planner = StreetPlanner::from_build(loaded, &[street_tiles()], StreetConfig::default())
+        .map_err(|error| format!("open: {error}"))?;
+    requests
+        .iter()
+        .map(|request| {
+            let response = planner
+                .plan(request, "en-US", &|| false)
+                .map_err(|error| format!("plan: {error}"))?;
+            Ok(serde_json::to_value(&response).expect("json"))
+        })
+        .collect()
+}
+
+/// Many threads opening one build at once, with the same feeds and with others, plan exactly
+/// as a single-threaded open of a fresh copy does: while every table is still being prepared,
+/// and once they are.
+#[test]
+fn concurrent_opens_plan_like_a_single_threaded_open() {
+    use valinor_gtfs::LatLon;
+    use valinor_transit_plan::TransitRequest;
+
+    let (_input, build, _report) = compiled_feeds(&[
+        Feed {
+            id: "feed-a",
+            stops: &grid(0.0, 40),
+        },
+        Feed {
+            id: "feed-b",
+            stops: &grid(0.0006, 40),
+        },
+    ]);
+    transfers::run(&transfer_options(build.path(), build.path())).expect("transfers");
+    // 2026-06-15 07:55 in Andorra; each feed's one trip leaves its first stop at 08:00.
+    let departure = 1_781_502_900;
+    let near_first = LatLon {
+        lat: 42.5046,
+        lon: 1.5153,
+    };
+    let near_last = LatLon {
+        lat: 42.5141,
+        lon: 1.5225,
+    };
+    let requests = [
+        TransitRequest::new(near_first, near_last, departure, departure - 60),
+        TransitRequest::new(near_last, near_first, departure, departure - 60),
+    ];
+    let sets: [Option<Vec<String>>; 3] = [
+        None,
+        Some(vec!["feed-a".to_owned()]),
+        Some(vec!["feed-b".to_owned()]),
+    ];
+    let reference: Vec<Vec<serde_json::Value>> = sets
+        .iter()
+        .map(|feeds| {
+            let fresh = copy_build(build.path());
+            plans_of(fresh.path(), feeds.as_deref(), &requests).expect("plans alone")
+        })
+        .collect();
+    // Not vacuous: every feed set rides its trip on the way along it.
+    for answers in &reference {
+        let rides = answers[0]["journeys"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|journey| journey["legs"].as_array().into_iter().flatten())
+            .any(|leg| leg["type"] == "transit");
+        assert!(rides, "{}", answers[0]);
+    }
+
+    let shared = copy_build(build.path());
+    let opens_per_set = 4;
+    for label in ["preparing", "prepared"] {
+        let barrier = std::sync::Barrier::new(sets.len() * opens_per_set);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..opens_per_set)
+                .flat_map(|_| sets.iter().enumerate())
+                .map(|(index, feeds)| {
+                    let (barrier, requests, path) = (&barrier, &requests, shared.path());
+                    scope.spawn(move || {
+                        barrier.wait();
+                        (index, plans_of(path, feeds.as_deref(), requests))
+                    })
+                })
+                .collect();
+            for handle in handles {
+                let (index, answers) = handle.join().expect("no panic");
+                let answers = answers.unwrap_or_else(|error| panic!("{label}: {error}"));
+                assert!(
+                    answers == reference[index],
+                    "{label}: feed set {:?} planned differently",
+                    sets[index]
+                );
+            }
+        });
+    }
+}

@@ -454,6 +454,144 @@ fn a_damaged_prepared_table_is_replaced() {
     assert_eq!(build.report.walks[0], 3);
 }
 
+/// The names of the prepared tables of a mode.
+fn prepared_of(dir: &Path, mode: &str) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dir.join("prepared"))
+        .expect("prepared")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.starts_with(&format!("{mode}-")))
+        .collect();
+    names.sort();
+    names
+}
+
+/// Another opener may be using another feed set's table, so preparing one never removes it,
+/// but a table no current manifest can use is removed.
+#[test]
+fn preparing_keeps_other_feed_sets_and_drops_other_manifests() {
+    let fixture = Fixture::new();
+    let sets = [
+        None,
+        Some(Fixture::feeds(&["one"])),
+        Some(Fixture::feeds(&["two"])),
+    ];
+    for feeds in &sets {
+        TransitBuild::prepare(fixture.path(), feeds.as_deref()).expect("prepares");
+    }
+    let tables = prepared_of(fixture.path(), "walking");
+    assert_eq!(tables.len(), 3, "one per feed set: {tables:?}");
+    let manifest = format!("walking-{MANIFEST_ID:016x}-");
+    assert!(tables.iter().all(|name| name.starts_with(&manifest)));
+
+    // Each is still the one its feed set uses: garbage in the tiles goes unnoticed.
+    let tile = fixture.path().join("transfers/walking/12/10/20.bin.zst");
+    let original = fs::read(&tile).expect("read");
+    fs::write(&tile, [1, 2, 3]).expect("write");
+    for feeds in &sets {
+        TransitBuild::load(fixture.path(), feeds.as_deref()).expect("reuses");
+    }
+    fs::write(&tile, &original).expect("write");
+
+    // A table of an earlier manifest, and one named as before manifests were in names,
+    // are removed once this manifest publishes a table of their mode, and only of their mode.
+    let prepared = fixture.path().join("prepared");
+    let older = "walking-00000000000000ff-0123456789abcdef-0123456789abcdef.bin";
+    let unnamed = "walking-0123456789abcdef-0123456789abcdef.bin";
+    let cycling = "cycling-00000000000000ff-0123456789abcdef-0123456789abcdef.bin";
+    for stale in [older, unnamed, cycling] {
+        fs::write(prepared.join(stale), b"an old table").expect("write");
+    }
+    fs::remove_file(fixture.path().join("transfers/walking/12/11/20.bin.zst")).expect("remove");
+    TransitBuild::prepare(fixture.path(), None).expect("prepares");
+    let after = prepared_of(fixture.path(), "walking");
+    assert!(!after.iter().any(|name| name == older || name == unnamed));
+    // The full set's table from both tiles is superseded; `one`'s and `two`'s are kept.
+    assert_eq!(after.len(), 3, "{after:?}");
+    assert_eq!(
+        after.iter().filter(|name| tables.contains(name)).count(),
+        2,
+        "{tables:?} then {after:?}"
+    );
+    // Cycling has no tiles here, so its table is built from none and supersedes nothing.
+    assert!(prepared.join(cycling).exists());
+}
+
+/// Every mode's table of a load, to compare loads.
+fn tables_of(build: &TransitBuild) -> [&valinor_walk::TransferTable; 3] {
+    [&build.walking, &build.cycling, &build.wheelchair]
+}
+
+/// Many threads opening one build at once, with the same feeds and with others, each get what
+/// a single-threaded open of a fresh copy gets: while the tables are being prepared,
+/// once they are, and after the tiles are discarded.
+#[test]
+fn concurrent_opens_match_a_single_threaded_open() {
+    let sets = [
+        None,
+        Some(Fixture::feeds(&["one"])),
+        Some(Fixture::feeds(&["two"])),
+        Some(Fixture::feeds(&["one", "two"])),
+    ];
+    let reference: Vec<TransitBuild> = sets
+        .iter()
+        .map(|feeds| {
+            let fresh = Fixture::new();
+            TransitBuild::load(fresh.path(), feeds.as_deref()).expect("loads")
+        })
+        .collect();
+    // `two` alone has no walks: its only one is to `one`.
+    let walks: Vec<usize> = reference
+        .iter()
+        .map(|build| build.report.walks[0])
+        .collect();
+    assert_eq!(walks, [3, 1, 0, 3]);
+
+    let fixture = Fixture::new();
+    let opens_per_set = 6;
+    let round = |label: &str| {
+        let barrier = std::sync::Barrier::new(sets.len() * opens_per_set);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..opens_per_set)
+                .flat_map(|_| sets.iter().enumerate())
+                .map(|(index, feeds)| {
+                    let barrier = &barrier;
+                    let path = fixture.path();
+                    scope.spawn(move || {
+                        barrier.wait();
+                        (index, TransitBuild::load(path, feeds.as_deref()))
+                    })
+                })
+                .collect();
+            for handle in handles {
+                let (index, loaded) = handle.join().expect("no panic");
+                let loaded = loaded.unwrap_or_else(|error| panic!("{label}: {error}"));
+                assert_eq!(
+                    tables_of(&loaded),
+                    tables_of(&reference[index]),
+                    "{label}: feed set {:?}",
+                    sets[index]
+                );
+            }
+        });
+    };
+    round("preparing");
+    round("prepared");
+    let leftovers: Vec<_> = fs::read_dir(fixture.path().join("prepared"))
+        .expect("prepared")
+        .map(|entry| entry.expect("entry").file_name())
+        .filter(|name| name.to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "temporary files left: {leftovers:?}");
+    fs::remove_dir_all(fixture.path().join("transfers/walking")).expect("discard tiles");
+    round("tiles discarded");
+}
+
 // Real data: the tiles of Seattle only, with King County Metro and Sound Transit loaded.
 const WASHINGTON: &str = "/mnt/maps/cardinal/transit/global/us-wa-2026-11-09";
 const STREETS: &str = "/mnt/maps/cardinal/routing-elevation-i2b/washington/tiles.tar";
