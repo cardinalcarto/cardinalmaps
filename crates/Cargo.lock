@@ -5013,6 +5013,7 @@ dependencies = [
  "crc32fast",
  "memmap2",
  "ruzstd",
+ "sha2",
  "thiserror 2.0.21",
  "valhalla-graphtile",
  "valhalla-proto",
