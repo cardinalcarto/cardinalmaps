@@ -154,6 +154,9 @@ class _PlacePageState extends State<PlacePage> with RouteAware {
   /// it in what the sheet leaves uncovered from then on, as the sheet settles here and
   /// moves, until it's moved by hand.
   void _show() {
+    // Directions over the card draw the map's trip themselves: a second pin here would
+    // mark a place that may no longer be the destination.
+    if (_covered) return;
     final place = _place;
     showSelection(_map, place, dark: _dark);
     if (place == null || _focused) return;

@@ -1,5 +1,5 @@
-/// Routes on the map: their lines, the destination's pin, and a callout with each route's
-/// travel time.
+/// Routes on the map: their lines, the start's marker, the destination's pin, and a
+/// callout with each route's travel time.
 library;
 
 import 'dart:async';
@@ -11,7 +11,7 @@ import '../directions/format.dart';
 import '../directions/transit_plan.dart';
 import '../store/store.dart';
 
-/// The style's GeoJSON source for the routes' lines and the destination.
+/// The style's GeoJSON source for the routes' lines, the start, and the destination.
 const routeSource = 'route';
 
 /// The style's GeoJSON source for the callouts, which change as the map moves.
@@ -80,6 +80,22 @@ void addRouteLayers(Map<String, Object?> style) {
   ]);
   layers.addAll([
     {
+      'id': 'route-start',
+      'type': 'circle',
+      'source': routeSource,
+      'filter': [
+        '==',
+        ['get', 'role'],
+        'start',
+      ],
+      'paint': {
+        'circle-radius': 6,
+        'circle-color': '#ffffff',
+        'circle-stroke-color': '#333333',
+        'circle-stroke-width': 3,
+      },
+    },
+    {
       'id': 'route-destination',
       'type': 'symbol',
       'source': routeSource,
@@ -126,12 +142,15 @@ void addRouteLayers(Map<String, Object?> style) {
   ]);
 }
 
-/// [routes]' lines and the pin at [destination], as GeoJSON.
+/// [routes]' lines, a marker at [start], and the pin at [destination], as GeoJSON.
+///
+/// [start] is null when the trip starts where you are, which the map already marks.
 Map<String, Object?> routesGeoJson(
   List<DirectionsRoute> routes, {
   required int selected,
   required LngLat? destination,
   required bool dark,
+  LngLat? start,
 }) => {
   'type': 'FeatureCollection',
   'features': [
@@ -144,6 +163,15 @@ Map<String, Object?> routesGeoJson(
           'coordinates': [
             for (final p in route.geometry) [p.lng, p.lat],
           ],
+        },
+      },
+    if (start != null)
+      {
+        'type': 'Feature',
+        'properties': {'role': 'start'},
+        'geometry': {
+          'type': 'Point',
+          'coordinates': [start.lon, start.lat],
         },
       },
     if (destination != null)

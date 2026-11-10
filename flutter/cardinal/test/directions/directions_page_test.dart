@@ -1,6 +1,6 @@
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/transit_plan.dart';
-import 'package:cardinal/directions/transit_sheet.dart';
+import 'package:cardinal/directions/transit_timeline.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/map/route_layer.dart';
@@ -183,6 +183,54 @@ void main() {
     expect(find.text('Library'), findsOneWidget);
   });
 
+  testWidgets('the start is marked, unless it is where you are', (
+    tester,
+  ) async {
+    List<Map<String, Object?>> starts() =>
+        features(routeSource)
+            .where((f) => (f['properties']! as Map)['role'] == 'start')
+            .toList();
+    final saved = Place(
+      id: 'poi:2',
+      kind: 'poi',
+      name: 'Library',
+      center: const LngLat(2, 2),
+    );
+    await store.places.put(saved);
+    await store.saved.savePlace(saved.id);
+    await open(tester);
+    // Where you are is marked by the map already.
+    expect(starts(), isEmpty);
+    await tester.tap(find.widgetWithText(InkWell, 'From'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Library'));
+    await tester.pumpAndSettle();
+    expect((starts().single['geometry']! as Map)['coordinates'], [2, 2]);
+  });
+
+  testWidgets('the place under directions adds no pin of its own', (
+    tester,
+  ) async {
+    await open(tester);
+    expect(features(selectionSource), isEmpty);
+    // The card under the directions hears its place change.
+    await store.places.put(
+      Place(
+        id: destination.id,
+        kind: 'poi',
+        name: 'Chu Minh Tofu',
+        center: destination.center,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(features(selectionSource), isEmpty);
+    expect(
+      features(routeSource)
+          .where((f) => (f['properties']! as Map)['role'] == 'pin'),
+      hasLength(1),
+    );
+  });
+
   testWidgets('a chip routes that way and is remembered', (tester) async {
     await open(tester);
     await tester.tap(find.byIcon(Icons.directions_bike));
@@ -307,26 +355,29 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('lists the journeys with their legs, and remembers the mode', (
+    testWidgets('lists the journeys as timelines, and remembers the mode', (
       tester,
     ) async {
       await openTransit(tester);
       expect(transit.asked.single.access, TransitAccess.walking);
       expect(await store.settings.get(lastTravelMode), TravelMode.transit);
-      expect(find.byType(JourneyCard), findsWidgets);
-      expect(find.text('40 to Downtown Seattle'), findsWidgets);
-      expect(find.text('1 Line to Angle Lake'), findsWidgets);
+      expect(find.byType(JourneyRow), findsNWidgets(2));
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w is Semantics && w.properties.label == '40, then 7, then 1 Line',
+        ),
+        findsNWidgets(2),
+      );
+      expect(find.textContaining('5:30 PM – 6:15 PM'), findsOneWidget);
+      expect(find.text('45 min'), findsNWidgets(2));
+      // Feeds, not messages: one of the two feeds is live.
       expect(
         find.text('Live times from 1 of 2 real-time feeds'),
         findsOneWidget,
       );
-      // The walk to a moved stop says so in the list too.
-      expect(find.text('Fremont Ave N & N 34th St has moved'), findsWidgets);
-      expect(
-        find.textContaining('Stay on at 3rd Ave & Pike St as 7 to Rainier'),
-        findsWidgets,
-      );
-      expect(find.textContaining('4 min late'), findsWidgets);
+      // The walk to a moved stop is flagged in the overview.
+      expect(find.byIcon(Icons.wrong_location), findsNWidgets(2));
     });
 
     testWidgets('draws the selected journey on the map', (tester) async {
@@ -354,7 +405,7 @@ void main() {
       tester,
     ) async {
       await openTransit(tester);
-      await tester.tap(find.text('5:30 PM – 6:15 PM'));
+      await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
       await tester.pumpAndSettle();
       expect(find.text('Trip details'), findsOneWidget);
       expect(
@@ -365,7 +416,84 @@ void main() {
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
       expect(find.text('Trip details'), findsNothing);
-      expect(find.byType(JourneyCard), findsWidgets);
+      expect(find.byType(JourneyRow), findsWidgets);
+    });
+
+    group('the sheet', () {
+      SheetController sheetOf(WidgetTester tester) =>
+          SheetScaffold.controllerOf(tester.element(find.text('Directions')));
+      const summary = SheetAnchor.section(
+        #directionsSummary,
+        gravity: double.infinity,
+      );
+
+      testWidgets('goes full for transit, and stays there', (tester) async {
+        await open(tester);
+        final sheet = sheetOf(tester);
+        expect(sheet.restingAt, summary);
+        expect(sheet.isDraggable, isTrue);
+
+        await tester.tap(find.byIcon(Icons.directions_transit));
+        await tester.pumpAndSettle();
+        expect(sheet.restingAt, const SheetAnchor.full());
+        expect(sheet.isDraggable, isFalse);
+        expect(sheet.anchors.map((a) => a.anchor), [const SheetAnchor.full()]);
+
+        // A drag down or a fling scrolls the list at most, and the sheet stays.
+        await tester.fling(find.text('Directions'), const Offset(0, 300), 3000);
+        await tester.pumpAndSettle();
+        expect(sheet.restingAt, const SheetAnchor.full());
+        expect(sheet.isAtMax, isTrue);
+      });
+
+      testWidgets('comes down to 40% for a journey, so the map shows it', (
+        tester,
+      ) async {
+        await open(tester);
+        await tester.tap(find.byIcon(Icons.directions_transit));
+        await tester.pumpAndSettle();
+        final sheet = sheetOf(tester);
+
+        await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
+        await tester.pumpAndSettle();
+        expect(sheet.restingAt, const SheetAnchor.fraction(0.4));
+        expect(sheet.isDraggable, isTrue);
+        expect(map.subject, isTrue);
+
+        // It can be pulled up to scroll through the journey.
+        sheet.animateTo(const SheetAnchor.full());
+        await tester.pumpAndSettle();
+        expect(sheet.restingAt, const SheetAnchor.full());
+      });
+
+      testWidgets('back from a journey goes full again, held', (tester) async {
+        await open(tester);
+        await tester.tap(find.byIcon(Icons.directions_transit));
+        await tester.pumpAndSettle();
+        final sheet = sheetOf(tester);
+        await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byTooltip('Back'));
+        await tester.pumpAndSettle();
+        expect(sheet.restingAt, const SheetAnchor.full());
+        expect(sheet.isDraggable, isFalse);
+      });
+
+      testWidgets('another mode frees it and brings it down to the summary', (
+        tester,
+      ) async {
+        await open(tester);
+        await tester.tap(find.byIcon(Icons.directions_transit));
+        await tester.pumpAndSettle();
+        final sheet = sheetOf(tester);
+
+        await tester.tap(find.byTooltip(TravelMode.walking.label));
+        await tester.pumpAndSettle();
+        expect(sheet.restingAt, summary);
+        expect(sheet.isDraggable, isTrue);
+        expect(sheet.anchors, hasLength(3));
+      });
     });
 
     testWidgets('how you get to stops is asked with and remembered', (

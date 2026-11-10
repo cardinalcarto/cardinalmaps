@@ -22,8 +22,10 @@ import 'callouts.dart';
 import 'directions.dart';
 import 'format.dart';
 import 'route_source.dart';
+import 'transit_details.dart';
 import 'transit_plan.dart';
 import 'transit_sheet.dart';
+import 'transit_timeline.dart';
 
 /// Directions to the place with [to]: the trip's two ends, the chips for how you're
 /// traveling, and the selected route's summary and steps, with the routes on the map.
@@ -36,8 +38,10 @@ import 'transit_sheet.dart';
 /// | editing | a place or My Location is chosen | that's the end; showing the trip, at the summary |
 /// | editing | back | showing the trip, at the summary, the end as it was unless it was cleared |
 /// | showing the trip | back | the place's card |
-/// | showing transit journeys | a journey is tapped | its legs in detail, on the map |
-/// | showing a journey | back, or a new plan | the journeys |
+/// | showing the trip | transit is chosen | its journeys, the sheet full and held there |
+/// | showing transit journeys | a journey is tapped | its legs in detail, the sheet at 40% so the map shows it |
+/// | showing a journey | back, or a new plan | the journeys, the sheet full and held there |
+/// | showing transit journeys | another mode is chosen | that mode's routes, the sheet free and down to the summary |
 class DirectionsPage extends StatefulWidget {
   const DirectionsPage({super.key, required this.to});
 
@@ -52,6 +56,12 @@ class _DirectionsPageState extends State<DirectionsPage> {
   static const _modes = #directionsModes;
   static const _summary = #directionsSummary;
   static const _journeySummary = #directionsJourneySummary;
+
+  /// Where a transit journey's details rest: low enough for the map to show its shape.
+  static const _detailsAnchor = SheetAnchor.fraction(0.4);
+
+  /// How often "Go in" times count down.
+  static const _tick = Duration(seconds: 30);
 
   /// Just below the summary. Flings always stop here, on the way up or down.
   static const _summaryAnchor = SheetAnchor.section(
@@ -81,6 +91,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
   StreamSubscription<SavedTree>? _watchSaved;
   StreamSubscription<int>? _taps;
   Timer? _calloutTimer;
+  Timer? _clock;
 
   final _text = TextEditingController();
   final _focus = FocusNode(debugLabel: 'directions');
@@ -170,6 +181,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
     _watchSaved?.cancel();
     _taps?.cancel();
     _calloutTimer?.cancel();
+    _clock?.cancel();
     _map.cameraMoved.removeListener(_viewChanged);
     _sheet?.removeListener(_viewChanged);
     _map
@@ -195,18 +207,46 @@ class _DirectionsPageState extends State<DirectionsPage> {
     }
     final journey = directions.journey;
     if (!identical(journey, _shownJourney)) {
-      if (journey == null ||
-          directions.plan?.journeys.contains(_shownJourney) != true) {
-        // A new plan: back to its list.
+      if (_journeyOpen &&
+          (journey == null ||
+              directions.plan?.journeys.contains(_shownJourney) != true)) {
+        // A new plan: back to its list, which holds the sheet full.
         _journeyOpen = false;
+        _animateAfterFrame(const SheetAnchor.full());
       }
       _shownJourney = journey;
       _showJourney();
     }
     _drawRoutes();
     _placeCallouts();
+    _keepClock(directions.mode == TravelMode.transit);
     setState(() {});
   }
+
+  /// While transit shows, "Go in" counts down.
+  void _keepClock(bool running) {
+    if (!running) {
+      _clock?.cancel();
+      _clock = null;
+    } else {
+      _clock ??= Timer.periodic(_tick, (_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  /// Springs the sheet to [anchor] once this frame has laid out the content that has it.
+  void _animateAfterFrame(SheetAnchor anchor) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _sheet!.animateTo(anchor);
+    });
+  }
+
+  /// Where the sheet rests for the trip, outside a journey's details: full for transit,
+  /// whose journeys need the room, and below the summary otherwise.
+  SheetAnchor get _tripAnchor => _directions!.mode == TravelMode.transit
+      ? const SheetAnchor.full()
+      : _summaryAnchor;
 
   void _drawRoutes() {
     final directions = _directions!;
@@ -216,6 +256,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
         directions.routes,
         selected: directions.selected,
         destination: directions.to?.point,
+        start: directions.from?.isMyLocation ?? true
+            ? null
+            : directions.from!.point,
         dark: _dark,
       ),
     );
@@ -305,8 +348,16 @@ class _DirectionsPageState extends State<DirectionsPage> {
   }
 
   void _setMode(TravelMode mode) {
-    _directions!.setMode(mode);
+    final directions = _directions!;
+    final was = directions.mode;
+    directions.setMode(mode);
+    if (directions.mode == was) return;
     unawaited(_settings!.set(lastTravelMode, mode));
+    // Into transit the sheet goes full and stays; out of it, it's free again and comes
+    // down to the anchor nearest full.
+    if (mode == TravelMode.transit || was == TravelMode.transit) {
+      _animateAfterFrame(_tripAnchor);
+    }
   }
 
   void _setTransitAccess(TransitAccess access) {
@@ -314,22 +365,17 @@ class _DirectionsPageState extends State<DirectionsPage> {
     unawaited(_settings!.set(lastTransitAccess, access));
   }
 
-  /// A journey's tapped: show its legs, and it alone on the map.
+  /// A journey's tapped: show its legs, and it alone on the map, with the sheet low
+  /// enough for the map to show it.
   void _openJourney(int index) {
     _directions!.selectJourney(index);
     setState(() => _journeyOpen = true);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _sheet!.animateTo(const SheetAnchor.section(_journeySummary));
-      }
-    });
+    _animateAfterFrame(_detailsAnchor);
   }
 
   void _closeJourney() {
     setState(() => _journeyOpen = false);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _sheet!.animateTo(_summaryAnchor);
-    });
+    _animateAfterFrame(_tripAnchor);
   }
 
   /// A field's tapped: edit it, full, with its text ready to be typed over.
@@ -355,9 +401,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
     if (_editing == null) return;
     setState(() => _editing = null);
     _focus.unfocus();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _sheet!.animateTo(_summaryAnchor);
-    });
+    _animateAfterFrame(_tripAnchor);
   }
 
   Future<void> _choose(Place place) async {
@@ -403,6 +447,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
   Widget build(BuildContext context) {
     final editing = _editing;
     final journey = _journeyOpen ? _directions!.journey : null;
+    final transit = _directions!.mode == TravelMode.transit;
     return PopScope(
       canPop: editing == null && journey == null,
       onPopInvokedWithResult: (didPop, _) {
@@ -417,13 +462,17 @@ class _DirectionsPageState extends State<DirectionsPage> {
         anchors: editing != null
             ? const [SheetAnchor.full()]
             : journey != null
-            ? const [SheetAnchor.section(_journeySummary), SheetAnchor.full()]
+            ? const [_detailsAnchor, SheetAnchor.full()]
+            : transit
+            ? const [SheetAnchor.full()]
             : const [
                 SheetAnchor.section(_modes),
                 _summaryAnchor,
                 SheetAnchor.full(),
               ],
         initialAnchor: 1,
+        // Transit's journeys hold the sheet full until one is picked.
+        draggable: editing != null || journey != null || !transit,
         slivers: editing != null
             ? _editingSlivers(editing)
             : journey != null
@@ -439,13 +488,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
     final transit = directions.mode == TravelMode.transit;
     final route = transit ? null : directions.selectedRoute;
     final plan = transit && !directions.loading ? directions.plan : null;
-    Widget journeyCard(int i) => JourneyCard(
-      journey: plan!.journeys[i],
-      miles: miles,
-      selected: i == directions.selectedJourney,
-      wheelchair: directions.transitAccess == TransitAccess.wheelchair,
-      onTap: () => _openJourney(i),
-    );
+    final journeys = plan?.journeys ?? const <Journey>[];
+    final axis = TimelineAxis.of(journeys);
+    final now = DateTime.now();
     final bothEnds = directions.from != null && directions.to != null;
     return [
       SliverToBoxAdapter(
@@ -536,12 +581,11 @@ class _DirectionsPageState extends State<DirectionsPage> {
                     : null,
               ),
               if (transit) ...[
-                if (plan != null && plan.journeys.isNotEmpty) ...[
+                if (plan != null && journeys.isNotEmpty) ...[
                   RealtimeLine(plan: plan),
-                  // The first journey rests in view, as a route's summary does.
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: journeyCard(0),
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                    child: TimelineTicks(axis: axis),
                   ),
                 ] else
                   _Message(
@@ -560,12 +604,19 @@ class _DirectionsPageState extends State<DirectionsPage> {
           ),
         ),
       ),
-      if (transit && plan != null && plan.journeys.length > 1)
+      if (journeys.isNotEmpty)
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          sliver: SliverList.builder(
-            itemCount: plan.journeys.length - 1,
-            itemBuilder: (context, i) => journeyCard(i + 1),
+          padding: const EdgeInsets.only(bottom: 12),
+          sliver: SliverList.separated(
+            itemCount: journeys.length,
+            itemBuilder: (context, i) => JourneyRow(
+              journey: journeys[i],
+              axis: axis,
+              now: now,
+              onTap: () => _openJourney(i),
+            ),
+            separatorBuilder: (context, i) =>
+                const Divider(height: 1, indent: 16, endIndent: 16),
           ),
         ),
       if (!transit && route != null)
@@ -582,53 +633,27 @@ class _DirectionsPageState extends State<DirectionsPage> {
 
   /// A transit journey's legs in detail, under a header to go back to the journeys.
   List<Widget> _journeySlivers(Directions directions, Journey journey) {
-    final theme = Theme.of(context);
     final miles = usesMiles(PlatformDispatcher.instance.locale);
+    final now = DateTime.now();
     return [
       SliverToBoxAdapter(
         child: SheetSection(
           id: _journeySummary,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(4, 0, 8, 0),
-                child: Row(
-                  children: [
-                    IconButton(
-                      tooltip: 'Back',
-                      icon: const Icon(Icons.arrow_back),
-                      onPressed: _closeJourney,
-                    ),
-                    Expanded(
-                      child: Text(
-                        'Trip details',
-                        style: theme.textTheme.titleLarge,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-                child: JourneySummary(journey: journey, miles: miles),
-              ),
-            ],
+          child: JourneyHeader(
+            journey: journey,
+            now: now,
+            miles: miles,
+            onBack: _closeJourney,
           ),
         ),
       ),
-      SliverPadding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        sliver: SliverList.builder(
-          itemCount: journey.legs.length,
-          itemBuilder: (context, i) => LegCard(
-            leg: journey.legs[i],
-            miles: miles,
-            cycling: directions.transitAccess == TransitAccess.cycling,
-            start: directions.from?.label ?? 'Start',
-            destination: directions.to?.label ?? 'Destination',
-          ),
-        ),
+      JourneyItinerary(
+        journey: journey,
+        start: directions.from?.label ?? 'Start',
+        destination: directions.to?.label ?? 'Destination',
+        miles: miles,
+        access: directions.transitAccess,
+        now: now,
       ),
     ];
   }
