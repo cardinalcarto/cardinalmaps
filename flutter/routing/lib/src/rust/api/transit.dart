@@ -7,7 +7,8 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `device_config`, `error_response`, `feed_kind`, `plan_at`, `response`, `unix_now`
+// These functions are ignored because they are not marked as `pub`: `device_config`, `error_response`, `feed_kind`, `response`, `unix_now`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `plan_at`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineTransit>>
 abstract class OfflineTransit implements RustOpaqueInterface {

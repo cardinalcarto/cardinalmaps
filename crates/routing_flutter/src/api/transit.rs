@@ -224,8 +224,12 @@ impl OfflineTransit {
         response(self.planner.vehicle_json(&feed, &id, unix_now()))
     }
 
-    /// [`Self::plan`] at a chosen moment, with a chosen interrupt, for tests.
-    pub(crate) fn plan_at(
+    /// [`Self::plan`] at a chosen moment, with a chosen interrupt,
+    /// for tests and the desktop memory harness (`examples/device_memory.rs`),
+    /// which replays fixed requests and needs the same answer each time.
+    /// Not part of the Dart API.
+    #[frb(ignore)]
+    pub fn plan_at(
         &self,
         request: &[u8],
         feeds: Vec<TransitFeed>,
