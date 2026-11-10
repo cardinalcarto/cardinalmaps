@@ -3532,9 +3532,11 @@ dependencies = [
  "serde_json",
  "valinor-gtfs",
  "valinor-gtfs-rt",
+ "valinor-loki",
  "valinor-router",
  "valinor-thor",
  "valinor-transit-plan",
+ "valinor-walk",
 ]
 
 [[package]]

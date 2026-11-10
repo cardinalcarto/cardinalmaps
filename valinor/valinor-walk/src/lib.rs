@@ -36,8 +36,8 @@ pub use flat_table::{FLAT_TABLE_MAGIC, FlatTableError, TableKey};
 pub use graph::GraphStats;
 pub use search::{ResolvedWalk, SearchStats, WalkHandle, WalkSearch};
 pub use snap::{
-    SnapConfig, SnapFailure, SnapPoint, SnapQuality, SnapReport, SnappedStop, StopSnaps, snap_stop,
-    snap_stops,
+    DEFAULT_MIN_REACHABILITY, SnapConfig, SnapFailure, SnapPoint, SnapQuality, SnapReport,
+    SnappedStop, StopSnaps, snap_stop, snap_stops,
 };
 pub use snap_file::{SavedSnap, SnapFileError, decode_snap_file, encode_snap_file};
 pub use table::{

@@ -61,6 +61,11 @@ pub struct RouterResponse {
   `valinor-router` will serve every action, because the server needs them,
   so `locate`, `trace_route`, or `status` can be exposed later
   when a feature needs one, as a `request(action, body)` variant.
+- **Snapping like transit.** On the device, a location's edge must reach 250 nodes in and out
+  (Loki's default is 50), the bound transit uses for its stops and plan endpoints,
+  so street and transit directions start and end in the same places.
+  At 50, Cal Anderson Park's point lands on a park path a bicycle can't enter or leave,
+  and no bicycle route reaches the park, in mainline or valinor.
 - **No async runtime.** The stages are synchronous functions.
   flutter_rust_bridge's thread pool supplies the concurrency, so tokio never runs on the device.
 - **Panics.** The router is built not to panic.
