@@ -22,6 +22,8 @@ import 'callouts.dart';
 import 'directions.dart';
 import 'format.dart';
 import 'route_source.dart';
+import 'transit_plan.dart';
+import 'transit_sheet.dart';
 
 /// Directions to the place with [to]: the trip's two ends, the chips for how you're
 /// traveling, and the selected route's summary and steps, with the routes on the map.
@@ -34,6 +36,8 @@ import 'route_source.dart';
 /// | editing | a place or My Location is chosen | that's the end; showing the trip, at the summary |
 /// | editing | back | showing the trip, at the summary, the end as it was unless it was cleared |
 /// | showing the trip | back | the place's card |
+/// | showing transit journeys | a journey is tapped | its legs in detail, on the map |
+/// | showing a journey | back, or a new plan | the journeys |
 class DirectionsPage extends StatefulWidget {
   const DirectionsPage({super.key, required this.to});
 
@@ -47,6 +51,7 @@ class DirectionsPage extends StatefulWidget {
 class _DirectionsPageState extends State<DirectionsPage> {
   static const _modes = #directionsModes;
   static const _summary = #directionsSummary;
+  static const _journeySummary = #directionsJourneySummary;
 
   /// Just below the summary. Flings always stop here, on the way up or down.
   static const _summaryAnchor = SheetAnchor.section(
@@ -82,6 +87,12 @@ class _DirectionsPageState extends State<DirectionsPage> {
 
   /// The end being edited, if one is.
   RouteField? _editing;
+
+  /// Whether the selected transit journey's legs are showing.
+  bool _journeyOpen = false;
+
+  /// The transit journey the map shows.
+  Journey? _shownJourney;
 
   List<SavedPlace> _saved = const [];
 
@@ -121,6 +132,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
     );
     final directions = _directions = Directions(
       routes: scope.routes,
+      transit: scope.transit,
       location: scope.location,
     )..addListener(_changed);
     // The place's card under this page has it, or is fetching it.
@@ -147,6 +159,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
 
   /// Starts with the mode last chosen, then from where you are.
   Future<void> _resume(Directions directions) async {
+    directions.setTransitAccess(await _settings!.get(lastTransitAccess));
     directions.setMode(await _settings!.get(lastTravelMode));
     await directions.startFromMyLocation();
   }
@@ -161,7 +174,8 @@ class _DirectionsPageState extends State<DirectionsPage> {
     _sheet?.removeListener(_viewChanged);
     _map
       ..setGeoJson(routeSource, empty)
-      ..setGeoJson(routeCalloutSource, empty);
+      ..setGeoJson(routeCalloutSource, empty)
+      ..setGeoJson(transitSource, empty);
     _directions?.dispose();
     _search?.dispose();
     _focus.dispose();
@@ -179,6 +193,16 @@ class _DirectionsPageState extends State<DirectionsPage> {
       _placer = _shownRoutes.isEmpty ? null : CalloutPlacer(_shownRoutes);
       _showAll();
     }
+    final journey = directions.journey;
+    if (!identical(journey, _shownJourney)) {
+      if (journey == null ||
+          directions.plan?.journeys.contains(_shownJourney) != true) {
+        // A new plan: back to its list.
+        _journeyOpen = false;
+      }
+      _shownJourney = journey;
+      _showJourney();
+    }
     _drawRoutes();
     _placeCallouts();
     setState(() {});
@@ -195,11 +219,19 @@ class _DirectionsPageState extends State<DirectionsPage> {
         dark: _dark,
       ),
     );
+    _map.setGeoJson(transitSource, journeyGeoJson(_shownJourney));
+  }
+
+  /// Makes the transit journey the map's subject.
+  void _showJourney() {
+    final points = _shownJourney?.legs.expand((leg) => leg.shape) ?? const [];
+    _fit(points);
   }
 
   /// Makes all of the routes the map's subject, kept in view as the sheet moves.
-  void _showAll() {
-    final points = _shownRoutes.expand((route) => route.geometry);
+  void _showAll() => _fit(_shownRoutes.expand((route) => route.geometry));
+
+  void _fit(Iterable<DirectionsPoint> points) {
     if (points.isEmpty) return;
     var west = double.infinity, south = double.infinity;
     var east = -double.infinity, north = -double.infinity;
@@ -277,6 +309,29 @@ class _DirectionsPageState extends State<DirectionsPage> {
     unawaited(_settings!.set(lastTravelMode, mode));
   }
 
+  void _setTransitAccess(TransitAccess access) {
+    _directions!.setTransitAccess(access);
+    unawaited(_settings!.set(lastTransitAccess, access));
+  }
+
+  /// A journey's tapped: show its legs, and it alone on the map.
+  void _openJourney(int index) {
+    _directions!.selectJourney(index);
+    setState(() => _journeyOpen = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _sheet!.animateTo(const SheetAnchor.section(_journeySummary));
+      }
+    });
+  }
+
+  void _closeJourney() {
+    setState(() => _journeyOpen = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _sheet!.animateTo(_summaryAnchor);
+    });
+  }
+
   /// A field's tapped: edit it, full, with its text ready to be typed over.
   void _edit(RouteField field) {
     final directions = _directions!;
@@ -347,14 +402,22 @@ class _DirectionsPageState extends State<DirectionsPage> {
   @override
   Widget build(BuildContext context) {
     final editing = _editing;
+    final journey = _journeyOpen ? _directions!.journey : null;
     return PopScope(
-      canPop: editing == null,
+      canPop: editing == null && journey == null,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _stopEditing();
+        if (didPop) return;
+        if (editing != null) {
+          _stopEditing();
+        } else {
+          _closeJourney();
+        }
       },
       child: SheetContent(
         anchors: editing != null
             ? const [SheetAnchor.full()]
+            : journey != null
+            ? const [SheetAnchor.section(_journeySummary), SheetAnchor.full()]
             : const [
                 SheetAnchor.section(_modes),
                 _summaryAnchor,
@@ -363,6 +426,8 @@ class _DirectionsPageState extends State<DirectionsPage> {
         initialAnchor: 1,
         slivers: editing != null
             ? _editingSlivers(editing)
+            : journey != null
+            ? _journeySlivers(_directions!, journey)
             : _tripSlivers(_directions!),
       ),
     );
@@ -371,7 +436,16 @@ class _DirectionsPageState extends State<DirectionsPage> {
   List<Widget> _tripSlivers(Directions directions) {
     final theme = Theme.of(context);
     final miles = usesMiles(PlatformDispatcher.instance.locale);
-    final route = directions.selectedRoute;
+    final transit = directions.mode == TravelMode.transit;
+    final route = transit ? null : directions.selectedRoute;
+    final plan = transit && !directions.loading ? directions.plan : null;
+    Widget journeyCard(int i) => JourneyCard(
+      journey: plan!.journeys[i],
+      miles: miles,
+      selected: i == directions.selectedJourney,
+      wheelchair: directions.transitAccess == TransitAccess.wheelchair,
+      onTap: () => _openJourney(i),
+    );
     final bothEnds = directions.from != null && directions.to != null;
     return [
       SliverToBoxAdapter(
@@ -425,7 +499,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                padding: EdgeInsets.fromLTRB(16, 12, 16, transit ? 6 : 12),
                 child: Row(
                   spacing: 8,
                   children: [
@@ -440,6 +514,11 @@ class _DirectionsPageState extends State<DirectionsPage> {
                   ],
                 ),
               ),
+              if (transit)
+                TransitAccessRow(
+                  access: directions.transitAccess,
+                  onChanged: _setTransitAccess,
+                ),
             ],
           ),
         ),
@@ -456,17 +535,40 @@ class _DirectionsPageState extends State<DirectionsPage> {
                     ? const LinearProgressIndicator()
                     : null,
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-                child: route != null
-                    ? _Summary(route: route, miles: miles)
-                    : _Message(_messageFor(directions)),
-              ),
+              if (transit) ...[
+                if (plan != null && plan.journeys.isNotEmpty) ...[
+                  RealtimeLine(plan: plan),
+                  // The first journey rests in view, as a route's summary does.
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: journeyCard(0),
+                  ),
+                ] else
+                  _Message(
+                    plan != null && directions.problem == null
+                        ? noJourneysMessage(plan, directions.transitAccess)
+                        : _messageFor(directions),
+                  ),
+              ] else
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                  child: route != null
+                      ? _Summary(route: route, miles: miles)
+                      : _Message(_messageFor(directions)),
+                ),
             ],
           ),
         ),
       ),
-      if (route != null)
+      if (transit && plan != null && plan.journeys.length > 1)
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          sliver: SliverList.builder(
+            itemCount: plan.journeys.length - 1,
+            itemBuilder: (context, i) => journeyCard(i + 1),
+          ),
+        ),
+      if (!transit && route != null)
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           sliver: SliverList.builder(
@@ -478,10 +580,68 @@ class _DirectionsPageState extends State<DirectionsPage> {
     ];
   }
 
+  /// A transit journey's legs in detail, under a header to go back to the journeys.
+  List<Widget> _journeySlivers(Directions directions, Journey journey) {
+    final theme = Theme.of(context);
+    final miles = usesMiles(PlatformDispatcher.instance.locale);
+    return [
+      SliverToBoxAdapter(
+        child: SheetSection(
+          id: _journeySummary,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 8, 0),
+                child: Row(
+                  children: [
+                    IconButton(
+                      tooltip: 'Back',
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: _closeJourney,
+                    ),
+                    Expanded(
+                      child: Text(
+                        'Trip details',
+                        style: theme.textTheme.titleLarge,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                child: JourneySummary(journey: journey, miles: miles),
+              ),
+            ],
+          ),
+        ),
+      ),
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        sliver: SliverList.builder(
+          itemCount: journey.legs.length,
+          itemBuilder: (context, i) => LegCard(
+            leg: journey.legs[i],
+            miles: miles,
+            cycling: directions.transitAccess == TransitAccess.cycling,
+            start: directions.from?.label ?? 'Start',
+            destination: directions.to?.label ?? 'Destination',
+          ),
+        ),
+      ),
+    ];
+  }
+
   String _messageFor(Directions directions) => switch (directions) {
+    Directions(problem: RouteProblem.outsideArea) =>
+      "This trip is outside the offline area, so there are no directions for it "
+          "on this device",
+    Directions(problem: RouteProblem.noOfflineArea) =>
+      'Directions need an offline area, and this device has none',
     Directions(problem: RouteProblem.noRoute) => 'No route found',
     Directions(problem: RouteProblem.failed) =>
-      "Couldn't get directions. Check your connection and try again.",
+      "Couldn't get directions. Try again.",
     Directions(loading: true) => 'Finding routes…',
     _ => 'Enter a start and a destination to get directions',
   };

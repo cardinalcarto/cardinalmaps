@@ -1,0 +1,71 @@
+import 'dart:convert';
+
+import 'package:cardinal/directions/transit_plan.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import '../fakes/fake_transit.dart';
+
+void main() {
+  test('reads a plan as the router writes it', () {
+    final plan = TransitPlan.decode(utf8.encode(jsonEncode(fakePlanJson())));
+    expect(plan.realtime, RealtimeLevel.degraded);
+    expect((plan.feedsApplied, plan.feedsReported), (1, 2));
+    final journey = plan.journeys.single;
+    expect(journey.transfers, 1);
+    expect(journey.legs.map((leg) => leg.runtimeType), [
+      StreetLeg,
+      TransitLeg,
+      StreetLeg,
+      TransitLeg,
+      StreetLeg,
+    ]);
+    final walk = journey.legs.first as StreetLeg;
+    expect(walk.kind, StreetLegKind.access);
+    expect(walk.from, isNull);
+    expect(walk.to!.name, 'Fremont Ave N & N 34th St');
+    expect(walk.stopMoved.single.atEnd, isTrue);
+    expect(walk.stopMoved.single.description, contains('50 feet north'));
+    expect(walk.shape, hasLength(2));
+    expect(walk.shape.last.lat, closeTo(2.1, 1e-6));
+
+    final bus = journey.rides.first;
+    expect(bus.route!.kind, VehicleKind.bus);
+    expect(bus.boarding.departureDelay, 240);
+    expect(bus.segments.map((s) => s.route!.shortName), ['40', '7']);
+    expect(bus.alerts.single.header, 'Route 40 detoured');
+    // A ride with no shape is drawn from stop to stop.
+    expect(bus.shape, hasLength(3));
+    expect(journey.rides.last.route!.kind, VehicleKind.tram);
+    expect(journey.accessibility, Accessibility.unknown);
+  });
+
+  test('a plan with no journeys says why', () {
+    final plan = emptyPlan('slower_than_direct');
+    expect(plan.journeys, isEmpty);
+    expect(plan.noJourneysReason, NoJourneysReason.slowerThanDirect);
+  });
+
+  test('polyline6 decodes negative and large steps', () {
+    final points = [
+      [-122.349, 47.651],
+      [-122.3001, 47.6131],
+      [-122.296, 47.4489],
+    ];
+    final decoded = decodePolyline6(polyline6(points));
+    expect(decoded, hasLength(3));
+    for (final (i, p) in decoded.indexed) {
+      expect(p.lng, closeTo(points[i][0], 1e-6));
+      expect(p.lat, closeTo(points[i][1], 1e-6));
+    }
+  });
+
+  test('vehicle kinds come from basic and extended route types', () {
+    expect(VehicleKind.of(3), VehicleKind.bus);
+    expect(VehicleKind.of(0), VehicleKind.tram);
+    expect(VehicleKind.of(4), VehicleKind.ferry);
+    expect(VehicleKind.of(2), VehicleKind.rail);
+    expect(VehicleKind.of(109), VehicleKind.rail);
+    expect(VehicleKind.of(700), VehicleKind.bus);
+    expect(VehicleKind.of(1000), VehicleKind.ferry);
+  });
+}

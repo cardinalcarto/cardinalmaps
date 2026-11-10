@@ -8,6 +8,7 @@ import 'package:routing/routing.dart';
 
 import '../directions/callouts.dart';
 import '../directions/format.dart';
+import '../directions/transit_plan.dart';
 import '../store/store.dart';
 
 /// The style's GeoJSON source for the routes' lines and the destination.
@@ -15,6 +16,10 @@ const routeSource = 'route';
 
 /// The style's GeoJSON source for the callouts, which change as the map moves.
 const routeCalloutSource = 'route-callouts';
+
+/// The style's GeoJSON source for a transit journey's legs and the stops it boards and
+/// leaves vehicles at.
+const transitSource = 'transit';
 
 /// The property of a callout saying which route it's for.
 const routeIndexProperty = 'route';
@@ -63,6 +68,7 @@ void addRouteLayers(Map<String, Object?> style) {
   final sources = style['sources'] as Map<String, Object?>;
   sources[routeSource] = {'type': 'geojson', 'data': empty};
   sources[routeCalloutSource] = {'type': 'geojson', 'data': empty};
+  sources[transitSource] = {'type': 'geojson', 'data': empty};
   final layers = style['layers'] as List<Object?>;
   final firstSymbol = layers.indexWhere((l) => (l as Map)['type'] == 'symbol');
   layers.insertAll(firstSymbol < 0 ? layers.length : firstSymbol, [
@@ -70,6 +76,7 @@ void addRouteLayers(Map<String, Object?> style) {
     _line('route-alternate', _alternateColor, 8, selected: false),
     _line('route-selected-casing', _selectedCasing, 9, selected: true),
     _line('route-selected', _selectedColor, 6, selected: true),
+    ..._transitLayers,
   ]);
   layers.addAll([
     {
@@ -174,3 +181,123 @@ Map<String, Object?> calloutsGeoJson(
       },
   ],
 };
+
+List<Object?> _roleFilter(String role) => [
+  '==',
+  ['get', 'role'],
+  role,
+];
+
+/// A journey's walks dashed in the selected route's color, and its rides in their routes'
+/// colors over a darker casing, with a dot where the rider gets on or off.
+final _transitLayers = <Map<String, Object?>>[
+  {
+    'id': 'transit-street',
+    'type': 'line',
+    'source': transitSource,
+    'filter': _roleFilter('street'),
+    'layout': {'line-cap': 'butt', 'line-join': 'round'},
+    'paint': {
+      'line-color': _selectedColor,
+      'line-width': 4,
+      'line-dasharray': [1.2, 1],
+    },
+  },
+  {
+    'id': 'transit-ride-casing',
+    'type': 'line',
+    'source': transitSource,
+    'filter': _roleFilter('ride'),
+    'layout': {'line-cap': 'round', 'line-join': 'round'},
+    'paint': {
+      'line-color': [
+        'to-color',
+        ['get', 'casing'],
+      ],
+      'line-width': 9,
+    },
+  },
+  {
+    'id': 'transit-ride',
+    'type': 'line',
+    'source': transitSource,
+    'filter': _roleFilter('ride'),
+    'layout': {'line-cap': 'round', 'line-join': 'round'},
+    'paint': {
+      'line-color': [
+        'to-color',
+        ['get', 'color'],
+      ],
+      'line-width': 6,
+    },
+  },
+  {
+    'id': 'transit-stops',
+    'type': 'circle',
+    'source': transitSource,
+    'filter': _roleFilter('stop'),
+    'paint': {
+      'circle-radius': 4,
+      'circle-color': '#ffffff',
+      'circle-stroke-color': '#333333',
+      'circle-stroke-width': 2,
+    },
+  },
+];
+
+/// The color a ride is drawn in when its route has none.
+const _defaultRideColor = '#3b81de';
+
+/// [journey]'s legs and the stops it boards and leaves vehicles at, as GeoJSON.
+Map<String, Object?> journeyGeoJson(Journey? journey) => {
+  'type': 'FeatureCollection',
+  'features': [
+    if (journey != null)
+      for (final leg in journey.legs)
+        if (leg.shape.length >= 2)
+          {
+            'type': 'Feature',
+            'properties': switch (leg) {
+              TransitLeg(:final route) => {
+                'role': 'ride',
+                'color': _hex(route?.color) ?? _defaultRideColor,
+                'casing': _darker(_hex(route?.color) ?? _defaultRideColor),
+              },
+              StreetLeg() => {'role': 'street'},
+            },
+            'geometry': {
+              'type': 'LineString',
+              'coordinates': [
+                for (final p in leg.shape) [p.lng, p.lat],
+              ],
+            },
+          },
+    if (journey != null)
+      for (final ride in journey.rides)
+        for (final visit in [ride.boarding, ride.alighting])
+          if (visit.stop.point case final p?)
+            {
+              'type': 'Feature',
+              'properties': {'role': 'stop'},
+              'geometry': {
+                'type': 'Point',
+                'coordinates': [p.lng, p.lat],
+              },
+            },
+  ],
+};
+
+/// `#RRGGBB` for a GTFS color, or null if it isn't one.
+String? _hex(String? color) =>
+    color != null && RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(color)
+    ? '#$color'
+    : null;
+
+/// [hex] at half its brightness, for a casing.
+String _darker(String hex) {
+  final value = int.parse(hex.substring(1), radix: 16);
+  final r = (value >> 16 & 0xff) ~/ 2;
+  final g = (value >> 8 & 0xff) ~/ 2;
+  final b = (value & 0xff) ~/ 2;
+  return '#${[r, g, b].map((c) => c.toRadixString(16).padLeft(2, '0')).join()}';
+}
