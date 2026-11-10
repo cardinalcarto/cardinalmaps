@@ -1338,13 +1338,15 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
     /// A stop's entry is its cheapest offer within the cost bound, whatever its seconds:
     /// a costlier route that fits must not replace a cheaper one that doesn't.
     fn reach_stops(&mut self, index: u32, label: &TableLabel) -> Result<(), WalkError> {
-        let Some(attachments) = self.attachments.clone() else {
+        let Some(attachments) = self.attachments.as_ref() else {
             return Ok(());
         };
         let mut at = attachments.edges.get(label.real_edge.value());
         if at == NONE {
             return Ok(());
         }
+        // Only for an edge with stops: the rest of this search doesn't pay for it.
+        let attachments = Arc::clone(attachments);
         let Some(tile) = self.tile_handle(label.real_edge)? else {
             return Ok(());
         };
