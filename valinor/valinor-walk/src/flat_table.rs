@@ -144,8 +144,28 @@ impl MappedTable {
 /// If the file can't be read, is the wrong length, has the wrong key, or its offsets don't fit.
 pub(crate) unsafe fn map_flat(path: &Path, key: &TableKey) -> Result<MappedTable, FlatTableError> {
     let file = File::open(path)?;
+    // SAFETY: passed on to the caller's promise.
+    unsafe { map_flat_file(&file, key) }
+}
+
+/// As [`map_flat`], for a file already open for reading.
+///
+/// The mapping is of the open file, not of whatever its path names later,
+/// so it is unaffected by the path being renamed over or unlinked.
+///
+/// # Safety
+///
+/// As [`map_flat`].
+///
+/// # Errors
+///
+/// As [`map_flat`].
+pub(crate) unsafe fn map_flat_file(
+    file: &File,
+    key: &TableKey,
+) -> Result<MappedTable, FlatTableError> {
     // SAFETY: the caller promises the file doesn't change underneath this mapping.
-    let map = unsafe { Mmap::map(&file) }?;
+    let map = unsafe { Mmap::map(file) }?;
     let (header, _) = Header::ref_from_prefix(&map)
         .map_err(|_| FlatTableError::Invalid("the file is shorter than its header"))?;
     if header.magic != FLAT_TABLE_MAGIC {

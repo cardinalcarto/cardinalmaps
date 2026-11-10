@@ -20,6 +20,8 @@ serde = { workspace = true }
 sha2 = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
+# Unique, exclusively created temporary files for publishing prepared tables.
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 valhalla-graphtile = { workspace = true }
 valhalla-proto = { workspace = true }
@@ -38,7 +40,6 @@ insta = { workspace = true, features = ["json"] }
 prost = { workspace = true }
 proptest = { workspace = true }
 valinor-gtfs = { path = "../valinor-gtfs" }
-tempfile = { workspace = true }
 zstd = { workspace = true }
 
 [[example]]

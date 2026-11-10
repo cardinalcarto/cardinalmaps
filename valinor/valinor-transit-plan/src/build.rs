@@ -9,8 +9,10 @@
 //! must match their SHA-256, and street tiles must match its build ID (checked when opening).
 
 use std::collections::BTreeSet;
-use std::io::Read;
+use std::fs::File;
+use std::io::{BufWriter, ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -273,7 +275,9 @@ impl TransitBuild {
     /// `feeds` chooses feeds by ID; `None` loads every feed that compiled.
     /// A mode's table is the flat file under `prepared/` for this manifest, set of feeds, bound,
     /// and whichever tiles are present; if there is none it is assembled from those tiles and
-    /// published atomically, and tables for other sets are removed.
+    /// published atomically, and older tables of the same feeds made from other tiles are removed.
+    /// Tables of other feed sets are kept, since another opener may be using them.
+    /// Opening the same build from several threads or processes at once is safe.
     /// Files are memory-mapped; to replace one, rename over it; don't modify it in place.
     ///
     /// # Performance
@@ -636,11 +640,16 @@ const PREPARED_DIR: &str = "prepared";
 
 /// How a mode's prepared table is named and keyed; see [`prepared_table`].
 struct PreparedName {
-    /// Depends on the manifest, feeds, bound, and numbering, not on which tiles are present.
+    /// `<mode>-`: every table of this mode.
+    mode_prefix: String,
+    /// `<mode>-<manifest>-`: every table of this mode that the current manifest can use.
+    manifest_prefix: String,
+    /// `<mode>-<manifest>-<set>-`, where the set depends on the manifest, feeds, bound,
+    /// and numbering, not on which tiles are present.
     set_prefix: String,
-    /// The whole key: `set_prefix`, and the tiles present.
+    /// The whole key: the set, and the tiles present.
     key: TableKey,
-    /// `<mode>-<set>-<tiles>.bin`.
+    /// `<mode>-<manifest>-<set>-<tiles>.bin`.
     file_name: String,
 }
 
@@ -678,9 +687,15 @@ fn prepared_name(
     key.update(set);
     key.update(tiles);
     let key: TableKey = key.finalize().into();
-    let set_prefix = format!("{}-{}", mode.as_str(), hex(&set[..8]));
-    let file_name = format!("{set_prefix}-{}.bin", hex(&tiles[..8]));
+    // The manifest ID is in the name, not only in the key, so that tables no manifest
+    // on disk can use are told apart without reading them.
+    let mode_prefix = format!("{}-", mode.as_str());
+    let manifest_prefix = format!("{mode_prefix}{manifest_id:016x}-");
+    let set_prefix = format!("{manifest_prefix}{}-", hex(&set[..8]));
+    let file_name = format!("{set_prefix}{}.bin", hex(&tiles[..8]));
     PreparedName {
+        mode_prefix,
+        manifest_prefix,
         set_prefix,
         key,
         file_name,
@@ -729,7 +744,8 @@ fn tile_path(transfers: &Path, mode: TransferMode, x: u32, y: u32) -> PathBuf {
 /// An existing prepared table for this exact key, or `None` if it has to be built.
 ///
 /// When no tile of the mode is on disk, a client has discarded its tiles after installing them,
-/// so a table prepared for this feed set is used whatever tiles it was made from.
+/// so a table prepared for this feed set is used whatever tiles it was made from:
+/// the most recently written one, if there are several.
 fn prepared_table(
     prepared: &Path,
     name: &PreparedName,
@@ -740,36 +756,75 @@ fn prepared_table(
         // documentation forbids modifying a build in place while it is open.
         return unsafe { TransferTable::map_flat(&prepared.join(&name.file_name), &name.key) }.ok();
     }
-    let entries = std::fs::read_dir(prepared).ok()?;
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        let matches = entry.file_name().to_str().is_some_and(|file| {
-            file.starts_with(&format!("{}-", name.set_prefix)) && is_table_file(file)
-        });
-        if !matches {
-            continue;
-        }
-        let key = read_key(&path)?;
-        // SAFETY: as above.
-        if let Ok(table) = unsafe { TransferTable::map_flat(&path, &key) } {
-            return Some(table);
+    // Another opener removes a table of this feed set only once a newer one is in place
+    // (see `publish_flat`), so if one vanishes while this looks, looking again finds the newer.
+    // Openers would have to keep replacing tables to make this give up.
+    for _ in 0..MAX_PREPARED_SCANS {
+        let (table, vanished) = newest_of_set(prepared, name);
+        if table.is_some() || !vanished {
+            return table;
         }
     }
     None
+}
+
+/// How many times to look for a table of a feed set while other openers keep removing them.
+const MAX_PREPARED_SCANS: usize = 4;
+
+/// The newest prepared table of a feed set that maps, and whether any vanished while looking.
+fn newest_of_set(prepared: &Path, name: &PreparedName) -> (Option<TransferTable>, bool) {
+    let Ok(entries) = std::fs::read_dir(prepared) else {
+        return (None, false);
+    };
+    let mut vanished = false;
+    let mut candidates: Vec<(SystemTime, PathBuf)> = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let matches = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|file| file.starts_with(&name.set_prefix) && is_table_file(file));
+        if !matches {
+            continue;
+        }
+        let path = entry.path();
+        // Followed like the build's other files; anything but a regular file could block a read.
+        match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => {
+                candidates.push((metadata.modified().unwrap_or(UNIX_EPOCH), path));
+            }
+            Ok(_) => {}
+            Err(error) => vanished |= error.kind() == ErrorKind::NotFound,
+        }
+    }
+    candidates.sort_unstable_by(|a, b| b.cmp(a));
+    for (_, path) in candidates {
+        let file = match File::open(&path) {
+            Ok(file) => file,
+            Err(error) => {
+                vanished |= error.kind() == ErrorKind::NotFound;
+                continue;
+            }
+        };
+        let Some(key) = read_key(&file) else {
+            continue;
+        };
+        // SAFETY: as above. Mapping the open file keeps it valid if another opener removes it.
+        if let Ok(table) = unsafe { TransferTable::map_flat_file(&file, &key) } {
+            return (Some(table), vanished);
+        }
+    }
+    (None, vanished)
 }
 
 fn is_table_file(file: &str) -> bool {
     Path::new(file).extension().is_some_and(|ext| ext == "bin")
 }
 
-/// The key stored in a prepared table's header.
-fn read_key(path: &Path) -> Option<TableKey> {
-    let bytes = read_bounded(path, MAX_TIMETABLE_BYTES).ok()?;
-    let start = FLAT_TABLE_MAGIC.len();
-    bytes
-        .get(start..start + size_of::<TableKey>())?
-        .try_into()
-        .ok()
+/// The key stored in a prepared table's header; the rest of the file is not read.
+fn read_key(mut file: &File) -> Option<TableKey> {
+    let mut header = [0_u8; FLAT_TABLE_MAGIC.len() + size_of::<TableKey>()];
+    file.read_exact(&mut header).ok()?;
+    header[FLAT_TABLE_MAGIC.len()..].try_into().ok()
 }
 
 /// Reads the mode's table from the prepared file, assembling it from tiles first if needed.
@@ -821,55 +876,142 @@ fn load_mode(
             source,
         })?;
     drop(tiles);
-    let path = prepared.join(&name.file_name);
-    publish_flat(&table, &name, &prepared, &path).map_err(|source| BuildLoadError::Prepare {
-        path: path.clone(),
-        source,
-    })?;
-    drop(table);
-    // SAFETY: just published by renaming, which is the only way it ever changes.
-    let table = unsafe { TransferTable::map_flat(&path, &name.key) }
-        .map_err(|source| BuildLoadError::Flat { path, source })?;
+    // A table assembled from no tiles at all supersedes nothing: the tables it would remove
+    // may be the only copy of walks whose tiles are gone.
+    let table = publish_flat(&table, &name, &prepared, !present.is_empty())?;
     Ok((table, present.len(), absent))
 }
 
-/// Writes a table to `path` so that readers see the whole file or none of it, and drops others.
+/// Publishes a table at its path under `prepared/`, and maps the file it wrote.
 ///
-/// Other prepared tables of this mode are for feed or tile sets no longer in use.
+/// Openers in this process and in others may publish at once, the same table or others.
+/// Each writes its own exclusively created temporary file and renames it into place,
+/// so a table's path only ever names a complete table; each maps the file it wrote,
+/// not whatever the path names by then.
+///
+/// With `prune`, the tables this one supersedes are removed, if they were there before this one
+/// was renamed into place and haven't been replaced since: those of the same feed set made from
+/// other tiles, and those of this mode that the current manifest can't use (of an earlier build,
+/// or named as before manifests were in names).
+/// Tables of other feed sets of this manifest are never removed: another opener with other feeds
+/// may be about to map one, or its tiles may be gone, leaving it the only copy of those walks.
+/// Removal is safe for an opener that already has a table mapped, since a mapping of an
+/// unlinked file stays valid on Linux and Android, and an opener still looking for a table of
+/// this feed set finds the one just published. Removal is best effort: a table left behind
+/// costs disk, never correctness.
 fn publish_flat(
     table: &TransferTable,
     name: &PreparedName,
     prepared: &Path,
-    path: &Path,
-) -> std::io::Result<()> {
-    std::fs::create_dir_all(prepared)?;
-    let temp = prepared.join(format!(".{}.{}.tmp", name.file_name, std::process::id()));
-    let result = (|| {
-        let mut file = std::io::BufWriter::new(std::fs::File::create(&temp)?);
-        table.write_flat(&mut file, &name.key)?;
-        file.into_inner()
-            .map_err(std::io::IntoInnerError::into_error)?
-            .sync_all()?;
-        std::fs::rename(&temp, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    result?;
-    std::fs::File::open(prepared)?.sync_all()?;
-    let mode_prefix = name
-        .set_prefix
-        .split('-')
-        .next()
-        .map(|mode| format!("{mode}-"))
-        .unwrap_or_default();
-    for entry in std::fs::read_dir(prepared)?.filter_map(Result::ok) {
-        let stale = entry.file_name().to_str().is_some_and(|file| {
-            file.starts_with(&mode_prefix) && is_table_file(file) && file != name.file_name
-        });
-        if stale {
-            let _ = std::fs::remove_file(entry.path());
+    prune: bool,
+) -> Result<TransferTable, BuildLoadError> {
+    let path = prepared.join(&name.file_name);
+    let prepare = |source| BuildLoadError::Prepare {
+        path: path.clone(),
+        source,
+    };
+    std::fs::create_dir_all(prepared).map_err(prepare)?;
+    // Listed before the rename, so that nothing published after this one is removed.
+    let superseded = if prune {
+        superseded_tables(prepared, name)
+    } else {
+        Vec::new()
+    };
+    let temp_prefix = format!(".{}.", name.file_name);
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(&temp_prefix).suffix(".tmp");
+    // As `File::create` would: readable by whoever the umask allows, not only this user,
+    // since a deployment may prepare a build as one user and serve it as another.
+    #[cfg(unix)]
+    builder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o666));
+    // Removed when dropped, so a failure anywhere before the rename leaves nothing behind.
+    let temp = builder.tempfile_in(prepared).map_err(prepare)?;
+    let mut writer = BufWriter::new(temp.as_file());
+    table.write_flat(&mut writer, &name.key).map_err(prepare)?;
+    writer
+        .into_inner()
+        .map_err(std::io::IntoInnerError::into_error)
+        .map_err(prepare)?
+        .sync_all()
+        .map_err(prepare)?;
+    let file = temp.persist(&path).map_err(|error| prepare(error.error))?;
+    File::open(prepared)
+        .and_then(|directory| directory.sync_all())
+        .map_err(prepare)?;
+    // SAFETY: nothing writes to a table once it is renamed into place: its temporary name was
+    // this opener's alone, and every other publisher renames a new file over the path.
+    let mapped = unsafe { TransferTable::map_flat_file(&file, &name.key) }.map_err(|source| {
+        BuildLoadError::Flat {
+            path: path.clone(),
+            source,
         }
+    })?;
+    for (other, identity) in superseded {
+        remove_if_unchanged(&other, identity);
     }
-    Ok(())
+    Ok(mapped)
+}
+
+/// Whether `name`'s table supersedes the table named `file`.
+fn is_superseded(file: &str, name: &PreparedName) -> bool {
+    if !file.starts_with(&name.mode_prefix) || !is_table_file(file) || file == name.file_name {
+        return false;
+    }
+    file.starts_with(&name.set_prefix) || !file.starts_with(&name.manifest_prefix)
+}
+
+/// Which file a path names, to tell whether it was replaced since it was listed.
+type FileIdentity = (u64, u64);
+
+#[cfg(unix)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "other platforms have no identity to give"
+)]
+fn file_identity(metadata: &std::fs::Metadata) -> Option<FileIdentity> {
+    use std::os::unix::fs::MetadataExt as _;
+    Some((metadata.dev(), metadata.ino()))
+}
+
+/// Without a file identity, nothing can be told apart, so nothing is removed.
+#[cfg(not(unix))]
+fn file_identity(_metadata: &std::fs::Metadata) -> Option<FileIdentity> {
+    None
+}
+
+/// The prepared tables that `name`'s table supersedes (see [`publish_flat`]),
+/// and which files they are.
+fn superseded_tables(prepared: &Path, name: &PreparedName) -> Vec<(PathBuf, FileIdentity)> {
+    let Ok(entries) = std::fs::read_dir(prepared) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|file| is_superseded(file, name))
+        })
+        .filter_map(|entry| {
+            let path = entry.path();
+            let identity = file_identity(&std::fs::symlink_metadata(&path).ok()?)?;
+            Some((path, identity))
+        })
+        .collect()
+}
+
+/// Removes `path` if it still names the file it did when listed.
+///
+/// Another opener can rename a new table over the path between the check and the removal;
+/// that opener has its table mapped, so this costs a later opener a rebuild, nothing more.
+fn remove_if_unchanged(path: &Path, identity: FileIdentity) {
+    let unchanged = std::fs::symlink_metadata(path)
+        .ok()
+        .and_then(|metadata| file_identity(&metadata))
+        == Some(identity);
+    if unchanged {
+        // Best effort, as above.
+        let _ = std::fs::remove_file(path);
+    }
 }
