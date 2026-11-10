@@ -1076,6 +1076,12 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         let Some(node_tile) = self.tile_handle(label.end_node)? else {
             return Ok(());
         };
+        // Read once per settle: a backward search needs it for every edge it expands here.
+        let pred_tile = if forward {
+            None
+        } else {
+            self.tile_handle(label.real_edge)?
+        };
         let node = node_tile
             .get_node(label.end_node)
             .map_err(|e| WalkError::Lookup(label.end_node, e))?;
@@ -1098,7 +1104,16 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 uturn = Some(edge_id);
                 continue;
             }
-            expanded |= self.expand(&label, index, node, edge_id, edge, &node_tile, forward)?;
+            expanded |= self.expand(
+                &label,
+                index,
+                node,
+                edge_id,
+                edge,
+                &node_tile,
+                forward,
+                pred_tile.as_ref(),
+            )?;
         }
         for transition in node_tile.get_transitions(node) {
             let end = transition.corresponding_end_node_id();
@@ -1126,6 +1141,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                     edge,
                     &trans_tile,
                     forward,
+                    pred_tile.as_ref(),
                 )?;
             }
         }
@@ -1136,7 +1152,16 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 .map_err(|e| WalkError::Lookup(uturn_id, e))?;
             let mut deadend = label;
             deadend.inner.set_deadend(true);
-            self.expand(&deadend, index, node, uturn_id, edge, &node_tile, forward)?;
+            self.expand(
+                &deadend,
+                index,
+                node,
+                uturn_id,
+                edge,
+                &node_tile,
+                forward,
+                pred_tile.as_ref(),
+            )?;
         }
         Ok(())
     }
@@ -1156,6 +1181,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         edge: &DirectedEdge,
         tile: &P::TileHandle,
         forward: bool,
+        pred_tile: Option<&P::TileHandle>,
     ) -> Result<bool, WalkError> {
         if edge.is_shortcut() {
             return Ok(false);
@@ -1234,7 +1260,7 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
                 access.edge_destonly,
             )?,
             Some((_, opp_tile, opp_edge)) => {
-                let Some(pred_tile) = self.tile_handle(pred.real_edge)? else {
+                let Some(pred_tile) = pred_tile else {
                     return Ok(false);
                 };
                 let opp_pred_edge = pred_tile
