@@ -179,6 +179,8 @@ position's rule byte, set when the lane is laid out, and the scan reads the bits
 with the same test as before, so a query on foot or by bicycle pays nothing.
 
 Forward and backward searches mirror the wheelchair bits exactly as they mirror pickup and drop-off.
+A build made without wheelchair tables refuses a wheelchair request as invalid,
+rather than answering that nothing is reachable.
 
 A table search's cost bound for a wheelchair is `1.2`, the same as walking;
 measured over 5,338 real wheelchair routes in Washington, whole-route cost over time has

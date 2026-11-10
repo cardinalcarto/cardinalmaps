@@ -11,10 +11,11 @@ use valhalla_graphtile::graph_tile::BuildId;
 use valinor_gtfs::{FeedId, FeedInput, InMemorySource, LatLon, compile};
 use valinor_transit::StopId;
 use valinor_walk::transfer_tile::{TileWalk, TransferMode, TransferTile, TransferTileRow};
-use valinor_walk::{SavedSnap, encode_snap_file};
+use valinor_walk::{SavedSnap, WalkError, encode_snap_file};
 
 use crate::build::{BuildLoadError, TransitBuild};
-use crate::plan::TransitRequest;
+use crate::error::PlanError;
+use crate::plan::{TransitRequest, TravelMode};
 use crate::street::{OpenPlannerError, StreetConfig, StreetPlanner};
 
 const MANIFEST_ID: u64 = 0x1234_5678_9abc_def0;
@@ -900,5 +901,24 @@ fn washington_combines_metro_and_sound_transit_with_real_walks() {
                 JourneyLeg::Transit(leg) if leg.trip.feed.as_deref() == Some(METRO) && leg.realtime
             ))),
         "real-time Metro legs appear in a Washington-wide answer"
+    );
+}
+
+#[test]
+fn a_build_without_wheelchair_tables_says_so() {
+    let fixture = Fixture::new();
+    let build = TransitBuild::load(fixture.path(), None).expect("loads");
+    assert!(!build.has_wheelchair);
+    assert!(matches!(
+        crate::street::require_mode_built::<WalkError, WalkError>(TravelMode::Wheelchair, false),
+        Err(PlanError::InvalidRequest(_))
+    ));
+    assert!(
+        crate::street::require_mode_built::<WalkError, WalkError>(TravelMode::Walking, false)
+            .is_ok()
+    );
+    assert!(
+        crate::street::require_mode_built::<WalkError, WalkError>(TravelMode::Wheelchair, true)
+            .is_ok()
     );
 }
