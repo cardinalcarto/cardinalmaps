@@ -558,6 +558,16 @@ impl<P: GraphTileProvider, C: Costing> LazyGraph<P, C> {
             .map(|slot| self.slots[slot as usize].handle.clone()))
     }
 
+    /// Whether the tile holding `id` is in the tile set.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the tile can't be read.
+    #[inline]
+    pub(crate) fn has_tile(&mut self, id: GraphId) -> Result<bool, WalkError> {
+        Ok(self.slot_of(id)?.is_some())
+    }
+
     /// The dense number of a directed edge whose tile already has a slot.
     pub(crate) fn known_dense_edge(&self, id: GraphId) -> Option<u32> {
         let level = usize::from(id.level());

@@ -1153,32 +1153,43 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         if edge.is_shortcut() {
             return Ok(false);
         }
-        let Some((opp_id, opp_tile, opp_edge)) = self.opposite_of(edge_id, tile)? else {
-            return Ok(false);
-        };
-        let (traversed, traversed_id, traversed_tile): (&DirectedEdge, GraphId, &P::TileHandle) =
-            if forward {
-                (edge, edge_id, tile)
-            } else {
-                (&opp_edge, opp_id, &opp_tile)
-            };
+        // First, as an edge is reached far more often than it is first settled.
+        // A settled edge's far tile is present: this search pushed its label.
         if self.is_permanent(edge_id) {
             return Ok(true);
         }
+        // A forward search only needs to know that the far tile is present, to stop at
+        // the edge of the tile set like a backward one; reading the opposing edge is the
+        // backward search's cost alone.
+        let opposing = if forward {
+            if !self.graph.has_tile(edge.end_node_id())? {
+                return Ok(false);
+            }
+            None
+        } else {
+            let Some(opposing) = self.opposite_of(edge_id, tile)? else {
+                return Ok(false);
+            };
+            Some(opposing)
+        };
+        let (traversed, traversed_id, traversed_tile): (&DirectedEdge, GraphId, &P::TileHandle) =
+            match &opposing {
+                None => (edge, edge_id, tile),
+                Some((opp_id, opp_tile, opp_edge)) => (opp_edge, *opp_id, opp_tile),
+            };
         let costing = &self.graph.costing;
         let mut access = EdgeAccess::new(pred.destonly_mask);
-        let allowed = if forward {
-            costing.allowed(edge, edge_id, tile, pred, TimeContext::NONE, &mut access)
-        } else {
-            costing.allowed_reverse(
+        let allowed = match &opposing {
+            None => costing.allowed(edge, edge_id, tile, pred, TimeContext::NONE, &mut access),
+            Some((opp_id, opp_tile, opp_edge)) => costing.allowed_reverse(
                 edge,
                 pred,
-                &opp_edge,
-                opp_id,
-                &opp_tile,
+                opp_edge,
+                *opp_id,
+                opp_tile,
                 TimeContext::NONE,
                 &mut access,
-            )
+            ),
         };
         if !allowed {
             return Ok(false);
@@ -1206,34 +1217,35 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
             return Ok(false);
         }
         let edge_cost = costing.edge_cost(traversed, traversed_id, traversed_tile, None)?;
-        let transition = if forward {
-            costing.transition_cost(
+        let transition = match &opposing {
+            None => costing.transition_cost(
                 edge,
                 tile,
                 node,
                 pred,
                 &self.graph.provider,
                 access.edge_destonly,
-            )?
-        } else {
-            let Some(pred_tile) = self.tile_handle(pred.real_edge)? else {
-                return Ok(false);
-            };
-            let opp_pred_edge = pred_tile
-                .get_directed_edge(pred.real_edge)
-                .map_err(|e| WalkError::Lookup(pred.real_edge, e))?;
-            self.graph.costing.transition_cost_reverse(
-                edge.local_edge_index(),
-                node,
-                &opp_edge,
-                opp_pred_edge,
-                pred,
-                &opp_tile,
-                &self.graph.provider,
-                !edge_cost.flow_sources.is_empty(),
-                pred.internal_turn(),
-                access.edge_destonly,
-            )?
+            )?,
+            Some((_, opp_tile, opp_edge)) => {
+                let Some(pred_tile) = self.tile_handle(pred.real_edge)? else {
+                    return Ok(false);
+                };
+                let opp_pred_edge = pred_tile
+                    .get_directed_edge(pred.real_edge)
+                    .map_err(|e| WalkError::Lookup(pred.real_edge, e))?;
+                self.graph.costing.transition_cost_reverse(
+                    edge.local_edge_index(),
+                    node,
+                    opp_edge,
+                    opp_pred_edge,
+                    pred,
+                    opp_tile,
+                    &self.graph.provider,
+                    !edge_cost.flow_sources.is_empty(),
+                    pred.internal_turn(),
+                    access.edge_destonly,
+                )?
+            }
         };
         // At the start of the edge, as a stop partway along it may still be within the bound.
         // Returning true keeps this out of the dead-end check, which must not depend on the bound.
