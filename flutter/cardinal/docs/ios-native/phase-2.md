@@ -61,4 +61,24 @@ Please check, on an Android device or emulator:
 
 ## Android results
 
-_(To be filled in by the Android session.)_
+Checked on 2026-11-11 on a Moto G Play 2024, Flutter stable 3.47.9, profile build with
+`dart_defines.json`.
+
+1. `flutter analyze`: no issues. `flutter test`: all 369 pass.
+2. The map buttons are the two floating action buttons. The bottom bar is the Material
+   row with Search filled. The sheet is opaque while it peeks (home, place) and at full
+   height (search, Saved): no map shows through it.
+3. Save shows "Saved" with Move… in the snack bar above the sheet, and Move… opens the
+   "Move 1 item to" picker. Unsaving from Manage shows "Removed from Saved" with Undo,
+   and Undo saves it again. The place was then unsaved, as it was before the check.
+4. Not checked on the device. The prompt needs `location.offered` unset and location
+   not allowed. The phone has both set, and resetting the flag means clearing the
+   app's data, which would wipe its saved places. The behavior is covered by
+   `test/map/location_test.dart` (which runs as Android): it offers, No means never
+   again, Yes asks and goes to you, and it isn't offered once allowed.
+5. A screen recording of place → directions → place → search shows no page through
+   another. Going back to the place and opening search each pass through one empty
+   sheet frame mid-fade.
+
+Unrelated to this branch: routing still fails ("Couldn't get directions"), because
+`CARDINAL_ROUTING_URL` points at a LAN host with no router running.
