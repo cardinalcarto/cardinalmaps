@@ -204,6 +204,10 @@ def main():
     # A remote source is read with range requests, which can fail now and then.
     os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "10")
     os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "2")
+    # Without a timeout, a read on a connection that died silently waits
+    # forever. Dagger's tunnel to a host service doesn't pass on the server
+    # closing an idle connection, so this happens on a long enough run.
+    os.environ.setdefault("GDAL_HTTP_TIMEOUT", "120")
     os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
     check_layout(source)
 
