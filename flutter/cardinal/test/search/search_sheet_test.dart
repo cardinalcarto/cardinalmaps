@@ -175,9 +175,7 @@ void main() {
     expect(_sheet(tester).isAtMax, isTrue);
   });
 
-  testWidgets('back stops searching, keeping the query for next time', (
-    tester,
-  ) async {
+  testWidgets('back stops searching and clears the query', (tester) async {
     await _pumpApp(tester);
     final peek = _sheet(tester).extent;
     await tester.tap(find.byType(SearchBar));
@@ -188,13 +186,47 @@ void main() {
     await tester.pumpAndSettle();
     expect(_sheet(tester).extent, moreOrLessEquals(peek));
     expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
-    expect(find.text('space ne'), findsOneWidget);
+    expect(find.text('space ne'), findsNothing);
+    expect(find.text('Space Needle'), findsNothing);
 
     await tester.tap(find.byType(SearchBar));
     await tester.pumpAndSettle();
     expect(_sheet(tester).isAtMax, isTrue);
-    expect(find.text('Space Needle'), findsOneWidget);
+    expect(find.text('Space Needle'), findsNothing);
   });
+
+  testWidgets(
+    'stopped after a place, nothing is left to drag the sheet up to',
+    (tester) async {
+      await _pumpApp(tester);
+      final peek = _sheet(tester).extent;
+      await tester.tap(find.byType(SearchBar));
+      await tester.enterText(find.byType(TextField), 'space ne');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Space Needle'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pumpAndSettle();
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(_sheet(tester).extent, moreOrLessEquals(peek));
+      expect(find.text('Space Needle'), findsNothing);
+
+      // Dragged up from the bar, it stays: no results are kept to show.
+      final gesture = await tester.startGesture(
+        Offset(200, 800 - _sheet(tester).extent + 12),
+      );
+      for (var i = 0; i < 15; i++) {
+        await gesture.moveBy(const Offset(0, -40));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(_sheet(tester).extent, moreOrLessEquals(peek));
+    },
+  );
 
   for (final close in ['X', 'back']) {
     for (final collapse in ['dragging down', 'back']) {
@@ -282,25 +314,6 @@ void main() {
       );
     }
   }
-
-  testWidgets('clearing a query kept from before only clears it', (
-    tester,
-  ) async {
-    await _pumpApp(tester);
-    final peek = _sheet(tester).extent;
-    await tester.tap(find.byType(SearchBar));
-    await tester.enterText(find.byType(TextField), 'space ne');
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
-    await tester.binding.handlePopRoute();
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byTooltip('Clear'));
-    await tester.pumpAndSettle();
-    expect(find.text('space ne'), findsNothing);
-    expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
-    expect(_sheet(tester).extent, moreOrLessEquals(peek));
-  });
 
   testWidgets('dragged down while searching, the keyboard stays', (
     tester,

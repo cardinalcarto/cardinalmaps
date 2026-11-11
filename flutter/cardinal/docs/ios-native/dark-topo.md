@@ -29,6 +29,11 @@ On both platforms:
 - **Topo follows the app's theme** like streets: `darkTopoStyle` when the app is dark.
   Contour units still apply.
 
+- **Stopping a search clears it** (both platforms): back while searching, or Cancel on
+  iOS, now empties the query and its results, as iOS's own search fields do. Before, it
+  kept them under the bar, where dragging the sheet scrolled them instead of raising the
+  sheet.
+
 ## Checked on this machine (iOS simulator, iPhone 18 Pro, iOS 27.2)
 
 - `flutter analyze` clean; `flutter test` 379 passing, including the dark topo cases in
@@ -52,6 +57,8 @@ Please check, on an Android device or emulator:
    follow ft / m in both.
 4. In a mountain area at z13–15, contours and their labels, trails, peaks (with their
    light markers), streams and POIs all read clearly.
+5. Search, then press back: the search bar is empty and no results are left under it;
+   dragging the sheet up doesn't scroll anything.
 
 ## Android results
 

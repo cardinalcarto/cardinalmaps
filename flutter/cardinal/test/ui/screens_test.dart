@@ -3,6 +3,7 @@ import 'package:cardinal/map/layers.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/saved/saved_dialogs.dart';
+import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:cardinal/ui/theme.dart';
 import 'package:cupertino_ui/cupertino_ui.dart'
@@ -68,6 +69,37 @@ void main() {
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       expect(find.text('Cancel'), findsNothing);
+    });
+
+    testWidgets('Cancel clears the query, so nothing is kept to pull up to', (
+      tester,
+    ) async {
+      await pumpFakeApp(tester, platform: _ios);
+      await tester.tap(find.byType(CupertinoSearchTextField));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(EditableText), 'chu minh');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.text('chu minh'), findsNothing);
+      final field = tester.widget<CupertinoSearchTextField>(
+        find.byType(CupertinoSearchTextField),
+      );
+      expect(field.controller?.text, isEmpty);
+
+      // The sheet stays at the bar when dragged: there are no results to show.
+      final sheet = SheetScaffold.controllerOf(
+        tester.element(find.byType(CupertinoSearchTextField)),
+      );
+      final peek = sheet.extent;
+      await tester.drag(
+        find.byType(CupertinoSearchTextField),
+        const Offset(0, -300),
+      );
+      await tester.pumpAndSettle();
+      expect(sheet.extent, moreOrLessEquals(peek));
     });
   });
 

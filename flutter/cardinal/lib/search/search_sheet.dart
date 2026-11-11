@@ -37,7 +37,7 @@ import 'place_search.dart';
 /// | browsing: at the bar, no keyboard | the bar's tapped | searching: full, keyboard up |
 /// | searching | dragged down | searching, at the bar, keyboard as it was |
 /// | searching | the bar's tapped | searching: full, keyboard up |
-/// | searching | back | browsing; the query and results wait for the next tap |
+/// | searching | back, or Cancel on iOS | browsing; the query and results cleared |
 /// | browsing | back | the app's left |
 /// | either | a page covers it | it notes its mode, anchor and keyboard, and lets go of focus |
 /// | either | that page closes, however | as it noted; the keyboard as soon as the page can take focus |
@@ -148,13 +148,16 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     _searchFull();
   }
 
-  /// Back while searching: browsing, keeping the query and results for next time.
+  /// Back while searching, or Cancel on iOS: browsing, the query and results cleared,
+  /// as iOS's own search fields do.
   void _stopSearching() {
     if (!_searching) return;
     setState(() => _searching = false);
     // Letting go of focus, rather than only losing it, keeps the page from giving it
     // back to the bar later.
     _focus.unfocus();
+    _text.clear();
+    _search!.update('');
     _sheet!.animateTo(const SheetAnchor.section(_bar));
   }
 
@@ -252,6 +255,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     _search!.update('');
     if (_searching) _focus.requestFocus();
   }
+
 
   /// Return in the field: opens the first result.
   void _openFirst() {
