@@ -304,6 +304,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
                                 text: _text,
                                 focus: _focus,
                                 searching: _searching,
+                                loading: search.loading,
                                 onTap: _searchFull,
                                 onChanged: search.update,
                                 onSubmitted: _openFirst,
@@ -459,17 +460,9 @@ class _Results extends StatelessWidget {
     };
     return SliverMainAxisGroup(
       slivers: [
-        if (cupertino)
-          SliverToBoxAdapter(
-            // Room for the spinner only while it spins.
-            child: search.loading
-                ? const SizedBox(
-                    height: 28,
-                    child: CupertinoActivityIndicator(),
-                  )
-                : const SizedBox.shrink(),
-          )
-        else
+        // On iOS the search field spins in place of its magnifying glass, so nothing
+        // here moves for it.
+        if (!cupertino)
           SliverToBoxAdapter(
             child: SizedBox(
               height: 2,
@@ -552,6 +545,7 @@ class _CupertinoSearchField extends StatelessWidget {
     required this.text,
     required this.focus,
     required this.searching,
+    required this.loading,
     required this.onTap,
     required this.onChanged,
     required this.onSubmitted,
@@ -565,12 +559,16 @@ class _CupertinoSearchField extends StatelessWidget {
   final TextEditingController text;
   final FocusNode focus;
   final bool searching;
+
+  /// Whether results are loading: a spinner takes the magnifying glass's place, the
+  /// only one on iOS, so the results below don't move for it.
+  final bool loading;
   final VoidCallback onTap;
   final ValueChanged<String> onChanged;
   final VoidCallback onSubmitted;
   final VoidCallback onClear;
 
-  /// Stops searching, as back does: the query and results wait for the next tap.
+  /// Stops searching, as back does, clearing the query and its results.
   final VoidCallback onCancel;
 
   @override
@@ -587,6 +585,9 @@ class _CupertinoSearchField extends StatelessWidget {
               placeholder: 'Search',
               style: theme.textTheme.bodyLarge,
               itemSize: 20,
+              prefixIcon: loading
+                  ? const CupertinoActivityIndicator(radius: 8)
+                  : const Icon(CupertinoIcons.search),
               borderRadius: BorderRadius.circular(height / 2),
               padding: const EdgeInsetsDirectional.fromSTEB(6, 11, 8, 11),
               prefixInsets: const EdgeInsetsDirectional.fromSTEB(12, 0, 0, 2),

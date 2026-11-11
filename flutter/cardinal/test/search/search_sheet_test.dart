@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/geocoder/geocoder.dart';
 import 'package:cardinal/map/map.dart';
 import 'package:cardinal/map/overlays.dart';
@@ -8,6 +9,9 @@ import 'package:cardinal/routes.dart';
 import 'package:cardinal/search/search_sheet.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show CupertinoActivityIndicator, CupertinoSearchTextField;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -15,8 +19,10 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../fakes/fake_location.dart';
 import '../fakes/fake_map.dart';
 import '../fakes/fake_place_store.dart';
+import '../fakes/fake_routes.dart';
 import '../fakes/fake_saved_store.dart';
 import '../geocoder/geocoder_test.dart' show spaceNeedle;
 
@@ -88,10 +94,14 @@ Future<Store> _pumpApp(
       store: store,
       child: GeocoderScope(
         geocoder: geocoder,
-        child: MapScope(
-          controller: map ?? FakeMap(),
-          overlays: MapOverlays(),
-          child: MaterialApp.router(routerConfig: router),
+        child: DirectionsScope(
+          routes: FakeRoutes(),
+          location: FakeLocation(),
+          child: MapScope(
+            controller: map ?? FakeMap(),
+            overlays: MapOverlays(),
+            child: MaterialApp.router(routerConfig: router),
+          ),
         ),
       ),
     ),
@@ -173,6 +183,46 @@ void main() {
     expect(find.text('Space Needle'), findsOneWidget);
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'search');
     expect(_sheet(tester).isAtMax, isTrue);
+  });
+
+  testWidgets('on iOS, results stay put while new ones load', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await _pumpApp(tester);
+    await tester.tap(find.byType(CupertinoSearchTextField));
+    await tester.enterText(find.byType(EditableText), 'space ne');
+    await tester.pump(const Duration(milliseconds: 50));
+    // The first results load with one spinner, the field's.
+    expect(find.byType(CupertinoActivityIndicator), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(CupertinoSearchTextField),
+        matching: find.byType(CupertinoActivityIndicator),
+      ),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    final before = tester.getTopLeft(find.text('Space Needle')).dy;
+
+    // Typing on: loading, with the results kept meanwhile.
+    await tester.enterText(find.byType(EditableText), 'space need');
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(tester.getTopLeft(find.text('Space Needle')).dy, before);
+    // The field spins instead.
+    expect(
+      find.descendant(
+        of: find.byType(CupertinoSearchTextField),
+        matching: find.byType(CupertinoActivityIndicator),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('Space Needle')).dy, before);
+    expect(find.byType(CupertinoActivityIndicator), findsNothing);
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('back stops searching and clears the query', (tester) async {
