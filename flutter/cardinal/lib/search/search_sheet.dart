@@ -10,11 +10,15 @@ import 'package:cupertino_ui/cupertino_ui.dart'
         CupertinoButtonSize,
         CupertinoIcons,
         CupertinoSearchTextField;
+import 'package:geolocator/geolocator.dart' show Geolocator, LocationPermission;
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../directions/format.dart';
+import '../directions/route_source.dart';
 import '../geocoder/address.dart';
 import '../geocoder/geocoder.dart';
+import '../map/location.dart';
 import '../map/map.dart';
 import '../routes.dart';
 import '../saved/saved_names.dart';
@@ -63,6 +67,10 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
 
   /// Whether the sheet is searching; see [SearchSheet].
   bool _searching = false;
+
+  /// Where you are, for how far each result is, on iOS: asked for when searching
+  /// starts, if you've allowed it already. Null until then, or if you haven't.
+  Fix? _here;
 
   /// What the sheet was when a page covered it, to be again when that page closes.
   ({bool searching, SheetAnchor anchor, bool keyboard})? _covered;
@@ -113,9 +121,23 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     if (_focus.hasFocus && !_searching) setState(() => _searching = true);
   }
 
+  /// Finds [_here], once, without asking for permission.
+  Future<void> _findHere() async {
+    if (_here != null) return;
+    final source = DirectionsScope.of(context).location;
+    final permission = await source.checkPermission();
+    if (permission != LocationPermission.always &&
+        permission != LocationPermission.whileInUse) {
+      return;
+    }
+    final fix = await source.current();
+    if (mounted && fix != null) setState(() => _here = fix);
+  }
+
   /// The bar's tapped: searching, full, the keyboard up.
   void _searchFull() {
     if (!_searching) setState(() => _searching = true);
+    if (isCupertinoOf(context)) unawaited(_findHere());
     _sampleMap();
     _sheet!.animateTo(const SheetAnchor.full());
   }
@@ -318,7 +340,8 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
             ),
             ListenableBuilder(
               listenable: search,
-              builder: (context, _) => _Results(search: search, onTap: _open),
+              builder: (context, _) =>
+                  _Results(search: search, here: _here, onTap: _open),
             ),
           ],
         ),
@@ -406,9 +429,16 @@ class _PinnedChips extends StatelessWidget {
 }
 
 class _Results extends StatelessWidget {
-  const _Results({required this.search, required this.onTap});
+  const _Results({
+    required this.search,
+    required this.here,
+    required this.onTap,
+  });
 
   final PlaceSearch search;
+
+  /// Where you are, for how far each result is; null if that isn't known.
+  final Fix? here;
   final void Function(Place place) onTap;
 
   @override
@@ -456,13 +486,17 @@ class _Results extends StatelessWidget {
             ),
           ),
         if (cupertino && search.text.trim().isNotEmpty && results.isNotEmpty)
+          // Straight on the sheet, as iOS lists what a search finds, with the
+          // separators starting at the text.
           SliverPadding(
             padding: const EdgeInsets.only(bottom: 12),
-            sliver: SliverToBoxAdapter(
-              child: AppListSection(
+            sliver: SliverList.builder(
+              itemCount: results.length,
+              itemBuilder: (context, i) => Column(
                 children: [
-                  for (final place in results)
-                    _ResultRow(place: place, onTap: onTap),
+                  _ResultRow(place: results[i], here: here, onTap: onTap),
+                  if (i < results.length - 1)
+                    const Divider(indent: _ResultRow.textInset, height: 0.5),
                 ],
               ),
             ),
@@ -576,12 +610,21 @@ class _CupertinoSearchField extends StatelessWidget {
   }
 }
 
-/// A result in iOS's grouped list: what it is, by its icon, then its name and address.
+/// A result in iOS's list: what it is, by its icon, then its name, and how far it is
+/// before its address.
 class _ResultRow extends StatelessWidget {
-  const _ResultRow({required this.place, required this.onTap});
+  const _ResultRow({
+    required this.place,
+    required this.here,
+    required this.onTap,
+  });
 
   final Place place;
+  final Fix? here;
   final void Function(Place place) onTap;
+
+  /// Where the text starts, past the icon: where separators start.
+  static const double textInset = 64;
 
   static IconData _icon(String kind) => switch (kind) {
     'poi' => CupertinoIcons.location_solid,
@@ -592,27 +635,54 @@ class _ResultRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final subtitle = placeSubtitle(place);
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    // Places in the accent; addresses, streets and areas quieter.
+    final poi = place.kind == 'poi';
+    final glyph = poi ? colors.primary : colors.onSurfaceVariant;
+    final address = placeSubtitle(place);
+    final here = this.here;
+    final distance = here == null
+        ? null
+        : formatDistance(
+            Geolocator.distanceBetween(
+              here.lat,
+              here.lng,
+              place.center.lat,
+              place.center.lon,
+            ),
+            miles: usesMiles(PlatformDispatcher.instance.locale),
+          );
+    final subtitle = [?distance, ?address].join(' · ');
     return AppListTile(
       leading: DecoratedBox(
         decoration: BoxDecoration(
-          color: colors.primary,
+          color: glyph.withValues(alpha: 0.14),
           shape: BoxShape.circle,
         ),
+        // CupertinoListTile's leading size: the text starts at [textInset].
         child: SizedBox.square(
-          dimension: 30,
-          child: Icon(_icon(place.kind), size: 16, color: colors.onPrimary),
+          dimension: 28,
+          child: Icon(_icon(place.kind), size: 15, color: glyph),
         ),
       ),
+      // Room to breathe: results are read at a glance, one after another.
+      padding: const EdgeInsetsDirectional.fromSTEB(20, 12, 14, 12),
       title: Text(
         placeTitle(place),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      subtitle: subtitle == null
+      subtitle: subtitle.isEmpty
           ? null
-          : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+          : Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
       onTap: () => onTap(place),
     );
   }

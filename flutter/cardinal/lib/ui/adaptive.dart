@@ -206,6 +206,7 @@ class AppListTile extends StatelessWidget {
     this.trailing,
     this.onTap,
     this.chevron = false,
+    this.padding,
   });
 
   final Widget title;
@@ -219,6 +220,9 @@ class AppListTile extends StatelessWidget {
   /// Whether a chevron at the end says the row opens something.
   final bool chevron;
 
+  /// Around the row's content, if not the platform's own.
+  final EdgeInsetsGeometry? padding;
+
   @override
   Widget build(BuildContext context) {
     if (isCupertinoOf(context)) {
@@ -229,6 +233,7 @@ class AppListTile extends StatelessWidget {
         trailing:
             trailing ?? (chevron ? const CupertinoListTileChevron() : null),
         onTap: onTap,
+        padding: padding,
       );
     }
     return ListTile(
@@ -237,6 +242,7 @@ class AppListTile extends StatelessWidget {
       leading: leading,
       trailing: trailing ?? (chevron ? const Icon(Icons.chevron_right) : null),
       onTap: onTap,
+      contentPadding: padding,
     );
   }
 }

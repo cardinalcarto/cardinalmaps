@@ -1169,11 +1169,16 @@ class _CupertinoSummary extends StatelessWidget {
               enabled: false,
               label: 'Start Navigation',
               excludeSemantics: true,
-              child: const CupertinoButton.filled(
-                color: Color(0xFF34C759),
+              child: CupertinoButton.filled(
+                color: const Color(0xFF34C759),
+                // Until there's navigation: there, but plainly not to be tapped.
+                disabledColor: theme.colorScheme.surfaceContainerHigh,
                 sizeStyle: CupertinoButtonSize.large,
                 onPressed: null,
-                child: Text('Go'),
+                child: Text(
+                  'Go',
+                  style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                ),
               ),
             ),
           ],

@@ -109,6 +109,13 @@ class GlassSurface extends StatelessWidget {
 /// The key of the sheet's glass, for tests to tell it from the rest.
 const sheetGlassKey = Key('sheet glass');
 
+/// How far toward tinted the sheet's glass is; see [appGlassTint].
+const double sheetGlassTint = 0.7;
+
+/// How much of the sheet's color lies over its glass while it peeks: enough for text
+/// over any map, little enough for the map's colors to read through the blur.
+const double sheetGlassWash = 0.5;
+
 /// The sheet's glass, for `SheetScaffold.backdrop`: at full strength while the sheet
 /// shows any of it, under the sheet's color fading in as it rises, so the sheet only
 /// ever gets more opaque. (Fading the glass out as the color faded in left the sheet
@@ -119,14 +126,14 @@ sheetGlassOf(BuildContext context) {
   if (!glassEnabledOf(context)) return null;
   return (context, cornerRadius, clarity) => AppGlassLayer(
     key: sheetGlassKey,
-    tintAmount: 0.9,
+    tintAmount: sheetGlassTint,
     child: GlassSurface(
       radius: cornerRadius,
       // A thick material, as iOS gives sheets: the sheet's color over the glass, so
       // the map tints the sheet without coloring the text on it.
       child: ColoredBox(
         color: Theme.of(context).colorScheme.surfaceContainerLow
-            .withValues(alpha: 0.7),
+            .withValues(alpha: sheetGlassWash),
         child: const SizedBox.expand(),
       ),
     ),
