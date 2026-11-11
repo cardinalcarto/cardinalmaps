@@ -205,7 +205,14 @@ class GpuExecutor {
   /// `uniforms` are its draws' uniform blocks, `data` the vertices they bind, and
   /// `uploads` the contents of the buffers and textures it creates; none of them are
   /// kept.
-  void execute(
+  ///
+  /// Each render pass after the first goes in a command buffer of its own, the one
+  /// before it submitted first, and the last is returned for the caller to present and
+  /// submit. On Metal a Flutter GPU render pass opens its encoder when it's created and
+  /// closes it only at submit, and a command buffer can't have two open at once: Metal
+  /// validation fails with "encoding in progress", and the simulator crashes. A queue
+  /// runs command buffers in the order they're submitted, so passes keep their order.
+  gpu.CommandBuffer execute(
     Uint32List words,
     Uint8List uniforms,
     Uint8List data,
@@ -213,6 +220,7 @@ class GpuExecutor {
     gpu.Texture screen,
     gpu.CommandBuffer commandBuffer,
   ) {
+    var passes = 0;
     _words = words;
     _wordBytes = ByteData.sublistView(words);
     _uploads = uploads;
@@ -308,6 +316,10 @@ class GpuExecutor {
         case _Op.freeTexture:
           _textures.remove(_next());
         case _Op.beginPass:
+          if (passes++ > 0) {
+            commandBuffer.submit();
+            commandBuffer = context.createCommandBuffer();
+          }
           pass = _beginPass(commandBuffer, screen);
           bindings.reset();
           _lineScissor = false; // PERF-TEMP
@@ -428,6 +440,7 @@ class GpuExecutor {
           throw StateError('unknown GPU command $op at word ${_at - 1}');
       }
     }
+    return commandBuffer;
   }
 
   /// Write the frame's uniform blocks to the next of [_uniformBuffers], growing it if

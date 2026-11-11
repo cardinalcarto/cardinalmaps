@@ -573,14 +573,13 @@ class _SparkleMapState extends State<SparkleMap> {
       }
       final tRust = sw.elapsedMicroseconds; // PERF-TEMP
       final frame = surface.acquireNextFrame();
-      final commandBuffer = gpu.gpuContext.createCommandBuffer();
-      executor.execute(
+      final commandBuffer = executor.execute(
         _words(out.commands),
         _bytes(out.uniforms),
         _bytes(out.data),
         _bytes(out.uploads),
         frame.colorTexture,
-        commandBuffer,
+        gpu.gpuContext.createCommandBuffer(),
       );
       final tExec = sw.elapsedMicroseconds - tRust; // PERF-TEMP
       frame.present(commandBuffer);
