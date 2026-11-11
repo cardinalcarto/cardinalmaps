@@ -198,7 +198,8 @@ class _SheetEntry extends ChangeNotifier {
         // says infinity), but it can at the trailing edge, a viewport's height less
         // its own above where its top is.
         final bottom = viewport.getOffsetToReveal(section, 1).offset;
-        top = bottom + (viewport as RenderBox).size.height - section.size.height;
+        top =
+            bottom + (viewport as RenderBox).size.height - section.size.height;
       }
       measured[section.id] = _Span(top, top + section.size.height);
     }
@@ -467,11 +468,26 @@ class _RenderSheetSection extends RenderProxyBox {
 
 /// Where the sheet is, as seen from within it (or its scaffold).
 class SheetView {
-  const SheetView._(this.controller, this.geometry, this._entry);
+  const SheetView._(
+    this.controller,
+    this.geometry,
+    this._entry, {
+    required this._color,
+    required this._translucent,
+  });
 
   final SheetController controller;
   final SheetGeometry geometry;
   final _SheetEntry? _entry;
+  final Color _color;
+  final bool _translucent;
+
+  /// The sheet's color where it is now: for what pins to its content, say, to paint
+  /// behind itself. Over a backdrop it's only as solid as the sheet
+  /// ([SheetGeometry.solidity]).
+  Color get surfaceColor => _translucent
+      ? _color.withValues(alpha: _color.a * geometry.solidity(extent))
+      : _color;
 
   /// How far the sheet is pulled up, in logical pixels from the bottom of the screen.
   double get extent => controller.extent;
@@ -525,7 +541,13 @@ class SheetBuilder extends StatelessWidget {
           : Listenable.merge([scope.controller, entry]),
       builder: (context, child) => builder(
         context,
-        SheetView._(scope.controller, entry?.geometry ?? scope.geometry, entry),
+        SheetView._(
+          scope.controller,
+          entry?.geometry ?? scope.geometry,
+          entry,
+          color: scope.color,
+          translucent: scope.translucent,
+        ),
         child,
       ),
       child: child,

@@ -22,6 +22,7 @@ class SheetScaffold extends StatefulWidget {
     this.color,
     this.elevation = 3,
     this.bodyOverlayStyle,
+    this.backdrop,
   });
 
   /// What the sheet lies over: the map.
@@ -53,6 +54,18 @@ class SheetScaffold extends StatefulWidget {
   /// The sheet's color; [ColorScheme.surfaceContainerLow] if null.
   final Color? color;
 
+  /// Builds what shows through the sheet where it isn't solid, glass say, given the
+  /// sheet's corner radius and how clear it is, from 1 (clear) to 0 (solid): it's laid
+  /// out over the sheet as it moves. With one, the sheet's [color] fades in only as the
+  /// sheet rises (see [SheetGeometry.solidity]), and its pages paint no background of
+  /// their own.
+  final Widget Function(
+    BuildContext context,
+    double cornerRadius,
+    double clarity,
+  )?
+  backdrop;
+
   final double elevation;
 
   /// The system bars' style over [body]; while the sheet covers the status bar, the
@@ -71,8 +84,16 @@ class SheetScaffold extends StatefulWidget {
       scope.controller,
       entry?.geometry ?? scope.geometry,
       entry,
+      color: scope.color,
+      translucent: scope.translucent,
     );
   }
+
+  /// Where the nearest sheet is, or null if there's no sheet above [context].
+  static SheetView? maybeViewOf(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<_SheetScope>() == null
+      ? null
+      : viewOf(context);
 
   /// How tall the nearest sheet's bottom bar is, 0 if it hasn't one.
   static double bottomBarHeightOf(BuildContext context) =>
@@ -326,6 +347,7 @@ class _SheetScaffoldState extends State<SheetScaffold>
               ? 0
               : widget.bottomBarHeight,
           color: color,
+          translucent: widget.backdrop != null,
           child: _SystemBarsStyle(
             controller: controller,
             geometry: geometry,
@@ -336,6 +358,13 @@ class _SheetScaffoldState extends State<SheetScaffold>
               children: [
                 RepaintBoundary(child: widget.body),
                 ?widget.floating,
+                if (widget.backdrop case final backdrop?)
+                  _SheetBackdrop(
+                    controller: controller,
+                    geometry: geometry,
+                    extent: _paintExtent,
+                    builder: backdrop,
+                  ),
                 RepaintBoundary(
                   child: GestureDetector(
                     onVerticalDragStart: (_) => controller.hold(),
@@ -349,6 +378,7 @@ class _SheetScaffoldState extends State<SheetScaffold>
                       geometry: geometry,
                       extent: _paintExtent,
                       color: color,
+                      translucent: widget.backdrop != null,
                       shadowColor: theme.colorScheme.shadow,
                       elevation: widget.elevation,
                       handle: _DragHandle(controller: controller),
@@ -393,6 +423,50 @@ class _SheetScaffoldState extends State<SheetScaffold>
   }
 }
 
+/// The scaffold's backdrop, laid out over the sheet as it moves.
+class _SheetBackdrop extends StatelessWidget {
+  const _SheetBackdrop({
+    required this.controller,
+    required this.geometry,
+    required this.extent,
+    required this.builder,
+  });
+
+  final SheetController controller;
+  final SheetGeometry geometry;
+  final double Function() extent;
+  final Widget Function(
+    BuildContext context,
+    double cornerRadius,
+    double clarity,
+  )
+  builder;
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: controller,
+    builder: (context, _) {
+      final extent = this.extent();
+      final clarity = 1 - geometry.solidity(extent);
+      // Solid, or out of sight: nothing shows through, so nothing to build.
+      if (extent <= 0 || clarity <= 0) return const SizedBox.shrink();
+      return Stack(
+        children: [
+          Positioned(
+            left: geometry.left,
+            width: geometry.width,
+            bottom: 0,
+            height: extent,
+            child: IgnorePointer(
+              child: builder(context, geometry.cornerRadiusAt(extent), clarity),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
+
 /// The scaffold's bottom bar, along the bottom of the sheet: as much of it as [shown]
 /// says rises from below the screen.
 class _BottomBar extends StatelessWidget {
@@ -432,6 +506,7 @@ class _SheetScope extends InheritedWidget {
     required this.geometry,
     required this.bottomBarHeight,
     required this.color,
+    required this.translucent,
     required super.child,
   });
 
@@ -445,6 +520,10 @@ class _SheetScope extends InheritedWidget {
   /// The sheet's color, which pages paint behind themselves to cover the page below.
   final Color color;
 
+  /// Whether the sheet is only as solid as [SheetGeometry.solidity] says, over a
+  /// backdrop, and pages paint nothing behind themselves.
+  final bool translucent;
+
   static _SheetScope of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<_SheetScope>();
     assert(scope != null, 'No SheetScaffold above this widget.');
@@ -457,7 +536,8 @@ class _SheetScope extends InheritedWidget {
       controller != oldWidget.controller ||
       geometry != oldWidget.geometry ||
       bottomBarHeight != oldWidget.bottomBarHeight ||
-      color != oldWidget.color;
+      color != oldWidget.color ||
+      translucent != oldWidget.translucent;
 }
 
 /// Styles the system bars for whatever's under them: the body, or the sheet once it
@@ -589,6 +669,7 @@ class _SheetSurface
     required this.geometry,
     required this.extent,
     required this.color,
+    required this.translucent,
     required this.shadowColor,
     required this.elevation,
     required this.handle,
@@ -599,6 +680,7 @@ class _SheetSurface
   final SheetGeometry geometry;
   final double Function() extent;
   final Color color;
+  final bool translucent;
   final Color shadowColor;
   final double elevation;
   final Widget handle;
@@ -620,6 +702,7 @@ class _SheetSurface
         geometry: geometry,
         extent: extent,
         color: color,
+        translucent: translucent,
         shadowColor: shadowColor,
         elevation: elevation,
       );
@@ -634,6 +717,7 @@ class _SheetSurface
       ..geometry = geometry
       ..extent = extent
       ..color = color
+      ..translucent = translucent
       ..shadowColor = shadowColor
       ..elevation = elevation;
   }
@@ -646,6 +730,7 @@ class _RenderSheetSurface extends RenderBox
     required this._geometry,
     required this.extent,
     required this._color,
+    required this._translucent,
     required this._shadowColor,
     required this._elevation,
   });
@@ -677,6 +762,15 @@ class _RenderSheetSurface extends RenderBox
   set color(Color value) {
     if (value == _color) return;
     _color = value;
+    markNeedsPaint();
+  }
+
+  /// Whether the surface is only as solid as [SheetGeometry.solidity] says.
+  bool get translucent => _translucent;
+  bool _translucent;
+  set translucent(bool value) {
+    if (value == _translucent) return;
+    _translucent = value;
     markNeedsPaint();
   }
 
@@ -771,15 +865,21 @@ class _RenderSheetSurface extends RenderBox
     }
     final surface = _surface(extent);
     final canvas = context.canvas;
-    if (elevation > 0) {
+    final solidity = translucent ? geometry.solidity(extent) : 1.0;
+    if (elevation > 0 && solidity > 0) {
       canvas.drawShadow(
         Path()..addRRect(surface.shift(offset)),
-        shadowColor,
+        shadowColor.withValues(alpha: shadowColor.a * solidity),
         elevation,
         false,
       );
     }
-    canvas.drawRRect(surface.shift(offset), Paint()..color = color);
+    if (solidity > 0) {
+      canvas.drawRRect(
+        surface.shift(offset),
+        Paint()..color = color.withValues(alpha: color.a * solidity),
+      );
+    }
     _clip.layer = context.pushClipRRect(
       needsCompositing,
       offset,

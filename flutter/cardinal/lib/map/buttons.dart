@@ -1,8 +1,11 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../sheet/sheet.dart';
+import '../ui/adaptive.dart';
+import '../ui/glass.dart';
 import 'layers.dart';
 import 'location.dart';
+import 'map_control.dart';
 
 /// The map's buttons, the layer picker's over my location, riding the top of the sheet
 /// at the end of the screen. They fade out as the sheet rises past halfway, as the map
@@ -17,10 +20,35 @@ class MapButtons extends StatelessWidget {
   Widget build(BuildContext context) {
     final padding = MediaQuery.paddingOf(context);
     return SheetBuilder(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [const LayerButton(), const SizedBox(height: 16), location],
-      ),
+      child: isCupertinoOf(context)
+          // One glass capsule, the way iOS groups a map's controls.
+          ? AppGlassLayer(
+              // More tinted than the rest: the map behind it can be anything.
+              tintAmount: 0.8,
+              child: GlassSurface(
+                radius: MapControl.size / 2,
+                floating: true,
+                child: SizedBox(
+                  width: MapControl.size,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const LayerButton(),
+                      const Divider(indent: 10, endIndent: 10),
+                      location,
+                    ],
+                  ),
+                ),
+              ),
+            )
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const LayerButton(),
+                const SizedBox(height: 16),
+                location,
+              ],
+            ),
       builder: (context, sheet, child) {
         final docked = sheet.geometry.placement == SheetPlacement.docked;
         final height = sheet.geometry.size.height;

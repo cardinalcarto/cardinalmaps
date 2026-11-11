@@ -207,7 +207,9 @@ class _SheetFade extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _SheetScope.of(context).color;
+    final scope = _SheetScope.of(context);
+    // Over a backdrop the sheet paints itself; a page's own background would hide it.
+    final color = scope.translucent ? Colors.transparent : scope.color;
     return AnimatedBuilder(
       animation: Listenable.merge([route.animation, route.secondaryAnimation]),
       // Opaque, to cover the page below once it's in, and a Material of its own for ink

@@ -137,6 +137,15 @@ class SheetGeometry {
   double cornerRadiusAt(double extent) =>
       cornerRadius * (1 - expansion(extent));
 
+  /// How opaque a sheet over a backdrop is at [extent] (see [SheetScaffold.backdrop]):
+  /// clear while it peeks, up to a third of the way up, and solid from halfway, where
+  /// its content needs the contrast more than the map needs to show through.
+  double solidity(double extent) {
+    final clearTo = maxExtent / 3;
+    final solidFrom = maxExtent / 2;
+    return ((extent - clearTo) / (solidFrom - clearTo)).clamp(0.0, 1.0);
+  }
+
   /// How far the content starts below the sheet's top edge at [extent]: below the drag
   /// handle, or below the status bar once expanded.
   double contentOffset(double extent) =>

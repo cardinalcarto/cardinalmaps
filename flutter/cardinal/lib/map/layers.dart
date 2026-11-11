@@ -6,7 +6,9 @@ import 'package:material_ui/material_ui.dart';
 import '../config.dart';
 import '../store/store.dart';
 import '../saved/saved_layers_sheet.dart';
+import '../ui/symbols.dart';
 import 'location.dart';
+import 'map_control.dart';
 import 'route_layer.dart';
 import 'saved_layer.dart';
 import 'selection.dart';
@@ -118,11 +120,10 @@ class LayerButton extends StatelessWidget {
   const LayerButton({super.key});
 
   @override
-  Widget build(BuildContext context) => FloatingActionButton(
-    heroTag: null,
+  Widget build(BuildContext context) => MapControl(
     tooltip: 'Map layers',
+    icon: AppSymbols.of(context).layers,
     onPressed: () => showLayerPicker(context),
-    child: const Icon(Icons.layers_outlined),
   );
 }
 

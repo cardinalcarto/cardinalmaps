@@ -1,9 +1,13 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../sheet/sheet.dart';
+import '../ui/adaptive.dart';
+import '../ui/toast.dart';
 
-/// Shows [message] above what the sheet covers: over the map above a partly raised
-/// sheet, or at the bottom of a full one, clear of its bars and [above] more.
+/// Shows [message]: on iOS a glass toast at the top of the screen; elsewhere a snack
+/// bar above what the sheet covers, over the map above a partly raised sheet or at the
+/// bottom of a full one, clear of its bars and [above] more (at the bottom of the
+/// screen without a sheet).
 void showSheetMessage(
   BuildContext context,
   String message, {
@@ -11,12 +15,21 @@ void showSheetMessage(
   VoidCallback? onAction,
   double above = 0,
 }) {
-  final view = SheetScaffold.viewOf(context);
-  final geometry = view.geometry;
-  final full = view.extent >= geometry.maxExtent - 1;
-  final bottom = full
-      ? geometry.padding.bottom + SheetScaffold.bottomBarHeightOf(context)
-      : view.extent;
+  if (isCupertinoOf(context)) {
+    showToast(context, message, action: action, onAction: onAction);
+    return;
+  }
+  final view = SheetScaffold.maybeViewOf(context);
+  final double bottom;
+  if (view == null) {
+    bottom = MediaQuery.viewPaddingOf(context).bottom;
+  } else {
+    final geometry = view.geometry;
+    final full = view.extent >= geometry.maxExtent - 1;
+    bottom = full
+        ? geometry.padding.bottom + SheetScaffold.bottomBarHeightOf(context)
+        : view.extent;
+  }
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
     ..showSnackBar(
@@ -24,7 +37,9 @@ void showSheetMessage(
         content: Text(message),
         behavior: SnackBarBehavior.floating,
         persist: false,
-        margin: EdgeInsets.fromLTRB(8, 0, 8, bottom + above + 8),
+        margin: view == null
+            ? null
+            : EdgeInsets.fromLTRB(8, 0, 8, bottom + above + 8),
         action: action == null
             ? null
             : SnackBarAction(label: action, onPressed: onAction ?? () {}),

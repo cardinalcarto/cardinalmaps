@@ -9,8 +9,12 @@ import 'package:geolocator/geolocator.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
 
+import '../saved/saved_feedback.dart';
 import '../store/store.dart';
+import '../ui/adaptive.dart';
+import '../ui/symbols.dart';
 import 'map.dart';
+import 'map_control.dart';
 
 /// The style's GeoJSON source for where you are.
 const locationSource = 'location';
@@ -327,25 +331,16 @@ class _MyLocationButtonState extends State<MyLocationButton> {
     }
     await _tracker!.map.firstComplete.timeout(_mapWait, onTimeout: () {});
     if (!mounted) return;
-    final yes = await showDialog<bool>(
+    final yes = await showAppDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Enable location?'),
-        content: const Text(
+      title: 'Enable location?',
+      message:
           'Allow Cardinal Maps to access your location to show you where you are on the map '
           'and provide a better experience.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('No'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Yes'),
-          ),
-        ],
-      ),
+      actions: const [
+        AppDialogAction(label: 'No', value: false),
+        AppDialogAction(label: 'Yes', value: true, isDefault: true),
+      ],
     );
     if (yes == null) return;
     await settings.set(locationOffered, true);
@@ -363,42 +358,41 @@ class _MyLocationButtonState extends State<MyLocationButton> {
     final tracker = _tracker!;
     final result = await tracker.locate();
     if (!mounted) return;
-    final (String message, SnackBarAction? action) = switch (result) {
-      LocateResult.located => ('', null),
+    final (
+      String message,
+      String? action,
+      VoidCallback? onAction,
+    ) = switch (result) {
+      LocateResult.located => ('', null, null),
       LocateResult.serviceOff => (
         'Location is off',
-        SnackBarAction(
-          label: 'Settings',
-          onPressed: tracker.source.openLocationSettings,
-        ),
+        'Settings',
+        tracker.source.openLocationSettings,
       ),
       LocateResult.denied => (
         'Cardinal needs your location to show where you are',
         null,
+        null,
       ),
       LocateResult.deniedForever => (
         'Location is turned off for Cardinal',
-        SnackBarAction(
-          label: 'Settings',
-          onPressed: tracker.source.openAppSettings,
-        ),
+        'Settings',
+        tracker.source.openAppSettings,
       ),
       LocateResult.unavailable => (
         "Your location isn't available right now",
         null,
+        null,
       ),
     };
     if (message.isEmpty) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message), action: action));
+    showSheetMessage(context, message, action: action, onAction: onAction);
   }
 
   @override
-  Widget build(BuildContext context) => FloatingActionButton(
-    heroTag: null,
+  Widget build(BuildContext context) => MapControl(
     tooltip: 'My location',
+    icon: AppSymbols.of(context).myLocation,
     onPressed: _locate,
-    child: const Icon(Icons.my_location),
   );
 }

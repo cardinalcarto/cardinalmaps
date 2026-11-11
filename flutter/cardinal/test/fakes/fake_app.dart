@@ -9,6 +9,8 @@ import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
+import 'package:cardinal/ui/glass.dart';
+import 'package:cardinal/ui/theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -41,6 +43,7 @@ Future<GoRouter> pumpFakeApp(
   LocationSource? locationSource,
   FakeMap? map,
   MapOverlays? overlays,
+  TargetPlatform? platform,
 }) async {
   tester.view
     ..physicalSize = appScreen * 2
@@ -59,6 +62,7 @@ Future<GoRouter> pumpFakeApp(
             body: const SizedBox.expand(),
             bottomBar: const AppNavigationBar(),
             bottomBarHeight: appBarHeight,
+            backdrop: sheetGlassOf(context),
             sheet: child,
           ),
         ),
@@ -83,7 +87,13 @@ Future<GoRouter> pumpFakeApp(
           child: MapScope(
             controller: map ?? FakeMap(),
             overlays: overlays ?? MapOverlays(),
-            child: MaterialApp.router(routerConfig: router),
+            child: MaterialApp.router(
+              // The app's theme for [platform], or the test's default theme.
+              theme: platform == null
+                  ? null
+                  : appTheme(Brightness.light, platform: platform),
+              routerConfig: router,
+            ),
           ),
         ),
       ),

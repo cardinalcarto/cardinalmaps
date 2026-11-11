@@ -15,10 +15,19 @@ import 'adaptive.dart';
 bool glassEnabledOf(BuildContext context) =>
     isCupertinoOf(context) && !MediaQuery.highContrastOf(context);
 
+/// How far toward tinted the app's glass is on iOS 27's Liquid Glass slider, from 0
+/// (clear) to 1 (tinted): partway, so chrome over a busy map stays legible.
+const double appGlassTint = 0.5;
+
 /// iOS 27's regular glass, for toolbars, tab bars and buttons, in the theme's
-/// brightness.
-LiquidGlassSettings appGlassSettings(BuildContext context) =>
-    LiquidGlassSettings.ios27Regular(brightness: Theme.of(context).brightness);
+/// brightness, [tintAmount] of the way to tinted.
+LiquidGlassSettings appGlassSettings(
+  BuildContext context, {
+  double tintAmount = appGlassTint,
+}) => LiquidGlassSettings.ios27Regular(
+  brightness: Theme.of(context).brightness,
+  tintAmount: tintAmount,
+);
 
 LiquidGlassAppearance _appearance(BuildContext context) =>
     LiquidGlassAppearance.ios27Regular(
@@ -28,15 +37,22 @@ LiquidGlassAppearance _appearance(BuildContext context) =>
 /// A layer for the [GlassSurface]s in [child] to share, sampling what's behind them
 /// once. Without glass it's just [child].
 class AppGlassLayer extends StatelessWidget {
-  const AppGlassLayer({super.key, required this.child});
+  const AppGlassLayer({
+    super.key,
+    required this.child,
+    this.tintAmount = appGlassTint,
+  });
 
   final Widget child;
+
+  /// How far toward tinted its glass is; see [appGlassTint].
+  final double tintAmount;
 
   @override
   Widget build(BuildContext context) {
     if (!glassEnabledOf(context)) return child;
     return LiquidGlassLayer(
-      settings: appGlassSettings(context),
+      settings: appGlassSettings(context, tintAmount: tintAmount),
       defaultAppearance: _appearance(context),
       child: child,
     );
@@ -48,10 +64,23 @@ class AppGlassLayer extends StatelessWidget {
 ///
 /// It uses the [AppGlassLayer] above it, if any, or a layer of its own.
 class GlassSurface extends StatelessWidget {
-  const GlassSurface({super.key, required this.child, this.radius = 24});
+  const GlassSurface({
+    super.key,
+    required this.child,
+    this.radius = 24,
+    this.floating = false,
+  });
 
   final Widget child;
   final double radius;
+
+  /// Whether it floats over the map, with a shadow to lift it off whatever's below.
+  final bool floating;
+
+  static const _floatingShadows = [
+    BoxShadow(color: Color(0x29000000), blurRadius: 16, offset: Offset(0, 4)),
+    BoxShadow(color: Color(0x14000000), blurRadius: 2, offset: Offset(0, 1)),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -61,6 +90,7 @@ class GlassSurface extends StatelessWidget {
         shape: LiquidRoundedSuperellipse(borderRadius: radius),
         settings: appGlassSettings(context),
         appearance: _appearance(context),
+        shadows: floating ? _floatingShadows : const [],
         child: child,
       );
     }
@@ -74,4 +104,28 @@ class GlassSurface extends StatelessWidget {
       child: child,
     );
   }
+}
+
+/// The sheet's glass, for `SheetScaffold.backdrop`: fading out as the sheet turns
+/// solid, given its corner radius and how clear it is. Null where glass is off, so the
+/// sheet stays solid.
+Widget Function(BuildContext context, double cornerRadius, double clarity)?
+sheetGlassOf(BuildContext context) {
+  if (!glassEnabledOf(context)) return null;
+  return (context, cornerRadius, clarity) => LiquidGlassVisibility(
+    visibility: clarity,
+    child: AppGlassLayer(
+      tintAmount: 0.9,
+      child: GlassSurface(
+        radius: cornerRadius,
+        // A thick material, as iOS gives sheets: the sheet's color over the glass, so
+        // the map tints the sheet without coloring the text on it.
+        child: ColoredBox(
+          color: Theme.of(context).colorScheme.surfaceContainerLow
+              .withValues(alpha: 0.7),
+          child: const SizedBox.expand(),
+        ),
+      ),
+    ),
+  );
 }

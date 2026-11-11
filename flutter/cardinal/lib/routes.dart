@@ -12,6 +12,7 @@ import 'place/place_page.dart';
 import 'saved/saved_page.dart';
 import 'search/search_sheet.dart';
 import 'sheet/sheet.dart';
+import 'ui/glass.dart';
 
 /// Tells the sheet's pages when a page covers them and when it closes again, so the
 /// page under it can be as it was: see `SearchSheet`.
@@ -63,6 +64,7 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
           body: CardinalMap(controller: map),
           floating: const MapButtons(),
           bottomBar: const AppNavigationBar(),
+          backdrop: sheetGlassOf(context),
           sheet: child,
         ),
       ),

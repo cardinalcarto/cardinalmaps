@@ -237,7 +237,6 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
             SliverPersistentHeader(
               pinned: true,
               delegate: _SearchBarHeader(
-                color: Theme.of(context).colorScheme.surfaceContainerLow,
                 height: _chipsShowing
                     ? _SearchBarHeader.heightWithChips
                     : _SearchBarHeader.barHeight,
@@ -305,15 +304,10 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
   }
 }
 
-/// The search bar, pinned to the top of the sheet's content.
+/// The search bar, pinned to the top of the sheet's content, on the sheet's color.
 class _SearchBarHeader extends SliverPersistentHeaderDelegate {
-  _SearchBarHeader({
-    required this.color,
-    required this.height,
-    required this.child,
-  });
+  _SearchBarHeader({required this.height, required this.child});
 
-  final Color color;
   final double height;
   final Widget child;
 
@@ -334,13 +328,17 @@ class _SearchBarHeader extends SliverPersistentHeaderDelegate {
     BuildContext context,
     double shrinkOffset,
     bool overlapsContent,
-  ) => ColoredBox(color: color, child: child);
+  ) => SheetBuilder(
+    // Clear over glass while the sheet peeks; the sheet's color once results scroll
+    // under it.
+    builder: (context, sheet, child) =>
+        ColoredBox(color: sheet.surfaceColor, child: child),
+    child: child,
+  );
 
   @override
   bool shouldRebuild(_SearchBarHeader oldDelegate) =>
-      color != oldDelegate.color ||
-      height != oldDelegate.height ||
-      child != oldDelegate.child;
+      height != oldDelegate.height || child != oldDelegate.child;
 }
 
 /// A chip for each pinned place, which opens it.
