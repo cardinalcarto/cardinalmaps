@@ -72,4 +72,27 @@ Please check, on an Android device or emulator:
 
 ## Android results
 
-_(To be filled in by the Android session.)_
+Checked on 2026-11-11 on a Moto G Play 2024, Flutter stable 3.47.9, profile build with
+`dart_defines.json`.
+
+1. `flutter analyze`: no issues. `flutter test`: all 376 pass.
+2. Everything looks and works as on `ios-native-chrome`:
+   - Search results and the place card: the same Material cards; Directions filled,
+     Save outlined, the close icon button.
+   - Directions: outlined From and To fields, the four-mode button row, "Couldn't get
+     directions" (no router is reachable, unrelated to this branch). Choosing an end
+     has the outlined field and result cards.
+   - Saved: browsing, and edit mode with checkboxes and the floating Material
+     Move / Copy / Delete bar (in code, Android keeps the same `Material` bar and icons;
+     the red Delete is iOS only). New list is a Material alert. Edit opens the "Edit
+     place" dialog, and its emoji saved. Copy, Move and Delete each worked, with Undo
+     in their snack bars.
+   - Layers: Streets, Topo with ft/m and the winter button, and Saved places; its
+     "Saved places on the map" sheet has Material checkboxes.
+3. The "Saved in" picker has Done at the bottom. The Move picker, and the Add and Copy
+   pickers like it, have "New list here" and the action button ("Move here" etc.), with
+   the source list greyed out.
+
+The Saved checks used throwaway lists ("Parity check", "Parity copy", "Parity move") and
+a place that wasn't saved before. All three lists were deleted afterward, leaving the
+phone's saved places as they were.
