@@ -46,4 +46,24 @@ Please check, on an Android device or emulator:
 
 ## Android results
 
-_(To be filled in by the Android session.)_
+Checked on 2026-11-11 on a Moto G Play 2024 (Adreno, Impeller on Vulkan), Flutter
+stable 3.47.9 / Dart 3.13.7. The Linux SDK was moved from master to the 3.47.9 tag to
+match: `liquid_glass_renderer`'s `<3.14` Dart constraint doesn't resolve on master
+(Dart 3.15).
+
+1. `flutter analyze`: no issues. `flutter test`: all 359 pass.
+2. Profile APK (`--dart-define-from-file=dart_defines.json`) builds, installs and
+   launches.
+3. No visible change. Home, search results, a place sheet, directions, layers and
+   Saved all have Material type, shapes and colors from the blue-grey seed. In code,
+   `appTheme` on Android is `ThemeData(colorScheme: fromSeed(blueGrey), platform:
+   defaultTargetPlatform)`, the same theme as before (default ink splash, default
+   dividers). The lockfile only adds packages: `cupertino_icons`, `equatable`,
+   `flutter_shaders`, `liquid_glass_renderer`, `motor`. No existing version changed.
+4. No log lines from `liquid_glass_renderer` at startup or during use. The only app
+   errors are ones unrelated to this branch (Geolocator's start message, OpenGLRenderer
+   swap behavior).
+
+Unrelated to this branch: routing failed with "Couldn't get directions" because
+`CARDINAL_ROUTING_URL` points at `192.168.1.112:8002`, which refused the connection.
+The directions sheet itself rendered normally.
