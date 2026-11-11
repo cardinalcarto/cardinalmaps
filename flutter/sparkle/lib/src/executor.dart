@@ -60,16 +60,10 @@ class _Program {
   final Map<int, gpu.RenderPipeline> pipelines = {};
 }
 
-/// One of the buffers frames write their uniform blocks to in turn, and the binding sets
-/// made for its blocks. Every draw's block has the same size, so a draw's block is at the
-/// same offset from one frame to the next, and its set can be bound again: binding a set
-/// costs Flutter GPU much less than binding a block.
+/// One of the buffers frames write their uniform blocks to in turn.
 class _UniformBuffer {
   gpu.DeviceBuffer? buffer;
   int capacity = 0;
-
-  /// Per program, by the block's offset and length (`offset << 16 | length`).
-  final Map<_Program, Map<int, gpu.BindingSet>> sets = {};
 }
 
 /// What a draw binds, kept so that every draw can bind all of it: whether Flutter GPU
@@ -450,7 +444,6 @@ class GpuExecutor {
       }
       u.buffer = context.createDeviceBuffer(gpu.StorageMode.hostVisible, capacity);
       u.capacity = capacity;
-      u.sets.clear();
     }
     u.buffer!.overwrite(ByteData.sublistView(uniforms));
     u.buffer!.flush(lengthInBytes: uniforms.length);
@@ -569,19 +562,14 @@ class GpuExecutor {
           if (shader.getUniformSlot('Draw').sizeInBytes != null)
             shader.getUniformSlot('Draw'),
       ];
-      final u = _uniformBuffer;
-      final sets = u.sets[p] ??= {};
-      final set = sets[offset << 16 | length] ??= context.createBindingSet(
-        uniforms: {
-          for (final slot in slots)
-            slot: gpu.BufferView(
-              u.buffer!,
-              offsetInBytes: offset,
-              lengthInBytes: length,
-            ),
-        },
+      final view = gpu.BufferView(
+        _uniformBuffer.buffer!,
+        offsetInBytes: offset,
+        lengthInBytes: length,
       );
-      pass.bindSet(set);
+      for (final slot in slots) {
+        pass.bindUniform(slot, view);
+      }
     }
     for (final MapEntry(key: name, value: view) in b.blocks.entries) {
       final slots = p.blocks[name] ??= [

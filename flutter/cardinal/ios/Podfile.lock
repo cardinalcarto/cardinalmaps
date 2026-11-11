@@ -1,0 +1,28 @@
+PODS:
+  - Flutter (1.0.0)
+  - routing (0.0.1):
+    - Flutter
+  - sparkle (0.0.1):
+    - Flutter
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - routing (from `.symlinks/plugins/routing/ios`)
+  - sparkle (from `.symlinks/plugins/sparkle/ios`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  routing:
+    :path: ".symlinks/plugins/routing/ios"
+  sparkle:
+    :path: ".symlinks/plugins/sparkle/ios"
+
+SPEC CHECKSUMS:
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
+  routing: c31b6eca0ae02da5da0c0447667df56e33c5958c
+  sparkle: ae32c261186b294fd9ed55136f162c6dfee20a12
+
+PODFILE CHECKSUM: 3ba3a73b1b12adcf321a227a745625fe0888cc82
+
+COCOAPODS: 1.17.0

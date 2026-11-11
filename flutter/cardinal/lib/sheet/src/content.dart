@@ -192,7 +192,14 @@ class _SheetEntry extends ChangeNotifier {
           RenderAbstractViewport.maybeOf(section) != viewport) {
         continue;
       }
-      final top = viewport.getOffsetToReveal(section, 0).offset;
+      var top = viewport.getOffsetToReveal(section, 0).offset;
+      if (!top.isFinite) {
+        // A section in a pinned sliver can't be revealed at the leading edge (Flutter
+        // says infinity), but it can at the trailing edge, a viewport's height less
+        // its own above where its top is.
+        final bottom = viewport.getOffsetToReveal(section, 1).offset;
+        top = bottom + (viewport as RenderBox).size.height - section.size.height;
+      }
       measured[section.id] = _Span(top, top + section.size.height);
     }
     if (!mapEquals(measured, spans)) {
