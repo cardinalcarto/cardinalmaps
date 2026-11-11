@@ -158,9 +158,7 @@ void main() {
   });
 
   group('the layer picker on iOS', () {
-    testWidgets('is grouped rows with a segmented control and a switch', (
-      tester,
-    ) async {
+    testWidgets('is grouped rows with a segmented control', (tester) async {
       final settings = SettingsStore.inMemory();
       await tester.pumpWidget(
         MaterialApp(
@@ -177,19 +175,15 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.byType(CupertinoSwitch), findsOneWidget);
+      expect(find.byType(CupertinoSwitch), findsNothing);
       expect(find.byType(SegmentedButton<ContourUnits>), findsNothing);
       expect(find.byIcon(CupertinoIcons.checkmark), findsOneWidget);
-
-      await tester.tap(find.byType(CupertinoSwitch));
-      await tester.pumpAndSettle();
-      expect(await settings.get(winterMode), true);
-      // A topo setting chooses topo.
-      expect(await settings.get(mapStyleChoice), MapStyle.topo);
 
       await tester.tap(find.text('m'));
       await tester.pumpAndSettle();
       expect(await settings.get(contourUnits), ContourUnits.metric);
+      // A topo setting chooses topo.
+      expect(await settings.get(mapStyleChoice), MapStyle.topo);
     });
   });
 

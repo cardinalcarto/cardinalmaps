@@ -26,6 +26,10 @@ const darkMapStyle = String.fromEnvironment(
 /// The bundled Cardinal Topo style, a file in `assets/map`.
 const topoStyle = 'cardinal-topo.json';
 
+/// The bundled Cardinal Topo style for dark mode, a file in `assets/map`, made from
+/// [topoStyle] by `tool/dark_topo_style.dart`.
+const darkTopoStyle = 'cardinal-topo-dark.json';
+
 /// Where the map opens on the first launch, as `lng,lat,zoom`; the whole planet if empty.
 /// After that it opens where it was (see `map/viewport.dart`).
 const initialView = String.fromEnvironment('CARDINAL_VIEW');

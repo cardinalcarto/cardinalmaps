@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../tool/dark_style.dart';
+import '../../tool/dark_topo_style.dart';
 import '../fakes/fake_place_store.dart';
 import '../fakes/fake_saved_store.dart';
 
@@ -17,17 +18,14 @@ Map<String, Object?> _state(Map<String, Object?> style) =>
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('the topo style carries the chosen units and winter mode', () async {
+  test('the topo style carries the chosen units, and no winter mode', () async {
     final style = await styleFor(
-      const MapLayers(
-        style: MapStyle.topo,
-        units: ContourUnits.metric,
-        winter: true,
-      ),
+      const MapLayers(style: MapStyle.topo, units: ContourUnits.metric),
     );
     expect(style['name'], 'Cardinal Topo');
     expect(_state(style)['units'], {'default': 'metric'});
-    expect(_state(style)['winter'], {'default': true});
+    expect(_state(style).containsKey('winter'), false);
+    expect(jsonEncode(style), isNot(contains('piste')));
   });
 
   test('both styles have the selected place on top', () async {
@@ -40,14 +38,16 @@ void main() {
     }
   });
 
-  test('a dark app gets the dark streets style, and topo as it is', () async {
+  test('a dark app gets the dark streets and topo styles', () async {
     final streets = await styleFor(const MapLayers(dark: true));
     expect(streets['id'], endsWith('-dark'));
     expect((await styleFor(const MapLayers()))['id'], isNot(endsWith('-dark')));
     final topo = await styleFor(
       const MapLayers(style: MapStyle.topo, dark: true),
     );
-    expect(topo['name'], 'Cardinal Topo');
+    expect(topo['name'], 'Cardinal Topo (dark)');
+    // Topo's settings still apply in the dark.
+    expect(_state(topo)['units'], {'default': 'imperial'});
   });
 
   test('the bundled dark style is the one made from the light style', () async {
@@ -61,6 +61,22 @@ void main() {
     );
     expect(jsonDecode(jsonEncode(light)), bundled);
   });
+
+  test(
+    'the bundled dark topo style is the one made from the light one',
+    () async {
+      // Fails if the light topo changed and tool/dark_topo_style.dart wasn't rerun, or
+      // if it has a color the dark palette doesn't cover.
+      final light = jsonDecode(
+        await rootBundle.loadString('assets/map/$topoStyle'),
+      ) as Map<String, Object?>;
+      darkenTopo(light);
+      final bundled = jsonDecode(
+        await rootBundle.loadString('assets/map/$darkTopoStyle'),
+      );
+      expect(jsonDecode(jsonEncode(light)), bundled);
+    },
+  );
 
   test('only declared global state is set', () {
     final style = <String, Object?>{
@@ -110,16 +126,11 @@ void main() {
     await tester.pump();
     expect(await settings.get(contourUnits), ContourUnits.metric);
 
-    await tester.tap(find.byTooltip('Winter'));
-    await tester.pump();
-    expect(await settings.get(winterMode), true);
-
     await tester.tap(find.text('Streets'));
     await tester.pump();
     expect(await settings.get(mapStyleChoice), MapStyle.streets);
     // Topo's settings are kept for next time.
     expect(await settings.get(contourUnits), ContourUnits.metric);
-    expect(await settings.get(winterMode), true);
   });
 
   testWidgets("choosing a topo setting chooses topo", (tester) async {
@@ -136,24 +147,16 @@ void main() {
   ) async {
     await pumpPicker(tester);
     Rect where(Finder finder) => tester.getRect(finder);
-    final before = [
-      where(find.byType(LayerPicker)),
-      where(find.text('m')),
-      where(find.byTooltip('Winter')),
-    ];
+    final before = [where(find.byType(LayerPicker)), where(find.text('m'))];
     await tester.tap(find.text('Topo'));
     await tester.pumpAndSettle();
-    expect([
-      where(find.byType(LayerPicker)),
-      where(find.text('m')),
-      where(find.byTooltip('Winter')),
-    ], before);
+    expect([where(find.byType(LayerPicker)), where(find.text('m'))], before);
   });
 
   testWidgets('the picker opens on what was stored', (tester) async {
     final stored = SettingsStore.inMemory();
     await stored.set(mapStyleChoice, MapStyle.topo);
-    await stored.set(winterMode, true);
+    await stored.set(contourUnits, ContourUnits.metric);
     await pumpPicker(tester, stored);
     final topo = tester.getSemantics(
       find
@@ -163,9 +166,11 @@ void main() {
     expect(topo, isSemantics(isSelected: true));
     expect(
       tester
-          .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.ac_unit))
-          .isSelected,
-      true,
+          .widget<SegmentedButton<ContourUnits>>(
+            find.byType(SegmentedButton<ContourUnits>),
+          )
+          .selected,
+      {ContourUnits.metric},
     );
   });
 }

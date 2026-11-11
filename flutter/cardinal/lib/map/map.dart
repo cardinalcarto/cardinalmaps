@@ -125,9 +125,6 @@ class _CardinalMapState extends State<CardinalMap> {
       settings
           .watch(contourUnits)
           .listen((v) => _change((l) => l.copyWith(units: v))),
-      settings
-          .watch(winterMode)
-          .listen((v) => _change((l) => l.copyWith(winter: v))),
     ]);
     return args;
   }

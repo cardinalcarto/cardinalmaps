@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:cupertino_ui/cupertino_ui.dart'
-    show CupertinoIcons, CupertinoListTileChevron, CupertinoSwitch;
+    show CupertinoIcons, CupertinoListTileChevron;
 import 'package:material_ui/material_ui.dart';
 
 import '../config.dart';
@@ -42,9 +42,6 @@ final contourUnits = Setting.choice(
   ContourUnits.imperial,
 );
 
-/// Cardinal Topo's winter mode, its `winter` global state.
-final winterMode = Setting.flag('map.winter', false);
-
 /// What the layer picker chooses: the map's style, and Cardinal Topo's settings; and
 /// whether the app is dark, which the map follows.
 @immutable
@@ -52,7 +49,6 @@ class MapLayers {
   const MapLayers({
     this.style = MapStyle.streets,
     this.units = ContourUnits.imperial,
-    this.winter = false,
     this.dark = false,
   });
 
@@ -63,39 +59,31 @@ class MapLayers {
   }) async => MapLayers(
     style: await settings.get(mapStyleChoice),
     units: await settings.get(contourUnits),
-    winter: await settings.get(winterMode),
     dark: dark,
   );
 
   final MapStyle style;
   final ContourUnits units;
-  final bool winter;
 
-  /// Whether the app is in dark mode. Streets has a dark style; Topo doesn't yet.
+  /// Whether the app is in dark mode, which each style has a version for.
   final bool dark;
 
-  MapLayers copyWith({
-    MapStyle? style,
-    ContourUnits? units,
-    bool? winter,
-    bool? dark,
-  }) => MapLayers(
-    style: style ?? this.style,
-    units: units ?? this.units,
-    winter: winter ?? this.winter,
-    dark: dark ?? this.dark,
-  );
+  MapLayers copyWith({MapStyle? style, ContourUnits? units, bool? dark}) =>
+      MapLayers(
+        style: style ?? this.style,
+        units: units ?? this.units,
+        dark: dark ?? this.dark,
+      );
 
   @override
   bool operator ==(Object other) =>
       other is MapLayers &&
       other.style == style &&
       other.units == units &&
-      other.winter == winter &&
       other.dark == dark;
 
   @override
-  int get hashCode => Object.hash(style, units, winter, dark);
+  int get hashCode => Object.hash(style, units, dark);
 }
 
 /// The style JSON for [layers], from the bundled styles, with where you are and the
@@ -103,15 +91,12 @@ class MapLayers {
 Future<Map<String, Object?>> styleFor(MapLayers layers) async {
   final file = switch (layers.style) {
     MapStyle.streets => layers.dark ? darkMapStyle : mapStyle,
-    MapStyle.topo => topoStyle,
+    MapStyle.topo => layers.dark ? darkTopoStyle : topoStyle,
   };
   final style = jsonDecode(
     await rootBundle.loadString('assets/map/$file'),
   ) as Map<String, Object?>;
-  setGlobalStateDefaults(style, {
-    'units': layers.units.name,
-    'winter': layers.winter,
-  });
+  setGlobalStateDefaults(style, {'units': layers.units.name});
   addSavedLayers(style);
   addRouteLayers(style);
   addSelectionLayers(style);
@@ -192,7 +177,6 @@ class _LayerPickerState extends State<LayerPicker> {
       if (old?.style != layers.style)
         settings.set(mapStyleChoice, layers.style),
       if (old?.units != layers.units) settings.set(contourUnits, layers.units),
-      if (old?.winter != layers.winter) settings.set(winterMode, layers.winter),
     ]);
   }
 
@@ -241,18 +225,6 @@ class _LayerPickerState extends State<LayerPicker> {
                   ),
                 ),
               ),
-              AppListTile(
-                title: const Text('Winter'),
-                trailing: Semantics(
-                  label: 'Winter',
-                  child: CupertinoSwitch(
-                    value: layers.winter,
-                    onChanged: (winter) => _choose(
-                      layers.copyWith(style: MapStyle.topo, winter: winter),
-                    ),
-                  ),
-                ),
-              ),
             ],
           ),
           StreamBuilder(
@@ -295,7 +267,6 @@ class _LayerPickerState extends State<LayerPicker> {
   @override
   Widget build(BuildContext context) {
     final layers = _layers;
-    final scheme = Theme.of(context).colorScheme;
     if (layers != null && isCupertinoOf(context)) {
       return _cupertino(context, layers);
     }
@@ -361,23 +332,6 @@ class _LayerPickerState extends State<LayerPicker> {
                           layers.copyWith(
                             style: MapStyle.topo,
                             units: chosen.single,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        isSelected: layers.winter,
-                        tooltip: 'Winter',
-                        icon: const Icon(Icons.ac_unit),
-                        style: IconButton.styleFrom(
-                          backgroundColor: layers.winter
-                              ? scheme.secondaryContainer
-                              : null,
-                        ),
-                        onPressed: () => _choose(
-                          layers.copyWith(
-                            style: MapStyle.topo,
-                            winter: !layers.winter,
                           ),
                         ),
                       ),
