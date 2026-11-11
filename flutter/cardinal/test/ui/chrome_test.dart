@@ -2,6 +2,7 @@ import 'package:cardinal/home/navigation_bar.dart';
 import 'package:cardinal/map/map_control.dart';
 import 'package:cardinal/saved/saved_feedback.dart';
 import 'package:cardinal/sheet/sheet.dart';
+import 'package:cardinal/ui/glass.dart';
 import 'package:cardinal/ui/theme.dart';
 
 import 'dart:ui' show Tristate;
@@ -64,24 +65,28 @@ void main() {
   group('the iOS sheet', () {
     testWidgets('is glass while it peeks', (tester) async {
       await pumpFakeApp(tester, platform: _ios);
-      final glass = tester.widget<LiquidGlassVisibility>(
-        find.byType(LiquidGlassVisibility),
+      expect(
+        find.descendant(
+          of: find.byKey(sheetGlassKey),
+          matching: find.byType(LiquidGlass),
+        ),
+        findsOneWidget,
       );
-      expect(glass.visibility, 1);
     });
 
     testWidgets('is solid at full height, with no glass to draw', (
       tester,
     ) async {
       final router = await pumpFakeApp(tester, platform: _ios);
+      expect(find.byKey(sheetGlassKey), findsOneWidget);
       router.go('/saved');
       await tester.pumpAndSettle();
-      expect(find.byType(LiquidGlassVisibility), findsNothing);
+      expect(find.byKey(sheetGlassKey), findsNothing);
     });
 
     testWidgets('is solid on Android, with no glass at all', (tester) async {
       await pumpFakeApp(tester, platform: TargetPlatform.android);
-      expect(find.byType(LiquidGlassVisibility), findsNothing);
+      expect(find.byKey(sheetGlassKey), findsNothing);
       expect(find.byType(LiquidGlass), findsNothing);
     });
 

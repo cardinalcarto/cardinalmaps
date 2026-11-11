@@ -7,6 +7,7 @@ import 'package:cupertino_ui/cupertino_ui.dart'
         CupertinoButton,
         CupertinoButtonSize,
         CupertinoDialogAction,
+        CupertinoIcons,
         CupertinoListSection,
         CupertinoListTile,
         CupertinoListTileChevron,
@@ -123,8 +124,19 @@ class AppListSection extends StatelessWidget {
       return CupertinoListSection.insetGrouped(
         // The sheet is the background.
         backgroundColor: const Color(0x00000000),
-        header: header == null ? null : Text(header!),
-        footer: footer == null ? null : Text(footer!),
+        decoration: BoxDecoration(
+          color: groupedRowColor(context),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        // The margin above is for a header; without one, just a little room.
+        topMargin: header == null ? 8 : null,
+        // iOS heads and foots grouped rows in small grey text.
+        header: header == null
+            ? null
+            : Text(header!.toUpperCase(), style: _sectionNote(context)),
+        footer: footer == null
+            ? null
+            : Text(footer!, style: _sectionNote(context)),
         children: children,
       );
     }
@@ -165,6 +177,23 @@ class AppListSection extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The color of grouped rows on a sheet: white over the light sheet, and a step
+/// lighter than the dark one, as iOS raises rows on an elevated sheet.
+Color groupedRowColor(BuildContext context) {
+  final colors = Theme.of(context).colorScheme;
+  return Theme.of(context).brightness == Brightness.dark
+      ? colors.surfaceContainerHigh
+      : colors.surface;
+}
+
+/// The style of an [AppListSection]'s header and footer on iOS: Footnote, secondary.
+TextStyle? _sectionNote(BuildContext context) {
+  final theme = Theme.of(context);
+  return theme.textTheme.bodySmall?.copyWith(
+    color: theme.colorScheme.onSurfaceVariant,
+  );
 }
 
 /// A row of an [AppListSection].
@@ -313,3 +342,205 @@ Future<T?> showAppDialog<T>({
     },
   );
 }
+
+/// Closes a sheet or page: on iOS a glyph in a small grey circle, as Apple closes its
+/// cards; elsewhere an icon button.
+class AppCloseButton extends StatelessWidget {
+  const AppCloseButton({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isCupertinoOf(context)) {
+      return IconButton(
+        tooltip: 'Close',
+        icon: const Icon(Icons.close),
+        onPressed: onPressed,
+      );
+    }
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      label: 'Close',
+      excludeSemantics: true,
+      child: CupertinoButton(
+        padding: EdgeInsets.zero,
+        minimumSize: const Size.square(44),
+        onPressed: onPressed,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colors.onSurface.withValues(alpha: 0.08),
+            shape: BoxShape.circle,
+          ),
+          child: SizedBox.square(
+            dimension: 30,
+            child: Icon(
+              CupertinoIcons.xmark,
+              size: 14,
+              weight: 700,
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One of a row of actions, as a place card has: on iOS a rounded button with its
+/// [icon] over its [label], made to share a row equally; elsewhere a compact button with
+/// the icon before the label, filled if [kind] is filled and outlined otherwise.
+class AppActionButton extends StatelessWidget {
+  const AppActionButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.kind = AppButtonKind.tinted,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final AppButtonKind kind;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isCupertinoOf(context)) {
+      const style = ButtonStyle(visualDensity: VisualDensity.compact);
+      return kind == AppButtonKind.filled
+          ? FilledButton.icon(
+              onPressed: onPressed,
+              style: style,
+              icon: Icon(icon),
+              label: Text(label),
+            )
+          : OutlinedButton.icon(
+              onPressed: onPressed,
+              style: style,
+              icon: Icon(icon),
+              label: Text(label),
+            );
+    }
+    final theme = Theme.of(context);
+    final filled = kind == AppButtonKind.filled;
+    final color = filled
+        ? theme.colorScheme.onPrimary
+        : theme.colorScheme.primary;
+    final child = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 22, color: color),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: color,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+    const padding = EdgeInsets.symmetric(vertical: 8, horizontal: 4);
+    final radius = BorderRadius.circular(14);
+    return Semantics(
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      child: filled
+          ? CupertinoButton.filled(
+              padding: padding,
+              borderRadius: radius,
+              minimumSize: const Size(0, 56),
+              onPressed: onPressed,
+              child: child,
+            )
+          : CupertinoButton.tinted(
+              padding: padding,
+              borderRadius: radius,
+              minimumSize: const Size(0, 56),
+              onPressed: onPressed,
+              child: child,
+            ),
+    );
+  }
+}
+
+/// The top of a sheet that asks for something: on iOS its title centered between
+/// [cancel] at the start and the [done] action at the end, as iOS heads its sheets;
+/// elsewhere just the title, the actions being the sheet's own buttons below.
+class AppSheetBar extends StatelessWidget {
+  const AppSheetBar({
+    super.key,
+    required this.title,
+    this.cancel = 'Cancel',
+    this.onCancel,
+    this.done = 'Done',
+    this.onDone,
+  });
+
+  final String title;
+  final String cancel;
+
+  /// Null leaves Cancel out.
+  final VoidCallback? onCancel;
+  final String done;
+
+  /// Null disables [done].
+  final VoidCallback? onDone;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (!isCupertinoOf(context)) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        child: Text(title, style: theme.textTheme.titleMedium),
+      );
+    }
+    return SizedBox(
+      height: 44,
+      child: NavigationToolbar(
+        middleSpacing: 8,
+        leading: onCancel == null
+            ? null
+            : CupertinoButton(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                onPressed: onCancel,
+                child: Text(cancel),
+              ),
+        middle: Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.titleMedium,
+        ),
+        trailing: CupertinoButton(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          onPressed: onDone,
+          child: Text(
+            done,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shows a sheet of [builder]'s, above the app's own sheet: iOS's sheet on iOS, through
+/// the theme, and Material's elsewhere.
+Future<T?> showAppSheet<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+}) => showModalBottomSheet<T>(
+  context: context,
+  isScrollControlled: true,
+  // Above the app's sheet, whose pages must stay current.
+  useRootNavigator: true,
+  showDragHandle: true,
+  builder: builder,
+);

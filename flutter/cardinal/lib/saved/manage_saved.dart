@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoIcons;
 import 'package:material_ui/material_ui.dart';
 
 import '../store/store.dart';
+import '../ui/adaptive.dart';
 import 'destination_picker.dart';
 import 'saved_names.dart';
 
@@ -12,12 +14,8 @@ import 'saved_names.dart';
 Future<Set<int?>?> showManageSaved(
   BuildContext context, {
   required String placeId,
-}) => showModalBottomSheet<Set<int?>>(
+}) => showAppSheet<Set<int?>>(
   context: context,
-  isScrollControlled: true,
-  // Above the app's sheet, whose pages must stay current.
-  useRootNavigator: true,
-  showDragHandle: true,
   builder: (context) => _ManageSaved(placeId: placeId),
 );
 
@@ -84,6 +82,11 @@ class _ManageSavedState extends State<_ManageSaved> {
   Widget build(BuildContext context) {
     final tree = _tree;
     final shown = _shown;
+    final cupertino = isCupertinoOf(context);
+    final accent = Theme.of(context).colorScheme.primary;
+    final done = shown == null
+        ? null
+        : () => Navigator.of(context).pop(_ticked);
     return SafeArea(
       child: ConstrainedBox(
         constraints: BoxConstraints(
@@ -93,16 +96,47 @@ class _ManageSavedState extends State<_ManageSaved> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Text(
-                'Saved in',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+            AppSheetBar(
+              title: 'Saved in',
+              onCancel: () => Navigator.of(context).pop(),
+              onDone: done,
             ),
             Flexible(
               child: tree == null || shown == null
                   ? const SizedBox(height: 96)
+                  : cupertino
+                  ? ListView(
+                      shrinkWrap: true,
+                      children: [
+                        AppListSection(
+                          children: [
+                            for (final list in shown)
+                              AppListTile(
+                                title: Text(
+                                  locationPath(tree, list),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: _ticked.contains(list)
+                                    ? Icon(
+                                        CupertinoIcons.checkmark,
+                                        color: accent,
+                                      )
+                                    : null,
+                                onTap: () => _toggle(list),
+                              ),
+                            AppListTile(
+                              leading: Icon(CupertinoIcons.add, color: accent),
+                              title: Text(
+                                'Add to list…',
+                                style: TextStyle(color: accent),
+                              ),
+                              onTap: () => _add(tree),
+                            ),
+                          ],
+                        ),
+                      ],
+                    )
                   : ListView(
                       shrinkWrap: true,
                       children: [
@@ -138,20 +172,17 @@ class _ManageSavedState extends State<_ManageSaved> {
                       ],
                     ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  FilledButton(
-                    onPressed: shown == null
-                        ? null
-                        : () => Navigator.of(context).pop(_ticked),
-                    child: const Text('Done'),
-                  ),
-                ],
+            // On iOS, Done is in the bar at the top.
+            if (!cupertino)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    FilledButton(onPressed: done, child: const Text('Done')),
+                  ],
+                ),
               ),
-            ),
           ],
         ),
       ),

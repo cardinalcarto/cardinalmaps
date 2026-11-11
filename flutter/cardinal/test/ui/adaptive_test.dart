@@ -82,7 +82,8 @@ void main() {
       await _pump(tester, _ios, section());
       expect(find.byType(CupertinoListSection), findsOneWidget);
       expect(find.byType(CupertinoListTile), findsNWidgets(2));
-      expect(find.text('Lists'), findsOneWidget);
+      // iOS heads grouped rows in capitals.
+      expect(find.text('LISTS'), findsOneWidget);
     });
 
     testWidgets('is a card of list tiles on Android', (tester) async {

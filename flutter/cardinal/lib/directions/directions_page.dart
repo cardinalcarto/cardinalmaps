@@ -2,6 +2,14 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show PlatformDispatcher;
 
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show
+        CupertinoActivityIndicator,
+        CupertinoButton,
+        CupertinoButtonSize,
+        CupertinoIcons,
+        CupertinoSearchTextField,
+        CupertinoSlidingSegmentedControl;
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:routing/routing.dart';
@@ -18,6 +26,8 @@ import '../saved/saved_names.dart';
 import '../search/place_search.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
+import '../ui/adaptive.dart';
+import '../ui/haptics.dart';
 import 'callouts.dart';
 import 'directions.dart';
 import 'format.dart';
@@ -370,6 +380,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
 
   List<Widget> _tripSlivers(Directions directions) {
     final theme = Theme.of(context);
+    final cupertino = isCupertinoOf(context);
     final miles = usesMiles(PlatformDispatcher.instance.locale);
     final route = directions.selectedRoute;
     final bothEnds = directions.from != null && directions.to != null;
@@ -390,55 +401,66 @@ class _DirectionsPageState extends State<DirectionsPage> {
                         style: theme.textTheme.headlineSmall,
                       ),
                     ),
-                    IconButton(
-                      tooltip: 'Close',
-                      icon: const Icon(Icons.close),
+                    AppCloseButton(
                       onPressed: () =>
                           context.canPop() ? context.pop() : context.go('/'),
                     ),
                   ],
                 ),
               ),
-              _EndRow(
-                label: 'From',
-                endpoint: directions.from,
-                onTap: () => _edit(RouteField.from),
-                onClear: () => directions.setEndpoint(RouteField.from, null),
-                action: IconButton(
-                  tooltip: 'Recalculate route',
-                  icon: const Icon(Icons.refresh),
-                  onPressed: bothEnds && !directions.loading
-                      ? directions.recalculate
-                      : null,
+              if (cupertino)
+                _CupertinoEnds(
+                  directions: directions,
+                  onEdit: _edit,
+                  bothEnds: bothEnds,
+                )
+              else ...[
+                _EndRow(
+                  label: 'From',
+                  endpoint: directions.from,
+                  onTap: () => _edit(RouteField.from),
+                  onClear: () => directions.setEndpoint(RouteField.from, null),
+                  action: IconButton(
+                    tooltip: 'Recalculate route',
+                    icon: const Icon(Icons.refresh),
+                    onPressed: bothEnds && !directions.loading
+                        ? directions.recalculate
+                        : null,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              _EndRow(
-                label: 'To',
-                endpoint: directions.to,
-                onTap: () => _edit(RouteField.to),
-                onClear: () => directions.setEndpoint(RouteField.to, null),
-                action: IconButton(
-                  tooltip: 'Swap start and destination',
-                  icon: const Icon(Icons.swap_vert),
-                  onPressed: bothEnds ? directions.swap : null,
+                const SizedBox(height: 8),
+                _EndRow(
+                  label: 'To',
+                  endpoint: directions.to,
+                  onTap: () => _edit(RouteField.to),
+                  onClear: () => directions.setEndpoint(RouteField.to, null),
+                  action: IconButton(
+                    tooltip: 'Swap start and destination',
+                    icon: const Icon(Icons.swap_vert),
+                    onPressed: bothEnds ? directions.swap : null,
+                  ),
                 ),
-              ),
+              ],
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                child: Row(
-                  spacing: 8,
-                  children: [
-                    for (final mode in TravelMode.values)
-                      Expanded(
-                        child: _ModeChip(
-                          mode: mode,
-                          selected: mode == directions.mode,
-                          onTap: () => _setMode(mode),
-                        ),
+                child: cupertino
+                    ? _CupertinoModes(
+                        selected: directions.mode,
+                        onChanged: _setMode,
+                      )
+                    : Row(
+                        spacing: 8,
+                        children: [
+                          for (final mode in TravelMode.values)
+                            Expanded(
+                              child: _ModeChip(
+                                mode: mode,
+                                selected: mode == directions.mode,
+                                onTap: () => _setMode(mode),
+                              ),
+                            ),
+                        ],
                       ),
-                  ],
-                ),
               ),
             ],
           ),
@@ -450,23 +472,41 @@ class _DirectionsPageState extends State<DirectionsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
-                height: 2,
-                child: directions.loading || directions.locating
-                    ? const LinearProgressIndicator()
-                    : null,
-              ),
+              if (!cupertino)
+                SizedBox(
+                  height: 2,
+                  child: directions.loading || directions.locating
+                      ? const LinearProgressIndicator()
+                      : null,
+                )
+              else if (directions.loading || directions.locating)
+                const SizedBox(height: 28, child: CupertinoActivityIndicator()),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-                child: route != null
-                    ? _Summary(route: route, miles: miles)
-                    : _Message(_messageFor(directions)),
+                child: route == null
+                    ? _Message(_messageFor(directions))
+                    : cupertino
+                    ? _CupertinoSummary(route: route, miles: miles)
+                    : _Summary(route: route, miles: miles),
               ),
             ],
           ),
         ),
       ),
-      if (route != null)
+      if (route != null && cupertino && route.steps.isNotEmpty)
+        SliverPadding(
+          padding: const EdgeInsets.only(bottom: 12),
+          sliver: SliverToBoxAdapter(
+            child: AppListSection(
+              header: 'Steps',
+              children: [
+                for (final (i, step) in route.steps.indexed)
+                  _CupertinoStep(number: i + 1, step: step, miles: miles),
+              ],
+            ),
+          ),
+        )
+      else if (route != null && !cupertino)
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           sliver: SliverList.builder(
@@ -492,31 +532,63 @@ class _DirectionsPageState extends State<DirectionsPage> {
       SliverToBoxAdapter(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-          child: TextField(
-            controller: _text,
-            focusNode: _focus,
-            onChanged: search.update,
-            onSubmitted: (_) {
-              if (search.results case [final first, ...]) _choose(first);
-            },
-            decoration: InputDecoration(
-              labelText: field == RouteField.from ? 'From' : 'To',
-              hintText: 'Enter a place',
-              border: const OutlineInputBorder(),
-              isDense: true,
-              prefixIcon: const Icon(Icons.location_on_outlined),
-              suffixIcon: IconButton(
-                tooltip: 'Clear',
-                icon: const Icon(Icons.close),
-                onPressed: () {
-                  _text.clear();
-                  search.update('');
-                  _directions!.setEndpoint(field, null);
-                  _focus.requestFocus();
-                },
-              ),
-            ),
-          ),
+          child: isCupertinoOf(context)
+              // With Cancel beside it, as iOS has for a search, doing what back does.
+              ? Row(
+                  children: [
+                    Expanded(
+                      child: CupertinoSearchTextField(
+                        controller: _text,
+                        focusNode: _focus,
+                        placeholder: field == RouteField.from
+                            ? 'Search for a start'
+                            : 'Search for a destination',
+                        onChanged: search.update,
+                        onSubmitted: (_) {
+                          if (search.results case [final first, ...]) {
+                            _choose(first);
+                          }
+                        },
+                        onSuffixTap: () {
+                          _text.clear();
+                          search.update('');
+                          _directions!.setEndpoint(field, null);
+                          _focus.requestFocus();
+                        },
+                      ),
+                    ),
+                    CupertinoButton(
+                      padding: const EdgeInsetsDirectional.only(start: 12),
+                      onPressed: _stopEditing,
+                      child: const Text('Cancel'),
+                    ),
+                  ],
+                )
+              : TextField(
+                  controller: _text,
+                  focusNode: _focus,
+                  onChanged: search.update,
+                  onSubmitted: (_) {
+                    if (search.results case [final first, ...]) _choose(first);
+                  },
+                  decoration: InputDecoration(
+                    labelText: field == RouteField.from ? 'From' : 'To',
+                    hintText: 'Enter a place',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    prefixIcon: const Icon(Icons.location_on_outlined),
+                    suffixIcon: IconButton(
+                      tooltip: 'Clear',
+                      icon: const Icon(Icons.close),
+                      onPressed: () {
+                        _text.clear();
+                        search.update('');
+                        _directions!.setEndpoint(field, null);
+                        _focus.requestFocus();
+                      },
+                    ),
+                  ),
+                ),
         ),
       ),
       ListenableBuilder(
@@ -781,6 +853,57 @@ class _EndChoices extends StatelessWidget {
       PlaceSearch(loading: false, results: []) when searching => 'No results',
       _ => null,
     };
+    if (isCupertinoOf(context)) {
+      final accent = Theme.of(context).colorScheme.primary;
+      Widget row(String title, String? subtitle, VoidCallback onTap) =>
+          AppListTile(
+            title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: subtitle == null
+                ? null
+                : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+            onTap: onTap,
+          );
+      return SliverMainAxisGroup(
+        slivers: [
+          if (search.loading)
+            const SliverToBoxAdapter(
+              child: SizedBox(height: 28, child: CupertinoActivityIndicator()),
+            ),
+          if (message != null) SliverToBoxAdapter(child: _Message(message)),
+          SliverToBoxAdapter(
+            child: AppListSection(
+              children: searching
+                  ? [
+                      for (final place in search.results)
+                        row(
+                          placeTitle(place),
+                          placeSubtitle(place),
+                          () => onPlace(place),
+                        ),
+                    ]
+                  : [
+                      AppListTile(
+                        leading: locating
+                            ? const CupertinoActivityIndicator()
+                            : Icon(CupertinoIcons.location_fill, color: accent),
+                        title: Text(
+                          'My Location',
+                          style: TextStyle(color: accent),
+                        ),
+                        onTap: onMyLocation,
+                      ),
+                      for (final place in saved)
+                        row(
+                          savedName(place),
+                          placeSubtitle(place.place),
+                          () => onPlace(place.place),
+                        ),
+                    ],
+            ),
+          ),
+        ],
+      );
+    }
     return SliverMainAxisGroup(
       slivers: [
         SliverToBoxAdapter(
@@ -868,4 +991,227 @@ class _ChoiceCard extends StatelessWidget {
       onTap: onTap,
     ),
   );
+}
+
+/// iOS's trip ends: From and To together in one grouped card, each with its marker and
+/// its action beside the card: Recalculate by From, Swap by To.
+class _CupertinoEnds extends StatelessWidget {
+  const _CupertinoEnds({
+    required this.directions,
+    required this.onEdit,
+    required this.bothEnds,
+  });
+
+  final Directions directions;
+  final void Function(RouteField field) onEdit;
+  final bool bothEnds;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Widget end(RouteField field) {
+      final from = field == RouteField.from;
+      final endpoint = from ? directions.from : directions.to;
+      final label = from ? 'From' : 'To';
+      return AppListTile(
+        leading: Icon(
+          from ? CupertinoIcons.circle_fill : CupertinoIcons.location_solid,
+          size: from ? 14 : 20,
+          color: from ? const Color(0xFF34C759) : const Color(0xFFFF3B30),
+        ),
+        title: Text(
+          endpoint?.label ?? label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: endpoint == null
+              ? TextStyle(color: theme.colorScheme.onSurfaceVariant)
+              : null,
+        ),
+        trailing: endpoint == null
+            ? null
+            : Semantics(
+                button: true,
+                label: 'Clear ${label.toLowerCase()}',
+                excludeSemantics: true,
+                child: CupertinoButton(
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size.square(32),
+                  onPressed: () => directions.setEndpoint(field, null),
+                  child: Icon(
+                    CupertinoIcons.xmark_circle_fill,
+                    size: 18,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+        onTap: () => onEdit(field),
+      );
+    }
+
+    Widget action(String label, IconData icon, VoidCallback? onPressed) =>
+        Semantics(
+          button: true,
+          label: label,
+          excludeSemantics: true,
+          child: CupertinoButton(
+            padding: EdgeInsets.zero,
+            minimumSize: const Size.square(44),
+            onPressed: onPressed,
+            child: Icon(icon, size: 20),
+          ),
+        );
+
+    return Row(
+      children: [
+        Expanded(
+          child: AppListSection(
+            children: [end(RouteField.from), end(RouteField.to)],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(right: 8, top: 8),
+          child: Column(
+            children: [
+              action(
+                'Recalculate route',
+                CupertinoIcons.arrow_clockwise,
+                bothEnds && !directions.loading ? directions.recalculate : null,
+              ),
+              action(
+                'Swap start and destination',
+                CupertinoIcons.arrow_up_arrow_down,
+                bothEnds ? directions.swap : null,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// iOS's ways of traveling: a segmented control, with those that can't be routed yet
+/// disabled.
+class _CupertinoModes extends StatelessWidget {
+  const _CupertinoModes({required this.selected, required this.onChanged});
+
+  final TravelMode selected;
+  final ValueChanged<TravelMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) =>
+      CupertinoSlidingSegmentedControl<TravelMode>(
+        groupValue: selected,
+        disabledChildren: {
+          for (final mode in TravelMode.values)
+            if (!mode.available) mode,
+        },
+        children: {
+          for (final mode in TravelMode.values)
+            mode: Semantics(
+              label: mode.label,
+              excludeSemantics: true,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Icon(mode.icon, size: 20),
+              ),
+            ),
+        },
+        onValueChanged: (mode) {
+          if (mode == null || mode == selected) return;
+          Haptics.selection();
+          onChanged(mode);
+        },
+      );
+}
+
+/// iOS's route summary: the time large, the distance under it, and Go, as Apple shows a
+/// route. Go waits for navigation.
+class _CupertinoSummary extends StatelessWidget {
+  const _CupertinoSummary({required this.route, required this.miles});
+
+  final DirectionsRoute route;
+  final bool miles;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: ShapeDecoration(
+        color: groupedRowColor(context),
+        shape: RoundedSuperellipseBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    formatDuration(route.duration),
+                    style: theme.textTheme.headlineSmall,
+                  ),
+                  Text(
+                    formatDistance(route.distance, miles: miles),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Semantics(
+              button: true,
+              enabled: false,
+              label: 'Start Navigation',
+              excludeSemantics: true,
+              child: const CupertinoButton.filled(
+                color: Color(0xFF34C759),
+                sizeStyle: CupertinoButtonSize.large,
+                onPressed: null,
+                child: Text('Go'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A numbered step of a route, in iOS's grouped list.
+class _CupertinoStep extends StatelessWidget {
+  const _CupertinoStep({
+    required this.number,
+    required this.step,
+    required this.miles,
+  });
+
+  final int number;
+  final DirectionsStep step;
+  final bool miles;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AppListTile(
+      leading: Text(
+        '$number',
+        style: theme.textTheme.titleSmall?.copyWith(
+          color: theme.colorScheme.primary,
+        ),
+      ),
+      title: Text(step.instruction, maxLines: 3),
+      trailing: Text(
+        formatDistance(step.distance, miles: miles),
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
 }

@@ -1,4 +1,12 @@
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show
+        CupertinoAlertDialog,
+        CupertinoButton,
+        CupertinoDialogAction,
+        CupertinoTextField;
 import 'package:material_ui/material_ui.dart';
+
+import '../ui/adaptive.dart';
 
 import 'emoji.dart';
 
@@ -25,7 +33,40 @@ class _NewListDialogState extends State<NewListDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) {
+    if (isCupertinoOf(context)) {
+      return CupertinoAlertDialog(
+        title: const Text('New List'),
+        content: Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: CupertinoTextField(
+            controller: _name,
+            autofocus: true,
+            placeholder: 'Name',
+            textCapitalization: TextCapitalization.sentences,
+            onSubmitted: (_) => _create(),
+          ),
+        ),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ListenableBuilder(
+            listenable: _name,
+            builder: (context, _) => CupertinoDialogAction(
+              isDefaultAction: true,
+              onPressed: _name.text.trim().isEmpty ? null : _create,
+              child: const Text('Create'),
+            ),
+          ),
+        ],
+      );
+    }
+    return _materialDialog(context);
+  }
+
+  Widget _materialDialog(BuildContext context) => AlertDialog(
     title: const Text('New list'),
     content: TextField(
       controller: _name,
@@ -121,14 +162,18 @@ class _EditItemDialogState extends State<EditItemDialog> {
     }
   }
 
-  Widget _emojiField(BuildContext context) {
+  /// The emoji: a grid of the common ones, and a field for any other. On iOS it goes
+  /// in a section of its own, which [cupertino] says, headed there by the section.
+  Widget _emojiField(BuildContext context, {bool cupertino = false}) {
     final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 16),
-        Text('Emoji', style: Theme.of(context).textTheme.labelLarge),
-        const SizedBox(height: 4),
+        if (!cupertino) ...[
+          const SizedBox(height: 16),
+          Text('Emoji', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 4),
+        ],
         Wrap(
           children: [
             for (final emoji in commonEmoji)
@@ -141,7 +186,11 @@ class _EditItemDialogState extends State<EditItemDialog> {
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
-                    color: _emoji == emoji ? scheme.secondaryContainer : null,
+                    color: _emoji == emoji
+                        ? (cupertino
+                              ? scheme.primary.withValues(alpha: 0.15)
+                              : scheme.secondaryContainer)
+                        : null,
                   ),
                   child: Text(emoji, style: const TextStyle(fontSize: 20)),
                 ),
@@ -151,27 +200,109 @@ class _EditItemDialogState extends State<EditItemDialog> {
         Row(
           children: [
             Expanded(
-              child: TextField(
-                controller: _typed,
-                onChanged: _typing,
-                decoration: const InputDecoration(
-                  labelText: 'Any emoji',
-                  isDense: true,
-                ),
+              child: cupertino
+                  ? CupertinoTextField(
+                      controller: _typed,
+                      onChanged: _typing,
+                      placeholder: 'Any emoji',
+                    )
+                  : TextField(
+                      controller: _typed,
+                      onChanged: _typing,
+                      decoration: const InputDecoration(
+                        labelText: 'Any emoji',
+                        isDense: true,
+                      ),
+                    ),
+            ),
+            if (cupertino)
+              CupertinoButton(
+                onPressed: _emoji == null ? null : () => _pick(null),
+                child: const Text('None'),
+              )
+            else
+              TextButton(
+                onPressed: _emoji == null ? null : () => _pick(null),
+                child: const Text('None'),
               ),
-            ),
-            TextButton(
-              onPressed: _emoji == null ? null : () => _pick(null),
-              child: const Text('None'),
-            ),
           ],
         ),
       ],
     );
   }
 
+  /// Whether what's entered can be saved: a name, unless a blank one is allowed.
+  bool get _canSave => widget.hint != null || _name.text.trim().isNotEmpty;
+
+  void _save() =>
+      Navigator.of(context)
+          .pop((name: _name.text, note: _note.text, emoji: _emoji));
+
+  /// iOS's form sheet: the fields grouped, Cancel and Save in the bar at the top.
+  Widget _cupertinoForm(BuildContext context) {
+    Widget field(Widget child) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: child,
+    );
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListenableBuilder(
+              listenable: _name,
+              builder: (context, _) => AppSheetBar(
+                title: widget.title,
+                onCancel: () => Navigator.of(context).pop(),
+                done: 'Save',
+                onDone: _canSave ? _save : null,
+              ),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    AppListSection(
+                      children: [
+                        field(
+                          CupertinoTextField.borderless(
+                            controller: _name,
+                            autofocus: true,
+                            padding: EdgeInsets.zero,
+                            placeholder: widget.hint ?? 'Name',
+                          ),
+                        ),
+                        field(
+                          CupertinoTextField.borderless(
+                            controller: _note,
+                            padding: EdgeInsets.zero,
+                            placeholder: 'Note',
+                            maxLines: null,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (widget.editsEmoji)
+                      AppListSection(
+                        header: 'Emoji',
+                        children: [
+                          field(_emojiField(context, cupertino: true)),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (isCupertinoOf(context)) return _cupertinoForm(context);
     final blankAllowed = widget.hint != null;
     return AlertDialog(
       scrollable: true,
@@ -205,8 +336,7 @@ class _EditItemDialogState extends State<EditItemDialog> {
           builder: (context, _) => TextButton(
             onPressed: !blankAllowed && _name.text.trim().isEmpty
                 ? null
-                : () => Navigator.of(context)
-                      .pop((name: _name.text, note: _note.text, emoji: _emoji)),
+                : _save,
             child: const Text('Save'),
           ),
         ),
@@ -214,3 +344,10 @@ class _EditItemDialogState extends State<EditItemDialog> {
     );
   }
 }
+
+/// Shows [form], an [EditItemDialog] say: on iOS a sheet, as iOS asks for more than an
+/// alert holds; elsewhere a dialog.
+Future<T?> showFormDialog<T>(BuildContext context, Widget form) =>
+    isCupertinoOf(context)
+    ? showAppSheet<T>(context: context, builder: (_) => form)
+    : showDialog<T>(context: context, builder: (_) => form);

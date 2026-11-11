@@ -37,6 +37,18 @@ ThemeData _appTheme(Brightness brightness, TargetPlatform platform) {
       space: 0.5,
       color: colors.outlineVariant,
     ),
+    // iOS's sheets: the grouped background, large continuous corners, and its grabber.
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: colors.surfaceContainerLow,
+      modalBackgroundColor: colors.surfaceContainerLow,
+      surfaceTintColor: const Color(0x00000000),
+      shape: const RoundedSuperellipseBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(38)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      dragHandleSize: const Size(36, 5),
+      dragHandleColor: colors.onSurfaceVariant.withValues(alpha: 0.3),
+    ),
     cupertinoOverrideTheme: CupertinoThemeData(
       brightness: brightness,
       primaryColor: colors.primary,

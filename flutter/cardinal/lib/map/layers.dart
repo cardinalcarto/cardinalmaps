@@ -1,11 +1,14 @@
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show CupertinoIcons, CupertinoListTileChevron, CupertinoSwitch;
 import 'package:material_ui/material_ui.dart';
 
 import '../config.dart';
 import '../store/store.dart';
 import '../saved/saved_layers_sheet.dart';
+import '../ui/adaptive.dart';
 import '../ui/symbols.dart';
 import 'location.dart';
 import 'map_control.dart';
@@ -133,6 +136,8 @@ Future<void> showLayerPicker(BuildContext context) {
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
+    // iOS's grouped sheet grows to its rows.
+    isScrollControlled: isCupertinoOf(context),
     builder: (context) =>
         LayerPicker(settings: store.settings, saved: store.saved),
   );
@@ -176,10 +181,109 @@ class _LayerPickerState extends State<LayerPicker> {
     ]);
   }
 
+  /// iOS's version: grouped rows, a checkmark on the chosen style, the topo settings as
+  /// rows of their own, and Done in the bar at the top.
+  Widget _cupertino(BuildContext context, MapLayers layers) {
+    final accent = Theme.of(context).colorScheme.primary;
+    Widget? tick(bool on) =>
+        on ? Icon(CupertinoIcons.checkmark, color: accent) : null;
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppSheetBar(title: 'Map', onDone: () => Navigator.of(context).pop()),
+          AppListSection(
+            header: 'Map style',
+            children: [
+              AppListTile(
+                leading: Icon(CupertinoIcons.map, color: accent),
+                title: const Text('Streets'),
+                trailing: tick(layers.style == MapStyle.streets),
+                onTap: () => _choose(layers.copyWith(style: MapStyle.streets)),
+              ),
+              AppListTile(
+                leading: Icon(CupertinoIcons.tree, color: accent),
+                title: const Text('Topo'),
+                trailing: tick(layers.style == MapStyle.topo),
+                onTap: () => _choose(layers.copyWith(style: MapStyle.topo)),
+              ),
+            ],
+          ),
+          AppListSection(
+            header: 'Topo',
+            footer: 'Changing these shows the topo map.',
+            children: [
+              AppListTile(
+                title: const Text('Contours'),
+                trailing: AppSegmentedControl<ContourUnits>(
+                  segments: const {
+                    ContourUnits.imperial: Text('ft'),
+                    ContourUnits.metric: Text('m'),
+                  },
+                  selected: layers.units,
+                  onChanged: (units) => _choose(
+                    layers.copyWith(style: MapStyle.topo, units: units),
+                  ),
+                ),
+              ),
+              AppListTile(
+                title: const Text('Winter'),
+                trailing: Semantics(
+                  label: 'Winter',
+                  child: CupertinoSwitch(
+                    value: layers.winter,
+                    onChanged: (winter) => _choose(
+                      layers.copyWith(style: MapStyle.topo, winter: winter),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          StreamBuilder(
+            stream: _savedTree,
+            builder: (context, snapshot) {
+              final count = snapshot.data?.shownPlaces.length ?? 0;
+              return AppListSection(
+                header: 'Layers',
+                children: [
+                  AppListTile(
+                    leading: Icon(CupertinoIcons.star, color: accent),
+                    title: const Text('Saved places'),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          count == 0 ? 'Off' : '$count on',
+                          style: TextStyle(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        const CupertinoListTileChevron(),
+                      ],
+                    ),
+                    onTap: () => showSavedLayersSheet(context),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final layers = _layers;
     final scheme = Theme.of(context).colorScheme;
+    if (layers != null && isCupertinoOf(context)) {
+      return _cupertino(context, layers);
+    }
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),

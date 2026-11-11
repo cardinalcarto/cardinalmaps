@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show CupertinoButton, CupertinoIcons, CupertinoSearchTextField;
 import 'package:material_ui/material_ui.dart';
 
 import '../store/store.dart';
+import '../ui/adaptive.dart';
 import 'saved_dialogs.dart';
 import 'saved_names.dart';
 
@@ -19,12 +22,8 @@ Future<({int? list})?> showDestinationPicker(
   required List<SavedItem> items,
   required Set<int?> unavailable,
   String verb = 'Move',
-}) => showModalBottomSheet<({int? list})>(
+}) => showAppSheet<({int? list})>(
   context: context,
-  isScrollControlled: true,
-  // Above the app's sheet, whose pages must stay current.
-  useRootNavigator: true,
-  showDragHandle: true,
   builder: (context) =>
       _DestinationPicker(items: items, unavailable: unavailable, verb: verb),
 );
@@ -133,7 +132,7 @@ class _DestinationPickerState extends State<_DestinationPicker> {
     final parent = under?.list;
     final saved = StoreScope.of(context).saved;
     final tree = _tree!;
-    final name = await showDialog<String>(
+    final name = await showAdaptiveDialog<String>(
       context: context,
       builder: (context) => const NewListDialog(),
     );
@@ -153,7 +152,6 @@ class _DestinationPickerState extends State<_DestinationPicker> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final tree = _tree;
     final count = widget.items.length;
     final media = MediaQuery.of(context);
@@ -171,6 +169,10 @@ class _DestinationPickerState extends State<_DestinationPicker> {
               if (item is SavedList) ...{item.id, ...tree.descendants(item.id)},
           };
     final picked = _pickedIn(rows);
+    final cupertino = isCupertinoOf(context);
+    final done = picked == null
+        ? null
+        : () => Navigator.of(context).pop(picked);
     return Padding(
       padding: EdgeInsets.only(bottom: keyboard),
       child: SafeArea(
@@ -179,24 +181,29 @@ class _DestinationPickerState extends State<_DestinationPicker> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Text(
-                  '${widget.verb} $count ${count == 1 ? 'item' : 'items'} to',
-                  style: theme.textTheme.titleMedium,
-                ),
+              AppSheetBar(
+                title:
+                    '${widget.verb} $count ${count == 1 ? 'item' : 'items'} to',
+                onCancel: () => Navigator.of(context).pop(),
+                done: widget.verb,
+                onDone: done,
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: TextField(
-                  controller: _filter,
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    prefixIcon: Icon(Icons.search),
-                    hintText: 'Filter lists',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
+                child: cupertino
+                    ? CupertinoSearchTextField(
+                        controller: _filter,
+                        placeholder: 'Filter lists',
+                      )
+                    : TextField(
+                        controller: _filter,
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          prefixIcon: Icon(Icons.search),
+                          hintText: 'Filter lists',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
               ),
               Expanded(
                 child: tree == null
@@ -222,17 +229,30 @@ class _DestinationPickerState extends State<_DestinationPicker> {
                 padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
                 child: Row(
                   children: [
-                    TextButton(
-                      onPressed: tree == null ? null : () => _newList(picked),
-                      child: const Text('New list here'),
-                    ),
-                    const Spacer(),
-                    FilledButton(
-                      onPressed: picked == null
-                          ? null
-                          : () => Navigator.of(context).pop(picked),
-                      child: Text('${widget.verb} here'),
-                    ),
+                    if (cupertino)
+                      CupertinoButton(
+                        onPressed: tree == null ? null : () => _newList(picked),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(CupertinoIcons.folder_badge_plus),
+                            SizedBox(width: 6),
+                            Text('New List'),
+                          ],
+                        ),
+                      )
+                    else ...[
+                      TextButton(
+                        onPressed: tree == null ? null : () => _newList(picked),
+                        child: const Text('New list here'),
+                      ),
+                      const Spacer(),
+                      // On iOS, the action is in the bar at the top.
+                      FilledButton(
+                        onPressed: done,
+                        child: Text('${widget.verb} here'),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -249,12 +269,23 @@ class _DestinationPickerState extends State<_DestinationPicker> {
     final filtering = _query.isNotEmpty;
     final nested = id != null && tree.listsIn(id).isNotEmpty;
     final open = _expanded!.contains(id);
+    final cupertino = isCupertinoOf(context);
+    final selected = _picked != null && _picked!.list == id;
     return ListTile(
       dense: true,
       visualDensity: VisualDensity.compact,
       enabled: !disabled,
-      selected: _picked != null && _picked!.list == id,
-      selectedTileColor: Theme.of(context).colorScheme.secondaryContainer,
+      selected: selected,
+      // iOS ticks the choice; Material fills it.
+      selectedTileColor: cupertino
+          ? null
+          : Theme.of(context).colorScheme.secondaryContainer,
+      trailing: cupertino && selected
+          ? Icon(
+              CupertinoIcons.checkmark,
+              color: Theme.of(context).colorScheme.primary,
+            )
+          : null,
       contentPadding: EdgeInsetsDirectional.only(
         start: 8.0 + row.depth * 16,
         end: 16,
@@ -272,13 +303,24 @@ class _DestinationPickerState extends State<_DestinationPicker> {
                     tooltip: open ? 'Collapse' : 'Expand',
                     visualDensity: VisualDensity.compact,
                     padding: EdgeInsets.zero,
-                    icon: Icon(open ? Icons.expand_more : Icons.chevron_right),
+                    icon: Icon(
+                      cupertino
+                          ? (open
+                                ? CupertinoIcons.chevron_down
+                                : CupertinoIcons.chevron_right)
+                          : (open ? Icons.expand_more : Icons.chevron_right),
+                      size: cupertino ? 16 : null,
+                    ),
                     onPressed: () => setState(() {
                       if (!_expanded!.remove(id)) _expanded!.add(id);
                     }),
                   ),
           ),
-          Icon(id == null ? Icons.star_border : Icons.folder_outlined),
+          Icon(
+            cupertino
+                ? (id == null ? CupertinoIcons.star : CupertinoIcons.folder)
+                : (id == null ? Icons.star_border : Icons.folder_outlined),
+          ),
         ],
       ),
       title: Text(

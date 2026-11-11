@@ -1,8 +1,11 @@
 import 'dart:async';
 
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show CupertinoIcons, CupertinoSearchTextField;
 import 'package:material_ui/material_ui.dart';
 
 import '../store/store.dart';
+import '../ui/adaptive.dart';
 import 'saved_names.dart';
 
 /// Opens the full-screen sheet for what the map's Saved Places layer shows, over the
@@ -101,6 +104,7 @@ class _SavedLayersSheetState extends State<_SavedLayersSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final cupertino = isCupertinoOf(context);
     final theme = Theme.of(context);
     final tree = _tree;
     final rows = tree == null || _expanded == null
@@ -117,35 +121,46 @@ class _SavedLayersSheetState extends State<_SavedLayersSheet> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsetsDirectional.fromSTEB(16, 4, 4, 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Saved places on the map',
-                      style: theme.textTheme.titleLarge,
+            if (cupertino)
+              AppSheetBar(
+                title: 'Saved Places on the Map',
+                onDone: () => Navigator.of(context).pop(),
+              )
+            else
+              Padding(
+                padding: const EdgeInsetsDirectional.fromSTEB(16, 4, 4, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Saved places on the map',
+                        style: theme.textTheme.titleLarge,
+                      ),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: 'Close',
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: TextField(
-                controller: _filter,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  prefixIcon: Icon(Icons.search),
-                  hintText: 'Filter',
-                  border: OutlineInputBorder(),
+                    IconButton(
+                      tooltip: 'Close',
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
                 ),
               ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: cupertino
+                  ? CupertinoSearchTextField(
+                      controller: _filter,
+                      placeholder: 'Filter',
+                    )
+                  : TextField(
+                      controller: _filter,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        prefixIcon: Icon(Icons.search),
+                        hintText: 'Filter',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
             ),
             Expanded(
               child: tree != null && rows.isEmpty && _query.isEmpty
@@ -174,6 +189,7 @@ class _SavedLayersSheetState extends State<_SavedLayersSheet> {
 
   Widget _tile(SavedTree tree, _Row row) {
     final theme = Theme.of(context);
+    final cupertino = isCupertinoOf(context);
     final item = row.item;
     final filtering = _query.isNotEmpty;
     final state = switch (item) {
@@ -203,19 +219,40 @@ class _SavedLayersSheetState extends State<_SavedLayersSheet> {
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
                       icon: Icon(
-                        open ? Icons.expand_more : Icons.chevron_right,
+                        cupertino
+                            ? (open
+                                  ? CupertinoIcons.chevron_down
+                                  : CupertinoIcons.chevron_right)
+                            : (open ? Icons.expand_more : Icons.chevron_right),
+                        size: cupertino ? 16 : null,
                       ),
                       onPressed: () => setState(() {
                         if (!_expanded!.remove(id)) _expanded!.add(id);
                       }),
                     ),
             ),
-            Checkbox(
-              value: state,
-              tristate: true,
-              visualDensity: VisualDensity.compact,
-              onChanged: (_) => toggle(),
-            ),
+            if (cupertino)
+              // iOS's selection circle; a list partly on, a minus.
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: Icon(
+                  switch (state) {
+                    true => CupertinoIcons.checkmark_circle_fill,
+                    null => CupertinoIcons.minus_circle_fill,
+                    false => CupertinoIcons.circle,
+                  },
+                  color: state == false
+                      ? theme.colorScheme.outline
+                      : theme.colorScheme.primary,
+                ),
+              )
+            else
+              Checkbox(
+                value: state,
+                tristate: true,
+                visualDensity: VisualDensity.compact,
+                onChanged: (_) => toggle(),
+              ),
             const SizedBox(width: 4),
             SizedBox(
               width: 24,
@@ -225,8 +262,12 @@ class _SavedLayersSheetState extends State<_SavedLayersSheet> {
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 18),
                 ),
-                SavedPlace() => const Icon(Icons.place_outlined),
-                SavedList() => const Icon(Icons.folder_outlined),
+                SavedPlace() => Icon(
+                  cupertino ? CupertinoIcons.placemark : Icons.place_outlined,
+                ),
+                SavedList() => Icon(
+                  cupertino ? CupertinoIcons.folder : Icons.folder_outlined,
+                ),
               },
             ),
             const SizedBox(width: 12),

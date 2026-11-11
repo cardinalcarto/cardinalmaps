@@ -3,6 +3,13 @@ import 'dart:math' as math;
 
 import 'dart:ui' show PlatformDispatcher;
 
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show
+        CupertinoActivityIndicator,
+        CupertinoButton,
+        CupertinoButtonSize,
+        CupertinoIcons,
+        CupertinoSearchTextField;
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -13,6 +20,7 @@ import '../routes.dart';
 import '../saved/saved_names.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
+import '../ui/adaptive.dart';
 import 'place_search.dart';
 
 /// The home sheet: a search bar, peeking over the map, with results below it as you type.
@@ -216,9 +224,22 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
   /// Whether the pinned places' chips show, under the bar while browsing.
   bool get _chipsShowing => !_searching && _pinned.isNotEmpty;
 
+  /// Clears the query. Ready to type again, if searching; otherwise clearing it is all.
+  void _clear() {
+    _text.clear();
+    _search!.update('');
+    if (_searching) _focus.requestFocus();
+  }
+
+  /// Return in the field: opens the first result.
+  void _openFirst() {
+    if (_search!.results case [final first, ...]) _open(first);
+  }
+
   @override
   Widget build(BuildContext context) {
     final search = _search!;
+    final cupertino = isCupertinoOf(context);
     return PopScope(
       // Back stops searching before it leaves the app.
       canPop: !_searching,
@@ -237,9 +258,10 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
             SliverPersistentHeader(
               pinned: true,
               delegate: _SearchBarHeader(
-                height: _chipsShowing
-                    ? _SearchBarHeader.heightWithChips
-                    : _SearchBarHeader.barHeight,
+                height: _SearchBarHeader.heightOf(
+                  cupertino: cupertino,
+                  chips: _chipsShowing,
+                ),
                 child: SheetSection(
                   id: _bar,
                   child: Column(
@@ -247,45 +269,46 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
                       Padding(
                         padding: EdgeInsets.fromLTRB(
                           16,
-                          4,
-                          16,
+                          cupertino ? 8 : 4,
+                          cupertino ? 8 : 16,
                           _chipsShowing ? 8 : 12,
                         ),
-                        child: SearchBar(
-                          controller: _text,
-                          focusNode: _focus,
-                          onTap: _searchFull,
-                          hintText: 'Search',
-                          elevation: const WidgetStatePropertyAll(0),
-                          leading: const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 8),
-                            child: Icon(Icons.search),
-                          ),
-                          trailing: [
-                            ListenableBuilder(
-                              listenable: _text,
-                              builder: (context, _) => _text.text.isEmpty
-                                  ? const SizedBox.shrink()
-                                  : IconButton(
-                                      tooltip: 'Clear',
-                                      icon: const Icon(Icons.close),
-                                      onPressed: () {
-                                        _text.clear();
-                                        search.update('');
-                                        // Ready to type again, if searching; otherwise
-                                        // clearing it is all.
-                                        if (_searching) _focus.requestFocus();
-                                      },
-                                    ),
-                            ),
-                          ],
-                          onChanged: search.update,
-                          onSubmitted: (_) {
-                            if (search.results case [final first, ...]) {
-                              _open(first);
-                            }
-                          },
-                        ),
+                        child: cupertino
+                            ? _CupertinoSearchField(
+                                text: _text,
+                                focus: _focus,
+                                searching: _searching,
+                                onTap: _searchFull,
+                                onChanged: search.update,
+                                onSubmitted: _openFirst,
+                                onClear: _clear,
+                                onCancel: _stopSearching,
+                              )
+                            : SearchBar(
+                                controller: _text,
+                                focusNode: _focus,
+                                onTap: _searchFull,
+                                hintText: 'Search',
+                                elevation: const WidgetStatePropertyAll(0),
+                                leading: const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 8),
+                                  child: Icon(Icons.search),
+                                ),
+                                trailing: [
+                                  ListenableBuilder(
+                                    listenable: _text,
+                                    builder: (context, _) => _text.text.isEmpty
+                                        ? const SizedBox.shrink()
+                                        : IconButton(
+                                            tooltip: 'Clear',
+                                            icon: const Icon(Icons.close),
+                                            onPressed: _clear,
+                                          ),
+                                  ),
+                                ],
+                                onChanged: search.update,
+                                onSubmitted: (_) => _openFirst(),
+                              ),
                       ),
                       if (_chipsShowing) _PinnedChips(pinned: _pinned),
                     ],
@@ -311,11 +334,15 @@ class _SearchBarHeader extends SliverPersistentHeaderDelegate {
   final double height;
   final Widget child;
 
-  /// The bar and its padding.
-  static const double barHeight = 72;
-
-  /// The bar, its padding, and a row of pinned places.
-  static const double heightWithChips = 112;
+  /// The bar and its padding, and a row of pinned places under it if [chips]: Material's
+  /// 56 high search bar, or iOS's 44 high search field.
+  static double heightOf({required bool cupertino, required bool chips}) =>
+      switch ((cupertino, chips)) {
+        (false, false) => 72,
+        (false, true) => 112,
+        (true, false) => 64,
+        (true, true) => 104,
+      };
 
   @override
   double get minExtent => height;
@@ -355,15 +382,25 @@ class _PinnedChips extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       itemCount: pinned.length,
       separatorBuilder: (context, _) => const SizedBox(width: 8),
-      itemBuilder: (context, i) => FilledButton.tonal(
-        style: const ButtonStyle(visualDensity: VisualDensity.compact),
-        onPressed: () => context.push<void>(placeLocation(pinned[i].id)),
-        child: Text(
+      itemBuilder: (context, i) {
+        void open() => context.push<void>(placeLocation(pinned[i].id));
+        final name = Text(
           savedName(pinned[i]),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-        ),
-      ),
+        );
+        return isCupertinoOf(context)
+            ? CupertinoButton.tinted(
+                sizeStyle: CupertinoButtonSize.small,
+                onPressed: open,
+                child: name,
+              )
+            : FilledButton.tonal(
+                style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                onPressed: open,
+                child: name,
+              );
+      },
     ),
   );
 }
@@ -377,6 +414,7 @@ class _Results extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final cupertino = isCupertinoOf(context);
     final results = search.results;
     final message = switch (search) {
       PlaceSearch(error: final error?) => 'Search failed: $error',
@@ -387,12 +425,23 @@ class _Results extends StatelessWidget {
     };
     return SliverMainAxisGroup(
       slivers: [
-        SliverToBoxAdapter(
-          child: SizedBox(
-            height: 2,
-            child: search.loading ? const LinearProgressIndicator() : null,
+        if (cupertino)
+          SliverToBoxAdapter(
+            // Room for the spinner only while it spins.
+            child: search.loading
+                ? const SizedBox(
+                    height: 28,
+                    child: CupertinoActivityIndicator(),
+                  )
+                : const SizedBox.shrink(),
+          )
+        else
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 2,
+              child: search.loading ? const LinearProgressIndicator() : null,
+            ),
           ),
-        ),
         if (message != null)
           SliverToBoxAdapter(
             child: Padding(
@@ -406,7 +455,19 @@ class _Results extends StatelessWidget {
               ),
             ),
           ),
-        if (search.text.trim().isNotEmpty)
+        if (cupertino && search.text.trim().isNotEmpty && results.isNotEmpty)
+          SliverPadding(
+            padding: const EdgeInsets.only(bottom: 12),
+            sliver: SliverToBoxAdapter(
+              child: AppListSection(
+                children: [
+                  for (final place in results)
+                    _ResultRow(place: place, onTap: onTap),
+                ],
+              ),
+            ),
+          )
+        else if (!cupertino && search.text.trim().isNotEmpty)
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
             sliver: SliverList.builder(
@@ -443,6 +504,116 @@ class _ResultCard extends StatelessWidget {
             : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
         onTap: () => onTap(place),
       ),
+    );
+  }
+}
+
+/// iOS's search field, with Cancel beside it while searching.
+class _CupertinoSearchField extends StatelessWidget {
+  const _CupertinoSearchField({
+    required this.text,
+    required this.focus,
+    required this.searching,
+    required this.onTap,
+    required this.onChanged,
+    required this.onSubmitted,
+    required this.onClear,
+    required this.onCancel,
+  });
+
+  /// Apple's height for a search field.
+  static const double height = 44;
+
+  final TextEditingController text;
+  final FocusNode focus;
+  final bool searching;
+  final VoidCallback onTap;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onSubmitted;
+  final VoidCallback onClear;
+
+  /// Stops searching, as back does: the query and results wait for the next tap.
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Expanded(
+          child: SizedBox(
+            height: height,
+            child: CupertinoSearchTextField(
+              controller: text,
+              focusNode: focus,
+              placeholder: 'Search',
+              style: theme.textTheme.bodyLarge,
+              itemSize: 20,
+              borderRadius: BorderRadius.circular(height / 2),
+              padding: const EdgeInsetsDirectional.fromSTEB(6, 11, 8, 11),
+              prefixInsets: const EdgeInsetsDirectional.fromSTEB(12, 0, 0, 2),
+              suffixInsets: const EdgeInsetsDirectional.only(end: 10),
+              onTap: onTap,
+              onChanged: onChanged,
+              onSubmitted: (_) => onSubmitted(),
+              onSuffixTap: onClear,
+            ),
+          ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          child: searching
+              ? CupertinoButton(
+                  padding: const EdgeInsetsDirectional.only(start: 12, end: 8),
+                  onPressed: onCancel,
+                  child: const Text('Cancel'),
+                )
+              : const SizedBox(width: 8),
+        ),
+      ],
+    );
+  }
+}
+
+/// A result in iOS's grouped list: what it is, by its icon, then its name and address.
+class _ResultRow extends StatelessWidget {
+  const _ResultRow({required this.place, required this.onTap});
+
+  final Place place;
+  final void Function(Place place) onTap;
+
+  static IconData _icon(String kind) => switch (kind) {
+    'poi' => CupertinoIcons.location_solid,
+    'address' => CupertinoIcons.house_fill,
+    'street' => CupertinoIcons.map,
+    _ => CupertinoIcons.globe,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final subtitle = placeSubtitle(place);
+    return AppListTile(
+      leading: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.primary,
+          shape: BoxShape.circle,
+        ),
+        child: SizedBox.square(
+          dimension: 30,
+          child: Icon(_icon(place.kind), size: 16, color: colors.onPrimary),
+        ),
+      ),
+      title: Text(
+        placeTitle(place),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: subtitle == null
+          ? null
+          : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+      onTap: () => onTap(place),
     );
   }
 }

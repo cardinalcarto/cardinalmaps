@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show CupertinoActivityIndicator, CupertinoIcons;
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
@@ -15,6 +17,8 @@ import '../saved/saved_names.dart';
 import '../routes.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
+import '../ui/adaptive.dart';
+import '../ui/symbols.dart';
 
 /// A place's card: its name and where it is, with its pin (and boundary) on the map.
 ///
@@ -227,12 +231,84 @@ class _PlacePageState extends State<PlacePage> with RouteAware {
     );
   }
 
+  /// The place's actions: sharing a row equally on iOS, as Apple's place cards do;
+  /// wrapped at their own widths elsewhere.
+  Widget _actions(bool cupertino, List<Widget> actions) => cupertino
+      ? Row(
+          children: [
+            for (final (i, action) in actions.indexed) ...[
+              if (i > 0) const SizedBox(width: 8),
+              Expanded(child: action),
+            ],
+          ],
+        )
+      : Wrap(spacing: 8, runSpacing: 4, children: actions);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final cupertino = isCupertinoOf(context);
+    final symbols = AppSymbols.of(context);
     final place = _place;
     final isSaved = _copies.isNotEmpty;
     final subtitle = place == null ? null : placeSubtitle(place);
+    final actions = _actions(cupertino, [
+      AppActionButton(
+        kind: AppButtonKind.filled,
+        icon: cupertino ? CupertinoIcons.arrow_turn_up_right : Icons.directions,
+        label: 'Directions',
+        onPressed: () => context.push<void>(directionsLocation(widget.id)),
+      ),
+      if (_savedTree != null)
+        AppActionButton(
+          icon: isSaved ? symbols.saved : symbols.save,
+          label: isSaved ? 'Manage' : 'Save',
+          onPressed: isSaved ? _manage : _save,
+        ),
+    ]);
+    final header = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                place != null
+                    ? placeTitle(place)
+                    : _missing
+                    ? 'Place not found'
+                    : '',
+                style: theme.textTheme.headlineSmall,
+              ),
+              if (subtitle != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    subtitle,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              if (place == null && !_missing)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: cupertino
+                      ? const CupertinoActivityIndicator()
+                      : const LinearProgressIndicator(),
+                ),
+              // Elsewhere the actions sit under the address, beside the close button.
+              if (place != null && !cupertino)
+                Padding(padding: const EdgeInsets.only(top: 8), child: actions),
+            ],
+          ),
+        ),
+        AppCloseButton(
+          onPressed: () => context.canPop() ? context.pop() : context.go('/'),
+        ),
+      ],
+    );
     return SheetContent(
       anchors: const [SheetAnchor.section(_header)],
       slivers: [
@@ -241,80 +317,18 @@ class _PlacePageState extends State<PlacePage> with RouteAware {
             id: _header,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 8, 16),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              child: cupertino && place != null
+                  // On iOS the actions are a row across the card, under its title.
+                  ? Column(
                       children: [
-                        Text(
-                          place != null
-                              ? placeTitle(place)
-                              : _missing
-                              ? 'Place not found'
-                              : '',
-                          style: theme.textTheme.headlineSmall,
+                        header,
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(0, 16, 8, 0),
+                          child: actions,
                         ),
-                        if (subtitle != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              subtitle,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                        if (place == null && !_missing)
-                          const Padding(
-                            padding: EdgeInsets.only(top: 8),
-                            child: LinearProgressIndicator(),
-                          ),
-                        if (place != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Wrap(
-                              spacing: 8,
-                              runSpacing: 4,
-                              children: [
-                                FilledButton.icon(
-                                  onPressed: () => context.push<void>(
-                                    directionsLocation(widget.id),
-                                  ),
-                                  style: const ButtonStyle(
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                                  icon: const Icon(Icons.directions),
-                                  label: const Text('Directions'),
-                                ),
-                                if (_savedTree != null)
-                                  OutlinedButton.icon(
-                                    onPressed: isSaved ? _manage : _save,
-                                    style: const ButtonStyle(
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                    icon: Icon(
-                                      isSaved
-                                          ? Icons.favorite
-                                          : Icons.favorite_border,
-                                    ),
-                                    label: Text(isSaved ? 'Manage' : 'Save'),
-                                  ),
-                              ],
-                            ),
-                          ),
                       ],
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Close',
-                    icon: const Icon(Icons.close),
-                    onPressed: () =>
-                        context.canPop() ? context.pop() : context.go('/'),
-                  ),
-                ],
-              ),
+                    )
+                  : header,
             ),
           ),
         ),

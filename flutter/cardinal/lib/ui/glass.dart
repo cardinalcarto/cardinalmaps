@@ -106,25 +106,28 @@ class GlassSurface extends StatelessWidget {
   }
 }
 
-/// The sheet's glass, for `SheetScaffold.backdrop`: fading out as the sheet turns
-/// solid, given its corner radius and how clear it is. Null where glass is off, so the
-/// sheet stays solid.
+/// The key of the sheet's glass, for tests to tell it from the rest.
+const sheetGlassKey = Key('sheet glass');
+
+/// The sheet's glass, for `SheetScaffold.backdrop`: at full strength while the sheet
+/// shows any of it, under the sheet's color fading in as it rises, so the sheet only
+/// ever gets more opaque. (Fading the glass out as the color faded in left the sheet
+/// clearest halfway, with the map's labels showing through its text.) Null where glass
+/// is off, so the sheet stays solid.
 Widget Function(BuildContext context, double cornerRadius, double clarity)?
 sheetGlassOf(BuildContext context) {
   if (!glassEnabledOf(context)) return null;
-  return (context, cornerRadius, clarity) => LiquidGlassVisibility(
-    visibility: clarity,
-    child: AppGlassLayer(
-      tintAmount: 0.9,
-      child: GlassSurface(
-        radius: cornerRadius,
-        // A thick material, as iOS gives sheets: the sheet's color over the glass, so
-        // the map tints the sheet without coloring the text on it.
-        child: ColoredBox(
-          color: Theme.of(context).colorScheme.surfaceContainerLow
-              .withValues(alpha: 0.7),
-          child: const SizedBox.expand(),
-        ),
+  return (context, cornerRadius, clarity) => AppGlassLayer(
+    key: sheetGlassKey,
+    tintAmount: 0.9,
+    child: GlassSurface(
+      radius: cornerRadius,
+      // A thick material, as iOS gives sheets: the sheet's color over the glass, so
+      // the map tints the sheet without coloring the text on it.
+      child: ColoredBox(
+        color: Theme.of(context).colorScheme.surfaceContainerLow
+            .withValues(alpha: 0.7),
+        child: const SizedBox.expand(),
       ),
     ),
   );

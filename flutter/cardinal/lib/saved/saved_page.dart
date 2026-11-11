@@ -1,12 +1,15 @@
 import 'dart:async';
 
 import 'package:go_router/go_router.dart';
+import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoIcons;
 import 'package:material_ui/material_ui.dart';
 
 import '../geocoder/address.dart';
 import '../routes.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
+import '../ui/adaptive.dart';
+import '../ui/glass.dart';
 import 'destination_picker.dart';
 import 'saved_dialogs.dart';
 import 'saved_feedback.dart';
@@ -136,7 +139,7 @@ class _SavedPageState extends State<SavedPage> {
   }
 
   Future<void> _newList() async {
-    final name = await showDialog<String>(
+    final name = await showAdaptiveDialog<String>(
       context: context,
       builder: (context) => const NewListDialog(),
     );
@@ -179,9 +182,9 @@ class _SavedPageState extends State<SavedPage> {
 
   Future<void> _editDetails(SavedItem item) async {
     final fields =
-        await showDialog<({String name, String note, String? emoji})>(
-          context: context,
-          builder: (context) => EditItemDialog(
+        await showFormDialog<({String name, String note, String? emoji})>(
+          context,
+          EditItemDialog(
             title: item is SavedList ? 'Edit list' : 'Edit place',
             name: switch (item) {
               SavedList(:final name) => name,
@@ -401,7 +404,11 @@ class _BrowsingHeader extends StatelessWidget {
                             ),
                           ),
                           Icon(
-                            Icons.chevron_right,
+                            _icon(
+                              context,
+                              Icons.chevron_right,
+                              CupertinoIcons.chevron_forward,
+                            ),
                             size: 14,
                             color: muted?.color,
                           ),
@@ -420,7 +427,13 @@ class _BrowsingHeader extends StatelessWidget {
           ),
           IconButton(
             tooltip: 'New list',
-            icon: const Icon(Icons.create_new_folder_outlined),
+            icon: Icon(
+              _icon(
+                context,
+                Icons.create_new_folder_outlined,
+                CupertinoIcons.folder_badge_plus,
+              ),
+            ),
             onPressed: onNewList,
           ),
           TextButton(onPressed: onEdit, child: const Text('Edit')),
@@ -515,6 +528,7 @@ class _Row extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final cupertino = isCupertinoOf(context);
     final item = this.item;
     final subtitle = savedSubtitle(item);
     return ListTile(
@@ -525,21 +539,42 @@ class _Row extends StatelessWidget {
       horizontalTitleGap: 16,
       minTileHeight: 72,
       selected: editing && selected,
-      selectedTileColor: theme.colorScheme.secondaryContainer,
+      // iOS marks a selected row by its circle alone.
+      selectedTileColor: cupertino
+          ? null
+          : theme.colorScheme.secondaryContainer,
       leading: editing
-          ? Checkbox(
-              value: selected,
-              visualDensity: VisualDensity.compact,
-              onChanged: (_) => onTap(),
-            )
+          ? cupertino
+                ? Icon(
+                    selected
+                        ? CupertinoIcons.checkmark_circle_fill
+                        : CupertinoIcons.circle,
+                    color: selected
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.outline,
+                  )
+                : Checkbox(
+                    value: selected,
+                    visualDensity: VisualDensity.compact,
+                    onChanged: (_) => onTap(),
+                  )
           : switch (item) {
               SavedPlace(emoji: final emoji?) => Text(
                 emoji,
                 style: const TextStyle(fontSize: 20),
               ),
-              SavedList() => const Icon(Icons.folder_outlined),
-              SavedPlace(pinned: true) => const Icon(Icons.push_pin),
-              SavedPlace() => const Icon(Icons.place_outlined),
+              SavedList() => Icon(
+                _icon(context, Icons.folder_outlined, CupertinoIcons.folder),
+                color: cupertino ? theme.colorScheme.primary : null,
+              ),
+              SavedPlace(pinned: true) => Icon(
+                _icon(context, Icons.push_pin, CupertinoIcons.pin_fill),
+                color: cupertino ? theme.colorScheme.primary : null,
+              ),
+              SavedPlace() => Icon(
+                _icon(context, Icons.place_outlined, CupertinoIcons.placemark),
+                color: cupertino ? theme.colorScheme.primary : null,
+              ),
             },
       title: Text(
         savedName(item),
@@ -566,8 +601,16 @@ class _Row extends StatelessWidget {
                     tooltip: place.pinned ? 'Unpin' : 'Pin',
                     isSelected: place.pinned,
                     visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.push_pin_outlined),
-                    selectedIcon: const Icon(Icons.push_pin),
+                    icon: Icon(
+                      _icon(
+                        context,
+                        Icons.push_pin_outlined,
+                        CupertinoIcons.pin,
+                      ),
+                    ),
+                    selectedIcon: Icon(
+                      _icon(context, Icons.push_pin, CupertinoIcons.pin_fill),
+                    ),
                     style: IconButton.styleFrom(
                       backgroundColor: place.pinned
                           ? theme.colorScheme.secondaryContainer
@@ -578,27 +621,47 @@ class _Row extends StatelessWidget {
                 IconButton(
                   tooltip: 'Edit',
                   visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.edit_outlined),
+                  icon: Icon(
+                    _icon(context, Icons.edit_outlined, CupertinoIcons.pencil),
+                  ),
                   onPressed: onEdit,
                 ),
                 ReorderableDragStartListener(
                   index: index,
-                  child: const Padding(
-                    padding: EdgeInsets.all(8),
-                    child: Icon(Icons.drag_handle),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(
+                      _icon(
+                        context,
+                        Icons.drag_handle,
+                        CupertinoIcons.line_horizontal_3,
+                      ),
+                    ),
                   ),
                 ),
               ],
             )
           // The emoji has taken the pin's place at the start of the row.
           : item is SavedPlace && item.pinned && item.emoji != null
-          ? const Icon(Icons.push_pin, size: 16)
+          ? Icon(
+              _icon(context, Icons.push_pin, CupertinoIcons.pin_fill),
+              size: 16,
+            )
           : item is SavedList
           ? Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text('$count', style: theme.textTheme.bodySmall),
-                const Icon(Icons.chevron_right),
+                if (cupertino) const SizedBox(width: 4),
+                Icon(
+                  _icon(
+                    context,
+                    Icons.chevron_right,
+                    CupertinoIcons.chevron_forward,
+                  ),
+                  size: cupertino ? 16 : null,
+                  color: cupertino ? theme.colorScheme.outline : null,
+                ),
               ],
             )
           : null,
@@ -620,34 +683,70 @@ class _ActionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget action(IconData icon, String label, VoidCallback? onPressed) =>
-        Expanded(
-          child: TextButton(
-            onPressed: onPressed,
-            style: const ButtonStyle(
-              padding: WidgetStatePropertyAll(EdgeInsets.zero),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 20),
-                Text(label, maxLines: 1, overflow: TextOverflow.fade),
-              ],
-            ),
-          ),
-        );
+    Widget action(
+      IconData icon,
+      String label,
+      VoidCallback? onPressed, {
+      bool destructive = false,
+    }) => Expanded(
+      child: TextButton(
+        onPressed: onPressed,
+        style: ButtonStyle(
+          padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+          // iOS colors what deletes red.
+          foregroundColor: destructive && isCupertinoOf(context)
+              ? WidgetStateProperty.resolveWith(
+                  (states) => states.contains(WidgetState.disabled)
+                      ? null
+                      : Theme.of(context).colorScheme.error,
+                )
+              : null,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 20),
+            Text(label, maxLines: 1, overflow: TextOverflow.fade),
+          ],
+        ),
+      ),
+    );
+    final row = Row(
+      children: [
+        action(
+          _icon(context, Icons.drive_file_move_outlined, CupertinoIcons.folder),
+          'Move',
+          onMove,
+        ),
+        action(
+          _icon(context, Icons.content_copy, CupertinoIcons.doc_on_doc),
+          'Copy',
+          onCopy,
+        ),
+        action(
+          _icon(context, Icons.delete_outline, CupertinoIcons.trash),
+          'Delete',
+          onDelete,
+          destructive: true,
+        ),
+      ],
+    );
+    // A floating glass toolbar on iOS.
+    if (isCupertinoOf(context)) {
+      return AppGlassLayer(
+        child: GlassSurface(radius: 28, floating: true, child: row),
+      );
+    }
     return Material(
       color: Theme.of(context).colorScheme.surfaceContainerHigh,
       elevation: 2,
       borderRadius: BorderRadius.circular(28),
       clipBehavior: Clip.antiAlias,
-      child: Row(
-        children: [
-          action(Icons.drive_file_move_outlined, 'Move', onMove),
-          action(Icons.content_copy, 'Copy', onCopy),
-          action(Icons.delete_outline, 'Delete', onDelete),
-        ],
-      ),
+      child: row,
     );
   }
 }
+
+/// [cupertino] on iOS, [material] elsewhere.
+IconData _icon(BuildContext context, IconData material, IconData cupertino) =>
+    isCupertinoOf(context) ? cupertino : material;
