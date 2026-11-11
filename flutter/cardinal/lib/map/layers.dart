@@ -45,49 +45,64 @@ final contourUnits = Setting.choice(
 /// Cardinal Topo's winter mode, its `winter` global state.
 final winterMode = Setting.flag('map.winter', false);
 
-/// What the layer picker chooses: the map's style, and Cardinal Topo's settings.
+/// What the layer picker chooses: the map's style, and Cardinal Topo's settings; and
+/// whether the app is dark, which the map follows.
 @immutable
 class MapLayers {
   const MapLayers({
     this.style = MapStyle.streets,
     this.units = ContourUnits.imperial,
     this.winter = false,
+    this.dark = false,
   });
 
-  /// The stored choice.
-  static Future<MapLayers> read(SettingsStore settings) async => MapLayers(
+  /// The stored choice, for an app that's [dark] or not.
+  static Future<MapLayers> read(
+    SettingsStore settings, {
+    bool dark = false,
+  }) async => MapLayers(
     style: await settings.get(mapStyleChoice),
     units: await settings.get(contourUnits),
     winter: await settings.get(winterMode),
+    dark: dark,
   );
 
   final MapStyle style;
   final ContourUnits units;
   final bool winter;
 
-  MapLayers copyWith({MapStyle? style, ContourUnits? units, bool? winter}) =>
-      MapLayers(
-        style: style ?? this.style,
-        units: units ?? this.units,
-        winter: winter ?? this.winter,
-      );
+  /// Whether the app is in dark mode. Streets has a dark style; Topo doesn't yet.
+  final bool dark;
+
+  MapLayers copyWith({
+    MapStyle? style,
+    ContourUnits? units,
+    bool? winter,
+    bool? dark,
+  }) => MapLayers(
+    style: style ?? this.style,
+    units: units ?? this.units,
+    winter: winter ?? this.winter,
+    dark: dark ?? this.dark,
+  );
 
   @override
   bool operator ==(Object other) =>
       other is MapLayers &&
       other.style == style &&
       other.units == units &&
-      other.winter == winter;
+      other.winter == winter &&
+      other.dark == dark;
 
   @override
-  int get hashCode => Object.hash(style, units, winter);
+  int get hashCode => Object.hash(style, units, winter, dark);
 }
 
 /// The style JSON for [layers], from the bundled styles, with where you are and the
 /// selected place on top.
 Future<Map<String, Object?>> styleFor(MapLayers layers) async {
   final file = switch (layers.style) {
-    MapStyle.streets => mapStyle,
+    MapStyle.streets => layers.dark ? darkMapStyle : mapStyle,
     MapStyle.topo => topoStyle,
   };
   final style = jsonDecode(

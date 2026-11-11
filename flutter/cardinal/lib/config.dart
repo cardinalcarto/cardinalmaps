@@ -16,6 +16,13 @@ const mapStyle = String.fromEnvironment(
   defaultValue: 'headway.json',
 );
 
+/// The bundled map style for dark mode, a file in `assets/map`, made from [mapStyle] by
+/// `tool/dark_style.dart`.
+const darkMapStyle = String.fromEnvironment(
+  'CARDINAL_DARK_STYLE',
+  defaultValue: 'headway-dark.json',
+);
+
 /// The bundled Cardinal Topo style, a file in `assets/map`.
 const topoStyle = 'cardinal-topo.json';
 

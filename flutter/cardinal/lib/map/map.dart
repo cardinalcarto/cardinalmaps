@@ -112,7 +112,7 @@ class _CardinalMapState extends State<CardinalMap> {
         WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio,
       ),
     )..start();
-    final layers = await MapLayers.read(settings);
+    final layers = await MapLayers.read(settings, dark: _dark);
     final args = await _mapArgs(
       layers,
       openingView(await settings.get(savedViewport)),
@@ -145,9 +145,17 @@ class _CardinalMapState extends State<CardinalMap> {
     });
   }
 
+  /// Whether the app is dark: the map has a dark style to match.
+  bool _dark = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    if (dark != _dark) {
+      _dark = dark;
+      _change((l) => l.copyWith(dark: dark));
+    }
     final sheet = SheetScaffold.controllerOf(context);
     if (sheet != _sheet) {
       _sheet?.removeListener(_updatePadding);

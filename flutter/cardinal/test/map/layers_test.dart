@@ -1,8 +1,13 @@
+import 'dart:convert';
+
+import 'package:cardinal/config.dart';
 import 'package:cardinal/map/layers.dart';
+import 'package:flutter/services.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../tool/dark_style.dart';
 import '../fakes/fake_place_store.dart';
 import '../fakes/fake_saved_store.dart';
 
@@ -33,6 +38,28 @@ void main() {
       ];
       expect(ids.last, 'selection-pin', reason: '$s');
     }
+  });
+
+  test('a dark app gets the dark streets style, and topo as it is', () async {
+    final streets = await styleFor(const MapLayers(dark: true));
+    expect(streets['id'], endsWith('-dark'));
+    expect((await styleFor(const MapLayers()))['id'], isNot(endsWith('-dark')));
+    final topo = await styleFor(
+      const MapLayers(style: MapStyle.topo, dark: true),
+    );
+    expect(topo['name'], 'Cardinal Topo');
+  });
+
+  test('the bundled dark style is the one made from the light style', () async {
+    // Fails if the light style changed and tool/dark_style.dart wasn't rerun.
+    final light = jsonDecode(
+      await rootBundle.loadString('assets/map/$mapStyle'),
+    ) as Map<String, Object?>;
+    darken(light);
+    final bundled = jsonDecode(
+      await rootBundle.loadString('assets/map/$darkMapStyle'),
+    );
+    expect(jsonDecode(jsonEncode(light)), bundled);
   });
 
   test('only declared global state is set', () {
