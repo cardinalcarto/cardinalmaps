@@ -123,6 +123,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DirectionsPoint dco_decode_box_autoadd_directions_point(dynamic raw);
 
   @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw);
+
+  @protected
   DirectionsError dco_decode_directions_error(dynamic raw);
 
   @protected
@@ -177,6 +180,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   OpenErrorKind dco_decode_open_error_kind(dynamic raw);
 
   @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
+
+  @protected
   List<String>? dco_decode_opt_list_String(dynamic raw);
 
   @protected
@@ -184,6 +190,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (String, String) dco_decode_record_string_string(dynamic raw);
+
+  @protected
+  RefreshError dco_decode_refresh_error(dynamic raw);
 
   @protected
   RouterResponse dco_decode_router_response(dynamic raw);
@@ -301,6 +310,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
   DirectionsError sse_decode_directions_error(SseDeserializer deserializer);
 
   @protected
@@ -365,6 +377,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   OpenErrorKind sse_decode_open_error_kind(SseDeserializer deserializer);
 
   @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
   List<String>? sse_decode_opt_list_String(SseDeserializer deserializer);
 
   @protected
@@ -374,6 +389,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (String, String) sse_decode_record_string_string(
     SseDeserializer deserializer,
   );
+
+  @protected
+  RefreshError sse_decode_refresh_error(SseDeserializer deserializer);
 
   @protected
   RouterResponse sse_decode_router_response(SseDeserializer deserializer);
@@ -508,6 +526,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
+
+  @protected
   void sse_encode_directions_error(
     DirectionsError self,
     SseSerializer serializer,
@@ -598,6 +619,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_open_error_kind(OpenErrorKind self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_list_String(List<String>? self, SseSerializer serializer);
 
   @protected
@@ -611,6 +635,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     (String, String) self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_refresh_error(RefreshError self, SseSerializer serializer);
 
   @protected
   void sse_encode_router_response(

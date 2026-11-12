@@ -21,7 +21,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tar::Archive;
 use thiserror::Error;
-use zerocopy::{FromBytes, IntoBytes, LE, U32, U64};
+use zerocopy::{FromBytes as _, IntoBytes as _, LE, U32, U64};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, Unaligned};
 
 // Offsets into an extract are 64-bit,
@@ -1140,8 +1140,9 @@ mod test {
                 .get_pointer_for_tile_containing(*graph_id)
                 .expect("Unable to get tile");
             let tarball_tile_bytes = unsafe { tarball_tile_pointer.as_tile_bytes() };
+            let directory_tile_bytes = unsafe { directory_tile.borrow_owner().as_tile_bytes() };
 
-            assert_eq!(directory_tile.borrow_owner(), tarball_tile_bytes);
+            assert_eq!(directory_tile_bytes, tarball_tile_bytes);
 
             let immutable_tarball_tile_pointer = immutable_tarball_provider
                 .get_handle_for_tile_containing(*graph_id)
@@ -1151,7 +1152,7 @@ mod test {
                     .borrow_owner()
                     .as_tile_bytes()
             };
-            assert_eq!(directory_tile.borrow_owner(), immutable_tarball_tile_bytes);
+            assert_eq!(directory_tile_bytes, immutable_tarball_tile_bytes);
         }
     }
 }

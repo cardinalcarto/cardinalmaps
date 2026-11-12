@@ -9,11 +9,6 @@ use thiserror::Error;
 use valinor_loki::LokiConfig;
 use valinor_thor::ThorConfig;
 
-/// The default number of tiles each tile directory keeps in memory (the stage services' default).
-///
-/// Tarball tiles need no such limit: they stay in the memory map (see [`crate::tiles`]).
-pub const DEFAULT_TILE_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
-
 /// Why a `valhalla.json` couldn't be read.
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -40,9 +35,6 @@ pub struct RouterConfig {
     /// `mjolnir.tile_extract`, if the config names one (relative to the working directory,
     /// as mainline reads it). [`crate::Router::open`] doesn't read it: callers pass tile sets.
     pub tile_extract: Option<PathBuf>,
-    /// How many tiles each tile directory keeps in memory (each holds a whole tile).
-    /// Tarballs don't use it: their tiles stay in the memory map.
-    pub tile_cache_size: NonZeroUsize,
     /// How many path search workspaces to keep, and so how many routes run at once;
     /// requests beyond that wait for one.
     ///
@@ -59,7 +51,6 @@ impl Default for RouterConfig {
             thor: ThorConfig::default(),
             odin: Odin::default(),
             tile_extract: None,
-            tile_cache_size: DEFAULT_TILE_CACHE_SIZE,
             workspaces: std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN),
         }
     }

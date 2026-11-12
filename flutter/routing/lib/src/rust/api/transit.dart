@@ -23,14 +23,20 @@ abstract class OfflineTransit implements RustOpaqueInterface {
   ///
   /// The build's files are memory-mapped: to replace one, write a new file and rename it over
   /// the old one; truncating or rewriting it in place while it is open can fault.
+  ///
+  /// `expected_build_id` is as for `OfflineRouter.open` (the routing release's
+  /// `valhalla_build_id`): with it, a street tile directory may have no tiles yet,
+  /// and tiles that arrive later are used after [`Self::refresh_tiles`].
   static Future<OfflineTransit> open({
     required String build,
     List<String>? feeds,
     required List<String> tileSets,
+    int? expectedBuildId,
   }) => RustLib.instance.api.crateApiTransitOfflineTransitOpen(
     build: build,
     feeds: feeds,
     tileSets: tileSets,
+    expectedBuildId: expectedBuildId,
   );
 
   /// Plans a trip from JSON request bytes (the server's `/transit/plan` body),
@@ -46,6 +52,13 @@ abstract class OfflineTransit implements RustOpaqueInterface {
     required List<TransitFeed> feeds,
     required TransitCancel cancel,
   });
+
+  /// Makes street tiles that arrived in the tile directories since this was opened (or last
+  /// refreshed) available to plans. Call it once a download's files are in place.
+  ///
+  /// It is cheap and safe while plans run; each search worker forgets the tiles it found
+  /// missing the next time it plans.
+  Future<void> refreshTiles();
 
   /// The latest real-time state of a vehicle, as the server's vehicle lookup returns it.
   Future<TransitResponse> vehicle({required String feed, required String id});

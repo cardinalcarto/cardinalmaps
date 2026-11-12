@@ -1836,7 +1836,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let costing_name = flags.string("costing", "pedestrian");
     let costing = costing_named(&costing_name)?;
-    let tile_sets = TileSets::open(&[tiles.as_str()], NonZeroUsize::new(1024).ok_or("nonzero")?)?;
+    let tile_sets = TileSets::open(&[tiles.as_str()])?;
     let provider: Provider = Box::leak(Box::new(tile_sets));
 
     let stops: Vec<(f64, f64)> = (0..snapshot.stop_count())

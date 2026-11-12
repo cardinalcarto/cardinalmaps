@@ -11,7 +11,6 @@
 //! The planner, like [`TransitState`], has no runtime and reads no clock.
 
 use core::fmt;
-use core::num::NonZeroUsize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -21,6 +20,7 @@ use jiff::Timestamp;
 use self_cell::self_cell;
 use thiserror::Error;
 use valhalla_graphtile::GraphId;
+use valhalla_graphtile::graph_tile::BuildId;
 use valhalla_proto::costing::Type as CostingType;
 use valhalla_proto::lat_lng::{HasLat, HasLng};
 use valhalla_proto::location::{HasMinimumReachability, HasSearchCutoff};
@@ -128,8 +128,6 @@ pub struct StreetConfig {
     ///
     /// A build's stops come snapped by the offline build.
     pub snap: SnapConfig,
-    /// How many tiles each tile directory keeps in memory.
-    pub tile_cache_size: NonZeroUsize,
     /// The most one query may ask for and keep.
     pub limits: ServiceLimits,
     /// How much of a Thor workspace a worker keeps between queries.
@@ -149,7 +147,6 @@ impl Default for StreetConfig {
         Self {
             state: StateConfig::default(),
             snap: SnapConfig::default(),
-            tile_cache_size: valinor_router::DEFAULT_TILE_CACHE_SIZE,
             limits: ServiceLimits::default(),
             retention: Retention::default(),
             max_walking_transfer_seconds: DEFAULT_TRANSFER_SECONDS,
@@ -344,6 +341,15 @@ impl ModeWorker<'_> {
         self.egress.release_search();
         self.transfer.release_search();
     }
+
+    /// Forgets the tiles this mode's searches have read, and those they found missing,
+    /// and the stops they attached (a stop whose tile was missing wasn't attached).
+    fn forget_tiles(&mut self) {
+        for table in [&mut self.access, &mut self.egress, &mut self.transfer] {
+            table.forget_tiles();
+            table.unbind();
+        }
+    }
 }
 
 /// One thread's search storage: per-mode searches and a Thor workspace.
@@ -353,11 +359,15 @@ struct Worker<'a> {
     wheelchair: ModeWorker<'a>,
     thor: Thor<&'a TileSets>,
     workspace: Workspace,
+    /// The tile sets' [`TileSets::generation`] when the searches last forgot their tiles:
+    /// a search remembers tiles it found missing, which may have arrived since.
+    tiles_generation: u64,
 }
 
 impl<'a> Worker<'a> {
     fn new(tiles: &'a TileSets, retention: Retention) -> Result<Self, StreetError> {
         Ok(Self {
+            tiles_generation: tiles.generation(),
             walking: ModeWorker::new(tiles, TravelMode::Walking)?,
             cycling: ModeWorker::new(tiles, TravelMode::Cycling)?,
             wheelchair: ModeWorker::new(tiles, TravelMode::Wheelchair)?,
@@ -379,6 +389,18 @@ impl<'a> Worker<'a> {
         self.walking.release_search();
         self.cycling.release_search();
         self.wheelchair.release_search();
+    }
+
+    /// Makes the searches see tiles that arrived since they last looked
+    /// (they remember missing tiles), if the tile sets were refreshed since.
+    fn catch_up_with(&mut self, tiles: &TileSets) {
+        let generation = tiles.generation();
+        if generation != self.tiles_generation {
+            self.walking.forget_tiles();
+            self.cycling.forget_tiles();
+            self.wheelchair.forget_tiles();
+            self.tiles_generation = generation;
+        }
     }
 }
 
@@ -768,7 +790,10 @@ impl<'a> WorkerPool<'a> {
             .unwrap_or_else(PoisonError::into_inner)
             .pop();
         match idle {
-            Some(worker) => Ok(worker),
+            Some(mut worker) => {
+                worker.catch_up_with(self.tiles);
+                Ok(worker)
+            }
             None => Worker::new(self.tiles, self.retention),
         }
     }
@@ -896,7 +921,8 @@ impl StopSnapper for TileSnapper {
             } => {
                 let tiles: &TileSets = &self.tiles;
                 let costing = any_costing(mode).map_err(snap_setup_error)?;
-                let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+                let threads =
+                    std::thread::available_parallelism().unwrap_or(core::num::NonZeroUsize::MIN);
                 let seconds = match mode {
                     TravelMode::Walking => *walking_seconds,
                     TravelMode::Cycling => *cycling_seconds,
@@ -999,7 +1025,22 @@ impl StreetPlanner {
         tile_sets: &[P],
         config: StreetConfig,
     ) -> Result<Self, OpenPlannerError> {
-        let tiles = Arc::new(TileSets::open(tile_sets, config.tile_cache_size)?);
+        Self::from_build_for(build, tile_sets, config, None)
+    }
+
+    /// [`StreetPlanner::from_build`], for street tiles of a known build
+    /// (see [`TileSets::open_for_build`]): a tile directory may have no tiles yet.
+    ///
+    /// # Errors
+    ///
+    /// As [`StreetPlanner::from_build`].
+    pub fn from_build_for<P: AsRef<Path>>(
+        build: TransitBuild,
+        tile_sets: &[P],
+        config: StreetConfig,
+        street_build: Option<BuildId>,
+    ) -> Result<Self, OpenPlannerError> {
+        let tiles = Arc::new(TileSets::open_for_build(tile_sets, street_build)?);
         if u32::from(tiles.build_id().value()) != build.valhalla_build_id {
             return Err(OpenPlannerError::Build(
                 BuildLoadError::StreetBuildMismatch {
@@ -1033,7 +1074,7 @@ impl StreetPlanner {
         tile_sets: &[P],
         config: StreetConfig,
     ) -> Result<Self, OpenPlannerError> {
-        let tiles = Arc::new(TileSets::open(tile_sets, config.tile_cache_size)?);
+        let tiles = Arc::new(TileSets::open(tile_sets)?);
         let transfers = BaseTransfers::Build {
             walking_seconds: config.max_walking_transfer_seconds,
             cycling_seconds: config.max_cycling_transfer_seconds,
@@ -1138,6 +1179,22 @@ impl StreetPlanner {
         })
     }
 
+    /// The street tile sets.
+    #[inline]
+    pub fn tiles(&self) -> &TileSets {
+        self.cell.borrow_owner()
+    }
+
+    /// Makes street tiles that arrived in the tile directories since the planner was opened
+    /// (or last refreshed) available to plans ([`TileSets::refresh`]).
+    ///
+    /// Search workers remember tiles they found missing; each forgets them the next time
+    /// it is taken for a plan. Call it once new tile files are in place.
+    /// It is safe while plans run; a plan that is running may or may not see the new tiles.
+    pub fn refresh_tiles(&self) {
+        self.tiles().refresh();
+    }
+
     /// The latest real-time state of a vehicle.
     ///
     /// # Errors
@@ -1167,6 +1224,7 @@ impl StreetPlanner {
             wheelchair,
             thor,
             workspace,
+            tiles_generation: _,
         } = worker;
         let mode_worker = match request.mode {
             TravelMode::Walking => walking,

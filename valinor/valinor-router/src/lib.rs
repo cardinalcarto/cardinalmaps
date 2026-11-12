@@ -34,7 +34,7 @@ pub mod tiles;
 #[cfg(test)]
 mod capture_tests;
 
-pub use config::{ConfigError, DEFAULT_TILE_CACHE_SIZE, RouterConfig};
+pub use config::{ConfigError, RouterConfig};
 pub use http::{Method, StatusCode};
 pub use router::{HttpResponse, Interrupted, Router};
 pub use tiles::OpenError;

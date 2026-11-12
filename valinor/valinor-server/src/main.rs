@@ -23,7 +23,7 @@ use tracing::{info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
-use valinor_router::{DEFAULT_TILE_CACHE_SIZE, Router, RouterConfig};
+use valinor_router::{Router, RouterConfig};
 use valinor_transit_plan::{ServiceLimits, StreetConfig, StreetPlanner, TransitBuild};
 
 mod app;
@@ -53,10 +53,6 @@ struct Cli {
     /// Each has its own path search storage; more requests wait.
     #[arg(env, long)]
     workers: Option<NonZeroUsize>,
-
-    /// How many tiles each tile directory keeps in memory (tarballs need no cache).
-    #[arg(env, long, default_value_t = DEFAULT_TILE_CACHE_SIZE)]
-    tile_cache_size: NonZeroUsize,
 
     /// How long a request may take, waiting for a worker included, before it is a 504.
     #[arg(env, long, default_value = "60")]
@@ -175,7 +171,6 @@ fn open(cli: &Cli) -> anyhow::Result<(Router, usize, Vec<PathBuf>)> {
         .with_context(|| format!("read {}", cli.config.display()))?;
     let mut config = RouterConfig::from_valhalla_json(&json)
         .with_context(|| format!("parse {}", cli.config.display()))?;
-    config.tile_cache_size = cli.tile_cache_size;
     if let Some(workers) = cli.workers {
         config.workspaces = workers;
     }

@@ -39,6 +39,7 @@ use crate::geo::PointLL;
 use crate::graph::{Graph, GraphError, edge as get_edge, shape};
 use crate::polygon::{PolygonError, edges_in_rings};
 use crate::search::{MAX_LEVEL, SearchError, lat_lng, point_of, search};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Instant;
 use valhalla_graphtile::GraphId;
 use valhalla_graphtile::graph_tile::GraphTile;
@@ -121,7 +122,9 @@ pub enum LokiOutput {
 pub struct Loki<P> {
     config: LokiConfig,
     provider: P,
-    connectivity: Option<ConnectivityMap>,
+    /// Replaced whole when tiles arrive ([`Loki::replace_connectivity`]),
+    /// so a request reads one map throughout.
+    connectivity: RwLock<Option<Arc<ConnectivityMap>>>,
     tileset_last_modified: u32,
 }
 
@@ -314,15 +317,29 @@ impl<P: GraphTileProvider> Loki<P> {
     /// without one, that check is skipped.
     pub fn new(config: LokiConfig, provider: P, connectivity: Option<ConnectivityMap>) -> Self {
         let connectivity = if config.use_connectivity {
-            connectivity
+            connectivity.map(Arc::new)
         } else {
             None
         };
         Self {
             config,
             provider,
-            connectivity,
+            connectivity: RwLock::new(connectivity),
             tileset_last_modified: 0,
+        }
+    }
+
+    /// Replaces the connectivity map (for a tile set that has gained tiles),
+    /// if this Loki checks connectivity (`config.use_connectivity`).
+    ///
+    /// It is safe while requests run: each request reads the map it started with,
+    /// or the new one.
+    pub fn replace_connectivity(&self, connectivity: ConnectivityMap) {
+        if self.config.use_connectivity {
+            *self
+                .connectivity
+                .write()
+                .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(connectivity));
         }
     }
 
@@ -659,7 +676,12 @@ impl<P: GraphTileProvider> Loki<P> {
         &self,
         locations: impl IntoIterator<Item = &'a Location>,
     ) -> Result<(), ValhallaError> {
-        match &self.connectivity {
+        let map = self
+            .connectivity
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        match &map {
             Some(map) if !map.connected(locations) => Err(ErrorCode::UnconnectedRegions.into()),
             _ => Ok(()),
         }

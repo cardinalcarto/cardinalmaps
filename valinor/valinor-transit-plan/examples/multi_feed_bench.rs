@@ -22,7 +22,6 @@
 )]
 
 use core::cell::{Cell, RefCell};
-use core::num::NonZeroUsize;
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -499,7 +498,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .stop_locations()
         .map(|location| (location.stop, location.latitude, location.longitude))
         .collect();
-    let tile_sets = TileSets::open(&[tiles.as_str()], NonZeroUsize::new(1024).ok_or("nonzero")?)?;
+    let tile_sets = TileSets::open(&[tiles.as_str()])?;
     let walking = costing(CostingType::Pedestrian)?;
     let mut tables = StopTables::new(&tile_sets, walking.clone());
     let snaps = snapshot.snaps().ok_or("no snaps")?;

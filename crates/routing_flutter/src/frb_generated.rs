@@ -42,7 +42,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -64462424;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 782684409;
 
 // Section: executor
 
@@ -215,10 +215,64 @@ fn wire__crate__api__router__OfflineRouter_open_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_tile_sets = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_expected_build_id = <Option<u32>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, crate::api::router::OpenError>((move || {
-                    let output_ok = crate::api::router::OfflineRouter::open(api_tile_sets)?;
+                    let output_ok = crate::api::router::OfflineRouter::open(
+                        api_tile_sets,
+                        api_expected_build_id,
+                    )?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__router__OfflineRouter_refresh_tiles_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "OfflineRouter_refresh_tiles",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineRouter>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::router::RefreshError>((move || {
+                    let mut api_that_guard = None;
+                    let decode_indices_ =
+                        flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                &api_that, 0, false,
+                            ),
+                        ]);
+                    for i in decode_indices_ {
+                        match i {
+                            0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                            _ => unreachable!(),
+                        }
+                    }
+                    let api_that_guard = api_that_guard.unwrap();
+                    let output_ok =
+                        crate::api::router::OfflineRouter::refresh_tiles(&*api_that_guard)?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -303,6 +357,7 @@ fn wire__crate__api__transit__OfflineTransit_open_impl(
             let api_build = <String>::sse_decode(&mut deserializer);
             let api_feeds = <Option<Vec<String>>>::sse_decode(&mut deserializer);
             let api_tile_sets = <Vec<String>>::sse_decode(&mut deserializer);
+            let api_expected_build_id = <Option<u32>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, crate::api::transit::TransitOpenError>((move || {
@@ -310,6 +365,7 @@ fn wire__crate__api__transit__OfflineTransit_open_impl(
                         api_build,
                         api_feeds,
                         api_tile_sets,
+                        api_expected_build_id,
                     )?;
                     std::result::Result::Ok(output_ok)
                 })(
@@ -379,6 +435,57 @@ fn wire__crate__api__transit__OfflineTransit_plan_impl(
                         api_feeds,
                         &*api_cancel_guard,
                     ))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__transit__OfflineTransit_refresh_tiles_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "OfflineTransit_refresh_tiles",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineTransit>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let mut api_that_guard = None;
+                    let decode_indices_ =
+                        flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                &api_that, 0, false,
+                            ),
+                        ]);
+                    for i in decode_indices_ {
+                        match i {
+                            0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                            _ => unreachable!(),
+                        }
+                    }
+                    let api_that_guard = api_that_guard.unwrap();
+                    let output_ok = Ok::<_, ()>({
+                        crate::api::transit::OfflineTransit::refresh_tiles(&*api_that_guard);
+                    })?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -869,8 +976,20 @@ impl SseDecode for crate::api::router::OpenErrorKind {
             1 => crate::api::router::OpenErrorKind::Unreadable,
             2 => crate::api::router::OpenErrorKind::NoBuildId,
             3 => crate::api::router::OpenErrorKind::MixedBuilds,
+            4 => crate::api::router::OpenErrorKind::WrongBuild,
             _ => unreachable!("Invalid variant for OpenErrorKind: {}", inner),
         };
+    }
+}
+
+impl SseDecode for Option<u32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<u32>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
     }
 }
 
@@ -902,6 +1021,16 @@ impl SseDecode for (String, String) {
         let mut var_field0 = <String>::sse_decode(deserializer);
         let mut var_field1 = <String>::sse_decode(deserializer);
         return (var_field0, var_field1);
+    }
+}
+
+impl SseDecode for crate::api::router::RefreshError {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_message = <String>::sse_decode(deserializer);
+        return crate::api::router::RefreshError {
+            message: var_message,
+        };
     }
 }
 
@@ -1025,16 +1154,28 @@ fn pde_ffi_dispatcher_primary_impl(
             data_len,
         ),
         4 => wire__crate__api__router__OfflineRouter_open_impl(port, ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__router__OfflineRouter_route_impl(port, ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__transit__OfflineTransit_open_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__transit__OfflineTransit_plan_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__transit__OfflineTransit_vehicle_impl(
+        5 => wire__crate__api__router__OfflineRouter_refresh_tiles_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        10 => {
+        6 => wire__crate__api__router__OfflineRouter_route_impl(port, ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__transit__OfflineTransit_open_impl(port, ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__transit__OfflineTransit_plan_impl(port, ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__transit__OfflineTransit_refresh_tiles_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        10 => wire__crate__api__transit__OfflineTransit_vehicle_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        12 => {
             wire__crate__api__transit__TransitCancel_default_impl(port, ptr, rust_vec_len, data_len)
         }
         _ => unreachable!(),
@@ -1059,8 +1200,8 @@ fn pde_ffi_dispatcher_sync_impl(
             rust_vec_len,
             data_len,
         ),
-        9 => wire__crate__api__transit__TransitCancel_cancel_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__transit__TransitCancel_new_impl(ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__transit__TransitCancel_cancel_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__transit__TransitCancel_new_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1283,6 +1424,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::router::OpenErrorKind {
             Self::Unreadable => 1.into_dart(),
             Self::NoBuildId => 2.into_dart(),
             Self::MixedBuilds => 3.into_dart(),
+            Self::WrongBuild => 4.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -1295,6 +1437,23 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::router::OpenErrorKind>
     for crate::api::router::OpenErrorKind
 {
     fn into_into_dart(self) -> crate::api::router::OpenErrorKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::router::RefreshError {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [self.message.into_into_dart().into_dart()].into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::router::RefreshError
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::router::RefreshError>
+    for crate::api::router::RefreshError
+{
+    fn into_into_dart(self) -> crate::api::router::RefreshError {
         self
     }
 }
@@ -1651,12 +1810,23 @@ impl SseEncode for crate::api::router::OpenErrorKind {
                 crate::api::router::OpenErrorKind::Unreadable => 1,
                 crate::api::router::OpenErrorKind::NoBuildId => 2,
                 crate::api::router::OpenErrorKind::MixedBuilds => 3,
+                crate::api::router::OpenErrorKind::WrongBuild => 4,
                 _ => {
                     unimplemented!("");
                 }
             },
             serializer,
         );
+    }
+}
+
+impl SseEncode for Option<u32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <u32>::sse_encode(value, serializer);
+        }
     }
 }
 
@@ -1685,6 +1855,13 @@ impl SseEncode for (String, String) {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.0, serializer);
         <String>::sse_encode(self.1, serializer);
+    }
+}
+
+impl SseEncode for crate::api::router::RefreshError {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.message, serializer);
     }
 }
 

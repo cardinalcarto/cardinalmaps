@@ -3530,6 +3530,7 @@ dependencies = [
  "ferrostar",
  "flutter_rust_bridge",
  "serde_json",
+ "valhalla-graphtile",
  "valinor-gtfs",
  "valinor-gtfs-rt",
  "valinor-loki",

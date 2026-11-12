@@ -370,7 +370,7 @@ fn placements(stops: &StopList) -> Vec<FeedPlacement> {
 
 /// What [`TransferTable::build`] gives for the same stops in one numbering.
 fn built_table(mode: TransferMode, stops: &StopList) -> TransferTable {
-    let tiles = TileSets::open(&[street_tiles()], threads(64)).expect("tiles");
+    let tiles = TileSets::open(&[street_tiles()]).expect("tiles");
     let costing = costing_for(mode).expect("costing");
     let coordinates: Vec<(f64, f64)> = stops
         .coordinates
@@ -888,12 +888,9 @@ fn real_tiles_equal_a_fresh_table() {
     feeds.sort_unstable_by(|a, b| a.id.cmp(&b.id));
     let stops = StopList::load(root, &feeds, threads(8)).expect("stops");
     let manifest = read_manifest(root).expect("manifest");
-    let tile_set = TileSets::open(
-        &[PathBuf::from(
-            "/mnt/maps/cardinal/routing-elevation-i2b/washington/tiles.tar",
-        )],
-        threads(64),
-    )
+    let tile_set = TileSets::open(&[PathBuf::from(
+        "/mnt/maps/cardinal/routing-elevation-i2b/washington/tiles.tar",
+    )])
     .expect("tiles");
     for mode in TransferMode::ALL {
         let entries = manifest.tiles.get(mode.as_str()).expect("tiles");

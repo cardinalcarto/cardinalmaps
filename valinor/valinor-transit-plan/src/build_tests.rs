@@ -734,6 +734,70 @@ fn a_downloaded_area_plans_on_partial_streets() {
     );
 }
 
+/// A street tile that arrives on the device after the planner opened: once refreshed, plans
+/// are those of a planner that had it from the start, although the pooled workers had attached
+/// the stops without it (its stops unsnapped) and found it missing.
+#[test]
+#[ignore = "needs the Washington build under /mnt/maps/cardinal/transit"]
+fn a_street_tile_that_arrives_is_used_after_a_refresh() {
+    let area = (47.48, -122.46, 47.76, -122.22);
+    let dir = seattle_only(area);
+    let feeds = [METRO.to_owned(), SOUND_TRANSIT.to_owned()];
+    let streets = seattle_street_tiles(area);
+    let cut = TempDir::new().expect("temp");
+    let status = std::process::Command::new("cp")
+        .arg("-a")
+        .arg(format!("{}/.", streets.path().display()))
+        .arg(cut.path())
+        .status()
+        .expect("cp");
+    assert!(status.success());
+    // Mercer Island's local tile, east of the Fremont origin's.
+    let late = "2/000/792/231.gph";
+    fs::remove_file(cut.path().join(late)).expect("remove");
+
+    let open = |tiles: &Path| {
+        let build = TransitBuild::load(dir.path(), Some(&feeds)).expect("loads");
+        StreetPlanner::from_build(build, &[tiles], StreetConfig::default()).expect("opens")
+    };
+    let full = open(streets.path());
+    let planner = open(cut.path());
+    let departure = 1_794_330_000;
+    let request = |lat, lon| {
+        TransitRequest::new(
+            LatLon {
+                lat: 47.649_735,
+                lon: -122.349_869,
+            },
+            LatLon { lat, lon },
+            departure,
+            departure - 60,
+        )
+    };
+    let requests = [
+        // Mercer Island station, in the late tile, and the Central District, in the origin's.
+        request(47.588_4, -122.233_0),
+        request(47.613_442, -122.302_605),
+    ];
+    let answer = |planner: &StreetPlanner, request: &TransitRequest| {
+        serde_json::to_value(planner.plan(request, "en-US", &|| false).ok()).expect("json")
+    };
+    for request in &requests {
+        let _ = answer(&planner, request);
+    }
+    assert_ne!(answer(&planner, &requests[0]), answer(&full, &requests[0]));
+
+    let part = cut.path().join(late).with_extension("part");
+    fs::copy(streets.path().join(late), &part).expect("copy");
+    fs::rename(&part, cut.path().join(late)).expect("rename");
+    planner.refresh_tiles();
+    for request in &requests {
+        let expected = answer(&full, request);
+        assert!(!expected.is_null());
+        assert_eq!(answer(&planner, request), expected);
+    }
+}
+
 /// Every Washington timetable reads the same, straight from its file, as from a heap copy.
 #[test]
 #[ignore = "needs the Washington build under /mnt/maps/cardinal/transit"]

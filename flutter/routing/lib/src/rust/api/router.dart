@@ -7,6 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `device_config`, `street_build`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineRouter>>
@@ -16,8 +17,26 @@ abstract class OfflineRouter implements RustOpaqueInterface {
   /// Fails if they don't all come from one build (the build ID in each tile's checksum).
   /// Opening maps the tarballs and reads their indexes and a sample of tile headers;
   /// it doesn't read the tiles.
-  static Future<OfflineRouter> open({required List<String> tileSets}) =>
-      RustLib.instance.api.crateApiRouterOfflineRouterOpen(tileSets: tileSets);
+  ///
+  /// With `expected_build_id` (the routing release's `valhalla_build_id`), every tile must
+  /// be from that build, and a tile directory may have no tiles yet: tiles that arrive later
+  /// are used after [`Self::refresh_tiles`].
+  /// Without it, every tile set must have tiles.
+  ///
+  /// Tile files must arrive whole: write each to a temporary file and rename it into place.
+  static Future<OfflineRouter> open({
+    required List<String> tileSets,
+    int? expectedBuildId,
+  }) => RustLib.instance.api.crateApiRouterOfflineRouterOpen(
+    tileSets: tileSets,
+    expectedBuildId: expectedBuildId,
+  );
+
+  /// Makes tiles that arrived in the tile directories since the router was opened (or last
+  /// refreshed) available to routes. Call it once a download's files are in place.
+  ///
+  /// It reads the tile directories' listings (not the tiles), and is safe while routes run.
+  Future<void> refreshTiles();
 
   /// Answers a Valhalla `route` request body, as Ferrostar's request generator makes it,
   /// with what the server would have sent. Routing errors are responses, not exceptions.
@@ -59,6 +78,28 @@ enum OpenErrorKind {
 
   /// The tile sets come from different builds: every region must come from the same one.
   mixedBuilds,
+
+  /// A tile is from another build than the expected one, or the expected build ID
+  /// isn't one (Valhalla's are 16 bits).
+  wrongBuild,
+}
+
+/// Why tiles that arrived couldn't be made available.
+class RefreshError implements FrbException {
+  /// A description for logs, naming the directory.
+  final String message;
+
+  const RefreshError({required this.message});
+
+  @override
+  int get hashCode => message.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RefreshError &&
+          runtimeType == other.runtimeType &&
+          message == other.message;
 }
 
 /// A response, as the server would have sent it.
