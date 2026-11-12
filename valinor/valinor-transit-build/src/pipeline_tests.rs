@@ -1342,44 +1342,6 @@ fn the_feed_index_places_each_stop_and_its_manifest_parts_open_one_feed() {
         }
     }
     assert_eq!(found, expected);
-    // Every transfer tile is listed once, with its size, in the zoom 6 tile holding it.
-    let mut listed: BTreeMap<(String, u32, u32), u64> = BTreeMap::new();
-    for (relative, bytes) in tree(&index_dir.join("index")) {
-        let x: u32 = relative
-            .iter()
-            .next()
-            .expect("x")
-            .to_string_lossy()
-            .parse()
-            .expect("x");
-        let document: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-        for (mode, tiles) in document["transfers"].as_object().expect("transfers") {
-            for tile in tiles.as_array().expect("tiles") {
-                let [tx, ty, size]: [u64; 3] = serde_json::from_value(tile.clone()).expect("tile");
-                assert_eq!(u32::try_from(tx).expect("x") >> 6, x);
-                let previous = listed.insert(
-                    (
-                        mode.clone(),
-                        u32::try_from(tx).expect("x"),
-                        u32::try_from(ty).expect("y"),
-                    ),
-                    size,
-                );
-                assert!(previous.is_none(), "a transfer tile is listed once");
-            }
-        }
-    }
-    let in_manifest: BTreeMap<(String, u32, u32), u64> = manifest
-        .tiles
-        .iter()
-        .flat_map(|(mode, tiles)| {
-            tiles
-                .iter()
-                .map(move |t| ((mode.clone(), t.x, t.y), t.bytes))
-        })
-        .collect();
-    assert!(!in_manifest.is_empty());
-    assert_eq!(listed, in_manifest);
     assert_eq!(
         report.cells,
         expected

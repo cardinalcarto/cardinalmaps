@@ -8,9 +8,6 @@
 //!   there, each with the zoom 12 tiles of its stops inside that zoom 6 tile.
 //!   Cells come from the stops in each compiled timetable, not from the manifest's
 //!   transfer tiles, which leave out stops that didn't snap to a street.
-//!   It also lists, by mode, every transfer tile inside it with its compressed size
-//!   (`transfers: {mode: [[x, y, bytes], ...]}`), so a client knows exactly what an area's
-//!   tiles cost; a zoom 6 tile with transfer tiles but no stops gets a file too.
 //! - `feeds/<id>.json`, a summary of one compiled feed: names, agencies, license, service
 //!   dates, and the files a client downloads for it, with their sizes; and `feeds.json`, all of
 //!   them in one file, for browsing the whole build. A client choosing feeds in an area fetches
@@ -167,12 +164,7 @@ struct IndexFeed<'a> {
 struct IndexDocument<'a> {
     tile: [u32; 2],
     feeds: Vec<IndexFeed<'a>>,
-    /// By mode, the transfer tiles inside this tile, as `[x, y, compressed bytes]`.
-    transfers: BTreeMap<&'a str, Vec<[u64; 3]>>,
 }
-
-/// By mode, transfer tiles as `[x, y, compressed bytes]`.
-type TransferSizes<'a> = BTreeMap<&'a str, Vec<[u64; 3]>>;
 
 /// By zoom 6 tile, each feed with stops there, by manifest position, and its zoom 12 cells.
 type IndexTiles = BTreeMap<(u32, u32), Vec<(usize, Vec<[u32; 2]>)>>;
@@ -279,7 +271,8 @@ pub fn run(options: &FeedIndexOptions) -> Result<FeedIndexReport, BuildError> {
     result.feeds = summaries.len();
     result.cells = all_cells.len();
 
-    result.index_files = write_index_tiles(&staging, &manifest, &by_index_tile)?;
+    write_index_tiles(&staging, &manifest, &by_index_tile)?;
+    result.index_files = by_index_tile.len();
 
     write_json(
         &staging.join("feeds.json"),
@@ -338,54 +331,24 @@ fn read_manifest_parts(path: &Path) -> Result<ManifestParts, BuildError> {
     Ok((manifest, raw, feeds))
 }
 
-/// Writes `index/<x>/<y>.json` for each zoom 6 tile with stops or transfer tiles, and
-/// returns how many.
+/// Writes `index/<x>/<y>.json` for each zoom 6 tile.
 fn write_index_tiles(
     staging: &Path,
     manifest: &Manifest,
     by_index_tile: &IndexTiles,
-) -> Result<usize, BuildError> {
-    let shift = CELL_ZOOM - INDEX_ZOOM;
-    let mut transfers: BTreeMap<(u32, u32), TransferSizes<'_>> = BTreeMap::new();
-    for (mode, tiles) in &manifest.tiles {
-        for tile in tiles {
-            transfers
-                .entry((tile.x >> shift, tile.y >> shift))
-                .or_default()
-                .entry(mode.as_str())
-                .or_default()
-                .push([u64::from(tile.x), u64::from(tile.y), tile.bytes]);
-        }
-    }
-    for lists in transfers.values_mut() {
-        for list in lists.values_mut() {
-            list.sort_unstable();
-        }
-    }
-    let keys: BTreeSet<(u32, u32)> = by_index_tile
-        .keys()
-        .chain(transfers.keys())
-        .copied()
-        .collect();
-    let count = keys.len();
-    for (x, y) in keys {
+) -> Result<(), BuildError> {
+    for (&(x, y), feeds) in by_index_tile {
         let document = IndexDocument {
             tile: [x, y],
-            feeds: by_index_tile
-                .get(&(x, y))
-                .map(|feeds| {
-                    feeds
-                        .iter()
-                        .filter_map(|(index, cells)| {
-                            Some(IndexFeed {
-                                id: &manifest.feeds.get(*index)?.id,
-                                cells: cells.clone(),
-                            })
-                        })
-                        .collect()
+            feeds: feeds
+                .iter()
+                .filter_map(|(index, cells)| {
+                    Some(IndexFeed {
+                        id: &manifest.feeds.get(*index)?.id,
+                        cells: cells.clone(),
+                    })
                 })
-                .unwrap_or_default(),
-            transfers: transfers.remove(&(x, y)).unwrap_or_default(),
+                .collect(),
         };
         let directory = staging.join("index").join(x.to_string());
         fs::create_dir_all(&directory).map_err(|source| BuildError::Write {
@@ -394,7 +357,7 @@ fn write_index_tiles(
         })?;
         write_json(&directory.join(format!("{y}.json")), &document)?;
     }
-    Ok(count)
+    Ok(())
 }
 
 /// `<output>.part`, beside the output.
