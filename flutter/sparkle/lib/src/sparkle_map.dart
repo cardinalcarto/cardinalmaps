@@ -9,6 +9,7 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
@@ -444,9 +445,24 @@ class _SparkleMapState extends State<SparkleMap> {
         _library == null) {
       return;
     }
-    _size = (width, height, pixelRatio);
     final context = gpu.gpuContext;
-    _surface = context.createImageSurface(width, height);
+    final gpu.GpuImageSurface surface;
+    try {
+      surface = context.createImageSurface(
+        width,
+        height,
+        format: context.defaultColorFormat == gpu.PixelFormat.unknown
+            ? _screenFormatFallback
+            : null,
+      );
+    } on Object catch (e) {
+      // Not during layout: report it after.
+      scheduleMicrotask(() => _fail(e));
+      return;
+    }
+    // Only now, so a size whose surface failed is tried again.
+    _size = (width, height, pixelRatio);
+    _surface = surface;
     final map = _map;
     if (map == null) {
       try {
@@ -486,6 +502,17 @@ class _SparkleMapState extends State<SparkleMap> {
     }
     _requestFrame();
   }
+
+  /// The screen's format, for when the engine doesn't know it: on a fresh install's
+  /// first launch on iOS, the default color format is `unknown` for the whole session,
+  /// and `createImageSurface` refuses it ("Unsupported GpuSurface pixel format"),
+  /// which left the map blank until the app restarted. Metal's screens are BGRA.
+  static gpu.PixelFormat get _screenFormatFallback =>
+      switch (defaultTargetPlatform) {
+        TargetPlatform.iOS ||
+        TargetPlatform.macOS => gpu.PixelFormat.b8g8r8a8UNormInt,
+        _ => gpu.PixelFormat.r8g8b8a8UNormInt,
+      };
 
   void _requestFrame() {
     if (_frameScheduled || !mounted) {
