@@ -60,6 +60,16 @@
             "dsl_features": []
           },
           {
+            "name": "manifest_id",
+            "getter_name": "manifestId",
+            "moor_type": "string",
+            "nullable": true,
+            "customConstraints": null,
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
             "name": "pinned_at",
             "getter_name": "pinnedAt",
             "moor_type": "dateTime",
@@ -707,7 +717,7 @@
       "sql": [
         {
           "dialect": "sqlite",
-          "sql": "CREATE TABLE IF NOT EXISTS \"releases\" (\"kind\" TEXT NOT NULL, \"date\" TEXT NOT NULL, \"valhalla_build_id\" INTEGER NULL, \"etag\" TEXT NULL, \"pinned_at\" INTEGER NOT NULL, PRIMARY KEY (\"kind\"));"
+          "sql": "CREATE TABLE IF NOT EXISTS \"releases\" (\"kind\" TEXT NOT NULL, \"date\" TEXT NOT NULL, \"valhalla_build_id\" INTEGER NULL, \"etag\" TEXT NULL, \"manifest_id\" TEXT NULL, \"pinned_at\" INTEGER NOT NULL, PRIMARY KEY (\"kind\"));"
         }
       ]
     },
