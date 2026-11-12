@@ -58,7 +58,7 @@ abstract class OfflineNative {
   Future<String> sha256File(String path);
 
   /// How many bytes of the archive to fetch first, for [mapPlanner].
-  int get mapFirstFetch;
+  Future<int> mapFirstFetch();
 
   Future<MapPlanning> mapPlanner(Uint8List firstBytes, GeoPolygon polygon);
 
@@ -94,7 +94,10 @@ class RustOfflineNative implements OfflineNative {
   }
 
   @override
-  int get mapFirstFetch => sparkle.mapFirstFetch();
+  Future<int> mapFirstFetch() async {
+    await sparkle.initSparkle();
+    return sparkle.mapFirstFetch();
+  }
 
   @override
   Future<MapPlanning> mapPlanner(
@@ -120,8 +123,14 @@ class RustOfflineNative implements OfflineNative {
   }
 
   @override
-  Future<void> basemapPrepare(String path, Uint8List header, String name) =>
-      sparkle.basemapPrepare(path: path, headerBytes: header, name: name);
+  Future<void> basemapPrepare(
+    String path,
+    Uint8List header,
+    String name,
+  ) async {
+    await sparkle.initSparkle();
+    await sparkle.basemapPrepare(path: path, headerBytes: header, name: name);
+  }
 
   @override
   Future<int> basemapUnpack(
@@ -131,6 +140,7 @@ class RustOfflineNative implements OfflineNative {
     Uint8List tiles,
     int region,
   ) async {
+    await sparkle.initSparkle();
     try {
       final unpacked = await sparkle.basemapUnpack(
         path: path,
@@ -150,12 +160,16 @@ class RustOfflineNative implements OfflineNative {
   }
 
   @override
-  Future<int> basemapClaim(String path, int region, Uint8List tileKeys) =>
-      sparkle.basemapClaim(path: path, region: region, tileKeys: tileKeys);
+  Future<int> basemapClaim(String path, int region, Uint8List tileKeys) async {
+    await sparkle.initSparkle();
+    return sparkle.basemapClaim(path: path, region: region, tileKeys: tileKeys);
+  }
 
   @override
-  Future<int> basemapRelease(String path, int region) =>
-      sparkle.basemapRelease(path: path, region: region);
+  Future<int> basemapRelease(String path, int region) async {
+    await sparkle.initSparkle();
+    return sparkle.basemapRelease(path: path, region: region);
+  }
 }
 
 class _RustMapPlanning implements MapPlanning {

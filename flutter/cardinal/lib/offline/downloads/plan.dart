@@ -448,7 +448,7 @@ class Planner {
     final first = await bucket.range(
       key,
       0,
-      native.mapFirstFetch,
+      await native.mapFirstFetch(),
       ifMatch: etag,
     );
     final archiveEtag = first.etag ?? etag;

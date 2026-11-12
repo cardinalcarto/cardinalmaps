@@ -419,3 +419,40 @@ fn plans_the_seattle_archive() {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+/// A basemap the app downloaded (the desktop end-to-end test leaves one): every tile
+/// sparkle's reader finds in it is the source tileset's.
+#[test]
+#[ignore = "needs CARDINAL_TEST_BASEMAP and CARDINAL_TEST_MBTILES"]
+fn reads_a_downloaded_basemap() {
+    let path = PathBuf::from(std::env::var("CARDINAL_TEST_BASEMAP").unwrap());
+    let source = MbTiles::open(&PathBuf::from(
+        std::env::var("CARDINAL_TEST_MBTILES").unwrap(),
+    ))
+    .unwrap();
+    let reader = MbTiles::open(&path).unwrap();
+    let metadata = reader.metadata().unwrap();
+    assert_eq!(metadata.format, TileFormat::Mlt);
+    let conn =
+        rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    let ids: Vec<(u8, u32, u32)> = conn
+        .prepare("SELECT zoom_level, tile_column, tile_row FROM tiles")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert!(!ids.is_empty());
+    for (z, x, row) in &ids {
+        let id = TileId::new(*z, *x, (1u32 << z) - 1 - row);
+        let tile = reader.tile(id).unwrap().unwrap();
+        assert_eq!(Some(tile), source.tile(id).unwrap(), "{id:?}");
+    }
+    let regions: i64 = conn
+        .query_row("SELECT count(DISTINCT region) FROM tile_regions", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    println!("{} tiles read, of {regions} regions", ids.len());
+}

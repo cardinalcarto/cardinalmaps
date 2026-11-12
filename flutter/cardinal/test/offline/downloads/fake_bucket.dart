@@ -32,6 +32,9 @@ class FakeBucket {
   /// Paths served with the byte at an offset changed, until removed.
   final corruptAt = <String, int>{};
 
+  /// Paths whose next response that reaches the offset has the byte there changed.
+  final corruptOnceAt = <String, int>{};
+
   /// Paths whose next response stops halfway through its body.
   final cutOnce = <String>{};
 
@@ -109,6 +112,10 @@ class FakeBucket {
         response
           ..statusCode = HttpStatus.partialContent
           ..headers.set('content-range', 'bytes $start-$end/${body.length}');
+        if (corruptOnceAt[key] case final at? when at >= start && at <= end) {
+          corruptOnceAt.remove(key);
+          body = List.of(body)..[at] ^= 0xff;
+        }
         body = body.sublist(start, end + 1);
       }
       response.contentLength = body.length;

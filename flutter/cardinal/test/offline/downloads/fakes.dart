@@ -133,7 +133,7 @@ class FakeNative implements OfflineNative {
       sha256.convert(await File(path).readAsBytes()).toString();
 
   @override
-  int get mapFirstFetch => 16384;
+  Future<int> mapFirstFetch() async => 16384;
 
   @override
   Future<MapPlanning> mapPlanner(
