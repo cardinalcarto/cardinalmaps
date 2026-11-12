@@ -7,6 +7,7 @@ use http::{Method, StatusCode};
 use illuvatar::Odin;
 use self_cell::self_cell;
 use std::path::Path;
+use valhalla_graphtile::graph_tile::BuildId;
 use valhalla_proto::Api;
 use valhalla_proto::options::Action;
 use valhalla_response::{ERROR_CONTENT_TYPE, ErrorCode, ValhallaError};
@@ -97,7 +98,21 @@ impl Router {
     ///
     /// See [`OpenError`].
     pub fn open<P: AsRef<Path>>(config: RouterConfig, tile_sets: &[P]) -> Result<Self, OpenError> {
-        let sets = TileSets::open(tile_sets)?;
+        Self::open_for_build(config, tile_sets, None)
+    }
+
+    /// [`Router::open`], for tiles of a known build (see [`TileSets::open_for_build`]):
+    /// a tile directory may have no tiles yet.
+    ///
+    /// # Errors
+    ///
+    /// See [`OpenError`].
+    pub fn open_for_build<P: AsRef<Path>>(
+        config: RouterConfig,
+        tile_sets: &[P],
+        build: Option<BuildId>,
+    ) -> Result<Self, OpenError> {
+        let sets = TileSets::open_for_build(tile_sets, build)?;
         let connectivity = ConnectivityMap::new(sets.tile_ids());
         let last_modified = sets.last_modified();
         let retention = config.thor.retention;

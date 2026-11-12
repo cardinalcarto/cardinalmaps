@@ -113,7 +113,8 @@ pub enum OpenError {
         #[source]
         source: GraphTileProviderError,
     },
-    /// A tile set has no tiles.
+    /// A tile set has no tiles
+    /// (a directory may, when the sets are opened for a known build).
     #[error("open {path}: it has no tiles")]
     Empty {
         /// The tile set.
@@ -126,6 +127,20 @@ pub enum OpenError {
         path: PathBuf,
         /// The tile.
         tile: GraphId,
+    },
+    /// A tile is from another build than the one the sets were opened for.
+    #[error(
+        "open {path}: tile {tile} is from build {found}, but the tiles must be from build {expected}"
+    )]
+    WrongBuild {
+        /// The tile set.
+        path: PathBuf,
+        /// The tile from another build.
+        tile: GraphId,
+        /// The build the sets were opened for.
+        expected: Build,
+        /// The tile's build.
+        found: Build,
     },
     /// Tiles come from different builds.
     #[error(
@@ -291,6 +306,25 @@ impl TileSets {
     ///
     /// See [`OpenError`].
     pub fn open<P: AsRef<Path>>(paths: &[P]) -> Result<Self, OpenError> {
+        Self::open_for_build(paths, None)
+    }
+
+    /// [`TileSets::open`], for tiles of a known build (when `build` is given):
+    /// every sampled tile must be from that build ([`OpenError::WrongBuild`]),
+    /// and so must every directory tile when it is first used
+    /// ([`GraphTileProviderError::BuildMismatch`]).
+    ///
+    /// A directory may then have no tiles yet: a device that fetches tiles as it needs them
+    /// opens its directory before the first one arrives (and calls [`TileSets::refresh`]
+    /// as they do). A tarball must still have tiles.
+    ///
+    /// # Errors
+    ///
+    /// See [`OpenError`].
+    pub fn open_for_build<P: AsRef<Path>>(
+        paths: &[P],
+        build: Option<BuildId>,
+    ) -> Result<Self, OpenError> {
         if paths.is_empty() {
             return Err(OpenError::NoTileSets);
         }
@@ -317,7 +351,7 @@ impl TileSets {
                 let ids: Vec<GraphId> = tiles.tile_ids().copied().collect();
                 (TileSet::Tarball(tiles), ids)
             };
-            if ids.is_empty() {
+            if ids.is_empty() && !(build.is_some() && matches!(set, TileSet::Directory(_))) {
                 return Err(OpenError::Empty {
                     path: path.to_path_buf(),
                 });
@@ -335,6 +369,16 @@ impl TileSets {
                     return Err(OpenError::NoBuildId {
                         path: path.to_path_buf(),
                         tile,
+                    });
+                }
+                if let Some(expected) = build
+                    && build_id != expected
+                {
+                    return Err(OpenError::WrongBuild {
+                        path: path.to_path_buf(),
+                        tile,
+                        expected: Build(expected),
+                        found: Build(build_id),
                     });
                 }
                 match &first {
@@ -364,8 +408,11 @@ impl TileSets {
             last_modified = last_modified.max(modified_seconds(&metadata));
             sets.push(set);
         }
-        // Every set has a tile, so the first set's first tile set `first`.
-        let build_id = first.map_or(BuildId::default(), |(_, _, build_id)| build_id);
+        // Without a build to open for, every set has a tile,
+        // so the first set's first tile set `first`.
+        let build_id = build
+            .or(first.map(|(_, _, build_id)| build_id))
+            .unwrap_or_default();
         let late = sets
             .iter()
             .any(|set| matches!(set, TileSet::Directory(_)))
@@ -988,5 +1035,53 @@ mod tests {
             Err(GraphTileProviderError::TileNotAvailable(_))
         ));
         assert!(!(&sets).contains_tile(elsewhere).unwrap());
+    }
+
+    #[test]
+    fn empty_directories_open_for_a_known_build() {
+        let fixture_build =
+            DirectoryGraphTileProvider::new(fixtures().join("andorra-tiles"), NonZeroUsize::MIN)
+                .tile_header(tile_id(TILES[0]))
+                .unwrap()
+                .build_id();
+        let dir = TempDir::new("empty-build");
+        assert!(matches!(
+            TileSets::open(&[&dir.0]),
+            Err(OpenError::Empty { .. })
+        ));
+        let sets = TileSets::open_for_build(&[&dir.0], Some(fixture_build)).unwrap();
+        assert_eq!(sets.build_id(), fixture_build);
+        assert_eq!(sets.tile_ids().count(), 0);
+        assert!(matches!(
+            get(&sets, TILES[0]),
+            Err(GraphTileProviderError::TileNotAvailable(_))
+        ));
+
+        // A tile from another build is refused; the build's own is used.
+        let newer =
+            std::fs::read(fixtures().join("andorra-tiles-with-traffic/0/003/015.gph")).unwrap();
+        dir.install(TILES[0], &newer);
+        sets.refresh();
+        assert!(matches!(
+            get(&sets, TILES[0]),
+            Err(GraphTileProviderError::BuildMismatch { expected, .. })
+                if expected == fixture_build.value()
+        ));
+        dir.install(TILES[0], &fixture_tile(TILES[0]));
+        assert_eq!(get(&sets, TILES[0]).unwrap(), tile_id(TILES[0]));
+
+        // Tiles there at open must be from the build too, in a directory or a tarball.
+        let other = BuildId::new(fixture_build.value().wrapping_add(1));
+        assert!(matches!(
+            TileSets::open_for_build(&[&dir.0], Some(other)),
+            Err(OpenError::WrongBuild { tile, expected, found, .. })
+                if tile == tile_id(TILES[0]) && expected.0 == other && found.0 == fixture_build
+        ));
+        let tarball = fixtures().join("andorra-tiles.tar");
+        assert!(matches!(
+            TileSets::open_for_build(&[&tarball], Some(other)),
+            Err(OpenError::WrongBuild { .. })
+        ));
+        assert!(TileSets::open_for_build(&[&tarball], Some(fixture_build)).is_ok());
     }
 }

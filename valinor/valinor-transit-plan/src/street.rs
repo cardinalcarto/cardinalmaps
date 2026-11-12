@@ -20,6 +20,7 @@ use jiff::Timestamp;
 use self_cell::self_cell;
 use thiserror::Error;
 use valhalla_graphtile::GraphId;
+use valhalla_graphtile::graph_tile::BuildId;
 use valhalla_proto::costing::Type as CostingType;
 use valhalla_proto::lat_lng::{HasLat, HasLng};
 use valhalla_proto::location::{HasMinimumReachability, HasSearchCutoff};
@@ -996,7 +997,22 @@ impl StreetPlanner {
         tile_sets: &[P],
         config: StreetConfig,
     ) -> Result<Self, OpenPlannerError> {
-        let tiles = Arc::new(TileSets::open(tile_sets)?);
+        Self::from_build_for(build, tile_sets, config, None)
+    }
+
+    /// [`StreetPlanner::from_build`], for street tiles of a known build
+    /// (see [`TileSets::open_for_build`]): a tile directory may have no tiles yet.
+    ///
+    /// # Errors
+    ///
+    /// As [`StreetPlanner::from_build`].
+    pub fn from_build_for<P: AsRef<Path>>(
+        build: TransitBuild,
+        tile_sets: &[P],
+        config: StreetConfig,
+        street_build: Option<BuildId>,
+    ) -> Result<Self, OpenPlannerError> {
+        let tiles = Arc::new(TileSets::open_for_build(tile_sets, street_build)?);
         if u32::from(tiles.build_id().value()) != build.valhalla_build_id {
             return Err(OpenPlannerError::Build(
                 BuildLoadError::StreetBuildMismatch {
