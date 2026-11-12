@@ -244,7 +244,8 @@ impl MapView {
         let transitioning =
             self.transitions
                 .apply(&self.map.style, &mut self.shown, now, self.camera.zoom);
-        let frame = self.map.frame(&self.camera);
+        let end = self.motion.end(&self.camera);
+        let frame = self.map.frame(&self.camera, end.as_ref());
         let draws = self.map.draws(&frame);
         self.renderer
             .render(&self.shown, &self.camera, &draws, self.map.terrain());

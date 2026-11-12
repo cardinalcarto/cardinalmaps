@@ -81,14 +81,22 @@ pub fn sources(
     let mut first = None;
     // Opened for the first tile server.
     let mut http = None;
-    for (id, path) in &args.tiles {
-        let id = match id.as_ref().or(args.source.as_ref()) {
+    let source_id = |id: &Option<String>| -> Result<String> {
+        Ok(match id.as_ref().or(args.source.as_ref()) {
             Some(id) => id.clone(),
             None => style
                 .first_vector_source()
                 .context("the style has no vector source; name one with --tiles id=path")?
                 .to_owned(),
-        };
+        })
+    };
+    let mut local = args
+        .local_tiles
+        .iter()
+        .map(|(id, path)| Ok((source_id(id)?, path.clone())))
+        .collect::<Result<Vec<_>>>()?;
+    for (id, path) in &args.tiles {
+        let id = source_id(id)?;
         if configs.iter().any(|c| c.id == id) {
             bail!("source {id:?} is given more than once");
         }
@@ -178,6 +186,14 @@ pub fn sources(
             tile_size: style_source.map_or(512, |s| s.tile_size()),
             bounds,
         });
+        let local = match local.iter().position(|(l, _)| *l == id) {
+            Some(i) if server.is_some() => {
+                let (_, local) = local.swap_remove(i);
+                log::info!("{id}: reading {} first", local.display());
+                Some(local)
+            }
+            _ => None,
+        };
         configs.push(SourceConfig {
             id,
             path: path.clone(),
@@ -185,8 +201,15 @@ pub fn sources(
             image_tile: None,
             geojson: None,
             server,
+            local,
         });
         first.get_or_insert(metadata);
+    }
+    if let Some((id, path)) = local.first() {
+        bail!(
+            "--local-tiles {}: source {id:?} isn't a tile server given with --tiles",
+            path.display()
+        );
     }
     let base = style_dir(args);
     for (id, source) in &style.sources {
@@ -236,6 +259,7 @@ pub fn geojson_config(id: String, path: PathBuf, index: GeoJsonIndex) -> SourceC
         image_tile: None,
         geojson: Some(Arc::new(index)),
         server: None,
+        local: None,
     }
 }
 
@@ -257,6 +281,7 @@ pub fn image_source(id: &str, path: &Path, image: &ImageSource) -> (SourceConfig
         image_tile: Some(tile),
         geojson: None,
         server: None,
+        local: None,
     };
     let map_source = MapSource {
         id: id.to_owned(),

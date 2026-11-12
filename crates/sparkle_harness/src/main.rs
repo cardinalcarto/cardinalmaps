@@ -106,7 +106,7 @@ fn run_headless(
     let wait = |map: &mut MapState, renderer: &mut Renderer, camera: &mut Camera| -> Result<()> {
         loop {
             map.update_camera(camera);
-            let frame = map.frame(camera);
+            let frame = map.frame(camera, None);
             if frame.complete {
                 return Ok(());
             }
@@ -157,7 +157,7 @@ fn run_headless(
         std::thread::sleep(Duration::from_millis(20));
     }
     map.update_camera(&mut camera);
-    let frame = map.frame(&camera);
+    let frame = map.frame(&camera, None);
     renderer.screenshot(&shown, &camera, &map.draws(&frame), map.terrain(), &path)?;
     log::info!(
         "saved {} ({} tiles drawn)",
@@ -280,7 +280,8 @@ impl App {
         {
             view.window.request_redraw();
         }
-        let frame = map.frame(camera);
+        let end = self.motion.end(camera);
+        let frame = map.frame(camera, end.as_ref());
         let draws = map.draws(&frame);
         view.renderer
             .render(&self.shown, camera, &draws, map.terrain());

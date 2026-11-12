@@ -226,6 +226,45 @@ impl Motion {
             || self.turn.is_some()
     }
 
+    /// Where `camera` comes to rest if the motion under way runs its course, or `None`
+    /// if nothing is moving: so that what's needed there can load on the way.
+    pub fn end(&self, camera: &Camera) -> Option<Camera> {
+        if !self.active() {
+            return None;
+        }
+        let mut end = camera.clone();
+        if let Some(flight) = &self.flight {
+            flight.step(
+                &mut end,
+                flight.start + Duration::from_secs_f64(flight.duration),
+            );
+        }
+        if let Some(turn) = &self.turn {
+            turn.step(
+                &mut end,
+                turn.start + Duration::from_secs_f64(turn.duration),
+            );
+        }
+        if self.zoom != 0.0 {
+            end.zoom_around(self.zoom, self.zoom_anchor);
+        }
+        // A decaying speed carries on for its time constant times the speed it loses
+        // before it stops.
+        let speed = self.velocity[0].hypot(self.velocity[1]);
+        if speed > 0.0 {
+            let lost = (1.0 - MIN_SPEED * camera.pixel_ratio / speed).max(0.0);
+            let from = self.fling_anchor;
+            let travel = self.velocity.map(|v| v * FLING_TIME * lost);
+            end.drag(from, [from[0] + travel[0], from[1] + travel[1]]);
+        }
+        if self.zoom_velocity != 0.0 {
+            let lost = (self.zoom_velocity.abs() - ZOOM_FLING_STOP).max(0.0);
+            let levels = self.zoom_velocity.signum() * ZOOM_FLING_TIME * lost;
+            end.zoom_around(levels, self.zoom_fling_anchor);
+        }
+        Some(end)
+    }
+
     /// Turn to north up the short way, keeping the middle of the view less `padding`
     /// where it is and changing nothing else.
     pub fn turn_north(&mut self, camera: &Camera, padding: Padding, now: Instant) {
@@ -742,6 +781,80 @@ mod tests {
         m.turn_north(&c, Padding::default(), t);
         assert!(m.grab([400.0, 300.0], t + Duration::from_millis(10)));
         assert!(!m.active());
+    }
+
+    /// `end` foresaw where `camera` came to rest, as of `then`.
+    fn assert_foreseen(end: &Camera, camera: &Camera) {
+        let moved = (end.center[0] - camera.center[0]).hypot(end.center[1] - camera.center[1]);
+        // Within a pixel or so at the view's zoom.
+        let pixel = 1.0 / (TILE_SIZE * camera.zoom.exp2());
+        assert!(moved < 2.0 * pixel, "{} pixels off", moved / pixel);
+        assert!(
+            (end.zoom - camera.zoom).abs() < 0.01,
+            "{} vs {}",
+            end.zoom,
+            camera.zoom
+        );
+        assert!((end.bearing - camera.bearing).abs() < 1e-6);
+    }
+
+    #[test]
+    fn nothing_moving_has_no_end() {
+        assert!(Motion::default().end(&camera()).is_none());
+    }
+
+    #[test]
+    fn a_fling_ends_where_it_was_foreseen() {
+        let mut c = camera();
+        let mut m = Motion::default();
+        let t = Instant::now();
+        m.grab([400.0, 300.0], t);
+        for i in 1..=5 {
+            let p = [400.0 - 30.0 * f64::from(i), 300.0 + 20.0 * f64::from(i)];
+            m.track(p, t + Duration::from_millis(10 * i as u64));
+        }
+        let end = t + Duration::from_millis(50);
+        m.release(&c, end);
+        let foreseen = m.end(&c).unwrap();
+        // Partway, it still foresees the same end.
+        m.step(&mut c, end + Duration::from_millis(16));
+        m.step(&mut c, end + Duration::from_millis(32));
+        assert_foreseen(&m.end(&c).unwrap(), &foreseen);
+        settle(&mut m, &mut c, end + Duration::from_millis(32));
+        assert_foreseen(&foreseen, &c);
+    }
+
+    #[test]
+    fn a_wheel_zoom_ends_where_it_was_foreseen() {
+        let mut c = camera();
+        let mut m = Motion::default();
+        let t = Instant::now();
+        m.zoom(&c, 1.5, [100.0, 500.0], t);
+        let foreseen = m.end(&c).unwrap();
+        settle(&mut m, &mut c, t);
+        assert_foreseen(&foreseen, &c);
+    }
+
+    #[test]
+    fn a_zoom_fling_ends_where_it_was_foreseen() {
+        let mut c = camera();
+        let mut m = Motion::default();
+        let end = pinch(&mut m, Instant::now(), 10, -0.05);
+        m.release_zoom(&c, end);
+        let foreseen = m.end(&c).unwrap();
+        settle(&mut m, &mut c, end);
+        assert_foreseen(&foreseen, &c);
+    }
+
+    #[test]
+    fn a_flight_ends_where_it_was_foreseen() {
+        let mut c = camera();
+        let mut m = Motion::default();
+        let t = Instant::now();
+        m.fly(&c, crate::camera::lng_lat_to_world(-122.2, 47.7), 15.0, t);
+        let foreseen = m.end(&c).unwrap();
+        settle(&mut m, &mut c, t);
+        assert_foreseen(&foreseen, &c);
     }
 
     #[test]

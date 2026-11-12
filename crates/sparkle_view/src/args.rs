@@ -14,6 +14,12 @@ usage: sparkle_harness | sparkle_example [tiles.mbtiles | TileJSON URL] [options
                                  .geojson or .json file replaces the data of a geojson
                                  source. GeoJSON sources whose data is inline or a local path
                                  need no --tiles.
+  --local-tiles [source=]path.mbtiles
+                                 an MBTiles file of a tile server source's tiles (given by
+                                 --tiles as a URL; without `source=`, the same default source)
+                                 read before the server, which is asked only for the tiles
+                                 it lacks; it needn't exist yet and may gain tiles while the
+                                 map runs, as an offline download writes it
   --cache dir                    where tiles from servers are cached (default:
                                  $XDG_CACHE_HOME/sparkle or ~/.cache/sparkle, else in memory)
   --cache-size MB                the most the cache holds before dropping the least recently
@@ -56,6 +62,8 @@ pub type ViewArg = (f64, f64, f64, f64, f64);
 pub struct Args {
     /// `(source id, path)`; `None` maps to the default vector source.
     pub tiles: Vec<(Option<String>, PathBuf)>,
+    /// `(source id, path)` of `--local-tiles`; `None` maps to the default vector source.
+    pub local_tiles: Vec<(Option<String>, PathBuf)>,
     pub style: Option<PathBuf>,
     pub source: Option<String>,
     /// `(sprite id, path prefix)`
@@ -123,6 +131,7 @@ fn keyed(arg: String) -> (Option<String>, PathBuf) {
 pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Args> {
     let mut args = Args {
         tiles: Vec::new(),
+        local_tiles: Vec::new(),
         style: None,
         source: None,
         sprites: Vec::new(),
@@ -149,6 +158,9 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Args> {
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--tiles" => args.tiles.push(keyed(value(&mut it, "--tiles")?)),
+            "--local-tiles" => args
+                .local_tiles
+                .push(keyed(value(&mut it, "--local-tiles")?)),
             "--style" => args.style = Some(value(&mut it, "--style")?.into()),
             "--source" => args.source = Some(value(&mut it, "--source")?),
             "--sprite" => args.sprites.push(keyed(value(&mut it, "--sprite")?)),
