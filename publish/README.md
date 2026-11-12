@@ -30,7 +30,7 @@ releases/
     snaps/MODE/FEED_INDEX.bin
     index/X/Y.json                  zoom 6 tiles: feeds with stops there, and their zoom 12 cells
     feeds/FEED.json, feeds.json     feed summaries: names, agencies, license, dates, sizes
-    manifest/shared.json            the build manifest's shared fields and feed IDs in order
+    manifest/shared.json            the build manifest's shared fields, feed_count, and feed IDs in order
     manifest/feeds/FEED.json        one feed's manifest entry, with its index
     manifest/manifest.json          the whole manifest, for servers
     realtime.json                   GTFS-RT sources
@@ -49,11 +49,13 @@ routing release's.
 
 On a phone, transit files go where the manifest names them: `snaps/MODE/N.bin`
 is stored at `transfers/snaps/MODE/N.bin`, everything else at the same path.
-The phone writes `transfers/manifest.json` from `manifest/shared.json` (without
-`feed_ids`) with a `feeds` list holding, at each position of `feed_ids`, that
-feed's entry from `manifest/feeds/` (without `index`) if it has the feed, or
-`{"id": ID, "stop_count": 0}` if it doesn't. Transfer tiles address stops by a
-feed's position, so positions must be kept. See `feed-index` in
+The phone writes `transfers/manifest.json` as `manifest/shared.json` without
+`feed_ids`, plus `feeds`: its own feeds' entries from `manifest/feeds/`, as
+published (each with its `index`), in increasing index order. Transfer tiles
+address stops by a feed's index, which the loader takes from these entries.
+This needs the loader on the `offline-publish-feed-index` branch; the loader
+before it needs every position filled, with `{"id": ID, "stop_count": 0}` for
+the feeds the phone doesn't have. See `feed-index` in
 `valinor/docs/transit.md`.
 
 ### Headers
