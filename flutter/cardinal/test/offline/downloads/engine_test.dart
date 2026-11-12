@@ -157,6 +157,26 @@ void main() {
       )..where((r) => r.id.equals(id))).getSingle();
       atClaim = row.state;
     };
+    final transitions = <RegionState>[];
+    engine.onRegionState = (_, state) => transitions.add(state);
+    // Files are hashed once downloaded, and ranges unpacked once downloaded.
+    final hashed = <FileState>{}, unpacked = <ChunkState>{};
+    native.onHash = (path) async {
+      final id = int.parse(path.split('/').last.substring(1));
+      hashed.add(
+        (await (db.select(
+          db.files,
+        )..where((f) => f.id.equals(id))).getSingle()).state,
+      );
+    };
+    native.onUnpack = (path) async {
+      final id = int.parse(path.split('/').last.substring(1));
+      unpacked.add(
+        (await (db.select(
+          db.mapChunks,
+        )..where((c) => c.id.equals(id))).getSingle()).state,
+      );
+    };
     // Held, so the downloading state can be seen.
     transfers.hold = true;
     final id = await engine.start(plan, feeds: {metro});
@@ -183,6 +203,13 @@ void main() {
       containsAllInOrder([RegionState.downloading, RegionState.ready]),
     );
 
+    expect(transitions, [
+      RegionState.downloading,
+      RegionState.installing,
+      RegionState.ready,
+    ]);
+    expect(hashed, {FileState.downloaded});
+    expect(unpacked, {ChunkState.downloaded});
     final progress = await region(id);
     expect(progress.state, RegionState.ready);
     expect(progress.filesDone, progress.filesTotal);
@@ -269,6 +296,8 @@ void main() {
       hasLength(engine.maxAttempts),
     );
 
+    final transitions = <RegionState>[];
+    engine.onRegionState = (_, state) => transitions.add(state);
     server.corrupt.clear();
     await engine.retry(id);
     expect(
@@ -277,6 +306,11 @@ void main() {
     );
     await settle();
     expect((await region(id)).state, RegionState.ready);
+    expect(transitions, [
+      RegionState.downloading,
+      RegionState.installing,
+      RegionState.ready,
+    ]);
     final fixed = (await files()).singleWhere((f) => f.path == tile);
     expect(fixed.state, FileState.installed);
     expect(fixed.verifiedSha256, plan.routingFiles.first.sha256);
@@ -478,7 +512,10 @@ void main() {
     transfers.hold = true;
     final id = await engine.start(plan);
     expect(transfers.jobs, isNotEmpty);
+    final transitions = <RegionState>[];
+    engine.onRegionState = (_, state) => transitions.add(state);
     await engine.delete(id);
+    expect(transitions, [RegionState.deleting]);
     await settle();
     expect(transfers.jobs, isEmpty);
     expect(await engine.regions(), isEmpty);
@@ -517,6 +554,63 @@ void main() {
       expect(await files(), isEmpty);
     },
   );
+
+  test('a restart checks what arrived while the app was away, without downloading it again', () async {
+    final plan = await engine.plan(downtown);
+    transfers.silent = true;
+    final id = await engine.start(plan, feeds: {metro});
+    await settle();
+    expect((await region(id)).state, RegionState.downloading);
+    expect(transfers.jobs, isEmpty);
+    await engine.close();
+    transfers = FakeTransfers();
+    engine = newEngine();
+    await engine.open();
+    await settle();
+    expect(transfers.history, isEmpty);
+    expect((await region(id)).state, RegionState.ready);
+    // Transfer tiles' SHA-256s came from the bucket, asked for.
+    final tiles = (await files()).where((f) => f.path.startsWith('transfers/'));
+    expect(tiles, isNotEmpty);
+    expect(server.heads.length, tiles.length);
+    expect(server.heads.keys.every((k) => k.contains('/transfers/')), isTrue);
+  });
+
+  test('a restart finishes unpacking and installing', () async {
+    final id = await download(downtown, feeds: {metro});
+    final chunk = (await db.select(db.mapChunks).get()).first;
+    final file = (await files()).first;
+    // As if the app stopped after a range was unpacked, and after a file was renamed
+    // into place but before its state was written.
+    await (db.update(db.mapChunks)..where((c) => c.id.equals(chunk.id))).write(
+      const MapChunksCompanion(state: Value(ChunkState.unpacked)),
+    );
+    await File('$root/.incoming/c${chunk.id}').writeAsString('left over');
+    await (db.update(db.files)..where((f) => f.id.equals(file.id))).write(
+      const FilesCompanion(state: Value(FileState.verified)),
+    );
+    await (db.update(db.regions)..where((r) => r.id.equals(id))).write(
+      const RegionsCompanion(state: Value(RegionState.installing)),
+    );
+    await engine.close();
+    engine = newEngine();
+    await engine.open();
+    await settle();
+    expect((await region(id)).state, RegionState.ready);
+    expect(
+      (await (db.select(
+        db.mapChunks,
+      )..where((c) => c.id.equals(chunk.id))).getSingle()).state,
+      ChunkState.deleted,
+    );
+    expect(File('$root/.incoming/c${chunk.id}').existsSync(), isFalse);
+    expect(
+      (await (db.select(
+        db.files,
+      )..where((f) => f.id.equals(file.id))).getSingle()).state,
+      FileState.installed,
+    );
+  });
 
   test('later downloads use the pinned releases, not latest', () async {
     await download(downtown);

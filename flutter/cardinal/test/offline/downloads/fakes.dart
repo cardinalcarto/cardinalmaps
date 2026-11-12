@@ -24,6 +24,9 @@ class FakeTransfers implements Transfers {
 
   /// Don't run jobs as they come; [run] them.
   bool hold = false;
+
+  /// Download, but report nothing: as if the app wasn't running when they ended.
+  bool silent = false;
   final _running = <Future<void>>{};
 
   @override
@@ -96,7 +99,7 @@ class FakeTransfers implements Transfers {
     } on Object catch (e) {
       result = TransferResult(job.id, TransferOutcome.failed, error: '$e');
     }
-    if (jobs.remove(job.id) != null) _results.add(result);
+    if (jobs.remove(job.id) != null && !silent) _results.add(result);
   }
 
   @override
@@ -128,9 +131,14 @@ class FakeNative implements OfflineNative {
   /// Called while a region claims its map tiles (as it starts).
   Future<void> Function(int region)? onClaim;
 
+  /// Called before a file is hashed, and a range unpacked, with its path.
+  Future<void> Function(String path)? onHash, onUnpack;
+
   @override
-  Future<String> sha256File(String path) async =>
-      sha256.convert(await File(path).readAsBytes()).toString();
+  Future<String> sha256File(String path) async {
+    await onHash?.call(path);
+    return sha256.convert(await File(path).readAsBytes()).toString();
+  }
 
   @override
   Future<int> mapFirstFetch() async => 16384;
@@ -159,6 +167,7 @@ class FakeNative implements OfflineNative {
     Uint8List tiles,
     int region,
   ) async {
+    await onUnpack?.call(rangeFile);
     final range = await File(rangeFile).readAsBytes();
     if (range.length != length) {
       throw MapRangeError(

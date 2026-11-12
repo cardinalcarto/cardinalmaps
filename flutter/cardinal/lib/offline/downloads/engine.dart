@@ -165,21 +165,7 @@ class OfflineDownloads {
     );
     await transfers.start();
     await _serially(() async {
-      final active = await transfers.active();
-      // Queued work the downloader no longer has (it was lost, or finished unseen
-      // and wasn't reported): queue it again.
-      await (db.update(db.files)..where(
-            (f) =>
-                f.state.equalsValue(FileState.queued) &
-                f.id.isNotIn(_ids(active, 'f')),
-          ))
-          .write(const FilesCompanion(state: Value(FileState.pending)));
-      await (db.update(db.mapChunks)..where(
-            (c) =>
-                c.state.equalsValue(ChunkState.queued) &
-                c.id.isNotIn(_ids(active, 'c')),
-          ))
-          .write(const MapChunksCompanion(state: Value(ChunkState.pending)));
+      await _recover(await transfers.active());
       for (final region in await (db.select(
         db.regions,
       )..where((r) => r.state.equalsValue(RegionState.deleting))).get()) {
@@ -189,10 +175,77 @@ class OfflineDownloads {
     });
   }
 
-  static List<int> _ids(Set<String> active, String prefix) => [
-    for (final id in active)
-      if (id.startsWith(prefix)) ?int.tryParse(id.substring(1)),
-  ];
+  /// Picks up work a previous run left between states. Files and ranges the
+  /// downloader no longer has ([active] lacks them) are checked if they arrived, or
+  /// queued again; checks and installs that were cut short run again.
+  Future<void> _recover(Set<String> active) async {
+    bool arrived(String id) => File(_incomingFile(id)).existsSync();
+    for (final f
+        in await (db.select(db.files)..where(
+              (f) => f.state.isInValues([
+                FileState.queued,
+                FileState.downloaded,
+                FileState.verified,
+              ]),
+            ))
+            .get()) {
+      final id = 'f${f.id}';
+      switch (f.state) {
+        case FileState.queued when active.contains(id):
+          break;
+        case FileState.queued || FileState.downloaded:
+          if (arrived(id)) {
+            // It finished unseen: its response's headers are gone, so a SHA-256 the
+            // index doesn't give is asked for.
+            await _downloaded(f, null);
+          } else {
+            await _setFile(f.id, FileState.pending);
+          }
+        case FileState.verified when !arrived(id):
+          // Renamed into place just before the app stopped, or lost.
+          await _setFile(
+            f.id,
+            File('$root/${f.installPath}').existsSync()
+                ? FileState.installed
+                : FileState.pending,
+          );
+        default:
+          break;
+      }
+    }
+    for (final c
+        in await (db.select(db.mapChunks)..where(
+              (c) => c.state.isInValues([
+                ChunkState.queued,
+                ChunkState.downloaded,
+                ChunkState.unpacked,
+              ]),
+            ))
+            .get()) {
+      final id = 'c${c.id}';
+      switch (c.state) {
+        case ChunkState.queued when active.contains(id):
+          break;
+        case ChunkState.queued || ChunkState.downloaded:
+          if (arrived(id)) {
+            await _setChunk(c.id, ChunkState.downloaded);
+            await _unpack(c);
+          } else {
+            await _setChunk(c.id, ChunkState.pending);
+          }
+        case ChunkState.unpacked:
+          _deleteQuietly(_incomingFile(id));
+          await _setChunk(c.id, ChunkState.deleted);
+        default:
+          break;
+      }
+    }
+    for (final region in await (db.select(
+      db.regions,
+    )..where((r) => r.state.equalsValue(RegionState.installing))).get()) {
+      await _install(region, await _regionFiles(region.id));
+    }
+  }
 
   Future<void> close() async {
     await _results?.cancel();
@@ -465,14 +518,20 @@ class OfflineDownloads {
     return regionId;
   });
 
-  Future<void> _setRegion(int id, RegionState state, {String? error}) =>
-      (db.update(db.regions)..where((r) => r.id.equals(id))).write(
-        RegionsCompanion(
-          state: Value(state),
-          error: Value(error),
-          updatedAt: Value(_clock()),
-        ),
-      );
+  Future<void> _setRegion(int id, RegionState state, {String? error}) async {
+    await (db.update(db.regions)..where((r) => r.id.equals(id))).write(
+      RegionsCompanion(
+        state: Value(state),
+        error: Value(error),
+        updatedAt: Value(_clock()),
+      ),
+    );
+    onRegionState?.call(id, state);
+  }
+
+  /// Told every region state written, in order, for tests.
+  @visibleForTesting
+  void Function(int region, RegionState state)? onRegionState;
 
   // Downloading.
 

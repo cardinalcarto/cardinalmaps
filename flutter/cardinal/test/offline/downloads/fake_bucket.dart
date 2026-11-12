@@ -26,6 +26,9 @@ class FakeBucket {
   /// Requests by path (from `releases/`), `HEAD`s included.
   final requests = <String, int>{};
 
+  /// `HEAD` requests by path.
+  final heads = <String, int>{};
+
   /// Paths served with one byte changed, until removed.
   final corrupt = <String>{};
 
@@ -56,6 +59,7 @@ class FakeBucket {
       final path = request.uri.path.replaceFirst(RegExp('^/'), '');
       final key = path.replaceFirst(RegExp('^releases/'), '');
       requests[key] = (requests[key] ?? 0) + 1;
+      if (request.method == 'HEAD') heads[key] = (heads[key] ?? 0) + 1;
       final file = File('$root/$path');
       if (path.contains('..') || !await file.exists()) {
         response.statusCode = HttpStatus.notFound;
