@@ -439,6 +439,28 @@ impl TileSets {
         self.index.keys().copied()
     }
 
+    /// The IDs of every tile in the sets now, sorted: those of [`TileSets::tile_ids`],
+    /// and those that have arrived in the directories since.
+    ///
+    /// # Performance
+    ///
+    /// This reads every directory of the tile directories (but opens no tiles).
+    ///
+    /// # Errors
+    ///
+    /// Fails if a directory can't be read.
+    pub fn current_tile_ids(&self) -> Result<Vec<GraphId>, GraphTileProviderError> {
+        let mut ids: Vec<GraphId> = self.index.keys().copied().collect();
+        for set in &self.sets {
+            if let TileSet::Directory(tiles) = set {
+                ids.extend(tiles.tile_ids()?);
+            }
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
+    }
+
     /// When the newest set was last modified, in seconds since the Unix epoch
     /// (mainline's `tileset_last_modified`, which it reads from its one tile extract or directory).
     #[inline]

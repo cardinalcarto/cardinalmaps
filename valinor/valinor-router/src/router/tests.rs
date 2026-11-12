@@ -416,3 +416,55 @@ fn tiles_missing_from_every_set_are_dead_ends() {
         String::from_utf8_lossy(&response.body)
     );
 }
+
+/// Tiles that arrive in a directory after the router opened: once refreshed, the router
+/// answers as if they had been there at open (including Loki's connectivity check).
+#[test]
+fn tiles_that_arrive_are_routed_after_a_refresh() {
+    let full = router();
+    let kept = [
+        ALL_TILES[0],
+        ALL_TILES[1],
+        ALL_TILES[4],
+        ALL_TILES[5],
+        ALL_TILES[6],
+    ];
+    let region = TempDir::new("arrive").with_tiles(&tiles(), &kept);
+    let cut = Router::open(RouterConfig::default(), &[&region.0]).unwrap();
+    let bodies: Vec<String> = [1.45, 1.48, 1.5211, 1.55]
+        .into_iter()
+        .flat_map(|lon| [42.43, 42.46, 42.48].map(|lat| (lat, lon)))
+        .map(|(lat, lon)| {
+            format!(
+                r#"{{"costing": "auto", "locations": [{{"lat": 42.5078, "lon": 1.5211}}, {{"lat": {lat}, "lon": {lon}, "search_cutoff": 150}}]}}"#
+            )
+        })
+        .collect();
+    let differing = |router: &Router| {
+        bodies
+            .iter()
+            .filter(|body| router.route(body.as_bytes()).body != full.route(body.as_bytes()).body)
+            .count()
+    };
+    let before = differing(&cut);
+    assert!(before > 0);
+
+    // The southern tiles arrive, as a download puts them: written aside, renamed into place.
+    for tile in [ALL_TILES[2], ALL_TILES[3]] {
+        let to = region.0.join(tile);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        let part = to.with_extension("part");
+        std::fs::copy(tiles().join(tile), &part).unwrap();
+        std::fs::rename(&part, &to).unwrap();
+    }
+    // The tiles alone aren't enough: Loki's connectivity map doesn't know them yet.
+    cut.tiles().refresh();
+    let unconnected = bodies
+        .iter()
+        .filter(|body| json(&cut.route(body.as_bytes()))["error_code"].as_u64() == Some(170))
+        .count();
+    assert!(unconnected > 0, "{before} differed before");
+
+    cut.refresh_tiles().unwrap();
+    assert_eq!(differing(&cut), 0);
+}
