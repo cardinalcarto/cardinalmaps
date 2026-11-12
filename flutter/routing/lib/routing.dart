@@ -19,7 +19,23 @@ export 'src/rust/api/directions.dart'
         DirectionsRoute,
         DirectionsStep;
 export 'src/rust/api/offline.dart'
-    show HashError, TileCheckError, checkTransferTile, sha256File;
+    show
+        ArchiveChunk,
+        ArchiveError,
+        ArchivePlanner,
+        ArchiveRange,
+        ArchiveTile,
+        FoundTile,
+        HashError,
+        RangeTile,
+        RangeTransferTile,
+        TileCheckError,
+        archiveFirstFetch,
+        archiveGapBytes,
+        archiveMaxRangeBytes,
+        checkTransferTile,
+        sha256File,
+        unpackTransferRange;
 export 'src/rust/api/router.dart'
     show OfflineRouter, OpenError, OpenErrorKind, RouterResponse;
 export 'src/rust/api/transit.dart'

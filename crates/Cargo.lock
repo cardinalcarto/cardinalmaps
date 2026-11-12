@@ -3542,6 +3542,7 @@ version = "0.1.0"
 dependencies = [
  "ferrostar",
  "flutter_rust_bridge",
+ "offline_map",
  "serde_json",
  "sha2",
  "valhalla-graphtile",

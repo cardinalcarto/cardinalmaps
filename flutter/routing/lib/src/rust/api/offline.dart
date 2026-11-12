@@ -7,6 +7,8 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `archive_error`, `check_tile_bytes`, `keys`, `signed`
+
 /// The SHA-256 of a file, in lowercase hexadecimal.
 ///
 /// Uses the CPU's SHA instructions where it has them (ARMv8's on phones, SHA-NI on x86),
@@ -34,6 +36,190 @@ Future<void> checkTransferTile({
   manifestId: manifestId,
 );
 
+/// The most bytes between two tiles that one range still spans
+/// (`offline_map::plan::GAP_BYTES`).
+PlatformInt64 archiveGapBytes() =>
+    RustLib.instance.api.crateApiOfflineArchiveGapBytes();
+
+/// The most bytes in a range of several tiles (`offline_map::plan::MAX_CHUNK_BYTES`); a
+/// tile larger than this is a range of its own.
+PlatformInt64 archiveMaxRangeBytes() =>
+    RustLib.instance.api.crateApiOfflineArchiveMaxRangeBytes();
+
+/// How many bytes of an archive to fetch first: its header and root directory.
+PlatformInt64 archiveFirstFetch() =>
+    RustLib.instance.api.crateApiOfflineArchiveFirstFetch();
+
+/// Checks the transfer tiles in a downloaded range of a transfer archive (the file at
+/// `range_file`, which must be `expected_length` bytes) as [`check_transfer_tile`] does,
+/// and writes each to its `dest`, through a temporary file and a rename. If any tile fails,
+/// nothing is written, and the error names it.
+Future<void> unpackTransferRange({
+  required String rangeFile,
+  required PlatformInt64 expectedLength,
+  required List<RangeTransferTile> tiles,
+  required String manifestId,
+}) => RustLib.instance.api.crateApiOfflineUnpackTransferRange(
+  rangeFile: rangeFile,
+  expectedLength: expectedLength,
+  tiles: tiles,
+  manifestId: manifestId,
+);
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ArchivePlanner>>
+abstract class ArchivePlanner implements RustOpaqueInterface {
+  /// Adds a leaf directory fetched from `offset`.
+  Future<void> addLeaf({
+    required PlatformInt64 offset,
+    required List<int> bytes,
+  });
+
+  /// The wanted tiles the archive has, with their sizes: the count and bytes of a set of
+  /// tiles, without downloading them.
+  List<FoundTile> found();
+
+  /// The leaf directories to fetch next; empty once every wanted tile is found.
+  List<ArchiveRange> neededLeaves();
+
+  // HINT: Make it `#[frb(sync)]` to let it become the default constructor of Dart class.
+  /// A planner for `tiles`, from the archive's first [`archive_first_fetch`] bytes.
+  static Future<ArchivePlanner> newInstance({
+    required List<int> firstBytes,
+    required List<ArchiveTile> tiles,
+  }) => RustLib.instance.api.crateApiOfflineArchivePlannerNew(
+    firstBytes: firstBytes,
+    tiles: tiles,
+  );
+
+  /// The wanted tiles the archive has, in ranges at most `gap` bytes apart and at most
+  /// `max` long (a tile longer than `max` is a range of its own).
+  List<ArchiveChunk> ranges({
+    required PlatformInt64 gap,
+    required PlatformInt64 max,
+  });
+
+  /// Looks for `tiles` instead, keeping the leaf directories fetched so far: sizing another
+  /// set of tiles costs only the leaves it needs that aren't fetched yet.
+  void want({required List<ArchiveTile> tiles});
+}
+
+/// One range to download and the tiles in it.
+class ArchiveChunk {
+  final PlatformInt64 offset;
+  final PlatformInt64 length;
+  final List<RangeTile> tiles;
+
+  const ArchiveChunk({
+    required this.offset,
+    required this.length,
+    required this.tiles,
+  });
+
+  @override
+  int get hashCode => offset.hashCode ^ length.hashCode ^ tiles.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ArchiveChunk &&
+          runtimeType == other.runtimeType &&
+          offset == other.offset &&
+          length == other.length &&
+          tiles == other.tiles;
+}
+
+/// Why an archive couldn't be read.
+class ArchiveError implements FrbException {
+  final String message;
+
+  const ArchiveError({required this.message});
+
+  @override
+  int get hashCode => message.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ArchiveError &&
+          runtimeType == other.runtimeType &&
+          message == other.message;
+}
+
+/// A byte range of an archive.
+class ArchiveRange {
+  /// From the start of the archive.
+  final PlatformInt64 offset;
+  final PlatformInt64 length;
+
+  const ArchiveRange({required this.offset, required this.length});
+
+  @override
+  int get hashCode => offset.hashCode ^ length.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ArchiveRange &&
+          runtimeType == other.runtimeType &&
+          offset == other.offset &&
+          length == other.length;
+}
+
+/// A tile of an archive, as `(z, x, y)`.
+class ArchiveTile {
+  final int z;
+  final int x;
+  final int y;
+
+  const ArchiveTile({required this.z, required this.x, required this.y});
+
+  @override
+  int get hashCode => z.hashCode ^ x.hashCode ^ y.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ArchiveTile &&
+          runtimeType == other.runtimeType &&
+          z == other.z &&
+          x == other.x &&
+          y == other.y;
+}
+
+/// A tile the archive has, and where.
+class FoundTile {
+  final int z;
+  final int x;
+  final int y;
+
+  /// From the start of the archive.
+  final PlatformInt64 offset;
+  final PlatformInt64 length;
+
+  const FoundTile({
+    required this.z,
+    required this.x,
+    required this.y,
+    required this.offset,
+    required this.length,
+  });
+
+  @override
+  int get hashCode =>
+      z.hashCode ^ x.hashCode ^ y.hashCode ^ offset.hashCode ^ length.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FoundTile &&
+          runtimeType == other.runtimeType &&
+          z == other.z &&
+          x == other.x &&
+          y == other.y &&
+          offset == other.offset &&
+          length == other.length;
+}
+
 /// Why a file couldn't be hashed.
 class HashError implements FrbException {
   /// A description for logs, naming the file.
@@ -50,6 +236,81 @@ class HashError implements FrbException {
       other is HashError &&
           runtimeType == other.runtimeType &&
           message == other.message;
+}
+
+/// A tile in a range to download, at an offset from the range's start.
+class RangeTile {
+  final int z;
+  final int x;
+  final int y;
+  final PlatformInt64 offset;
+  final PlatformInt64 length;
+
+  const RangeTile({
+    required this.z,
+    required this.x,
+    required this.y,
+    required this.offset,
+    required this.length,
+  });
+
+  @override
+  int get hashCode =>
+      z.hashCode ^ x.hashCode ^ y.hashCode ^ offset.hashCode ^ length.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RangeTile &&
+          runtimeType == other.runtimeType &&
+          z == other.z &&
+          x == other.x &&
+          y == other.y &&
+          offset == other.offset &&
+          length == other.length;
+}
+
+/// A transfer tile in a downloaded range, and where its file goes.
+class RangeTransferTile {
+  /// From the range's start.
+  final PlatformInt64 offset;
+  final PlatformInt64 length;
+
+  /// Written to `<dest>.part`, then renamed to `dest`.
+  final String dest;
+  final String mode;
+  final int x;
+  final int y;
+
+  const RangeTransferTile({
+    required this.offset,
+    required this.length,
+    required this.dest,
+    required this.mode,
+    required this.x,
+    required this.y,
+  });
+
+  @override
+  int get hashCode =>
+      offset.hashCode ^
+      length.hashCode ^
+      dest.hashCode ^
+      mode.hashCode ^
+      x.hashCode ^
+      y.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RangeTransferTile &&
+          runtimeType == other.runtimeType &&
+          offset == other.offset &&
+          length == other.length &&
+          dest == other.dest &&
+          mode == other.mode &&
+          x == other.x &&
+          y == other.y;
 }
 
 /// Why a downloaded transfer tile isn't the one asked for.

@@ -70,7 +70,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -1129836608;
+  int get rustContentHash => 1222444421;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -82,6 +82,36 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
+  Future<void> crateApiOfflineArchivePlannerAddLeaf({
+    required ArchivePlanner that,
+    required PlatformInt64 offset,
+    required List<int> bytes,
+  });
+
+  List<FoundTile> crateApiOfflineArchivePlannerFound({
+    required ArchivePlanner that,
+  });
+
+  List<ArchiveRange> crateApiOfflineArchivePlannerNeededLeaves({
+    required ArchivePlanner that,
+  });
+
+  Future<ArchivePlanner> crateApiOfflineArchivePlannerNew({
+    required List<int> firstBytes,
+    required List<ArchiveTile> tiles,
+  });
+
+  List<ArchiveChunk> crateApiOfflineArchivePlannerRanges({
+    required ArchivePlanner that,
+    required PlatformInt64 gap,
+    required PlatformInt64 max,
+  });
+
+  void crateApiOfflineArchivePlannerWant({
+    required ArchivePlanner that,
+    required List<ArchiveTile> tiles,
+  });
+
   Future<List<DirectionsRoute>> crateApiDirectionsDirectionsAdapterParse({
     required DirectionsAdapter that,
     required List<int> body,
@@ -143,6 +173,12 @@ abstract class RustLibApi extends BaseApi {
 
   TransitCancel crateApiTransitTransitCancelNew();
 
+  PlatformInt64 crateApiOfflineArchiveFirstFetch();
+
+  PlatformInt64 crateApiOfflineArchiveGapBytes();
+
+  PlatformInt64 crateApiOfflineArchiveMaxRangeBytes();
+
   Future<void> crateApiOfflineCheckTransferTile({
     required String path,
     required String mode,
@@ -152,6 +188,22 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<String> crateApiOfflineSha256File({required String path});
+
+  Future<void> crateApiOfflineUnpackTransferRange({
+    required String rangeFile,
+    required PlatformInt64 expectedLength,
+    required List<RangeTransferTile> tiles,
+    required String manifestId,
+  });
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_ArchivePlanner;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_ArchivePlanner;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_ArchivePlannerPtr;
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_DirectionsAdapter;
@@ -199,6 +251,212 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
+  Future<void> crateApiOfflineArchivePlannerAddLeaf({
+    required ArchivePlanner that,
+    required PlatformInt64 offset,
+    required List<int> bytes,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+            that,
+            serializer,
+          );
+          sse_encode_i_64(offset, serializer);
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 1,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_archive_error,
+        ),
+        constMeta: kCrateApiOfflineArchivePlannerAddLeafConstMeta,
+        argValues: [that, offset, bytes],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineArchivePlannerAddLeafConstMeta =>
+      const TaskConstMeta(
+        debugName: "ArchivePlanner_add_leaf",
+        argNames: ["that", "offset", "bytes"],
+      );
+
+  @override
+  List<FoundTile> crateApiOfflineArchivePlannerFound({
+    required ArchivePlanner that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_found_tile,
+          decodeErrorData: sse_decode_archive_error,
+        ),
+        constMeta: kCrateApiOfflineArchivePlannerFoundConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineArchivePlannerFoundConstMeta =>
+      const TaskConstMeta(
+        debugName: "ArchivePlanner_found",
+        argNames: ["that"],
+      );
+
+  @override
+  List<ArchiveRange> crateApiOfflineArchivePlannerNeededLeaves({
+    required ArchivePlanner that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_archive_range,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiOfflineArchivePlannerNeededLeavesConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineArchivePlannerNeededLeavesConstMeta =>
+      const TaskConstMeta(
+        debugName: "ArchivePlanner_needed_leaves",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<ArchivePlanner> crateApiOfflineArchivePlannerNew({
+    required List<int> firstBytes,
+    required List<ArchiveTile> tiles,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(firstBytes, serializer);
+          sse_encode_list_archive_tile(tiles, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 4,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner,
+          decodeErrorData: sse_decode_archive_error,
+        ),
+        constMeta: kCrateApiOfflineArchivePlannerNewConstMeta,
+        argValues: [firstBytes, tiles],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineArchivePlannerNewConstMeta =>
+      const TaskConstMeta(
+        debugName: "ArchivePlanner_new",
+        argNames: ["firstBytes", "tiles"],
+      );
+
+  @override
+  List<ArchiveChunk> crateApiOfflineArchivePlannerRanges({
+    required ArchivePlanner that,
+    required PlatformInt64 gap,
+    required PlatformInt64 max,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+            that,
+            serializer,
+          );
+          sse_encode_i_64(gap, serializer);
+          sse_encode_i_64(max, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_archive_chunk,
+          decodeErrorData: sse_decode_archive_error,
+        ),
+        constMeta: kCrateApiOfflineArchivePlannerRangesConstMeta,
+        argValues: [that, gap, max],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineArchivePlannerRangesConstMeta =>
+      const TaskConstMeta(
+        debugName: "ArchivePlanner_ranges",
+        argNames: ["that", "gap", "max"],
+      );
+
+  @override
+  void crateApiOfflineArchivePlannerWant({
+    required ArchivePlanner that,
+    required List<ArchiveTile> tiles,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+            that,
+            serializer,
+          );
+          sse_encode_list_archive_tile(tiles, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiOfflineArchivePlannerWantConstMeta,
+        argValues: [that, tiles],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineArchivePlannerWantConstMeta =>
+      const TaskConstMeta(
+        debugName: "ArchivePlanner_want",
+        argNames: ["that", "tiles"],
+      );
+
+  @override
   Future<List<DirectionsRoute>> crateApiDirectionsDirectionsAdapterParse({
     required DirectionsAdapter that,
     required List<int> body,
@@ -215,7 +473,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 1,
+            funcId: 7,
             port: port_,
           );
         },
@@ -252,7 +510,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_box_autoadd_directions_point(from, serializer);
           sse_encode_box_autoadd_directions_point(to, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_directions_request,
@@ -284,7 +542,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(endpointUrl, serializer);
           sse_encode_String(costing, serializer);
           sse_encode_u_32(alternates, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -318,7 +576,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 4,
+            funcId: 10,
             port: port_,
           );
         },
@@ -355,7 +613,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 11,
             port: port_,
           );
         },
@@ -393,7 +651,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 12,
             port: port_,
           );
         },
@@ -432,7 +690,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 13,
             port: port_,
           );
         },
@@ -478,7 +736,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 14,
             port: port_,
           );
         },
@@ -514,7 +772,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 15,
             port: port_,
           );
         },
@@ -554,7 +812,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 16,
             port: port_,
           );
         },
@@ -585,7 +843,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -613,7 +871,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 18,
             port: port_,
           );
         },
@@ -638,7 +896,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -654,6 +912,72 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiTransitTransitCancelNewConstMeta =>
       const TaskConstMeta(debugName: "TransitCancel_new", argNames: []);
+
+  @override
+  PlatformInt64 crateApiOfflineArchiveFirstFetch() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiOfflineArchiveFirstFetchConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineArchiveFirstFetchConstMeta =>
+      const TaskConstMeta(debugName: "archive_first_fetch", argNames: []);
+
+  @override
+  PlatformInt64 crateApiOfflineArchiveGapBytes() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiOfflineArchiveGapBytesConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineArchiveGapBytesConstMeta =>
+      const TaskConstMeta(debugName: "archive_gap_bytes", argNames: []);
+
+  @override
+  PlatformInt64 crateApiOfflineArchiveMaxRangeBytes() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiOfflineArchiveMaxRangeBytesConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineArchiveMaxRangeBytesConstMeta =>
+      const TaskConstMeta(debugName: "archive_max_range_bytes", argNames: []);
 
   @override
   Future<void> crateApiOfflineCheckTransferTile({
@@ -675,7 +999,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 23,
             port: port_,
           );
         },
@@ -706,7 +1030,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 24,
             port: port_,
           );
         },
@@ -723,6 +1047,53 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiOfflineSha256FileConstMeta =>
       const TaskConstMeta(debugName: "sha256_file", argNames: ["path"]);
+
+  @override
+  Future<void> crateApiOfflineUnpackTransferRange({
+    required String rangeFile,
+    required PlatformInt64 expectedLength,
+    required List<RangeTransferTile> tiles,
+    required String manifestId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(rangeFile, serializer);
+          sse_encode_i_64(expectedLength, serializer);
+          sse_encode_list_range_transfer_tile(tiles, serializer);
+          sse_encode_String(manifestId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 25,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_tile_check_error,
+        ),
+        constMeta: kCrateApiOfflineUnpackTransferRangeConstMeta,
+        argValues: [rangeFile, expectedLength, tiles, manifestId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineUnpackTransferRangeConstMeta =>
+      const TaskConstMeta(
+        debugName: "unpack_transfer_range",
+        argNames: ["rangeFile", "expectedLength", "tiles", "manifestId"],
+      );
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_ArchivePlanner => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_ArchivePlanner => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner;
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_DirectionsAdapter => wire
@@ -755,6 +1126,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RustArcDecrementStrongCountFnType
   get rust_arc_decrement_strong_count_TransitCancel => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel;
+
+  @protected
+  ArchivePlanner
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ArchivePlannerImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
 
   @protected
   DirectionsAdapter
@@ -790,6 +1170,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return TransitCancelImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  ArchivePlanner
+  dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ArchivePlannerImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  ArchivePlanner
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ArchivePlannerImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -838,6 +1236,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ArchivePlanner
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ArchivePlannerImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   DirectionsAdapter
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     dynamic raw,
@@ -877,6 +1284,53 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as String;
+  }
+
+  @protected
+  ArchiveChunk dco_decode_archive_chunk(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return ArchiveChunk(
+      offset: dco_decode_i_64(arr[0]),
+      length: dco_decode_i_64(arr[1]),
+      tiles: dco_decode_list_range_tile(arr[2]),
+    );
+  }
+
+  @protected
+  ArchiveError dco_decode_archive_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 1)
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+    return ArchiveError(message: dco_decode_String(arr[0]));
+  }
+
+  @protected
+  ArchiveRange dco_decode_archive_range(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return ArchiveRange(
+      offset: dco_decode_i_64(arr[0]),
+      length: dco_decode_i_64(arr[1]),
+    );
+  }
+
+  @protected
+  ArchiveTile dco_decode_archive_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return ArchiveTile(
+      z: dco_decode_u_8(arr[0]),
+      x: dco_decode_u_32(arr[1]),
+      y: dco_decode_u_32(arr[2]),
+    );
   }
 
   @protected
@@ -968,6 +1422,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  FoundTile dco_decode_found_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return FoundTile(
+      z: dco_decode_u_8(arr[0]),
+      x: dco_decode_u_32(arr[1]),
+      y: dco_decode_u_32(arr[2]),
+      offset: dco_decode_i_64(arr[3]),
+      length: dco_decode_i_64(arr[4]),
+    );
+  }
+
+  @protected
   HashError dco_decode_hash_error(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -983,9 +1452,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeI64(raw);
+  }
+
+  @protected
   List<String> dco_decode_list_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_String).toList();
+  }
+
+  @protected
+  List<ArchiveChunk> dco_decode_list_archive_chunk(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_archive_chunk).toList();
+  }
+
+  @protected
+  List<ArchiveRange> dco_decode_list_archive_range(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_archive_range).toList();
+  }
+
+  @protected
+  List<ArchiveTile> dco_decode_list_archive_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_archive_tile).toList();
   }
 
   @protected
@@ -1007,6 +1500,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<FoundTile> dco_decode_list_found_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_found_tile).toList();
+  }
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as List<int>;
@@ -1016,6 +1515,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
+  }
+
+  @protected
+  List<RangeTile> dco_decode_list_range_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_range_tile).toList();
+  }
+
+  @protected
+  List<RangeTransferTile> dco_decode_list_range_transfer_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_range_transfer_tile).toList();
   }
 
   @protected
@@ -1064,6 +1575,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_list_prim_u_8_strict(raw);
+  }
+
+  @protected
+  RangeTile dco_decode_range_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return RangeTile(
+      z: dco_decode_u_8(arr[0]),
+      x: dco_decode_u_32(arr[1]),
+      y: dco_decode_u_32(arr[2]),
+      offset: dco_decode_i_64(arr[3]),
+      length: dco_decode_i_64(arr[4]),
+    );
+  }
+
+  @protected
+  RangeTransferTile dco_decode_range_transfer_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return RangeTransferTile(
+      offset: dco_decode_i_64(arr[0]),
+      length: dco_decode_i_64(arr[1]),
+      dest: dco_decode_String(arr[2]),
+      mode: dco_decode_String(arr[3]),
+      x: dco_decode_u_32(arr[4]),
+      y: dco_decode_u_32(arr[5]),
+    );
   }
 
   @protected
@@ -1178,6 +1720,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ArchivePlanner
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return ArchivePlannerImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   DirectionsAdapter
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     SseDeserializer deserializer,
@@ -1220,6 +1774,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return TransitCancelImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  ArchivePlanner
+  sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return ArchivePlannerImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  ArchivePlanner
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return ArchivePlannerImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -1283,6 +1861,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ArchivePlanner
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return ArchivePlannerImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   DirectionsAdapter
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     SseDeserializer deserializer,
@@ -1335,6 +1925,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_list_prim_u_8_strict(deserializer);
     return utf8.decoder.convert(inner);
+  }
+
+  @protected
+  ArchiveChunk sse_decode_archive_chunk(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_offset = sse_decode_i_64(deserializer);
+    var var_length = sse_decode_i_64(deserializer);
+    var var_tiles = sse_decode_list_range_tile(deserializer);
+    return ArchiveChunk(
+      offset: var_offset,
+      length: var_length,
+      tiles: var_tiles,
+    );
+  }
+
+  @protected
+  ArchiveError sse_decode_archive_error(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_message = sse_decode_String(deserializer);
+    return ArchiveError(message: var_message);
+  }
+
+  @protected
+  ArchiveRange sse_decode_archive_range(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_offset = sse_decode_i_64(deserializer);
+    var var_length = sse_decode_i_64(deserializer);
+    return ArchiveRange(offset: var_offset, length: var_length);
+  }
+
+  @protected
+  ArchiveTile sse_decode_archive_tile(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_z = sse_decode_u_8(deserializer);
+    var var_x = sse_decode_u_32(deserializer);
+    var var_y = sse_decode_u_32(deserializer);
+    return ArchiveTile(z: var_z, x: var_x, y: var_y);
   }
 
   @protected
@@ -1426,6 +2053,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  FoundTile sse_decode_found_tile(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_z = sse_decode_u_8(deserializer);
+    var var_x = sse_decode_u_32(deserializer);
+    var var_y = sse_decode_u_32(deserializer);
+    var var_offset = sse_decode_i_64(deserializer);
+    var var_length = sse_decode_i_64(deserializer);
+    return FoundTile(
+      z: var_z,
+      x: var_x,
+      y: var_y,
+      offset: var_offset,
+      length: var_length,
+    );
+  }
+
+  @protected
   HashError sse_decode_hash_error(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_message = sse_decode_String(deserializer);
@@ -1439,6 +2083,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getPlatformInt64();
+  }
+
+  @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -1446,6 +2096,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <String>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<ArchiveChunk> sse_decode_list_archive_chunk(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ArchiveChunk>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_archive_chunk(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<ArchiveRange> sse_decode_list_archive_range(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ArchiveRange>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_archive_range(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<ArchiveTile> sse_decode_list_archive_tile(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ArchiveTile>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_archive_tile(deserializer));
     }
     return ans_;
   }
@@ -1493,6 +2183,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<FoundTile> sse_decode_list_found_tile(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <FoundTile>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_found_tile(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -1504,6 +2206,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  List<RangeTile> sse_decode_list_range_tile(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <RangeTile>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_range_tile(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<RangeTransferTile> sse_decode_list_range_transfer_tile(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <RangeTransferTile>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_range_transfer_tile(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -1578,6 +2306,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     } else {
       return null;
     }
+  }
+
+  @protected
+  RangeTile sse_decode_range_tile(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_z = sse_decode_u_8(deserializer);
+    var var_x = sse_decode_u_32(deserializer);
+    var var_y = sse_decode_u_32(deserializer);
+    var var_offset = sse_decode_i_64(deserializer);
+    var var_length = sse_decode_i_64(deserializer);
+    return RangeTile(
+      z: var_z,
+      x: var_x,
+      y: var_y,
+      offset: var_offset,
+      length: var_length,
+    );
+  }
+
+  @protected
+  RangeTransferTile sse_decode_range_transfer_tile(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_offset = sse_decode_i_64(deserializer);
+    var var_length = sse_decode_i_64(deserializer);
+    var var_dest = sse_decode_String(deserializer);
+    var var_mode = sse_decode_String(deserializer);
+    var var_x = sse_decode_u_32(deserializer);
+    var var_y = sse_decode_u_32(deserializer);
+    return RangeTransferTile(
+      offset: var_offset,
+      length: var_length,
+      dest: var_dest,
+      mode: var_mode,
+      x: var_x,
+      y: var_y,
+    );
   }
 
   @protected
@@ -1685,6 +2451,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    ArchivePlanner self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as ArchivePlannerImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     DirectionsAdapter self,
     SseSerializer serializer,
@@ -1731,6 +2510,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as TransitCancelImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    ArchivePlanner self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as ArchivePlannerImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    ArchivePlanner self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as ArchivePlannerImpl).frbInternalSseEncode(move: false),
       serializer,
     );
   }
@@ -1801,6 +2606,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    ArchivePlanner self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as ArchivePlannerImpl).frbInternalSseEncode(move: null),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     DirectionsAdapter self,
     SseSerializer serializer,
@@ -1855,6 +2673,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_String(String self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
+  }
+
+  @protected
+  void sse_encode_archive_chunk(ArchiveChunk self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.offset, serializer);
+    sse_encode_i_64(self.length, serializer);
+    sse_encode_list_range_tile(self.tiles, serializer);
+  }
+
+  @protected
+  void sse_encode_archive_error(ArchiveError self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.message, serializer);
+  }
+
+  @protected
+  void sse_encode_archive_range(ArchiveRange self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.offset, serializer);
+    sse_encode_i_64(self.length, serializer);
+  }
+
+  @protected
+  void sse_encode_archive_tile(ArchiveTile self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_8(self.z, serializer);
+    sse_encode_u_32(self.x, serializer);
+    sse_encode_u_32(self.y, serializer);
   }
 
   @protected
@@ -1942,6 +2789,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_found_tile(FoundTile self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_8(self.z, serializer);
+    sse_encode_u_32(self.x, serializer);
+    sse_encode_u_32(self.y, serializer);
+    sse_encode_i_64(self.offset, serializer);
+    sse_encode_i_64(self.length, serializer);
+  }
+
+  @protected
   void sse_encode_hash_error(HashError self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.message, serializer);
@@ -1954,11 +2811,53 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putPlatformInt64(self);
+  }
+
+  @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_String(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_archive_chunk(
+    List<ArchiveChunk> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_archive_chunk(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_archive_range(
+    List<ArchiveRange> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_archive_range(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_archive_tile(
+    List<ArchiveTile> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_archive_tile(item, serializer);
     }
   }
 
@@ -1999,6 +2898,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_found_tile(
+    List<FoundTile> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_found_tile(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_prim_u_8_loose(
     List<int> self,
     SseSerializer serializer,
@@ -2018,6 +2929,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
+  }
+
+  @protected
+  void sse_encode_list_range_tile(
+    List<RangeTile> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_range_tile(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_range_transfer_tile(
+    List<RangeTransferTile> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_range_transfer_tile(item, serializer);
+    }
   }
 
   @protected
@@ -2094,6 +3029,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (self != null) {
       sse_encode_list_prim_u_8_strict(self, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_range_tile(RangeTile self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_8(self.z, serializer);
+    sse_encode_u_32(self.x, serializer);
+    sse_encode_u_32(self.y, serializer);
+    sse_encode_i_64(self.offset, serializer);
+    sse_encode_i_64(self.length, serializer);
+  }
+
+  @protected
+  void sse_encode_range_transfer_tile(
+    RangeTransferTile self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.offset, serializer);
+    sse_encode_i_64(self.length, serializer);
+    sse_encode_String(self.dest, serializer);
+    sse_encode_String(self.mode, serializer);
+    sse_encode_u_32(self.x, serializer);
+    sse_encode_u_32(self.y, serializer);
   }
 
   @protected
@@ -2202,6 +3161,61 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
   }
+}
+
+@sealed
+class ArchivePlannerImpl extends RustOpaque implements ArchivePlanner {
+  // Not to be used by end users
+  ArchivePlannerImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  ArchivePlannerImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_ArchivePlanner,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_ArchivePlanner,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_ArchivePlannerPtr,
+  );
+
+  /// Adds a leaf directory fetched from `offset`.
+  Future<void> addLeaf({
+    required PlatformInt64 offset,
+    required List<int> bytes,
+  }) => RustLib.instance.api.crateApiOfflineArchivePlannerAddLeaf(
+    that: this,
+    offset: offset,
+    bytes: bytes,
+  );
+
+  /// The wanted tiles the archive has, with their sizes: the count and bytes of a set of
+  /// tiles, without downloading them.
+  List<FoundTile> found() =>
+      RustLib.instance.api.crateApiOfflineArchivePlannerFound(that: this);
+
+  /// The leaf directories to fetch next; empty once every wanted tile is found.
+  List<ArchiveRange> neededLeaves() => RustLib.instance.api
+      .crateApiOfflineArchivePlannerNeededLeaves(that: this);
+
+  /// The wanted tiles the archive has, in ranges at most `gap` bytes apart and at most
+  /// `max` long (a tile longer than `max` is a range of its own).
+  List<ArchiveChunk> ranges({
+    required PlatformInt64 gap,
+    required PlatformInt64 max,
+  }) => RustLib.instance.api.crateApiOfflineArchivePlannerRanges(
+    that: this,
+    gap: gap,
+    max: max,
+  );
+
+  /// Looks for `tiles` instead, keeping the leaf directories fetched so far: sizing another
+  /// set of tiles costs only the leaves it needs that aren't fetched yet.
+  void want({required List<ArchiveTile> tiles}) => RustLib.instance.api
+      .crateApiOfflineArchivePlannerWant(that: this, tiles: tiles);
 }
 
 @sealed

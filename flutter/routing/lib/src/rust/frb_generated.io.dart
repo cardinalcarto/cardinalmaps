@@ -25,6 +25,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   });
 
   CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_ArchivePlannerPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlannerPtr;
+
+  CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_DirectionsAdapterPtr => wire
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapterPtr;
 
@@ -39,6 +43,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_TransitCancelPtr => wire
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancelPtr;
+
+  @protected
+  ArchivePlanner
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    dynamic raw,
+  );
 
   @protected
   DirectionsAdapter
@@ -61,6 +71,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   TransitCancel
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    dynamic raw,
+  );
+
+  @protected
+  ArchivePlanner
+  dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    dynamic raw,
+  );
+
+  @protected
+  ArchivePlanner
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     dynamic raw,
   );
 
@@ -92,6 +114,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Map<String, String> dco_decode_Map_String_String_None(dynamic raw);
 
   @protected
+  ArchivePlanner
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    dynamic raw,
+  );
+
+  @protected
   DirectionsAdapter
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     dynamic raw,
@@ -117,6 +145,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String dco_decode_String(dynamic raw);
+
+  @protected
+  ArchiveChunk dco_decode_archive_chunk(dynamic raw);
+
+  @protected
+  ArchiveError dco_decode_archive_error(dynamic raw);
+
+  @protected
+  ArchiveRange dco_decode_archive_range(dynamic raw);
+
+  @protected
+  ArchiveTile dco_decode_archive_tile(dynamic raw);
 
   @protected
   DirectionsPoint dco_decode_box_autoadd_directions_point(dynamic raw);
@@ -146,13 +186,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double dco_decode_f_64(dynamic raw);
 
   @protected
+  FoundTile dco_decode_found_tile(dynamic raw);
+
+  @protected
   HashError dco_decode_hash_error(dynamic raw);
 
   @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<ArchiveChunk> dco_decode_list_archive_chunk(dynamic raw);
+
+  @protected
+  List<ArchiveRange> dco_decode_list_archive_range(dynamic raw);
+
+  @protected
+  List<ArchiveTile> dco_decode_list_archive_tile(dynamic raw);
 
   @protected
   List<DirectionsPoint> dco_decode_list_directions_point(dynamic raw);
@@ -164,10 +219,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<DirectionsStep> dco_decode_list_directions_step(dynamic raw);
 
   @protected
+  List<FoundTile> dco_decode_list_found_tile(dynamic raw);
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<RangeTile> dco_decode_list_range_tile(dynamic raw);
+
+  @protected
+  List<RangeTransferTile> dco_decode_list_range_transfer_tile(dynamic raw);
 
   @protected
   List<(String, String)> dco_decode_list_record_string_string(dynamic raw);
@@ -189,6 +253,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  RangeTile dco_decode_range_tile(dynamic raw);
+
+  @protected
+  RangeTransferTile dco_decode_range_transfer_tile(dynamic raw);
 
   @protected
   (String, String) dco_decode_record_string_string(dynamic raw);
@@ -230,6 +300,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt dco_decode_usize(dynamic raw);
 
   @protected
+  ArchivePlanner
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   DirectionsAdapter
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     SseDeserializer deserializer,
@@ -250,6 +326,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   TransitCancel
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ArchivePlanner
+  sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ArchivePlanner
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     SseDeserializer deserializer,
   );
 
@@ -283,6 +371,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ArchivePlanner
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   DirectionsAdapter
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     SseDeserializer deserializer,
@@ -308,6 +402,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String sse_decode_String(SseDeserializer deserializer);
+
+  @protected
+  ArchiveChunk sse_decode_archive_chunk(SseDeserializer deserializer);
+
+  @protected
+  ArchiveError sse_decode_archive_error(SseDeserializer deserializer);
+
+  @protected
+  ArchiveRange sse_decode_archive_range(SseDeserializer deserializer);
+
+  @protected
+  ArchiveTile sse_decode_archive_tile(SseDeserializer deserializer);
 
   @protected
   DirectionsPoint sse_decode_box_autoadd_directions_point(
@@ -341,13 +447,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double sse_decode_f_64(SseDeserializer deserializer);
 
   @protected
+  FoundTile sse_decode_found_tile(SseDeserializer deserializer);
+
+  @protected
   HashError sse_decode_hash_error(SseDeserializer deserializer);
 
   @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<ArchiveChunk> sse_decode_list_archive_chunk(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ArchiveRange> sse_decode_list_archive_range(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ArchiveTile> sse_decode_list_archive_tile(SseDeserializer deserializer);
 
   @protected
   List<DirectionsPoint> sse_decode_list_directions_point(
@@ -365,10 +490,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<FoundTile> sse_decode_list_found_tile(SseDeserializer deserializer);
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<RangeTile> sse_decode_list_range_tile(SseDeserializer deserializer);
+
+  @protected
+  List<RangeTransferTile> sse_decode_list_range_transfer_tile(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<(String, String)> sse_decode_list_record_string_string(
@@ -392,6 +528,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  RangeTile sse_decode_range_tile(SseDeserializer deserializer);
+
+  @protected
+  RangeTransferTile sse_decode_range_transfer_tile(
+    SseDeserializer deserializer,
+  );
 
   @protected
   (String, String) sse_decode_record_string_string(
@@ -439,6 +583,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    ArchivePlanner self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     DirectionsAdapter self,
     SseSerializer serializer,
@@ -462,6 +613,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
     TransitCancel self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    ArchivePlanner self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    ArchivePlanner self,
     SseSerializer serializer,
   );
 
@@ -501,6 +666,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    ArchivePlanner self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     DirectionsAdapter self,
     SseSerializer serializer,
@@ -529,6 +701,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_String(String self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_archive_chunk(ArchiveChunk self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_archive_error(ArchiveError self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_archive_range(ArchiveRange self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_archive_tile(ArchiveTile self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_directions_point(
@@ -579,13 +763,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_f_64(double self, SseSerializer serializer);
 
   @protected
+  void sse_encode_found_tile(FoundTile self, SseSerializer serializer);
+
+  @protected
   void sse_encode_hash_error(HashError self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_archive_chunk(
+    List<ArchiveChunk> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_archive_range(
+    List<ArchiveRange> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_archive_tile(
+    List<ArchiveTile> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_directions_point(
@@ -606,11 +814,29 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_found_tile(
+    List<FoundTile> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_range_tile(
+    List<RangeTile> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_range_transfer_tile(
+    List<RangeTransferTile> self,
     SseSerializer serializer,
   );
 
@@ -641,6 +867,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_list_prim_u_8_strict(
     Uint8List? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_range_tile(RangeTile self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_range_transfer_tile(
+    RangeTransferTile self,
     SseSerializer serializer,
   );
 
@@ -718,6 +953,40 @@ class RustLibWire implements BaseWire {
   /// The symbols are looked up in [dynamicLibrary].
   RustLibWire(ffi.DynamicLibrary dynamicLibrary)
     : _lookup = dynamicLibrary.lookup;
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlannerPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_routing_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner',
+      );
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlannerPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlannerPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_routing_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner',
+      );
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlannerPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void
   rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
