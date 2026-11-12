@@ -5,6 +5,7 @@
 
 import 'api/directions.dart';
 import 'api/router.dart';
+import 'api/transit.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -68,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 250684200;
+  int get rustContentHash => -64462424;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -106,6 +107,31 @@ abstract class RustLibApi extends BaseApi {
     required List<int> body,
   });
 
+  Future<OfflineTransit> crateApiTransitOfflineTransitOpen({
+    required String build,
+    List<String>? feeds,
+    required List<String> tileSets,
+  });
+
+  Future<TransitResponse> crateApiTransitOfflineTransitPlan({
+    required OfflineTransit that,
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  });
+
+  Future<TransitResponse> crateApiTransitOfflineTransitVehicle({
+    required OfflineTransit that,
+    required String feed,
+    required String id,
+  });
+
+  void crateApiTransitTransitCancelCancel({required TransitCancel that});
+
+  Future<TransitCancel> crateApiTransitTransitCancelDefault();
+
+  TransitCancel crateApiTransitTransitCancelNew();
+
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_DirectionsAdapter;
 
@@ -123,6 +149,24 @@ abstract class RustLibApi extends BaseApi {
 
   CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_OfflineRouterPtr;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_OfflineTransit;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_OfflineTransit;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_OfflineTransitPtr;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_TransitCancel;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_TransitCancel;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_TransitCancelPtr;
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -311,6 +355,209 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         argNames: ["that", "body"],
       );
 
+  @override
+  Future<OfflineTransit> crateApiTransitOfflineTransitOpen({
+    required String build,
+    List<String>? feeds,
+    required List<String> tileSets,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(build, serializer);
+          sse_encode_opt_list_String(feeds, serializer);
+          sse_encode_list_String(tileSets, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit,
+          decodeErrorData: sse_decode_transit_open_error,
+        ),
+        constMeta: kCrateApiTransitOfflineTransitOpenConstMeta,
+        argValues: [build, feeds, tileSets],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTransitOfflineTransitOpenConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineTransit_open",
+        argNames: ["build", "feeds", "tileSets"],
+      );
+
+  @override
+  Future<TransitResponse> crateApiTransitOfflineTransitPlan({
+    required OfflineTransit that,
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+            that,
+            serializer,
+          );
+          sse_encode_list_prim_u_8_loose(request, serializer);
+          sse_encode_list_transit_feed(feeds, serializer);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+            cancel,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 7,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_transit_response,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTransitOfflineTransitPlanConstMeta,
+        argValues: [that, request, feeds, cancel],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTransitOfflineTransitPlanConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineTransit_plan",
+        argNames: ["that", "request", "feeds", "cancel"],
+      );
+
+  @override
+  Future<TransitResponse> crateApiTransitOfflineTransitVehicle({
+    required OfflineTransit that,
+    required String feed,
+    required String id,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+            that,
+            serializer,
+          );
+          sse_encode_String(feed, serializer);
+          sse_encode_String(id, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 8,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_transit_response,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTransitOfflineTransitVehicleConstMeta,
+        argValues: [that, feed, id],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTransitOfflineTransitVehicleConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineTransit_vehicle",
+        argNames: ["that", "feed", "id"],
+      );
+
+  @override
+  void crateApiTransitTransitCancelCancel({required TransitCancel that}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTransitTransitCancelCancelConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTransitTransitCancelCancelConstMeta =>
+      const TaskConstMeta(
+        debugName: "TransitCancel_cancel",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<TransitCancel> crateApiTransitTransitCancelDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 10,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTransitTransitCancelDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTransitTransitCancelDefaultConstMeta =>
+      const TaskConstMeta(debugName: "TransitCancel_default", argNames: []);
+
+  @override
+  TransitCancel crateApiTransitTransitCancelNew() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTransitTransitCancelNewConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTransitTransitCancelNewConstMeta =>
+      const TaskConstMeta(debugName: "TransitCancel_new", argNames: []);
+
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_DirectionsAdapter => wire
       .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter;
@@ -326,6 +573,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RustArcDecrementStrongCountFnType
   get rust_arc_decrement_strong_count_OfflineRouter => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_OfflineTransit => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_OfflineTransit => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_TransitCancel => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_TransitCancel => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel;
 
   @protected
   DirectionsAdapter
@@ -346,6 +609,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  OfflineTransit
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return OfflineTransitImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  TransitCancel
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   DirectionsAdapter
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     dynamic raw,
@@ -361,6 +642,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return OfflineRouterImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  OfflineTransit
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return OfflineTransitImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  TransitCancel
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -388,6 +687,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return OfflineRouterImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  OfflineTransit
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return OfflineTransitImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  TransitCancel
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -527,6 +844,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<TransitFeed> dco_decode_list_transit_feed(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_transit_feed).toList();
+  }
+
+  @protected
   OpenError dco_decode_open_error(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -542,6 +865,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   OpenErrorKind dco_decode_open_error_kind(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return OpenErrorKind.values[raw as int];
+  }
+
+  @protected
+  List<String>? dco_decode_opt_list_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_list_String(raw);
+  }
+
+  @protected
+  Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_list_prim_u_8_strict(raw);
   }
 
   @protected
@@ -563,6 +898,47 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return RouterResponse(
       status: dco_decode_u_16(arr[0]),
       body: dco_decode_list_prim_u_8_strict(arr[1]),
+    );
+  }
+
+  @protected
+  TransitFeed dco_decode_transit_feed(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return TransitFeed(
+      feed: dco_decode_String(arr[0]),
+      kind: dco_decode_transit_feed_kind(arr[1]),
+      bytes: dco_decode_opt_list_prim_u_8_strict(arr[2]),
+    );
+  }
+
+  @protected
+  TransitFeedKind dco_decode_transit_feed_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TransitFeedKind.values[raw as int];
+  }
+
+  @protected
+  TransitOpenError dco_decode_transit_open_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 1)
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+    return TransitOpenError(message: dco_decode_String(arr[0]));
+  }
+
+  @protected
+  TransitResponse dco_decode_transit_response(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return TransitResponse(
+      status: dco_decode_u_16(arr[0]),
+      body: dco_decode_list_prim_u_8_strict(arr[1]),
+      ignoredFeeds: dco_decode_list_String(arr[2]),
     );
   }
 
@@ -621,6 +997,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  OfflineTransit
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return OfflineTransitImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  TransitCancel
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   DirectionsAdapter
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     SseDeserializer deserializer,
@@ -639,6 +1039,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return OfflineRouterImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  OfflineTransit
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return OfflineTransitImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  TransitCancel
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -672,6 +1096,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return OfflineRouterImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  OfflineTransit
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return OfflineTransitImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  TransitCancel
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return TransitCancelImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -855,6 +1303,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<TransitFeed> sse_decode_list_transit_feed(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <TransitFeed>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_transit_feed(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   OpenError sse_decode_open_error(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_kind = sse_decode_open_error_kind(deserializer);
@@ -867,6 +1327,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return OpenErrorKind.values[inner];
+  }
+
+  @protected
+  List<String>? sse_decode_opt_list_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_list_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_list_prim_u_8_strict(deserializer));
+    } else {
+      return null;
+    }
   }
 
   @protected
@@ -885,6 +1367,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_status = sse_decode_u_16(deserializer);
     var var_body = sse_decode_list_prim_u_8_strict(deserializer);
     return RouterResponse(status: var_status, body: var_body);
+  }
+
+  @protected
+  TransitFeed sse_decode_transit_feed(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_feed = sse_decode_String(deserializer);
+    var var_kind = sse_decode_transit_feed_kind(deserializer);
+    var var_bytes = sse_decode_opt_list_prim_u_8_strict(deserializer);
+    return TransitFeed(feed: var_feed, kind: var_kind, bytes: var_bytes);
+  }
+
+  @protected
+  TransitFeedKind sse_decode_transit_feed_kind(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return TransitFeedKind.values[inner];
+  }
+
+  @protected
+  TransitOpenError sse_decode_transit_open_error(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_message = sse_decode_String(deserializer);
+    return TransitOpenError(message: var_message);
+  }
+
+  @protected
+  TransitResponse sse_decode_transit_response(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_status = sse_decode_u_16(deserializer);
+    var var_body = sse_decode_list_prim_u_8_strict(deserializer);
+    var var_ignoredFeeds = sse_decode_list_String(deserializer);
+    return TransitResponse(
+      status: var_status,
+      body: var_body,
+      ignoredFeeds: var_ignoredFeeds,
+    );
   }
 
   @protected
@@ -950,6 +1468,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    OfflineTransit self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as OfflineTransitImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    TransitCancel self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as TransitCancelImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     DirectionsAdapter self,
     SseSerializer serializer,
@@ -970,6 +1514,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as OfflineRouterImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    OfflineTransit self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as OfflineTransitImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    TransitCancel self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as TransitCancelImpl).frbInternalSseEncode(move: false),
       serializer,
     );
   }
@@ -1008,6 +1578,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as OfflineRouterImpl).frbInternalSseEncode(move: null),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    OfflineTransit self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as OfflineTransitImpl).frbInternalSseEncode(move: null),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    TransitCancel self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as TransitCancelImpl).frbInternalSseEncode(move: null),
       serializer,
     );
   }
@@ -1182,6 +1778,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_transit_feed(
+    List<TransitFeed> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_transit_feed(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_open_error(OpenError self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_open_error_kind(self.kind, serializer);
@@ -1195,6 +1803,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_opt_list_String(
+    List<String>? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_list_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_list_prim_u_8_strict(
+    Uint8List? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_list_prim_u_8_strict(self, serializer);
+    }
   }
 
   @protected
@@ -1215,6 +1849,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_16(self.status, serializer);
     sse_encode_list_prim_u_8_strict(self.body, serializer);
+  }
+
+  @protected
+  void sse_encode_transit_feed(TransitFeed self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.feed, serializer);
+    sse_encode_transit_feed_kind(self.kind, serializer);
+    sse_encode_opt_list_prim_u_8_strict(self.bytes, serializer);
+  }
+
+  @protected
+  void sse_encode_transit_feed_kind(
+    TransitFeedKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_transit_open_error(
+    TransitOpenError self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.message, serializer);
+  }
+
+  @protected
+  void sse_encode_transit_response(
+    TransitResponse self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_16(self.status, serializer);
+    sse_encode_list_prim_u_8_strict(self.body, serializer);
+    sse_encode_list_String(self.ignoredFeeds, serializer);
   }
 
   @protected
@@ -1322,4 +1993,75 @@ class OfflineRouterImpl extends RustOpaque implements OfflineRouter {
       .instance
       .api
       .crateApiRouterOfflineRouterRoute(that: this, body: body);
+}
+
+@sealed
+class OfflineTransitImpl extends RustOpaque implements OfflineTransit {
+  // Not to be used by end users
+  OfflineTransitImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  OfflineTransitImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_OfflineTransit,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_OfflineTransit,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_OfflineTransitPtr,
+  );
+
+  /// Plans a trip from JSON request bytes (the server's `/transit/plan` body),
+  /// applying `feeds` first.
+  ///
+  /// Each [`TransitFeed`] replaces what was held for its feed;
+  /// feeds not mentioned stay as they are, until they age out.
+  /// Undecodable bytes degrade to the schedule and are reported in the response.
+  ///
+  /// A plan answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+  Future<TransitResponse> plan({
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  }) => RustLib.instance.api.crateApiTransitOfflineTransitPlan(
+    that: this,
+    request: request,
+    feeds: feeds,
+    cancel: cancel,
+  );
+
+  /// The latest real-time state of a vehicle, as the server's vehicle lookup returns it.
+  Future<TransitResponse> vehicle({required String feed, required String id}) =>
+      RustLib.instance.api.crateApiTransitOfflineTransitVehicle(
+        that: this,
+        feed: feed,
+        id: id,
+      );
+}
+
+@sealed
+class TransitCancelImpl extends RustOpaque implements TransitCancel {
+  // Not to be used by end users
+  TransitCancelImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  TransitCancelImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_TransitCancel,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_TransitCancel,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_TransitCancelPtr,
+  );
+
+  /// Asks every plan given this token to stop; each then answers 499.
+  void cancel() =>
+      RustLib.instance.api.crateApiTransitTransitCancelCancel(that: this);
 }

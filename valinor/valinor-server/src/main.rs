@@ -8,6 +8,7 @@
 //! with `GET ?json=` and POST, as mainline's httpd does; see [`app`] for the details.
 //! `GET /status` is the health check. Logging follows `RUST_LOG`.
 //! It writes no files.
+//! With `--transit-build`, it also plans public transit at `/transit/...`; see [`transit`].
 
 use anyhow::{Context, bail};
 use clap::Parser;
@@ -16,16 +17,19 @@ use core::time::Duration;
 use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 use valinor_router::{DEFAULT_TILE_CACHE_SIZE, Router, RouterConfig};
+use valinor_transit_plan::{ServiceLimits, StreetConfig, StreetPlanner, TransitBuild};
 
 mod app;
 #[cfg(test)]
 mod tests;
+mod transit;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -61,6 +65,53 @@ struct Cli {
     /// The largest request body, in bytes (larger ones are a 413).
     #[arg(env, long, default_value = "16777216")]
     max_body_bytes: usize,
+
+    /// A transit build directory (`valinor-transit-build`), to serve `/transit/...`.
+    /// Without one, those paths are unknown, as any others are.
+    #[arg(env, long)]
+    transit_build: Option<PathBuf>,
+
+    /// The feeds to load from the build, comma-separated by ID
+    /// (default: every feed that compiled; an empty value means the same).
+    #[arg(env, long, default_value = "")]
+    transit_feeds: FeedList,
+
+    /// The shared secret for feeding GTFS-RT to `PUT /transit/feeds/...`.
+    /// Without one, real-time data can't be ingested and transit serves the schedule.
+    #[arg(env, long)]
+    transit_ingest_token: Option<String>,
+
+    /// The longest access or egress leg a transit query may ask for, in seconds
+    /// (longer ones are a 400), as Valhalla's service limits bound its other work.
+    #[arg(env, long, default_value = "3600")]
+    transit_max_walk_seconds: u32,
+}
+
+/// A comma-separated list of feed IDs; an empty value is no feeds at all, so no subset.
+#[derive(Clone, Debug, Default)]
+struct FeedList(Vec<String>);
+
+impl FeedList {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn as_slice(&self) -> &[String] {
+        &self.0
+    }
+}
+
+impl FromStr for FeedList {
+    type Err = core::convert::Infallible;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Ok(Self(
+            text.split(',')
+                .filter(|feed| !feed.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        ))
+    }
 }
 
 /// The tile sets to open: `--tiles`, or else the config's `mjolnir.tile_extract`
@@ -79,7 +130,47 @@ fn tile_sets(cli: &Cli, config: &RouterConfig) -> anyhow::Result<Vec<PathBuf>> {
     }
 }
 
-fn open(cli: &Cli) -> anyhow::Result<(Router, usize)> {
+/// Opens transit, if a build was given, over the same tile sets as the router.
+fn open_transit(cli: &Cli, tiles: &[PathBuf]) -> anyhow::Result<Option<transit::Transit>> {
+    let Some(path) = cli.transit_build.as_deref() else {
+        return Ok(None);
+    };
+    let feeds = (!cli.transit_feeds.is_empty()).then_some(cli.transit_feeds.as_slice());
+    let build = TransitBuild::load(path, feeds)
+        .with_context(|| format!("load the transit build {}", path.display()))?;
+    // Absent tiles are expected for a device's partial download, not for a server.
+    info!(
+        "transit build {}: walking {} tiles read, {} absent, cycling {} read, {} absent",
+        path.display(),
+        build.report.tiles_read[0],
+        build.report.tiles_absent[0],
+        build.report.tiles_read[1],
+        build.report.tiles_absent[1]
+    );
+    if build.report.tiles_absent.iter().any(|&absent| absent > 0) {
+        warn!("some transfer tiles the loaded feeds need are absent: their stops have no walks");
+    }
+    let config = StreetConfig {
+        limits: ServiceLimits {
+            max_walk_seconds: cli.transit_max_walk_seconds,
+            ..ServiceLimits::default()
+        },
+        ..StreetConfig::default()
+    };
+    let planner =
+        StreetPlanner::from_build(build, tiles, config).context("open transit over the tiles")?;
+    info!(
+        "transit: {} feeds, from {}",
+        planner.state().feeds().len(),
+        path.display()
+    );
+    Ok(Some(transit::Transit::new(
+        planner,
+        cli.transit_ingest_token.clone(),
+    )))
+}
+
+fn open(cli: &Cli) -> anyhow::Result<(Router, usize, Vec<PathBuf>)> {
     let json = std::fs::read_to_string(&cli.config)
         .with_context(|| format!("read {}", cli.config.display()))?;
     let mut config = RouterConfig::from_valhalla_json(&json)
@@ -101,7 +192,7 @@ fn open(cli: &Cli) -> anyhow::Result<(Router, usize)> {
             .collect::<Vec<_>>()
             .join(", ")
     );
-    Ok((router, workers))
+    Ok((router, workers, tiles))
 }
 
 #[tokio::main]
@@ -117,12 +208,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let (router, workers) = open(&cli)?;
-    let state = Arc::new(app::AppState::new(
-        router,
-        workers,
-        Duration::from_secs(cli.timeout_seconds),
-    ));
+    let (router, workers, tiles) = open(&cli)?;
+    let transit = open_transit(&cli, &tiles)?;
+    let state = Arc::new(
+        app::AppState::new(router, workers, Duration::from_secs(cli.timeout_seconds))
+            .with_transit(transit),
+    );
     let listener = tokio::net::TcpListener::bind(cli.listen)
         .await
         .with_context(|| format!("listen on {}", cli.listen))?;

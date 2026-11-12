@@ -202,6 +202,23 @@ impl BidirectionalAStar {
     }
 
     /// Clears a search, keeping its storage (`Clear`).
+    /// Bytes of storage both trees and the path scratch hold, used or not.
+    pub(crate) fn bytes(&self) -> usize {
+        [&self.fwd, &self.rev]
+            .iter()
+            .map(|tree| {
+                tree.labels.capacity() * size_of::<ThorLabel>()
+                    + tree.queue.bytes()
+                    + tree.status.bytes()
+            })
+            .sum::<usize>()
+            + self.best_connections.capacity() * size_of::<CandidateConnection>()
+            + (self.path_edges.capacity()
+                + self.recovered.capacity()
+                + self.recovered_inner.capacity())
+                * size_of::<GraphId>()
+    }
+
     /// The labels and edge statuses both trees have room for (for tests).
     #[cfg(test)]
     pub(crate) fn retained(&self) -> usize {

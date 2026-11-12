@@ -1,0 +1,13 @@
+diff --git a/src/fetch.py b/src/fetch.py
+index d97c845..bd4d3a4 100755
+--- a/src/fetch.py
++++ b/src/fetch.py
+@@ -207,7 +207,7 @@ def download_http_source(
+         headers[key] = decrypt_if_necessary(value)
+     if "user-agent" not in headers:
+         headers["user-agent"] \
+-            = "Transitous GTFS Fetcher (https://transitous.org)"
++            = "Cardinal Maps GTFS fetcher (https://github.com/cardinalcarto)"
+ 
+     # Detect last modification time of local file
+     last_modified = None

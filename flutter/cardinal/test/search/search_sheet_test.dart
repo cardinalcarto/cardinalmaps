@@ -24,6 +24,7 @@ import '../fakes/fake_map.dart';
 import '../fakes/fake_place_store.dart';
 import '../fakes/fake_routes.dart';
 import '../fakes/fake_saved_store.dart';
+import '../fakes/fake_transit.dart';
 import '../geocoder/geocoder_test.dart' show spaceNeedle;
 
 /// The app's sheet pages over a blank body instead of the map, which needs Flutter GPU.
@@ -96,6 +97,7 @@ Future<Store> _pumpApp(
         geocoder: geocoder,
         child: DirectionsScope(
           routes: FakeRoutes(),
+          transit: FakeTransit(),
           location: FakeLocation(),
           child: MapScope(
             controller: map ?? FakeMap(),

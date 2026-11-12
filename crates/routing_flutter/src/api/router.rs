@@ -6,6 +6,7 @@
 
 use core::num::NonZeroUsize;
 use flutter_rust_bridge::frb;
+use valinor_loki::LokiConfig;
 use valinor_router::{Router, RouterConfig};
 use valinor_thor::{Retention, ThorConfig};
 
@@ -15,15 +16,27 @@ use valinor_thor::{Retention, ThorConfig};
 /// needs (tens of megabytes for a long route), so a phone keeps few.
 const WORKSPACES: NonZeroUsize = NonZeroUsize::new(2).unwrap();
 
-/// The search storage each idle workspace keeps between routes, in labels per search tree.
+/// The search storage each idle workspace keeps between routes, in labels per search tree:
+/// none.
 ///
-/// A search starts with room for this many labels anyway, so ordinary routes don't allocate
-/// as they go. After a longer search, the rest is given back as soon as the route finishes,
-/// rather than kept for the next one as mainline's server defaults (a million labels or more)
-/// would. A label is 72 bytes, so an idle workspace holds at most about 5 MB per search tree
-/// (20 MB across its two bidirectional trees and two time-dependent searches).
+/// A search reserves room for 65,536 labels (72 bytes each) when it starts, so ordinary routes
+/// still don't allocate as they go; what any search used is given back as soon as the route
+/// finishes, rather than kept for the next one as mainline's server defaults
+/// (a million labels or more) would. Keeping the starting room instead held 9 MB in an idle
+/// workspace, and giving it back costs the next route one allocation per tree,
+/// which measured within noise of keeping it.
+/// An idle workspace still keeps its queues' buckets, a few megabytes after a long route.
 /// This only bounds idle memory, not how far a search can go.
-const RETAINED_LABELS: usize = 1 << 16;
+const RETAINED_LABELS: usize = 0;
+
+/// The nodes a location's edge must reach, in and out, for the route to start or end on it:
+/// the bound transit snaps its stops and plan endpoints by
+/// ([`valinor_walk::DEFAULT_MIN_REACHABILITY`]), not Loki's default of 50.
+///
+/// At 50, Cal Anderson Park's point lands on a park path a bicycle can't enter or leave, though
+/// more than 50 nodes connect to it, so neither mainline nor valinor finds a bicycle route to or
+/// from the park; at 100 it lands on Nagle Place, as a car's does.
+const MIN_REACHABILITY: u32 = valinor_walk::DEFAULT_MIN_REACHABILITY;
 
 /// The router over the device's offline regions. Opaque to Dart.
 #[frb(opaque)]
@@ -83,19 +96,8 @@ impl OfflineRouter {
     /// Opening maps the tarballs and reads their indexes and a sample of tile headers;
     /// it doesn't read the tiles.
     pub fn open(tile_sets: Vec<String>) -> Result<OfflineRouter, OpenError> {
-        let config = RouterConfig {
-            workspaces: WORKSPACES,
-            thor: ThorConfig {
-                retention: Retention {
-                    bidirectional_labels: RETAINED_LABELS,
-                    unidirectional_labels: RETAINED_LABELS,
-                },
-                ..ThorConfig::default()
-            },
-            ..RouterConfig::default()
-        };
         Ok(Self {
-            router: Router::open(config, &tile_sets)?,
+            router: Router::open(device_config(), &tile_sets)?,
         })
     }
 
@@ -110,10 +112,60 @@ impl OfflineRouter {
     }
 }
 
+/// The router's configuration on a device.
+fn device_config() -> RouterConfig {
+    let mut loki = LokiConfig::default();
+    loki.service_defaults.minimum_reachability = MIN_REACHABILITY;
+    // A request that names its own reachability is capped by this; keep it from being
+    // capped below the default.
+    loki.service_limits.max_reachability =
+        loki.service_limits.max_reachability.max(MIN_REACHABILITY);
+    RouterConfig {
+        loki,
+        workspaces: WORKSPACES,
+        thor: ThorConfig {
+            retention: Retention {
+                bidirectional_labels: RETAINED_LABELS,
+                unidirectional_labels: RETAINED_LABELS,
+            },
+            ..ThorConfig::default()
+        },
+        ..RouterConfig::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn locations_need_transits_reachability() {
+        let loki = device_config().loki;
+        assert_eq!(loki.service_defaults.minimum_reachability, 250);
+        assert!(loki.service_limits.max_reachability >= 250);
+    }
+
+    /// Street tiles covering Seattle (a phone bundle's `tiles.tar`), from `CARDINAL_SEATTLE_TILES`;
+    /// real data, so not in the repository.
+    #[test]
+    #[ignore = "needs CARDINAL_SEATTLE_TILES"]
+    fn bicycles_route_to_and_from_cal_anderson_park() {
+        let tiles = std::env::var("CARDINAL_SEATTLE_TILES").expect("CARDINAL_SEATTLE_TILES");
+        let router = OfflineRouter::open(vec![tiles]).ok().unwrap();
+        // The geocoder's point for the park, and Westlake.
+        let park = r#"{"lat": 47.6170378, "lon": -122.3191692}"#;
+        let westlake = r#"{"lat": 47.6114, "lon": -122.3375}"#;
+        for (from, to) in [(westlake, park), (park, westlake)] {
+            let body = format!(
+                r#"{{"format": "osrm", "costing": "bicycle", "locations": [{from}, {to}]}}"#
+            );
+            let response = router.route(body.into_bytes());
+            let body = String::from_utf8(response.body).unwrap();
+            assert_eq!(response.status, 200, "{body}");
+            assert!(body.contains(r#""code":"Ok""#), "{body}");
+        }
+    }
 
     fn tiles() -> String {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))

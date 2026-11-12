@@ -9,6 +9,7 @@ import '../geocoder/address.dart';
 import '../map/location.dart';
 import '../store/store.dart';
 import 'route_source.dart';
+import 'transit_plan.dart';
 
 /// One end of a trip: a place, or where you are.
 @immutable
@@ -35,6 +36,12 @@ enum RouteProblem {
 
   /// Asking for routes failed.
   failed,
+
+  /// An end is outside the offline area.
+  outsideArea,
+
+  /// There's no offline area to route in.
+  noOfflineArea,
 }
 
 /// A trip being planned: its ends, how you're traveling, and the routes for those.
@@ -47,6 +54,11 @@ enum RouteProblem {
 /// | loading | there are none, or asking failed | a [RouteProblem], no routes |
 /// | anywhere | an end is cleared | no routes, no problem, nothing loading |
 /// | showing routes | a route is selected | that route selected, with no request |
+/// | showing journeys | a journey is selected | that journey selected, with no request |
+///
+/// Transit answers with a [TransitPlan] rather than routes, and how you get to and from
+/// stops ([transitAccess]) is part of its question. A plan with no journeys isn't a
+/// [RouteProblem]: the plan says why it has none.
 ///
 /// Only the latest question's answer counts: asking again aborts the last request, and an
 /// answer that arrives anyway is dropped. While loading, routes for the last question
@@ -58,11 +70,13 @@ enum RouteProblem {
 class Directions extends ChangeNotifier {
   Directions({
     required RouteSource routes,
+    required this._transit,
     required this._location,
     this._mode = TravelMode.driving,
   }) : _source = routes;
 
   final RouteSource _source;
+  final TransitSource _transit;
   final LocationSource _location;
 
   RouteEndpoint? get from => _from;
@@ -73,6 +87,24 @@ class Directions extends ChangeNotifier {
 
   TravelMode get mode => _mode;
   TravelMode _mode;
+
+  /// How transit gets to and from stops.
+  TransitAccess get transitAccess => _transitAccess;
+  TransitAccess _transitAccess = TransitAccess.walking;
+
+  /// The transit plan for the latest question to be answered, if it was for transit.
+  TransitPlan? get plan => _plan;
+  TransitPlan? _plan;
+
+  /// The index in [plan]'s journeys of the selected one.
+  int get selectedJourney => _selectedJourney;
+  int _selectedJourney = 0;
+
+  Journey? get journey => switch (_plan?.journeys) {
+    final journeys? when _selectedJourney < journeys.length =>
+      journeys[_selectedJourney],
+    _ => null,
+  };
 
   /// The routes for the latest question to be answered, the best first.
   List<DirectionsRoute> get routes => _routes;
@@ -134,7 +166,23 @@ class Directions extends ChangeNotifier {
   void setMode(TravelMode mode) {
     if (!mode.available || mode == _mode) return;
     _mode = mode;
+    if (mode == TravelMode.transit) _transit.prepare();
     _ask();
+  }
+
+  /// Changes how transit gets to and from stops.
+  void setTransitAccess(TransitAccess access) {
+    if (access == _transitAccess) return;
+    _transitAccess = access;
+    if (_mode == TravelMode.transit) _ask();
+  }
+
+  /// Selects one of [plan]'s journeys.
+  void selectJourney(int index) {
+    final count = _plan?.journeys.length ?? 0;
+    if (index == _selectedJourney || index < 0 || index >= count) return;
+    _selectedJourney = index;
+    notifyListeners();
   }
 
   /// Selects one of [routes].
@@ -227,6 +275,8 @@ class Directions extends ChangeNotifier {
     if (from == null || to == null) {
       _routes = const [];
       _selected = 0;
+      _plan = null;
+      _selectedJourney = 0;
       _loading = false;
       notifyListeners();
       return;
@@ -244,20 +294,39 @@ class Directions extends ChangeNotifier {
     Future<void> abort,
   ) async {
     List<DirectionsRoute> routes = const [];
+    TransitPlan? plan;
     RouteProblem? problem;
     try {
-      routes = await _source.routes(
-        mode: _mode,
-        from: from.point,
-        to: to.point,
-        abort: abort,
-      );
-      if (routes.isEmpty) problem = RouteProblem.noRoute;
+      if (_mode == TravelMode.transit) {
+        plan = await _transit.plan(
+          access: _transitAccess,
+          from: from.point,
+          to: to.point,
+          abort: abort,
+        );
+      } else {
+        routes = await _source.routes(
+          mode: _mode,
+          from: from.point,
+          to: to.point,
+          abort: abort,
+        );
+        if (routes.isEmpty) problem = RouteProblem.noRoute;
+      }
     } on http.RequestAbortedException {
       return;
     } on DirectionsError catch (e) {
       debugPrint('directions: ${e.message}');
       problem = e.kind == DirectionsErrorKind.noRoute
+          ? RouteProblem.noRoute
+          : RouteProblem.failed;
+    } on OutsideOfflineArea {
+      problem = RouteProblem.outsideArea;
+    } on NoOfflineArea {
+      problem = RouteProblem.noOfflineArea;
+    } on TransitPlanError catch (e) {
+      debugPrint('directions: $e');
+      problem = e.kind == 'no_street_nearby'
           ? RouteProblem.noRoute
           : RouteProblem.failed;
     } on Object catch (e) {
@@ -268,6 +337,8 @@ class Directions extends ChangeNotifier {
     _abort = null;
     _routes = routes;
     _selected = 0;
+    _plan = plan;
+    _selectedJourney = 0;
     _problem = problem;
     _loading = false;
     notifyListeners();

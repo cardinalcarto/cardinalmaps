@@ -262,6 +262,13 @@ impl Workspace {
         self.reverse.clear(self.retention.unidirectional_labels);
     }
 
+    /// Bytes of search storage the workspace holds now, used or not:
+    /// after [`Self::trim`], what it keeps between requests.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        self.bidirectional.bytes() + self.forward.bytes() + self.reverse.bytes()
+    }
+
     /// The labels and edge statuses every search has room for (for tests).
     #[cfg(test)]
     pub(crate) fn retained(&self) -> usize {

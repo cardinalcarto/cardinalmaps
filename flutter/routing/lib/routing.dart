@@ -20,6 +20,14 @@ export 'src/rust/api/directions.dart'
         DirectionsStep;
 export 'src/rust/api/router.dart'
     show OfflineRouter, OpenError, OpenErrorKind, RouterResponse;
+export 'src/rust/api/transit.dart'
+    show
+        OfflineTransit,
+        TransitCancel,
+        TransitFeed,
+        TransitFeedKind,
+        TransitOpenError,
+        TransitResponse;
 
 /// Loads the native router. Call once (it is safe to call again) before opening one.
 Future<void> initRouting() => _init ??= RustLib.init();

@@ -1,0 +1,1015 @@
+//! Scenario tests: each pins down one rule on a hand-made network.
+
+use crate::ids::{Direction, TripId};
+use crate::overlay::OverlayBuilder;
+use crate::stop_table::RouteFilter;
+use crate::testing::{
+    Scenario, ScenarioTrip, TestNet, block_of, check_journey, day_slot, oracle, t,
+};
+use crate::timetable::{
+    ResolvedBlock, ResolvedLane, ResolvedTrip, RouteAttributes, StopEvent, StopRules,
+};
+use crate::{Journey, Leg, MAX_TRIPS, QueryError, Router, SearchError, StopTable};
+
+fn arrivals(net: &TestNet, departure: i32) -> Vec<(u8, i32)> {
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router = net.router();
+    let run = router
+        .forward(&query, t(departure), &|| false)
+        .expect("search");
+    let results: Vec<_> = run
+        .results()
+        .iter()
+        .map(|r| (r.trips, r.time.into_inner()))
+        .collect();
+    let journeys: Vec<_> = results
+        .iter()
+        .map(|&(trips, _)| run.journey(trips).expect("journey"))
+        .collect();
+    for journey in &journeys {
+        check_journey(net, journey);
+    }
+    results
+}
+
+fn departures(net: &TestNet, arrival: i32) -> Vec<(u8, i32)> {
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router = net.router();
+    let run = router
+        .backward(&query, t(arrival), &|| false)
+        .expect("search");
+    run.results()
+        .iter()
+        .map(|r| (r.trips, r.time.into_inner()))
+        .collect()
+}
+
+fn agrees_with_oracle(net: &TestNet, departure: i32) {
+    assert_eq!(
+        arrivals(net, departure),
+        oracle(net, RouteFilter::ALL, Direction::Forward, departure, 4),
+        "forward search at {departure}"
+    );
+}
+
+#[test]
+fn single_ride() {
+    let (net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[100, 200])])
+        .access(0, 10)
+        .egress(1, 5)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(1, 205)]);
+    assert_eq!(departures(&net, 205), vec![(1, 90)]);
+    assert_eq!(departures(&net, 204), vec![]);
+}
+
+#[test]
+fn a_journey_needs_a_trip() {
+    // The origin can walk straight to a stop with an egress entry; that is not a journey.
+    let (net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[100, 200])])
+        .access(1, 10)
+        .egress(1, 5)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![]);
+}
+
+#[test]
+fn earliest_arrival_trip_is_found_with_multiple_trips() {
+    let (net, _) = Scenario::new(3)
+        .route(
+            &[0, 1],
+            &[
+                ScenarioTrip::simple(1, &[100, 200]),
+                ScenarioTrip::simple(2, &[150, 250]),
+            ],
+        )
+        .route(&[1, 2], &[ScenarioTrip::simple(3, &[220, 300])])
+        .access(0, 0)
+        .egress(2, 0)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(2, 300)]);
+    // The second bus reaches stop 1 too late for the connection.
+    assert_eq!(arrivals(&net, 120), vec![]);
+    agrees_with_oracle(&net, 0);
+    agrees_with_oracle(&net, 120);
+}
+
+#[test]
+fn an_earlier_trip_further_along_replaces_the_current_one() {
+    // Boarding the late trip at stop 0, the rider could switch to an earlier
+    // trip at stop 1, where a walk arrived in time.
+    let (net, _) = Scenario::new(4)
+        .route(
+            &[0, 1, 2],
+            &[
+                ScenarioTrip::simple(1, &[50, 150, 250]),
+                ScenarioTrip::simple(2, &[100, 200, 300]),
+            ],
+        )
+        .walk(3, 1, 10)
+        .route(&[3, 1], &[ScenarioTrip::simple(3, &[60, 90])])
+        .access(0, 80)
+        .access(3, 0)
+        .egress(2, 0)
+        .build();
+    agrees_with_oracle(&net, 0);
+    assert_eq!(arrivals(&net, 0), vec![(1, 300), (2, 250)]);
+}
+
+#[test]
+fn loops_visit_a_stop_twice() {
+    // The route starts and ends at stop 0.
+    // A rider starting at stop 1 can only reach stop 0 as the loop's last stop.
+    let (net, _) = Scenario::new(3)
+        .route(&[0, 1, 2, 0], &[ScenarioTrip::simple(1, &[10, 20, 30, 40])])
+        .access(1, 0)
+        .egress(0, 0)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(1, 40)]);
+    assert_eq!(departures(&net, 40), vec![(1, 20)]);
+    agrees_with_oracle(&net, 0);
+}
+
+#[test]
+fn a_loop_can_board_at_the_second_visit() {
+    // The first visit to stop 0 is before the rider gets there, so only the second can board.
+    let (net, _) = Scenario::new(3)
+        .route(&[0, 1, 0, 2], &[ScenarioTrip::simple(1, &[10, 20, 30, 40])])
+        .access(0, 25)
+        .egress(2, 0)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(1, 40)]);
+}
+
+#[test]
+fn trips_past_midnight_run_on_their_service_day() {
+    // A trip of yesterday (slot 0) still running after midnight, seen from today's clock.
+    let mut late = ScenarioTrip::simple(1, &[90_000, 90_600]);
+    late.day_slots = vec![0];
+    let mut today = ScenarioTrip::simple(2, &[3_700, 3_800]);
+    today.day_slots = vec![1];
+    let (net, ids) = Scenario::new(2)
+        .days(&[(1, -86_400), (2, 0)])
+        .route(&[0, 1], &[late, today])
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    // 90_000 seconds into yesterday is 3_600 after today's midnight.
+    assert_eq!(arrivals(&net, 0), vec![(1, 3_800)]);
+    let query = net.query(1, RouteFilter::ALL);
+    let mut router = net.router();
+    let journey = {
+        let run = router.forward(&query, t(0), &|| false).expect("search");
+        run.journey(1).expect("journey")
+    };
+    let Some(Leg::Ride(ride)) = journey.legs.get(1) else {
+        panic!("expected a ride: {journey:?}");
+    };
+    // The rider takes today's service-day run, even though the block rows are shared by time.
+    assert_eq!(ride.board_stop, ids[0]);
+    assert_eq!(ride.trip.trip, TripId::new(2));
+    assert_eq!(arrivals(&net, 3_601), vec![(1, 3_800)]);
+}
+
+#[test]
+fn minimum_change_time_applies_at_the_same_stop() {
+    let net = |min_change: u32| {
+        Scenario::new(3)
+            .min_change(1, min_change)
+            .route(&[0, 1], &[ScenarioTrip::simple(1, &[10, 20])])
+            .route(&[1, 2], &[ScenarioTrip::simple(2, &[25, 40])])
+            .access(0, 0)
+            .egress(2, 0)
+            .build()
+            .0
+    };
+    // Leaves 5 seconds to change.
+    assert_eq!(arrivals(&net(5), 0), vec![(2, 40)]);
+    assert_eq!(arrivals(&net(6), 0), vec![]);
+    assert_eq!(departures(&net(5), 40), vec![(2, 10)]);
+    assert_eq!(departures(&net(6), 40), vec![]);
+}
+
+#[test]
+fn a_zero_length_walk_cannot_bypass_the_change_time() {
+    // Stops 1 and 3 are one node; walking between them costs nothing.
+    // Boarding at 3 (a different stop) still costs the longer of the walk and both transfer times.
+    // Boarding back at stop 1 itself must still wait for it.
+    let scenario = |bus_stop: u32, bus_departs: i32| {
+        Scenario::new(4)
+            .min_change(1, 300)
+            .route(&[0, 1], &[ScenarioTrip::simple(1, &[0, 100])])
+            .route(
+                &[bus_stop, 2],
+                &[ScenarioTrip::simple(2, &[bus_departs, 500])],
+            )
+            .walk(1, 3, 0)
+            .walk(3, 1, 0)
+            .access(0, 0)
+            .egress(2, 0)
+            .build()
+            .0
+    };
+    // Walking to the other stop for nothing still costs the transfer time at either end.
+    assert_eq!(arrivals(&scenario(3, 100), 0), vec![]);
+    assert_eq!(departures(&scenario(3, 100), 500), vec![]);
+    assert_eq!(arrivals(&scenario(3, 400), 0), vec![(2, 500)]);
+    // At the same stop, 100 seconds to change isn't enough, whatever the walking graph allows.
+    assert_eq!(arrivals(&scenario(1, 100), 0), vec![]);
+    assert_eq!(departures(&scenario(1, 100), 500), vec![]);
+    assert_eq!(arrivals(&scenario(1, 400), 0), vec![(2, 500)]);
+}
+
+/// Two routes meeting two stops apart: the walk between them is what's under test.
+fn two_routes_with_a_walk(walk: i32, times: (u32, u32), pair: Option<u32>) -> (TestNet, Vec<i32>) {
+    let mut scenario = Scenario::new(4)
+        .min_change(1, times.0)
+        .min_change(2, times.1)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[0, 100])])
+        .walk(1, 2, walk)
+        // The second route leaves stop 2 every 20 seconds, so a wait shows in the arrival.
+        .route(
+            &[2, 3],
+            &[
+                ScenarioTrip::simple(2, &[120, 400]),
+                ScenarioTrip::simple(3, &[140, 420]),
+                ScenarioTrip::simple(4, &[160, 440]),
+                ScenarioTrip::simple(5, &[180, 460]),
+                ScenarioTrip::simple(6, &[300, 580]),
+            ],
+        )
+        .access(0, 0)
+        .egress(3, 0);
+    if let Some(floor) = pair {
+        scenario = scenario.pair(1, 2, floor);
+    }
+    let (net, _) = scenario.build();
+    let arrival = arrivals(&net, 0).first().map(|&(_, a)| a).expect("reached");
+    (net, vec![arrival])
+}
+
+#[test]
+fn a_walk_costs_the_longest_of_itself_and_both_transfer_times() {
+    // The walk is the longest: 30 s to the trip at 140 is the first it can make.
+    let (net, arrivals_seen) = two_routes_with_a_walk(30, (10, 20), None);
+    assert_eq!(arrivals_seen, vec![420]);
+    agrees_with_oracle(&net, 0);
+    // A stop's transfer time is longer than the walk, at either end.
+    let (net, arrivals_seen) = two_routes_with_a_walk(30, (65, 20), None);
+    assert_eq!(arrivals_seen, vec![460], "the walk's from stop");
+    agrees_with_oracle(&net, 0);
+    let (net, arrivals_seen) = two_routes_with_a_walk(30, (10, 65), None);
+    assert_eq!(arrivals_seen, vec![460], "the walk's to stop");
+    agrees_with_oracle(&net, 0);
+}
+
+#[test]
+fn a_rule_between_two_stops_is_a_floor_on_the_walk() {
+    let (net, arrivals_seen) = two_routes_with_a_walk(30, (10, 20), Some(70));
+    assert_eq!(arrivals_seen, vec![460]);
+    agrees_with_oracle(&net, 0);
+    // A rule shorter than the walk changes nothing.
+    let (_, arrivals_seen) = two_routes_with_a_walk(30, (10, 20), Some(5));
+    assert_eq!(arrivals_seen, vec![420]);
+}
+
+#[test]
+fn a_rule_only_binds_its_own_direction() {
+    let (net, _) = Scenario::new(4)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[0, 100])])
+        .walk(1, 2, 30)
+        .pair(2, 1, 500) // The reverse direction.
+        .route(&[2, 3], &[ScenarioTrip::simple(2, &[140, 400])])
+        .access(0, 0)
+        .egress(3, 0)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(2, 400)]);
+    agrees_with_oracle(&net, 0);
+}
+
+#[test]
+fn walk_times_mirror_in_a_backward_search() {
+    let (net, _) = two_routes_with_a_walk(30, (65, 20), Some(40));
+    for arrival in [440, 460, 580] {
+        assert_eq!(
+            departures(&net, arrival),
+            oracle(&net, RouteFilter::ALL, Direction::Backward, arrival, 4),
+            "backward from {arrival}"
+        );
+    }
+}
+
+#[test]
+fn a_transfer_leg_keeps_the_cost_and_the_walk_apart() {
+    let (net, _) = two_routes_with_a_walk(30, (65, 20), None);
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router = net.router();
+    let run = router.forward(&query, t(0), &|| false).expect("search");
+    let journey = run.journey(2).expect("journey");
+    assert!(journey.legs.iter().any(|leg| matches!(
+        leg,
+        Leg::Transfer { duration, .. } if duration.into_inner() == 65
+    )));
+}
+
+/// A rider reaches stop 1 by trip and could continue from stop 1 or walk to stop 2.
+fn change_or_walk(forbid_change: bool, forbid_walk: bool) -> TestNet {
+    let mut scenario = Scenario::new(4)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[0, 100])])
+        .route(&[1, 3], &[ScenarioTrip::simple(2, &[150, 300])])
+        .route(&[2, 3], &[ScenarioTrip::simple(3, &[150, 400])])
+        .walk(1, 2, 30)
+        .access(0, 0)
+        .egress(3, 0);
+    if forbid_change {
+        scenario = scenario.forbid_change(1);
+    }
+    if forbid_walk {
+        scenario = scenario.forbid_walk(1, 2);
+    }
+    scenario.build().0
+}
+
+#[test]
+fn a_forbidden_change_at_a_stop_can_only_be_walked_around() {
+    // Allowed: change at stop 1 and arrive at 300.
+    assert_eq!(arrivals(&change_or_walk(false, false), 0), vec![(2, 300)]);
+    // Forbidden: the only way on is to walk to stop 2.
+    let net = change_or_walk(true, false);
+    assert_eq!(arrivals(&net, 0), vec![(2, 400)]);
+    agrees_with_oracle(&net, 0);
+    assert_eq!(
+        departures(&net, 400),
+        oracle(&net, RouteFilter::ALL, Direction::Backward, 400, 4),
+        "the mirror is forbidden too"
+    );
+}
+
+#[test]
+fn a_forbidden_walk_between_stops_does_not_exist() {
+    let net = change_or_walk(false, true);
+    // The change at stop 1 is still allowed.
+    assert_eq!(arrivals(&net, 0), vec![(2, 300)]);
+    let net = change_or_walk(true, true);
+    // With both forbidden there is no way on, in either direction of search.
+    assert_eq!(arrivals(&net, 0), vec![]);
+    agrees_with_oracle(&net, 0);
+    assert_eq!(departures(&net, 400), vec![]);
+}
+
+#[test]
+fn a_forbidden_rule_binds_only_its_own_walk() {
+    let (net, _) = Scenario::new(4)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[0, 100])])
+        .route(&[2, 3], &[ScenarioTrip::simple(3, &[150, 400])])
+        .walk(1, 2, 30)
+        .forbid_walk(2, 1) // The reverse direction.
+        .access(0, 0)
+        .egress(3, 0)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(2, 400)]);
+    agrees_with_oracle(&net, 0);
+}
+
+#[test]
+fn a_wheelchair_rider_avoids_an_inaccessible_stop_and_uses_unknown_ones() {
+    // The fast way is through stop 1, inaccessible; the slow way through 2 is fine.
+    let trip = |id, times: &[i32]| ScenarioTrip::simple(id, times);
+    let (net, _) = Scenario::new(4)
+        .inaccessible(1)
+        .route_with(
+            &[0, 1, 3],
+            RouteAttributes::WHEELCHAIR_ACCESSIBLE,
+            &[trip(1, &[0, 100, 200])],
+        )
+        .route_with(
+            &[0, 2, 3],
+            RouteAttributes::WHEELCHAIR_ACCESSIBLE,
+            &[trip(2, &[0, 150, 300])],
+        )
+        .access(0, 0)
+        .egress(1, 0)
+        .egress(3, 0)
+        .build();
+    let run = |filter: RouteFilter| {
+        let query = net.query(4, filter);
+        let mut router = net.router();
+        let run = router.forward(&query, t(0), &|| false).expect("search");
+        run.results()
+            .iter()
+            .map(|r| (r.trips, r.time.into_inner()))
+            .collect::<Vec<_>>()
+    };
+    // On foot, the first route reaches stop 1 at 100.
+    assert_eq!(run(RouteFilter::ALL), vec![(1, 100)]);
+    // In a wheelchair, the first route passes through stop 1 without stopping,
+    // so stop 3 by the first route and the second both arrive, and the first is earliest.
+    assert_eq!(run(RouteFilter::WHEELCHAIR), vec![(1, 200)]);
+    assert_eq!(
+        oracle(&net, RouteFilter::WHEELCHAIR, Direction::Forward, 0, 4),
+        vec![(1, 200)]
+    );
+    assert_eq!(
+        oracle(&net, RouteFilter::WHEELCHAIR, Direction::Backward, 200, 4),
+        vec![(1, 0)],
+    );
+}
+
+#[test]
+fn a_wheelchair_rider_only_rides_routes_not_marked_inaccessible() {
+    let trip = |id, times: &[i32]| ScenarioTrip::simple(id, times);
+    let (net, _) = Scenario::new(3)
+        .route(&[0, 1], &[trip(1, &[0, 100])]) // Marked inaccessible: no attribute.
+        .route_with(
+            &[0, 2],
+            RouteAttributes::WHEELCHAIR_ACCESSIBLE,
+            &[trip(2, &[0, 200])],
+        )
+        .access(0, 0)
+        .egress(1, 0)
+        .egress(2, 0)
+        .build();
+    let query = net.query(4, RouteFilter::WHEELCHAIR);
+    let mut router = net.router();
+    let run = router.forward(&query, t(0), &|| false).expect("search");
+    let results: Vec<_> = run
+        .results()
+        .iter()
+        .map(|r| (r.trips, r.time.into_inner()))
+        .collect();
+    assert_eq!(results, vec![(1, 200)]);
+}
+
+/// A combined stay-seated trip is one row on a longer pattern: its join's arrival and departure
+/// positions at one stop can't be boarded and alighted across, in either search direction.
+#[test]
+fn a_combined_trip_rides_through_its_join_and_mirrors() {
+    let no_pickup = StopRules {
+        pickup: false,
+        drop_off: true,
+    };
+    let no_drop_off = StopRules {
+        pickup: true,
+        drop_off: false,
+    };
+    // Stop 1 is the join: the last position of the first trip and the first of the second.
+    let mut trip = ScenarioTrip::simple(1, &[0, 100, 150, 400]);
+    trip.times = vec![(0, 0), (100, 100), (150, 150), (400, 400)];
+    trip.rules = vec![
+        StopRules::REGULAR,
+        no_pickup,
+        no_drop_off,
+        StopRules::REGULAR,
+    ];
+    let (net, _) = Scenario::new(4)
+        .route(&[0, 1, 1, 2], &[trip])
+        .route(&[3, 1], &[ScenarioTrip::simple(2, &[0, 120])])
+        .min_change(1, 300)
+        .access(0, 0)
+        .access(3, 0)
+        .egress(1, 0)
+        .egress(2, 0)
+        .build();
+    // Riding through the join: one trip, no change time, and the egress at stop 2.
+    assert_eq!(arrivals(&net, 0), vec![(1, 100)]);
+    agrees_with_oracle(&net, 0);
+    // From the other route, the change at the join's stop is the only way, and it costs 300.
+    assert_eq!(departures(&net, 400), vec![(1, 0)]);
+    assert_eq!(
+        departures(&net, 100),
+        oracle(&net, RouteFilter::ALL, Direction::Backward, 100, 4)
+    );
+    // A second ride after the join's stop can board at position 2 at 150, not the 100 of position 1.
+    let mut later = ScenarioTrip::simple(3, &[0, 100, 150, 400]);
+    later.rules = vec![
+        StopRules::REGULAR,
+        no_pickup,
+        no_drop_off,
+        StopRules::REGULAR,
+    ];
+    let (net, _) = Scenario::new(4)
+        .route(&[0, 1, 1, 2], &[later])
+        .route(&[3, 1], &[ScenarioTrip::simple(4, &[0, 120])])
+        .access(3, 0)
+        .egress(2, 0)
+        .build();
+    // Arriving at stop 1 at 120 by the other route (change time 0), boarding position 2 works,
+    // since 120 <= its departure 150.
+    assert_eq!(arrivals(&net, 0), vec![(2, 400)]);
+    agrees_with_oracle(&net, 0);
+}
+
+#[test]
+fn walking_from_another_stop_helps_even_after_a_trip_arrival() {
+    // A rider arrives at stop 1 by trip at 100 and at stop 2 by trip at 90,
+    // and the walk from 2 to 1 costs the longer of its 15 seconds and stop 1's 30.
+    // Boarding at stop 1 at 125 is possible only on foot; the same-stop rule would wait until 130.
+    let (net, _) = Scenario::new(5)
+        .min_change(1, 30)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[0, 100])])
+        .route(&[0, 2], &[ScenarioTrip::simple(2, &[0, 90])])
+        .route(&[1, 3], &[ScenarioTrip::simple(3, &[125, 200])])
+        .walk(2, 1, 15)
+        .access(0, 0)
+        .egress(3, 0)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(2, 200)]);
+    agrees_with_oracle(&net, 0);
+}
+
+#[test]
+fn pickup_and_drop_off_rules_are_honored() {
+    let trip_with = |rules: Vec<StopRules>| {
+        let mut trip = ScenarioTrip::simple(1, &[10, 20, 30]);
+        trip.rules = rules;
+        trip
+    };
+    let no_pickup = StopRules {
+        pickup: false,
+        drop_off: true,
+    };
+    let no_drop = StopRules {
+        pickup: true,
+        drop_off: false,
+    };
+    let reach = |rules: Vec<StopRules>, from: u32, to: u32| {
+        let (net, _) = Scenario::new(3)
+            .route(&[0, 1, 2], &[trip_with(rules)])
+            .access(from, 0)
+            .egress(to, 0)
+            .build();
+        (arrivals(&net, 0), departures(&net, 100))
+    };
+    assert_eq!(
+        reach(vec![StopRules::REGULAR; 3], 0, 2),
+        (vec![(1, 30)], vec![(1, 10)])
+    );
+    assert_eq!(
+        reach(
+            vec![no_pickup, StopRules::REGULAR, StopRules::REGULAR],
+            0,
+            2
+        ),
+        (vec![], vec![])
+    );
+    assert_eq!(
+        reach(vec![StopRules::REGULAR, StopRules::REGULAR, no_drop], 0, 2),
+        (vec![], vec![])
+    );
+    // Boarding at the middle stop works when only the first stop forbids it.
+    assert_eq!(
+        reach(
+            vec![no_pickup, StopRules::REGULAR, StopRules::REGULAR],
+            1,
+            2
+        ),
+        (vec![(1, 30)], vec![(1, 20)])
+    );
+}
+
+#[test]
+fn rules_differing_across_trips_keep_their_own_lanes() {
+    let no_pickup = StopRules {
+        pickup: false,
+        drop_off: true,
+    };
+    let mut no_board = ScenarioTrip::simple(1, &[10, 20]);
+    no_board.rules = vec![no_pickup, StopRules::REGULAR];
+    let (net, _) = Scenario::new(2)
+        .route(&[0, 1], &[no_board, ScenarioTrip::simple(2, &[50, 60])])
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    // The earlier trip has no pickup, so the rider waits for the second.
+    assert_eq!(arrivals(&net, 0), vec![(1, 60)]);
+    assert_eq!(departures(&net, 70), vec![(1, 50)]);
+}
+
+#[test]
+fn bikes_allowed_filter_selects_routes() {
+    let (net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[10, 20])])
+        .route_with(
+            &[0, 1],
+            RouteAttributes::BIKES_ALLOWED,
+            &[ScenarioTrip::simple(2, &[30, 40])],
+        )
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(1, 20)]);
+    let query = net.query(4, RouteFilter::requiring(RouteAttributes::BIKES_ALLOWED));
+    let mut router = net.router();
+    let run = router.forward(&query, t(0), &|| false).expect("search");
+    assert_eq!(
+        run.results()
+            .iter()
+            .map(|r| r.time.into_inner())
+            .collect::<Vec<_>>(),
+        vec![40]
+    );
+}
+
+#[test]
+fn a_route_cycle_terminates() {
+    // Two routes feed each other in a cycle; the search must stop when nothing improves.
+    let (net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[10, 20])])
+        .route(&[1, 0], &[ScenarioTrip::simple(2, &[30, 40])])
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    let query = net.query(MAX_TRIPS, RouteFilter::ALL);
+    let mut router = net.router();
+    let run = router.forward(&query, t(0), &|| false).expect("search");
+    assert_eq!(run.results().len(), 1);
+}
+
+#[test]
+fn a_stop_with_no_target_entry_is_never_a_result() {
+    // At the limit a backward clock is `-TIME_LIMIT`, so an unreachable stop's sum would
+    // land inside the valid time range. Stop 0 has no access entry; there is no journey at all.
+    let limit = crate::TIME_LIMIT;
+    let (net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[limit, limit])])
+        .egress(1, 0)
+        .build();
+    assert_eq!(departures(&net, limit), vec![]);
+}
+
+#[test]
+fn an_interrupt_stops_the_search() {
+    let (net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[10, 20])])
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router = net.router();
+    let result = router.forward(&query, t(0), &|| true);
+    assert!(matches!(result, Err(SearchError::Interrupted)));
+}
+
+#[test]
+fn invalid_queries_are_rejected() {
+    let (net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[10, 20])])
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    let mut router = net.router();
+    let query = net.query(0, RouteFilter::ALL);
+    assert!(matches!(
+        router.forward(&query, t(0), &|| false),
+        Err(SearchError::Query(QueryError::MaxTrips(0)))
+    ));
+    let query = net.query(MAX_TRIPS + 1, RouteFilter::ALL);
+    assert!(matches!(
+        router.forward(&query, t(0), &|| false),
+        Err(SearchError::Query(QueryError::MaxTrips(_)))
+    ));
+    let short_table = StopTable::new(1);
+    let mut query = net.query(1, RouteFilter::ALL);
+    query.access = &short_table;
+    assert!(matches!(
+        router.forward(&query, t(0), &|| false),
+        Err(SearchError::Query(QueryError::StopTableSize {
+            expected: 2,
+            got: 1
+        }))
+    ));
+    let query = net.query(1, RouteFilter::ALL);
+    assert!(matches!(
+        router.profile(&query, t(10), t(0), &|| false),
+        Err(SearchError::Query(QueryError::EmptyWindow))
+    ));
+}
+
+#[test]
+fn profile_has_one_entry_per_useful_departure() {
+    let (net, _) = Scenario::new(2)
+        .route(
+            &[0, 1],
+            &[
+                ScenarioTrip::simple(1, &[100, 200]),
+                ScenarioTrip::simple(2, &[300, 400]),
+                ScenarioTrip::simple(3, &[500, 600]),
+            ],
+        )
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    let query = net.query(2, RouteFilter::ALL);
+    let mut router = net.router();
+    let profile = router
+        .profile(&query, t(0), t(350), &|| false)
+        .expect("profile");
+    let triples: Vec<_> = profile
+        .entries
+        .iter()
+        .map(|e| (e.departure.into_inner(), e.arrival.into_inner(), e.trips))
+        .collect();
+    // The trip at 500 departs after the window and is left out.
+    assert_eq!(triples, vec![(100, 200, 1), (300, 400, 1)]);
+}
+
+/// A two-trip journey leaving at 100 and arriving at 300, and a direct one leaving at 50 and
+/// arriving at 400.
+fn walks_scenario() -> TestNet {
+    Scenario::new(4)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[100, 200])])
+        .route(&[2, 3], &[ScenarioTrip::simple(2, &[220, 300])])
+        .route(&[0, 3], &[ScenarioTrip::simple(3, &[50, 400])])
+        .walk(1, 2, 10)
+        .access(0, 0)
+        .egress(3, 0)
+        .build()
+        .0
+}
+
+#[test]
+fn a_profile_resolves_no_walk_for_a_departure_outside_its_window() {
+    let net = walks_scenario();
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router = net.router();
+    let profile = router
+        .profile(&query, t(0), t(90), &|| false)
+        .expect("profile");
+    assert_eq!(
+        profile.entries.len(),
+        1,
+        "only the direct journey departs in the window"
+    );
+    assert_eq!(router.transfers().walks_resolved.get(), 0);
+}
+
+#[test]
+fn a_profile_resolves_the_walk_of_each_entry_once() {
+    // The backward searches from 300 and from 400 both find the two-trip journey,
+    // and the second must not pay for its walk again.
+    let net = walks_scenario();
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router = net.router();
+    let profile = router
+        .profile(&query, t(0), t(200), &|| false)
+        .expect("profile");
+    let triples: Vec<_> = profile
+        .entries
+        .iter()
+        .map(|e| (e.departure.into_inner(), e.arrival.into_inner(), e.trips))
+        .collect();
+    assert_eq!(triples, vec![(50, 400, 1), (100, 300, 2)]);
+    assert_eq!(router.transfers().walks_resolved.get(), 1);
+}
+
+#[test]
+fn a_two_day_window_includes_tomorrows_trips() {
+    let mut tomorrow = ScenarioTrip::simple(1, &[100, 200]);
+    tomorrow.day_slots = vec![1];
+    let (net, _) = Scenario::new(2)
+        .days(&[(1, 0), (2, 86_400)])
+        .route(&[0, 1], &[tomorrow])
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(1, 86_600)]);
+}
+
+#[test]
+fn overlay_changes_are_seen_by_a_search() {
+    let (mut net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[100, 200])])
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    assert_eq!(arrivals(&net, 0), vec![(1, 200)]);
+    let event = |time| StopEvent {
+        arrival: t(time),
+        departure: t(time),
+        rules: StopRules::REGULAR,
+    };
+    let delayed = ResolvedTrip {
+        trip: TripId::new(1),
+        events: vec![event(150), event(250)],
+    };
+    let mut overlay = OverlayBuilder::new(net.snapshot.base().clone());
+    overlay
+        .replace_block(
+            crate::RouteId::new(0),
+            day_slot(0),
+            &block_of(vec![delayed]),
+        )
+        .expect("replace");
+    net.snapshot = overlay.build().expect("build");
+    net.routes[0].days[0][0].events = vec![event(150), event(250)];
+    assert_eq!(arrivals(&net, 0), vec![(1, 250)]);
+}
+
+#[test]
+fn a_lane_that_lost_all_its_trips_does_not_reach_the_scan() {
+    let (mut net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[100, 200])])
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    let event = |time| StopEvent {
+        arrival: t(time),
+        departure: t(time),
+        rules: StopRules::REGULAR,
+    };
+    let kept = ResolvedLane::new(vec![ResolvedTrip {
+        trip: TripId::new(1),
+        events: vec![event(100), event(200)],
+    }])
+    .expect("valid");
+    let emptied = ResolvedLane::new(Vec::new()).expect("cancellation can empty a lane");
+    let mut overlay = OverlayBuilder::new(net.snapshot.base().clone());
+    overlay
+        .replace_block(
+            crate::RouteId::new(0),
+            day_slot(0),
+            &ResolvedBlock::from_lanes(vec![kept, emptied]),
+        )
+        .expect("replace");
+    net.snapshot = overlay.build().expect("build");
+    assert_eq!(arrivals(&net, 0), vec![(1, 200)]);
+}
+
+#[test]
+fn removed_service_cannot_be_ridden() {
+    let (mut net, _) = Scenario::new(2)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[100, 200])])
+        .access(0, 0)
+        .egress(1, 0)
+        .build();
+    let mut overlay = OverlayBuilder::new(net.snapshot.base().clone());
+    overlay
+        .remove_service(crate::RouteId::new(0), day_slot(0))
+        .expect("remove");
+    net.snapshot = overlay.build().expect("build");
+    net.routes[0].days[0].clear();
+    assert_eq!(arrivals(&net, 0), vec![]);
+}
+
+#[test]
+fn journey_is_recorded_leg_by_leg() {
+    let (net, ids) = Scenario::new(4)
+        .min_change(2, 10)
+        .route(&[0, 1], &[ScenarioTrip::simple(1, &[100, 200])])
+        .route(&[2, 3], &[ScenarioTrip::simple(2, &[300, 400])])
+        .walk(1, 2, 50)
+        .access(0, 5)
+        .egress(3, 7)
+        .build();
+    let query = net.query(4, RouteFilter::ALL);
+    let mut router: Router<_> = net.router();
+    let run = router.forward(&query, t(0), &|| false).expect("search");
+    let journey = run.journey(2).expect("journey");
+    assert_eq!(journey.departure, t(95));
+    assert_eq!(journey.arrival, t(407));
+    check_journey(&net, &journey);
+    let backward = {
+        let run = router.backward(&query, t(407), &|| false).expect("search");
+        run.journey(2).expect("journey")
+    };
+    check_journey(&net, &backward);
+    let compact = |j: &Journey<_>| {
+        j.legs
+            .iter()
+            .map(|leg| match leg {
+                Leg::Access { stop, duration } => {
+                    format!("access {} {}", stop.into_inner(), duration.into_inner())
+                }
+                Leg::Ride(r) => format!(
+                    "ride route {} trip {} from {} at {} to {} at {}",
+                    r.route.into_inner(),
+                    r.trip.trip.into_inner(),
+                    r.board_stop.into_inner(),
+                    r.board_time.into_inner(),
+                    r.alight_stop.into_inner(),
+                    r.alight_time.into_inner(),
+                ),
+                Leg::Transfer {
+                    from, to, duration, ..
+                } => format!(
+                    "walk {} to {} ({}s)",
+                    from.into_inner(),
+                    to.into_inner(),
+                    duration.into_inner()
+                ),
+                Leg::Egress { stop, duration } => {
+                    format!("egress {} {}", stop.into_inner(), duration.into_inner())
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(compact(&journey), compact(&backward));
+    insta::assert_yaml_snapshot!(compact(&journey), @r"
+    - access 0 5
+    - ride route 0 trip 1 from 0 at 100 to 1 at 200
+    - walk 1 to 2 (50s)
+    - ride route 1 trip 2 from 2 at 300 to 3 at 400
+    - egress 3 7
+    ");
+    let _ = ids;
+}
+
+/// The response layer reads lanes, rules, and the schedule's blocks as the route scan does.
+#[test]
+fn the_response_layer_reads_the_timetable_as_the_scan_does() {
+    let (net, ids) = Scenario::new(3)
+        .inaccessible(1)
+        .route(
+            &[0, 1, 2],
+            &[
+                ScenarioTrip::simple(1, &[100, 200, 300]),
+                ScenarioTrip::simple(2, &[400, 500, 600]),
+            ],
+        )
+        // A loop: it serves stop 0 twice.
+        .route(&[0, 2, 0], &[ScenarioTrip::simple(3, &[700, 800, 900])])
+        .build();
+    let snapshot = &net.snapshot;
+    let (straight, loop_route) = (crate::RouteId::new(0), crate::RouteId::new(1));
+    let mut at_first: Vec<(crate::RouteId, u32)> = snapshot.route_occurrences(ids[0]).collect();
+    at_first.sort_unstable();
+    assert_eq!(
+        at_first,
+        vec![(straight, 0), (loop_route, 0), (loop_route, 2)]
+    );
+
+    let day = day_slot(0);
+    let lanes = snapshot.block_lanes(straight, day).expect("a block");
+    assert_eq!(
+        snapshot.base_block_lanes(straight, day),
+        Some(lanes.clone())
+    );
+    assert!(!snapshot.block_changed(straight, day));
+    let lane = lanes[0];
+    let event = snapshot.lane_event(lane, 1, 1).expect("row 1, position 1");
+    assert_eq!((event.arrival, event.departure), (t(500), t(500)));
+    assert_eq!(event.rules, StopRules::REGULAR);
+    assert_eq!(snapshot.lane_event(lane, 2, 0), None, "past the last row");
+    assert_eq!(
+        snapshot.lane_event(lane, 0, 3),
+        None,
+        "past the last position"
+    );
+    // The scan's wheelchair bits: stop 1 is marked inaccessible.
+    assert_eq!(
+        snapshot.lane_rules(lane, 1, RouteFilter::ALL),
+        Some(StopRules::REGULAR)
+    );
+    assert_eq!(
+        snapshot.lane_rules(lane, 1, RouteFilter::WHEELCHAIR),
+        Some(StopRules::SKIPPED)
+    );
+    assert_eq!(
+        snapshot.lane_rules(lane, 0, RouteFilter::WHEELCHAIR),
+        Some(StopRules::REGULAR)
+    );
+    assert!(RouteFilter::ALL.allows(RouteAttributes::NONE));
+    assert!(!RouteFilter::WHEELCHAIR.allows(RouteAttributes::NONE));
+
+    // An overlay that drops trip 1 leaves the schedule's block readable beside its own.
+    let event = |time| StopEvent {
+        arrival: t(time),
+        departure: t(time),
+        rules: StopRules::REGULAR,
+    };
+    let kept = ResolvedTrip {
+        trip: TripId::new(2),
+        events: vec![event(460), event(560), event(660)],
+    };
+    let mut overlay = OverlayBuilder::new(snapshot.base().clone());
+    overlay
+        .replace_block(straight, day, &block_of(vec![kept]))
+        .expect("replace");
+    let changed = overlay.build().expect("build");
+    assert!(changed.block_changed(straight, day));
+    assert!(!changed.block_changed(loop_route, day));
+    let now = changed.block_lanes(straight, day).expect("a block")[0];
+    assert!(now.is_overlay());
+    assert_eq!(changed.lane_trip_count(now), Some(1));
+    assert_eq!(
+        changed.lane_event(now, 0, 0).map(|e| e.departure),
+        Some(t(460))
+    );
+    let scheduled = changed
+        .base_block_lanes(straight, day)
+        .expect("the schedule's");
+    assert_eq!(scheduled, lanes);
+    assert_eq!(changed.lane_trip_count(scheduled[0]), Some(2));
+    assert_eq!(
+        changed.trip_key(scheduled[0], 0).map(|key| key.trip),
+        Some(TripId::new(1))
+    );
+    assert_eq!(
+        changed.lane_event(scheduled[0], 0, 0).map(|e| e.departure),
+        Some(t(100))
+    );
+    assert_eq!(changed.base_block_lanes(crate::RouteId::new(2), day), None);
+    assert!(!changed.block_changed(crate::RouteId::new(2), day));
+}

@@ -1,0 +1,22 @@
+diff --git a/src/transitland.py b/src/transitland.py
+index 39e8dce..2a4462e 100644
+--- a/src/transitland.py
++++ b/src/transitland.py
+@@ -35,8 +35,6 @@ class Atlas:
+         if "static_current" in feed["urls"]:
+             result = inherit_options_from_db_source(source)
+             result.url = feed["urls"]["static_current"]
+-            result.cache_url = "https://gtfsproxy.fale.io/" + \
+-                source.transitland_atlas_id
+             result.spec = "gtfs"
+ 
+             results.append(result)
+@@ -44,8 +42,6 @@ class Atlas:
+         if "static_historic" in feed["urls"] and not "static_current" in feed["urls"]:
+             result = inherit_options_from_db_source(source)
+             result.url = feed["urls"]["static_historic"][0]
+-            result.cache_url = "https://gtfsproxy.fale.io/" + \
+-                source.transitland_atlas_id
+             result.spec = "gtfs"
+ 
+             results.append(result)

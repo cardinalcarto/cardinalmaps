@@ -131,6 +131,15 @@ impl EdgeStatus {
         self.tiles.shrink_to(keep);
     }
 
+    /// Bytes of storage the statuses hold, used or not.
+    ///
+    /// The tile map's entries are counted, not its control bytes or spare buckets.
+    pub(crate) fn bytes(&self) -> usize {
+        self.tiles.capacity() * size_of::<(u64, usize)>()
+            + self.slots.capacity() * size_of::<Vec<EdgeStatusInfo>>()
+            + self.slots.iter().map(Vec::capacity).sum::<usize>() * size_of::<EdgeStatusInfo>()
+    }
+
     /// Room for how many edges the slots keep (for tests).
     #[cfg(test)]
     pub(crate) fn retained_edges(&self) -> usize {

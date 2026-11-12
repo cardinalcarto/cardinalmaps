@@ -12,7 +12,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-
 use sparkle::paint::PaintArrays;
 use sparkle::style::{LayerKind, StyleLayer, SymbolLayer};
 use sparkle::symbol::Labels;

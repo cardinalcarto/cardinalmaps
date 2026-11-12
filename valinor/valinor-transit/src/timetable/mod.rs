@@ -1,0 +1,26 @@
+//! Timetables: what compiled GTFS becomes, and the windows that searches read.
+//!
+//! [`TimetableBuilder`] takes patterns, trips, stop times, and calendars,
+//! and produces a [`Timetable`], which holds service-day-relative times.
+//! [`Timetable::materialize`] then resolves calendars for some service days and lays their
+//! active trips out as contiguous blocks in a [`BaseWindow`].
+
+mod arena;
+mod builder;
+mod lanes;
+mod pairs;
+mod window;
+
+pub use arena::ArenaUsage;
+pub(crate) use arena::{Arena, BlockRef, INFINITY, Lane, offset_of};
+pub use builder::{
+    PatternKey, StopKey, StopTime, Timetable, TimetableBuilder, TimetableSource, WindowPart,
+    materialize_parts,
+};
+pub(crate) use lanes::{RULE_DROP_OFF, RULE_PICKUP, RULE_WHEELCHAIR_SHIFT};
+pub use lanes::{ResolvedBlock, ResolvedLane, ResolvedTrip, StopEvent, StopRules};
+pub(crate) use pairs::FORBIDDEN_WALK;
+pub use pairs::{PairRule, TransferPair, TransferPairs};
+pub(crate) use window::NO_CHANGE;
+pub(crate) use window::RouteOccurrence;
+pub use window::{BaseWindow, RouteAttributes, StopRouteIndex};

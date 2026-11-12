@@ -15,11 +15,16 @@ clap = { workspace = true }
 tokio = { workspace = true, features = ["net", "signal", "time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+valinor-gtfs-rt = { path = "../valinor-gtfs-rt" }
 valinor-router = { workspace = true }
+valinor-transit-plan = { path = "../valinor-transit-plan" }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 tower = { workspace = true }
+valinor-gtfs = { path = "../valinor-gtfs" }
+valinor-transit-plan = { path = "../valinor-transit-plan", features = ["test-support"] }
 
 [lints]
 workspace = true

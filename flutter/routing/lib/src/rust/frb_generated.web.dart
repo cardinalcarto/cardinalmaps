@@ -8,6 +8,7 @@
 
 import 'api/directions.dart';
 import 'api/router.dart';
+import 'api/transit.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -32,6 +33,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   get rust_arc_decrement_strong_count_OfflineRouterPtr => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter;
 
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_OfflineTransitPtr => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_TransitCancelPtr => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel;
+
   @protected
   DirectionsAdapter
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
@@ -41,6 +50,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   OfflineRouter
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
+    dynamic raw,
+  );
+
+  @protected
+  OfflineTransit
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    dynamic raw,
+  );
+
+  @protected
+  TransitCancel
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
     dynamic raw,
   );
 
@@ -57,6 +78,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  OfflineTransit
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    dynamic raw,
+  );
+
+  @protected
+  TransitCancel
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    dynamic raw,
+  );
+
+  @protected
   Map<String, String> dco_decode_Map_String_String_None(dynamic raw);
 
   @protected
@@ -68,6 +101,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   OfflineRouter
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
+    dynamic raw,
+  );
+
+  @protected
+  OfflineTransit
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    dynamic raw,
+  );
+
+  @protected
+  TransitCancel
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
     dynamic raw,
   );
 
@@ -123,16 +168,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<(String, String)> dco_decode_list_record_string_string(dynamic raw);
 
   @protected
+  List<TransitFeed> dco_decode_list_transit_feed(dynamic raw);
+
+  @protected
   OpenError dco_decode_open_error(dynamic raw);
 
   @protected
   OpenErrorKind dco_decode_open_error_kind(dynamic raw);
 
   @protected
+  List<String>? dco_decode_opt_list_String(dynamic raw);
+
+  @protected
+  Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
+
+  @protected
   (String, String) dco_decode_record_string_string(dynamic raw);
 
   @protected
   RouterResponse dco_decode_router_response(dynamic raw);
+
+  @protected
+  TransitFeed dco_decode_transit_feed(dynamic raw);
+
+  @protected
+  TransitFeedKind dco_decode_transit_feed_kind(dynamic raw);
+
+  @protected
+  TransitOpenError dco_decode_transit_open_error(dynamic raw);
+
+  @protected
+  TransitResponse dco_decode_transit_response(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
@@ -162,6 +228,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  OfflineTransit
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TransitCancel
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   DirectionsAdapter
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     SseDeserializer deserializer,
@@ -170,6 +248,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   OfflineRouter
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  OfflineTransit
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TransitCancel
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
     SseDeserializer deserializer,
   );
 
@@ -187,6 +277,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   OfflineRouter
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  OfflineTransit
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TransitCancel
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
     SseDeserializer deserializer,
   );
 
@@ -254,10 +356,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<TransitFeed> sse_decode_list_transit_feed(SseDeserializer deserializer);
+
+  @protected
   OpenError sse_decode_open_error(SseDeserializer deserializer);
 
   @protected
   OpenErrorKind sse_decode_open_error_kind(SseDeserializer deserializer);
+
+  @protected
+  List<String>? sse_decode_opt_list_String(SseDeserializer deserializer);
+
+  @protected
+  Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
   (String, String) sse_decode_record_string_string(
@@ -266,6 +377,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RouterResponse sse_decode_router_response(SseDeserializer deserializer);
+
+  @protected
+  TransitFeed sse_decode_transit_feed(SseDeserializer deserializer);
+
+  @protected
+  TransitFeedKind sse_decode_transit_feed_kind(SseDeserializer deserializer);
+
+  @protected
+  TransitOpenError sse_decode_transit_open_error(SseDeserializer deserializer);
+
+  @protected
+  TransitResponse sse_decode_transit_response(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
@@ -301,6 +424,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    OfflineTransit self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    TransitCancel self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     DirectionsAdapter self,
     SseSerializer serializer,
@@ -310,6 +447,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     OfflineRouter self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    OfflineTransit self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    TransitCancel self,
     SseSerializer serializer,
   );
 
@@ -330,6 +481,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     OfflineRouter self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    OfflineTransit self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    TransitCancel self,
     SseSerializer serializer,
   );
 
@@ -421,10 +586,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_transit_feed(
+    List<TransitFeed> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_open_error(OpenError self, SseSerializer serializer);
 
   @protected
   void sse_encode_open_error_kind(OpenErrorKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_list_String(List<String>? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_list_prim_u_8_strict(
+    Uint8List? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_record_string_string(
@@ -435,6 +615,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_router_response(
     RouterResponse self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_transit_feed(TransitFeed self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_transit_feed_kind(
+    TransitFeedKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_transit_open_error(
+    TransitOpenError self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_transit_response(
+    TransitResponse self,
     SseSerializer serializer,
   );
 
@@ -493,6 +694,38 @@ class RustLibWire implements BaseWire {
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
         ptr,
       );
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+        ptr,
+      );
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+        ptr,
+      );
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+        ptr,
+      );
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+        ptr,
+      );
 }
 
 @JS('wasm_bindgen')
@@ -518,6 +751,26 @@ extension type RustLibWasmModule._(JSObject _) implements JSObject {
 
   external void
   rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
+    int ptr,
+  );
+
+  external void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    int ptr,
+  );
+
+  external void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+    int ptr,
+  );
+
+  external void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+    int ptr,
+  );
+
+  external void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
     int ptr,
   );
 }

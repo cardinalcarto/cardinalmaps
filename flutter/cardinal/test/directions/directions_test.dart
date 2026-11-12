@@ -1,5 +1,6 @@
 import 'package:cardinal/directions/directions.dart';
 import 'package:cardinal/directions/route_source.dart';
+import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +10,7 @@ import 'package:routing/routing.dart';
 
 import '../fakes/fake_location.dart';
 import '../fakes/fake_routes.dart';
+import '../fakes/fake_transit.dart';
 
 Place place(String id, double lon, double lat) =>
     Place(id: id, kind: 'poi', name: id, center: LngLat(lon, lat));
@@ -31,13 +33,19 @@ const here = Fix(lng: 5, lat: 6, accuracy: 3);
 
 void main() {
   late FakeRoutes routes;
+  late FakeTransit transit;
   late FakeLocation location;
   late Directions directions;
 
   setUp(() {
     routes = FakeRoutes();
+    transit = FakeTransit();
     location = FakeLocation(now: here);
-    directions = Directions(routes: routes, location: location);
+    directions = Directions(
+      routes: routes,
+      transit: transit,
+      location: location,
+    );
     addTearDown(directions.dispose);
   });
 
@@ -127,11 +135,78 @@ void main() {
     expect(routes.asked, hasLength(1));
   });
 
-  test('a mode that cannot be routed is not taken up', () {
-    bothEnds();
-    directions.setMode(TravelMode.transit);
-    expect(directions.mode, TravelMode.driving);
-    expect(routes.asked, hasLength(1));
+  group('transit', () {
+    test('plans with how you get to stops, and gets ready first', () async {
+      bothEnds();
+      directions.setMode(TravelMode.transit);
+      expect(transit.prepared, 1);
+      expect(routes.asked, hasLength(1));
+      expect(transit.asked.single.access, TransitAccess.walking);
+      expect(transit.asked.single.from, a.point);
+      transit.asked.single.answer.complete(fakePlan(journeys: 2));
+      await pumpEventQueue();
+      expect(directions.loading, isFalse);
+      expect(directions.plan!.journeys, hasLength(2));
+      expect(directions.journey, same(directions.plan!.journeys.first));
+      expect(directions.problem, isNull);
+    });
+
+    test('changing how you get to stops asks again, only for transit', () {
+      bothEnds();
+      directions.setTransitAccess(TransitAccess.wheelchair);
+      expect(transit.asked, isEmpty);
+      directions.setMode(TravelMode.transit);
+      expect(transit.asked.single.access, TransitAccess.wheelchair);
+      directions.setTransitAccess(TransitAccess.cycling);
+      expect(transit.asked.last.access, TransitAccess.cycling);
+      expect(transit.asked, hasLength(2));
+    });
+
+    test('selecting a journey asks nothing', () async {
+      bothEnds();
+      directions.setMode(TravelMode.transit);
+      transit.asked.single.answer.complete(fakePlan(journeys: 2));
+      await pumpEventQueue();
+      directions.selectJourney(1);
+      expect(directions.journey, same(directions.plan!.journeys[1]));
+      directions.selectJourney(5);
+      expect(directions.selectedJourney, 1);
+      expect(transit.asked, hasLength(1));
+    });
+
+    test('an end outside the offline area is a problem of its own', () async {
+      bothEnds();
+      routes.asked.single.answer.completeError(const OutsideOfflineArea());
+      await pumpEventQueue();
+      expect(directions.problem, RouteProblem.outsideArea);
+      directions.setMode(TravelMode.transit);
+      transit.asked.single.answer.completeError(const NoOfflineArea());
+      await pumpEventQueue();
+      expect(directions.problem, RouteProblem.noOfflineArea);
+      expect(directions.plan, isNull);
+    });
+
+    test('a plan with no journeys is an answer, not a problem', () async {
+      bothEnds();
+      directions.setMode(TravelMode.transit);
+      transit.asked.single.answer.complete(emptyPlan('no_service'));
+      await pumpEventQueue();
+      expect(directions.problem, isNull);
+      expect(directions.journey, isNull);
+      expect(directions.plan!.noJourneysReason, NoJourneysReason.noService);
+    });
+
+    test('going back to driving clears the plan once routes arrive', () async {
+      bothEnds();
+      directions.setMode(TravelMode.transit);
+      transit.asked.single.answer.complete(fakePlan());
+      await pumpEventQueue();
+      directions.setMode(TravelMode.driving);
+      routes.asked.last.answer.complete([one]);
+      await pumpEventQueue();
+      expect(directions.plan, isNull);
+      expect(directions.routes, hasLength(1));
+    });
   });
 
   test('swapping the ends asks the other way', () {
@@ -234,7 +309,11 @@ void main() {
     });
 
     test('a platform without a location service leaves it empty', () async {
-      final none = Directions(routes: routes, location: ThrowingLocation());
+      final none = Directions(
+        routes: routes,
+        transit: transit,
+        location: ThrowingLocation(),
+      );
       addTearDown(none.dispose);
       await none.startFromMyLocation();
       expect(none.from, isNull);
@@ -257,7 +336,11 @@ void main() {
         granted: LocationPermission.whileInUse,
         now: here,
       );
-      final asking = Directions(routes: routes, location: location);
+      final asking = Directions(
+        routes: routes,
+        transit: transit,
+        location: location,
+      );
       addTearDown(asking.dispose);
       expect(await asking.useMyLocation(RouteField.from), LocateResult.located);
       expect(location.asked, 1);
@@ -270,7 +353,11 @@ void main() {
         granted: LocationPermission.denied,
         now: here,
       );
-      final asking = Directions(routes: routes, location: location);
+      final asking = Directions(
+        routes: routes,
+        transit: transit,
+        location: location,
+      );
       addTearDown(asking.dispose);
       expect(await asking.useMyLocation(RouteField.from), LocateResult.denied);
       expect(asking.from, isNull);
@@ -295,7 +382,11 @@ void main() {
 
     test('no position to be had: says so and leaves the field', () async {
       location = FakeLocation();
-      final none = Directions(routes: routes, location: location);
+      final none = Directions(
+        routes: routes,
+        transit: transit,
+        location: location,
+      );
       addTearDown(none.dispose);
       expect(
         await none.useMyLocation(RouteField.from),

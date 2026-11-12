@@ -211,6 +211,15 @@ impl EdgeLabel {
         }
     }
 
+    /// Clears the simple turn restrictions read off the edge this label was built from.
+    ///
+    /// A label built for checking a seed's own edge has no predecessor to turn from,
+    /// so nothing should be restricted about the seed edge relative to itself.
+    #[inline]
+    pub fn clear_restrictions(&mut self) {
+        self.restrictions = 0;
+    }
+
     #[inline]
     const fn has(&self, bit: u16) -> bool {
         self.flags & bit != 0

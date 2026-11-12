@@ -22,8 +22,9 @@ so changes to it should be deliberate and discussed.
 - **No panics on decoding paths.**
   Corrupt, truncated, or unexpected tile data is an error, never a crash.
   This matters most offline, where a bad download must not take the app down.
-- **Out of scope:** transit routing and live traffic.
+- **Out of scope:** live traffic.
   Static predicted speeds are in scope.
+  Transit is separate from these stages; see [transit.md](transit.md).
 
 ## Stages
 

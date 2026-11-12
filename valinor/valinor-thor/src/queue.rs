@@ -39,6 +39,18 @@ enum Bucket {
 }
 
 impl BucketQueue {
+    /// Bytes of storage the queue holds, used or not.
+    pub(crate) fn bytes(&self) -> usize {
+        self.buckets.capacity() * size_of::<Vec<u32>>()
+            + self
+                .buckets
+                .iter()
+                .chain(core::iter::once(&self.overflow))
+                .map(Vec::capacity)
+                .sum::<usize>()
+                * size_of::<u32>()
+    }
+
     /// Empties the queue and sets its cost range (`reuse`): `bucket_count` buckets
     /// of `bucketsize` from `mincost` (rounded down to a multiple of the bucket size).
     ///

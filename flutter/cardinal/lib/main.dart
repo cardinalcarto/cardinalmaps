@@ -11,6 +11,7 @@ import 'geocoder/geocoder.dart';
 import 'map/location.dart';
 import 'map/map.dart';
 import 'map/overlays.dart';
+import 'offline/offline_area.dart';
 import 'routes.dart';
 import 'store/store.dart';
 import 'ui/theme.dart';
@@ -22,13 +23,15 @@ void main() {
   final store = Store.open();
   unawaited(store.prune());
   final map = SparkleMapController();
+  final offlineArea = configuredOfflineArea();
   runApp(
     StoreScope(
       store: store,
       child: GeocoderScope(
         geocoder: Geocoder(Uri.parse(geocoderUrl)),
         child: DirectionsScope(
-          routes: ValhallaRouteSource(Uri.parse('$routingUrl/route')),
+          routes: OfflineRouteSource(offlineArea),
+          transit: OfflineTransitSource(offlineArea),
           location: const GeolocatorSource(),
           child: MapScope(
             controller: map,

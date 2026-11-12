@@ -22,6 +22,7 @@ import 'fake_location.dart';
 import 'fake_place_store.dart';
 import 'fake_routes.dart';
 import 'fake_saved_store.dart';
+import 'fake_transit.dart';
 
 const appScreen = Size(400, 800);
 const appNavigationBar = 24.0;
@@ -40,6 +41,7 @@ Future<GoRouter> pumpFakeApp(
   Store? store,
   String location = '/',
   RouteSource? routes,
+  TransitSource? transit,
   LocationSource? locationSource,
   FakeMap? map,
   MapOverlays? overlays,
@@ -83,6 +85,7 @@ Future<GoRouter> pumpFakeApp(
         ),
         child: DirectionsScope(
           routes: routes ?? FakeRoutes(),
+          transit: transit ?? FakeTransit(),
           location: locationSource ?? FakeLocation(),
           child: MapScope(
             controller: map ?? FakeMap(),

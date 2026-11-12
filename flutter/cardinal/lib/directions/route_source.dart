@@ -1,27 +1,33 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 import 'package:material_ui/material_ui.dart';
 import 'package:routing/routing.dart';
 
 import '../map/location.dart';
+import '../offline/offline_area.dart';
+import '../offline/realtime.dart';
 import '../store/store.dart';
+import 'transit_plan.dart';
 
 /// A way of traveling, in the order the sheet's chips show them.
 enum TravelMode {
   driving('auto', 'Driving', Icons.directions_car),
 
-  /// Shown, but there's no trip planning for it yet.
+  /// Planned by [TransitSource] rather than routed.
   transit(null, 'Transit', Icons.directions_transit),
   walking('pedestrian', 'Walking', Icons.directions_walk),
   cycling('bicycle', 'Cycling', Icons.directions_bike);
 
   const TravelMode(this.costing, this.label, this.icon);
 
-  /// The router's name for it, or null if it can't be routed yet.
+  /// The street router's name for it, or null for transit.
   final String? costing;
   final String label;
   final IconData icon;
 
-  bool get available => costing != null;
+  bool get available => true;
 }
 
 /// The way of traveling last chosen, which directions start with.
@@ -31,10 +37,28 @@ final lastTravelMode = Setting.choice(
   TravelMode.driving,
 );
 
+/// How transit directions last got to and from stops.
+final lastTransitAccess = Setting.choice(
+  'directions.transitAccess',
+  TransitAccess.values,
+  TransitAccess.walking,
+);
+
+/// The trip has an end the offline area's streets don't reach.
+class OutsideOfflineArea implements Exception {
+  const OutsideOfflineArea();
+}
+
+/// The app has no offline area to route in.
+class NoOfflineArea implements Exception {
+  const NoOfflineArea();
+}
+
 /// Where routes come from, behind what the app needs of it, so tests can fake it.
 abstract class RouteSource {
   /// The routes [from] to [to], the best first. Throws a [DirectionsError] if there are
-  /// none, and [http.RequestAbortedException] if [abort] completes first.
+  /// none, [OutsideOfflineArea] or [NoOfflineArea] if they can't be looked for, and
+  /// [http.RequestAbortedException] if [abort] completes first.
   Future<List<DirectionsRoute>> routes({
     required TravelMode mode,
     required LngLat from,
@@ -43,14 +67,60 @@ abstract class RouteSource {
   });
 }
 
-/// [RouteSource] from a Valhalla-compatible server, with Ferrostar's request and parser.
-class ValhallaRouteSource implements RouteSource {
-  ValhallaRouteSource(this.endpoint, {http.Client? client})
-    : _client = client ?? http.Client();
+/// Where transit plans come from, so tests can fake it.
+abstract class TransitSource {
+  /// Gets ready to plan, if that takes a while, so the first plan doesn't wait as long.
+  void prepare() {}
 
-  /// The server's route endpoint.
-  final Uri endpoint;
-  final http.Client _client;
+  /// Journeys [from] to [to] leaving in the next hour, getting to and from stops by
+  /// [access]. Throws [TransitPlanError] if the plan fails, [OutsideOfflineArea] or
+  /// [NoOfflineArea] if it can't be made, and [http.RequestAbortedException] if [abort]
+  /// completes first.
+  Future<TransitPlan> plan({
+    required TransitAccess access,
+    required LngLat from,
+    required LngLat to,
+    Future<void>? abort,
+  });
+}
+
+/// Why a transit plan failed.
+class TransitPlanError implements Exception {
+  const TransitPlanError(this.kind, this.message);
+
+  /// The router's error kind, such as `no_street_nearby` or `timed_out`.
+  final String kind;
+  final String message;
+
+  @override
+  String toString() => 'TransitPlanError($kind: $message)';
+}
+
+/// Throws [http.RequestAbortedException] if [abort] completes before [work] does.
+Future<T> _abortable<T>(Future<T> work, Future<void>? abort) {
+  if (abort == null) return work;
+  return Future.any([
+    work,
+    abort.then<T>((_) => throw http.RequestAbortedException()),
+  ]);
+}
+
+Future<OfflineArea> _need(Future<OfflineArea?> area) async =>
+    await area ?? (throw const NoOfflineArea());
+
+Future<void> _checkCovers(OfflineArea area, LngLat from, LngLat to) async {
+  if (!await area.covers(from.lat, from.lon) ||
+      !await area.covers(to.lat, to.lon)) {
+    throw const OutsideOfflineArea();
+  }
+}
+
+/// [RouteSource] on the device, over the offline area's streets: Ferrostar makes the
+/// request and reads the answer, as it would from a server.
+class OfflineRouteSource implements RouteSource {
+  OfflineRouteSource(this._area);
+
+  final Future<OfflineArea?> _area;
   final _adapters = <TravelMode, DirectionsAdapter>{};
 
   /// How many routes to ask for besides the best.
@@ -65,22 +135,112 @@ class ValhallaRouteSource implements RouteSource {
     required LngLat from,
     required LngLat to,
     Future<void>? abort,
-  }) async {
-    await initRouting();
+  }) => _abortable(_routes(mode, from, to), abort);
+
+  Future<List<DirectionsRoute>> _routes(
+    TravelMode mode,
+    LngLat from,
+    LngLat to,
+  ) async {
+    final area = await _need(_area);
+    await _checkCovers(area, from, to);
+    final router = await area.router;
     final adapter = _adapters[mode] ??= DirectionsAdapter.valhalla(
-      endpointUrl: endpoint.toString(),
+      // Ferrostar wants an endpoint to make the request for; nothing is sent to it.
+      endpointUrl: 'offline:route',
       costing: mode.costing!,
       alternates: _alternates,
     );
     final made = adapter.request(from: _point(from), to: _point(to));
-    final request =
-        http.AbortableRequest('POST', Uri.parse(made.url), abortTrigger: abort)
-          ..headers.addAll(made.headers)
-          ..bodyBytes = made.body;
-    final response = await http.Response.fromStream(
-      await _client.send(request),
+    final watch = Stopwatch()..start();
+    final response = await router.route(body: made.body);
+    debugPrint(
+      'cardinal-timing: street route ${mode.name} '
+      '${watch.elapsedMilliseconds} ms (${response.status})',
     );
-    return adapter.parse(body: response.bodyBytes);
+    return adapter.parse(body: response.body);
+  }
+}
+
+/// [TransitSource] on the device, over the offline area's timetables, with the latest
+/// real-time data its agencies publish when there's a network.
+class OfflineTransitSource implements TransitSource {
+  OfflineTransitSource(this._area, {http.Client? client})
+    : _realtime = _area.then(
+        (area) => RealtimeFeeds(
+          area?.realtimeSources ?? Future.value(const []),
+          client: client,
+        ),
+      );
+
+  final Future<OfflineArea?> _area;
+  final Future<RealtimeFeeds> _realtime;
+
+  @override
+  void prepare() {
+    unawaited(() async {
+      try {
+        final area = await _area;
+        if (area == null) return;
+        await Future.wait([area.transit, _realtime.then((r) => r.prefetch())]);
+      } on Object catch (e) {
+        debugPrint('transit: $e');
+      }
+    }());
+  }
+
+  @override
+  Future<TransitPlan> plan({
+    required TransitAccess access,
+    required LngLat from,
+    required LngLat to,
+    Future<void>? abort,
+  }) async {
+    final cancel = TransitCancel();
+    unawaited(abort?.then((_) => cancel.cancel()));
+    return _abortable(_plan(access, from, to, cancel), abort);
+  }
+
+  Future<TransitPlan> _plan(
+    TransitAccess access,
+    LngLat from,
+    LngLat to,
+    TransitCancel cancel,
+  ) async {
+    final area = await _need(_area);
+    await _checkCovers(area, from, to);
+    // Real-time messages are fetched while the timetables open.
+    final fetching = _realtime.then((r) => r.fresh());
+    final transit = await area.transit;
+    final feeds = await fetching;
+    final request = utf8.encode(
+      jsonEncode({
+        'origin': {'lat': from.lat, 'lon': from.lon},
+        'destination': {'lat': to.lat, 'lon': to.lon},
+        'mode': access.mode,
+      }),
+    );
+    final watch = Stopwatch()..start();
+    final response = await transit.plan(
+      request: request,
+      feeds: feeds,
+      cancel: cancel,
+    );
+    debugPrint(
+      'cardinal-timing: transit plan ${access.mode} '
+      '${watch.elapsedMilliseconds} ms (${response.status}, '
+      '${feeds.length} new real-time messages)',
+    );
+    if (response.status == 499) throw http.RequestAbortedException();
+    if (response.status != 200) {
+      final body = jsonDecode(utf8.decode(response.body));
+      final error = body is Map<String, Object?> ? body : const {};
+      throw TransitPlanError(
+        error['kind'] as String? ?? 'failed',
+        error['error'] as String? ?? 'status ${response.status}',
+      );
+    }
+    return TransitPlan.decode(response.body);
   }
 }
 
@@ -89,11 +249,13 @@ class DirectionsScope extends InheritedWidget {
   const DirectionsScope({
     super.key,
     required this.routes,
+    required this.transit,
     required this.location,
     required super.child,
   });
 
   final RouteSource routes;
+  final TransitSource transit;
   final LocationSource location;
 
   static DirectionsScope of(BuildContext context) =>
@@ -101,5 +263,7 @@ class DirectionsScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(DirectionsScope oldWidget) =>
-      routes != oldWidget.routes || location != oldWidget.location;
+      routes != oldWidget.routes ||
+      transit != oldWidget.transit ||
+      location != oldWidget.location;
 }

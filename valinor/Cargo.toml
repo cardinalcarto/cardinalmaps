@@ -11,6 +11,8 @@ members = [
     "valhalla-response",
     "valinor-cli",
     "valinor-export-graph",
+    "valinor-gtfs",
+    "valinor-gtfs-rt",
     "valinor-loki",
     "valinor-loki-service",
     "valinor-router",
@@ -19,6 +21,10 @@ members = [
     "valinor-tap",
     "valinor-thor",
     "valinor-thor-service",
+    "valinor-transit",
+    "valinor-transit-plan",
+    "valinor-transit-build",
+    "valinor-walk",
     "valinor-tyr",
 ]
 
@@ -40,6 +46,8 @@ bit-twiddling-helpers = { path = "bit-twiddling-helpers" }
 bytes = "1.12.1"
 chrono = "0.4.45"
 clap = { version = "4.6.7", features = ["derive", "env"] }
+crc32fast = "1.5.4"
+csv = "1.4.0"
 dashmap = "6.2.1"
 enumset = "1.1.15"
 flatgeobuf = { version = "6.0.1", default-features = false }
@@ -64,12 +72,15 @@ prost-build = "0.14.4"
 protobuf-src = "2.1.1"
 protoc-bin-vendored = "3.3.0"
 rand = "0.10.3"
+ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 regex = "1.13.1"
 self_cell = "1.3.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_with = "3.24.0"
 serde_json = "1.0.154"
+sha2 = "0.11.1"
 tar = "0.4.46"
+tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "fs", "io-util", "sync"] }
 tower = { version = "0.5.3", features = ["util"] }
@@ -83,11 +94,15 @@ valinor-loki = { path = "valinor-loki" }
 valinor-router = { path = "valinor-router" }
 valinor-sif = { path = "valinor-sif" }
 valinor-thor = { path = "valinor-thor" }
+valinor-transit = { path = "valinor-transit" }
+valinor-gtfs = { path = "valinor-gtfs" }
 valinor-tyr = { path = "valinor-tyr" }
 walkdir = "2.5.0"
 zerocopy = "0.8.63"
 zerocopy-derive = "0.8.63"
 zeromq = "0.7.0"
+zstd = "0.14.3"
+zip = { version = "9.5.0", default-features = false, features = ["deflate"] }
 
 [profile.dev.package]
 insta.opt-level = 3

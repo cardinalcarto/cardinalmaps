@@ -61,6 +61,11 @@ pub struct RouterResponse {
   `valinor-router` will serve every action, because the server needs them,
   so `locate`, `trace_route`, or `status` can be exposed later
   when a feature needs one, as a `request(action, body)` variant.
+- **Snapping like transit.** On the device, a location's edge must reach 250 nodes in and out
+  (Loki's default is 50), the bound transit uses for its stops and plan endpoints,
+  so street and transit directions start and end in the same places.
+  At 50, Cal Anderson Park's point lands on a park path a bicycle can't enter or leave,
+  and no bicycle route reaches the park, in mainline or valinor.
 - **No async runtime.** The stages are synchronous functions.
   flutter_rust_bridge's thread pool supplies the concurrency, so tokio never runs on the device.
 - **Panics.** The router is built not to panic.
@@ -115,3 +120,48 @@ The ZeroMQ workers remain for splicing stages into the mainline oracle.
 1. **Cancellation.** Ferrostar may supersede a reroute while it is still running.
    Loki doesn't check interrupts yet, and offline routes over region-sized graphs should be fast,
    so v1 has no cancellation. Adding a cancel token to `route` later is a compatible change.
+
+## Public transit on the device
+
+Transit planning runs through `api::transit::OfflineTransit`, beside the router above:
+
+```rust
+impl OfflineTransit {
+    /// A transit build directory (from `valinor-transit-build`) over the same tile sets;
+    /// `feeds` chooses which of its feeds to load, or `None` for every feed that compiled.
+    /// Takes a few seconds: every stop is snapped for walking and for cycling.
+    pub fn open(build: String, feeds: Option<Vec<String>>, tile_sets: Vec<String>) -> Result<OfflineTransit, TransitOpenError>;
+
+    /// JSON request bytes (the body of the server's `POST /transit/plan`),
+    /// with whatever GTFS-RT bytes the app holds, per feed.
+    /// `cancel` lets a screen abandon the plan; past a 30-second deadline it answers 504.
+    pub fn plan(
+        &self,
+        request: Vec<u8>,
+        feeds: Vec<TransitFeed>,
+        cancel: &TransitCancel,
+    ) -> TransitResponse;
+
+    /// A vehicle's latest state, as the server's vehicle lookup returns it.
+    pub fn vehicle(&self, feed: String, id: String) -> TransitResponse;
+}
+```
+
+- The app fetches GTFS-RT itself and passes the bytes in;
+  the routing crates never reach the network, and a feed that doesn't decode degrades to the
+  schedule and is reported in the response.
+  A feed omitted from a call stays as it was until it ages out.
+- Requests and responses are the server's JSON, from `valinor-transit-plan`.
+  A response has `journeys`, each with access, transit, transfer, and egress legs;
+  walking and cycling legs carry a `walk` with a polyline6 `shape`, distance, duration,
+  and `maneuvers`, and each response states every feed's age in `realtime`.
+- A walking leg next to a moved stop has `stop_moved`: `STOP_MOVED` alerts give the
+  temporary location only as prose, so show that text beside the walk.
+  The transit leg's alert also names the affected stop in `moved_stops`.
+- Not `#[frb(sync)]`: planning runs on flutter_rust_bridge's worker pool.
+- A plan with no journeys says why in `no_journeys_reason` (`no_access`, `no_egress`,
+  `no_service`, or `slower_than_direct`), and `direct` reports the direct search's outcome.
+- The device refuses access or egress walks above 45 minutes with a 400,
+  and a timetable must be replaced by renaming, never rewritten in place, while open.
+On first open (or `TransitBuild::prepare`) a flat transfer table is assembled under the build's
+`prepared/`, so that directory must be writable.

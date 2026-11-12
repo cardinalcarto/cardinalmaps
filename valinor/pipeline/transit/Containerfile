@@ -1,0 +1,43 @@
+# The feed-fetching stage of the offline transit pipeline: Transitous's `src/fetch.py`
+# and `gtfsclean`, at pinned commits, with `fetch_feeds.py` driving them.
+# See README.md for how to build and run it.
+
+# The pins. These are the only places either commit is written down.
+ARG TRANSITOUS_COMMIT=1bfd87a25e144a1e29993bbd9a99a2a86d86c190
+# The tip of main, which is what `go install ...@latest` in Transitous's CI builds:
+# the repository's tags aren't semantic versions, so Go ignores them.
+ARG GTFSCLEAN_COMMIT=013af793337b759e782c3f8919e0b535cb702944
+
+FROM docker.io/library/golang:1.25-trixie AS build
+ARG TRANSITOUS_COMMIT
+ARG GTFSCLEAN_COMMIT
+
+RUN GOPROXY=direct GOBIN=/usr/local/bin go install \
+    github.com/public-transport/gtfsclean@${GTFSCLEAN_COMMIT}
+
+COPY patches /patches
+# `transitland-atlas` is the submodule, at the commit this Transitous commit pins.
+# `git apply` fails on any patch that no longer matches, so moving the pin can't silently drop one.
+RUN git init -q /opt/transitous \
+    && cd /opt/transitous \
+    && git remote add origin https://github.com/public-transport/transitous.git \
+    && git fetch -q --depth 1 origin "${TRANSITOUS_COMMIT}" \
+    && git checkout -q FETCH_HEAD \
+    && git submodule update --init --depth 1 transitland-atlas \
+    && git apply /patches/*.patch \
+    && rm -rf .git transitland-atlas/.git website docs ansible
+
+FROM docker.io/library/python:3.13-slim-trixie
+ARG TRANSITOUS_COMMIT
+
+COPY --from=build /usr/local/bin/gtfsclean /usr/local/bin/gtfsclean
+COPY --from=build /opt/transitous /opt/transitous
+COPY constraints.txt /opt/pipeline/constraints.txt
+RUN pip install --no-cache-dir \
+    --requirement /opt/transitous/requirements.txt \
+    --constraint /opt/pipeline/constraints.txt
+COPY fetch_feeds.py excluded-sources.txt /opt/pipeline/
+
+ENV TRANSITOUS_DIR=/opt/transitous
+ENV TRANSITOUS_COMMIT=${TRANSITOUS_COMMIT}
+ENTRYPOINT ["python3", "-I", "/opt/pipeline/fetch_feeds.py"]
