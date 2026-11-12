@@ -153,6 +153,9 @@ fn transfer_options(compiled: &Path, output: &Path) -> TransferOptions {
         zstd_level: 3,
         modes: TransferMode::ALL.to_vec(),
         snap: SnapConfig::default(),
+        // The tests below compare tiles with the table build walk for walk; pruning has its
+        // own test.
+        prune_dominated: false,
     }
 }
 
@@ -484,6 +487,58 @@ fn tiles_load_to_exactly_what_the_table_build_gives_and_cross_feeds() {
             assert_eq!(listed, holding, "{}", feed.id);
         }
     }
+}
+
+/// Pruning only leaves walks out, and counts each one it leaves out.
+#[test]
+fn pruning_leaves_out_walks_and_counts_them() {
+    let one = grid(0.0, 64);
+    let two = grid(0.0006, 64);
+    let (_input, compiled, _report) = compiled_feeds(&[
+        Feed {
+            id: "feed-a",
+            stops: &one,
+        },
+        Feed {
+            id: "feed-b",
+            stops: &two,
+        },
+    ]);
+    let full_out = tempfile::tempdir().expect("output");
+    let full = transfers::run(&transfer_options(compiled.path(), full_out.path())).expect("full");
+    let pruned_out = tempfile::tempdir().expect("output");
+    let mut options = transfer_options(compiled.path(), pruned_out.path());
+    options.prune_dominated = true;
+    let pruned = transfers::run(&options).expect("pruned");
+    let walks = |output: &Path, manifest: &Manifest, mode| -> BTreeSet<(u32, u32, u32, u32)> {
+        load_tiles(output, manifest, mode)
+            .iter()
+            .flat_map(|tile| {
+                tile.rows()
+                    .flat_map(|(feed, stop, walks)| {
+                        walks
+                            .iter()
+                            .map(move |walk| (feed, stop, walk.feed, walk.stop))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
+    let mut left_out = 0;
+    for mode in TransferMode::ALL {
+        let all = walks(full_out.path(), &full, mode);
+        let kept = walks(pruned_out.path(), &pruned, mode);
+        assert!(kept.is_subset(&all), "{mode:?}: pruning added a walk");
+        let totals = &pruned.totals[mode.as_str()];
+        assert_eq!(totals.pruned as usize, all.len() - kept.len(), "{mode:?}");
+        assert_eq!(full.totals[mode.as_str()].pruned, 0);
+        let per_tile: u64 = pruned.tiles[mode.as_str()].iter().map(|t| t.pruned).sum();
+        // Tiles whose every walk went aren't written, so they aren't counted per tile.
+        assert!(per_tile <= totals.pruned);
+        left_out += totals.pruned;
+    }
+    assert!(left_out > 0, "nothing on the fixture's lines was dominated");
 }
 
 #[test]

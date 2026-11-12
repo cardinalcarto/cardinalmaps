@@ -139,6 +139,9 @@ pub struct TileEntry {
     pub bytes: u64,
     /// Size when decompressed.
     pub raw_bytes: u64,
+    /// Walks left out because no plan can use them (see `dominance`).
+    #[serde(default)]
+    pub pruned: u64,
 }
 
 /// Totals for one mode over the whole build.
@@ -164,6 +167,9 @@ pub struct ModeTotals {
     pub bytes: u64,
     /// Total decompressed bytes.
     pub raw_bytes: u64,
+    /// Walks left out because no plan can use them (see `dominance`).
+    #[serde(default)]
+    pub pruned: u64,
     /// `transfers.txt` rules between two stops with no walk on the street network between them.
     #[serde(default)]
     pub pair_rules_without_walk: u64,
@@ -346,6 +352,7 @@ mod tests {
             content_sha256: content.to_owned(),
             bytes: 50,
             raw_bytes: 90,
+            pruned: 0,
         }
     }
 

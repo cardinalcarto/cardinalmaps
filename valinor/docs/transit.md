@@ -439,6 +439,13 @@ an unchanged archive (by SHA-256) is not recompiled.
 `TransferTable::build`. Results are tiled at zoom 14 by the stop the walk starts at,
 so a tile can walk to stops of any feed, and one mode's tiles are at
 `transfers/<mode>/14/<x>/<y>.bin.zst`.
+Walks no plan can use are left out (`dominance` in `valinor-transit-build`): a walk to a stop
+`T` goes when, on every pattern a rider could board at `T`, a walk to a stop upstream catches
+every trip `T` would, strictly sooner, under the planner's own walk costs (transfer times,
+`transfers.txt` floors, forbidden pairs) and, for wheelchairs, only where a wheelchair may
+board. It is exact for every plan (checked by `compare_builds` in `valinor-transit-plan`);
+the manifest counts the walks left out per tile and mode, and `--no-prune-dominated` keeps
+them all.
 `transfers/manifest.json` lists the feeds in index order, with the tiles each feed's stops need
 and its saved stop snaps (`transfers/snaps/<mode>/<feed index>.bin`),
 since clients choose which feeds to download, and `transfers/unsnapped-<mode>.jsonl` the stops

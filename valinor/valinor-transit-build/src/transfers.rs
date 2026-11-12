@@ -42,6 +42,7 @@ use valinor_walk::{
 };
 
 use crate::compile::{CompileReport, FeedOutcome};
+use crate::dominance::{Dominance, Scratch};
 use crate::error::BuildError;
 use crate::feeds::hex_digest;
 use crate::manifest::{
@@ -89,6 +90,9 @@ pub struct TransferOptions {
     pub modes: Vec<TransferMode>,
     /// How stops are snapped to the street network.
     pub snap: SnapConfig,
+    /// Leave out walks no plan can use: dominated by a walk to a stop upstream on every
+    /// pattern the target serves (see [`crate::dominance`]).
+    pub prune_dominated: bool,
 }
 
 /// The default zstd level: tiles are read far more than written.
@@ -146,6 +150,16 @@ pub fn run(options: &TransferOptions) -> Result<Manifest, BuildError> {
     })?;
     let build_id = tiles.build_id();
     let stops = StopList::load(&options.compiled, &feeds, options.threads)?;
+    let dominance = if options.prune_dominated {
+        let loaded = Dominance::load(&options.compiled, &feeds, &stops, options.threads)?;
+        tracing::info!(
+            patterns = loaded.pattern_count(),
+            "read patterns, to leave out walks no plan can use"
+        );
+        Some(loaded)
+    } else {
+        None
+    };
     tracing::info!(
         feeds = feeds.len(),
         stops = stops.len(),
@@ -177,7 +191,15 @@ pub fn run(options: &TransferOptions) -> Result<Manifest, BuildError> {
     let mut by_mode = BTreeMap::new();
     for &mode in &options.modes {
         let result = run_mode(
-            options, mode, &tiles, build_id, &stops, &order, &jobs, &staging,
+            options,
+            mode,
+            &tiles,
+            build_id,
+            &stops,
+            &order,
+            &jobs,
+            &staging,
+            dominance.as_ref(),
         )?;
         let unsnapped_path = staging.join(format!("unsnapped-{}.jsonl", mode.as_str()));
         write_unsnapped(
@@ -310,6 +332,7 @@ fn run_mode(
     order: &[u32],
     jobs: &[TileJob],
     staging: &Path,
+    dominance: Option<&Dominance>,
 ) -> Result<ModeResult, BuildError> {
     let started = Instant::now();
     let costing = costing_for(mode)?;
@@ -348,6 +371,7 @@ fn run_mode(
         order,
         staging,
         pair_rules_without_walk: &pair_rules_without_walk,
+        dominance,
     };
     let outcomes = run_jobs(&context, jobs)?;
     let mut result = summarize(outcomes, stops, &unsnapped_list, &disconnected_stops);
@@ -359,6 +383,7 @@ fn run_mode(
         mode = mode.as_str(),
         tiles = result.tiles.len(),
         walks = result.totals.walks,
+        pruned = result.totals.pruned,
         raw_bytes = result.totals.raw_bytes,
         seconds = result.seconds,
         "built transfers"
@@ -545,6 +570,7 @@ struct Context<'a> {
     order: &'a [u32],
     staging: &'a Path,
     pair_rules_without_walk: &'a AtomicU64,
+    dominance: Option<&'a Dominance>,
 }
 
 fn run_jobs(context: &Context<'_>, jobs: &[TileJob]) -> Result<Vec<TileOutcome>, BuildError> {
@@ -557,6 +583,7 @@ fn run_jobs(context: &Context<'_>, jobs: &[TileJob]) -> Result<Vec<TileOutcome>,
         for _ in 0..context.options.threads.get() {
             scope.spawn(|| {
                 let mut tables = StopTables::new(context.tiles, context.costing.clone());
+                let mut scratch = Scratch::default();
                 tables.bind_shared(Arc::clone(context.attachments));
                 while !failed.load(Ordering::Relaxed) {
                     let batch_index = next.fetch_add(1, Ordering::Relaxed);
@@ -565,7 +592,7 @@ fn run_jobs(context: &Context<'_>, jobs: &[TileJob]) -> Result<Vec<TileOutcome>,
                     };
                     tables.forget_tiles();
                     for &job in &jobs[batch.clone()] {
-                        match build_tile(context, &mut tables, job) {
+                        match build_tile(context, &mut tables, &mut scratch, job) {
                             Ok(Some(outcome)) => {
                                 if let Ok(mut outcomes) = outcomes.lock() {
                                     outcomes.push(outcome);
@@ -602,11 +629,17 @@ fn run_jobs(context: &Context<'_>, jobs: &[TileJob]) -> Result<Vec<TileOutcome>,
 }
 
 /// Computes one tile's walks and keeps it for [`seal_tiles`], if any stop in it has a walk.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one tile's searches, pruning, rows, and file, in order"
+)]
 fn build_tile(
     context: &Context<'_>,
     tables: &mut StopTables<&TileSets, AnyCosting>,
+    scratch: &mut Scratch,
     job: TileJob,
 ) -> Result<Option<TileOutcome>, BuildError> {
+    let mut pruned = 0_u64;
     let origins = context.order.get(job.start..job.end).unwrap_or(&[]);
     let mut rows: Vec<(u32, u32, Vec<TileWalk>)> = Vec::new();
     let mut per_feed: BTreeMap<u32, (u64, u64)> = BTreeMap::new();
@@ -624,7 +657,7 @@ fn build_tile(
             max_seconds: context.max_seconds,
             interrupt: &|| false,
         })?;
-        let hops: Vec<Hop> = sorted_walks_from(tables, origin_id);
+        let mut hops: Vec<Hop> = sorted_walks_from(tables, origin_id);
         if let Some(targets) = context.stops.pair_rules.get(&origin) {
             let missing = targets
                 .iter()
@@ -633,6 +666,14 @@ fn build_tile(
             context
                 .pair_rules_without_walk
                 .fetch_add(missing as u64, Ordering::Relaxed);
+        }
+        if let Some(dominance) = context.dominance {
+            pruned += dominance.prune(
+                origin,
+                &mut hops,
+                context.mode == TransferMode::Wheelchair,
+                scratch,
+            ) as u64;
         }
         if hops.is_empty() {
             continue;
@@ -701,6 +742,7 @@ fn build_tile(
             // Known once the tile is sealed.
             bytes: 0,
             raw_bytes: raw.len() as u64,
+            pruned,
         },
         feeds: per_feed
             .into_iter()
@@ -876,6 +918,7 @@ fn summarize(
         totals.walks += outcome.entry.walks;
         totals.cross_feed_walks += outcome.entry.cross_feed_walks;
         totals.raw_bytes += outcome.entry.raw_bytes;
+        totals.pruned += outcome.entry.pruned;
         let tile = (outcome.entry.x, outcome.entry.y);
         for (feed, walks, cross) in outcome.feeds {
             result.feed_tiles.entry(feed).or_default().insert(tile);

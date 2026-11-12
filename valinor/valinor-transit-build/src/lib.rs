@@ -10,6 +10,7 @@
 //! (see the `valinor-transit-build` binary and `docs/transit.md`).
 
 pub mod compile;
+pub mod dominance;
 pub mod error;
 pub mod feed_index;
 pub mod feeds;

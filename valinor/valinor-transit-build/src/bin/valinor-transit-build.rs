@@ -65,6 +65,10 @@ enum Stage {
         /// The modes to build; all three by default.
         #[arg(long, value_enum, num_args = 1.., default_values_t = [Mode::Walking, Mode::Cycling, Mode::Wheelchair])]
         modes: Vec<Mode>,
+        /// Keep every walk, including those no plan can use (dominated by a walk upstream on
+        /// every pattern its target serves); for comparing with the default.
+        #[arg(long)]
+        no_prune_dominated: bool,
     },
     /// Writes what clients fetch to choose and install feeds: a zoom 6 index of where each
     /// feed's stops are, feed summaries, the manifest split by feed, and GTFS-RT sources.
@@ -143,6 +147,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn core::error::Error>> {
             max_seconds_wheelchair,
             zstd_level,
             modes,
+            no_prune_dominated,
         } => {
             let manifest = transfers::run(&TransferOptions {
                 compiled,
@@ -154,6 +159,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn core::error::Error>> {
                 max_seconds_wheelchair,
                 zstd_level,
                 snap: SnapConfig::default(),
+                prune_dominated: !no_prune_dominated,
                 modes: modes
                     .into_iter()
                     .map(|mode| match mode {
