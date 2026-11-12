@@ -126,6 +126,7 @@ fn extrudes_buildings() {
         let at = b.walls.paint.features[1].vertices.end as usize - 1;
         assert_eq!(b.walls.paint.value(&props, "base", at), [0.0], "at zoom 14");
         assert!(b.roofs.patterns.is_empty() && b.walls.patterns.is_empty());
+        assert!(b.walls.edge_distances.is_empty());
     }
 }
 
@@ -171,6 +172,9 @@ fn patterns_come_from_the_sprite() {
         assert_eq!(block.rect, [0.0; 4]);
     }
 
+    // Walls with patterns know how far along their rings they are.
+    assert_eq!(b.walls.edge_distances.len(), b.walls.points.len());
+
     // Without sprites there is nothing to take patterns from.
     let processed = TileProcessor::new()
         .process(&style, "s", TileId::new(14, 1, 2), &tile(Tessellation::Off))
@@ -179,4 +183,5 @@ fn patterns_come_from_the_sprite() {
         panic!()
     };
     assert!(b.roofs.patterns.is_empty() && b.walls.patterns.is_empty());
+    assert!(b.walls.edge_distances.is_empty());
 }

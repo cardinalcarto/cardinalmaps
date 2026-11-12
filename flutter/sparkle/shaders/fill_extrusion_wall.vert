@@ -6,14 +6,17 @@
 #include <common.glsl>
 #include <paint.glsl>
 
-// This instance's `WallPoint`: position and edge distance, then the wall's normal (zero
-// where no wall starts).
-in vec3 pos_edge;
-in vec2 normal_xy;
-// The next point's position and edge distance.
-in vec3 next_pos_edge;
+// This instance's `WallPoint`: position, then the wall's normal (zero where no wall
+// starts).
+in vec4 pos_normal;
+// The next point's position.
+in vec2 next_pos;
 // Per vertex: 1 at the next point's end of the wall (x), 1 at the top (y).
 in vec2 corner;
+// This point's and the next one's `ExtrusionWalls::edge_distances`; zeros without
+// patterns, which are all that read them.
+in float edge;
+in float next_edge;
 // `sparkle::tile::FillExtrusionPattern`.
 in vec4 pattern_rect;
 in vec2 pattern_size;
@@ -27,11 +30,12 @@ PAINT_FLOAT(base, 2)
 void main() {
   // As in MapLibre, each end of the wall takes the other end's distance along the ring.
   bool at_next = corner.x > 0.5;
-  vec2 pos = at_next ? next_pos_edge.xy : pos_edge.xy;
-  float edge = at_next ? pos_edge.z : next_pos_edge.z;
+  vec2 pos = at_next ? next_pos : pos_normal.xy;
+  vec2 normal_xy = pos_normal.zw;
   float base = max(paint_base(), 0.0);
   float height = max(paint_height(), 0.0);
-  extrude(pos, edge, vec3(normal_xy, 0.0), corner.y, base, height, pattern_rect, pattern_size);
+  extrude(pos, at_next ? edge : next_edge, vec3(normal_xy, 0.0), corner.y, base, height,
+          pattern_rect, pattern_size);
   if (normal_xy == vec2(0.0)) {
     // No wall: every corner at one point outside the view.
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);

@@ -49,6 +49,8 @@ pub struct FillExtrusionRenderer {
     /// their pipelines can use the same shaders: the first once per instance by roofs, one
     /// per corner by walls.
     no_pattern: wgpu::Buffer,
+    /// Zero edge distances, one per corner, read by walls without patterns.
+    no_edges: wgpu::Buffer,
     targets: Option<Targets>,
     /// Whether a layer was drawn since the last `prepare`: the next one starts a frame and
     /// clears the shared depth buffer.
@@ -91,8 +93,8 @@ struct GpuRoofs {
 
 struct GpuWalls {
     points: wgpu::Buffer,
-    /// `None` when the bucket has no patterns.
-    patterns: Option<wgpu::Buffer>,
+    /// The patterns and edge distances; `None` when the bucket has no patterns.
+    patterns: Option<(wgpu::Buffer, wgpu::Buffer)>,
     instances: u32,
     paint_buffer: Option<wgpu::Buffer>,
     /// The layout of `paint_buffer`; its data isn't kept.
@@ -135,8 +137,14 @@ impl FillExtrusionRenderer {
         );
         // In the order MapLibre's two triangles take a wall's four vertices.
         let corners: [[f32; 2]; 6] = [[1., 0.], [0., 0.], [1., 1.], [1., 1.], [0., 0.], [0., 1.]];
+        let no_edges = gpu.buffer(
+            "no fill-extrusion edge distances",
+            bytemuck::cast_slice(&[0f32; 6]),
+            wgpu::BufferUsages::VERTEX,
+        );
         Self {
             pipelines: HashMap::new(),
+            no_edges,
             wall_corners: gpu.buffer(
                 "fill-extrusion wall corners",
                 bytemuck::cast_slice(&corners),
@@ -177,20 +185,29 @@ impl FillExtrusionRenderer {
                     attributes: &wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x2],
                 };
                 let point_stride = size_of::<WallPoint>() as u64;
-                let point = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2];
-                let next = wgpu::vertex_attr_array![4 => Float32x3];
+                let point = wgpu::vertex_attr_array![0 => Float32x4];
+                let next = wgpu::vertex_attr_array![4 => Float32x2];
                 let corner = wgpu::vertex_attr_array![5 => Float32x2];
+                let edge = wgpu::vertex_attr_array![1 => Float32];
+                let next_edge = wgpu::vertex_attr_array![6 => Float32];
+                // Edge distances, as patterns are: per wall, or the zeros of `no_edges` by
+                // vertex index.
+                let edge_step = if patterns {
+                    wgpu::VertexStepMode::Instance
+                } else {
+                    wgpu::VertexStepMode::Vertex
+                };
                 let roof = wgpu::vertex_attr_array![0 => Float32x2];
                 let vertex_buffers = if walls {
                     vec![
-                        // Position and edge distance, then normal.
+                        // Position, then normal.
                         wgpu::VertexBufferLayout {
                             array_stride: point_stride,
                             step_mode: wgpu::VertexStepMode::Instance,
                             attributes: &point,
                         },
                         pattern,
-                        // The next point's position and edge distance.
+                        // The next point's position.
                         wgpu::VertexBufferLayout {
                             array_stride: point_stride,
                             step_mode: wgpu::VertexStepMode::Instance,
@@ -200,6 +217,16 @@ impl FillExtrusionRenderer {
                             array_stride: 8,
                             step_mode: wgpu::VertexStepMode::Vertex,
                             attributes: &corner,
+                        },
+                        wgpu::VertexBufferLayout {
+                            array_stride: 4,
+                            step_mode: edge_step,
+                            attributes: &edge,
+                        },
+                        wgpu::VertexBufferLayout {
+                            array_stride: 4,
+                            step_mode: edge_step,
+                            attributes: &next_edge,
                         },
                     ]
                 } else {
@@ -234,7 +261,7 @@ impl FillExtrusionRenderer {
                     shader: &shader,
                     vertex_buffers: &vertex_buffers,
                     paint: Some(paint),
-                    paint_location: 6,
+                    paint_location: 7,
                     paint_step: if walls {
                         wgpu::VertexStepMode::Instance
                     } else {
@@ -385,11 +412,22 @@ impl FillExtrusionRenderer {
                 pass.set_bind_group(0, &group, &[offset]);
                 let stride = size_of::<WallPoint>() as u64;
                 pass.set_vertex_buffer(0, walls.points.slice(..));
-                pass.set_vertex_buffer(1, patterns.unwrap_or(&self.no_pattern).slice(..));
                 pass.set_vertex_buffer(2, walls.points.slice(stride..));
                 pass.set_vertex_buffer(3, self.wall_corners.slice(..));
+                match patterns {
+                    Some((patterns, edges)) => {
+                        pass.set_vertex_buffer(1, patterns.slice(..));
+                        pass.set_vertex_buffer(4, edges.slice(..));
+                        pass.set_vertex_buffer(5, edges.slice(4..));
+                    }
+                    None => {
+                        pass.set_vertex_buffer(1, self.no_pattern.slice(..));
+                        pass.set_vertex_buffer(4, self.no_edges.slice(..));
+                        pass.set_vertex_buffer(5, self.no_edges.slice(..));
+                    }
+                }
                 if let Some(buffer) = &walls.paint_buffer {
-                    pass.set_vertex_buffer(4, buffer.slice(..));
+                    pass.set_vertex_buffer(6, buffer.slice(..));
                 }
                 pass.draw(0..6, 0..walls.instances);
             }
@@ -430,7 +468,10 @@ impl LayerRenderer for FillExtrusionRenderer {
                     bytemuck::cast_slice(&walls.points),
                     vertex,
                 ),
-                patterns: patterns(&walls.patterns),
+                patterns: patterns(&walls.patterns).map(|p| {
+                    let edges = bytemuck::cast_slice(&walls.edge_distances);
+                    (p, gpu.buffer("fill-extrusion wall edges", edges, vertex))
+                }),
                 instances: walls.instances() as u32,
                 paint_buffer: gpu.paint_buffer(&walls.paint),
                 paint: walls.paint.layout(),

@@ -27,11 +27,6 @@ use crate::style::FillExtrusionLayer;
 pub struct WallPoint {
     /// In tile coordinates.
     pub position: [f32; 2],
-    /// How far along its ring the point is, in tile units, counting only the edges that
-    /// have walls: the horizontal coordinate of `fill-extrusion-pattern` on walls. As in
-    /// MapLibre, a wall's quad has this point's distance at the *next* point's end and
-    /// the next point's distance at this end.
-    pub edge_distance: f32,
     /// The unit normal of the wall to the next point, horizontal in tile coordinates
     /// (y down); zero where no wall starts here (at the end of a ring, and along edges
     /// that have none).
@@ -84,6 +79,13 @@ pub struct ExtrusionRoofs {
 pub struct ExtrusionWalls {
     /// Each ring's points in order, then its first point again.
     pub points: Vec<WallPoint>,
+    /// For each point, how far along its ring it is, in tile units, counting only the
+    /// edges that have walls: the horizontal coordinate of `fill-extrusion-pattern` on
+    /// walls. As in MapLibre, a wall's quad has this point's distance at the *next*
+    /// point's end and the next point's distance at this end.
+    ///
+    /// Only with [`Self::patterns`]; empty otherwise, as nothing else reads them.
+    pub edge_distances: Vec<f32>,
     /// One per point, as [`ExtrusionRoofs::patterns`] has one per vertex.
     pub patterns: Vec<FillExtrusionPattern>,
     /// Per-point values of
@@ -153,6 +155,7 @@ impl LayerBuilder for FillExtrusionBuilder<'_> {
             feature.geometry,
             feature.pre_tessellated,
             self.extent,
+            self.images.is_some(),
         );
         if counts(bucket) == before {
             return;
@@ -191,13 +194,15 @@ impl LayerBuilder for FillExtrusionBuilder<'_> {
     }
 }
 
-/// Add the roof and walls of a polygon or multi-polygon; anything else is ignored.
+/// Add the roof and walls of a polygon or multi-polygon; anything else is ignored. With
+/// `edge_distances`, for patterns, the walls' distances along their rings too.
 fn add_extrusion(
     bucket: &mut FillExtrusionBucket,
     roofs: &mut RoofScratch,
     geometry: &Geometry<i32>,
     pre_tessellated: Option<PreTessellated<'_>>,
     extent: i32,
+    edge_distances: bool,
 ) {
     let polygons = match geometry {
         Geometry::Polygon(p) => std::slice::from_ref(p),
@@ -222,17 +227,24 @@ fn add_extrusion(
     roof.triangles
         .extend(fill.triangles.iter().map(|&i| i + base));
 
+    let walls = &mut bucket.walls;
     for polygon in polygons {
-        add_walls(&mut bucket.walls, polygon.exterior(), false, extent);
+        add_walls(walls, polygon.exterior(), false, extent, edge_distances);
         for hole in polygon.interiors() {
-            add_walls(&mut bucket.walls, hole, true, extent);
+            add_walls(walls, hole, true, extent, edge_distances);
         }
     }
 }
 
 /// A wall per ring edge, except for edges along the tile's clipped border: the neighbouring
 /// tile's copy of the polygon continues there, so the wall would be inside the building.
-fn add_walls(walls: &mut ExtrusionWalls, ring: &LineString<i32>, hole: bool, extent: i32) {
+fn add_walls(
+    walls: &mut ExtrusionWalls,
+    ring: &LineString<i32>,
+    hole: bool,
+    extent: i32,
+    edge_distances: bool,
+) {
     // Rings may or may not repeat their first vertex at the end; walk them as closed.
     let points = match ring.0.as_slice() {
         [first, rest @ .., last] if first == last => &ring.0[..rest.len() + 1],
@@ -252,28 +264,35 @@ fn add_walls(walls: &mut ExtrusionWalls, ring: &LineString<i32>, hole: bool, ext
     let start = walls.points.len();
     let mut edge_distance = 0.0;
     let mut any = false;
-    let point = |p: Coord<i32>, edge_distance, normal| WallPoint {
-        position: [p.x as f32, p.y as f32],
-        edge_distance,
-        normal,
+    let mut push = |p: Coord<i32>, edge_distance, normal| {
+        walls.points.push(WallPoint {
+            position: [p.x as f32, p.y as f32],
+            normal,
+        });
+        if edge_distances {
+            walls.edge_distances.push(edge_distance);
+        }
     };
     for (&p0, &p1) in edges() {
         if p0 == p1 || is_boundary_edge(p0, p1, extent) {
-            walls.points.push(point(p0, edge_distance, [0.0; 2]));
+            push(p0, edge_distance, [0.0; 2]);
             continue;
         }
         let d = [(p1.x - p0.x) as f32, (p1.y - p0.y) as f32];
         let length = d[0].hypot(d[1]);
         let normal = [-d[1] / length * sign, d[0] / length * sign];
-        walls.points.push(point(p0, edge_distance, normal));
+        push(p0, edge_distance, normal);
         edge_distance += length;
         any = true;
     }
     if any {
         // The last wall ends at the first point; no wall starts there.
-        walls.points.push(point(points[0], edge_distance, [0.0; 2]));
+        push(points[0], edge_distance, [0.0; 2]);
     } else {
         walls.points.truncate(start);
+        if edge_distances {
+            walls.edge_distances.truncate(start);
+        }
     }
 }
 
@@ -298,6 +317,7 @@ mod tests {
             geometry,
             None,
             4096,
+            true,
         );
         bucket
     }
@@ -307,14 +327,15 @@ mod tests {
     type Quad = ([([f32; 2], f32); 4], [f32; 2]);
 
     fn quads(b: &FillExtrusionBucket) -> Vec<Quad> {
-        b.walls
-            .points
-            .windows(2)
-            .filter(|w| w[0].normal != [0.0; 2])
-            .map(|w| {
-                let (this, next) = (w[0], w[1]);
-                let at_next = (next.position, this.edge_distance);
-                let at_this = (this.position, next.edge_distance);
+        let walls = &b.walls;
+        assert_eq!(walls.edge_distances.len(), walls.points.len());
+        (0..walls.instances())
+            .filter(|&i| walls.points[i].normal != [0.0; 2])
+            .map(|i| {
+                let (this, next) = (walls.points[i], walls.points[i + 1]);
+                let distances = &walls.edge_distances;
+                let at_next = (next.position, distances[i]);
+                let at_this = (this.position, distances[i + 1]);
                 ([at_next, at_next, at_this, at_this], this.normal)
             })
             .collect()
@@ -392,7 +413,7 @@ mod tests {
         assert_eq!(quads(&b).len(), 2);
         // Skipped edges add nothing to the distance along the ring: 164 along the top,
         // then 160 down the right side.
-        assert_eq!(b.walls.points.last().unwrap().edge_distance, 324.0);
+        assert_eq!(b.walls.edge_distances.last(), Some(&324.0));
         // An edge exactly on the tile border is a real wall, as in MapLibre.
         let on_border =
             polygon![(x: 0, y: 0), (x: 10, y: 0), (x: 10, y: 10), (x: 0, y: 10), (x: 0, y: 0)];

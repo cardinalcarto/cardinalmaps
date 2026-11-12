@@ -119,6 +119,8 @@ fn widen_r8(pixels: &[u8]) -> Vec<u8> {
 pub enum VertexFormat {
     Float32 = 0,
     Float32x2 = 1,
+    // Unused for now, but the Dart side takes formats by these numbers.
+    #[allow(dead_code)]
     Float32x3 = 2,
     Float32x4 = 3,
 }

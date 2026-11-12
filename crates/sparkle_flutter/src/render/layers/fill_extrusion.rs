@@ -53,6 +53,8 @@ pub struct FillExtrusionRenderer {
     /// their pipelines can use the same shaders: the first once per instance by roofs, one
     /// per corner by walls.
     no_pattern: Buffer,
+    /// Zero edge distances, one per corner, read by walls without patterns.
+    no_edges: Buffer,
     targets: Option<Targets>,
     /// Whether a layer was drawn since the last `prepare`: the next one starts a frame and
     /// clears the shared depth buffer.
@@ -92,8 +94,8 @@ struct GpuRoofs {
 
 struct GpuWalls {
     points: Buffer,
-    /// `None` when the bucket has no patterns.
-    patterns: Option<Buffer>,
+    /// The patterns and edge distances; `None` when the bucket has no patterns.
+    patterns: Option<(Buffer, Buffer)>,
     instances: u32,
     paint: GpuPaint,
 }
@@ -114,6 +116,7 @@ impl FillExtrusionRenderer {
             wall_corners: gpu.buffer(bytemuck::cast_slice(&corners)),
             composite,
             no_pattern: gpu.buffer(bytemuck::cast_slice(&[FillExtrusionPattern::default(); 6])),
+            no_edges: gpu.buffer(bytemuck::cast_slice(&[0f32; 6])),
             targets: None,
             frame_done: true,
         }
@@ -144,21 +147,35 @@ impl FillExtrusionRenderer {
                 }
                 let mut paint = paint.vertex_buffers();
                 let mut vertex_buffers = if walls {
-                    // Position and edge distance, then normal: this point's, then the
-                    // next one's position and edge distance.
-                    let mut point = VertexBufferLayout::packed(&[
-                        ("pos_edge", VertexFormat::Float32x3),
-                        ("normal_xy", VertexFormat::Float32x2),
-                    ]);
+                    // Position and normal: this point's, then the next one's position.
+                    let mut point =
+                        VertexBufferLayout::packed(&[("pos_normal", VertexFormat::Float32x4)]);
                     debug_assert_eq!(point.stride as usize, size_of::<WallPoint>());
                     point.step = StepMode::Instance;
                     let mut next =
-                        VertexBufferLayout::packed(&[("next_pos_edge", VertexFormat::Float32x3)]);
+                        VertexBufferLayout::packed(&[("next_pos", VertexFormat::Float32x2)]);
                     next.stride = point.stride;
                     next.step = StepMode::Instance;
                     let corner = VertexBufferLayout::packed(&[("corner", VertexFormat::Float32x2)]);
+                    // Edge distances, as patterns are: per wall, or the zeros of
+                    // `no_edges` by vertex index.
+                    let edges = |name| {
+                        let mut layout =
+                            VertexBufferLayout::packed(&[(name, VertexFormat::Float32)]);
+                        if patterns {
+                            layout.step = StepMode::Instance;
+                        }
+                        layout
+                    };
                     paint.iter_mut().for_each(|b| b.step = StepMode::Instance);
-                    vec![point, next, corner, pattern]
+                    vec![
+                        point,
+                        next,
+                        corner,
+                        pattern,
+                        edges("edge"),
+                        edges("next_edge"),
+                    ]
                 } else {
                     let vertex = VertexBufferLayout::packed(&[("pos", VertexFormat::Float32x2)]);
                     vec![vertex, pattern]
@@ -293,8 +310,20 @@ impl FillExtrusionRenderer {
                 pass.set_vertex_buffer(0, Slice::Buffer(&walls.points, 0, size));
                 pass.set_vertex_buffer(1, Slice::Buffer(&walls.points, stride, size - stride));
                 pass.set_vertex_buffer(2, self.wall_corners.slice());
-                pass.set_vertex_buffer(3, patterns.unwrap_or(&self.no_pattern).slice());
-                walls.paint.bind(gpu, pass, 4);
+                match patterns {
+                    Some((patterns, edges)) => {
+                        pass.set_vertex_buffer(3, patterns.slice());
+                        let size = (walls.instances + 1) * 4;
+                        pass.set_vertex_buffer(4, Slice::Buffer(edges, 0, size));
+                        pass.set_vertex_buffer(5, Slice::Buffer(edges, 4, size - 4));
+                    }
+                    None => {
+                        pass.set_vertex_buffer(3, self.no_pattern.slice());
+                        pass.set_vertex_buffer(4, self.no_edges.slice());
+                        pass.set_vertex_buffer(5, self.no_edges.slice());
+                    }
+                }
+                walls.paint.bind(gpu, pass, 6);
                 pass.draw(6, walls.instances);
             }
         }
@@ -324,7 +353,8 @@ impl LayerRenderer for FillExtrusionRenderer {
             }),
             walls: (walls.instances() > 0).then(|| GpuWalls {
                 points: gpu.buffer(bytemuck::cast_slice(&walls.points)),
-                patterns: patterns(&walls.patterns),
+                patterns: patterns(&walls.patterns)
+                    .map(|p| (p, gpu.buffer(bytemuck::cast_slice(&walls.edge_distances)))),
                 instances: walls.instances() as u32,
                 paint: GpuPaint::new(gpu, &walls.paint),
             }),
