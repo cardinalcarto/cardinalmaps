@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/map.dart';
+import 'api/offline.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -22,6 +23,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   });
 
   CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_MapPlannerPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlannerPtr;
+
+  CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_SparkleMapPtr => wire
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMapPtr;
 
@@ -29,8 +34,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
+  MapPlanner
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    dynamic raw,
+  );
+
+  @protected
   SparkleMap
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+    dynamic raw,
+  );
+
+  @protected
+  MapPlanner
+  dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    dynamic raw,
+  );
+
+  @protected
+  MapPlanner
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
     dynamic raw,
   );
 
@@ -42,6 +65,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Map<String, String> dco_decode_Map_String_String_None(dynamic raw);
+
+  @protected
+  MapPlanner
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    dynamic raw,
+  );
 
   @protected
   SparkleMap
@@ -71,6 +100,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MapPadding dco_decode_box_autoadd_map_padding(dynamic raw);
 
   @protected
+  ByteRange dco_decode_byte_range(dynamic raw);
+
+  @protected
   CameraState dco_decode_camera_state(dynamic raw);
 
   @protected
@@ -98,7 +130,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
+  List<ByteRange> dco_decode_list_byte_range(dynamic raw);
+
+  @protected
   List<ClickedFeature> dco_decode_list_clicked_feature(dynamic raw);
+
+  @protected
+  List<LngLat> dco_decode_list_lng_lat(dynamic raw);
+
+  @protected
+  List<MapChunkPlan> dco_decode_list_map_chunk_plan(dynamic raw);
+
+  @protected
+  List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
@@ -113,7 +157,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   LngLat dco_decode_lng_lat(dynamic raw);
 
   @protected
+  MapChunkPlan dco_decode_map_chunk_plan(dynamic raw);
+
+  @protected
+  MapError dco_decode_map_error(dynamic raw);
+
+  @protected
+  MapErrorKind dco_decode_map_error_kind(dynamic raw);
+
+  @protected
   MapPadding dco_decode_map_padding(dynamic raw);
+
+  @protected
+  MapRegionPlan dco_decode_map_region_plan(dynamic raw);
 
   @protected
   Map<String, String>? dco_decode_opt_Map_String_String_None(dynamic raw);
@@ -143,14 +199,35 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void dco_decode_unit(dynamic raw);
 
   @protected
+  UnpackedChunk dco_decode_unpacked_chunk(dynamic raw);
+
+  @protected
   BigInt dco_decode_usize(dynamic raw);
 
   @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  MapPlanner
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SparkleMap
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  MapPlanner
+  sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  MapPlanner
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
     SseDeserializer deserializer,
   );
 
@@ -162,6 +239,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Map<String, String> sse_decode_Map_String_String_None(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  MapPlanner
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
     SseDeserializer deserializer,
   );
 
@@ -195,6 +278,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MapPadding sse_decode_box_autoadd_map_padding(SseDeserializer deserializer);
 
   @protected
+  ByteRange sse_decode_byte_range(SseDeserializer deserializer);
+
+  @protected
   CameraState sse_decode_camera_state(SseDeserializer deserializer);
 
   @protected
@@ -222,9 +308,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
+  List<ByteRange> sse_decode_list_byte_range(SseDeserializer deserializer);
+
+  @protected
   List<ClickedFeature> sse_decode_list_clicked_feature(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<LngLat> sse_decode_list_lng_lat(SseDeserializer deserializer);
+
+  @protected
+  List<MapChunkPlan> sse_decode_list_map_chunk_plan(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
@@ -243,7 +343,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   LngLat sse_decode_lng_lat(SseDeserializer deserializer);
 
   @protected
+  MapChunkPlan sse_decode_map_chunk_plan(SseDeserializer deserializer);
+
+  @protected
+  MapError sse_decode_map_error(SseDeserializer deserializer);
+
+  @protected
+  MapErrorKind sse_decode_map_error_kind(SseDeserializer deserializer);
+
+  @protected
   MapPadding sse_decode_map_padding(SseDeserializer deserializer);
+
+  @protected
+  MapRegionPlan sse_decode_map_region_plan(SseDeserializer deserializer);
 
   @protected
   Map<String, String>? sse_decode_opt_Map_String_String_None(
@@ -277,6 +389,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  UnpackedChunk sse_decode_unpacked_chunk(SseDeserializer deserializer);
+
+  @protected
   BigInt sse_decode_usize(SseDeserializer deserializer);
 
   @protected
@@ -287,8 +402,29 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    MapPlanner self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
     SparkleMap self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    MapPlanner self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    MapPlanner self,
     SseSerializer serializer,
   );
 
@@ -302,6 +438,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_Map_String_String_None(
     Map<String, String> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    MapPlanner self,
     SseSerializer serializer,
   );
 
@@ -343,6 +486,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_byte_range(ByteRange self, SseSerializer serializer);
+
+  @protected
   void sse_encode_camera_state(CameraState self, SseSerializer serializer);
 
   @protected
@@ -373,10 +519,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_byte_range(
+    List<ByteRange> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_clicked_feature(
     List<ClickedFeature> self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_list_lng_lat(List<LngLat> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_map_chunk_plan(
+    List<MapChunkPlan> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_strict(
@@ -400,7 +564,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_lng_lat(LngLat self, SseSerializer serializer);
 
   @protected
+  void sse_encode_map_chunk_plan(MapChunkPlan self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_map_error(MapError self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_map_error_kind(MapErrorKind self, SseSerializer serializer);
+
+  @protected
   void sse_encode_map_padding(MapPadding self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_map_region_plan(MapRegionPlan self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_Map_String_String_None(
@@ -442,6 +618,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_unit(void self, SseSerializer serializer);
 
   @protected
+  void sse_encode_unpacked_chunk(UnpackedChunk self, SseSerializer serializer);
+
+  @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer);
 }
 
@@ -458,6 +637,40 @@ class RustLibWire implements BaseWire {
   /// The symbols are looked up in [dynamicLibrary].
   RustLibWire(ffi.DynamicLibrary dynamicLibrary)
     : _lookup = dynamicLibrary.lookup;
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlannerPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_sparkle_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner',
+      );
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlannerPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlannerPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_sparkle_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner',
+      );
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlannerPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void
   rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(

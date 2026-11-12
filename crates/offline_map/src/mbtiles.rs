@@ -127,6 +127,14 @@ impl Basemap {
             ("maxzoom", header.max_zoom.to_string()),
             ("bounds", format!("{w},{s},{e},{n}")),
             ("center", format!("{lng},{lat},{zoom}")),
+            (
+                "compression",
+                match header.tile_compression {
+                    Compression::Gzip => "gzip",
+                    _ => "none",
+                }
+                .to_owned(),
+            ),
         ];
         let tx = self.conn.unchecked_transaction()?;
         for (key, value) in rows {
@@ -137,6 +145,27 @@ impl Basemap {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// How the tiles are compressed, as [`Self::set_metadata`] recorded it.
+    ///
+    /// # Errors
+    ///
+    /// If it can't be read.
+    pub fn compression(&self) -> Result<Compression, Error> {
+        let value: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM metadata WHERE name = 'compression'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(match value.as_deref() {
+            Some("gzip") => Compression::Gzip,
+            Some(_) => Compression::None,
+            None => Compression::Unknown,
+        })
     }
 
     /// Which of `tiles` the file has.

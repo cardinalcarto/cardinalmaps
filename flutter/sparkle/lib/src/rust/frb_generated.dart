@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/map.dart';
+import 'api/offline.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -69,7 +70,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 1224253473;
+  int get rustContentHash => 442197493;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -81,6 +82,28 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
+  Future<void> crateApiOfflineMapPlannerAddLeaf({
+    required MapPlanner that,
+    required PlatformInt64 offset,
+    required List<int> bytes,
+  });
+
+  Future<MapRegionPlan> crateApiOfflineMapPlannerFinish({
+    required MapPlanner that,
+    String? basemap,
+  });
+
+  List<ByteRange> crateApiOfflineMapPlannerNeededLeaves({
+    required MapPlanner that,
+  });
+
+  Future<MapPlanner> crateApiOfflineMapPlannerNew({
+    required List<int> firstBytes,
+    required List<LngLat> polygon,
+    required int minZoom,
+    required int maxZoom,
+  });
+
   void crateApiMapSparkleMapAddImages({
     required SparkleMap that,
     required List<SpriteImageInput> images,
@@ -244,7 +267,47 @@ abstract class RustLibApi extends BaseApi {
 
   Stream<int> crateApiMapSparkleMapWakeStream({required SparkleMap that});
 
+  Future<int> crateApiOfflineBasemapClaim({
+    required String path,
+    required PlatformInt64 region,
+    required List<int> tileKeys,
+  });
+
+  Future<void> crateApiOfflineBasemapPrepare({
+    required String path,
+    required List<int> headerBytes,
+    required String name,
+  });
+
+  Future<PlatformInt64> crateApiOfflineBasemapRegionTiles({
+    required String path,
+    required PlatformInt64 region,
+  });
+
+  Future<PlatformInt64> crateApiOfflineBasemapRelease({
+    required String path,
+    required PlatformInt64 region,
+  });
+
+  Future<UnpackedChunk> crateApiOfflineBasemapUnpack({
+    required String path,
+    required String chunkFile,
+    required PlatformInt64 expectedLength,
+    required List<int> tiles,
+    required PlatformInt64 region,
+  });
+
   Future<void> crateApiMapInitApp();
+
+  PlatformInt64 crateApiOfflineMapFirstFetch();
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_MapPlanner;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_MapPlanner;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_MapPlannerPtr;
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_SparkleMap;
@@ -264,6 +327,155 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
+  Future<void> crateApiOfflineMapPlannerAddLeaf({
+    required MapPlanner that,
+    required PlatformInt64 offset,
+    required List<int> bytes,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+            that,
+            serializer,
+          );
+          sse_encode_i_64(offset, serializer);
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 1,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_map_error,
+        ),
+        constMeta: kCrateApiOfflineMapPlannerAddLeafConstMeta,
+        argValues: [that, offset, bytes],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineMapPlannerAddLeafConstMeta =>
+      const TaskConstMeta(
+        debugName: "MapPlanner_add_leaf",
+        argNames: ["that", "offset", "bytes"],
+      );
+
+  @override
+  Future<MapRegionPlan> crateApiOfflineMapPlannerFinish({
+    required MapPlanner that,
+    String? basemap,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+            that,
+            serializer,
+          );
+          sse_encode_opt_String(basemap, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 2,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_map_region_plan,
+          decodeErrorData: sse_decode_map_error,
+        ),
+        constMeta: kCrateApiOfflineMapPlannerFinishConstMeta,
+        argValues: [that, basemap],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineMapPlannerFinishConstMeta =>
+      const TaskConstMeta(
+        debugName: "MapPlanner_finish",
+        argNames: ["that", "basemap"],
+      );
+
+  @override
+  List<ByteRange> crateApiOfflineMapPlannerNeededLeaves({
+    required MapPlanner that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_byte_range,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiOfflineMapPlannerNeededLeavesConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineMapPlannerNeededLeavesConstMeta =>
+      const TaskConstMeta(
+        debugName: "MapPlanner_needed_leaves",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<MapPlanner> crateApiOfflineMapPlannerNew({
+    required List<int> firstBytes,
+    required List<LngLat> polygon,
+    required int minZoom,
+    required int maxZoom,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(firstBytes, serializer);
+          sse_encode_list_lng_lat(polygon, serializer);
+          sse_encode_u_8(minZoom, serializer);
+          sse_encode_u_8(maxZoom, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 4,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner,
+          decodeErrorData: sse_decode_map_error,
+        ),
+        constMeta: kCrateApiOfflineMapPlannerNewConstMeta,
+        argValues: [firstBytes, polygon, minZoom, maxZoom],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineMapPlannerNewConstMeta =>
+      const TaskConstMeta(
+        debugName: "MapPlanner_new",
+        argNames: ["firstBytes", "polygon", "minZoom", "maxZoom"],
+      );
+
+  @override
   void crateApiMapSparkleMapAddImages({
     required SparkleMap that,
     required List<SpriteImageInput> images,
@@ -277,7 +489,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_list_sprite_image_input(images, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -306,7 +518,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_camera_state,
@@ -332,7 +544,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -367,7 +579,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -401,7 +613,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -438,7 +650,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(lng, serializer);
           sse_encode_f_64(lat, serializer);
           sse_encode_f_64(zoom, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -466,7 +678,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_frame_output,
@@ -492,7 +704,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -521,7 +733,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -556,7 +768,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_String(key, serializer);
           sse_encode_bool(shift, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -594,7 +806,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 15,
             port: port_,
           );
         },
@@ -639,7 +851,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(dy, serializer);
           sse_encode_f_64(scale, serializer);
           sse_encode_f_64(rotation, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -668,7 +880,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -703,7 +915,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -742,7 +954,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(y, serializer);
           sse_encode_u_32(button, serializer);
           sse_encode_bool(rotate, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -777,7 +989,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -816,7 +1028,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(y, serializer);
           sse_encode_u_32(button, serializer);
           sse_encode_bool(click, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -845,7 +1057,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -882,7 +1094,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
           sse_encode_f_64(dy, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -919,7 +1131,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_32(width, serializer);
           sse_encode_u_32(height, serializer);
           sse_encode_f_64(pixelRatio, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -954,7 +1166,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_box_autoadd_lng_lat,
@@ -983,7 +1195,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_String,
@@ -1020,7 +1232,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
           sse_encode_f_64(delta, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1055,7 +1267,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_String(source, serializer);
           sse_encode_String(geojson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1088,7 +1300,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_box_autoadd_map_padding(padding, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -1131,7 +1343,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(north, serializer);
           sse_encode_f_64(maxZoom, serializer);
           sse_encode_f_64(margin, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1170,7 +1382,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_clicked_feature,
@@ -1213,7 +1425,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_i_64(tileX, serializer);
           sse_encode_u_32(tileY, serializer);
           sse_encode_u_64(id, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_Map_String_String_None,
@@ -1254,7 +1466,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_f_64(dy, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1282,7 +1494,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1317,7 +1529,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 31,
+              funcId: 35,
               port: port_,
             );
           },
@@ -1341,6 +1553,191 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<int> crateApiOfflineBasemapClaim({
+    required String path,
+    required PlatformInt64 region,
+    required List<int> tileKeys,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          sse_encode_i_64(region, serializer);
+          sse_encode_list_prim_u_8_loose(tileKeys, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 36,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_32,
+          decodeErrorData: sse_decode_map_error,
+        ),
+        constMeta: kCrateApiOfflineBasemapClaimConstMeta,
+        argValues: [path, region, tileKeys],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineBasemapClaimConstMeta =>
+      const TaskConstMeta(
+        debugName: "basemap_claim",
+        argNames: ["path", "region", "tileKeys"],
+      );
+
+  @override
+  Future<void> crateApiOfflineBasemapPrepare({
+    required String path,
+    required List<int> headerBytes,
+    required String name,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          sse_encode_list_prim_u_8_loose(headerBytes, serializer);
+          sse_encode_String(name, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 37,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_map_error,
+        ),
+        constMeta: kCrateApiOfflineBasemapPrepareConstMeta,
+        argValues: [path, headerBytes, name],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineBasemapPrepareConstMeta =>
+      const TaskConstMeta(
+        debugName: "basemap_prepare",
+        argNames: ["path", "headerBytes", "name"],
+      );
+
+  @override
+  Future<PlatformInt64> crateApiOfflineBasemapRegionTiles({
+    required String path,
+    required PlatformInt64 region,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          sse_encode_i_64(region, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 38,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: sse_decode_map_error,
+        ),
+        constMeta: kCrateApiOfflineBasemapRegionTilesConstMeta,
+        argValues: [path, region],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineBasemapRegionTilesConstMeta =>
+      const TaskConstMeta(
+        debugName: "basemap_region_tiles",
+        argNames: ["path", "region"],
+      );
+
+  @override
+  Future<PlatformInt64> crateApiOfflineBasemapRelease({
+    required String path,
+    required PlatformInt64 region,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          sse_encode_i_64(region, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 39,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: sse_decode_map_error,
+        ),
+        constMeta: kCrateApiOfflineBasemapReleaseConstMeta,
+        argValues: [path, region],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineBasemapReleaseConstMeta =>
+      const TaskConstMeta(
+        debugName: "basemap_release",
+        argNames: ["path", "region"],
+      );
+
+  @override
+  Future<UnpackedChunk> crateApiOfflineBasemapUnpack({
+    required String path,
+    required String chunkFile,
+    required PlatformInt64 expectedLength,
+    required List<int> tiles,
+    required PlatformInt64 region,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          sse_encode_String(chunkFile, serializer);
+          sse_encode_i_64(expectedLength, serializer);
+          sse_encode_list_prim_u_8_loose(tiles, serializer);
+          sse_encode_i_64(region, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 40,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unpacked_chunk,
+          decodeErrorData: sse_decode_map_error,
+        ),
+        constMeta: kCrateApiOfflineBasemapUnpackConstMeta,
+        argValues: [path, chunkFile, expectedLength, tiles, region],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineBasemapUnpackConstMeta =>
+      const TaskConstMeta(
+        debugName: "basemap_unpack",
+        argNames: ["path", "chunkFile", "expectedLength", "tiles", "region"],
+      );
+
+  @override
   Future<void> crateApiMapInitApp() {
     return handler.executeNormal(
       NormalTask(
@@ -1349,7 +1746,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 32,
+            funcId: 41,
             port: port_,
           );
         },
@@ -1367,6 +1764,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiMapInitAppConstMeta =>
       const TaskConstMeta(debugName: "init_app", argNames: []);
 
+  @override
+  PlatformInt64 crateApiOfflineMapFirstFetch() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 42)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiOfflineMapFirstFetchConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineMapFirstFetchConstMeta =>
+      const TaskConstMeta(debugName: "map_first_fetch", argNames: []);
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_MapPlanner => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_MapPlanner => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner;
+
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_SparkleMap => wire
       .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap;
@@ -1382,12 +1809,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MapPlanner
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return MapPlannerImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   SparkleMap
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
     dynamic raw,
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return SparkleMapImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  MapPlanner
+  dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return MapPlannerImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  MapPlanner
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return MapPlannerImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1406,6 +1860,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       dco_decode_list_record_string_string(raw)
           .map((e) => MapEntry(e.$1, e.$2)),
     );
+  }
+
+  @protected
+  MapPlanner
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return MapPlannerImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1463,6 +1926,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   MapPadding dco_decode_box_autoadd_map_padding(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_map_padding(raw);
+  }
+
+  @protected
+  ByteRange dco_decode_byte_range(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return ByteRange(
+      offset: dco_decode_i_64(arr[0]),
+      length: dco_decode_i_64(arr[1]),
+    );
   }
 
   @protected
@@ -1564,9 +2039,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ByteRange> dco_decode_list_byte_range(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_byte_range).toList();
+  }
+
+  @protected
   List<ClickedFeature> dco_decode_list_clicked_feature(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_clicked_feature).toList();
+  }
+
+  @protected
+  List<LngLat> dco_decode_list_lng_lat(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_lng_lat).toList();
+  }
+
+  @protected
+  List<MapChunkPlan> dco_decode_list_map_chunk_plan(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_map_chunk_plan).toList();
+  }
+
+  @protected
+  List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as List<int>;
   }
 
   @protected
@@ -1597,6 +2096,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MapChunkPlan dco_decode_map_chunk_plan(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return MapChunkPlan(
+      offset: dco_decode_i_64(arr[0]),
+      length: dco_decode_i_64(arr[1]),
+      tileCount: dco_decode_u_32(arr[2]),
+      tiles: dco_decode_list_prim_u_8_strict(arr[3]),
+    );
+  }
+
+  @protected
+  MapError dco_decode_map_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return MapError(
+      kind: dco_decode_map_error_kind(arr[0]),
+      message: dco_decode_String(arr[1]),
+    );
+  }
+
+  @protected
+  MapErrorKind dco_decode_map_error_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return MapErrorKind.values[raw as int];
+  }
+
+  @protected
   MapPadding dco_decode_map_padding(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -1607,6 +2138,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       right: dco_decode_f_64(arr[1]),
       bottom: dco_decode_f_64(arr[2]),
       left: dco_decode_f_64(arr[3]),
+    );
+  }
+
+  @protected
+  MapRegionPlan dco_decode_map_region_plan(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return MapRegionPlan(
+      coveringTiles: dco_decode_u_32(arr[0]),
+      archiveTiles: dco_decode_u_32(arr[1]),
+      presentTiles: dco_decode_u_32(arr[2]),
+      tileBytes: dco_decode_i_64(arr[3]),
+      rangeBytes: dco_decode_i_64(arr[4]),
+      chunks: dco_decode_list_map_chunk_plan(arr[5]),
+      tileKeys: dco_decode_list_prim_u_8_strict(arr[6]),
     );
   }
 
@@ -1678,6 +2226,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UnpackedChunk dco_decode_unpacked_chunk(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return UnpackedChunk(
+      tiles: dco_decode_i_64(arr[0]),
+      bytes: dco_decode_i_64(arr[1]),
+    );
+  }
+
+  @protected
   BigInt dco_decode_usize(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dcoDecodeU64(raw);
@@ -1691,12 +2251,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MapPlanner
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return MapPlannerImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   SparkleMap
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return SparkleMapImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  MapPlanner
+  sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return MapPlannerImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  MapPlanner
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return MapPlannerImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -1721,6 +2317,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_list_record_string_string(deserializer);
     return Map.fromEntries(inner.map((e) => MapEntry(e.$1, e.$2)));
+  }
+
+  @protected
+  MapPlanner
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return MapPlannerImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
   }
 
   @protected
@@ -1780,6 +2388,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   MapPadding sse_decode_box_autoadd_map_padding(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_map_padding(deserializer));
+  }
+
+  @protected
+  ByteRange sse_decode_byte_range(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_offset = sse_decode_i_64(deserializer);
+    var var_length = sse_decode_i_64(deserializer);
+    return ByteRange(offset: var_offset, length: var_length);
   }
 
   @protected
@@ -1903,6 +2519,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ByteRange> sse_decode_list_byte_range(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ByteRange>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_byte_range(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<ClickedFeature> sse_decode_list_clicked_feature(
     SseDeserializer deserializer,
   ) {
@@ -1914,6 +2542,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       ans_.add(sse_decode_clicked_feature(deserializer));
     }
     return ans_;
+  }
+
+  @protected
+  List<LngLat> sse_decode_list_lng_lat(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <LngLat>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_lng_lat(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<MapChunkPlan> sse_decode_list_map_chunk_plan(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <MapChunkPlan>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_map_chunk_plan(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint8List(len_);
   }
 
   @protected
@@ -1960,6 +2621,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MapChunkPlan sse_decode_map_chunk_plan(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_offset = sse_decode_i_64(deserializer);
+    var var_length = sse_decode_i_64(deserializer);
+    var var_tileCount = sse_decode_u_32(deserializer);
+    var var_tiles = sse_decode_list_prim_u_8_strict(deserializer);
+    return MapChunkPlan(
+      offset: var_offset,
+      length: var_length,
+      tileCount: var_tileCount,
+      tiles: var_tiles,
+    );
+  }
+
+  @protected
+  MapError sse_decode_map_error(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_kind = sse_decode_map_error_kind(deserializer);
+    var var_message = sse_decode_String(deserializer);
+    return MapError(kind: var_kind, message: var_message);
+  }
+
+  @protected
+  MapErrorKind sse_decode_map_error_kind(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return MapErrorKind.values[inner];
+  }
+
+  @protected
   MapPadding sse_decode_map_padding(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_top = sse_decode_f_64(deserializer);
@@ -1971,6 +2662,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       right: var_right,
       bottom: var_bottom,
       left: var_left,
+    );
+  }
+
+  @protected
+  MapRegionPlan sse_decode_map_region_plan(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_coveringTiles = sse_decode_u_32(deserializer);
+    var var_archiveTiles = sse_decode_u_32(deserializer);
+    var var_presentTiles = sse_decode_u_32(deserializer);
+    var var_tileBytes = sse_decode_i_64(deserializer);
+    var var_rangeBytes = sse_decode_i_64(deserializer);
+    var var_chunks = sse_decode_list_map_chunk_plan(deserializer);
+    var var_tileKeys = sse_decode_list_prim_u_8_strict(deserializer);
+    return MapRegionPlan(
+      coveringTiles: var_coveringTiles,
+      archiveTiles: var_archiveTiles,
+      presentTiles: var_presentTiles,
+      tileBytes: var_tileBytes,
+      rangeBytes: var_rangeBytes,
+      chunks: var_chunks,
+      tileKeys: var_tileKeys,
     );
   }
 
@@ -2060,6 +2772,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UnpackedChunk sse_decode_unpacked_chunk(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_tiles = sse_decode_i_64(deserializer);
+    var var_bytes = sse_decode_i_64(deserializer);
+    return UnpackedChunk(tiles: var_tiles, bytes: var_bytes);
+  }
+
+  @protected
   BigInt sse_decode_usize(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getBigUint64();
@@ -2076,6 +2796,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    MapPlanner self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as MapPlannerImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
     SparkleMap self,
     SseSerializer serializer,
@@ -2083,6 +2816,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as SparkleMapImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    MapPlanner self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as MapPlannerImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    MapPlanner self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as MapPlannerImpl).frbInternalSseEncode(move: false),
       serializer,
     );
   }
@@ -2108,6 +2867,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_record_string_string(
       self.entries.map((e) => (e.key, e.value)).toList(),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+    MapPlanner self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as MapPlannerImpl).frbInternalSseEncode(move: null),
       serializer,
     );
   }
@@ -2183,6 +2955,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_map_padding(self, serializer);
+  }
+
+  @protected
+  void sse_encode_byte_range(ByteRange self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.offset, serializer);
+    sse_encode_i_64(self.length, serializer);
   }
 
   @protected
@@ -2270,6 +3049,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_byte_range(
+    List<ByteRange> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_byte_range(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_clicked_feature(
     List<ClickedFeature> self,
     SseSerializer serializer,
@@ -2279,6 +3070,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     for (final item in self) {
       sse_encode_clicked_feature(item, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_list_lng_lat(List<LngLat> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_lng_lat(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_map_chunk_plan(
+    List<MapChunkPlan> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_map_chunk_plan(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_prim_u_8_loose(
+    List<int> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint8List(
+      self is Uint8List ? self : Uint8List.fromList(self),
+    );
   }
 
   @protected
@@ -2323,12 +3147,49 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_map_chunk_plan(MapChunkPlan self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.offset, serializer);
+    sse_encode_i_64(self.length, serializer);
+    sse_encode_u_32(self.tileCount, serializer);
+    sse_encode_list_prim_u_8_strict(self.tiles, serializer);
+  }
+
+  @protected
+  void sse_encode_map_error(MapError self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_map_error_kind(self.kind, serializer);
+    sse_encode_String(self.message, serializer);
+  }
+
+  @protected
+  void sse_encode_map_error_kind(MapErrorKind self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_map_padding(MapPadding self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_f_64(self.top, serializer);
     sse_encode_f_64(self.right, serializer);
     sse_encode_f_64(self.bottom, serializer);
     sse_encode_f_64(self.left, serializer);
+  }
+
+  @protected
+  void sse_encode_map_region_plan(
+    MapRegionPlan self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.coveringTiles, serializer);
+    sse_encode_u_32(self.archiveTiles, serializer);
+    sse_encode_u_32(self.presentTiles, serializer);
+    sse_encode_i_64(self.tileBytes, serializer);
+    sse_encode_i_64(self.rangeBytes, serializer);
+    sse_encode_list_map_chunk_plan(self.chunks, serializer);
+    sse_encode_list_prim_u_8_strict(self.tileKeys, serializer);
   }
 
   @protected
@@ -2414,10 +3275,56 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_unpacked_chunk(UnpackedChunk self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.tiles, serializer);
+    sse_encode_i_64(self.bytes, serializer);
+  }
+
+  @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putBigUint64(self);
   }
+}
+
+@sealed
+class MapPlannerImpl extends RustOpaque implements MapPlanner {
+  // Not to be used by end users
+  MapPlannerImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  MapPlannerImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_MapPlanner,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_MapPlanner,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_MapPlannerPtr,
+  );
+
+  /// Adds a leaf directory fetched from `offset`.
+  Future<void> addLeaf({
+    required PlatformInt64 offset,
+    required List<int> bytes,
+  }) => RustLib.instance.api.crateApiOfflineMapPlannerAddLeaf(
+    that: this,
+    offset: offset,
+    bytes: bytes,
+  );
+
+  /// The region's plan: its tiles, less those `basemap` (if it exists) has, in ranges.
+  Future<MapRegionPlan> finish({String? basemap}) => RustLib.instance.api
+      .crateApiOfflineMapPlannerFinish(that: this, basemap: basemap);
+
+  /// The leaf directories to fetch next; empty once every tile is found. Fetching some
+  /// may ask for more (directories can nest).
+  List<ByteRange> neededLeaves() =>
+      RustLib.instance.api.crateApiOfflineMapPlannerNeededLeaves(that: this);
 }
 
 @sealed

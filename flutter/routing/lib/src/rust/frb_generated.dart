@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/directions.dart';
+import 'api/offline.dart';
 import 'api/router.dart';
 import 'api/transit.dart';
 
@@ -69,7 +70,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 782684409;
+  int get rustContentHash => -901441397;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -141,6 +142,8 @@ abstract class RustLibApi extends BaseApi {
   Future<TransitCancel> crateApiTransitTransitCancelDefault();
 
   TransitCancel crateApiTransitTransitCancelNew();
+
+  Future<String> crateApiOfflineSha256File({required String path});
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_DirectionsAdapter;
@@ -644,6 +647,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiTransitTransitCancelNewConstMeta =>
       const TaskConstMeta(debugName: "TransitCancel_new", argNames: []);
 
+  @override
+  Future<String> crateApiOfflineSha256File({required String path}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 14,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_hash_error,
+        ),
+        constMeta: kCrateApiOfflineSha256FileConstMeta,
+        argValues: [path],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineSha256FileConstMeta =>
+      const TaskConstMeta(debugName: "sha256_file", argNames: ["path"]);
+
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_DirectionsAdapter => wire
       .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter;
@@ -885,6 +916,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   double dco_decode_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
+  }
+
+  @protected
+  HashError dco_decode_hash_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 1)
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+    return HashError(message: dco_decode_String(arr[0]));
   }
 
   @protected
@@ -1325,6 +1365,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   double sse_decode_f_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getFloat64();
+  }
+
+  @protected
+  HashError sse_decode_hash_error(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_message = sse_decode_String(deserializer);
+    return HashError(message: var_message);
   }
 
   @protected
@@ -1827,6 +1874,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_f_64(double self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putFloat64(self);
+  }
+
+  @protected
+  void sse_encode_hash_error(HashError self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.message, serializer);
   }
 
   @protected

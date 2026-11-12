@@ -28,8 +28,9 @@
 // Section: imports
 
 use crate::api::map::*;
+use crate::api::offline::*;
 use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
+use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
 use flutter_rust_bridge::{Handler, IntoIntoDart};
 
 // Section: boilerplate
@@ -40,7 +41,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1224253473;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 442197493;
 
 // Section: executor
 
@@ -48,6 +49,201 @@ flutter_rust_bridge::frb_generated_default_handler!();
 
 // Section: wire_funcs
 
+fn wire__crate__api__offline__MapPlanner_add_leaf_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "MapPlanner_add_leaf",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>,
+            >>::sse_decode(&mut deserializer);
+            let api_offset = <i64>::sse_decode(&mut deserializer);
+            let api_bytes = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::offline::MapError>((move || {
+                    let mut api_that_guard = None;
+                    let decode_indices_ =
+                        flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                &api_that, 0, true,
+                            ),
+                        ]);
+                    for i in decode_indices_ {
+                        match i {
+                            0 => api_that_guard = Some(api_that.lockable_decode_sync_ref_mut()),
+                            _ => unreachable!(),
+                        }
+                    }
+                    let mut api_that_guard = api_that_guard.unwrap();
+                    let output_ok = crate::api::offline::MapPlanner::add_leaf(
+                        &mut *api_that_guard,
+                        api_offset,
+                        api_bytes,
+                    )?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__offline__MapPlanner_finish_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "MapPlanner_finish",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>,
+            >>::sse_decode(&mut deserializer);
+            let api_basemap = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::offline::MapError>((move || {
+                    let mut api_that_guard = None;
+                    let decode_indices_ =
+                        flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                &api_that, 0, false,
+                            ),
+                        ]);
+                    for i in decode_indices_ {
+                        match i {
+                            0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                            _ => unreachable!(),
+                        }
+                    }
+                    let api_that_guard = api_that_guard.unwrap();
+                    let output_ok =
+                        crate::api::offline::MapPlanner::finish(&*api_that_guard, api_basemap)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__offline__MapPlanner_needed_leaves_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "MapPlanner_needed_leaves",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>(crate::api::offline::MapPlanner::needed_leaves(
+                    &*api_that_guard,
+                ))?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__offline__MapPlanner_new_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "MapPlanner_new",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_first_bytes = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_polygon = <Vec<crate::api::map::LngLat>>::sse_decode(&mut deserializer);
+            let api_min_zoom = <u8>::sse_decode(&mut deserializer);
+            let api_max_zoom = <u8>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::offline::MapError>((move || {
+                    let output_ok = crate::api::offline::MapPlanner::new(
+                        api_first_bytes,
+                        api_polygon,
+                        api_min_zoom,
+                        api_max_zoom,
+                    )?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__map__SparkleMap_add_images_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -1642,6 +1838,190 @@ fn wire__crate__api__map__SparkleMap_wake_stream_impl(
         },
     )
 }
+fn wire__crate__api__offline__basemap_claim_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "basemap_claim",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_region = <i64>::sse_decode(&mut deserializer);
+            let api_tile_keys = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::offline::MapError>((move || {
+                    let output_ok =
+                        crate::api::offline::basemap_claim(api_path, api_region, api_tile_keys)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__offline__basemap_prepare_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "basemap_prepare",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_header_bytes = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_name = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::offline::MapError>((move || {
+                    let output_ok =
+                        crate::api::offline::basemap_prepare(api_path, api_header_bytes, api_name)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__offline__basemap_region_tiles_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "basemap_region_tiles",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_region = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::offline::MapError>((move || {
+                    let output_ok =
+                        crate::api::offline::basemap_region_tiles(api_path, api_region)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__offline__basemap_release_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "basemap_release",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_region = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::offline::MapError>((move || {
+                    let output_ok = crate::api::offline::basemap_release(api_path, api_region)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__offline__basemap_unpack_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "basemap_unpack",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_chunk_file = <String>::sse_decode(&mut deserializer);
+            let api_expected_length = <i64>::sse_decode(&mut deserializer);
+            let api_tiles = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_region = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::offline::MapError>((move || {
+                    let output_ok = crate::api::offline::basemap_unpack(
+                        api_path,
+                        api_chunk_file,
+                        api_expected_length,
+                        api_tiles,
+                        api_region,
+                    )?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__map__init_app_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1676,9 +2056,41 @@ fn wire__crate__api__map__init_app_impl(
         },
     )
 }
+fn wire__crate__api__offline__map_first_fetch_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "map_first_fetch",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::offline::map_first_fetch())?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 
 // Section: related_funcs
 
+flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
+    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>
+);
 flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
     flutter_rust_bridge::for_generated::RustAutoOpaqueInner<SparkleMap>
 );
@@ -1690,6 +2102,16 @@ impl SseDecode for flutter_rust_bridge::for_generated::anyhow::Error {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <String>::sse_decode(deserializer);
         return flutter_rust_bridge::for_generated::anyhow::anyhow!("{}", inner);
+    }
+}
+
+impl SseDecode for MapPlanner {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <RustOpaqueMoi<
+            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>,
+        >>::sse_decode(deserializer);
+        return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
     }
 }
 
@@ -1708,6 +2130,16 @@ impl SseDecode for std::collections::HashMap<String, String> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <Vec<(String, String)>>::sse_decode(deserializer);
         return inner.into_iter().collect();
+    }
+}
+
+impl SseDecode
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <usize>::sse_decode(deserializer);
+        return decode_rust_opaque_moi(inner);
     }
 }
 
@@ -1753,6 +2185,18 @@ impl SseDecode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_u8().unwrap() != 0
+    }
+}
+
+impl SseDecode for crate::api::offline::ByteRange {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_offset = <i64>::sse_decode(deserializer);
+        let mut var_length = <i64>::sse_decode(deserializer);
+        return crate::api::offline::ByteRange {
+            offset: var_offset,
+            length: var_length,
+        };
     }
 }
 
@@ -1885,6 +2329,18 @@ impl SseDecode for Vec<String> {
     }
 }
 
+impl SseDecode for Vec<crate::api::offline::ByteRange> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::offline::ByteRange>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::map::ClickedFeature> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1892,6 +2348,32 @@ impl SseDecode for Vec<crate::api::map::ClickedFeature> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<crate::api::map::ClickedFeature>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::map::LngLat> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::map::LngLat>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::offline::MapChunkPlan> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::offline::MapChunkPlan>::sse_decode(
+                deserializer,
+            ));
         }
         return ans_;
     }
@@ -1947,6 +2429,50 @@ impl SseDecode for crate::api::map::LngLat {
     }
 }
 
+impl SseDecode for crate::api::offline::MapChunkPlan {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_offset = <i64>::sse_decode(deserializer);
+        let mut var_length = <i64>::sse_decode(deserializer);
+        let mut var_tileCount = <u32>::sse_decode(deserializer);
+        let mut var_tiles = <Vec<u8>>::sse_decode(deserializer);
+        return crate::api::offline::MapChunkPlan {
+            offset: var_offset,
+            length: var_length,
+            tile_count: var_tileCount,
+            tiles: var_tiles,
+        };
+    }
+}
+
+impl SseDecode for crate::api::offline::MapError {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_kind = <crate::api::offline::MapErrorKind>::sse_decode(deserializer);
+        let mut var_message = <String>::sse_decode(deserializer);
+        return crate::api::offline::MapError {
+            kind: var_kind,
+            message: var_message,
+        };
+    }
+}
+
+impl SseDecode for crate::api::offline::MapErrorKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::offline::MapErrorKind::BadPolygon,
+            1 => crate::api::offline::MapErrorKind::BadArchive,
+            2 => crate::api::offline::MapErrorKind::LeavesMissing,
+            3 => crate::api::offline::MapErrorKind::ChunkLength,
+            4 => crate::api::offline::MapErrorKind::BadTile,
+            5 => crate::api::offline::MapErrorKind::Storage,
+            _ => unreachable!("Invalid variant for MapErrorKind: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::api::map::MapPadding {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1959,6 +2485,28 @@ impl SseDecode for crate::api::map::MapPadding {
             right: var_right,
             bottom: var_bottom,
             left: var_left,
+        };
+    }
+}
+
+impl SseDecode for crate::api::offline::MapRegionPlan {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_coveringTiles = <u32>::sse_decode(deserializer);
+        let mut var_archiveTiles = <u32>::sse_decode(deserializer);
+        let mut var_presentTiles = <u32>::sse_decode(deserializer);
+        let mut var_tileBytes = <i64>::sse_decode(deserializer);
+        let mut var_rangeBytes = <i64>::sse_decode(deserializer);
+        let mut var_chunks = <Vec<crate::api::offline::MapChunkPlan>>::sse_decode(deserializer);
+        let mut var_tileKeys = <Vec<u8>>::sse_decode(deserializer);
+        return crate::api::offline::MapRegionPlan {
+            covering_tiles: var_coveringTiles,
+            archive_tiles: var_archiveTiles,
+            present_tiles: var_presentTiles,
+            tile_bytes: var_tileBytes,
+            range_bytes: var_rangeBytes,
+            chunks: var_chunks,
+            tile_keys: var_tileKeys,
         };
     }
 }
@@ -2051,6 +2599,18 @@ impl SseDecode for () {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {}
 }
 
+impl SseDecode for crate::api::offline::UnpackedChunk {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_tiles = <i64>::sse_decode(deserializer);
+        let mut var_bytes = <i64>::sse_decode(deserializer);
+        return crate::api::offline::UnpackedChunk {
+            tiles: var_tiles,
+            bytes: var_bytes,
+        };
+    }
+}
+
 impl SseDecode for usize {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2067,9 +2627,19 @@ fn pde_ffi_dispatcher_primary_impl(
 ) {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        11 => wire__crate__api__map__SparkleMap_new_impl(port, ptr, rust_vec_len, data_len),
-        31 => wire__crate__api__map__SparkleMap_wake_stream_impl(port, ptr, rust_vec_len, data_len),
-        32 => wire__crate__api__map__init_app_impl(port, ptr, rust_vec_len, data_len),
+        1 => wire__crate__api__offline__MapPlanner_add_leaf_impl(port, ptr, rust_vec_len, data_len),
+        2 => wire__crate__api__offline__MapPlanner_finish_impl(port, ptr, rust_vec_len, data_len),
+        4 => wire__crate__api__offline__MapPlanner_new_impl(port, ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__map__SparkleMap_new_impl(port, ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__map__SparkleMap_wake_stream_impl(port, ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__offline__basemap_claim_impl(port, ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__offline__basemap_prepare_impl(port, ptr, rust_vec_len, data_len),
+        38 => {
+            wire__crate__api__offline__basemap_region_tiles_impl(port, ptr, rust_vec_len, data_len)
+        }
+        39 => wire__crate__api__offline__basemap_release_impl(port, ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__offline__basemap_unpack_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__map__init_app_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2082,40 +2652,57 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        1 => wire__crate__api__map__SparkleMap_add_images_impl(ptr, rust_vec_len, data_len),
-        2 => wire__crate__api__map__SparkleMap_camera_impl(ptr, rust_vec_len, data_len),
-        3 => wire__crate__api__map__SparkleMap_clear_subject_impl(ptr, rust_vec_len, data_len),
-        4 => wire__crate__api__map__SparkleMap_click_impl(ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__map__SparkleMap_double_tap_zoom_impl(ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__map__SparkleMap_fly_to_impl(ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__map__SparkleMap_frame_impl(ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__map__SparkleMap_has_subject_impl(ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__map__SparkleMap_hover_argument_impl(ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__map__SparkleMap_key_impl(ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__map__SparkleMap_pan_zoom_impl(ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__map__SparkleMap_pan_zoom_end_impl(ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__map__SparkleMap_pan_zoom_start_impl(ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__map__SparkleMap_pointer_down_impl(ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__map__SparkleMap_pointer_move_impl(ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__map__SparkleMap_pointer_up_impl(ptr, rust_vec_len, data_len),
-        18 => wire__crate__api__map__SparkleMap_poll_style_impl(ptr, rust_vec_len, data_len),
-        19 => wire__crate__api__map__SparkleMap_quick_zoom_impl(ptr, rust_vec_len, data_len),
-        20 => wire__crate__api__map__SparkleMap_resize_impl(ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__map__SparkleMap_screen_to_lng_lat_impl(ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__map__SparkleMap_screenshot_path_impl(ptr, rust_vec_len, data_len),
-        23 => wire__crate__api__map__SparkleMap_scroll_impl(ptr, rust_vec_len, data_len),
-        24 => wire__crate__api__map__SparkleMap_set_geojson_impl(ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__map__SparkleMap_set_padding_impl(ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__map__SparkleMap_set_subject_impl(ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__map__SparkleMap_take_clicked_impl(ptr, rust_vec_len, data_len),
-        28 => wire__crate__api__map__SparkleMap_tile_feature_impl(ptr, rust_vec_len, data_len),
-        29 => wire__crate__api__map__SparkleMap_tilt_impl(ptr, rust_vec_len, data_len),
-        30 => wire__crate__api__map__SparkleMap_turn_north_impl(ptr, rust_vec_len, data_len),
+        3 => wire__crate__api__offline__MapPlanner_needed_leaves_impl(ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__map__SparkleMap_add_images_impl(ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__map__SparkleMap_camera_impl(ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__map__SparkleMap_clear_subject_impl(ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__map__SparkleMap_click_impl(ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__map__SparkleMap_double_tap_zoom_impl(ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__map__SparkleMap_fly_to_impl(ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__map__SparkleMap_frame_impl(ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__map__SparkleMap_has_subject_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__map__SparkleMap_hover_argument_impl(ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__map__SparkleMap_key_impl(ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__map__SparkleMap_pan_zoom_impl(ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__map__SparkleMap_pan_zoom_end_impl(ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__map__SparkleMap_pan_zoom_start_impl(ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__map__SparkleMap_pointer_down_impl(ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__map__SparkleMap_pointer_move_impl(ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__map__SparkleMap_pointer_up_impl(ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__map__SparkleMap_poll_style_impl(ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__map__SparkleMap_quick_zoom_impl(ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__map__SparkleMap_resize_impl(ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__map__SparkleMap_screen_to_lng_lat_impl(ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__map__SparkleMap_screenshot_path_impl(ptr, rust_vec_len, data_len),
+        27 => wire__crate__api__map__SparkleMap_scroll_impl(ptr, rust_vec_len, data_len),
+        28 => wire__crate__api__map__SparkleMap_set_geojson_impl(ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__map__SparkleMap_set_padding_impl(ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__map__SparkleMap_set_subject_impl(ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__map__SparkleMap_take_clicked_impl(ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__map__SparkleMap_tile_feature_impl(ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__map__SparkleMap_tilt_impl(ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__map__SparkleMap_turn_north_impl(ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__offline__map_first_fetch_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
 
 // Section: rust2dart
+
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<MapPlanner> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
+            .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<MapPlanner> {}
+
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<MapPlanner>> for MapPlanner {
+    fn into_into_dart(self) -> FrbWrapper<MapPlanner> {
+        self.into()
+    }
+}
 
 // Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for FrbWrapper<SparkleMap> {
@@ -2145,6 +2732,27 @@ impl flutter_rust_bridge::IntoDart for crate::api::map::Address {
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::map::Address {}
 impl flutter_rust_bridge::IntoIntoDart<crate::api::map::Address> for crate::api::map::Address {
     fn into_into_dart(self) -> crate::api::map::Address {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::offline::ByteRange {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.offset.into_into_dart().into_dart(),
+            self.length.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::offline::ByteRange
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::offline::ByteRange>
+    for crate::api::offline::ByteRange
+{
+    fn into_into_dart(self) -> crate::api::offline::ByteRange {
         self
     }
 }
@@ -2260,6 +2868,72 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::map::LngLat> for crate::api::
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::offline::MapChunkPlan {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.offset.into_into_dart().into_dart(),
+            self.length.into_into_dart().into_dart(),
+            self.tile_count.into_into_dart().into_dart(),
+            self.tiles.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::offline::MapChunkPlan
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::offline::MapChunkPlan>
+    for crate::api::offline::MapChunkPlan
+{
+    fn into_into_dart(self) -> crate::api::offline::MapChunkPlan {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::offline::MapError {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.kind.into_into_dart().into_dart(),
+            self.message.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::offline::MapError {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::offline::MapError>
+    for crate::api::offline::MapError
+{
+    fn into_into_dart(self) -> crate::api::offline::MapError {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::offline::MapErrorKind {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::BadPolygon => 0.into_dart(),
+            Self::BadArchive => 1.into_dart(),
+            Self::LeavesMissing => 2.into_dart(),
+            Self::ChunkLength => 3.into_dart(),
+            Self::BadTile => 4.into_dart(),
+            Self::Storage => 5.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::offline::MapErrorKind
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::offline::MapErrorKind>
+    for crate::api::offline::MapErrorKind
+{
+    fn into_into_dart(self) -> crate::api::offline::MapErrorKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::map::MapPadding {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2276,6 +2950,32 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::map::MapPadding>
     for crate::api::map::MapPadding
 {
     fn into_into_dart(self) -> crate::api::map::MapPadding {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::offline::MapRegionPlan {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.covering_tiles.into_into_dart().into_dart(),
+            self.archive_tiles.into_into_dart().into_dart(),
+            self.present_tiles.into_into_dart().into_dart(),
+            self.tile_bytes.into_into_dart().into_dart(),
+            self.range_bytes.into_into_dart().into_dart(),
+            self.chunks.into_into_dart().into_dart(),
+            self.tile_keys.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::offline::MapRegionPlan
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::offline::MapRegionPlan>
+    for crate::api::offline::MapRegionPlan
+{
+    fn into_into_dart(self) -> crate::api::offline::MapRegionPlan {
         self
     }
 }
@@ -2303,11 +3003,39 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::map::SpriteImageInput>
         self
     }
 }
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::offline::UnpackedChunk {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.tiles.into_into_dart().into_dart(),
+            self.bytes.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::offline::UnpackedChunk
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::offline::UnpackedChunk>
+    for crate::api::offline::UnpackedChunk
+{
+    fn into_into_dart(self) -> crate::api::offline::UnpackedChunk {
+        self
+    }
+}
 
 impl SseEncode for flutter_rust_bridge::for_generated::anyhow::Error {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(format!("{:?}", self), serializer);
+    }
+}
+
+impl SseEncode for MapPlanner {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
     }
 }
 
@@ -2322,6 +3050,17 @@ impl SseEncode for std::collections::HashMap<String, String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Vec<(String, String)>>::sse_encode(self.into_iter().collect(), serializer);
+    }
+}
+
+impl SseEncode
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        let (ptr, size) = self.sse_encode_raw();
+        <usize>::sse_encode(ptr, serializer);
+        <i32>::sse_encode(size, serializer);
     }
 }
 
@@ -2362,6 +3101,14 @@ impl SseEncode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u8(self as _).unwrap();
+    }
+}
+
+impl SseEncode for crate::api::offline::ByteRange {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i64>::sse_encode(self.offset, serializer);
+        <i64>::sse_encode(self.length, serializer);
     }
 }
 
@@ -2455,12 +3202,42 @@ impl SseEncode for Vec<String> {
     }
 }
 
+impl SseEncode for Vec<crate::api::offline::ByteRange> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::offline::ByteRange>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::map::ClickedFeature> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::map::ClickedFeature>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::map::LngLat> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::map::LngLat>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::offline::MapChunkPlan> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::offline::MapChunkPlan>::sse_encode(item, serializer);
         }
     }
 }
@@ -2503,6 +3280,44 @@ impl SseEncode for crate::api::map::LngLat {
     }
 }
 
+impl SseEncode for crate::api::offline::MapChunkPlan {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i64>::sse_encode(self.offset, serializer);
+        <i64>::sse_encode(self.length, serializer);
+        <u32>::sse_encode(self.tile_count, serializer);
+        <Vec<u8>>::sse_encode(self.tiles, serializer);
+    }
+}
+
+impl SseEncode for crate::api::offline::MapError {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::offline::MapErrorKind>::sse_encode(self.kind, serializer);
+        <String>::sse_encode(self.message, serializer);
+    }
+}
+
+impl SseEncode for crate::api::offline::MapErrorKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::offline::MapErrorKind::BadPolygon => 0,
+                crate::api::offline::MapErrorKind::BadArchive => 1,
+                crate::api::offline::MapErrorKind::LeavesMissing => 2,
+                crate::api::offline::MapErrorKind::ChunkLength => 3,
+                crate::api::offline::MapErrorKind::BadTile => 4,
+                crate::api::offline::MapErrorKind::Storage => 5,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for crate::api::map::MapPadding {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -2510,6 +3325,19 @@ impl SseEncode for crate::api::map::MapPadding {
         <f64>::sse_encode(self.right, serializer);
         <f64>::sse_encode(self.bottom, serializer);
         <f64>::sse_encode(self.left, serializer);
+    }
+}
+
+impl SseEncode for crate::api::offline::MapRegionPlan {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.covering_tiles, serializer);
+        <u32>::sse_encode(self.archive_tiles, serializer);
+        <u32>::sse_encode(self.present_tiles, serializer);
+        <i64>::sse_encode(self.tile_bytes, serializer);
+        <i64>::sse_encode(self.range_bytes, serializer);
+        <Vec<crate::api::offline::MapChunkPlan>>::sse_encode(self.chunks, serializer);
+        <Vec<u8>>::sse_encode(self.tile_keys, serializer);
     }
 }
 
@@ -2588,6 +3416,14 @@ impl SseEncode for () {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {}
 }
 
+impl SseEncode for crate::api::offline::UnpackedChunk {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i64>::sse_encode(self.tiles, serializer);
+        <i64>::sse_encode(self.bytes, serializer);
+    }
+}
+
 impl SseEncode for usize {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -2607,15 +3443,30 @@ mod io {
 
     use super::*;
     use crate::api::map::*;
+    use crate::api::offline::*;
     use flutter_rust_bridge::for_generated::byteorder::{
         NativeEndian, ReadBytesExt, WriteBytesExt,
     };
-    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
+    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate
 
     flutter_rust_bridge::frb_generated_boilerplate_io!();
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_sparkle_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>>::increment_strong_count(ptr as _);
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_sparkle_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>>::decrement_strong_count(ptr as _);
+    }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn frbgen_sparkle_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
@@ -2644,17 +3495,32 @@ mod web {
 
     use super::*;
     use crate::api::map::*;
+    use crate::api::offline::*;
     use flutter_rust_bridge::for_generated::byteorder::{
         NativeEndian, ReadBytesExt, WriteBytesExt,
     };
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
-    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
+    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate
 
     flutter_rust_bridge::frb_generated_boilerplate_web!();
+
+    #[wasm_bindgen]
+    pub fn rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>>::increment_strong_count(ptr as _);
+    }
+
+    #[wasm_bindgen]
+    pub fn rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMapPlanner(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>>::decrement_strong_count(ptr as _);
+    }
 
     #[wasm_bindgen]
     pub fn rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
