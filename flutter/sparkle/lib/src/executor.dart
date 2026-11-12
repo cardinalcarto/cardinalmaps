@@ -2,9 +2,11 @@
 // (`crates/sparkle_flutter/src/gpu.rs`) with Flutter GPU.
 
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:ffi/ffi.dart';
 import 'package:flutter_gpu/gpu.dart' as gpu;
 import 'package:vector_math/vector_math.dart' as vm;
 
@@ -58,6 +60,26 @@ class _Program {
 
   /// Per vertex layout.
   final Map<int, gpu.RenderPipeline> pipelines = {};
+}
+
+/// A buffer or texture, with the native memory behind it made known to Dart's garbage
+/// collector.
+///
+/// Flutter GPU frees a resource's memory (on GLES, a copy of its contents in the native
+/// heap as well as the GL object) only once Dart collects its object, and doesn't tell
+/// the collector what that object holds: it looks a few bytes big. Resources the map
+/// dropped then pile up uncollected, hundreds of megabytes of them after some panning,
+/// for as long as Dart sees no reason to collect. Attaching their size as `externalSize`
+/// lets it collect them as it would any memory it allocates itself.
+final class _Resource<T extends Object> implements Finalizable {
+  _Resource(this.value, int bytes) {
+    // There's nothing to free besides `value`: freeing null does nothing.
+    _finalizer.attach(this, nullptr, externalSize: max(bytes, 1));
+  }
+
+  static final _finalizer = NativeFinalizer(malloc.nativeFree);
+
+  final T value;
 }
 
 /// One of the buffers frames write their uniform blocks to in turn.
@@ -122,8 +144,8 @@ class GpuExecutor {
   /// The format of the frames' color targets.
   final gpu.PixelFormat screenFormat;
 
-  final Map<int, gpu.DeviceBuffer> _buffers = {};
-  final Map<int, gpu.Texture> _textures = {};
+  final Map<int, _Resource<gpu.DeviceBuffer>> _buffers = {};
+  final Map<int, _Resource<gpu.Texture>> _textures = {};
   final Map<int, _Program> _programs = {};
   final Map<int, gpu.VertexLayout> _layouts = {};
   late final gpu.HostBuffer _host = context.createHostBuffer();
@@ -171,14 +193,14 @@ class GpuExecutor {
       );
     }
     return gpu.BufferView(
-      _buffers[buffer]!,
+      _buffers[buffer]!.value,
       offsetInBytes: offset,
       lengthInBytes: length,
     );
   }
 
   gpu.Texture _texture(int id, gpu.Texture screen) =>
-      id == 0 ? screen : _textures[id]!;
+      id == 0 ? screen : _textures[id]!.value;
 
   gpu.PixelFormat _format(int format) => switch (format) {
     0 => screenFormat,
@@ -186,6 +208,12 @@ class GpuExecutor {
     2 => gpu.PixelFormat.r8UNormInt,
     3 => gpu.PixelFormat.r16g16b16a16Float,
     _ => context.defaultDepthStencilFormat,
+  };
+
+  static int _bytesPerPixel(gpu.PixelFormat format) => switch (format) {
+    gpu.PixelFormat.r8UNormInt => 1,
+    gpu.PixelFormat.r16g16b16a16Float => 8,
+    _ => 4,
   };
 
   static gpu.LoadAction _load(int load) => switch (load) {
@@ -279,8 +307,11 @@ class GpuExecutor {
           final offset = _next();
           final length = _next();
           // Flutter GPU has no empty buffers; nothing draws from these.
-          _buffers[id] = context.createDeviceBufferWithCopy(
-            length == 0 ? ByteData(4) : _bytes(offset, length),
+          _buffers[id] = _Resource(
+            context.createDeviceBufferWithCopy(
+              length == 0 ? ByteData(4) : _bytes(offset, length),
+            ),
+            length,
           );
         case _Op.freeBuffer:
           _buffers.remove(_next());
@@ -307,12 +338,15 @@ class GpuExecutor {
           if (length > 0) {
             texture.overwrite(_bytes(offset, length));
           }
-          _textures[id] = texture;
+          _textures[id] = _Resource(
+            texture,
+            width * height * samples * _bytesPerPixel(format),
+          );
         case _Op.writeTexture:
           final id = _next();
           final offset = _next();
           final length = _next();
-          _textures[id]!.overwrite(_bytes(offset, length));
+          _textures[id]!.value.overwrite(_bytes(offset, length));
         case _Op.freeTexture:
           _textures.remove(_next());
         case _Op.beginPass:

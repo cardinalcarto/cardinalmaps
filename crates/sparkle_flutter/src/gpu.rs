@@ -430,6 +430,11 @@ pub struct DepthStencilDesc<'a> {
     pub stencil_store: Store,
 }
 
+/// The most a stream keeps allocated for uploads once they're done with. A frame takes
+/// in whole tiles, and a dense one is tens of megabytes: kept, that would stay allocated
+/// in every stream that ever carried one.
+const KEPT_UPLOAD_CAPACITY: usize = 4 << 20;
+
 /// Commands and their data, as sent to the Dart side.
 #[derive(Default)]
 pub struct Stream {
@@ -467,12 +472,14 @@ impl Stream {
         push(&mut self.uploads, bytes, 16)
     }
 
-    /// Empty, keeping the allocations.
+    /// Empty, keeping the allocations, except what the uploads took past
+    /// [`KEPT_UPLOAD_CAPACITY`].
     fn clear(&mut self) {
         self.words.clear();
         self.uniforms.clear();
         self.data.clear();
         self.uploads.clear();
+        self.uploads.shrink_to(KEPT_UPLOAD_CAPACITY);
     }
 }
 
@@ -915,5 +922,26 @@ impl Pass<'_> {
 
     pub fn draw_indexed(&mut self, indices: u32, instances: u32) {
         self.gpu.stream().op(Op::DrawIndexed, &[indices, instances]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streams_dont_keep_a_big_upload_allocated() {
+        let gpu = Gpu::new(GpuInfo {
+            uniform_alignment: 256,
+            sample_count: 1,
+            half_float: false,
+        });
+        let big = vec![0; 8 * KEPT_UPLOAD_CAPACITY];
+        let _buffer = gpu.buffer(&big);
+        let carried = gpu.take(Stream::default());
+        assert!(carried.uploads.capacity() >= big.len());
+        // Once Dart is done with it, it's recycled to record the next frame in.
+        drop(gpu.take(carried));
+        assert!(gpu.stream().uploads.capacity() <= KEPT_UPLOAD_CAPACITY);
     }
 }
