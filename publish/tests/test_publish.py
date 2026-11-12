@@ -274,7 +274,8 @@ def write_transit_build(root: Path, build_id=4060):
         data = mode.encode() * 10
         put(f"transfers/{mode}/12/656/1430.bin.zst", data)
         tiles[mode] = [{"x": 656, "y": 1430, "bytes": len(data)}]
-    manifest = {"manifest_id": "00ff", "valhalla_build_id": build_id, "zoom": 12, "feeds": feeds, "tiles": tiles}
+    manifest = {"manifest_id": "00ff", "valhalla_build_id": build_id, "tile_format_version": 1, "zoom": 12,
+                "feeds": feeds, "tiles": tiles}
     put("transfers/manifest.json", json.dumps(manifest).encode())
     staging = root / "staging"
     (staging / "index/10").mkdir(parents=True)
@@ -286,26 +287,112 @@ def write_transit_build(root: Path, build_id=4060):
     return root / "build", staging
 
 
-def test_transit_publishes_against_its_routing_release(tmp_path):
+@pytest.fixture(scope="session")
+def pack_bin():
+    """cardinal-pack, built from this checkout."""
+    import subprocess
+
+    crates = Path(__file__).resolve().parents[2] / "crates"
+    subprocess.run(["cargo", "build", "--release", "-q", "-p", "offline_map", "--bin", "cardinal-pack"],
+                   cwd=crates, check=True)
+    return transit.default_pack_bin()
+
+
+def read_archive_tile(archive: bytes, x, y):
+    """A zoom 12 tile's bytes from an archive cardinal-pack wrote (no leaf directories)."""
+    import gzip as gz
+
+    def varints(data):
+        value = shift = 0
+        for byte in data:
+            value |= (byte & 0x7F) << shift
+            shift += 7
+            if not byte & 0x80:
+                yield value
+                value = shift = 0
+
+    root_offset, root_length = struct.unpack_from("<QQ", archive, 8)
+    data_offset = struct.unpack_from("<Q", archive, 56)[0]
+    numbers = list(varints(gz.decompress(archive[root_offset:root_offset + root_length])))
+    n = numbers[0]
+    ids, runs, lengths, offsets = (numbers[1 + i * n:1 + (i + 1) * n] for i in range(4))
+    tile_ids = [sum(ids[:i + 1]) for i in range(n)]
+
+    def hilbert(z, x, y):
+        acc = ((1 << (2 * z)) - 1) // 3
+        d, s = 0, 1 << (z - 1)
+        while s > 0:
+            rx, ry = int(x & s > 0), int(y & s > 0)
+            d += s * s * ((3 * rx) ^ ry)
+            if ry == 0:
+                if rx == 1:
+                    x, y = s - 1 - (x & (s - 1)), s - 1 - (y & (s - 1))
+                x, y = y, x
+            s >>= 1
+        return acc + d
+
+    at, position = 0, {}
+    for i in range(n):
+        at = at if offsets[i] == 0 and i > 0 else offsets[i] - 1
+        position[tile_ids[i]] = (at, lengths[i])
+        at += lengths[i]
+    start, length = position[hilbert(12, x, y)]
+    return archive[data_offset + start:data_offset + start + length]
+
+
+def test_transit_publishes_against_its_routing_release(tmp_path, pack_bin):
     build, staging = write_transit_build(tmp_path)
     publisher = dir_publisher(tmp_path)
+    work = tmp_path / "work"
+
+    def publish(date, routing_date, commit, publisher=publisher):
+        return transit.run(publisher, build, staging, date, routing_date, commit, work, pack_bin)
+
     with pytest.raises(PublishError, match="isn't published"):
-        transit.run(publisher, build, staging, "2026-11-11", "2026-11-11", None)
+        publish("2026-11-11", "2026-11-11", None)
     fake_release(publisher, "routing", "2026-11-10", valhalla_build_id=99)
     with pytest.raises(PublishError, match="Valhalla build 4060"):
-        transit.run(publisher, build, staging, "2026-11-11", "2026-11-10", None)
+        publish("2026-11-11", "2026-11-10", None)
     fake_release(publisher, "routing", "2026-11-11", valhalla_build_id=4060)
-    release = transit.run(publisher, build, staging, "2026-11-11", "2026-11-11", "abc")
+    release = publish("2026-11-11", "2026-11-11", "abc")
     assert release["routing_release"] == "2026-11-11" and release["valhalla_build_id"] == 4060
     root = tmp_path / "bucket/releases/transit/2026-11-11"
     assert (root / "timetables/a.timetable").read_bytes() == b"a" * 50
     assert (root / "snaps/cycling/1.bin").read_bytes() == b"cycling1"
-    assert (root / "transfers/walking/12/656/1430.bin.zst").read_bytes() == b"walking" * 10
+    # Transfer tiles are in one archive per mode, not loose.
+    assert not (root / "transfers/walking/12").exists()
+    archive = (root / "transfers/walking.pmtiles").read_bytes()
+    assert archive[:8] == b"PMTiles\x03" and archive[98:100] == bytes([1, 0])
+    assert read_archive_tile(archive, 656, 1430) == b"walking" * 10
+    assert release["transfer_archives"]["walking"] == {
+        "path": "transfers/walking.pmtiles", "bytes": len(archive),
+        "sha256": __import__("hashlib").sha256(archive).hexdigest(), "tiles": 1,
+    }
+    meta = json.loads((tmp_path / "bucket/.meta/releases/transit/2026-11-11/transfers/walking.pmtiles.json").read_text())
+    assert meta["content_type"] == "application/vnd.pmtiles"
     assert json.loads(gzip.decompress((root / "index/10/22.json").read_bytes()))["tile"] == [10, 22]
     assert json.loads(gzip.decompress((root / "manifest/manifest.json").read_bytes()))["manifest_id"] == "00ff"
-    transit.run(dir_publisher(tmp_path), build, staging, "2026-11-11", "2026-11-11", "abc")
+    # A rerun reuses the packed archives and uploads nothing.
+    before = {p: p.stat().st_mtime_ns for p in root.rglob("*")}
+    packed = {p: p.stat().st_mtime_ns for p in work.rglob("*")}
+    publish("2026-11-11", "2026-11-11", "abc", dir_publisher(tmp_path))
+    assert {p: p.stat().st_mtime_ns for p in root.rglob("*")} == before
+    assert {p: p.stat().st_mtime_ns for p in work.rglob("*")} == packed
+
+    # A dry run of another date packs (reusing the work) but uploads nothing.
+    publish("2026-11-13", "2026-11-11", None, dir_publisher(tmp_path, dry_run=True))
+    assert not (tmp_path / "bucket/releases/transit/2026-11-13").exists()
+
+    # A transfer tile that isn't the size the manifest gives is refused when packing.
+    tile = build / "transfers/cycling/12/656/1430.bin.zst"
+    tile.write_bytes(b"short")
+    for path in work.rglob("cycling.*"):
+        path.unlink()
+    with pytest.raises(PublishError, match="manifest says"):
+        publish("2026-11-12", "2026-11-11", None, dir_publisher(tmp_path))
+    tile.write_bytes(b"cycling" * 10)
 
     # A timetable that isn't the one the manifest names is refused.
     (build / "timetables/b.timetable").write_bytes(b"c" * 50)
     with pytest.raises(PublishError, match="SHA-256"):
-        transit.run(dir_publisher(tmp_path), build, staging, "2026-11-12", "2026-11-11", None)
+        publish("2026-11-12", "2026-11-11", None, dir_publisher(tmp_path))

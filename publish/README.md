@@ -26,7 +26,7 @@ releases/
     release.json                    Valhalla build ID, source, commits, counts, index cells
   transit/DATE/
     timetables/FEED.timetable
-    transfers/MODE/12/X/Y.bin.zst
+    transfers/MODE.pmtiles          one PMTiles archive per mode: each mode's zoom 12 transfer tiles, as built
     snaps/MODE/FEED_INDEX.bin
     index/X/Y.json                  zoom 6 tiles: feeds with stops there, and their zoom 12 cells
     feeds/FEED.json, feeds.json     feed summaries: names, agencies, license, dates, sizes
@@ -48,7 +48,10 @@ its `release.json` records that routing release and Valhalla build ID, and
 routing release's.
 
 On a phone, transit files go where the manifest names them: `snaps/MODE/N.bin`
-is stored at `transfers/snaps/MODE/N.bin`, everything else at the same path.
+is stored at `transfers/snaps/MODE/N.bin`, everything else at the same path. A
+phone takes the transfer tiles it needs out of `transfers/MODE.pmtiles` by range
+requests, and stores each loose at `transfers/MODE/12/X/Y.bin.zst`, as the build
+wrote it, so the loader reads the same layout either way.
 The phone writes `transfers/manifest.json` as `manifest/shared.json` without
 `feed_ids`, plus `feeds`: its own feeds' entries from `manifest/feeds/`, as
 published (each with its `index`), in increasing index order. Transfer tiles
@@ -66,7 +69,6 @@ the feeds the phone doesn't have. See `feed-index` in
 | `release.json` | `application/json` | none | 5 minutes |
 | `latest.json` | `application/json` | none | 1 minute |
 | `*.pmtiles` | `application/vnd.pmtiles` | none | 1 week |
-| `*.bin.zst` | `application/zstd` | none | 1 week |
 | `*.gph`, `*.timetable`, `*.bin` | `application/octet-stream` | none | 1 week |
 
 JSON that a phone fetches is stored gzipped with `Content-Encoding: gzip`, so
@@ -156,16 +158,24 @@ same MD5 aren't sent again.
 
 ```sh
 valinor-transit-build feed-index --build transit/BUILD --output transit/BUILD-feed-index
+(cd ../crates && cargo build --release -p offline_map --bin cardinal-pack)
 uv run cardinal-publish transit --target s3://BUCKET --access-key-id ID --secret-access-key KEY \
-  --build transit/BUILD --staging transit/BUILD-feed-index \
+  --build transit/BUILD --staging transit/BUILD-feed-index --work transit/BUILD-archives \
   --date 2026-11-11 --routing-date 2026-11-11 --build-commit COMMIT
 ```
 
 `feed-index` (in `valinor/valinor-transit-build`) writes the indexes, summaries,
 split manifest, and `realtime.json` for a finished build. `transit` publishes
-them with every timetable, snap file, and transfer tile the manifest names,
-checking each against it. `--routing-date` must be a published routing release
-with the build ID the transfers were computed on.
+them with every timetable and snap file the manifest names, checking each
+against it, and the transfer tiles as one PMTiles archive per mode:
+`cardinal-pack transfers` (in `crates/offline_map`; `--pack-bin` names another
+build of it) packs each mode's tiles, as the build wrote them, into `--work`
+(about their size; a planet's three modes are 1.5 GB and pack in about 15
+seconds), checking every tile the manifest lists is there at its size, and each
+archive goes up as one resumable multipart upload. `release.json` records each
+archive's size, SHA-256, and tile count under `transfer_archives`.
+`--routing-date` must be a published routing release with the build ID the
+transfers were computed on.
 
 ### Latest
 

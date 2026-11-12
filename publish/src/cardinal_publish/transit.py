@@ -4,9 +4,15 @@ The build directory is the transfer stage's output (`compile.json`, `timetables/
 `transfers/`); the staging directory is `valinor-transit-build feed-index`'s output for it.
 Every file is checked against the build's manifest, and the release records the routing
 release its walks were computed on, which must have the same Valhalla build ID.
+
+Transfer tiles are published as one PMTiles archive per mode, `transfers/MODE.pmtiles`,
+packed by `cardinal-pack transfers` (in `crates/offline_map`) into a work directory: a
+planet has a quarter of a million tiles, and an object each costs a write request each.
+Timetables and snap files stay one object each.
 """
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,9 +27,10 @@ from .common import (
     publisher_commit,
     release_prefix,
 )
+from .archive import publish_file
 from .release import finish_release
+from .target import Publisher
 
-ZSTD = "application/zstd"
 BUILD_SNAPS = "transfers/snaps/"
 STAGED_JSON = ("feeds.json", "realtime.json", "feeds", "index", "manifest")
 
@@ -50,11 +57,48 @@ def build_uploads(build: Path, manifest, prefix):
                 raise PublishError(f"feed {feed['id']}'s snap file {path!r} isn't under {BUILD_SNAPS}")
             yield file_upload(prefix + "snaps/" + path[len(BUILD_SNAPS):], build / path, OCTET_STREAM,
                               sha256=snaps["sha256"])
-    zoom = manifest["zoom"]
-    for mode, tiles in manifest["tiles"].items():
-        for tile in tiles:
-            relative = f"transfers/{mode}/{zoom}/{tile['x']}/{tile['y']}.bin.zst"
-            yield file_upload(prefix + relative, build / relative, ZSTD, tile["bytes"])
+
+
+def default_pack_bin():
+    """`cardinal-pack` as `cargo build --release -p offline_map` builds it in this checkout."""
+    return Path(__file__).resolve().parents[3] / "crates/target/release/cardinal-pack"
+
+
+def pack_transfers(build: Path, manifest, work: Path, pack_bin: Path):
+    """Each mode's transfer archive in `work`, packed unless a previous run packed it.
+
+    Returns `{mode: (path, report)}`.
+    """
+    directory = work / manifest["manifest_id"]
+    directory.mkdir(parents=True, exist_ok=True)
+    archives = {}
+    for mode in sorted(manifest["tiles"]):
+        out = directory / f"{mode}.pmtiles"
+        report_path = directory / f"{mode}.json"
+        if out.is_file() and report_path.is_file():
+            report = json.loads(report_path.read_text())
+            print(f"{out} is packed already ({report['tiles']} tiles)", file=sys.stderr)
+        else:
+            if not pack_bin.is_file():
+                raise PublishError(
+                    f"no cardinal-pack at {pack_bin}; build it with "
+                    "`cargo build --release -p offline_map --bin cardinal-pack` in crates/, or pass --pack-bin"
+                )
+            report_path.unlink(missing_ok=True)
+            result = subprocess.run(
+                [str(pack_bin), "transfers", "--build", str(build), "--mode", mode, "--out", str(out),
+                 "--report", str(report_path)],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                raise PublishError(f"packing {mode} transfer tiles failed: {result.stderr.strip()}")
+            report = json.loads(report_path.read_text())
+            print(f"packed {report['tiles']} {mode} tiles into {out} in {report['seconds']:.1f} s", file=sys.stderr)
+        expected = len(manifest["tiles"][mode])
+        if report["manifest_id"] != manifest["manifest_id"] or report["tiles"] != expected:
+            raise PublishError(f"{out} isn't this build's {mode} tiles; remove it and run again")
+        archives[mode] = (out, report)
+    return archives
 
 
 def staged_uploads(staging: Path, prefix):
@@ -66,7 +110,8 @@ def staged_uploads(staging: Path, prefix):
             yield Upload.of_bytes(prefix + relative, gzip_bytes(path.read_bytes()), JSON, "gzip")
 
 
-def run(publisher, build: Path, staging: Path, date: str, routing_date: str, build_commit: str | None):
+def run(publisher, build: Path, staging: Path, date: str, routing_date: str, build_commit: str | None,
+        work: Path, pack_bin: Path | None = None, part_size: int = 128 << 20):
     prefix = release_prefix("transit", date)
     check_date(routing_date)
     manifest_path = build / "transfers" / "manifest.json"
@@ -108,6 +153,21 @@ def run(publisher, build: Path, staging: Path, date: str, routing_date: str, bui
             yield upload
 
     files = publisher.sync(counted(build_uploads(build, manifest, prefix)), remote, f"transit {date} files")
+    transfer_archives = {}
+    archived = 0
+    # Parts are large; a few in flight fill the uplink.
+    archive_publisher = Publisher(publisher.target, publisher.root, publisher.state,
+                                  min(publisher.jobs, 8), publisher.dry_run)
+    for mode, (path, report) in pack_transfers(build, manifest, work, pack_bin or default_pack_bin()).items():
+        relative = f"transfers/{mode}.pmtiles"
+        published = None
+        if existing:
+            entry = existing.get("transfer_archives", {}).get(mode, {})
+            published = (entry.get("bytes"), entry.get("sha256"))
+        size, sha, changed = publish_file(archive_publisher, path, prefix + relative, part_size, published)
+        keys.add(prefix + relative)
+        archived += changed
+        transfer_archives[mode] = {"path": relative, "bytes": size, "sha256": sha, "tiles": report["tiles"]}
     staged = list(staged_uploads(staging, prefix))
     staged.append(Upload.of_bytes(prefix + "manifest/manifest.json", gzip_bytes(manifest_bytes), JSON, "gzip"))
     keys.update(upload.key for upload in staged)
@@ -128,11 +188,12 @@ def run(publisher, build: Path, staging: Path, date: str, routing_date: str, bui
         "index_files": index_report["index_files"],
         "zoom": manifest["zoom"],
         "tiles": {mode: len(tiles) for mode, tiles in sorted(manifest["tiles"].items())},
+        "transfer_archives": transfer_archives,
         "files": files.items,
         "file_bytes": files.bytes,
     }
     finish_release(
         publisher, prefix, release, existing, keys, remote, CACHE_RELEASE_MARKER,
-        changed=files.uploaded + index.uploaded,
+        changed=files.uploaded + index.uploaded + archived,
     )
     return release

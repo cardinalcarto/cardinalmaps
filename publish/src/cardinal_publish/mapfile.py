@@ -24,7 +24,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .common import CACHE_RELEASE_MARKER, PublishError, Upload, publisher_commit, release_prefix, sha256_file
+from .archive import publish_file
+from .common import CACHE_RELEASE_MARKER, PublishError, publisher_commit, release_prefix, sha256_file
 from .release import finish_release
 
 PMTILES_VERSION = "1.31.2"
@@ -37,7 +38,6 @@ PMTILES_ARCHIVES = {
 }
 PMTILES_URL = "https://github.com/protomaps/go-pmtiles/releases/download/v{version}/{archive}"
 
-PMTILES_CONTENT_TYPE = "application/vnd.pmtiles"
 MAP_FILE = "planet.pmtiles"
 
 # PMTiles v3 header (https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md).
@@ -218,33 +218,8 @@ def publish(publisher, pmtiles: Path, date: str, source: str | None, build_commi
         print(f"map {date} is published already; checking it matches, uploading nothing", file=sys.stderr)
         publisher = publisher.checking()
     key = prefix + MAP_FILE
-    stat = pmtiles.stat()
-    size = stat.st_size
-    identity = f"{stat.st_size}:{stat.st_mtime_ns}"
-    path_key = str(pmtiles.resolve())
-    target = publisher.target.describe()
-    state = publisher.state
-    sha = state.file_sha(path_key, identity) if state else None
-    changed = 0
-    if existing:
-        if sha is None:
-            print(f"hashing {pmtiles} to compare it with the release", file=sys.stderr)
-            sha = sha256_file(pmtiles)
-        changed = int((size, sha) != (existing.get("bytes"), existing.get("sha256")))
-    else:
-        remote = publisher.target.head(publisher.key(key))
-        known = state.known(target, key) if state else None
-        if sha and remote and remote.size == size and (remote.sha256 == sha or (known and tuple(known) == (size, sha))):
-            print(f"{publisher.key(key)} is uploaded already", file=sys.stderr)
-        else:
-            upload = Upload(key=key, body=None, path=pmtiles, size=size, sha256=sha or "",
-                            content_type=PMTILES_CONTENT_TYPE)
-            sha = publisher.target.put_large(
-                pmtiles, publisher.key(key), upload, part_size, publisher.jobs, state, publisher.dry_run
-            )
-            if state and not publisher.dry_run:
-                state.set_file_sha(path_key, identity, sha)
-                state.record(target, key, size, sha)
+    published = (existing.get("bytes"), existing.get("sha256")) if existing else None
+    size, sha, changed = publish_file(publisher, pmtiles, key, part_size, published)
     release = {
         "kind": "map",
         "date": date,

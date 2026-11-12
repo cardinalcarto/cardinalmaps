@@ -77,6 +77,11 @@ def parser():
     step.add_argument("--routing-date", required=True,
                       help="the routing release the build's walks were computed on (its build ID must match)")
     step.add_argument("--build-commit", help="the Cardinal commit the build was made with, for release.json")
+    step.add_argument("--work", type=Path, required=True,
+                      help="where to pack the transfer tiles' archives (about their size); a rerun reuses them")
+    step.add_argument("--pack-bin", type=Path,
+                      help="a cardinal-pack binary (default: crates/target/release/cardinal-pack in this checkout)")
+    step.add_argument("--part-size-mib", type=int, default=128, help="multipart part size (default: 128 MiB)")
 
     step = steps.add_parser("latest", help="point latest.json at releases, checking they fit together")
     add_target_args(step)
@@ -115,7 +120,8 @@ def run(args):
                             args.build_commit, args.part_size_mib << 20)
         elif args.step == "transit":
             transit.run(publisher, args.build.resolve(), args.staging.resolve(), check_date(args.date),
-                        args.routing_date, args.build_commit)
+                        args.routing_date, args.build_commit, args.work.resolve(),
+                        args.pack_bin.resolve() if args.pack_bin else None, args.part_size_mib << 20)
         elif args.step == "latest":
             latest.run(publisher, {"map": args.map, "routing": args.routing, "transit": args.transit})
     finally:
