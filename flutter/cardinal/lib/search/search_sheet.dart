@@ -256,7 +256,6 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     if (_searching) _focus.requestFocus();
   }
 
-
   /// Return in the field: opens the first result.
   void _openFirst() {
     if (_search!.results case [final first, ...]) _open(first);
