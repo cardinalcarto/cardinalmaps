@@ -92,7 +92,11 @@ impl From<Error> for MapError {
             | Error::UnsupportedCompression(_)
             | Error::UnsupportedTileType(_) => MapErrorKind::BadArchive,
             Error::LeavesMissing => MapErrorKind::LeavesMissing,
-            Error::BadTileList | Error::Io(_) | Error::Sqlite(_) => MapErrorKind::Storage,
+            Error::BadTileList
+            | Error::Io(_)
+            | Error::Sqlite(_)
+            | Error::Unordered
+            | Error::TileLength { .. } => MapErrorKind::Storage,
             Error::ChunkLength { .. } => MapErrorKind::ChunkLength,
             Error::BadTile { .. } => MapErrorKind::BadTile,
         };

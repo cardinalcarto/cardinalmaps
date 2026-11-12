@@ -60,7 +60,8 @@ enum Resolved {
     NeedLeaf(u64, u32),
 }
 
-/// Finds a polygon's tiles in an archive, asking for leaf directories as it needs them.
+/// Finds tiles in an archive (a polygon's, or a list's), asking for leaf directories as it
+/// needs them.
 pub struct MapPlanner {
     header: Header,
     root: Vec<Entry>,
@@ -98,6 +99,37 @@ impl MapPlanner {
             leaves: HashMap::new(),
             wanted,
         })
+    }
+
+    /// A planner for the tiles `wanted` (as `(z, x, y)`), from the archive's first bytes.
+    ///
+    /// # Errors
+    ///
+    /// If the bytes aren't a PMTiles header followed by its root directory.
+    pub fn for_tiles(first: &[u8], wanted: &[(u8, u32, u32)]) -> Result<Self, Error> {
+        let header = Header::parse(first)?;
+        let start = usize::try_from(header.root_offset).map_err(|_| Error::RootNotInFirstBytes)?;
+        let end = usize::try_from(header.root_offset + header.root_length)
+            .map_err(|_| Error::RootNotInFirstBytes)?;
+        let root_bytes = first.get(start..end).ok_or(Error::RootNotInFirstBytes)?;
+        let root = parse_directory(root_bytes, header.internal_compression)?;
+        let mut planner = Self {
+            header,
+            root,
+            leaves: HashMap::new(),
+            wanted: Vec::new(),
+        };
+        planner.want(wanted);
+        Ok(planner)
+    }
+
+    /// Looks for `wanted` instead, keeping the leaf directories already fetched: for sizing
+    /// another set of tiles of the same archive cheaply.
+    pub fn want(&mut self, wanted: &[(u8, u32, u32)]) {
+        self.wanted = wanted
+            .iter()
+            .map(|&(z, x, y)| (z, x, y, tile_id(z, x, y)))
+            .collect();
     }
 
     pub fn header(&self) -> &Header {

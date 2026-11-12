@@ -3,13 +3,30 @@ name = "offline_map"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
-description = "Offline map regions: reading a PMTiles archive's directories, choosing the tiles and byte ranges that cover a polygon, and unpacking downloaded ranges into the device's MBTiles."
+description = "Offline regions: reading and writing PMTiles archives, choosing the tiles and byte ranges a polygon needs, and unpacking downloaded map ranges into the device's MBTiles."
+
+[features]
+default = ["mbtiles", "pack"]
+# The device's MBTiles basemap (bundles SQLite).
+mbtiles = ["dep:rusqlite"]
+# The `cardinal-pack` command.
+pack = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
 flate2 = "1.1.10"
-rusqlite = { version = "0.41.0", features = ["bundled"] }
+rusqlite = { version = "0.41.0", features = ["bundled"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1.0.154", optional = true }
 thiserror = "2.0.21"
 
 [dev-dependencies]
 sparkle = { version = "0.1.0", path = "../sparkle" }
 sparkle_view = { version = "0.1.0", path = "../sparkle_view" }
+
+[[bin]]
+name = "cardinal-pack"
+required-features = ["pack"]
+
+[[test]]
+name = "regions"
+required-features = ["mbtiles"]

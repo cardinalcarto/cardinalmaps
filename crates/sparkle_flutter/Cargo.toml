@@ -13,7 +13,7 @@ env_logger = "0.11.11"
 flutter_rust_bridge = "=2.13.0"
 log = "0.4.34"
 maplibre-expr = "0.5.4"
-offline_map = { version = "0.1.0", path = "../offline_map" }
+offline_map = { version = "0.1.0", path = "../offline_map", default-features = false, features = ["mbtiles"] }
 serde_json = "1.0.154"
 sparkle = { version = "0.1.0", path = "../sparkle" }
 sparkle_view = { version = "0.1.0", path = "../sparkle_view" }

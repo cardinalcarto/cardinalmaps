@@ -2957,6 +2957,8 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "rusqlite",
+ "serde",
+ "serde_json",
  "sparkle",
  "sparkle_view",
  "thiserror 2.0.21",
