@@ -1,0 +1,21 @@
+[project]
+name = "cardinal-publish"
+version = "0.1.0"
+description = "Publishes Cardinal's map, routing, and transit releases to an S3-compatible bucket"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.35",
+]
+
+[project.scripts]
+cardinal-publish = "cardinal_publish.cli:main"
+
+[dependency-groups]
+dev = [
+    "moto[s3,server]>=5.0",
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
