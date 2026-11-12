@@ -436,9 +436,9 @@ A feed that fails is recorded in `compile.json` and doesn't stop the others;
 an unchanged archive (by SHA-256) is not recompiled.
 
 `transfers` loads the stop lists of all feeds and computes every walk with the same search as
-`TransferTable::build`. Results are tiled at zoom 12 by the stop the walk starts at,
+`TransferTable::build`. Results are tiled at zoom 14 by the stop the walk starts at,
 so a tile can walk to stops of any feed, and one mode's tiles are at
-`transfers/<mode>/12/<x>/<y>.bin.zst`.
+`transfers/<mode>/14/<x>/<y>.bin.zst`.
 `transfers/manifest.json` lists the feeds in index order, with the tiles each feed's stops need
 and its saved stop snaps (`transfers/snaps/<mode>/<feed index>.bin`),
 since clients choose which feeds to download, and `transfers/unsnapped-<mode>.jsonl` the stops

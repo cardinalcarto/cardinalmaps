@@ -1,6 +1,6 @@
 //! Tiles of precomputed transfers: the on-disk format and how a client loads it.
 //!
-//! The server build writes one file per travel mode and zoom 12 tile of walks starting at the
+//! The server build writes one file per travel mode and zoom 14 tile of walks starting at the
 //! stops in that tile. Stops are addressed across feeds by `(feed index, stop number)`,
 //! where the feed index is the position in the build manifest's sorted feed list,
 //! so a tile stays valid for a client that has downloaded any subset of the feeds.

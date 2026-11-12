@@ -45,7 +45,12 @@ pub const TILE_MAGIC: [u8; 4] = *b"VTFR";
 /// The only format version this build reads and writes.
 pub const TILE_FORMAT_VERSION: u16 = 1;
 /// The zoom every tile is at (the standard slippy-map scheme).
-pub const TILE_ZOOM: u8 = 12;
+///
+/// 14, so that a dense city's tile stays well under [`DEFAULT_MAX_DECOMPRESSED_BYTES`]:
+/// at 12, Taipei's and Cochabamba's cycling tiles were 293 MB and 272 MB decompressed.
+/// Tiles of another zoom are refused by the header's zoom byte (and a manifest of another
+/// zoom by its `zoom`), so a reader needs no new format version for this.
+pub const TILE_ZOOM: u8 = 14;
 
 /// The most tiles there are on one axis at the tile zoom.
 const TILES_PER_AXIS: u32 = 1 << TILE_ZOOM;
@@ -1008,7 +1013,14 @@ mod tests {
         // A tile beyond the zoom.
         let tile = sample();
         assert!(
-            TransferTile::from_rows(tile.mode, (4096, tile.y), tile.manifest_id, 900, &[]).is_err()
+            TransferTile::from_rows(
+                tile.mode,
+                (TILES_PER_AXIS, tile.y),
+                tile.manifest_id,
+                900,
+                &[]
+            )
+            .is_err()
         );
     }
 

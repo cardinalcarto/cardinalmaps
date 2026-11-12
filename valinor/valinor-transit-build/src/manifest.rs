@@ -119,9 +119,9 @@ fn hash_option(hasher: &mut Sha256, value: Option<u32>) {
 /// A file with counts, for one tile of one mode.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TileEntry {
-    /// The tile's column at zoom 12.
+    /// The tile's column at the manifest's zoom.
     pub x: u32,
-    /// The tile's row at zoom 12.
+    /// The tile's row at the manifest's zoom.
     pub y: u32,
     /// Stops in the tile with at least one walk.
     pub origins: u32,

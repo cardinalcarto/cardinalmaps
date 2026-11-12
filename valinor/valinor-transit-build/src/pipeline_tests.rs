@@ -325,12 +325,15 @@ fn compiling_the_same_feed_twice_gives_the_same_file() {
 fn load_tiles(output: &Path, manifest: &Manifest, mode: TransferMode) -> Vec<TransferTile> {
     let entries = manifest.tiles.get(mode.as_str()).expect("mode's tiles");
     let root = output.join("transfers");
-    let on_disk = fs::read_dir(root.join(mode.as_str()).join("12"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .flat_map(|x| fs::read_dir(x.path()).into_iter().flatten().flatten())
-        .count();
+    let on_disk = fs::read_dir(
+        root.join(mode.as_str())
+            .join(valinor_walk::transfer_tile::TILE_ZOOM.to_string()),
+    )
+    .into_iter()
+    .flatten()
+    .flatten()
+    .flat_map(|x| fs::read_dir(x.path()).into_iter().flatten().flatten())
+    .count();
     assert_eq!(
         on_disk,
         entries.len(),
@@ -1307,7 +1310,7 @@ fn the_feed_index_places_each_stop_and_its_manifest_parts_open_one_feed() {
         ("feed-far", &far[..]),
     ] {
         for &(lat, lon) in stops {
-            let (x, y) = crate::slippy::tile_of(lat, lon);
+            let (x, y) = crate::slippy::tile_of(lat, lon, crate::feed_index::CELL_ZOOM);
             expected
                 .entry((x >> 6, y >> 6))
                 .or_default()

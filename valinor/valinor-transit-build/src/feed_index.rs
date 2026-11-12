@@ -5,7 +5,8 @@
 //! build, the small files that a client fetches instead:
 //!
 //! - `index/<x>/<y>.json`, one per zoom 6 tile with any stop in it: the feeds with stops
-//!   there, each with the zoom 12 tiles of its stops inside that zoom 6 tile.
+//!   there, each with the zoom 12 cells of its stops inside that zoom 6 tile (a coarser
+//!   grid than the zoom 14 transfer tiles: enough to choose feeds by).
 //!   Cells come from the stops in each compiled timetable, not from the manifest's
 //!   transfer tiles, which leave out stops that didn't snap to a street.
 //! - `feeds/<id>.json`, a summary of one compiled feed: names, agencies, license, service
@@ -48,8 +49,9 @@ use crate::write_atomic;
 /// The zoom of the spatial index's files.
 pub const INDEX_ZOOM: u8 = 6;
 
-/// The zoom of the transfer tiles, which cells in the index are given at.
-const CELL_ZOOM: u8 = valinor_walk::transfer_tile::TILE_ZOOM;
+/// The zoom the index gives feeds' stop cells at: coarser than the transfer tiles'
+/// ([`TILE_ZOOM`](valinor_walk::transfer_tile::TILE_ZOOM)), which a feed picker doesn't need.
+pub const CELL_ZOOM: u8 = 12;
 
 /// Where a snap file is in a build, before its mode and file name.
 const BUILD_SNAPS_PREFIX: &str = "transfers/snaps/";
@@ -599,7 +601,9 @@ fn read_feed(build: &Path, feed: &ManifestFeed) -> Result<Option<FeedContents>, 
             .and_then(|info| info.coordinate)
         {
             Some(coordinate) => {
-                found.cells.insert(tile_of(coordinate.lat, coordinate.lon));
+                found
+                    .cells
+                    .insert(tile_of(coordinate.lat, coordinate.lon, CELL_ZOOM));
             }
             None => found.stops_without_location += 1,
         }

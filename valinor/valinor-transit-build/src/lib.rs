@@ -2,7 +2,7 @@
 //!
 //! - [`compile`] turns each fetched GTFS feed into its own compiled timetable.
 //! - [`transfers`] computes walking and cycling transfers between every stop of every feed
-//!   and writes them tiled by the origin stop's zoom 12 tile.
+//!   and writes them tiled by the origin stop's zoom 14 tile.
 //! - The [`manifest`] ties them together for clients: feeds, bounds, tiles, and per-feed tile lists.
 //! - [`feed_index`] writes what a client fetches to choose feeds near it and install them.
 //!

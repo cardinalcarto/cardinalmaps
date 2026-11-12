@@ -1,7 +1,8 @@
 //! The transfer stage: tiled walks between every stop of every feed.
 //!
 //! Walks are computed by the same search as [`TransferTable::build`](valinor_walk::TransferTable),
-//! tile by tile of the origin stop's zoom 12 tile, balanced dynamically across the threads.
+//! tile by tile of the origin stop's zoom 14 tile, balanced dynamically across the threads in
+//! batches of neighbouring tiles (see [`job_batches`]).
 //! Everything held for the whole run is one list of stops and one index of them on the street
 //! network; a worker's tile memory is given back between tiles.
 //!
@@ -204,11 +205,11 @@ pub fn run(options: &TransferOptions) -> Result<Manifest, BuildError> {
 }
 
 /// `(tile key, global stop)` of every stop with a coordinate.
-fn stops_by_tile(stops: &StopList) -> Vec<(u32, u32)> {
+fn stops_by_tile(stops: &StopList) -> Vec<(u64, u32)> {
     let mut ordered = Vec::with_capacity(stops.len());
     for (global, coordinate) in stops.coordinates.iter().enumerate() {
         if let Some((lon, lat)) = *coordinate {
-            let (x, y) = tile_of(lat, lon);
+            let (x, y) = tile_of(lat, lon, TILE_ZOOM);
             if let Ok(global) = u32::try_from(global) {
                 ordered.push((tile_key(x, y), global));
             }
@@ -217,12 +218,65 @@ fn stops_by_tile(stops: &StopList) -> Vec<(u32, u32)> {
     ordered
 }
 
-fn tile_key(x: u32, y: u32) -> u32 {
-    (x << 12) | y
+/// The zoom whose tiles group neighbouring tiles into batches: a tile's key sorts it after
+/// the other tiles of its zoom 12 parent, which are next to it.
+const BATCH_ZOOM: u8 = 12;
+
+/// The most origin stops in one batch of tiles (a tile with more is a batch of its own).
+///
+/// A worker forgets the street tiles it has read between batches, so that its memory stays
+/// tied to where it works; a batch of neighbouring tiles reads mostly the same street tiles.
+/// Batches no larger than this keep the threads busy to the end: a dense city's zoom 12
+/// tile had thousands of stops in one job.
+const BATCH_STOPS: usize = 512;
+
+/// A tile's key: its zoom 12 parent, then its place in the parent.
+fn tile_key(x: u32, y: u32) -> u64 {
+    let shift = TILE_ZOOM - BATCH_ZOOM;
+    let mask = (1u32 << shift) - 1;
+    let parent = (u64::from(x >> shift) << BATCH_ZOOM) | u64::from(y >> shift);
+    (parent << (2 * shift)) | u64::from(((x & mask) << shift) | (y & mask))
 }
 
-fn tile_from_key(key: u32) -> (u32, u32) {
-    (key >> 12, key & 0xfff)
+fn tile_from_key(key: u64) -> (u32, u32) {
+    let shift = TILE_ZOOM - BATCH_ZOOM;
+    let mask = (1u64 << shift) - 1;
+    let parent = key >> (2 * shift);
+    let child = key & ((1 << (2 * shift)) - 1);
+    let (px, py) = (parent >> BATCH_ZOOM, parent & ((1 << BATCH_ZOOM) - 1));
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a tile coordinate at TILE_ZOOM"
+    )]
+    let tile = (
+        ((px << shift) | (child >> shift)) as u32,
+        ((py << shift) | (child & mask)) as u32,
+    );
+    tile
+}
+
+/// Consecutive jobs of one zoom 12 parent, with at most [`BATCH_STOPS`] stops together.
+fn job_batches(jobs: &[TileJob]) -> Vec<core::ops::Range<usize>> {
+    let shift = TILE_ZOOM - BATCH_ZOOM;
+    let parent = |job: &TileJob| (job.x >> shift, job.y >> shift);
+    let mut batches: Vec<core::ops::Range<usize>> = Vec::new();
+    let mut stops = 0;
+    for (i, job) in jobs.iter().enumerate() {
+        let size = job.end - job.start;
+        match batches.last_mut() {
+            Some(batch)
+                if parent(&jobs[batch.start]) == parent(job) && stops + size <= BATCH_STOPS =>
+            {
+                batch.end = i + 1;
+                stops += size;
+            }
+            _ => {
+                batches.push(i..i + 1);
+                stops = size;
+            }
+        }
+    }
+    batches
 }
 
 /// One tile's stops, as a range of the ordered stop list.
@@ -234,7 +288,7 @@ struct TileJob {
     end: usize,
 }
 
-fn tile_jobs(ordered: &[(u32, u32)]) -> Vec<TileJob> {
+fn tile_jobs(ordered: &[(u64, u32)]) -> Vec<TileJob> {
     let mut jobs = Vec::new();
     let mut start = 0;
     while let Some(&(key, _)) = ordered.get(start) {
@@ -494,6 +548,7 @@ struct Context<'a> {
 }
 
 fn run_jobs(context: &Context<'_>, jobs: &[TileJob]) -> Result<Vec<TileOutcome>, BuildError> {
+    let batches = job_batches(jobs);
     let next = AtomicUsize::new(0);
     let outcomes: Mutex<Vec<TileOutcome>> = Mutex::new(Vec::new());
     let first_error: Mutex<Option<BuildError>> = Mutex::new(None);
@@ -504,28 +559,32 @@ fn run_jobs(context: &Context<'_>, jobs: &[TileJob]) -> Result<Vec<TileOutcome>,
                 let mut tables = StopTables::new(context.tiles, context.costing.clone());
                 tables.bind_shared(Arc::clone(context.attachments));
                 while !failed.load(Ordering::Relaxed) {
-                    let Some(&job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                    let batch_index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(batch) = batches.get(batch_index) else {
                         break;
                     };
-                    match build_tile(context, &mut tables, job) {
-                        Ok(Some(outcome)) => {
-                            if let Ok(mut outcomes) = outcomes.lock() {
-                                outcomes.push(outcome);
+                    tables.forget_tiles();
+                    for &job in &jobs[batch.clone()] {
+                        match build_tile(context, &mut tables, job) {
+                            Ok(Some(outcome)) => {
+                                if let Ok(mut outcomes) = outcomes.lock() {
+                                    outcomes.push(outcome);
+                                }
                             }
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            failed.store(true, Ordering::Relaxed);
-                            if let Ok(mut first) = first_error.lock() {
-                                first.get_or_insert(error);
+                            Ok(None) => {}
+                            Err(error) => {
+                                failed.store(true, Ordering::Relaxed);
+                                if let Ok(mut first) = first_error.lock() {
+                                    first.get_or_insert(error);
+                                }
+                                break;
                             }
                         }
                     }
-                    let done = next.load(Ordering::Relaxed);
-                    if done.is_multiple_of(1024) {
+                    if batch_index.is_multiple_of(1024) {
                         tracing::info!(
                             mode = context.mode.as_str(),
-                            done,
+                            done = batch.start,
                             total = jobs.len(),
                             "tiles done"
                         );
@@ -548,7 +607,6 @@ fn build_tile(
     tables: &mut StopTables<&TileSets, AnyCosting>,
     job: TileJob,
 ) -> Result<Option<TileOutcome>, BuildError> {
-    tables.forget_tiles();
     let origins = context.order.get(job.start..job.end).unwrap_or(&[]);
     let mut rows: Vec<(u32, u32, Vec<TileWalk>)> = Vec::new();
     let mut per_feed: BTreeMap<u32, (u64, u64)> = BTreeMap::new();
@@ -1038,4 +1096,53 @@ fn gtfs_ids(
                 .map_or_else(String::new, |info| info.gtfs_id.to_owned())
         })
         .collect())
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+
+    #[test]
+    fn tile_keys_group_a_parents_children_and_round_trip() {
+        let tiles = [
+            (2624, 5721),
+            (2625, 5721),
+            (2627, 5720),
+            (2628, 5720),
+            (0, 0),
+            (16383, 16383),
+        ];
+        for (x, y) in tiles {
+            assert_eq!(tile_from_key(tile_key(x, y)), (x, y));
+        }
+        // The four children in one row of parent (656, 1430) sort before the next parent's.
+        let mut keys: Vec<(u64, (u32, u32))> = (2624..2632)
+            .flat_map(|x| (5720..5724).map(move |y| (tile_key(x, y), (x, y))))
+            .collect();
+        keys.sort_unstable();
+        let parents: Vec<(u32, u32)> = keys.iter().map(|&(_, (x, y))| (x >> 2, y >> 2)).collect();
+        assert_eq!(parents[..16], [(656, 1430); 16]);
+        assert_eq!(parents[16..], [(657, 1430); 16]);
+    }
+
+    #[test]
+    fn batches_keep_to_a_parent_and_a_stop_count() {
+        let job = |x, y, stops| TileJob {
+            x,
+            y,
+            start: 0,
+            end: stops,
+        };
+        let jobs = [
+            job(2624, 5720, 10),
+            job(2624, 5721, 20),
+            // A busy tile: a batch of its own.
+            job(2625, 5720, BATCH_STOPS + 1),
+            job(2625, 5721, 300),
+            job(2626, 5720, 300),
+            // Another parent.
+            job(2628, 5720, 1),
+        ];
+        assert_eq!(job_batches(&jobs), [0..2, 2..3, 3..4, 4..5, 5..6]);
+    }
 }

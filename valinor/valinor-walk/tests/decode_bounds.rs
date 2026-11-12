@@ -49,7 +49,7 @@ fn header(origins: u32, walks: u32) -> Vec<u8> {
     h.extend_from_slice(b"VTFR");
     h.extend_from_slice(&1u16.to_le_bytes());
     h.push(0); // walking
-    h.push(12); // zoom
+    h.push(valinor_walk::transfer_tile::TILE_ZOOM); // zoom
     h.extend_from_slice(&0u32.to_le_bytes());
     h.extend_from_slice(&0u32.to_le_bytes());
     h.extend_from_slice(&0u64.to_le_bytes());

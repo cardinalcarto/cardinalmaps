@@ -78,7 +78,7 @@ fn write_tile(dir: &Path, mode: TransferMode, x: u32, y: u32, rows: &[(u32, u32,
     let path = dir
         .join("transfers")
         .join(mode.as_str())
-        .join("12")
+        .join(valinor_walk::transfer_tile::TILE_ZOOM.to_string())
         .join(x.to_string());
     fs::create_dir_all(&path).expect("mkdir");
     let compressed = zstd::bulk::compress(tile.as_bytes(), 3).expect("compress");
@@ -123,7 +123,7 @@ impl Fixture {
             "manifest_id": format!("{MANIFEST_ID:016x}"),
             "valhalla_build_id": 77,
             "tile_format_version": valinor_walk::transfer_tile::TILE_FORMAT_VERSION,
-            "zoom": 12,
+            "zoom": valinor_walk::transfer_tile::TILE_ZOOM,
             "walking_bound_seconds": BOUND,
             "cycling_bound_seconds": BOUND,
             "feeds": [
@@ -338,7 +338,7 @@ fn inconsistent_feed_indices_are_errors() {
 #[test]
 fn a_tile_missing_from_disk_simply_has_no_walks() {
     let fixture = Fixture::new();
-    fs::remove_file(fixture.path().join("transfers/walking/12/11/20.bin.zst")).expect("remove");
+    fs::remove_file(fixture.path().join("transfers/walking/14/11/20.bin.zst")).expect("remove");
     let build = TransitBuild::load(fixture.path(), None).expect("a partial download loads");
     assert_eq!(build.report.tiles_read[0], 1);
     assert_eq!(build.report.tiles_absent[0], 1);
@@ -455,7 +455,7 @@ fn corrupt_or_truncated_timetables_are_errors_not_panics() {
 fn a_corrupt_tile_is_an_error_not_a_panic() {
     let fixture = Fixture::new();
     fs::write(
-        fixture.path().join("transfers/walking/12/10/20.bin.zst"),
+        fixture.path().join("transfers/walking/14/10/20.bin.zst"),
         [1, 2, 3],
     )
     .expect("write");
@@ -468,7 +468,7 @@ fn a_corrupt_tile_is_an_error_not_a_panic() {
 #[test]
 fn a_prepared_table_is_reused_until_the_tiles_change() {
     let fixture = Fixture::new();
-    let tile = fixture.path().join("transfers/walking/12/10/20.bin.zst");
+    let tile = fixture.path().join("transfers/walking/14/10/20.bin.zst");
     let first = TransitBuild::load(fixture.path(), None).expect("loads");
     assert_eq!(first.report.walks[0], 3);
     drop(first);
@@ -485,7 +485,7 @@ fn a_prepared_table_is_reused_until_the_tiles_change() {
 
     // A tile disappearing changes what is prepared.
     fs::write(&tile, &original).expect("write");
-    fs::remove_file(fixture.path().join("transfers/walking/12/11/20.bin.zst")).expect("remove");
+    fs::remove_file(fixture.path().join("transfers/walking/14/11/20.bin.zst")).expect("remove");
     let fewer = TransitBuild::load(fixture.path(), None).expect("rebuilds");
     assert_eq!(fewer.report.walks[0], 2);
     assert_eq!(fewer.walking.seconds(StopId::new(2), StopId::new(1)), None);
@@ -578,7 +578,7 @@ fn preparing_keeps_other_feed_sets_and_drops_other_manifests() {
     assert!(tables.iter().all(|name| name.starts_with(&manifest)));
 
     // Each is still the one its feed set uses: garbage in the tiles goes unnoticed.
-    let tile = fixture.path().join("transfers/walking/12/10/20.bin.zst");
+    let tile = fixture.path().join("transfers/walking/14/10/20.bin.zst");
     let original = fs::read(&tile).expect("read");
     fs::write(&tile, [1, 2, 3]).expect("write");
     for feeds in &sets {
@@ -595,7 +595,7 @@ fn preparing_keeps_other_feed_sets_and_drops_other_manifests() {
     for stale in [older, unnamed, cycling] {
         fs::write(prepared.join(stale), b"an old table").expect("write");
     }
-    fs::remove_file(fixture.path().join("transfers/walking/12/11/20.bin.zst")).expect("remove");
+    fs::remove_file(fixture.path().join("transfers/walking/14/11/20.bin.zst")).expect("remove");
     TransitBuild::prepare(fixture.path(), None).expect("prepares");
     let after = prepared_of(fixture.path(), "walking");
     assert!(!after.iter().any(|name| name == older || name == unnamed));
@@ -720,7 +720,13 @@ fn seattle_only(area: (f64, f64, f64, f64)) -> TempDir {
     )
     .expect("copy manifest");
     for mode in ["walking", "cycling"] {
-        for entry in fs::read_dir(root.join("transfers").join(mode).join("12")).expect("modes") {
+        for entry in fs::read_dir(
+            root.join("transfers")
+                .join(mode)
+                .join(valinor_walk::transfer_tile::TILE_ZOOM.to_string()),
+        )
+        .expect("modes")
+        {
             let entry = entry.expect("entry");
             let x: u32 = entry.file_name().to_string_lossy().parse().expect("x");
             if !(west_x..=east_x).contains(&x) {
@@ -730,7 +736,7 @@ fn seattle_only(area: (f64, f64, f64, f64)) -> TempDir {
                 .path()
                 .join("transfers")
                 .join(mode)
-                .join("12")
+                .join(valinor_walk::transfer_tile::TILE_ZOOM.to_string())
                 .join(x.to_string());
             for file in fs::read_dir(entry.path()).expect("x dir") {
                 let file = file.expect("file");
