@@ -509,6 +509,62 @@ void main() {
     },
   );
 
+  test(
+    'no more than maxQueued files and ranges are with the downloader at once',
+    () async {
+      await engine.close();
+      engine = OfflineDownloads(
+        db: db,
+        root: root,
+        bucket: Bucket(Uri.parse(server.releasesUrl)),
+        transfers: transfers,
+        native: native,
+        maxQueued: 4,
+      );
+      await engine.open();
+      final plan = await engine.plan(capitolHill);
+      transfers.hold = true;
+      final id = await engine.start(plan, feeds: {metro});
+      final total =
+          (await files()).where((f) => !f.path.endsWith('.json')).length +
+          (await db.select(db.mapChunks).get()).length;
+      expect(total, greaterThan(4 * 3));
+      var most = 0;
+      var rounds = 0;
+      while (transfers.jobs.isNotEmpty) {
+        most = transfers.jobs.length > most ? transfers.jobs.length : most;
+        expect(
+          (await files(state: FileState.queued)).length +
+              (await (db.select(db.mapChunks)
+                        ..where((c) => c.state.equalsValue(ChunkState.queued)))
+                      .get())
+                  .length,
+          transfers.jobs.length,
+        );
+        // Halfway, the app stops and the downloader keeps what it has.
+        if (rounds == 2) {
+          await engine.close();
+          engine = OfflineDownloads(
+            db: db,
+            root: root,
+            bucket: Bucket(Uri.parse(server.releasesUrl)),
+            transfers: transfers,
+            native: native,
+            maxQueued: 4,
+          );
+          await engine.open();
+          expect(transfers.jobs.length, lessThanOrEqualTo(4));
+        }
+        transfers.run([transfers.jobs.keys.first]);
+        await settle();
+        rounds++;
+      }
+      expect(most, 4);
+      expect(transfers.history.length, total);
+      expect((await region(id)).state, RegionState.ready);
+    },
+  );
+
   test('overlapping regions share files and tiles, and deleting one keeps what the other needs', () async {
     final first = await download(capitolHill, feeds: {metro});
     final firstFiles = {for (final f in await files()) f.path};

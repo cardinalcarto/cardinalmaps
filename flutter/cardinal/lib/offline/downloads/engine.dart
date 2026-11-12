@@ -106,6 +106,7 @@ class OfflineDownloads {
     required this.transfers,
     this.native = const RustOfflineNative(),
     this.maxAttempts = 3,
+    this.maxQueued = 200,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
 
@@ -119,6 +120,11 @@ class OfflineDownloads {
 
   /// How many times a file or range is tried before it counts as failed.
   final int maxAttempts;
+
+  /// The most files and ranges handed to the downloader at once; more are handed over
+  /// as those end. Keeps the platform's queue (WorkManager, a URL session) small for
+  /// regions of thousands of files.
+  final int maxQueued;
   final DateTime Function() _clock;
 
   final _listeners = <OfflineListener>{};
@@ -554,10 +560,22 @@ class OfflineDownloads {
   Uri _fileUrl(FileRow f) =>
       bucket.url('${f.kind.name}/${f.release}/${f.path}');
 
-  /// Hands pending work of regions that are downloading to the downloader, and fetches
-  /// small JSON files itself. Runs serially.
+  /// Hands pending work of regions that are downloading to the downloader, up to
+  /// [maxQueued] at once, and fetches small JSON files itself. Runs serially.
   Future<void> _pump() async {
     final downloading = db.regions.state.equalsValue(RegionState.downloading);
+    final queuedCount =
+        (await (db.selectOnly(db.files)
+              ..addColumns([db.files.id.count()])
+              ..where(db.files.state.equalsValue(FileState.queued)))
+            .map((row) => row.read(db.files.id.count()) ?? 0)
+            .getSingle()) +
+        (await (db.selectOnly(db.mapChunks)
+              ..addColumns([db.mapChunks.id.count()])
+              ..where(db.mapChunks.state.equalsValue(ChunkState.queued)))
+            .map((row) => row.read(db.mapChunks.id.count()) ?? 0)
+            .getSingle());
+    var room = maxQueued - queuedCount;
     final pending =
         await (db.select(db.files).join([
                 innerJoin(
@@ -580,7 +598,8 @@ class OfflineDownloads {
     for (final f in pending) {
       if (f.path.endsWith('.json')) {
         await _fetchForeground(f);
-      } else {
+      } else if (room > 0) {
+        room--;
         jobs.add(
           TransferJob(
             id: 'f${f.id}',
@@ -592,13 +611,17 @@ class OfflineDownloads {
     }
     final chunks =
         await (db.select(db.mapChunks).join([
-              innerJoin(
-                db.regions,
-                db.regions.id.equalsExp(db.mapChunks.regionId),
-              ),
-            ])..where(
-              db.mapChunks.state.equalsValue(ChunkState.pending) & downloading,
-            ))
+                innerJoin(
+                  db.regions,
+                  db.regions.id.equalsExp(db.mapChunks.regionId),
+                ),
+              ])
+              ..where(
+                db.mapChunks.state.equalsValue(ChunkState.pending) &
+                    downloading,
+              )
+              ..orderBy([OrderingTerm(expression: db.mapChunks.id)])
+              ..limit(room < 0 ? 0 : room))
             .get();
     final etag = (await pinned())[ReleaseKind.map]?.etag;
     for (final row in chunks) {
