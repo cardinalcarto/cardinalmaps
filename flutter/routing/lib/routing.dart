@@ -18,7 +18,8 @@ export 'src/rust/api/directions.dart'
         DirectionsRequest,
         DirectionsRoute,
         DirectionsStep;
-export 'src/rust/api/offline.dart' show HashError, sha256File;
+export 'src/rust/api/offline.dart'
+    show HashError, TileCheckError, checkTransferTile, sha256File;
 export 'src/rust/api/router.dart'
     show OfflineRouter, OpenError, OpenErrorKind, RouterResponse;
 export 'src/rust/api/transit.dart'

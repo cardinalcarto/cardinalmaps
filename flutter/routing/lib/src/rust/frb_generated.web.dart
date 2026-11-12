@@ -202,6 +202,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RouterResponse dco_decode_router_response(dynamic raw);
 
   @protected
+  TileCheckError dco_decode_tile_check_error(dynamic raw);
+
+  @protected
   TransitFeed dco_decode_transit_feed(dynamic raw);
 
   @protected
@@ -402,6 +405,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RouterResponse sse_decode_router_response(SseDeserializer deserializer);
+
+  @protected
+  TileCheckError sse_decode_tile_check_error(SseDeserializer deserializer);
 
   @protected
   TransitFeed sse_decode_transit_feed(SseDeserializer deserializer);
@@ -652,6 +658,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_router_response(
     RouterResponse self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_tile_check_error(
+    TileCheckError self,
     SseSerializer serializer,
   );
 

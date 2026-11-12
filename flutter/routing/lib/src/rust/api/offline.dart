@@ -15,6 +15,25 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 Future<String> sha256File({required String path}) =>
     RustLib.instance.api.crateApiOfflineSha256File(path: path);
 
+/// Checks a downloaded transfer tile without a published hash: its zstd frame must decode
+/// whole with nothing after it, the CRC-32 in its header must match the whole decompressed
+/// tile (`valinor-walk`'s `transfer_tile` format: it covers every byte but itself), and the
+/// header must name `mode`, tile `x`, `y` at zoom 12, and the build `manifest_id` (16
+/// hexadecimal digits, as the manifest gives it).
+Future<void> checkTransferTile({
+  required String path,
+  required String mode,
+  required int x,
+  required int y,
+  required String manifestId,
+}) => RustLib.instance.api.crateApiOfflineCheckTransferTile(
+  path: path,
+  mode: mode,
+  x: x,
+  y: y,
+  manifestId: manifestId,
+);
+
 /// Why a file couldn't be hashed.
 class HashError implements FrbException {
   /// A description for logs, naming the file.
@@ -29,6 +48,24 @@ class HashError implements FrbException {
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is HashError &&
+          runtimeType == other.runtimeType &&
+          message == other.message;
+}
+
+/// Why a downloaded transfer tile isn't the one asked for.
+class TileCheckError implements FrbException {
+  /// A description for logs, naming the file.
+  final String message;
+
+  const TileCheckError({required this.message});
+
+  @override
+  int get hashCode => message.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TileCheckError &&
           runtimeType == other.runtimeType &&
           message == other.message;
 }

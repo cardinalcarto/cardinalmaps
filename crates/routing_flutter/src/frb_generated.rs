@@ -31,7 +31,7 @@ use crate::api::directions::*;
 use crate::api::router::*;
 use crate::api::transit::*;
 use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
 use flutter_rust_bridge::{Handler, IntoIntoDart};
 
 // Section: boilerplate
@@ -42,7 +42,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -901441397;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1129836608;
 
 // Section: executor
 
@@ -656,6 +656,49 @@ fn wire__crate__api__transit__TransitCancel_new_impl(
         },
     )
 }
+fn wire__crate__api__offline__check_transfer_tile_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "check_transfer_tile",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_mode = <String>::sse_decode(&mut deserializer);
+            let api_x = <u32>::sse_decode(&mut deserializer);
+            let api_y = <u32>::sse_decode(&mut deserializer);
+            let api_manifest_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::offline::TileCheckError>((move || {
+                    let output_ok = crate::api::offline::check_transfer_tile(
+                        api_path,
+                        api_mode,
+                        api_x,
+                        api_y,
+                        api_manifest_id,
+                    )?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__offline__sha256_file_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1089,6 +1132,16 @@ impl SseDecode for crate::api::router::RouterResponse {
     }
 }
 
+impl SseDecode for crate::api::offline::TileCheckError {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_message = <String>::sse_decode(deserializer);
+        return crate::api::offline::TileCheckError {
+            message: var_message,
+        };
+    }
+}
+
 impl SseDecode for crate::api::transit::TransitFeed {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1221,7 +1274,10 @@ fn pde_ffi_dispatcher_primary_impl(
         12 => {
             wire__crate__api__transit__TransitCancel_default_impl(port, ptr, rust_vec_len, data_len)
         }
-        14 => wire__crate__api__offline__sha256_file_impl(port, ptr, rust_vec_len, data_len),
+        14 => {
+            wire__crate__api__offline__check_transfer_tile_impl(port, ptr, rust_vec_len, data_len)
+        }
+        15 => wire__crate__api__offline__sha256_file_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1536,6 +1592,23 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::router::RouterResponse>
     for crate::api::router::RouterResponse
 {
     fn into_into_dart(self) -> crate::api::router::RouterResponse {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::offline::TileCheckError {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [self.message.into_into_dart().into_dart()].into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::offline::TileCheckError
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::offline::TileCheckError>
+    for crate::api::offline::TileCheckError
+{
+    fn into_into_dart(self) -> crate::api::offline::TileCheckError {
         self
     }
 }
@@ -1941,6 +2014,13 @@ impl SseEncode for crate::api::router::RouterResponse {
     }
 }
 
+impl SseEncode for crate::api::offline::TileCheckError {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.message, serializer);
+    }
+}
+
 impl SseEncode for crate::api::transit::TransitFeed {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -2041,7 +2121,7 @@ mod io {
     use flutter_rust_bridge::for_generated::byteorder::{
         NativeEndian, ReadBytesExt, WriteBytesExt,
     };
-    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate
@@ -2124,7 +2204,7 @@ mod web {
     };
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
-    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate

@@ -70,7 +70,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -901441397;
+  int get rustContentHash => -1129836608;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -142,6 +142,14 @@ abstract class RustLibApi extends BaseApi {
   Future<TransitCancel> crateApiTransitTransitCancelDefault();
 
   TransitCancel crateApiTransitTransitCancelNew();
+
+  Future<void> crateApiOfflineCheckTransferTile({
+    required String path,
+    required String mode,
+    required int x,
+    required int y,
+    required String manifestId,
+  });
 
   Future<String> crateApiOfflineSha256File({required String path});
 
@@ -648,6 +656,47 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "TransitCancel_new", argNames: []);
 
   @override
+  Future<void> crateApiOfflineCheckTransferTile({
+    required String path,
+    required String mode,
+    required int x,
+    required int y,
+    required String manifestId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          sse_encode_String(mode, serializer);
+          sse_encode_u_32(x, serializer);
+          sse_encode_u_32(y, serializer);
+          sse_encode_String(manifestId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 14,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_tile_check_error,
+        ),
+        constMeta: kCrateApiOfflineCheckTransferTileConstMeta,
+        argValues: [path, mode, x, y, manifestId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineCheckTransferTileConstMeta =>
+      const TaskConstMeta(
+        debugName: "check_transfer_tile",
+        argNames: ["path", "mode", "x", "y", "manifestId"],
+      );
+
+  @override
   Future<String> crateApiOfflineSha256File({required String path}) {
     return handler.executeNormal(
       NormalTask(
@@ -657,7 +706,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 15,
             port: port_,
           );
         },
@@ -1046,6 +1095,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       status: dco_decode_u_16(arr[0]),
       body: dco_decode_list_prim_u_8_strict(arr[1]),
     );
+  }
+
+  @protected
+  TileCheckError dco_decode_tile_check_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 1)
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+    return TileCheckError(message: dco_decode_String(arr[0]));
   }
 
   @protected
@@ -1545,6 +1603,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_status = sse_decode_u_16(deserializer);
     var var_body = sse_decode_list_prim_u_8_strict(deserializer);
     return RouterResponse(status: var_status, body: var_body);
+  }
+
+  @protected
+  TileCheckError sse_decode_tile_check_error(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_message = sse_decode_String(deserializer);
+    return TileCheckError(message: var_message);
   }
 
   @protected
@@ -2055,6 +2120,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_16(self.status, serializer);
     sse_encode_list_prim_u_8_strict(self.body, serializer);
+  }
+
+  @protected
+  void sse_encode_tile_check_error(
+    TileCheckError self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.message, serializer);
   }
 
   @protected
