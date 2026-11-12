@@ -213,8 +213,10 @@ uv run cardinal-publish poi-prune --target s3://BUCKET --access-key-id ID --secr
 ```
 
 deletes checkpoint releases more than `--keep-days` (28) older than the
-newest, then every snapshot that none of the remaining checkpoints restores
-from. It never deletes the newest checkpoint, the one `latest.json` names, a
+newest, except those between a kept checkpoint and the snapshot it restores
+from, then every snapshot that none of the remaining checkpoints restores
+from. With weekly snapshots, that keeps up to five weeks of deltas (2 to 6 MB
+each) and about five snapshots (1.9 GB each for the planet). It never deletes the newest checkpoint, the one `latest.json` names, a
 snapshot newer than every checkpoint (one whose checkpoint is still being
 uploaded), or a prefix without a `release.json`. Each release's
 `release.json` goes first, so an interrupted prune leaves incomplete releases

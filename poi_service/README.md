@@ -193,8 +193,9 @@ map it and look up any ID without parsing or building anything.
 Sizes for the planet (68,185,562 POIs, October 2026), against 29 GB in
 PostgreSQL: `versions.bin.zst` 90 MB, `pois.bin.zst` 1.65 GB,
 `status.bin.zst` 178 MB (545 MB uncompressed), so a snapshot is 1.9 GB.
-A day's delta is 2 to 6 MB (median 2.3 MB for 55,000 changed elements), and
-four weeks of deltas plus the snapshots they restore from is about 4 GB.
+A day's delta is 2 to 6 MB (median 2.3 MB for 55,000 changed elements).
+`cardinal-publish poi-prune`'s four weeks of deltas restore from about five
+weekly snapshots, so the bucket holds about 10 GB.
 `poi_changes` grows the database by about 20 MB a day; it's only needed until
 a diff is exported.
 
