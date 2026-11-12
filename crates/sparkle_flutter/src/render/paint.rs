@@ -14,7 +14,9 @@
 //! property is a uniform, and `factor` zero unless it's composite. So per-vertex values are
 //! repacked to the composite size (a source value written twice), and uniform properties
 //! read zeros from [`PAINT_ZEROS`], a one-element instance buffer, since Flutter GPU wants
-//! an attribute's format to match its input exactly and every input bound.
+//! an attribute's format to match its input exactly and every input bound. Instanced draws
+//! with per-instance paint ([`GpuPaint::instance_vertex_buffers`]) read the zeros per
+//! vertex instead, as an instance buffer would be read past its end.
 
 use sparkle::paint::{Binding, PaintArrays, PaintAttribute, PaintProperties, PaintUniforms};
 
@@ -23,6 +25,10 @@ use crate::gpu::{Buffer, Pass, Slice, StepMode, VertexBufferLayout, VertexFormat
 
 /// Bytes of the zeros uniform properties read: room for every property's inputs.
 pub const PAINT_ZEROS: usize = sparkle::paint::MAX_PAINT_ATTRIBUTES * 32;
+
+/// How many vertices of an instance may read [`PAINT_ZEROS`] each, with
+/// [`GpuPaint::instance_vertex_buffers`]: the zeros buffer holds that many copies.
+pub const PAINT_ZERO_VERTICES: usize = 6;
 
 /// [`PaintArrays::uniforms`] for the tiles of one layer, evaluated once for all the tiles
 /// laid out alike (with the same bindings and zoom range), as most of them are: the
@@ -170,6 +176,20 @@ impl GpuPaint {
     /// The vertex buffer slots this binds, for the pipeline.
     pub fn vertex_buffers(&self) -> VertexLayout {
         vertex_buffers(&self.layout)
+    }
+
+    /// [`Self::vertex_buffers`] for instanced draws of up to [`PAINT_ZERO_VERTICES`]
+    /// vertices with a value per instance: the values step per instance, and the zeros
+    /// per vertex, since stepping them per instance would read past their end.
+    pub fn instance_vertex_buffers(&self) -> VertexLayout {
+        let mut layout = self.vertex_buffers();
+        for b in &mut layout {
+            b.step = match b.step {
+                StepMode::Vertex => StepMode::Instance,
+                StepMode::Instance => StepMode::Vertex,
+            };
+        }
+        layout
     }
 
     /// Bind the paint slots from `first_slot` on.

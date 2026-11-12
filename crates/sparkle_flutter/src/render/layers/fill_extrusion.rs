@@ -145,7 +145,11 @@ impl FillExtrusionRenderer {
                 if walls == patterns {
                     pattern.step = StepMode::Instance;
                 }
-                let mut paint = paint.vertex_buffers();
+                let paint = if walls {
+                    paint.instance_vertex_buffers()
+                } else {
+                    paint.vertex_buffers()
+                };
                 let mut vertex_buffers = if walls {
                     // Position and normal: this point's, then the next one's position.
                     let mut point =
@@ -167,7 +171,6 @@ impl FillExtrusionRenderer {
                         }
                         layout
                     };
-                    paint.iter_mut().for_each(|b| b.step = StepMode::Instance);
                     vec![
                         point,
                         next,
