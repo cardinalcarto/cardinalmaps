@@ -41,10 +41,19 @@ pub struct VersionRow {
     pub poi_id: i64,
 }
 
+/// An element's new state after a diff.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PoiChange {
+    pub key: ElementKey,
+    pub state: Tracked,
+    /// The element's identity before the diff, if it was tracked.
+    pub previous_poi_id: Option<i64>,
+}
+
 #[derive(Debug, Default)]
 pub struct Applied {
-    /// New state of every element that changed, by key.
-    pub updates: Vec<(ElementKey, Tracked)>,
+    /// New state of every element that changed, in key order.
+    pub updates: Vec<PoiChange>,
     /// Every new POI version, in (type, id, version) order.
     pub versions: Vec<VersionRow>,
     pub new_identities: usize,
@@ -94,7 +103,8 @@ pub fn apply(tracked: &HashMap<ElementKey, Tracked>, mut changes: Vec<ElementVer
             changed = true;
         }
         if changed && let Some(state) = state {
-            applied.updates.push((key, state));
+            let previous_poi_id = tracked.get(&key).map(|t| t.poi_id);
+            applied.updates.push(PoiChange { key, state, previous_poi_id });
         }
     }
     applied
@@ -173,11 +183,15 @@ mod tests {
         let replaced = change(1, 4, None);
 
         let applied = apply(&tracked, vec![disused.clone()], 10);
-        assert_eq!(applied.updates[0].1, Tracked { version: 2, poi_id: 4, active: false, tags: cafe("Ritual").unwrap() });
+        assert_eq!(
+            applied.updates[0].state,
+            Tracked { version: 2, poi_id: 4, active: false, tags: cafe("Ritual").unwrap() }
+        );
 
         let applied = apply(&tracked, vec![disused, reopened, replaced], 10);
         assert_eq!(applied.versions, [VersionRow { key: node(1), version: 3, poi_id: 4 }]);
-        assert!(!applied.updates[0].1.active);
+        assert!(!applied.updates[0].state.active);
+        assert_eq!(applied.updates[0].previous_poi_id, Some(4));
     }
 
     #[test]
@@ -192,7 +206,7 @@ mod tests {
 
         // The same changes split into two diffs, applied one after the other.
         let first = apply(&HashMap::new(), changes[..2].to_vec(), 1);
-        let tracked: HashMap<_, _> = first.updates.into_iter().collect();
+        let tracked: HashMap<_, _> = first.updates.into_iter().map(|c| (c.key, c.state)).collect();
         let second = apply(&tracked, changes[2..].to_vec(), 1 + first.new_identities as i64);
         let mut split = first.versions;
         split.extend(second.versions);

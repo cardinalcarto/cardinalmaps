@@ -6,15 +6,27 @@
 //!     poi_service patch --input planet.osm.pbf --output planet-with-ids.osm.pbf
 //!     poi_service checkpoint
 //!     poi_service covers --input extract.osm.pbf
+//!     poi_service export --staging poi-staging
+//!     poi_service fetch --url https://example.org/releases --dir poi-releases
+//!     poi_service import --releases poi-releases
+//!     poi_service status --releases poi-releases --output poi-status.bin
+//!
+//! `patch` and `covers` read published releases instead of PostgreSQL when
+//! given `--releases`.
 
 mod bootstrap;
 mod db;
+mod export;
+mod fetch;
 mod identity;
+mod import;
 mod osm;
 mod patch;
 mod pbf;
+mod published;
 mod replication;
 mod rules;
+mod tables;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -26,14 +38,16 @@ use sqlx::PgPool;
 
 use crate::db::Checkpoint;
 use crate::identity::Checksum;
+use crate::published::Releases;
 use crate::replication::Server;
 use crate::rules::RULESET_VERSION;
 
 #[derive(Parser)]
 #[command(about)]
 struct Cli {
+    /// The identity database. Commands given `--releases` don't need one.
     #[arg(long, env = "DATABASE_URL")]
-    database_url: String,
+    database_url: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -68,6 +82,14 @@ enum Command {
         input: PathBuf,
         #[arg(long)]
         output: PathBuf,
+        /// Read identifiers from published releases in this directory (as
+        /// `fetch` or `export` writes them) instead of the database. The
+        /// output is the same.
+        #[arg(long)]
+        releases: Option<PathBuf>,
+        /// With `--releases`, the checkpoint to use (default: the newest).
+        #[arg(long, requires = "releases")]
+        sequence: Option<i64>,
     },
     /// Print the latest checkpoint's sequence and checksum, which together
     /// identify every identifier `patch` can add.
@@ -79,6 +101,52 @@ enum Command {
     Covers {
         #[arg(long)]
         input: PathBuf,
+        /// Check the newest release in this directory instead of the database.
+        #[arg(long)]
+        releases: Option<PathBuf>,
+    },
+    /// Write a release for every checkpoint not yet in `--staging`, and a
+    /// snapshot of the latest when asked or when the newest snapshot there
+    /// is a week older, for `cardinal-publish poi` to upload.
+    Export {
+        #[arg(long)]
+        staging: PathBuf,
+        /// Write a snapshot of the latest checkpoint whatever the age of the
+        /// newest one.
+        #[arg(long)]
+        snapshot: bool,
+        #[arg(long, default_value_t = 7)]
+        snapshot_days: i64,
+    },
+    /// Restore an empty database from published releases, or bring one up to
+    /// date with them, checking the checksum chain at every checkpoint.
+    Import {
+        #[arg(long)]
+        releases: PathBuf,
+        /// The checkpoint to stop at (default: the newest).
+        #[arg(long)]
+        sequence: Option<i64>,
+    },
+    /// Download the releases that reach a checkpoint (default: the one
+    /// `latest.json` names) into a directory.
+    Fetch {
+        /// The bucket's releases prefix over HTTPS, holding latest.json.
+        #[arg(long)]
+        url: String,
+        #[arg(long)]
+        dir: PathBuf,
+        #[arg(long)]
+        sequence: Option<i64>,
+    },
+    /// Write the geocoder's status file for a checkpoint (default: the
+    /// newest) from published releases, replacing `--output` by a rename.
+    Status {
+        #[arg(long)]
+        releases: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        sequence: Option<i64>,
     },
 }
 
@@ -90,35 +158,76 @@ async fn main() -> Result<()> {
         )
         .init();
     let cli = Cli::parse();
-    let pool = db::connect(&cli.database_url).await?;
+    let connect = || async {
+        let url = cli.database_url.as_deref().context("this needs --database-url or DATABASE_URL")?;
+        db::connect(url).await
+    };
     match cli.command {
+        Command::Patch { input, output, releases: Some(releases), sequence } => {
+            let releases = Releases::new(&releases);
+            let (ids, checkpoint) = tokio::task::block_in_place(|| import::load_ids(&releases, sequence))?;
+            patch::patch(ids, Some(checkpoint), &input, &output).await
+        }
+        Command::Covers { input, releases: Some(releases) } => {
+            covers(&input, &import::latest_checkpoint(&Releases::new(&releases))?)
+        }
+        Command::Export { staging, snapshot, snapshot_days } => {
+            export::export(&connect().await?, &staging, snapshot, snapshot_days).await
+        }
+        Command::Import { releases, sequence } => {
+            import::import(&connect().await?, &Releases::new(&releases), sequence).await
+        }
+        Command::Fetch { url, dir, sequence } => {
+            let sequence = fetch::fetch(&url, &dir, sequence).await?;
+            println!("{sequence}");
+            Ok(())
+        }
+        Command::Status { releases, output, sequence } => {
+            let checkpoint = import::write_status(&Releases::new(&releases), sequence, &output)?;
+            println!("{} {}", checkpoint.sequence, checkpoint.timestamp.to_rfc3339());
+            Ok(())
+        }
+        command => database_command(&connect().await?, command).await,
+    }
+}
+
+async fn database_command(pool: &PgPool, command: Command) -> Result<()> {
+    match command {
         Command::Bootstrap { planet, replication_url } => {
-            bootstrap::bootstrap(&pool, &planet, &Server::new(&replication_url), &replication_url).await
+            bootstrap::bootstrap(pool, &planet, &Server::new(&replication_url), &replication_url).await
         }
         Command::Update { follow, poll_seconds, max_diffs } => {
-            update(&pool, follow, Duration::from_secs(poll_seconds), max_diffs.unwrap_or(usize::MAX)).await
+            update(pool, follow, Duration::from_secs(poll_seconds), max_diffs.unwrap_or(usize::MAX)).await
         }
-        Command::Patch { input, output } => patch::patch(&pool, &input, &output).await,
+        Command::Patch { input, output, .. } => {
+            let checkpoint = db::latest_checkpoint(pool).await?;
+            let ids = patch::PoiIds::load(pool).await?;
+            patch::patch(ids, checkpoint, &input, &output).await
+        }
         Command::Checkpoint => {
-            let checkpoint = db::latest_checkpoint(&pool).await?.context("no checkpoint")?;
+            let checkpoint = db::latest_checkpoint(pool).await?.context("no checkpoint")?;
             println!("{} {}", checkpoint.sequence, hex::encode(&checkpoint.checksum));
             Ok(())
         }
-        Command::Covers { input } => {
-            let file = bootstrap::replication_timestamp(&input)?;
-            let checkpoint = db::latest_checkpoint(&pool).await?.context("no checkpoint")?;
-            println!("{} {} {}", file.to_rfc3339(), checkpoint.sequence, checkpoint.timestamp.to_rfc3339());
-            if checkpoint.timestamp < file {
-                bail!(
-                    "the database is at {} ({}), behind {} ({file})",
-                    checkpoint.sequence,
-                    checkpoint.timestamp,
-                    input.display()
-                );
-            }
-            Ok(())
-        }
+        Command::Covers { input, .. } => covers(&input, &db::latest_checkpoint(pool).await?.context("no checkpoint")?),
+        _ => unreachable!("handled in main"),
     }
+}
+
+/// Prints the file's timestamp and the checkpoint's sequence and timestamp,
+/// failing if the checkpoint is older than the file.
+fn covers(input: &std::path::Path, checkpoint: &Checkpoint) -> Result<()> {
+    let file = bootstrap::replication_timestamp(input)?;
+    println!("{} {} {}", file.to_rfc3339(), checkpoint.sequence, checkpoint.timestamp.to_rfc3339());
+    if checkpoint.timestamp < file {
+        bail!(
+            "the identifiers are at {} ({}), behind {} ({file})",
+            checkpoint.sequence,
+            checkpoint.timestamp,
+            input.display()
+        );
+    }
+    Ok(())
 }
 
 async fn update(pool: &PgPool, follow: bool, poll: Duration, max_diffs: usize) -> Result<()> {
@@ -145,8 +254,10 @@ async fn update(pool: &PgPool, follow: bool, poll: Duration, max_diffs: usize) -
 
 async fn apply_diff(pool: &PgPool, server: &Server, previous: &Checkpoint) -> Result<Checkpoint> {
     let sequence = previous.sequence + 1;
+    let started = std::time::Instant::now();
     let state = server.state(Some(sequence)).await?;
     let changes = server.diff(sequence).await?;
+    let downloaded = started.elapsed();
     let keys: HashSet<_> = changes.iter().map(|c| c.key).collect();
     let tracked = db::tracked(pool, keys.into_iter()).await?;
     let applied = identity::apply(&tracked, changes, previous.next_poi_id);
@@ -161,14 +272,17 @@ async fn apply_diff(pool: &PgPool, server: &Server, previous: &Checkpoint) -> Re
         next_poi_id: previous.next_poi_id + applied.new_identities as i64,
         checksum: checksum.finish(),
     };
-    db::store(pool, &applied.updates, &applied.versions, &checkpoint).await?;
+    db::store(pool, &applied.updates, &applied.versions, &checkpoint, None).await?;
     tracing::info!(
-        "applied {sequence} ({}): {} elements changed, {} POI versions, {} new identities; checksum {}",
+        "applied {sequence} ({}): {} elements changed, {} POI versions, {} new identities; checksum {}; \
+         {:.1} s downloading and reading, {:.1} s applying",
         state.timestamp,
         applied.updates.len(),
         applied.versions.len(),
         applied.new_identities,
         hex::encode(&checkpoint.checksum),
+        downloaded.as_secs_f64(),
+        (started.elapsed() - downloaded).as_secs_f64(),
     );
     Ok(checkpoint)
 }

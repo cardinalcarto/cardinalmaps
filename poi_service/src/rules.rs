@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use icu_casemap::CaseMapper;
 use icu_normalizer::DecomposingNormalizerBorrowed;
-use icu_properties::props::{CanonicalCombiningClass, GeneralCategory, GeneralCategoryGroup};
 use icu_properties::CodePointMapData;
+use icu_properties::props::{CanonicalCombiningClass, GeneralCategory, GeneralCategoryGroup};
 
 /// Identifies the rules below. Deployments with different rulesets assign
 /// different identifiers, so the database records which one it was built with.
@@ -32,6 +32,7 @@ pub type Tags = BTreeMap<String, String>;
 /// - `type`, which on relations only says how to read the relation.
 ///
 /// Must match `POI_KEYS` in `stable_ids/poi_tags.py`.
+#[rustfmt::skip]
 const POI_KEYS: [&str; 36] = [
     "advertising", "allotments", "amenity", "attraction", "barrier", "boundary", "building",
     "building:part", "cemetery", "club", "craft", "education", "emergency", "entrance", "geological",

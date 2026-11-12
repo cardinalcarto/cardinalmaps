@@ -49,6 +49,11 @@ database built with another one.
 | `poi_versions` | `(osm_type, osm_id, version, poi_id)` for every POI version since the planet |
 | `origin` | The planet timestamp, ruleset and replication URL the identifiers depend on |
 | `checkpoints` | Each applied replication sequence, the next `poi_id`, and the checksum |
+| `poi_changes` | Each diff's new `pois` rows and each element's identity before it, for `export` |
+
+`poi_versions.sequence` records which diff added each version (NULL for the
+planet's), and `checkpoints.journaled` whether a diff's changes are in
+`poi_changes`; diffs applied before that migration can't be exported.
 
 ## Running
 
@@ -90,6 +95,133 @@ whether an earlier patched file is still current.
 `covers --input extract.osm.pbf` fails unless the database has applied diffs
 up to the file's replication timestamp, so that `patch` can identify all of
 its POIs.
+
+## Published tables
+
+The database stays on the build host. What it knows is published to the
+public bucket under `releases/poi/`, so anyone can restore it, patch extracts
+or answer ID status without PostgreSQL or an OSM planet:
+
+```sh
+poi_service export --staging poi-staging     # after each `update`
+uv run cardinal-publish poi --target s3://BUCKET ... --staging poi-staging --latest
+```
+
+`export` reads the database in one read-only transaction, so it can run
+while `update` does. It writes a release for every checkpoint after the
+newest one in `--staging`, and a snapshot of the latest checkpoint when given
+`--snapshot`, when `--staging` has none, or when the newest is
+`--snapshot-days` (7) older. Each release is written under a temporary name
+and renamed once complete, so a rerun after a failure starts over cleanly;
+releases never change once written. `export` checks each delta against its
+checkpoint before writing it, and reads each snapshot back and checks it (see
+`import`) before marking it complete. `cardinal-publish` (`publish/README.md`)
+uploads them and prunes old ones.
+
+```
+releases/poi/
+  SEQ/release.json                 every checkpoint, by OSM replication sequence
+  SEQ/delta.bin.zst                what that diff changed (none for the planet's)
+  snapshots/SEQ/release.json
+  snapshots/SEQ/versions.bin.zst   all of poi_versions, with the sequence that added each row
+  snapshots/SEQ/pois.bin.zst       all of pois, with tags
+  snapshots/SEQ/status.bin.zst     a fixed-size record per poi_id, for lookups
+  snapshots/SEQ/checkpoints.json   every checkpoint row
+```
+
+`release.json` gives the checkpoint (`sequence`, `timestamp`, `next_poi_id`,
+`checksum`), what it follows (`previous`, for a delta), the origin
+(`planet_timestamp`, `ruleset`, `replication_url`), each file's size and
+SHA-256, row counts, and `snapshot`: the snapshot a restore up to this
+checkpoint starts from. To restore checkpoint S, take snapshot
+`release(S).snapshot`, then apply the deltas after it, one per sequence, up
+to S. No listing is needed: `latest.json`'s `poi` names the newest checkpoint.
+
+### Formats
+
+Every file is checked by its SHA-256 in `release.json`. The row files are a
+zstd frame (level 15, with zstd's content checksum) of a header (an 8-byte
+magic, `CPOIVERS`, `CPOIPOIS` or `CPOIDLTA`, and a little-endian u32 format
+version, 1) and rows as LEB128 varints. Rows are in (type, ID, version) order,
+in three sections (nodes, ways, relations), each ended by a 0; a row starts
+with its ID's delta from the previous row's in the section plus one, then
+its version, then its `poi_id` as a zigzag delta from the previous row's.
+Each table ends with its row count (u64). Identifiers were numbered in key
+order, so most of these deltas take a byte each, and a table can be streamed
+in order without an index.
+
+- `versions.bin.zst`: after the header, the planet checkpoint's sequence
+  (i64); each row then has the sequence that added it as a varint, 0 for the
+  planet's and otherwise its distance from the planet's. That's what lets a
+  restore recompute every checkpoint's checksum.
+- `pois.bin.zst`: each row has an active byte (0 or 1), then its tags: a
+  count, then each key and value as a length and UTF-8 bytes, in key order.
+- `delta.bin.zst`: after the header, the previous checkpoint and this one
+  (sequence, timestamp in microseconds, `next_poi_id`, 32-byte checksum),
+  this one's `applied_at` (µs), then the diff's new `poi_versions` rows and
+  its new `pois` rows. Each `pois` row also has the element's identity before
+  the diff (0 if new; otherwise a zigzag delta from its `poi_id`, plus one),
+  so the status table can be updated from deltas alone.
+
+A delta is exactly what `update` stored for the diff, which is everything a
+restore needs to replay it: the upserted `pois` rows (with tags and active
+flags), the inserted `poi_versions` rows and the checkpoint row.
+
+`status.bin` (published as `status.bin.zst`; `poi_service status` writes it
+uncompressed for the geocoder to memory-map) is a 128-byte header (the magic
+`CPOISTAT`, u32 format 1, u32 record size 8, then i64s: sequence, timestamp
+in seconds, `next_poi_id`, record count, then the 32-byte checksum, then
+zeros) and then one little-endian u64 per `poi_id` below `next_poi_id`,
+starting at 0, so a lookup is one read at `128 + 8 × poi_id`:
+
+| Bits | Field |
+| --- | --- |
+| 0-1 | state: 0 unassigned, 1 active (its element is a POI), 2 inactive (deleted or not a POI; may come back), 3 replaced (its element has a newer identity) |
+| 2-3 | OSM type: 0 node, 1 way, 2 relation |
+| 4-23 | the last OSM version with this identity (up to 1,048,575; the planet's highest is 6,165) |
+| 24-63 | OSM ID (up to 1.1 × 10¹²; the planet's highest is 1.4 × 10¹⁰) |
+
+`export` refuses a value that doesn't fit, which would need format 2.
+
+Why these: the tables are tens of millions of sorted rows of small integers,
+which delta varints shrink to about a byte a field before zstd, without a
+dependency like Parquet's; tags are mostly repeated keys, which zstd
+handles. A `pg_dump` would tie readers to PostgreSQL and isn't byte-stable.
+The status table is fixed-size and indexed by `poi_id` so the geocoder can
+map it and look up any ID without parsing or building anything.
+
+Sizes for the planet (68,185,562 POIs, October 2026), against 29 GB in
+PostgreSQL: `versions.bin.zst` 90 MB, `pois.bin.zst` 1.65 GB,
+`status.bin.zst` 178 MB (545 MB uncompressed), so a snapshot is 1.9 GB.
+DAILY_SIZES
+
+### Reading them without PostgreSQL
+
+```sh
+poi_service fetch --url https://BUCKET-HOST/releases --dir poi-releases
+poi_service patch --releases poi-releases --input extract.osm.pbf --output extract-ids.osm.pbf
+poi_service covers --releases poi-releases --input extract.osm.pbf
+poi_service status --releases poi-releases --output poi-status.bin
+DATABASE_URL=... poi_service import --releases poi-releases
+```
+
+`fetch` downloads the releases that reach the checkpoint `latest.json` names
+(or `--sequence`), keeping files it already has. `patch --releases` gives
+byte-identical output to `patch` from the database at the same checkpoint.
+`status` writes the geocoder's status file (the snapshot's, updated by each
+delta since), replacing `--output` by a rename. `import` restores an empty
+database from the snapshot, then applies each delta, or brings a database up
+to date with the deltas after its checkpoint; the restored database is
+identical to the original, row for row, except `poi_changes` rows from
+before the snapshot.
+
+Everything that reads releases checks each file's SHA-256, that each delta
+follows the checkpoint before it, and that its rows give its checksum and
+counter. `import` also checks a snapshot completely before loading it: its
+versions table against every checkpoint's checksum (one SHA-256 per
+checkpoint, since a diff's rows are in key order within the whole table) and
+counter, each `pois` row against its element's versions, and the status file
+against both.
 
 ## Container image
 

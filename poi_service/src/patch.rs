@@ -1,8 +1,9 @@
 //! Adding POI identifiers to an `.osm.pbf` file as `cardinal:poi_id` tags,
 //! with `cardinal:version` tags giving the element's OSM version.
 //!
-//! Every known (type, id, version) is loaded into memory first, so PostgreSQL
-//! isn't involved while the file is rewritten. An element gets the tags if its
+//! Every known (type, id, version) is loaded into memory first, from
+//! PostgreSQL or from published releases, so neither is involved while the
+//! file is rewritten; both give the same identifiers, so the same output. An element gets the tags if its
 //! exact version is in `poi_versions`. Blocks without any are copied
 //! unchanged; others are decoded, retagged and recompressed. Existing
 //! `cardinal:poi_id` and `cardinal:version` tags are replaced, so a file can be
@@ -19,7 +20,8 @@ use prost::Message;
 use rayon::prelude::*;
 use sqlx::PgPool;
 
-use crate::db;
+use crate::db::Checkpoint;
+use crate::identity::VersionRow;
 use crate::osm::OsmType;
 use crate::pbf::{DenseNodes, PrimitiveBlock, RawBlob};
 use crate::rules::{is_poi, is_poi_key, is_poi_value_key};
@@ -33,6 +35,7 @@ pub const VERSION_TAG: &str = "cardinal:version";
 const BLOBS_PER_CHUNK: usize = 256;
 
 /// Every known POI version's identifier, sorted for lookup.
+#[derive(Default)]
 pub struct PoiIds {
     /// (osm_id, version, poi_id) for nodes, ways and relations.
     by_type: [Vec<(i64, i32, i64)>; 3],
@@ -41,17 +44,26 @@ pub struct PoiIds {
 impl PoiIds {
     pub async fn load(pool: &PgPool) -> Result<PoiIds> {
         let mut by_type: [Vec<(i64, i32, i64)>; 3] = Default::default();
-        let mut rows = sqlx::query_as::<_, (OsmType, i64, i32, i64)>(
-            "SELECT osm_type, osm_id, version, poi_id FROM poi_versions",
-        )
-        .fetch(pool);
+        let mut rows =
+            sqlx::query_as::<_, (OsmType, i64, i32, i64)>("SELECT osm_type, osm_id, version, poi_id FROM poi_versions")
+                .fetch(pool);
         while let Some((osm_type, osm_id, version, poi_id)) = rows.try_next().await? {
             by_type[osm_type as usize].push((osm_id, version, poi_id));
         }
-        for entries in &mut by_type {
+        let mut ids = PoiIds { by_type };
+        ids.finish();
+        Ok(ids)
+    }
+
+    pub fn push(&mut self, row: &VersionRow) {
+        self.by_type[row.key.osm_type as usize].push((row.key.osm_id, row.version, row.poi_id));
+    }
+
+    /// Sorts the identifiers pushed, for lookup.
+    pub fn finish(&mut self) {
+        for entries in &mut self.by_type {
             entries.sort_unstable();
         }
-        Ok(PoiIds { by_type })
     }
 
     pub fn len(&self) -> usize {
@@ -84,15 +96,15 @@ impl Stats {
     }
 }
 
-pub async fn patch(pool: &PgPool, input: &Path, output: &Path) -> Result<()> {
-    if let Some(checkpoint) = db::latest_checkpoint(pool).await? {
+/// Patches `input` with identifiers known as of `checkpoint`.
+pub async fn patch(ids: PoiIds, checkpoint: Option<Checkpoint>, input: &Path, output: &Path) -> Result<()> {
+    if let Some(checkpoint) = checkpoint {
         let input_timestamp = crate::bootstrap::replication_timestamp(input)?;
-        tracing::info!("database is at {}; input is at {input_timestamp}", checkpoint.timestamp);
+        tracing::info!("identifiers are at {}; input is at {input_timestamp}", checkpoint.timestamp);
         if input_timestamp > checkpoint.timestamp {
-            tracing::warn!("the input is newer than the database, so its newest POI versions won't get identifiers");
+            tracing::warn!("the input is newer than the identifiers, so its newest POI versions won't get them");
         }
     }
-    let ids = PoiIds::load(pool).await?;
     tracing::info!("loaded {} POI versions", ids.len());
     let (input, output) = (input.to_owned(), output.to_owned());
     let stats = tokio::task::spawn_blocking(move || patch_file(&ids, &input, &output)).await??;

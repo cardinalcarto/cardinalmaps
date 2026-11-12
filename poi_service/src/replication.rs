@@ -13,7 +13,9 @@ use crate::osm::{ElementVersion, read_osc};
 pub const DEFAULT_URL: &str = "https://planet.openstreetmap.org/replication/day/";
 
 const ATTEMPTS: u32 = 10;
+/// The first retry's delay, doubled for each after it up to [`MAX_RETRY_DELAY`].
 const RETRY_DELAY: Duration = Duration::from_secs(30);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(600);
 
 #[derive(Debug, Clone, Copy)]
 pub struct State {
@@ -29,7 +31,11 @@ pub struct Server {
 impl Server {
     pub fn new(url: &str) -> Self {
         let base = if url.ends_with('/') { url.to_owned() } else { format!("{url}/") };
-        Server { base, client: reqwest::Client::new() }
+        let client = reqwest::Client::builder()
+            .user_agent(concat!("cardinal-poi-service/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .expect("an HTTP client with default TLS settings");
+        Server { base, client }
     }
 
     fn path(&self, sequence: i64, suffix: &str) -> String {
@@ -39,6 +45,7 @@ impl Server {
 
     async fn get(&self, url: &str) -> Result<Vec<u8>> {
         let mut attempt = 1;
+        let mut delay = RETRY_DELAY;
         loop {
             let response = self.client.get(url).send().await.and_then(|r| r.error_for_status());
             let result = match response {
@@ -50,10 +57,11 @@ impl Server {
                 Err(e) if e.status().is_some_and(|s| s.is_client_error()) || attempt == ATTEMPTS => {
                     return Err(e).with_context(|| format!("fetching {url}"));
                 }
-                Err(e) => tracing::warn!("fetching {url} (attempt {attempt}): {e}; retrying"),
+                Err(e) => tracing::warn!("fetching {url} (attempt {attempt}): {e}; retrying in {delay:?}"),
             }
             attempt += 1;
-            tokio::time::sleep(RETRY_DELAY).await;
+            tokio::time::sleep(delay).await;
+            delay = (delay * 2).min(MAX_RETRY_DELAY);
         }
     }
 
@@ -114,10 +122,7 @@ fn parse_state(text: &str) -> Result<State> {
             _ => {}
         }
     }
-    Ok(State {
-        sequence: sequence.context("no sequenceNumber")?,
-        timestamp: timestamp.context("no timestamp")?,
-    })
+    Ok(State { sequence: sequence.context("no sequenceNumber")?, timestamp: timestamp.context("no timestamp")? })
 }
 
 #[cfg(test)]
@@ -126,7 +131,9 @@ mod tests {
 
     #[test]
     fn parses_state() {
-        let state = parse_state("#Sat Oct 05 00:20:43 UTC 2026\nsequenceNumber=5136\ntimestamp=2026-10-05T00\\:00\\:00Z\n").unwrap();
+        let state =
+            parse_state("#Sat Oct 05 00:20:43 UTC 2026\nsequenceNumber=5136\ntimestamp=2026-10-05T00\\:00\\:00Z\n")
+                .unwrap();
         assert_eq!(state.sequence, 5136);
         assert_eq!(state.timestamp.to_rfc3339(), "2026-10-05T00:00:00+00:00");
     }
@@ -134,9 +141,6 @@ mod tests {
     #[test]
     fn builds_paths() {
         let server = Server::new("https://planet.openstreetmap.org/replication/day");
-        assert_eq!(
-            server.path(5137, ".osc.gz"),
-            "https://planet.openstreetmap.org/replication/day/000/005/137.osc.gz"
-        );
+        assert_eq!(server.path(5137, ".osc.gz"), "https://planet.openstreetmap.org/replication/day/000/005/137.osc.gz");
     }
 }

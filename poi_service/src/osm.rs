@@ -18,6 +18,11 @@ pub enum OsmType {
 }
 
 impl OsmType {
+    /// The type with this index (0 node, 1 way, 2 relation).
+    pub fn from_index(index: u8) -> Option<OsmType> {
+        [OsmType::Node, OsmType::Way, OsmType::Relation].get(usize::from(index)).copied()
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             OsmType::Node => "node",

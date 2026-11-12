@@ -69,7 +69,9 @@ pub async fn bootstrap(pool: &PgPool, planet: &Path, server: &Server, replicatio
     copy.finish().await?;
     tracing::info!("loaded {} POIs; recording versions", next_poi_id - 1);
 
-    sqlx::query("INSERT INTO poi_versions SELECT osm_type, osm_id, version, poi_id FROM pois").execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO poi_versions SELECT osm_type, osm_id, version, poi_id FROM pois")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("INSERT INTO origin (planet_timestamp, ruleset, replication_url) VALUES ($1, $2, $3)")
         .bind(planet_timestamp)
         .bind(RULESET_VERSION)
@@ -77,7 +79,7 @@ pub async fn bootstrap(pool: &PgPool, planet: &Path, server: &Server, replicatio
         .execute(&mut *tx)
         .await?;
     let checkpoint = Checkpoint { sequence, timestamp: planet_timestamp, next_poi_id, checksum: checksum.finish() };
-    db::insert_checkpoint(&mut tx, &checkpoint).await?;
+    db::insert_checkpoint(&mut tx, &checkpoint, None, false).await?;
     tx.commit().await?;
     tracing::info!("bootstrapped; checksum {}", hex::encode(&checkpoint.checksum));
     Ok(())
@@ -144,6 +146,6 @@ fn block_pois(block: &osmpbf::PrimitiveBlock) -> Result<Vec<PlanetPoi>> {
 }
 
 /// Escapes a value for PostgreSQL's COPY text format.
-fn copy_escape(value: &str) -> String {
+pub fn copy_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n").replace('\r', "\\r")
 }
