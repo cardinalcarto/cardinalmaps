@@ -28,7 +28,8 @@ releases/
     timetables/FEED.timetable
     transfers/MODE/12/X/Y.bin.zst
     snaps/MODE/FEED_INDEX.bin
-    index/X/Y.json                  zoom 6 tiles: feeds with stops there, and their zoom 12 cells
+    index/X/Y.json                  zoom 6 tiles: feeds with stops there, and their zoom 12 cells;
+                                    transfer tiles there by mode, with their sizes
     feeds/FEED.json, feeds.json     feed summaries: names, agencies, license, dates, sizes
     manifest/shared.json            the build manifest's shared fields, feed_count, and feed IDs in order
     manifest/feeds/FEED.json        one feed's manifest entry, with its index

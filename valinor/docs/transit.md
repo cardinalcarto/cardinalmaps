@@ -459,8 +459,10 @@ client's own stop numbering; walks to feeds it doesn't have are left out.
 
 `feed-index` writes what a client fetches to choose and install feeds, for publishing
 beside the build (see `feed_index`). Its `index/<x>/<y>.json` lists, for each zoom 6 tile, the
-feeds with stops there and the zoom 12 cells of those stops, read from the timetables;
-`feeds/<id>.json` and `feeds.json` summarize feeds (agencies, license, service dates, and
+feeds with stops there and the zoom 12 cells of those stops, read from the timetables,
+and `transfers`: by mode, every transfer tile inside it as `[x, y, compressed bytes]`, so a
+client knows an area's exact download size (a zoom 6 tile with transfer tiles but no stops
+gets a file too); `feeds/<id>.json` and `feeds.json` summarize feeds (agencies, license, service dates, and
 download sizes). `manifest/shared.json` is the manifest without its feeds and global tile list,
 with `feed_count` and `feed_ids` in index order, and `manifest/feeds/<id>.json` is one feed's
 entry with its `index`. The loader reads only the scalar fields and the loaded feeds' entries,
