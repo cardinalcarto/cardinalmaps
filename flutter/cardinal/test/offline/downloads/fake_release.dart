@@ -99,6 +99,15 @@ class FakeRelease {
   /// The transfer tiles of each feed and mode, as `[x, y]`.
   final transferTiles = <String, Map<String, List<List<int>>>>{};
 
+  /// Every transfer tile's bytes, by `(mode, x, y)`.
+  final transferTileBytes = <(String, int, int), Uint8List>{};
+
+  /// By archive (under `releases/`), where each tile is: `(start, length)`.
+  final archives = <String, Map<(int, int, int), (int, int)>>{};
+
+  /// The bytes before an archive's first tile.
+  static const archiveHeader = 16384;
+
   /// Publishes another transit release, over another routing release, as latest.
   Future<void> publishOtherTransit(String date) async {
     await putJson('latest.json', {
@@ -161,8 +170,6 @@ class FakeRelease {
       'us-wa-Far-Away': [SlippyTiles.at(12, 47.2, -122.9)],
     };
     final byIndexTile = <(int, int), List<Map<String, Object?>>>{};
-    // By zoom 6 tile and mode, transfer tiles as `[x, y, bytes]`.
-    final transfers = <(int, int), Map<String, Map<(int, int), int>>>{};
     final shared = <String, Object?>{
       'manifest_id': 'bd1c61618c8c9ac9',
       'valhalla_build_id': buildId,
@@ -200,20 +207,12 @@ class FakeRelease {
           ],
         ];
         for (final [x, y] in modeTiles) {
-          final key = 'transit/$transitDate/transfers/$mode/12/$x/$y.bin.zst';
-          if (!File('$root/releases/$key').existsSync()) {
-            await put(
-              key,
-              bytes(700 + (x + y) % 200),
-              contentType: 'application/zstd',
-            );
-          }
-          final size = File('$root/releases/$key').lengthSync();
-          transferBytes += size;
-          transfers
-                  .putIfAbsent((x >> 6, y >> 6), () => {})
-                  .putIfAbsent(mode, () => {})[(x, y)] =
-              size;
+          final tile = transferTileBytes.putIfAbsent((
+            mode,
+            x,
+            y,
+          ), () => bytes(700 + (x + y) % 200));
+          transferBytes += tile.length;
         }
         tiles[mode] = modeTiles;
         modes[mode] = {
@@ -256,19 +255,27 @@ class FakeRelease {
         'stop_snaps': snaps,
       });
     }
-    for (final (x, y) in {...byIndexTile.keys, ...transfers.keys}) {
+    for (final MapEntry(key: (x, y), value: feeds) in byIndexTile.entries) {
       await putJson('transit/$transitDate/index/$x/$y.json', {
         'tile': [x, y],
-        'feeds': byIndexTile[(x, y)] ?? const [],
-        'transfers': {
-          for (final MapEntry(key: mode, value: tiles)
-              in (transfers[(x, y)] ?? const {}).entries)
-            mode: [
-              for (final MapEntry(key: (tx, ty), value: size) in tiles.entries)
-                [tx, ty, size],
-            ],
-        },
+        'feeds': feeds,
       });
+    }
+    // Each mode's transfer tiles in one archive: [archiveHeader] bytes (where a real
+    // archive's header and directories are), then the tiles, in any order; where each
+    // tile is goes in [archives] for FakeNative's planner.
+    for (final mode in ['walking', 'cycling']) {
+      final body = BytesBuilder()..add(Uint8List(archiveHeader));
+      final at = <(int, int, int), (int, int)>{};
+      for (final MapEntry(key: (m, x, y), value: tile)
+          in transferTileBytes.entries) {
+        if (m != mode) continue;
+        at[(12, x, y)] = (body.length, tile.length);
+        body.add(tile);
+      }
+      final key = 'transit/$transitDate/transfers/$mode.pmtiles';
+      archives[key] = at;
+      await put(key, body.takeBytes(), contentType: 'application/vnd.pmtiles');
     }
     await putJson('transit/$transitDate/manifest/shared.json', shared);
     await putJson('transit/$transitDate/realtime.json', {

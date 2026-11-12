@@ -50,16 +50,6 @@
             "dsl_features": []
           },
           {
-            "name": "etag",
-            "getter_name": "etag",
-            "moor_type": "string",
-            "nullable": true,
-            "customConstraints": null,
-            "default_dart": null,
-            "default_client_dart": null,
-            "dsl_features": []
-          },
-          {
             "name": "manifest_id",
             "getter_name": "manifestId",
             "moor_type": "string",
@@ -325,6 +315,16 @@
             "dsl_features": []
           },
           {
+            "name": "archive",
+            "getter_name": "archive",
+            "moor_type": "string",
+            "nullable": true,
+            "customConstraints": null,
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
             "name": "expected_sha256",
             "getter_name": "expectedSha256",
             "moor_type": "string",
@@ -542,12 +542,49 @@
     },
     {
       "id": 5,
+      "references": [],
+      "type": "table",
+      "data": {
+        "name": "archives",
+        "was_declared_in_moor": false,
+        "columns": [
+          {
+            "name": "path",
+            "getter_name": "path",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": null,
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "etag",
+            "getter_name": "etag",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": null,
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          }
+        ],
+        "is_virtual": false,
+        "without_rowid": false,
+        "constraints": [],
+        "explicit_pk": [
+          "path"
+        ]
+      }
+    },
+    {
+      "id": 6,
       "references": [
         1
       ],
       "type": "table",
       "data": {
-        "name": "map_chunks",
+        "name": "chunks",
         "was_declared_in_moor": false,
         "columns": [
           {
@@ -593,6 +630,30 @@
             ]
           },
           {
+            "name": "kind",
+            "getter_name": "kind",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": null,
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [],
+            "type_converter": {
+              "dart_expr": "const EnumNameConverter<ChunkKind>(ChunkKind.values)",
+              "dart_type_name": "ChunkKind"
+            }
+          },
+          {
+            "name": "archive",
+            "getter_name": "archive",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": null,
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
             "name": "start",
             "getter_name": "start",
             "moor_type": "int",
@@ -626,7 +687,7 @@
             "name": "tiles",
             "getter_name": "tiles",
             "moor_type": "blob",
-            "nullable": false,
+            "nullable": true,
             "customConstraints": null,
             "default_dart": null,
             "default_client_dart": null,
@@ -673,7 +734,100 @@
       }
     },
     {
-      "id": 6,
+      "id": 7,
+      "references": [
+        6,
+        2
+      ],
+      "type": "table",
+      "data": {
+        "name": "chunk_files",
+        "was_declared_in_moor": false,
+        "columns": [
+          {
+            "name": "chunk_id",
+            "getter_name": "chunkId",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": null,
+            "defaultConstraints": "REFERENCES chunks (id) ON DELETE CASCADE",
+            "dialectAwareDefaultConstraints": {
+              "sqlite": "REFERENCES chunks (id) ON DELETE CASCADE"
+            },
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [
+              {
+                "foreign_key": {
+                  "to": {
+                    "table": "chunks",
+                    "column": "id"
+                  },
+                  "initially_deferred": false,
+                  "on_update": null,
+                  "on_delete": "cascade"
+                }
+              }
+            ]
+          },
+          {
+            "name": "file_id",
+            "getter_name": "fileId",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": null,
+            "defaultConstraints": "REFERENCES files (id) ON DELETE CASCADE",
+            "dialectAwareDefaultConstraints": {
+              "sqlite": "REFERENCES files (id) ON DELETE CASCADE"
+            },
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [
+              {
+                "foreign_key": {
+                  "to": {
+                    "table": "files",
+                    "column": "id"
+                  },
+                  "initially_deferred": false,
+                  "on_update": null,
+                  "on_delete": "cascade"
+                }
+              }
+            ]
+          },
+          {
+            "name": "start",
+            "getter_name": "start",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": null,
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "length",
+            "getter_name": "length",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": null,
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          }
+        ],
+        "is_virtual": false,
+        "without_rowid": false,
+        "constraints": [],
+        "explicit_pk": [
+          "chunk_id",
+          "file_id"
+        ]
+      }
+    },
+    {
+      "id": 8,
       "references": [
         2
       ],
@@ -692,7 +846,7 @@
       }
     },
     {
-      "id": 7,
+      "id": 9,
       "references": [
         3
       ],
@@ -700,6 +854,25 @@
       "data": {
         "on": 3,
         "name": "region_files_file",
+        "sql": null,
+        "unique": false,
+        "columns": [
+          {
+            "column": "file_id",
+            "order_by": null
+          }
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "references": [
+        7
+      ],
+      "type": "index",
+      "data": {
+        "on": 7,
+        "name": "chunk_files_file",
         "sql": null,
         "unique": false,
         "columns": [
@@ -717,7 +890,7 @@
       "sql": [
         {
           "dialect": "sqlite",
-          "sql": "CREATE TABLE IF NOT EXISTS \"releases\" (\"kind\" TEXT NOT NULL, \"date\" TEXT NOT NULL, \"valhalla_build_id\" INTEGER NULL, \"etag\" TEXT NULL, \"manifest_id\" TEXT NULL, \"pinned_at\" INTEGER NOT NULL, PRIMARY KEY (\"kind\"));"
+          "sql": "CREATE TABLE IF NOT EXISTS \"releases\" (\"kind\" TEXT NOT NULL, \"date\" TEXT NOT NULL, \"valhalla_build_id\" INTEGER NULL, \"manifest_id\" TEXT NULL, \"pinned_at\" INTEGER NOT NULL, PRIMARY KEY (\"kind\"));"
         }
       ]
     },
@@ -735,7 +908,7 @@
       "sql": [
         {
           "dialect": "sqlite",
-          "sql": "CREATE TABLE IF NOT EXISTS \"files\" (\"id\" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, \"kind\" TEXT NOT NULL, \"release\" TEXT NOT NULL, \"path\" TEXT NOT NULL, \"install_path\" TEXT NOT NULL, \"bytes\" INTEGER NULL, \"expected_sha256\" TEXT NULL, \"verified_sha256\" TEXT NULL, \"state\" TEXT NOT NULL, \"attempts\" INTEGER NOT NULL DEFAULT 0, \"error\" TEXT NULL, \"last_used\" INTEGER NULL, UNIQUE (\"kind\", \"release\", \"path\"));"
+          "sql": "CREATE TABLE IF NOT EXISTS \"files\" (\"id\" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, \"kind\" TEXT NOT NULL, \"release\" TEXT NOT NULL, \"path\" TEXT NOT NULL, \"install_path\" TEXT NOT NULL, \"bytes\" INTEGER NULL, \"archive\" TEXT NULL, \"expected_sha256\" TEXT NULL, \"verified_sha256\" TEXT NULL, \"state\" TEXT NOT NULL, \"attempts\" INTEGER NOT NULL DEFAULT 0, \"error\" TEXT NULL, \"last_used\" INTEGER NULL, UNIQUE (\"kind\", \"release\", \"path\"));"
         }
       ]
     },
@@ -758,11 +931,29 @@
       ]
     },
     {
-      "name": "map_chunks",
+      "name": "archives",
       "sql": [
         {
           "dialect": "sqlite",
-          "sql": "CREATE TABLE IF NOT EXISTS \"map_chunks\" (\"id\" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, \"region_id\" INTEGER NOT NULL REFERENCES regions (id) ON DELETE CASCADE, \"start\" INTEGER NOT NULL, \"length\" INTEGER NOT NULL, \"tile_count\" INTEGER NOT NULL, \"tiles\" BLOB NOT NULL, \"state\" TEXT NOT NULL, \"attempts\" INTEGER NOT NULL DEFAULT 0, \"error\" TEXT NULL);"
+          "sql": "CREATE TABLE IF NOT EXISTS \"archives\" (\"path\" TEXT NOT NULL, \"etag\" TEXT NOT NULL, PRIMARY KEY (\"path\"));"
+        }
+      ]
+    },
+    {
+      "name": "chunks",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TABLE IF NOT EXISTS \"chunks\" (\"id\" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, \"region_id\" INTEGER NOT NULL REFERENCES regions (id) ON DELETE CASCADE, \"kind\" TEXT NOT NULL, \"archive\" TEXT NOT NULL, \"start\" INTEGER NOT NULL, \"length\" INTEGER NOT NULL, \"tile_count\" INTEGER NOT NULL, \"tiles\" BLOB NULL, \"state\" TEXT NOT NULL, \"attempts\" INTEGER NOT NULL DEFAULT 0, \"error\" TEXT NULL);"
+        }
+      ]
+    },
+    {
+      "name": "chunk_files",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TABLE IF NOT EXISTS \"chunk_files\" (\"chunk_id\" INTEGER NOT NULL REFERENCES chunks (id) ON DELETE CASCADE, \"file_id\" INTEGER NOT NULL REFERENCES files (id) ON DELETE CASCADE, \"start\" INTEGER NOT NULL, \"length\" INTEGER NOT NULL, PRIMARY KEY (\"chunk_id\", \"file_id\"));"
         }
       ]
     },
@@ -781,6 +972,15 @@
         {
           "dialect": "sqlite",
           "sql": "CREATE INDEX region_files_file ON region_files (file_id)"
+        }
+      ]
+    },
+    {
+      "name": "chunk_files_file",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE INDEX chunk_files_file ON chunk_files (file_id)"
         }
       ]
     }

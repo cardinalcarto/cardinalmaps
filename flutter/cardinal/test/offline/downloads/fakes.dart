@@ -125,30 +125,55 @@ class FakeNative implements OfflineNative {
   /// The map archive in the bucket, which ranges are checked against.
   final String archive;
 
-  /// The bucket's `releases/`: transfer tiles are checked against what's there, as the
-  /// tile's CRC-32 would be.
+  /// The bucket's `releases/`.
   final String releases;
+
+  /// Where each archive's tiles are, and every transfer tile's bytes, as the fake
+  /// release wrote them ([FakeRelease.archives], [FakeRelease.transferTileBytes]).
+  Map<String, Map<(int, int, int), (int, int)>> archives = {};
+  Map<(String, int, int), Uint8List> transferTiles = {};
 
   /// Transfer tiles checked, as `mode/x/y`.
   final checkedTiles = <String>[];
 
   @override
-  Future<String?> checkTransferTile(
-    String path,
-    String mode,
-    int x,
-    int y,
+  Future<int> archiveFirstFetch() async => 16384;
+
+  @override
+  Future<ArchivePlanning> archivePlanner(
+    String key,
+    Uint8List firstBytes,
+    List<TileKey> tiles,
+  ) async => _FakeArchivePlanning(archives[key] ?? const {})..want(tiles);
+
+  @override
+  Future<String?> unpackTransferRange(
+    String rangeFile,
+    int length,
+    List<RangeTransferItem> items,
     String manifestId,
   ) async {
-    checkedTiles.add('$mode/$x/$y');
+    final range = await File(rangeFile).readAsBytes();
+    if (range.length != length) return '${range.length} bytes, not $length';
     if (manifestId != 'bd1c61618c8c9ac9') return 'build $manifestId';
-    final published = File(
-      '$releases/transit/2026-11-11/transfers/$mode/12/$x/$y.bin.zst',
-    );
-    final same =
-        sha256.convert(await File(path).readAsBytes()) ==
-        sha256.convert(await published.readAsBytes());
-    return same ? null : 'checksum mismatch';
+    for (final i in items) {
+      checkedTiles.add('${i.mode}/${i.x}/${i.y}');
+      final tile = Uint8List.sublistView(range, i.start, i.start + i.length);
+      final published = transferTiles[(i.mode, i.x, i.y)];
+      if (published == null ||
+          sha256.convert(tile) != sha256.convert(published)) {
+        return '${i.mode} ${i.x}/${i.y}: checksum mismatch';
+      }
+    }
+    for (final i in items) {
+      final part = File('${i.dest}.part');
+      await part.parent.create(recursive: true);
+      await part.writeAsBytes(
+        Uint8List.sublistView(range, i.start, i.start + i.length),
+      );
+      await part.rename(i.dest);
+    }
+    return null;
   }
 
   /// Basemap tiles, by path, and the regions holding each.
@@ -248,6 +273,61 @@ class FakeNative implements OfflineNative {
       }
     }
     return removed;
+  }
+}
+
+class _FakeArchivePlanning implements ArchivePlanning {
+  _FakeArchivePlanning(this.at);
+
+  final Map<(int, int, int), (int, int)> at;
+  List<TileKey> _wanted = const [];
+
+  @override
+  List<(int, int)> neededLeaves() => const [];
+
+  @override
+  Future<void> addLeaf(int start, Uint8List bytes) async {}
+
+  @override
+  void want(List<TileKey> tiles) => _wanted = tiles;
+
+  @override
+  List<ArchiveTileAt> found() => [
+    for (final t in _wanted)
+      if (at[t] case (final start, final length))
+        (tile: t, start: start, length: length),
+  ];
+
+  /// Ranges of tiles at most 2000 bytes apart.
+  @override
+  List<ArchiveRangePlan> ranges() {
+    final tiles = found()..sort((a, b) => a.start.compareTo(b.start));
+    final ranges = <ArchiveRangePlan>[];
+    var group = <ArchiveTileAt>[];
+    void flush() {
+      if (group.isEmpty) return;
+      final start = group.first.start;
+      final end = group.last.start + group.last.length;
+      ranges.add((
+        start: start,
+        length: end - start,
+        tiles: [
+          for (final t in group)
+            (tile: t.tile, start: t.start - start, length: t.length),
+        ],
+      ));
+      group = [];
+    }
+
+    for (final t in tiles) {
+      if (group.isNotEmpty &&
+          t.start > group.last.start + group.last.length + 2000) {
+        flush();
+      }
+      group.add(t);
+    }
+    flush();
+    return ranges;
   }
 }
 

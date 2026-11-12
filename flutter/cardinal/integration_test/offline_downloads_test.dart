@@ -155,7 +155,7 @@ void main() {
         'cut-off tile: ${cut.state.name}, ${cut.attempts} failed attempts, ${cut.error}',
       );
       expect(cut.state, isIn([FileState.verified, FileState.installed]));
-      final chunks = await db.select(db.mapChunks).get();
+      final chunks = await db.select(db.chunks).get();
       final first = chunks.singleWhere((c) => c.start == firstRange.start);
       log.add(
         'corrupt map range: ${first.state.name}, ${first.attempts} failed attempts, ${first.error}',

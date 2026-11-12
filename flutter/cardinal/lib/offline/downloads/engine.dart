@@ -246,7 +246,7 @@ class OfflineDownloads {
       }
     }
     for (final c
-        in await (db.select(db.mapChunks)..where(
+        in await (db.select(db.chunks)..where(
               (c) => c.state.isInValues([
                 ChunkState.queued,
                 ChunkState.downloaded,
@@ -324,11 +324,12 @@ class OfflineDownloads {
   /// (in the foreground: a few small requests per kind) and downloads nothing.
   Future<OfflinePlan> plan(GeoPolygon polygon) async {
     final planner = Planner(bucket, native);
-    final releases = await planner.releases(await pinned());
+    final etags = await archiveEtags();
+    final releases = await planner.releases(await pinned(), etags: etags);
     final routing = await planner.routing(releases.routing, polygon);
-    final feeds = releases.transit == null
-        ? const <CandidateFeed>[]
-        : await planner.feeds(releases.transit!, polygon);
+    final (feeds, transferArchives) = releases.transit == null
+        ? (const <CandidateFeed>[], const <String, TransferArchive>{})
+        : await planner.feeds(releases.transit!, polygon, etags: etags);
     MapPlanResult? map;
     Uint8List? header;
     var mapEtag = releases.mapEtag;
@@ -378,8 +379,14 @@ class OfflineDownloads {
       map: map,
       mapHeader: header,
       present: present,
+      transferArchives: transferArchives,
     );
   }
+
+  /// The ETags of the archives ranges come from, pinned with the releases, by path.
+  Future<Map<String, String>> archiveEtags() async => {
+    for (final row in await db.select(db.archives).get()) row.path: row.etag,
+  };
 
   // Starting.
 
@@ -404,12 +411,60 @@ class OfflineDownloads {
               release: r.transit!,
               path: transferPath(mode, x, y),
               bytes: bytes,
+              archive: transferArchivePath(r.transit!, mode),
               installPath: transitInstallPath(
                 r.transit!,
                 transferPath(mode, x, y),
               ),
             ),
     ];
+    // The archives ranges come from, and the ETags they must match.
+    final archives = {
+      if (r.map case final m? when plan.map != null)
+        mapArchivePath(m): r.mapEtag!,
+      for (final MapEntry(key: mode, value: archive)
+          in plan.transferArchives.entries)
+        if (chosen.any((f) => f.transferTiles[mode]?.isNotEmpty ?? false))
+          archive.path: archive.etag,
+    };
+    // Transfer tiles to download (not those another region brought), in ranges.
+    final have = {
+      for (final f
+          in await (db.select(db.files)..where(
+                (f) =>
+                    f.archive.isNotNull() &
+                    f.state.isInValues([
+                      FileState.verified,
+                      FileState.installed,
+                    ]),
+              ))
+              .get())
+        f.path,
+    };
+    final transferRanges = <String, List<ArchiveRangePlan>>{};
+    for (final archive in plan.transferArchives.values) {
+      final fetch = {
+        for (final f in transferFiles)
+          if (f.archive == archive.path && !have.contains(f.path))
+            if (parseTransferPath(f.path) case (_, final x, final y))
+              (12, x, y),
+      }.toList();
+      if (fetch.isEmpty) continue;
+      archive.planning.want(fetch);
+      for (var leaves = archive.planning.neededLeaves(); leaves.isNotEmpty;) {
+        for (final (start, length) in leaves) {
+          final leaf = await bucket.range(
+            archive.path,
+            start,
+            length,
+            ifMatch: archive.etag,
+          );
+          await archive.planning.addLeaf(start, leaf.bytes);
+        }
+        leaves = archive.planning.neededLeaves();
+      }
+      transferRanges[archive.path] = archive.planning.ranges();
+    }
     final files = {
       for (final f in [
         ...plan.routingFiles,
@@ -442,16 +497,26 @@ class OfflineDownloads {
               ReleasesCompanion.insert(
                 kind: ReleaseKind.map,
                 date: m,
-                etag: Value(r.mapEtag),
                 pinnedAt: now,
               ),
           ]);
         });
       } else if (pinned[ReleaseKind.routing]?.date != r.routing ||
           pinned[ReleaseKind.transit]?.date != r.transit ||
-          pinned[ReleaseKind.map]?.date != r.map ||
-          (r.map != null && pinned[ReleaseKind.map]?.etag != r.mapEtag)) {
+          pinned[ReleaseKind.map]?.date != r.map) {
         throw const StalePlan('the pinned releases changed; plan again');
+      }
+      final etags = await archiveEtags();
+      for (final MapEntry(key: path, value: etag) in archives.entries) {
+        if (etags[path] case final pinnedEtag? when pinnedEtag != etag) {
+          throw StalePlan('$path changed since it was pinned; plan again');
+        }
+        await db
+            .into(db.archives)
+            .insert(
+              ArchivesCompanion.insert(path: path, etag: etag),
+              mode: InsertMode.insertOrIgnore,
+            );
       }
       final id = await db
           .into(db.regions)
@@ -481,12 +546,14 @@ class OfflineDownloads {
                 installPath: f.installPath,
                 bytes: Value(f.bytes),
                 expectedSha256: Value(f.sha256),
+                archive: Value(f.archive),
                 state: FileState.pending,
               ),
               mode: InsertMode.insertOrIgnore,
             );
       }
       // Link every file, including those other regions brought.
+      final fileIds = <String, int>{};
       for (final f in files.values) {
         final row =
             await (db.select(db.files)..where(
@@ -496,6 +563,7 @@ class OfflineDownloads {
                       x.path.equals(f.path),
                 ))
                 .getSingle();
+        fileIds[f.path] = row.id;
         await db
             .into(db.regionFiles)
             .insert(RegionFilesCompanion.insert(regionId: id, fileId: row.id));
@@ -509,18 +577,51 @@ class OfflineDownloads {
               feedIndex: feed.index,
             ),
         ]);
-        b.insertAll(db.mapChunks, [
+        b.insertAll(db.chunks, [
           for (final range in plan.map?.ranges ?? const <MapRange>[])
-            MapChunksCompanion.insert(
+            ChunksCompanion.insert(
               regionId: id,
+              kind: ChunkKind.map,
+              archive: mapArchivePath(r.map!),
               start: range.start,
               length: range.length,
               tileCount: range.tileCount,
-              tiles: range.tiles,
+              tiles: Value(range.tiles),
               state: ChunkState.pending,
             ),
         ]);
       });
+      for (final MapEntry(key: path, value: ranges) in transferRanges.entries) {
+        final mode = plan.transferArchives.values
+            .firstWhere((a) => a.path == path)
+            .mode;
+        for (final range in ranges) {
+          final chunk = await db
+              .into(db.chunks)
+              .insert(
+                ChunksCompanion.insert(
+                  regionId: id,
+                  kind: ChunkKind.transfers,
+                  archive: path,
+                  start: range.start,
+                  length: range.length,
+                  tileCount: range.tiles.length,
+                  state: ChunkState.pending,
+                ),
+              );
+          await db.batch((b) {
+            b.insertAll(db.chunkFiles, [
+              for (final t in range.tiles)
+                ChunkFilesCompanion.insert(
+                  chunkId: chunk,
+                  fileId: fileIds[transferPath(mode, t.tile.$2, t.tile.$3)]!,
+                  start: t.start,
+                  length: t.length,
+                ),
+            ]);
+          });
+        }
+      }
       return id;
     });
     if (plan.map case final map? when r.map != null) {
@@ -585,10 +686,10 @@ class OfflineDownloads {
               ..where(db.files.state.equalsValue(FileState.queued)))
             .map((row) => row.read(db.files.id.count()) ?? 0)
             .getSingle()) +
-        (await (db.selectOnly(db.mapChunks)
-              ..addColumns([db.mapChunks.id.count()])
-              ..where(db.mapChunks.state.equalsValue(ChunkState.queued)))
-            .map((row) => row.read(db.mapChunks.id.count()) ?? 0)
+        (await (db.selectOnly(db.chunks)
+              ..addColumns([db.chunks.id.count()])
+              ..where(db.chunks.state.equalsValue(ChunkState.queued)))
+            .map((row) => row.read(db.chunks.id.count()) ?? 0)
             .getSingle());
     var room = maxQueued - queuedCount;
     final pending =
@@ -603,7 +704,9 @@ class OfflineDownloads {
                 ),
               ])
               ..where(
-                db.files.state.equalsValue(FileState.pending) & downloading,
+                db.files.state.equalsValue(FileState.pending) &
+                    db.files.archive.isNull() &
+                    downloading,
               )
               ..groupBy([db.files.id])
               ..orderBy([OrderingTerm(expression: db.files.id)]))
@@ -625,31 +728,29 @@ class OfflineDownloads {
       }
     }
     final chunks =
-        await (db.select(db.mapChunks).join([
+        await (db.select(db.chunks).join([
                 innerJoin(
                   db.regions,
-                  db.regions.id.equalsExp(db.mapChunks.regionId),
+                  db.regions.id.equalsExp(db.chunks.regionId),
                 ),
               ])
               ..where(
-                db.mapChunks.state.equalsValue(ChunkState.pending) &
-                    downloading,
+                db.chunks.state.equalsValue(ChunkState.pending) & downloading,
               )
-              ..orderBy([OrderingTerm(expression: db.mapChunks.id)])
+              ..orderBy([OrderingTerm(expression: db.chunks.id)])
               ..limit(room < 0 ? 0 : room))
             .get();
-    final etag = (await pinned())[ReleaseKind.map]?.etag;
+    final etags = await archiveEtags();
     for (final row in chunks) {
-      final c = row.readTable(db.mapChunks);
-      final region = row.readTable(db.regions);
+      final c = row.readTable(db.chunks);
       jobs.add(
         TransferJob(
           id: 'c${c.id}',
-          url: bucket.url('map/${region.mapRelease}/planet.pmtiles'),
+          url: bucket.url(c.archive),
           path: _incomingFile('c${c.id}'),
           headers: {
             'Range': 'bytes=${c.start}-${c.start + c.length - 1}',
-            'If-Match': ?etag,
+            'If-Match': ?etags[c.archive],
           },
         ),
       );
@@ -672,8 +773,8 @@ class OfflineDownloads {
           );
         } else {
           b.update(
-            db.mapChunks,
-            const MapChunksCompanion(state: Value(ChunkState.queued)),
+            db.chunks,
+            const ChunksCompanion(state: Value(ChunkState.queued)),
             where: (c) => c.id.equals(id),
           );
         }
@@ -782,7 +883,7 @@ class OfflineDownloads {
       }
     } else if (result.id.startsWith('c')) {
       final c = await (db.select(
-        db.mapChunks,
+        db.chunks,
       )..where((x) => x.id.equals(id))).getSingleOrNull();
       if (c == null || c.state != ChunkState.queued) return;
       switch (result.outcome) {
@@ -799,7 +900,7 @@ class OfflineDownloads {
           await _failChunk(
             c,
             changed
-                ? 'the map archive changed since its release was pinned (412)'
+                ? '${c.archive} changed since its release was pinned (412)'
                 : result.error ?? 'status ${result.statusCode}',
             permanent: changed || result.outcome == TransferOutcome.notFound,
           );
@@ -814,18 +915,15 @@ class OfflineDownloads {
     db.files,
   )..where((f) => f.id.equals(id))).write(FilesCompanion(state: Value(state)));
 
-  Future<void> _setChunk(int id, ChunkState state) =>
-      (db.update(db.mapChunks)..where((c) => c.id.equals(id))).write(
-        MapChunksCompanion(state: Value(state)),
-      );
+  Future<void> _setChunk(int id, ChunkState state) => (db.update(
+    db.chunks,
+  )..where((c) => c.id.equals(id))).write(ChunksCompanion(state: Value(state)));
 
   /// A file is whole in `.incoming/` (`downloaded`): checks it, and it's `verified`.
   ///
   /// - Files the index gives a SHA-256 for (routing tiles, timetables, snaps) must
   ///   hash to it.
-  /// - Transfer tiles must be the size their index shard gives, and decode whole: the
-  ///   CRC-32 in their header covers every byte of the decompressed tile, and the header
-  ///   must name the tile and the build's manifest (in Rust, `checkTransferTile`).
+  /// (Transfer tiles are checked as their range is unpacked: [_unpack].)
   /// - JSON must read as the release's ([_checkJson]).
   Future<void> _verify(FileRow f) async {
     final path = _incomingFile('f${f.id}');
@@ -836,21 +934,7 @@ class OfflineDownloads {
         await _failFile(f, '$length bytes, not $bytes');
         return;
       }
-      if (parseTransferPath(f.path) case (final mode, final x, final y)) {
-        final manifest = (await pinned())[ReleaseKind.transit]?.manifestId;
-        if (manifest == null) {
-          await _failFile(f, 'no manifest ID to check it against');
-          return;
-        }
-        final problem = await _timed(
-          'transfer tile check',
-          () => native.checkTransferTile(path, mode, x, y, manifest),
-        );
-        if (problem != null) {
-          await _failFile(f, problem);
-          return;
-        }
-      } else if (f.path.endsWith('.json')) {
+      if (f.path.endsWith('.json')) {
         final problem = await _timed(
           'json check',
           () async =>
@@ -909,15 +993,15 @@ class OfflineDownloads {
   }
 
   Future<void> _failChunk(
-    MapChunkRow c,
+    ChunkRow c,
     String error, {
     bool permanent = false,
   }) async {
     debugPrint('offline: map range ${c.start}+${c.length}: $error');
     _deleteQuietly(_incomingFile('c${c.id}'));
     final attempts = c.attempts + 1;
-    await (db.update(db.mapChunks)..where((x) => x.id.equals(c.id))).write(
-      MapChunksCompanion(
+    await (db.update(db.chunks)..where((x) => x.id.equals(c.id))).write(
+      ChunksCompanion(
         state: Value(
           permanent || attempts >= maxAttempts
               ? ChunkState.failed
@@ -929,13 +1013,29 @@ class OfflineDownloads {
     );
   }
 
-  /// Writes a downloaded range's tiles into the basemap: `unpacked`, then its file goes:
-  /// `deleted`. A bad tile or a short range fails it, to be downloaded again.
-  Future<void> _unpack(MapChunkRow c) async {
+  /// Takes a downloaded range's tiles out of it: map tiles into the basemap, transfer
+  /// tiles each to its file in `.incoming/` (which is then `verified`). Then the range is
+  /// `unpacked`, and its file goes: `deleted`. A bad tile or a short range fails it, to be
+  /// downloaded again.
+  Future<void> _unpack(ChunkRow c) async {
+    final file = _incomingFile('c${c.id}');
+    final problem = switch (c.kind) {
+      ChunkKind.map => await _unpackMap(c, file),
+      ChunkKind.transfers => await _unpackTransfers(c, file),
+    };
+    if (problem != null) {
+      await _failChunk(c, problem);
+      return;
+    }
+    await _setChunk(c.id, ChunkState.unpacked);
+    _deleteQuietly(file);
+    await _setChunk(c.id, ChunkState.deleted);
+  }
+
+  Future<String?> _unpackMap(ChunkRow c, String file) async {
     final region = await (db.select(
       db.regions,
     )..where((r) => r.id.equals(c.regionId))).getSingle();
-    final file = _incomingFile('c${c.id}');
     try {
       await _timed(
         'unpack',
@@ -943,17 +1043,60 @@ class OfflineDownloads {
           basemapPath(region.mapRelease!),
           file,
           c.length,
-          c.tiles,
+          c.tiles!,
           c.regionId,
         ),
       );
+      return null;
     } on MapRangeError catch (e) {
-      await _failChunk(c, e.message);
-      return;
+      return e.message;
     }
-    await _setChunk(c.id, ChunkState.unpacked);
-    _deleteQuietly(file);
-    await _setChunk(c.id, ChunkState.deleted);
+  }
+
+  Future<String?> _unpackTransfers(ChunkRow c, String file) async {
+    final manifest = (await pinned())[ReleaseKind.transit]?.manifestId;
+    if (manifest == null) return 'no manifest ID to check its tiles against';
+    final rows = await (db.select(db.chunkFiles).join([
+      innerJoin(db.files, db.files.id.equalsExp(db.chunkFiles.fileId)),
+    ])..where(db.chunkFiles.chunkId.equals(c.id))).get();
+    // Tiles another region's range brought meanwhile are left as they are.
+    final wanted = [
+      for (final row in rows)
+        if (row.readTable(db.files) case final f
+            when f.state == FileState.pending || f.state == FileState.failed)
+          (row.readTable(db.chunkFiles), f),
+    ];
+    final items = <RangeTransferItem>[
+      for (final (at, f) in wanted)
+        if (parseTransferPath(f.path) case (final mode, final x, final y))
+          (
+            start: at.start,
+            length: at.length,
+            dest: _incomingFile('f${f.id}'),
+            mode: mode,
+            x: x,
+            y: y,
+          ),
+    ];
+    await Directory(incoming).create(recursive: true);
+    final problem = await _timed(
+      'transfer range check',
+      () => native.unpackTransferRange(file, c.length, items, manifest),
+    );
+    if (problem != null) return problem;
+    await db.batch((b) {
+      for (final (_, f) in wanted) {
+        b.update(
+          db.files,
+          const FilesCompanion(
+            state: Value(FileState.verified),
+            error: Value(null),
+          ),
+          where: (x) => x.id.equals(f.id),
+        );
+      }
+    });
+    return null;
   }
 
   static void _deleteQuietly(String path) {
@@ -980,7 +1123,7 @@ class OfflineDownloads {
   Future<void> _advance(RegionRow region) async {
     final files = await _regionFiles(region.id);
     final chunks = await (db.select(
-      db.mapChunks,
+      db.chunks,
     )..where((c) => c.regionId.equals(region.id))).get();
     final failedFile = files
         .where((f) => f.state == FileState.failed)
@@ -1114,8 +1257,8 @@ class OfflineDownloads {
         );
       }
       b.update(
-        db.mapChunks,
-        const MapChunksCompanion(
+        db.chunks,
+        const ChunksCompanion(
           state: Value(ChunkState.pending),
           attempts: Value(0),
         ),
@@ -1151,7 +1294,7 @@ class OfflineDownloads {
     };
     final orphans = files.where((f) => !others.contains(f.id)).toList();
     final chunks = await (db.select(
-      db.mapChunks,
+      db.chunks,
     )..where((c) => c.regionId.equals(region.id))).get();
     await transfers.cancel([
       for (final f in orphans)
@@ -1306,11 +1449,11 @@ class OfflineDownloads {
           SUM(state IN ('unpacked', 'deleted')) AS done,
           COUNT(*) AS total,
           SUM(state = 'failed') AS failed
-        FROM map_chunks GROUP BY region_id
+        FROM chunks WHERE kind = 'map' GROUP BY region_id
       ) c ON c.region_id = r.id
       ORDER BY r.id
       ''',
-      readsFrom: {db.regions, db.files, db.regionFiles, db.mapChunks},
+      readsFrom: {db.regions, db.files, db.regionFiles, db.chunks},
     );
     return query.watch().map(
       (rows) => [

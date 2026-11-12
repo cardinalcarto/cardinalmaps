@@ -38,15 +38,6 @@ class $ReleasesTable extends Releases
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _etagMeta = const VerificationMeta('etag');
-  @override
-  late final GeneratedColumn<String> etag = GeneratedColumn<String>(
-    'etag',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
   static const VerificationMeta _manifestIdMeta = const VerificationMeta(
     'manifestId',
   );
@@ -74,7 +65,6 @@ class $ReleasesTable extends Releases
     kind,
     date,
     valhallaBuildId,
-    etag,
     manifestId,
     pinnedAt,
   ];
@@ -105,12 +95,6 @@ class $ReleasesTable extends Releases
           data['valhalla_build_id']!,
           _valhallaBuildIdMeta,
         ),
-      );
-    }
-    if (data.containsKey('etag')) {
-      context.handle(
-        _etagMeta,
-        etag.isAcceptableOrUnknown(data['etag']!, _etagMeta),
       );
     }
     if (data.containsKey('manifest_id')) {
@@ -150,10 +134,6 @@ class $ReleasesTable extends Releases
         DriftSqlType.int,
         data['${effectivePrefix}valhalla_build_id'],
       ),
-      etag: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}etag'],
-      ),
       manifestId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}manifest_id'],
@@ -183,9 +163,6 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
   /// Routing and transit: the Valhalla build their tiles and walks are from.
   final int? valhallaBuildId;
 
-  /// Map: the archive's ETag, which every range request must match (`If-Match`).
-  final String? etag;
-
   /// Transit: the build's manifest ID, which its transfer tiles carry.
   final String? manifestId;
   final DateTime pinnedAt;
@@ -193,7 +170,6 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
     required this.kind,
     required this.date,
     this.valhallaBuildId,
-    this.etag,
     this.manifestId,
     required this.pinnedAt,
   });
@@ -206,9 +182,6 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
     map['date'] = Variable<String>(date);
     if (!nullToAbsent || valhallaBuildId != null) {
       map['valhalla_build_id'] = Variable<int>(valhallaBuildId);
-    }
-    if (!nullToAbsent || etag != null) {
-      map['etag'] = Variable<String>(etag);
     }
     if (!nullToAbsent || manifestId != null) {
       map['manifest_id'] = Variable<String>(manifestId);
@@ -224,7 +197,6 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
       valhallaBuildId: valhallaBuildId == null && nullToAbsent
           ? const Value.absent()
           : Value(valhallaBuildId),
-      etag: etag == null && nullToAbsent ? const Value.absent() : Value(etag),
       manifestId: manifestId == null && nullToAbsent
           ? const Value.absent()
           : Value(manifestId),
@@ -243,7 +215,6 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
       ),
       date: serializer.fromJson<String>(json['date']),
       valhallaBuildId: serializer.fromJson<int?>(json['valhallaBuildId']),
-      etag: serializer.fromJson<String?>(json['etag']),
       manifestId: serializer.fromJson<String?>(json['manifestId']),
       pinnedAt: serializer.fromJson<DateTime>(json['pinnedAt']),
     );
@@ -257,7 +228,6 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
       ),
       'date': serializer.toJson<String>(date),
       'valhallaBuildId': serializer.toJson<int?>(valhallaBuildId),
-      'etag': serializer.toJson<String?>(etag),
       'manifestId': serializer.toJson<String?>(manifestId),
       'pinnedAt': serializer.toJson<DateTime>(pinnedAt),
     };
@@ -267,7 +237,6 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
     ReleaseKind? kind,
     String? date,
     Value<int?> valhallaBuildId = const Value.absent(),
-    Value<String?> etag = const Value.absent(),
     Value<String?> manifestId = const Value.absent(),
     DateTime? pinnedAt,
   }) => ReleaseRow(
@@ -276,7 +245,6 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
     valhallaBuildId: valhallaBuildId.present
         ? valhallaBuildId.value
         : this.valhallaBuildId,
-    etag: etag.present ? etag.value : this.etag,
     manifestId: manifestId.present ? manifestId.value : this.manifestId,
     pinnedAt: pinnedAt ?? this.pinnedAt,
   );
@@ -287,7 +255,6 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
       valhallaBuildId: data.valhallaBuildId.present
           ? data.valhallaBuildId.value
           : this.valhallaBuildId,
-      etag: data.etag.present ? data.etag.value : this.etag,
       manifestId: data.manifestId.present
           ? data.manifestId.value
           : this.manifestId,
@@ -301,7 +268,6 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
           ..write('kind: $kind, ')
           ..write('date: $date, ')
           ..write('valhallaBuildId: $valhallaBuildId, ')
-          ..write('etag: $etag, ')
           ..write('manifestId: $manifestId, ')
           ..write('pinnedAt: $pinnedAt')
           ..write(')'))
@@ -310,7 +276,7 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
 
   @override
   int get hashCode =>
-      Object.hash(kind, date, valhallaBuildId, etag, manifestId, pinnedAt);
+      Object.hash(kind, date, valhallaBuildId, manifestId, pinnedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -318,7 +284,6 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
           other.kind == this.kind &&
           other.date == this.date &&
           other.valhallaBuildId == this.valhallaBuildId &&
-          other.etag == this.etag &&
           other.manifestId == this.manifestId &&
           other.pinnedAt == this.pinnedAt);
 }
@@ -327,7 +292,6 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
   final Value<ReleaseKind> kind;
   final Value<String> date;
   final Value<int?> valhallaBuildId;
-  final Value<String?> etag;
   final Value<String?> manifestId;
   final Value<DateTime> pinnedAt;
   final Value<int> rowid;
@@ -335,7 +299,6 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
     this.kind = const Value.absent(),
     this.date = const Value.absent(),
     this.valhallaBuildId = const Value.absent(),
-    this.etag = const Value.absent(),
     this.manifestId = const Value.absent(),
     this.pinnedAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -344,7 +307,6 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
     required ReleaseKind kind,
     required String date,
     this.valhallaBuildId = const Value.absent(),
-    this.etag = const Value.absent(),
     this.manifestId = const Value.absent(),
     required DateTime pinnedAt,
     this.rowid = const Value.absent(),
@@ -355,7 +317,6 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
     Expression<String>? kind,
     Expression<String>? date,
     Expression<int>? valhallaBuildId,
-    Expression<String>? etag,
     Expression<String>? manifestId,
     Expression<DateTime>? pinnedAt,
     Expression<int>? rowid,
@@ -364,7 +325,6 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
       if (kind != null) 'kind': kind,
       if (date != null) 'date': date,
       if (valhallaBuildId != null) 'valhalla_build_id': valhallaBuildId,
-      if (etag != null) 'etag': etag,
       if (manifestId != null) 'manifest_id': manifestId,
       if (pinnedAt != null) 'pinned_at': pinnedAt,
       if (rowid != null) 'rowid': rowid,
@@ -375,7 +335,6 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
     Value<ReleaseKind>? kind,
     Value<String>? date,
     Value<int?>? valhallaBuildId,
-    Value<String?>? etag,
     Value<String?>? manifestId,
     Value<DateTime>? pinnedAt,
     Value<int>? rowid,
@@ -384,7 +343,6 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
       kind: kind ?? this.kind,
       date: date ?? this.date,
       valhallaBuildId: valhallaBuildId ?? this.valhallaBuildId,
-      etag: etag ?? this.etag,
       manifestId: manifestId ?? this.manifestId,
       pinnedAt: pinnedAt ?? this.pinnedAt,
       rowid: rowid ?? this.rowid,
@@ -405,9 +363,6 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
     if (valhallaBuildId.present) {
       map['valhalla_build_id'] = Variable<int>(valhallaBuildId.value);
     }
-    if (etag.present) {
-      map['etag'] = Variable<String>(etag.value);
-    }
     if (manifestId.present) {
       map['manifest_id'] = Variable<String>(manifestId.value);
     }
@@ -426,7 +381,6 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
           ..write('kind: $kind, ')
           ..write('date: $date, ')
           ..write('valhallaBuildId: $valhallaBuildId, ')
-          ..write('etag: $etag, ')
           ..write('manifestId: $manifestId, ')
           ..write('pinnedAt: $pinnedAt, ')
           ..write('rowid: $rowid')
@@ -1276,6 +1230,17 @@ class $FilesTable extends Files with TableInfo<$FilesTable, FileRow> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _archiveMeta = const VerificationMeta(
+    'archive',
+  );
+  @override
+  late final GeneratedColumn<String> archive = GeneratedColumn<String>(
+    'archive',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _expectedSha256Meta = const VerificationMeta(
     'expectedSha256',
   );
@@ -1347,6 +1312,7 @@ class $FilesTable extends Files with TableInfo<$FilesTable, FileRow> {
     path,
     installPath,
     bytes,
+    archive,
     expectedSha256,
     verifiedSha256,
     state,
@@ -1400,6 +1366,12 @@ class $FilesTable extends Files with TableInfo<$FilesTable, FileRow> {
       context.handle(
         _bytesMeta,
         bytes.isAcceptableOrUnknown(data['bytes']!, _bytesMeta),
+      );
+    }
+    if (data.containsKey('archive')) {
+      context.handle(
+        _archiveMeta,
+        archive.isAcceptableOrUnknown(data['archive']!, _archiveMeta),
       );
     }
     if (data.containsKey('expected_sha256')) {
@@ -1477,6 +1449,10 @@ class $FilesTable extends Files with TableInfo<$FilesTable, FileRow> {
         DriftSqlType.int,
         data['${effectivePrefix}bytes'],
       ),
+      archive: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}archive'],
+      ),
       expectedSha256: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}expected_sha256'],
@@ -1528,11 +1504,15 @@ class FileRow extends DataClass implements Insertable<FileRow> {
   /// Where it goes under the offline folder, such as `routing/<date>/tiles/...`.
   final String installPath;
 
-  /// Its size, when the index says (transfer tiles' sizes aren't published).
+  /// Its size, from the index or the archive's directory.
   final int? bytes;
 
-  /// The SHA-256 to check it against, from the index; for files whose index gives none,
-  /// the bucket's `x-amz-meta-sha256` for the object, taken when it downloads.
+  /// The archive it comes out of (`transit/<date>/transfers/<mode>.pmtiles`), for tiles
+  /// downloaded in ranges ([ChunkFiles]) rather than one by one.
+  final String? archive;
+
+  /// The SHA-256 to check it against, from the index (none for JSON, which is checked by
+  /// reading it, or transfer tiles, which are checked by decoding them).
   final String? expectedSha256;
 
   /// What it hashed to, once it matched.
@@ -1550,6 +1530,7 @@ class FileRow extends DataClass implements Insertable<FileRow> {
     required this.path,
     required this.installPath,
     this.bytes,
+    this.archive,
     this.expectedSha256,
     this.verifiedSha256,
     required this.state,
@@ -1569,6 +1550,9 @@ class FileRow extends DataClass implements Insertable<FileRow> {
     map['install_path'] = Variable<String>(installPath);
     if (!nullToAbsent || bytes != null) {
       map['bytes'] = Variable<int>(bytes);
+    }
+    if (!nullToAbsent || archive != null) {
+      map['archive'] = Variable<String>(archive);
     }
     if (!nullToAbsent || expectedSha256 != null) {
       map['expected_sha256'] = Variable<String>(expectedSha256);
@@ -1599,6 +1583,9 @@ class FileRow extends DataClass implements Insertable<FileRow> {
       bytes: bytes == null && nullToAbsent
           ? const Value.absent()
           : Value(bytes),
+      archive: archive == null && nullToAbsent
+          ? const Value.absent()
+          : Value(archive),
       expectedSha256: expectedSha256 == null && nullToAbsent
           ? const Value.absent()
           : Value(expectedSha256),
@@ -1630,6 +1617,7 @@ class FileRow extends DataClass implements Insertable<FileRow> {
       path: serializer.fromJson<String>(json['path']),
       installPath: serializer.fromJson<String>(json['installPath']),
       bytes: serializer.fromJson<int?>(json['bytes']),
+      archive: serializer.fromJson<String?>(json['archive']),
       expectedSha256: serializer.fromJson<String?>(json['expectedSha256']),
       verifiedSha256: serializer.fromJson<String?>(json['verifiedSha256']),
       state: $FilesTable.$converterstate.fromJson(
@@ -1652,6 +1640,7 @@ class FileRow extends DataClass implements Insertable<FileRow> {
       'path': serializer.toJson<String>(path),
       'installPath': serializer.toJson<String>(installPath),
       'bytes': serializer.toJson<int?>(bytes),
+      'archive': serializer.toJson<String?>(archive),
       'expectedSha256': serializer.toJson<String?>(expectedSha256),
       'verifiedSha256': serializer.toJson<String?>(verifiedSha256),
       'state': serializer.toJson<String>(
@@ -1670,6 +1659,7 @@ class FileRow extends DataClass implements Insertable<FileRow> {
     String? path,
     String? installPath,
     Value<int?> bytes = const Value.absent(),
+    Value<String?> archive = const Value.absent(),
     Value<String?> expectedSha256 = const Value.absent(),
     Value<String?> verifiedSha256 = const Value.absent(),
     FileState? state,
@@ -1683,6 +1673,7 @@ class FileRow extends DataClass implements Insertable<FileRow> {
     path: path ?? this.path,
     installPath: installPath ?? this.installPath,
     bytes: bytes.present ? bytes.value : this.bytes,
+    archive: archive.present ? archive.value : this.archive,
     expectedSha256: expectedSha256.present
         ? expectedSha256.value
         : this.expectedSha256,
@@ -1704,6 +1695,7 @@ class FileRow extends DataClass implements Insertable<FileRow> {
           ? data.installPath.value
           : this.installPath,
       bytes: data.bytes.present ? data.bytes.value : this.bytes,
+      archive: data.archive.present ? data.archive.value : this.archive,
       expectedSha256: data.expectedSha256.present
           ? data.expectedSha256.value
           : this.expectedSha256,
@@ -1726,6 +1718,7 @@ class FileRow extends DataClass implements Insertable<FileRow> {
           ..write('path: $path, ')
           ..write('installPath: $installPath, ')
           ..write('bytes: $bytes, ')
+          ..write('archive: $archive, ')
           ..write('expectedSha256: $expectedSha256, ')
           ..write('verifiedSha256: $verifiedSha256, ')
           ..write('state: $state, ')
@@ -1744,6 +1737,7 @@ class FileRow extends DataClass implements Insertable<FileRow> {
     path,
     installPath,
     bytes,
+    archive,
     expectedSha256,
     verifiedSha256,
     state,
@@ -1761,6 +1755,7 @@ class FileRow extends DataClass implements Insertable<FileRow> {
           other.path == this.path &&
           other.installPath == this.installPath &&
           other.bytes == this.bytes &&
+          other.archive == this.archive &&
           other.expectedSha256 == this.expectedSha256 &&
           other.verifiedSha256 == this.verifiedSha256 &&
           other.state == this.state &&
@@ -1776,6 +1771,7 @@ class FilesCompanion extends UpdateCompanion<FileRow> {
   final Value<String> path;
   final Value<String> installPath;
   final Value<int?> bytes;
+  final Value<String?> archive;
   final Value<String?> expectedSha256;
   final Value<String?> verifiedSha256;
   final Value<FileState> state;
@@ -1789,6 +1785,7 @@ class FilesCompanion extends UpdateCompanion<FileRow> {
     this.path = const Value.absent(),
     this.installPath = const Value.absent(),
     this.bytes = const Value.absent(),
+    this.archive = const Value.absent(),
     this.expectedSha256 = const Value.absent(),
     this.verifiedSha256 = const Value.absent(),
     this.state = const Value.absent(),
@@ -1803,6 +1800,7 @@ class FilesCompanion extends UpdateCompanion<FileRow> {
     required String path,
     required String installPath,
     this.bytes = const Value.absent(),
+    this.archive = const Value.absent(),
     this.expectedSha256 = const Value.absent(),
     this.verifiedSha256 = const Value.absent(),
     required FileState state,
@@ -1821,6 +1819,7 @@ class FilesCompanion extends UpdateCompanion<FileRow> {
     Expression<String>? path,
     Expression<String>? installPath,
     Expression<int>? bytes,
+    Expression<String>? archive,
     Expression<String>? expectedSha256,
     Expression<String>? verifiedSha256,
     Expression<String>? state,
@@ -1835,6 +1834,7 @@ class FilesCompanion extends UpdateCompanion<FileRow> {
       if (path != null) 'path': path,
       if (installPath != null) 'install_path': installPath,
       if (bytes != null) 'bytes': bytes,
+      if (archive != null) 'archive': archive,
       if (expectedSha256 != null) 'expected_sha256': expectedSha256,
       if (verifiedSha256 != null) 'verified_sha256': verifiedSha256,
       if (state != null) 'state': state,
@@ -1851,6 +1851,7 @@ class FilesCompanion extends UpdateCompanion<FileRow> {
     Value<String>? path,
     Value<String>? installPath,
     Value<int?>? bytes,
+    Value<String?>? archive,
     Value<String?>? expectedSha256,
     Value<String?>? verifiedSha256,
     Value<FileState>? state,
@@ -1865,6 +1866,7 @@ class FilesCompanion extends UpdateCompanion<FileRow> {
       path: path ?? this.path,
       installPath: installPath ?? this.installPath,
       bytes: bytes ?? this.bytes,
+      archive: archive ?? this.archive,
       expectedSha256: expectedSha256 ?? this.expectedSha256,
       verifiedSha256: verifiedSha256 ?? this.verifiedSha256,
       state: state ?? this.state,
@@ -1896,6 +1898,9 @@ class FilesCompanion extends UpdateCompanion<FileRow> {
     }
     if (bytes.present) {
       map['bytes'] = Variable<int>(bytes.value);
+    }
+    if (archive.present) {
+      map['archive'] = Variable<String>(archive.value);
     }
     if (expectedSha256.present) {
       map['expected_sha256'] = Variable<String>(expectedSha256.value);
@@ -1929,6 +1934,7 @@ class FilesCompanion extends UpdateCompanion<FileRow> {
           ..write('path: $path, ')
           ..write('installPath: $installPath, ')
           ..write('bytes: $bytes, ')
+          ..write('archive: $archive, ')
           ..write('expectedSha256: $expectedSha256, ')
           ..write('verifiedSha256: $verifiedSha256, ')
           ..write('state: $state, ')
@@ -2430,12 +2436,220 @@ class RegionFeedsCompanion extends UpdateCompanion<RegionFeedRow> {
   }
 }
 
-class $MapChunksTable extends MapChunks
-    with TableInfo<$MapChunksTable, MapChunkRow> {
+class $ArchivesTable extends Archives
+    with TableInfo<$ArchivesTable, ArchiveRow> {
   @override
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
-  $MapChunksTable(this.attachedDatabase, [this._alias]);
+  $ArchivesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _pathMeta = const VerificationMeta('path');
+  @override
+  late final GeneratedColumn<String> path = GeneratedColumn<String>(
+    'path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _etagMeta = const VerificationMeta('etag');
+  @override
+  late final GeneratedColumn<String> etag = GeneratedColumn<String>(
+    'etag',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [path, etag];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'archives';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<ArchiveRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('path')) {
+      context.handle(
+        _pathMeta,
+        path.isAcceptableOrUnknown(data['path']!, _pathMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_pathMeta);
+    }
+    if (data.containsKey('etag')) {
+      context.handle(
+        _etagMeta,
+        etag.isAcceptableOrUnknown(data['etag']!, _etagMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_etagMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {path};
+  @override
+  ArchiveRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return ArchiveRow(
+      path: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}path'],
+      )!,
+      etag: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}etag'],
+      )!,
+    );
+  }
+
+  @override
+  $ArchivesTable createAlias(String alias) {
+    return $ArchivesTable(attachedDatabase, alias);
+  }
+}
+
+class ArchiveRow extends DataClass implements Insertable<ArchiveRow> {
+  /// Under `releases/`, such as `map/<date>/planet.pmtiles`.
+  final String path;
+  final String etag;
+  const ArchiveRow({required this.path, required this.etag});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['path'] = Variable<String>(path);
+    map['etag'] = Variable<String>(etag);
+    return map;
+  }
+
+  ArchivesCompanion toCompanion(bool nullToAbsent) {
+    return ArchivesCompanion(path: Value(path), etag: Value(etag));
+  }
+
+  factory ArchiveRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return ArchiveRow(
+      path: serializer.fromJson<String>(json['path']),
+      etag: serializer.fromJson<String>(json['etag']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'path': serializer.toJson<String>(path),
+      'etag': serializer.toJson<String>(etag),
+    };
+  }
+
+  ArchiveRow copyWith({String? path, String? etag}) =>
+      ArchiveRow(path: path ?? this.path, etag: etag ?? this.etag);
+  ArchiveRow copyWithCompanion(ArchivesCompanion data) {
+    return ArchiveRow(
+      path: data.path.present ? data.path.value : this.path,
+      etag: data.etag.present ? data.etag.value : this.etag,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ArchiveRow(')
+          ..write('path: $path, ')
+          ..write('etag: $etag')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(path, etag);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ArchiveRow &&
+          other.path == this.path &&
+          other.etag == this.etag);
+}
+
+class ArchivesCompanion extends UpdateCompanion<ArchiveRow> {
+  final Value<String> path;
+  final Value<String> etag;
+  final Value<int> rowid;
+  const ArchivesCompanion({
+    this.path = const Value.absent(),
+    this.etag = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  ArchivesCompanion.insert({
+    required String path,
+    required String etag,
+    this.rowid = const Value.absent(),
+  }) : path = Value(path),
+       etag = Value(etag);
+  static Insertable<ArchiveRow> custom({
+    Expression<String>? path,
+    Expression<String>? etag,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (path != null) 'path': path,
+      if (etag != null) 'etag': etag,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  ArchivesCompanion copyWith({
+    Value<String>? path,
+    Value<String>? etag,
+    Value<int>? rowid,
+  }) {
+    return ArchivesCompanion(
+      path: path ?? this.path,
+      etag: etag ?? this.etag,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (path.present) {
+      map['path'] = Variable<String>(path.value);
+    }
+    if (etag.present) {
+      map['etag'] = Variable<String>(etag.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ArchivesCompanion(')
+          ..write('path: $path, ')
+          ..write('etag: $etag, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $ChunksTable extends Chunks with TableInfo<$ChunksTable, ChunkRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ChunksTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<int> id = GeneratedColumn<int>(
@@ -2462,6 +2676,26 @@ class $MapChunksTable extends MapChunks
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'REFERENCES regions (id) ON DELETE CASCADE',
     ),
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<ChunkKind, String> kind =
+      GeneratedColumn<String>(
+        'kind',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      ).withConverter<ChunkKind>($ChunksTable.$converterkind);
+  static const VerificationMeta _archiveMeta = const VerificationMeta(
+    'archive',
+  );
+  @override
+  late final GeneratedColumn<String> archive = GeneratedColumn<String>(
+    'archive',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _startMeta = const VerificationMeta('start');
   @override
@@ -2497,9 +2731,9 @@ class $MapChunksTable extends MapChunks
   late final GeneratedColumn<Uint8List> tiles = GeneratedColumn<Uint8List>(
     'tiles',
     aliasedName,
-    false,
+    true,
     type: DriftSqlType.blob,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
   );
   @override
   late final GeneratedColumnWithTypeConverter<ChunkState, String> state =
@@ -2509,7 +2743,7 @@ class $MapChunksTable extends MapChunks
         false,
         type: DriftSqlType.string,
         requiredDuringInsert: true,
-      ).withConverter<ChunkState>($MapChunksTable.$converterstate);
+      ).withConverter<ChunkState>($ChunksTable.$converterstate);
   static const VerificationMeta _attemptsMeta = const VerificationMeta(
     'attempts',
   );
@@ -2535,6 +2769,8 @@ class $MapChunksTable extends MapChunks
   List<GeneratedColumn> get $columns => [
     id,
     regionId,
+    kind,
+    archive,
     start,
     length,
     tileCount,
@@ -2547,10 +2783,10 @@ class $MapChunksTable extends MapChunks
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
-  static const String $name = 'map_chunks';
+  static const String $name = 'chunks';
   @override
   VerificationContext validateIntegrity(
-    Insertable<MapChunkRow> instance, {
+    Insertable<ChunkRow> instance, {
     bool isInserting = false,
   }) {
     final context = VerificationContext();
@@ -2565,6 +2801,14 @@ class $MapChunksTable extends MapChunks
       );
     } else if (isInserting) {
       context.missing(_regionIdMeta);
+    }
+    if (data.containsKey('archive')) {
+      context.handle(
+        _archiveMeta,
+        archive.isAcceptableOrUnknown(data['archive']!, _archiveMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_archiveMeta);
     }
     if (data.containsKey('start')) {
       context.handle(
@@ -2595,8 +2839,6 @@ class $MapChunksTable extends MapChunks
         _tilesMeta,
         tiles.isAcceptableOrUnknown(data['tiles']!, _tilesMeta),
       );
-    } else if (isInserting) {
-      context.missing(_tilesMeta);
     }
     if (data.containsKey('attempts')) {
       context.handle(
@@ -2616,9 +2858,9 @@ class $MapChunksTable extends MapChunks
   @override
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
-  MapChunkRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+  ChunkRow map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return MapChunkRow(
+    return ChunkRow(
       id: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}id'],
@@ -2626,6 +2868,16 @@ class $MapChunksTable extends MapChunks
       regionId: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}region_id'],
+      )!,
+      kind: $ChunksTable.$converterkind.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}kind'],
+        )!,
+      ),
+      archive: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}archive'],
       )!,
       start: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
@@ -2642,8 +2894,8 @@ class $MapChunksTable extends MapChunks
       tiles: attachedDatabase.typeMapping.read(
         DriftSqlType.blob,
         data['${effectivePrefix}tiles'],
-      )!,
-      state: $MapChunksTable.$converterstate.fromSql(
+      ),
+      state: $ChunksTable.$converterstate.fromSql(
         attachedDatabase.typeMapping.read(
           DriftSqlType.string,
           data['${effectivePrefix}state'],
@@ -2661,35 +2913,43 @@ class $MapChunksTable extends MapChunks
   }
 
   @override
-  $MapChunksTable createAlias(String alias) {
-    return $MapChunksTable(attachedDatabase, alias);
+  $ChunksTable createAlias(String alias) {
+    return $ChunksTable(attachedDatabase, alias);
   }
 
+  static JsonTypeConverter2<ChunkKind, String, String> $converterkind =
+      const EnumNameConverter<ChunkKind>(ChunkKind.values);
   static JsonTypeConverter2<ChunkState, String, String> $converterstate =
       const EnumNameConverter<ChunkState>(ChunkState.values);
 }
 
-class MapChunkRow extends DataClass implements Insertable<MapChunkRow> {
+class ChunkRow extends DataClass implements Insertable<ChunkRow> {
   final int id;
   final int regionId;
+  final ChunkKind kind;
+
+  /// The archive, as in [Archives].
+  final String archive;
 
   /// From the start of the archive.
   final int start;
   final int length;
   final int tileCount;
 
-  /// The tiles in it (opaque bytes from the planner).
-  final Uint8List tiles;
+  /// Map tiles: those in it (opaque bytes from the planner).
+  final Uint8List? tiles;
   final ChunkState state;
   final int attempts;
   final String? error;
-  const MapChunkRow({
+  const ChunkRow({
     required this.id,
     required this.regionId,
+    required this.kind,
+    required this.archive,
     required this.start,
     required this.length,
     required this.tileCount,
-    required this.tiles,
+    this.tiles,
     required this.state,
     required this.attempts,
     this.error,
@@ -2699,13 +2959,19 @@ class MapChunkRow extends DataClass implements Insertable<MapChunkRow> {
     final map = <String, Expression>{};
     map['id'] = Variable<int>(id);
     map['region_id'] = Variable<int>(regionId);
+    {
+      map['kind'] = Variable<String>($ChunksTable.$converterkind.toSql(kind));
+    }
+    map['archive'] = Variable<String>(archive);
     map['start'] = Variable<int>(start);
     map['length'] = Variable<int>(length);
     map['tile_count'] = Variable<int>(tileCount);
-    map['tiles'] = Variable<Uint8List>(tiles);
+    if (!nullToAbsent || tiles != null) {
+      map['tiles'] = Variable<Uint8List>(tiles);
+    }
     {
       map['state'] = Variable<String>(
-        $MapChunksTable.$converterstate.toSql(state),
+        $ChunksTable.$converterstate.toSql(state),
       );
     }
     map['attempts'] = Variable<int>(attempts);
@@ -2715,14 +2981,18 @@ class MapChunkRow extends DataClass implements Insertable<MapChunkRow> {
     return map;
   }
 
-  MapChunksCompanion toCompanion(bool nullToAbsent) {
-    return MapChunksCompanion(
+  ChunksCompanion toCompanion(bool nullToAbsent) {
+    return ChunksCompanion(
       id: Value(id),
       regionId: Value(regionId),
+      kind: Value(kind),
+      archive: Value(archive),
       start: Value(start),
       length: Value(length),
       tileCount: Value(tileCount),
-      tiles: Value(tiles),
+      tiles: tiles == null && nullToAbsent
+          ? const Value.absent()
+          : Value(tiles),
       state: Value(state),
       attempts: Value(attempts),
       error: error == null && nullToAbsent
@@ -2731,19 +3001,23 @@ class MapChunkRow extends DataClass implements Insertable<MapChunkRow> {
     );
   }
 
-  factory MapChunkRow.fromJson(
+  factory ChunkRow.fromJson(
     Map<String, dynamic> json, {
     ValueSerializer? serializer,
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
-    return MapChunkRow(
+    return ChunkRow(
       id: serializer.fromJson<int>(json['id']),
       regionId: serializer.fromJson<int>(json['regionId']),
+      kind: $ChunksTable.$converterkind.fromJson(
+        serializer.fromJson<String>(json['kind']),
+      ),
+      archive: serializer.fromJson<String>(json['archive']),
       start: serializer.fromJson<int>(json['start']),
       length: serializer.fromJson<int>(json['length']),
       tileCount: serializer.fromJson<int>(json['tileCount']),
-      tiles: serializer.fromJson<Uint8List>(json['tiles']),
-      state: $MapChunksTable.$converterstate.fromJson(
+      tiles: serializer.fromJson<Uint8List?>(json['tiles']),
+      state: $ChunksTable.$converterstate.fromJson(
         serializer.fromJson<String>(json['state']),
       ),
       attempts: serializer.fromJson<int>(json['attempts']),
@@ -2756,43 +3030,53 @@ class MapChunkRow extends DataClass implements Insertable<MapChunkRow> {
     return <String, dynamic>{
       'id': serializer.toJson<int>(id),
       'regionId': serializer.toJson<int>(regionId),
+      'kind': serializer.toJson<String>(
+        $ChunksTable.$converterkind.toJson(kind),
+      ),
+      'archive': serializer.toJson<String>(archive),
       'start': serializer.toJson<int>(start),
       'length': serializer.toJson<int>(length),
       'tileCount': serializer.toJson<int>(tileCount),
-      'tiles': serializer.toJson<Uint8List>(tiles),
+      'tiles': serializer.toJson<Uint8List?>(tiles),
       'state': serializer.toJson<String>(
-        $MapChunksTable.$converterstate.toJson(state),
+        $ChunksTable.$converterstate.toJson(state),
       ),
       'attempts': serializer.toJson<int>(attempts),
       'error': serializer.toJson<String?>(error),
     };
   }
 
-  MapChunkRow copyWith({
+  ChunkRow copyWith({
     int? id,
     int? regionId,
+    ChunkKind? kind,
+    String? archive,
     int? start,
     int? length,
     int? tileCount,
-    Uint8List? tiles,
+    Value<Uint8List?> tiles = const Value.absent(),
     ChunkState? state,
     int? attempts,
     Value<String?> error = const Value.absent(),
-  }) => MapChunkRow(
+  }) => ChunkRow(
     id: id ?? this.id,
     regionId: regionId ?? this.regionId,
+    kind: kind ?? this.kind,
+    archive: archive ?? this.archive,
     start: start ?? this.start,
     length: length ?? this.length,
     tileCount: tileCount ?? this.tileCount,
-    tiles: tiles ?? this.tiles,
+    tiles: tiles.present ? tiles.value : this.tiles,
     state: state ?? this.state,
     attempts: attempts ?? this.attempts,
     error: error.present ? error.value : this.error,
   );
-  MapChunkRow copyWithCompanion(MapChunksCompanion data) {
-    return MapChunkRow(
+  ChunkRow copyWithCompanion(ChunksCompanion data) {
+    return ChunkRow(
       id: data.id.present ? data.id.value : this.id,
       regionId: data.regionId.present ? data.regionId.value : this.regionId,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      archive: data.archive.present ? data.archive.value : this.archive,
       start: data.start.present ? data.start.value : this.start,
       length: data.length.present ? data.length.value : this.length,
       tileCount: data.tileCount.present ? data.tileCount.value : this.tileCount,
@@ -2805,9 +3089,11 @@ class MapChunkRow extends DataClass implements Insertable<MapChunkRow> {
 
   @override
   String toString() {
-    return (StringBuffer('MapChunkRow(')
+    return (StringBuffer('ChunkRow(')
           ..write('id: $id, ')
           ..write('regionId: $regionId, ')
+          ..write('kind: $kind, ')
+          ..write('archive: $archive, ')
           ..write('start: $start, ')
           ..write('length: $length, ')
           ..write('tileCount: $tileCount, ')
@@ -2823,6 +3109,8 @@ class MapChunkRow extends DataClass implements Insertable<MapChunkRow> {
   int get hashCode => Object.hash(
     id,
     regionId,
+    kind,
+    archive,
     start,
     length,
     tileCount,
@@ -2834,9 +3122,11 @@ class MapChunkRow extends DataClass implements Insertable<MapChunkRow> {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      (other is MapChunkRow &&
+      (other is ChunkRow &&
           other.id == this.id &&
           other.regionId == this.regionId &&
+          other.kind == this.kind &&
+          other.archive == this.archive &&
           other.start == this.start &&
           other.length == this.length &&
           other.tileCount == this.tileCount &&
@@ -2846,19 +3136,23 @@ class MapChunkRow extends DataClass implements Insertable<MapChunkRow> {
           other.error == this.error);
 }
 
-class MapChunksCompanion extends UpdateCompanion<MapChunkRow> {
+class ChunksCompanion extends UpdateCompanion<ChunkRow> {
   final Value<int> id;
   final Value<int> regionId;
+  final Value<ChunkKind> kind;
+  final Value<String> archive;
   final Value<int> start;
   final Value<int> length;
   final Value<int> tileCount;
-  final Value<Uint8List> tiles;
+  final Value<Uint8List?> tiles;
   final Value<ChunkState> state;
   final Value<int> attempts;
   final Value<String?> error;
-  const MapChunksCompanion({
+  const ChunksCompanion({
     this.id = const Value.absent(),
     this.regionId = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.archive = const Value.absent(),
     this.start = const Value.absent(),
     this.length = const Value.absent(),
     this.tileCount = const Value.absent(),
@@ -2867,25 +3161,30 @@ class MapChunksCompanion extends UpdateCompanion<MapChunkRow> {
     this.attempts = const Value.absent(),
     this.error = const Value.absent(),
   });
-  MapChunksCompanion.insert({
+  ChunksCompanion.insert({
     this.id = const Value.absent(),
     required int regionId,
+    required ChunkKind kind,
+    required String archive,
     required int start,
     required int length,
     required int tileCount,
-    required Uint8List tiles,
+    this.tiles = const Value.absent(),
     required ChunkState state,
     this.attempts = const Value.absent(),
     this.error = const Value.absent(),
   }) : regionId = Value(regionId),
+       kind = Value(kind),
+       archive = Value(archive),
        start = Value(start),
        length = Value(length),
        tileCount = Value(tileCount),
-       tiles = Value(tiles),
        state = Value(state);
-  static Insertable<MapChunkRow> custom({
+  static Insertable<ChunkRow> custom({
     Expression<int>? id,
     Expression<int>? regionId,
+    Expression<String>? kind,
+    Expression<String>? archive,
     Expression<int>? start,
     Expression<int>? length,
     Expression<int>? tileCount,
@@ -2897,6 +3196,8 @@ class MapChunksCompanion extends UpdateCompanion<MapChunkRow> {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (regionId != null) 'region_id': regionId,
+      if (kind != null) 'kind': kind,
+      if (archive != null) 'archive': archive,
       if (start != null) 'start': start,
       if (length != null) 'length': length,
       if (tileCount != null) 'tile_count': tileCount,
@@ -2907,20 +3208,24 @@ class MapChunksCompanion extends UpdateCompanion<MapChunkRow> {
     });
   }
 
-  MapChunksCompanion copyWith({
+  ChunksCompanion copyWith({
     Value<int>? id,
     Value<int>? regionId,
+    Value<ChunkKind>? kind,
+    Value<String>? archive,
     Value<int>? start,
     Value<int>? length,
     Value<int>? tileCount,
-    Value<Uint8List>? tiles,
+    Value<Uint8List?>? tiles,
     Value<ChunkState>? state,
     Value<int>? attempts,
     Value<String?>? error,
   }) {
-    return MapChunksCompanion(
+    return ChunksCompanion(
       id: id ?? this.id,
       regionId: regionId ?? this.regionId,
+      kind: kind ?? this.kind,
+      archive: archive ?? this.archive,
       start: start ?? this.start,
       length: length ?? this.length,
       tileCount: tileCount ?? this.tileCount,
@@ -2940,6 +3245,14 @@ class MapChunksCompanion extends UpdateCompanion<MapChunkRow> {
     if (regionId.present) {
       map['region_id'] = Variable<int>(regionId.value);
     }
+    if (kind.present) {
+      map['kind'] = Variable<String>(
+        $ChunksTable.$converterkind.toSql(kind.value),
+      );
+    }
+    if (archive.present) {
+      map['archive'] = Variable<String>(archive.value);
+    }
     if (start.present) {
       map['start'] = Variable<int>(start.value);
     }
@@ -2954,7 +3267,7 @@ class MapChunksCompanion extends UpdateCompanion<MapChunkRow> {
     }
     if (state.present) {
       map['state'] = Variable<String>(
-        $MapChunksTable.$converterstate.toSql(state.value),
+        $ChunksTable.$converterstate.toSql(state.value),
       );
     }
     if (attempts.present) {
@@ -2968,9 +3281,11 @@ class MapChunksCompanion extends UpdateCompanion<MapChunkRow> {
 
   @override
   String toString() {
-    return (StringBuffer('MapChunksCompanion(')
+    return (StringBuffer('ChunksCompanion(')
           ..write('id: $id, ')
           ..write('regionId: $regionId, ')
+          ..write('kind: $kind, ')
+          ..write('archive: $archive, ')
           ..write('start: $start, ')
           ..write('length: $length, ')
           ..write('tileCount: $tileCount, ')
@@ -2978,6 +3293,317 @@ class MapChunksCompanion extends UpdateCompanion<MapChunkRow> {
           ..write('state: $state, ')
           ..write('attempts: $attempts, ')
           ..write('error: $error')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $ChunkFilesTable extends ChunkFiles
+    with TableInfo<$ChunkFilesTable, ChunkFileRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ChunkFilesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _chunkIdMeta = const VerificationMeta(
+    'chunkId',
+  );
+  @override
+  late final GeneratedColumn<int> chunkId = GeneratedColumn<int>(
+    'chunk_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES chunks (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _fileIdMeta = const VerificationMeta('fileId');
+  @override
+  late final GeneratedColumn<int> fileId = GeneratedColumn<int>(
+    'file_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES files (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _startMeta = const VerificationMeta('start');
+  @override
+  late final GeneratedColumn<int> start = GeneratedColumn<int>(
+    'start',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _lengthMeta = const VerificationMeta('length');
+  @override
+  late final GeneratedColumn<int> length = GeneratedColumn<int>(
+    'length',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [chunkId, fileId, start, length];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'chunk_files';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<ChunkFileRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('chunk_id')) {
+      context.handle(
+        _chunkIdMeta,
+        chunkId.isAcceptableOrUnknown(data['chunk_id']!, _chunkIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_chunkIdMeta);
+    }
+    if (data.containsKey('file_id')) {
+      context.handle(
+        _fileIdMeta,
+        fileId.isAcceptableOrUnknown(data['file_id']!, _fileIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_fileIdMeta);
+    }
+    if (data.containsKey('start')) {
+      context.handle(
+        _startMeta,
+        start.isAcceptableOrUnknown(data['start']!, _startMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_startMeta);
+    }
+    if (data.containsKey('length')) {
+      context.handle(
+        _lengthMeta,
+        length.isAcceptableOrUnknown(data['length']!, _lengthMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_lengthMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {chunkId, fileId};
+  @override
+  ChunkFileRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return ChunkFileRow(
+      chunkId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}chunk_id'],
+      )!,
+      fileId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}file_id'],
+      )!,
+      start: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}start'],
+      )!,
+      length: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}length'],
+      )!,
+    );
+  }
+
+  @override
+  $ChunkFilesTable createAlias(String alias) {
+    return $ChunkFilesTable(attachedDatabase, alias);
+  }
+}
+
+class ChunkFileRow extends DataClass implements Insertable<ChunkFileRow> {
+  final int chunkId;
+  final int fileId;
+  final int start;
+  final int length;
+  const ChunkFileRow({
+    required this.chunkId,
+    required this.fileId,
+    required this.start,
+    required this.length,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['chunk_id'] = Variable<int>(chunkId);
+    map['file_id'] = Variable<int>(fileId);
+    map['start'] = Variable<int>(start);
+    map['length'] = Variable<int>(length);
+    return map;
+  }
+
+  ChunkFilesCompanion toCompanion(bool nullToAbsent) {
+    return ChunkFilesCompanion(
+      chunkId: Value(chunkId),
+      fileId: Value(fileId),
+      start: Value(start),
+      length: Value(length),
+    );
+  }
+
+  factory ChunkFileRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return ChunkFileRow(
+      chunkId: serializer.fromJson<int>(json['chunkId']),
+      fileId: serializer.fromJson<int>(json['fileId']),
+      start: serializer.fromJson<int>(json['start']),
+      length: serializer.fromJson<int>(json['length']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'chunkId': serializer.toJson<int>(chunkId),
+      'fileId': serializer.toJson<int>(fileId),
+      'start': serializer.toJson<int>(start),
+      'length': serializer.toJson<int>(length),
+    };
+  }
+
+  ChunkFileRow copyWith({int? chunkId, int? fileId, int? start, int? length}) =>
+      ChunkFileRow(
+        chunkId: chunkId ?? this.chunkId,
+        fileId: fileId ?? this.fileId,
+        start: start ?? this.start,
+        length: length ?? this.length,
+      );
+  ChunkFileRow copyWithCompanion(ChunkFilesCompanion data) {
+    return ChunkFileRow(
+      chunkId: data.chunkId.present ? data.chunkId.value : this.chunkId,
+      fileId: data.fileId.present ? data.fileId.value : this.fileId,
+      start: data.start.present ? data.start.value : this.start,
+      length: data.length.present ? data.length.value : this.length,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ChunkFileRow(')
+          ..write('chunkId: $chunkId, ')
+          ..write('fileId: $fileId, ')
+          ..write('start: $start, ')
+          ..write('length: $length')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(chunkId, fileId, start, length);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ChunkFileRow &&
+          other.chunkId == this.chunkId &&
+          other.fileId == this.fileId &&
+          other.start == this.start &&
+          other.length == this.length);
+}
+
+class ChunkFilesCompanion extends UpdateCompanion<ChunkFileRow> {
+  final Value<int> chunkId;
+  final Value<int> fileId;
+  final Value<int> start;
+  final Value<int> length;
+  final Value<int> rowid;
+  const ChunkFilesCompanion({
+    this.chunkId = const Value.absent(),
+    this.fileId = const Value.absent(),
+    this.start = const Value.absent(),
+    this.length = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  ChunkFilesCompanion.insert({
+    required int chunkId,
+    required int fileId,
+    required int start,
+    required int length,
+    this.rowid = const Value.absent(),
+  }) : chunkId = Value(chunkId),
+       fileId = Value(fileId),
+       start = Value(start),
+       length = Value(length);
+  static Insertable<ChunkFileRow> custom({
+    Expression<int>? chunkId,
+    Expression<int>? fileId,
+    Expression<int>? start,
+    Expression<int>? length,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (chunkId != null) 'chunk_id': chunkId,
+      if (fileId != null) 'file_id': fileId,
+      if (start != null) 'start': start,
+      if (length != null) 'length': length,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  ChunkFilesCompanion copyWith({
+    Value<int>? chunkId,
+    Value<int>? fileId,
+    Value<int>? start,
+    Value<int>? length,
+    Value<int>? rowid,
+  }) {
+    return ChunkFilesCompanion(
+      chunkId: chunkId ?? this.chunkId,
+      fileId: fileId ?? this.fileId,
+      start: start ?? this.start,
+      length: length ?? this.length,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (chunkId.present) {
+      map['chunk_id'] = Variable<int>(chunkId.value);
+    }
+    if (fileId.present) {
+      map['file_id'] = Variable<int>(fileId.value);
+    }
+    if (start.present) {
+      map['start'] = Variable<int>(start.value);
+    }
+    if (length.present) {
+      map['length'] = Variable<int>(length.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ChunkFilesCompanion(')
+          ..write('chunkId: $chunkId, ')
+          ..write('fileId: $fileId, ')
+          ..write('start: $start, ')
+          ..write('length: $length, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -2991,7 +3617,9 @@ abstract class _$OfflineDatabase extends GeneratedDatabase {
   late final $FilesTable files = $FilesTable(this);
   late final $RegionFilesTable regionFiles = $RegionFilesTable(this);
   late final $RegionFeedsTable regionFeeds = $RegionFeedsTable(this);
-  late final $MapChunksTable mapChunks = $MapChunksTable(this);
+  late final $ArchivesTable archives = $ArchivesTable(this);
+  late final $ChunksTable chunks = $ChunksTable(this);
+  late final $ChunkFilesTable chunkFiles = $ChunkFilesTable(this);
   late final Index filesState = Index(
     'files_state',
     'CREATE INDEX files_state ON files (state)',
@@ -2999,6 +3627,10 @@ abstract class _$OfflineDatabase extends GeneratedDatabase {
   late final Index regionFilesFile = Index(
     'region_files_file',
     'CREATE INDEX region_files_file ON region_files (file_id)',
+  );
+  late final Index chunkFilesFile = Index(
+    'chunk_files_file',
+    'CREATE INDEX chunk_files_file ON chunk_files (file_id)',
   );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
@@ -3010,9 +3642,12 @@ abstract class _$OfflineDatabase extends GeneratedDatabase {
     files,
     regionFiles,
     regionFeeds,
-    mapChunks,
+    archives,
+    chunks,
+    chunkFiles,
     filesState,
     regionFilesFile,
+    chunkFilesFile,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -3042,7 +3677,21 @@ abstract class _$OfflineDatabase extends GeneratedDatabase {
         'regions',
         limitUpdateKind: UpdateKind.delete,
       ),
-      result: [TableUpdate('map_chunks', kind: UpdateKind.delete)],
+      result: [TableUpdate('chunks', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'chunks',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('chunk_files', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'files',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('chunk_files', kind: UpdateKind.delete)],
     ),
   ]);
 }
@@ -3051,7 +3700,6 @@ typedef $$ReleasesTableCreateCompanionBuilder = ReleasesCompanion Function({
   required ReleaseKind kind,
   required String date,
   Value<int?> valhallaBuildId,
-  Value<String?> etag,
   Value<String?> manifestId,
   required DateTime pinnedAt,
   Value<int> rowid,
@@ -3060,7 +3708,6 @@ typedef $$ReleasesTableUpdateCompanionBuilder = ReleasesCompanion Function({
   Value<ReleaseKind> kind,
   Value<String> date,
   Value<int?> valhallaBuildId,
-  Value<String?> etag,
   Value<String?> manifestId,
   Value<DateTime> pinnedAt,
   Value<int> rowid,
@@ -3088,11 +3735,6 @@ class $$ReleasesTableFilterComposer
 
   ColumnFilters<int> get valhallaBuildId => $composableBuilder(
     column: $table.valhallaBuildId,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get etag => $composableBuilder(
-    column: $table.etag,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3131,11 +3773,6 @@ class $$ReleasesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<String> get etag => $composableBuilder(
-    column: $table.etag,
-    builder: (column) => ColumnOrderings(column),
-  );
-
   ColumnOrderings<String> get manifestId => $composableBuilder(
     column: $table.manifestId,
     builder: (column) => ColumnOrderings(column),
@@ -3166,9 +3803,6 @@ class $$ReleasesTableAnnotationComposer
     column: $table.valhallaBuildId,
     builder: (column) => column,
   );
-
-  GeneratedColumn<String> get etag =>
-      $composableBuilder(column: $table.etag, builder: (column) => column);
 
   GeneratedColumn<String> get manifestId => $composableBuilder(
     column: $table.manifestId,
@@ -3213,7 +3847,6 @@ class $$ReleasesTableTableManager
                 Value<ReleaseKind> kind = const Value.absent(),
                 Value<String> date = const Value.absent(),
                 Value<int?> valhallaBuildId = const Value.absent(),
-                Value<String?> etag = const Value.absent(),
                 Value<String?> manifestId = const Value.absent(),
                 Value<DateTime> pinnedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -3221,7 +3854,6 @@ class $$ReleasesTableTableManager
                 kind: kind,
                 date: date,
                 valhallaBuildId: valhallaBuildId,
-                etag: etag,
                 manifestId: manifestId,
                 pinnedAt: pinnedAt,
                 rowid: rowid,
@@ -3231,7 +3863,6 @@ class $$ReleasesTableTableManager
                 required ReleaseKind kind,
                 required String date,
                 Value<int?> valhallaBuildId = const Value.absent(),
-                Value<String?> etag = const Value.absent(),
                 Value<String?> manifestId = const Value.absent(),
                 required DateTime pinnedAt,
                 Value<int> rowid = const Value.absent(),
@@ -3239,7 +3870,6 @@ class $$ReleasesTableTableManager
                 kind: kind,
                 date: date,
                 valhallaBuildId: valhallaBuildId,
-                etag: etag,
                 manifestId: manifestId,
                 pinnedAt: pinnedAt,
                 rowid: rowid,
@@ -3349,19 +3979,20 @@ final class $$RegionsTableReferences
     );
   }
 
-  static MultiTypedResultKey<$MapChunksTable, List<MapChunkRow>>
-  _mapChunksRefsTable(_$OfflineDatabase db) => MultiTypedResultKey.fromTable(
-    db.mapChunks,
-    aliasName: 'regions__id__map_chunks__region_id',
+  static MultiTypedResultKey<$ChunksTable, List<ChunkRow>> _chunksRefsTable(
+    _$OfflineDatabase db,
+  ) => MultiTypedResultKey.fromTable(
+    db.chunks,
+    aliasName: 'regions__id__chunks__region_id',
   );
 
-  $$MapChunksTableProcessedTableManager get mapChunksRefs {
-    final manager = $$MapChunksTableTableManager(
+  $$ChunksTableProcessedTableManager get chunksRefs {
+    final manager = $$ChunksTableTableManager(
       $_db,
-      $_db.mapChunks,
+      $_db.chunks,
     ).filter((f) => f.regionId.id.sqlEquals($_itemColumn<int>('id')!));
 
-    final cache = $_typedResult.readTableOrNull(_mapChunksRefsTable($_db));
+    final cache = $_typedResult.readTableOrNull(_chunksRefsTable($_db));
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: cache),
     );
@@ -3494,22 +4125,22 @@ class $$RegionsTableFilterComposer
     return f(composer);
   }
 
-  Expression<bool> mapChunksRefs(
-    Expression<bool> Function($$MapChunksTableFilterComposer f) f,
+  Expression<bool> chunksRefs(
+    Expression<bool> Function($$ChunksTableFilterComposer f) f,
   ) {
-    final $$MapChunksTableFilterComposer composer = $composerBuilder(
+    final $$ChunksTableFilterComposer composer = $composerBuilder(
       composer: this,
       getCurrentColumn: (t) => t.id,
-      referencedTable: $db.mapChunks,
+      referencedTable: $db.chunks,
       getReferencedColumn: (t) => t.regionId,
       builder:
           (
             joinBuilder, {
             $addJoinBuilderToRootComposer,
             $removeJoinBuilderFromRootComposer,
-          }) => $$MapChunksTableFilterComposer(
+          }) => $$ChunksTableFilterComposer(
             $db: $db,
-            $table: $db.mapChunks,
+            $table: $db.chunks,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -3699,22 +4330,22 @@ class $$RegionsTableAnnotationComposer
     return f(composer);
   }
 
-  Expression<T> mapChunksRefs<T extends Object>(
-    Expression<T> Function($$MapChunksTableAnnotationComposer a) f,
+  Expression<T> chunksRefs<T extends Object>(
+    Expression<T> Function($$ChunksTableAnnotationComposer a) f,
   ) {
-    final $$MapChunksTableAnnotationComposer composer = $composerBuilder(
+    final $$ChunksTableAnnotationComposer composer = $composerBuilder(
       composer: this,
       getCurrentColumn: (t) => t.id,
-      referencedTable: $db.mapChunks,
+      referencedTable: $db.chunks,
       getReferencedColumn: (t) => t.regionId,
       builder:
           (
             joinBuilder, {
             $addJoinBuilderToRootComposer,
             $removeJoinBuilderFromRootComposer,
-          }) => $$MapChunksTableAnnotationComposer(
+          }) => $$ChunksTableAnnotationComposer(
             $db: $db,
-            $table: $db.mapChunks,
+            $table: $db.chunks,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -3741,7 +4372,7 @@ class $$RegionsTableTableManager
           PrefetchHooks Function({
             bool regionFilesRefs,
             bool regionFeedsRefs,
-            bool mapChunksRefs,
+            bool chunksRefs,
           })
         > {
   $$RegionsTableTableManager(_$OfflineDatabase db, $RegionsTable table)
@@ -3827,14 +4458,14 @@ class $$RegionsTableTableManager
               ({
                 regionFilesRefs = false,
                 regionFeedsRefs = false,
-                mapChunksRefs = false,
+                chunksRefs = false,
               }) {
                 return PrefetchHooks(
                   db: db,
                   explicitlyWatchedTables: [
                     if (regionFilesRefs) db.regionFiles,
                     if (regionFeedsRefs) db.regionFeeds,
-                    if (mapChunksRefs) db.mapChunks,
+                    if (chunksRefs) db.chunks,
                   ],
                   addJoins: null,
                   getPrefetchedDataCallback: (items) async {
@@ -3879,22 +4510,22 @@ class $$RegionsTableTableManager
                           referencedColumn: 'region_id',
                           typedResults: items,
                         ),
-                      if (mapChunksRefs)
+                      if (chunksRefs)
                         await $_getPrefetchedDataByColumns<
                           RegionRow,
                           $RegionsTable,
-                          MapChunkRow,
-                          $MapChunksTable
+                          ChunkRow,
+                          $ChunksTable
                         >(
                           currentTable: table,
                           referencedTable: $$RegionsTableReferences
-                              ._mapChunksRefsTable(db),
+                              ._chunksRefsTable(db),
                           managerFromTypedResult: (p0) =>
                               $$RegionsTableReferences(
                                 db,
                                 table,
                                 p0,
-                              ).mapChunksRefs,
+                              ).chunksRefs,
                           currentColumn: 'id',
                           referencedColumn: 'region_id',
                           typedResults: items,
@@ -3922,7 +4553,7 @@ typedef $$RegionsTableProcessedTableManager =
       PrefetchHooks Function({
         bool regionFilesRefs,
         bool regionFeedsRefs,
-        bool mapChunksRefs,
+        bool chunksRefs,
       })
     >;
 typedef $$FilesTableCreateCompanionBuilder = FilesCompanion Function({
@@ -3932,6 +4563,7 @@ typedef $$FilesTableCreateCompanionBuilder = FilesCompanion Function({
   required String path,
   required String installPath,
   Value<int?> bytes,
+  Value<String?> archive,
   Value<String?> expectedSha256,
   Value<String?> verifiedSha256,
   required FileState state,
@@ -3946,6 +4578,7 @@ typedef $$FilesTableUpdateCompanionBuilder = FilesCompanion Function({
   Value<String> path,
   Value<String> installPath,
   Value<int?> bytes,
+  Value<String?> archive,
   Value<String?> expectedSha256,
   Value<String?> verifiedSha256,
   Value<FileState> state,
@@ -3971,6 +4604,24 @@ final class $$FilesTableReferences
     ).filter((f) => f.fileId.id.sqlEquals($_itemColumn<int>('id')!));
 
     final cache = $_typedResult.readTableOrNull(_regionFilesRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<$ChunkFilesTable, List<ChunkFileRow>>
+  _chunkFilesRefsTable(_$OfflineDatabase db) => MultiTypedResultKey.fromTable(
+    db.chunkFiles,
+    aliasName: 'files__id__chunk_files__file_id',
+  );
+
+  $$ChunkFilesTableProcessedTableManager get chunkFilesRefs {
+    final manager = $$ChunkFilesTableTableManager(
+      $_db,
+      $_db.chunkFiles,
+    ).filter((f) => f.fileId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_chunkFilesRefsTable($_db));
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: cache),
     );
@@ -4014,6 +4665,11 @@ class $$FilesTableFilterComposer
 
   ColumnFilters<int> get bytes => $composableBuilder(
     column: $table.bytes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get archive => $composableBuilder(
+    column: $table.archive,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -4072,6 +4728,31 @@ class $$FilesTableFilterComposer
     );
     return f(composer);
   }
+
+  Expression<bool> chunkFilesRefs(
+    Expression<bool> Function($$ChunkFilesTableFilterComposer f) f,
+  ) {
+    final $$ChunkFilesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.chunkFiles,
+      getReferencedColumn: (t) => t.fileId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChunkFilesTableFilterComposer(
+            $db: $db,
+            $table: $db.chunkFiles,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $$FilesTableOrderingComposer
@@ -4110,6 +4791,11 @@ class $$FilesTableOrderingComposer
 
   ColumnOrderings<int> get bytes => $composableBuilder(
     column: $table.bytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get archive => $composableBuilder(
+    column: $table.archive,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -4173,6 +4859,9 @@ class $$FilesTableAnnotationComposer
   GeneratedColumn<int> get bytes =>
       $composableBuilder(column: $table.bytes, builder: (column) => column);
 
+  GeneratedColumn<String> get archive =>
+      $composableBuilder(column: $table.archive, builder: (column) => column);
+
   GeneratedColumn<String> get expectedSha256 => $composableBuilder(
     column: $table.expectedSha256,
     builder: (column) => column,
@@ -4219,6 +4908,31 @@ class $$FilesTableAnnotationComposer
     );
     return f(composer);
   }
+
+  Expression<T> chunkFilesRefs<T extends Object>(
+    Expression<T> Function($$ChunkFilesTableAnnotationComposer a) f,
+  ) {
+    final $$ChunkFilesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.chunkFiles,
+      getReferencedColumn: (t) => t.fileId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChunkFilesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.chunkFiles,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $$FilesTableTableManager
@@ -4234,7 +4948,7 @@ class $$FilesTableTableManager
           $$FilesTableUpdateCompanionBuilder,
           (FileRow, $$FilesTableReferences),
           FileRow,
-          PrefetchHooks Function({bool regionFilesRefs})
+          PrefetchHooks Function({bool regionFilesRefs, bool chunkFilesRefs})
         > {
   $$FilesTableTableManager(_$OfflineDatabase db, $FilesTable table)
     : super(
@@ -4255,6 +4969,7 @@ class $$FilesTableTableManager
                 Value<String> path = const Value.absent(),
                 Value<String> installPath = const Value.absent(),
                 Value<int?> bytes = const Value.absent(),
+                Value<String?> archive = const Value.absent(),
                 Value<String?> expectedSha256 = const Value.absent(),
                 Value<String?> verifiedSha256 = const Value.absent(),
                 Value<FileState> state = const Value.absent(),
@@ -4268,6 +4983,7 @@ class $$FilesTableTableManager
                 path: path,
                 installPath: installPath,
                 bytes: bytes,
+                archive: archive,
                 expectedSha256: expectedSha256,
                 verifiedSha256: verifiedSha256,
                 state: state,
@@ -4283,6 +4999,7 @@ class $$FilesTableTableManager
                 required String path,
                 required String installPath,
                 Value<int?> bytes = const Value.absent(),
+                Value<String?> archive = const Value.absent(),
                 Value<String?> expectedSha256 = const Value.absent(),
                 Value<String?> verifiedSha256 = const Value.absent(),
                 required FileState state,
@@ -4296,6 +5013,7 @@ class $$FilesTableTableManager
                 path: path,
                 installPath: installPath,
                 bytes: bytes,
+                archive: archive,
                 expectedSha256: expectedSha256,
                 verifiedSha256: verifiedSha256,
                 state: state,
@@ -4311,33 +5029,61 @@ class $$FilesTableTableManager
                 ),
               )
               .toList(),
-          prefetchHooksCallback: ({regionFilesRefs = false}) {
-            return PrefetchHooks(
-              db: db,
-              explicitlyWatchedTables: [if (regionFilesRefs) db.regionFiles],
-              addJoins: null,
-              getPrefetchedDataCallback: (items) async {
-                return [
-                  if (regionFilesRefs)
-                    await $_getPrefetchedDataByColumns<
-                      FileRow,
-                      $FilesTable,
-                      RegionFileRow,
-                      $RegionFilesTable
-                    >(
-                      currentTable: table,
-                      referencedTable: $$FilesTableReferences
-                          ._regionFilesRefsTable(db),
-                      managerFromTypedResult: (p0) =>
-                          $$FilesTableReferences(db, table, p0).regionFilesRefs,
-                      currentColumn: 'id',
-                      referencedColumn: 'file_id',
-                      typedResults: items,
-                    ),
-                ];
+          prefetchHooksCallback:
+              ({regionFilesRefs = false, chunkFilesRefs = false}) {
+                return PrefetchHooks(
+                  db: db,
+                  explicitlyWatchedTables: [
+                    if (regionFilesRefs) db.regionFiles,
+                    if (chunkFilesRefs) db.chunkFiles,
+                  ],
+                  addJoins: null,
+                  getPrefetchedDataCallback: (items) async {
+                    return [
+                      if (regionFilesRefs)
+                        await $_getPrefetchedDataByColumns<
+                          FileRow,
+                          $FilesTable,
+                          RegionFileRow,
+                          $RegionFilesTable
+                        >(
+                          currentTable: table,
+                          referencedTable: $$FilesTableReferences
+                              ._regionFilesRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$FilesTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).regionFilesRefs,
+                          currentColumn: 'id',
+                          referencedColumn: 'file_id',
+                          typedResults: items,
+                        ),
+                      if (chunkFilesRefs)
+                        await $_getPrefetchedDataByColumns<
+                          FileRow,
+                          $FilesTable,
+                          ChunkFileRow,
+                          $ChunkFilesTable
+                        >(
+                          currentTable: table,
+                          referencedTable: $$FilesTableReferences
+                              ._chunkFilesRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$FilesTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).chunkFilesRefs,
+                          currentColumn: 'id',
+                          referencedColumn: 'file_id',
+                          typedResults: items,
+                        ),
+                    ];
+                  },
+                );
               },
-            );
-          },
         ),
       );
 }
@@ -4354,7 +5100,7 @@ typedef $$FilesTableProcessedTableManager =
       $$FilesTableUpdateCompanionBuilder,
       (FileRow, $$FilesTableReferences),
       FileRow,
-      PrefetchHooks Function({bool regionFilesRefs})
+      PrefetchHooks Function({bool regionFilesRefs, bool chunkFilesRefs})
     >;
 typedef $$RegionFilesTableCreateCompanionBuilder =
     RegionFilesCompanion Function({
@@ -4977,35 +5723,179 @@ typedef $$RegionFeedsTableProcessedTableManager =
       RegionFeedRow,
       PrefetchHooks Function({bool regionId})
     >;
-typedef $$MapChunksTableCreateCompanionBuilder = MapChunksCompanion Function({
+typedef $$ArchivesTableCreateCompanionBuilder = ArchivesCompanion Function({
+  required String path,
+  required String etag,
+  Value<int> rowid,
+});
+typedef $$ArchivesTableUpdateCompanionBuilder = ArchivesCompanion Function({
+  Value<String> path,
+  Value<String> etag,
+  Value<int> rowid,
+});
+
+class $$ArchivesTableFilterComposer
+    extends Composer<_$OfflineDatabase, $ArchivesTable> {
+  $$ArchivesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get path => $composableBuilder(
+    column: $table.path,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get etag => $composableBuilder(
+    column: $table.etag,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$ArchivesTableOrderingComposer
+    extends Composer<_$OfflineDatabase, $ArchivesTable> {
+  $$ArchivesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get path => $composableBuilder(
+    column: $table.path,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get etag => $composableBuilder(
+    column: $table.etag,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$ArchivesTableAnnotationComposer
+    extends Composer<_$OfflineDatabase, $ArchivesTable> {
+  $$ArchivesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get path =>
+      $composableBuilder(column: $table.path, builder: (column) => column);
+
+  GeneratedColumn<String> get etag =>
+      $composableBuilder(column: $table.etag, builder: (column) => column);
+}
+
+class $$ArchivesTableTableManager
+    extends
+        RootTableManager<
+          _$OfflineDatabase,
+          $ArchivesTable,
+          ArchiveRow,
+          $$ArchivesTableFilterComposer,
+          $$ArchivesTableOrderingComposer,
+          $$ArchivesTableAnnotationComposer,
+          $$ArchivesTableCreateCompanionBuilder,
+          $$ArchivesTableUpdateCompanionBuilder,
+          (
+            ArchiveRow,
+            BaseReferences<_$OfflineDatabase, $ArchivesTable, ArchiveRow>,
+          ),
+          ArchiveRow,
+          PrefetchHooks Function()
+        > {
+  $$ArchivesTableTableManager(_$OfflineDatabase db, $ArchivesTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$ArchivesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$ArchivesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$ArchivesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> path = const Value.absent(),
+            Value<String> etag = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) => ArchivesCompanion(path: path, etag: etag, rowid: rowid),
+          createCompanionCallback: ({
+            required String path,
+            required String etag,
+            Value<int> rowid = const Value.absent(),
+          }) => ArchivesCompanion.insert(path: path, etag: etag, rowid: rowid),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$ArchivesTable, ArchiveRow>(table),
+                  BaseReferences<_$OfflineDatabase, $ArchivesTable, ArchiveRow>(
+                    db,
+                    table,
+                    e,
+                  ),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$ArchivesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$OfflineDatabase,
+      $ArchivesTable,
+      ArchiveRow,
+      $$ArchivesTableFilterComposer,
+      $$ArchivesTableOrderingComposer,
+      $$ArchivesTableAnnotationComposer,
+      $$ArchivesTableCreateCompanionBuilder,
+      $$ArchivesTableUpdateCompanionBuilder,
+      (
+        ArchiveRow,
+        BaseReferences<_$OfflineDatabase, $ArchivesTable, ArchiveRow>,
+      ),
+      ArchiveRow,
+      PrefetchHooks Function()
+    >;
+typedef $$ChunksTableCreateCompanionBuilder = ChunksCompanion Function({
   Value<int> id,
   required int regionId,
+  required ChunkKind kind,
+  required String archive,
   required int start,
   required int length,
   required int tileCount,
-  required Uint8List tiles,
+  Value<Uint8List?> tiles,
   required ChunkState state,
   Value<int> attempts,
   Value<String?> error,
 });
-typedef $$MapChunksTableUpdateCompanionBuilder = MapChunksCompanion Function({
+typedef $$ChunksTableUpdateCompanionBuilder = ChunksCompanion Function({
   Value<int> id,
   Value<int> regionId,
+  Value<ChunkKind> kind,
+  Value<String> archive,
   Value<int> start,
   Value<int> length,
   Value<int> tileCount,
-  Value<Uint8List> tiles,
+  Value<Uint8List?> tiles,
   Value<ChunkState> state,
   Value<int> attempts,
   Value<String?> error,
 });
 
-final class $$MapChunksTableReferences
-    extends BaseReferences<_$OfflineDatabase, $MapChunksTable, MapChunkRow> {
-  $$MapChunksTableReferences(super.$_db, super.$_table, super.$_typedResult);
+final class $$ChunksTableReferences
+    extends BaseReferences<_$OfflineDatabase, $ChunksTable, ChunkRow> {
+  $$ChunksTableReferences(super.$_db, super.$_table, super.$_typedResult);
 
   static $RegionsTable _regionIdTable(_$OfflineDatabase db) =>
-      db.regions.createAlias('map_chunks__region_id__regions__id');
+      db.regions.createAlias('chunks__region_id__regions__id');
 
   $$RegionsTableProcessedTableManager get regionId {
     final $_column = $_itemColumn<int>('region_id')!;
@@ -5020,11 +5910,29 @@ final class $$MapChunksTableReferences
       manager.$state.copyWith(prefetchedData: [item]),
     );
   }
+
+  static MultiTypedResultKey<$ChunkFilesTable, List<ChunkFileRow>>
+  _chunkFilesRefsTable(_$OfflineDatabase db) => MultiTypedResultKey.fromTable(
+    db.chunkFiles,
+    aliasName: 'chunks__id__chunk_files__chunk_id',
+  );
+
+  $$ChunkFilesTableProcessedTableManager get chunkFilesRefs {
+    final manager = $$ChunkFilesTableTableManager(
+      $_db,
+      $_db.chunkFiles,
+    ).filter((f) => f.chunkId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_chunkFilesRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
 }
 
-class $$MapChunksTableFilterComposer
-    extends Composer<_$OfflineDatabase, $MapChunksTable> {
-  $$MapChunksTableFilterComposer({
+class $$ChunksTableFilterComposer
+    extends Composer<_$OfflineDatabase, $ChunksTable> {
+  $$ChunksTableFilterComposer({
     required super.$db,
     required super.$table,
     super.joinBuilder,
@@ -5033,6 +5941,17 @@ class $$MapChunksTableFilterComposer
   });
   ColumnFilters<int> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<ChunkKind, ChunkKind, String> get kind =>
+      $composableBuilder(
+        column: $table.kind,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnFilters<String> get archive => $composableBuilder(
+    column: $table.archive,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5094,11 +6013,36 @@ class $$MapChunksTableFilterComposer
     );
     return composer;
   }
+
+  Expression<bool> chunkFilesRefs(
+    Expression<bool> Function($$ChunkFilesTableFilterComposer f) f,
+  ) {
+    final $$ChunkFilesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.chunkFiles,
+      getReferencedColumn: (t) => t.chunkId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChunkFilesTableFilterComposer(
+            $db: $db,
+            $table: $db.chunkFiles,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
-class $$MapChunksTableOrderingComposer
-    extends Composer<_$OfflineDatabase, $MapChunksTable> {
-  $$MapChunksTableOrderingComposer({
+class $$ChunksTableOrderingComposer
+    extends Composer<_$OfflineDatabase, $ChunksTable> {
+  $$ChunksTableOrderingComposer({
     required super.$db,
     required super.$table,
     super.joinBuilder,
@@ -5107,6 +6051,16 @@ class $$MapChunksTableOrderingComposer
   });
   ColumnOrderings<int> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get archive => $composableBuilder(
+    column: $table.archive,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -5169,9 +6123,9 @@ class $$MapChunksTableOrderingComposer
   }
 }
 
-class $$MapChunksTableAnnotationComposer
-    extends Composer<_$OfflineDatabase, $MapChunksTable> {
-  $$MapChunksTableAnnotationComposer({
+class $$ChunksTableAnnotationComposer
+    extends Composer<_$OfflineDatabase, $ChunksTable> {
+  $$ChunksTableAnnotationComposer({
     required super.$db,
     required super.$table,
     super.joinBuilder,
@@ -5180,6 +6134,12 @@ class $$MapChunksTableAnnotationComposer
   });
   GeneratedColumn<int> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<ChunkKind, String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<String> get archive =>
+      $composableBuilder(column: $table.archive, builder: (column) => column);
 
   GeneratedColumn<int> get start =>
       $composableBuilder(column: $table.start, builder: (column) => column);
@@ -5224,48 +6184,77 @@ class $$MapChunksTableAnnotationComposer
     );
     return composer;
   }
+
+  Expression<T> chunkFilesRefs<T extends Object>(
+    Expression<T> Function($$ChunkFilesTableAnnotationComposer a) f,
+  ) {
+    final $$ChunkFilesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.chunkFiles,
+      getReferencedColumn: (t) => t.chunkId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChunkFilesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.chunkFiles,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
-class $$MapChunksTableTableManager
+class $$ChunksTableTableManager
     extends
         RootTableManager<
           _$OfflineDatabase,
-          $MapChunksTable,
-          MapChunkRow,
-          $$MapChunksTableFilterComposer,
-          $$MapChunksTableOrderingComposer,
-          $$MapChunksTableAnnotationComposer,
-          $$MapChunksTableCreateCompanionBuilder,
-          $$MapChunksTableUpdateCompanionBuilder,
-          (MapChunkRow, $$MapChunksTableReferences),
-          MapChunkRow,
-          PrefetchHooks Function({bool regionId})
+          $ChunksTable,
+          ChunkRow,
+          $$ChunksTableFilterComposer,
+          $$ChunksTableOrderingComposer,
+          $$ChunksTableAnnotationComposer,
+          $$ChunksTableCreateCompanionBuilder,
+          $$ChunksTableUpdateCompanionBuilder,
+          (ChunkRow, $$ChunksTableReferences),
+          ChunkRow,
+          PrefetchHooks Function({bool regionId, bool chunkFilesRefs})
         > {
-  $$MapChunksTableTableManager(_$OfflineDatabase db, $MapChunksTable table)
+  $$ChunksTableTableManager(_$OfflineDatabase db, $ChunksTable table)
     : super(
         TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
-              $$MapChunksTableFilterComposer($db: db, $table: table),
+              $$ChunksTableFilterComposer($db: db, $table: table),
           createOrderingComposer: () =>
-              $$MapChunksTableOrderingComposer($db: db, $table: table),
+              $$ChunksTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
-              $$MapChunksTableAnnotationComposer($db: db, $table: table),
+              $$ChunksTableAnnotationComposer($db: db, $table: table),
           updateCompanionCallback:
               ({
                 Value<int> id = const Value.absent(),
                 Value<int> regionId = const Value.absent(),
+                Value<ChunkKind> kind = const Value.absent(),
+                Value<String> archive = const Value.absent(),
                 Value<int> start = const Value.absent(),
                 Value<int> length = const Value.absent(),
                 Value<int> tileCount = const Value.absent(),
-                Value<Uint8List> tiles = const Value.absent(),
+                Value<Uint8List?> tiles = const Value.absent(),
                 Value<ChunkState> state = const Value.absent(),
                 Value<int> attempts = const Value.absent(),
                 Value<String?> error = const Value.absent(),
-              }) => MapChunksCompanion(
+              }) => ChunksCompanion(
                 id: id,
                 regionId: regionId,
+                kind: kind,
+                archive: archive,
                 start: start,
                 length: length,
                 tileCount: tileCount,
@@ -5278,16 +6267,20 @@ class $$MapChunksTableTableManager
               ({
                 Value<int> id = const Value.absent(),
                 required int regionId,
+                required ChunkKind kind,
+                required String archive,
                 required int start,
                 required int length,
                 required int tileCount,
-                required Uint8List tiles,
+                Value<Uint8List?> tiles = const Value.absent(),
                 required ChunkState state,
                 Value<int> attempts = const Value.absent(),
                 Value<String?> error = const Value.absent(),
-              }) => MapChunksCompanion.insert(
+              }) => ChunksCompanion.insert(
                 id: id,
                 regionId: regionId,
+                kind: kind,
+                archive: archive,
                 start: start,
                 length: length,
                 tileCount: tileCount,
@@ -5299,15 +6292,15 @@ class $$MapChunksTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable<$MapChunksTable, MapChunkRow>(table),
-                  $$MapChunksTableReferences(db, table, e),
+                  e.readTable<$ChunksTable, ChunkRow>(table),
+                  $$ChunksTableReferences(db, table, e),
                 ),
               )
               .toList(),
-          prefetchHooksCallback: ({regionId = false}) {
+          prefetchHooksCallback: ({regionId = false, chunkFilesRefs = false}) {
             return PrefetchHooks(
               db: db,
-              explicitlyWatchedTables: [],
+              explicitlyWatchedTables: [if (chunkFilesRefs) db.chunkFiles],
               addJoins:
                   <
                     T extends TableManagerState<
@@ -5328,10 +6321,406 @@ class $$MapChunksTableTableManager
                       state = state.withJoin(
                         currentTable: table,
                         currentColumn: table.regionId,
-                        referencedTable: $$MapChunksTableReferences
-                            ._regionIdTable(db),
-                        referencedColumn: $$MapChunksTableReferences
+                        referencedTable: $$ChunksTableReferences._regionIdTable(
+                          db,
+                        ),
+                        referencedColumn: $$ChunksTableReferences
                             ._regionIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [
+                  if (chunkFilesRefs)
+                    await $_getPrefetchedDataByColumns<
+                      ChunkRow,
+                      $ChunksTable,
+                      ChunkFileRow,
+                      $ChunkFilesTable
+                    >(
+                      currentTable: table,
+                      referencedTable: $$ChunksTableReferences
+                          ._chunkFilesRefsTable(db),
+                      managerFromTypedResult: (p0) =>
+                          $$ChunksTableReferences(db, table, p0).chunkFilesRefs,
+                      currentColumn: 'id',
+                      referencedColumn: 'chunk_id',
+                      typedResults: items,
+                    ),
+                ];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$ChunksTableProcessedTableManager =
+    ProcessedTableManager<
+      _$OfflineDatabase,
+      $ChunksTable,
+      ChunkRow,
+      $$ChunksTableFilterComposer,
+      $$ChunksTableOrderingComposer,
+      $$ChunksTableAnnotationComposer,
+      $$ChunksTableCreateCompanionBuilder,
+      $$ChunksTableUpdateCompanionBuilder,
+      (ChunkRow, $$ChunksTableReferences),
+      ChunkRow,
+      PrefetchHooks Function({bool regionId, bool chunkFilesRefs})
+    >;
+typedef $$ChunkFilesTableCreateCompanionBuilder = ChunkFilesCompanion Function({
+  required int chunkId,
+  required int fileId,
+  required int start,
+  required int length,
+  Value<int> rowid,
+});
+typedef $$ChunkFilesTableUpdateCompanionBuilder = ChunkFilesCompanion Function({
+  Value<int> chunkId,
+  Value<int> fileId,
+  Value<int> start,
+  Value<int> length,
+  Value<int> rowid,
+});
+
+final class $$ChunkFilesTableReferences
+    extends BaseReferences<_$OfflineDatabase, $ChunkFilesTable, ChunkFileRow> {
+  $$ChunkFilesTableReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static $ChunksTable _chunkIdTable(_$OfflineDatabase db) =>
+      db.chunks.createAlias('chunk_files__chunk_id__chunks__id');
+
+  $$ChunksTableProcessedTableManager get chunkId {
+    final $_column = $_itemColumn<int>('chunk_id')!;
+
+    final manager = $$ChunksTableTableManager(
+      $_db,
+      $_db.chunks,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_chunkIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $FilesTable _fileIdTable(_$OfflineDatabase db) =>
+      db.files.createAlias('chunk_files__file_id__files__id');
+
+  $$FilesTableProcessedTableManager get fileId {
+    final $_column = $_itemColumn<int>('file_id')!;
+
+    final manager = $$FilesTableTableManager(
+      $_db,
+      $_db.files,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_fileIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$ChunkFilesTableFilterComposer
+    extends Composer<_$OfflineDatabase, $ChunkFilesTable> {
+  $$ChunkFilesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get start => $composableBuilder(
+    column: $table.start,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get length => $composableBuilder(
+    column: $table.length,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$ChunksTableFilterComposer get chunkId {
+    final $$ChunksTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.chunkId,
+      referencedTable: $db.chunks,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChunksTableFilterComposer(
+            $db: $db,
+            $table: $db.chunks,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$FilesTableFilterComposer get fileId {
+    final $$FilesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.fileId,
+      referencedTable: $db.files,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$FilesTableFilterComposer(
+            $db: $db,
+            $table: $db.files,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ChunkFilesTableOrderingComposer
+    extends Composer<_$OfflineDatabase, $ChunkFilesTable> {
+  $$ChunkFilesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get start => $composableBuilder(
+    column: $table.start,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get length => $composableBuilder(
+    column: $table.length,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$ChunksTableOrderingComposer get chunkId {
+    final $$ChunksTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.chunkId,
+      referencedTable: $db.chunks,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChunksTableOrderingComposer(
+            $db: $db,
+            $table: $db.chunks,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$FilesTableOrderingComposer get fileId {
+    final $$FilesTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.fileId,
+      referencedTable: $db.files,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$FilesTableOrderingComposer(
+            $db: $db,
+            $table: $db.files,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ChunkFilesTableAnnotationComposer
+    extends Composer<_$OfflineDatabase, $ChunkFilesTable> {
+  $$ChunkFilesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get start =>
+      $composableBuilder(column: $table.start, builder: (column) => column);
+
+  GeneratedColumn<int> get length =>
+      $composableBuilder(column: $table.length, builder: (column) => column);
+
+  $$ChunksTableAnnotationComposer get chunkId {
+    final $$ChunksTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.chunkId,
+      referencedTable: $db.chunks,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChunksTableAnnotationComposer(
+            $db: $db,
+            $table: $db.chunks,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$FilesTableAnnotationComposer get fileId {
+    final $$FilesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.fileId,
+      referencedTable: $db.files,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$FilesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.files,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ChunkFilesTableTableManager
+    extends
+        RootTableManager<
+          _$OfflineDatabase,
+          $ChunkFilesTable,
+          ChunkFileRow,
+          $$ChunkFilesTableFilterComposer,
+          $$ChunkFilesTableOrderingComposer,
+          $$ChunkFilesTableAnnotationComposer,
+          $$ChunkFilesTableCreateCompanionBuilder,
+          $$ChunkFilesTableUpdateCompanionBuilder,
+          (ChunkFileRow, $$ChunkFilesTableReferences),
+          ChunkFileRow,
+          PrefetchHooks Function({bool chunkId, bool fileId})
+        > {
+  $$ChunkFilesTableTableManager(_$OfflineDatabase db, $ChunkFilesTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$ChunkFilesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$ChunkFilesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$ChunkFilesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> chunkId = const Value.absent(),
+                Value<int> fileId = const Value.absent(),
+                Value<int> start = const Value.absent(),
+                Value<int> length = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => ChunkFilesCompanion(
+                chunkId: chunkId,
+                fileId: fileId,
+                start: start,
+                length: length,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required int chunkId,
+                required int fileId,
+                required int start,
+                required int length,
+                Value<int> rowid = const Value.absent(),
+              }) => ChunkFilesCompanion.insert(
+                chunkId: chunkId,
+                fileId: fileId,
+                start: start,
+                length: length,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$ChunkFilesTable, ChunkFileRow>(table),
+                  $$ChunkFilesTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({chunkId = false, fileId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (chunkId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.chunkId,
+                        referencedTable: $$ChunkFilesTableReferences
+                            ._chunkIdTable(db),
+                        referencedColumn: $$ChunkFilesTableReferences
+                            ._chunkIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+                    if (fileId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.fileId,
+                        referencedTable: $$ChunkFilesTableReferences
+                            ._fileIdTable(db),
+                        referencedColumn: $$ChunkFilesTableReferences
+                            ._fileIdTable(db)
                             .id,
                       ) as T;
                     }
@@ -5347,19 +6736,19 @@ class $$MapChunksTableTableManager
       );
 }
 
-typedef $$MapChunksTableProcessedTableManager =
+typedef $$ChunkFilesTableProcessedTableManager =
     ProcessedTableManager<
       _$OfflineDatabase,
-      $MapChunksTable,
-      MapChunkRow,
-      $$MapChunksTableFilterComposer,
-      $$MapChunksTableOrderingComposer,
-      $$MapChunksTableAnnotationComposer,
-      $$MapChunksTableCreateCompanionBuilder,
-      $$MapChunksTableUpdateCompanionBuilder,
-      (MapChunkRow, $$MapChunksTableReferences),
-      MapChunkRow,
-      PrefetchHooks Function({bool regionId})
+      $ChunkFilesTable,
+      ChunkFileRow,
+      $$ChunkFilesTableFilterComposer,
+      $$ChunkFilesTableOrderingComposer,
+      $$ChunkFilesTableAnnotationComposer,
+      $$ChunkFilesTableCreateCompanionBuilder,
+      $$ChunkFilesTableUpdateCompanionBuilder,
+      (ChunkFileRow, $$ChunkFilesTableReferences),
+      ChunkFileRow,
+      PrefetchHooks Function({bool chunkId, bool fileId})
     >;
 
 class $OfflineDatabaseManager {
@@ -5375,6 +6764,10 @@ class $OfflineDatabaseManager {
       $$RegionFilesTableTableManager(_db, _db.regionFiles);
   $$RegionFeedsTableTableManager get regionFeeds =>
       $$RegionFeedsTableTableManager(_db, _db.regionFeeds);
-  $$MapChunksTableTableManager get mapChunks =>
-      $$MapChunksTableTableManager(_db, _db.mapChunks);
+  $$ArchivesTableTableManager get archives =>
+      $$ArchivesTableTableManager(_db, _db.archives);
+  $$ChunksTableTableManager get chunks =>
+      $$ChunksTableTableManager(_db, _db.chunks);
+  $$ChunkFilesTableTableManager get chunkFiles =>
+      $$ChunkFilesTableTableManager(_db, _db.chunkFiles);
 }

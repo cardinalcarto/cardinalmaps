@@ -41,6 +41,42 @@ class MapRangeError implements Exception {
   String toString() => 'MapRangeError(${problem.name}: $message)';
 }
 
+/// A tile of an archive, as `(z, x, y)`.
+typedef TileKey = (int, int, int);
+
+/// A tile an archive has, and where: `start` from the archive's start.
+typedef ArchiveTileAt = ({TileKey tile, int start, int length});
+
+/// A range of an archive to download, with its tiles (`start` from the range's start).
+typedef ArchiveRangePlan = ({int start, int length, List<ArchiveTileAt> tiles});
+
+/// A transfer tile in a downloaded range, and the file to write it to.
+typedef RangeTransferItem = ({
+  int start,
+  int length,
+  String dest,
+  String mode,
+  int x,
+  int y,
+});
+
+/// Finding a list of tiles in an archive (a transfer archive), given its first bytes.
+abstract class ArchivePlanning {
+  /// Leaf directories to fetch next, as `(start, length)`; empty when done.
+  List<(int, int)> neededLeaves();
+
+  Future<void> addLeaf(int start, Uint8List bytes);
+
+  /// Looks for [tiles] instead, keeping the leaves fetched so far.
+  void want(List<TileKey> tiles);
+
+  /// The wanted tiles the archive has, with their sizes.
+  List<ArchiveTileAt> found();
+
+  /// The wanted tiles the archive has, in ranges to download.
+  List<ArchiveRangePlan> ranges();
+}
+
 /// Finding a polygon's tiles in the archive, given its first bytes.
 abstract class MapPlanning {
   /// Leaf directories to fetch next, as `(start, length)`; empty when done.
@@ -57,13 +93,23 @@ abstract class OfflineNative {
   /// The SHA-256 of a file, in lowercase hexadecimal.
   Future<String> sha256File(String path);
 
-  /// What's wrong with a downloaded transfer tile, or null if it decodes whole (its
-  /// CRC-32 covers the whole tile) as [mode] tile [x], [y] of build [manifestId].
-  Future<String?> checkTransferTile(
-    String path,
-    String mode,
-    int x,
-    int y,
+  /// How many bytes of an archive to fetch first, for [archivePlanner].
+  Future<int> archiveFirstFetch();
+
+  /// A planner for [tiles] of the archive [key] (under `releases/`), from its first bytes.
+  Future<ArchivePlanning> archivePlanner(
+    String key,
+    Uint8List firstBytes,
+    List<TileKey> tiles,
+  );
+
+  /// Checks every transfer tile in a downloaded range (decoded whole: its CRC-32 covers
+  /// the whole tile; its header names its mode, tile and build [manifestId]) and writes
+  /// each to its `dest`; returns what's wrong (and writes nothing), or null.
+  Future<String?> unpackTransferRange(
+    String rangeFile,
+    int length,
+    List<RangeTransferItem> items,
     String manifestId,
   );
 
@@ -104,20 +150,53 @@ class RustOfflineNative implements OfflineNative {
   }
 
   @override
-  Future<String?> checkTransferTile(
-    String path,
-    String mode,
-    int x,
-    int y,
+  Future<int> archiveFirstFetch() async {
+    await routing.initRouting();
+    return routing.archiveFirstFetch();
+  }
+
+  @override
+  Future<ArchivePlanning> archivePlanner(
+    String key,
+    Uint8List firstBytes,
+    List<TileKey> tiles,
+  ) async {
+    await routing.initRouting();
+    try {
+      return _RustArchivePlanning(
+        await routing.ArchivePlanner.newInstance(
+          firstBytes: firstBytes,
+          tiles: _archiveTiles(tiles),
+        ),
+      );
+    } on routing.ArchiveError catch (e) {
+      throw StateError('$key: ${e.message}');
+    }
+  }
+
+  @override
+  Future<String?> unpackTransferRange(
+    String rangeFile,
+    int length,
+    List<RangeTransferItem> items,
     String manifestId,
   ) async {
     await routing.initRouting();
     try {
-      await routing.checkTransferTile(
-        path: path,
-        mode: mode,
-        x: x,
-        y: y,
+      await routing.unpackTransferRange(
+        rangeFile: rangeFile,
+        expectedLength: length,
+        tiles: [
+          for (final i in items)
+            routing.RangeTransferTile(
+              offset: i.start,
+              length: i.length,
+              dest: i.dest,
+              mode: i.mode,
+              x: i.x,
+              y: i.y,
+            ),
+        ],
         manifestId: manifestId,
       );
       return null;
@@ -240,4 +319,48 @@ class _RustMapPlanning implements MapPlanning {
       tileKeys: plan.tileKeys,
     );
   }
+}
+
+List<routing.ArchiveTile> _archiveTiles(List<TileKey> tiles) => [
+  for (final (z, x, y) in tiles) routing.ArchiveTile(z: z, x: x, y: y),
+];
+
+class _RustArchivePlanning implements ArchivePlanning {
+  _RustArchivePlanning(this._planner);
+
+  final routing.ArchivePlanner _planner;
+
+  @override
+  List<(int, int)> neededLeaves() => [
+    for (final range in _planner.neededLeaves()) (range.offset, range.length),
+  ];
+
+  @override
+  Future<void> addLeaf(int start, Uint8List bytes) =>
+      _planner.addLeaf(offset: start, bytes: bytes);
+
+  @override
+  void want(List<TileKey> tiles) => _planner.want(tiles: _archiveTiles(tiles));
+
+  @override
+  List<ArchiveTileAt> found() => [
+    for (final t in _planner.found())
+      (tile: (t.z, t.x, t.y), start: t.offset, length: t.length),
+  ];
+
+  @override
+  List<ArchiveRangePlan> ranges() => [
+    for (final r in _planner.ranges(
+      gap: routing.archiveGapBytes(),
+      max: routing.archiveMaxRangeBytes(),
+    ))
+      (
+        start: r.offset,
+        length: r.length,
+        tiles: [
+          for (final t in r.tiles)
+            (tile: (t.z, t.x, t.y), start: t.offset, length: t.length),
+        ],
+      ),
+  ];
 }

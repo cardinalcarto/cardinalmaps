@@ -27,17 +27,30 @@ enum RegionState { planned, downloading, installing, ready, failed, deleting }
 /// Where a file is:
 ///
 /// `pending` → `queued` (handed to the downloader; fetched in the foreground instead,
-/// small JSON skips this) → `downloaded` (whole, in `.incoming/`) → `verified` (its
-/// SHA-256 matched, and is stored) → `installed` (renamed to its place).
+/// small JSON skips this) → `downloaded` (whole, in `.incoming/`) → `verified` (checked)
+/// → `installed` (renamed to its place).
 /// A failed attempt counts in `attempts` and goes back to `pending`, or to `failed` after
 /// the last.
+///
+/// A file that comes out of an archive (a transfer tile) goes from `pending` straight to
+/// `verified` when a range holding it is checked and unpacked; its range has the states.
 enum FileState { pending, queued, downloaded, verified, installed, failed }
 
-/// Where a map range is:
+/// Where a range of an archive is:
 ///
-/// `pending` → `queued` → `downloaded` → `unpacked` (its tiles are in the basemap) →
-/// `deleted` (its file is gone). Failures go back to `pending`, or to `failed`.
+/// `pending` → `queued` → `downloaded` → `unpacked` (its tiles are in the basemap, or
+/// checked and written loose) → `deleted` (its file is gone). Failures go back to
+/// `pending`, or to `failed`.
 enum ChunkState { pending, queued, downloaded, unpacked, deleted, failed }
+
+/// What a range's tiles are for.
+enum ChunkKind {
+  /// Map tiles, for the shared basemap.
+  map,
+
+  /// Transfer tiles, written loose as the files ([ChunkFiles]) they are.
+  transfers,
+}
 
 /// The releases downloads are pinned to, one per kind: the first download pins those
 /// `latest.json` names, and later ones use them.
@@ -50,9 +63,6 @@ class Releases extends Table {
 
   /// Routing and transit: the Valhalla build their tiles and walks are from.
   IntColumn get valhallaBuildId => integer().nullable()();
-
-  /// Map: the archive's ETag, which every range request must match (`If-Match`).
-  TextColumn get etag => text().nullable()();
 
   /// Transit: the build's manifest ID, which its transfer tiles carry.
   TextColumn get manifestId => text().nullable()();
@@ -106,11 +116,15 @@ class Files extends Table {
   /// Where it goes under the offline folder, such as `routing/<date>/tiles/...`.
   TextColumn get installPath => text()();
 
-  /// Its size, when the index says (transfer tiles' sizes aren't published).
+  /// Its size, from the index or the archive's directory.
   IntColumn get bytes => integer().nullable()();
 
-  /// The SHA-256 to check it against, from the index; for files whose index gives none,
-  /// the bucket's `x-amz-meta-sha256` for the object, taken when it downloads.
+  /// The archive it comes out of (`transit/<date>/transfers/<mode>.pmtiles`), for tiles
+  /// downloaded in ranges ([ChunkFiles]) rather than one by one.
+  TextColumn get archive => text().nullable()();
+
+  /// The SHA-256 to check it against, from the index (none for JSON, which is checked by
+  /// reading it, or transfer tiles, which are checked by decoding them).
   TextColumn get expectedSha256 => text().nullable()();
 
   /// What it hashed to, once it matched.
@@ -155,29 +169,69 @@ class RegionFeeds extends Table {
   Set<Column> get primaryKey => {regionId, feedId};
 }
 
-/// A byte range of the map archive a region downloads; its tiles go into the shared
-/// basemap, so the range itself goes once they're in.
-@DataClassName('MapChunkRow')
-class MapChunks extends Table {
+/// The archives ranges are downloaded from, with the ETag each range must match
+/// (`If-Match`), pinned with the releases.
+@DataClassName('ArchiveRow')
+class Archives extends Table {
+  /// Under `releases/`, such as `map/<date>/planet.pmtiles`.
+  TextColumn get path => text()();
+  TextColumn get etag => text()();
+
+  @override
+  Set<Column> get primaryKey => {path};
+}
+
+/// A byte range of an archive a region downloads: map tiles go into the shared basemap,
+/// transfer tiles are written loose; the range itself goes once they're out of it.
+@DataClassName('ChunkRow')
+class Chunks extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get regionId =>
       integer().references(Regions, #id, onDelete: KeyAction.cascade)();
+  TextColumn get kind => textEnum<ChunkKind>()();
+
+  /// The archive, as in [Archives].
+  TextColumn get archive => text()();
 
   /// From the start of the archive.
   IntColumn get start => integer()();
   IntColumn get length => integer()();
   IntColumn get tileCount => integer()();
 
-  /// The tiles in it (opaque bytes from the planner).
-  BlobColumn get tiles => blob()();
+  /// Map tiles: those in it (opaque bytes from the planner).
+  BlobColumn get tiles => blob().nullable()();
   TextColumn get state => textEnum<ChunkState>()();
   IntColumn get attempts => integer().withDefault(const Constant(0))();
   TextColumn get error => text().nullable()();
 }
 
+/// The files in a range of transfer tiles, at their offsets from its start.
+@DataClassName('ChunkFileRow')
+@TableIndex(name: 'chunk_files_file', columns: {#fileId})
+class ChunkFiles extends Table {
+  IntColumn get chunkId =>
+      integer().references(Chunks, #id, onDelete: KeyAction.cascade)();
+  IntColumn get fileId =>
+      integer().references(Files, #id, onDelete: KeyAction.cascade)();
+  IntColumn get start => integer()();
+  IntColumn get length => integer()();
+
+  @override
+  Set<Column> get primaryKey => {chunkId, fileId};
+}
+
 /// What offline downloads keep: `offline.sqlite`, apart from the app's own database.
 @DriftDatabase(
-  tables: [Releases, Regions, Files, RegionFiles, RegionFeeds, MapChunks],
+  tables: [
+    Releases,
+    Regions,
+    Files,
+    RegionFiles,
+    RegionFeeds,
+    Archives,
+    Chunks,
+    ChunkFiles,
+  ],
 )
 class OfflineDatabase extends _$OfflineDatabase {
   OfflineDatabase(super.executor);

@@ -47,6 +47,7 @@ class PlannedFile {
     required this.installPath,
     this.bytes,
     this.sha256,
+    this.archive,
   });
 
   final ReleaseKind kind;
@@ -55,6 +56,9 @@ class PlannedFile {
   final String installPath;
   final int? bytes;
   final String? sha256;
+
+  /// The archive it comes out of, in ranges, rather than an object of its own.
+  final String? archive;
 
   /// Small JSON the engine fetches itself rather than through the background
   /// downloader: stored gzipped, so only its stored bytes match the bucket's SHA-256.
@@ -89,7 +93,7 @@ class CandidateFeed {
 
   /// By mode (`walking`, `cycling`, `wheelchair`), the transfer tiles with walks from
   /// its stops that intersect the polygon, as `(x, y, bytes)` at zoom 12, sizes from the
-  /// index shards.
+  /// mode's archive directory.
   final Map<String, List<(int, int, int)>> transferTiles;
 
   /// The transfer tiles' size.
@@ -119,6 +123,7 @@ class OfflinePlan {
     required this.map,
     required this.mapHeader,
     required this.present,
+    this.transferArchives = const {},
   });
 
   final GeoPolygon polygon;
@@ -142,6 +147,9 @@ class OfflinePlan {
 
   /// `kind/release/path` of files already downloaded for another region.
   final Set<String> present;
+
+  /// Each mode's transfer archive, read as far as the candidate feeds' tiles need.
+  final Map<String, TransferArchive> transferArchives;
 
   static String key(ReleaseKind kind, String release, String path) =>
       '${kind.name}/$release/$path';
@@ -227,9 +235,35 @@ class PlanTotals {
   final int mapTiles;
 }
 
-/// Where a transfer tile is under its release.
+/// Where a transfer tile is under its release (and, under the offline folder, on the
+/// phone; the bucket holds them in [transferArchivePath]).
 String transferPath(String mode, int x, int y) =>
     'transfers/$mode/12/$x/$y.bin.zst';
+
+/// The map archive in the bucket, under `releases/`.
+String mapArchivePath(String release) => 'map/$release/planet.pmtiles';
+
+/// A mode's transfer archive in the bucket, under `releases/`.
+String transferArchivePath(String release, String mode) =>
+    'transit/$release/transfers/$mode.pmtiles';
+
+/// A mode's transfer archive, read as far as a plan's tiles need.
+class TransferArchive {
+  TransferArchive({
+    required this.path,
+    required this.mode,
+    required this.etag,
+    required this.planning,
+  });
+
+  /// Under `releases/`.
+  final String path;
+  final String mode;
+
+  /// What its ranges must match (`If-Match`).
+  final String etag;
+  final ArchivePlanning planning;
+}
 
 /// Where a transit release's file goes under the offline folder: `snaps/` under
 /// `transfers/`, as the manifest names them; everything else at its own path.
@@ -255,14 +289,20 @@ class Planner {
 
   /// The releases to plan with: [pinned] if there are any, else `latest.json`'s.
   /// Throws [StateError] if the transit release isn't over the routing release.
-  Future<PlanReleases> releases(Map<ReleaseKind, ReleaseRow> pinned) async {
+  Future<PlanReleases> releases(
+    Map<ReleaseKind, ReleaseRow> pinned, {
+    Map<String, String> etags = const {},
+  }) async {
     if (pinned[ReleaseKind.routing] case final routing?) {
       return PlanReleases(
         map: pinned[ReleaseKind.map]?.date,
         routing: routing.date,
         transit: pinned[ReleaseKind.transit]?.date,
         valhallaBuildId: routing.valhallaBuildId!,
-        mapEtag: pinned[ReleaseKind.map]?.etag,
+        mapEtag: switch (pinned[ReleaseKind.map]) {
+          final map? => etags[mapArchivePath(map.date)],
+          null => null,
+        },
         pinned: true,
         manifestId: pinned[ReleaseKind.transit]?.manifestId,
       );
@@ -341,11 +381,14 @@ class Planner {
     return files;
   }
 
-  /// The feeds with stops in [polygon], with what each needs there.
-  Future<List<CandidateFeed>> feeds(String release, GeoPolygon polygon) async {
+  /// The feeds with stops in [polygon], with what each needs there, and each mode's
+  /// transfer archive, read as far as those feeds' tiles need ([etags] the pinned ones).
+  Future<(List<CandidateFeed>, Map<String, TransferArchive>)> feeds(
+    String release,
+    GeoPolygon polygon, {
+    Map<String, String> etags = const {},
+  }) async {
     final ids = <String>{};
-    // Every transfer tile's size, by mode and tile, from the shards.
-    final sizes = <(String, int, int), int>{};
     for (final (x, y) in SlippyTiles.covering(6, polygon)) {
       final Object? shard;
       try {
@@ -356,18 +399,6 @@ class Planner {
         rethrow;
       }
       final document = shard! as Map<String, Object?>;
-      final transfers = document['transfers'];
-      if (transfers is! Map<String, Object?>) {
-        throw StateError(
-          'transit $release\'s index has no transfer tile sizes; it needs '
-          'the feed index from valinor-transit-build with them',
-        );
-      }
-      for (final MapEntry(key: mode, value: tiles) in transfers.entries) {
-        for (final t in (tiles! as List<Object?>).cast<List<Object?>>()) {
-          sizes[(mode, t[0]! as int, t[1]! as int)] = t[2]! as int;
-        }
-      }
       for (final feed in document['feeds']! as List<Object?>) {
         final f = feed! as Map<String, Object?>;
         final cells = (f['cells']! as List<Object?>).cast<List<Object?>>();
@@ -380,24 +411,109 @@ class Planner {
         }
       }
     }
-    final feeds = await Future.wait(
-      ids.map((id) => _feed(release, id, polygon, sizes)),
-    );
-    return feeds..sort((a, b) => a.index.compareTo(b.index));
+    final entries = await Future.wait(ids.map((id) => _entry(release, id)));
+    // Each mode's tiles the feeds need inside the polygon, sized by the archive.
+    final wanted = <String, Set<(int, int)>>{};
+    for (final (_, entry) in entries) {
+      for (final MapEntry(key: mode, value: tiles) in _inside(
+        entry,
+        polygon,
+      ).entries) {
+        wanted.putIfAbsent(mode, () => {}).addAll(tiles);
+      }
+    }
+    final archives = <String, TransferArchive>{};
+    final sizes = <(String, int, int), int>{};
+    for (final MapEntry(key: mode, value: tiles) in wanted.entries) {
+      final archive = await transferArchive(release, mode, [
+        for (final (x, y) in tiles) (12, x, y),
+      ], etag: etags[transferArchivePath(release, mode)]);
+      archives[mode] = archive;
+      for (final found in archive.planning.found()) {
+        sizes[(mode, found.tile.$2, found.tile.$3)] = found.length;
+      }
+    }
+    final feeds = [
+      for (final (summary, entry) in entries)
+        _feed(release, summary, entry, polygon, sizes),
+    ];
+    return (feeds..sort((a, b) => a.index.compareTo(b.index)), archives);
   }
 
-  Future<CandidateFeed> _feed(
+  /// A mode's transfer archive, its directory read as far as [tiles] need.
+  /// Throws [BucketError] (`changed`) if it isn't the one whose ETag ([etag]) was pinned.
+  Future<TransferArchive> transferArchive(
+    String release,
+    String mode,
+    List<TileKey> tiles, {
+    String? etag,
+  }) async {
+    final key = transferArchivePath(release, mode);
+    final first = await bucket.range(
+      key,
+      0,
+      await native.archiveFirstFetch(),
+      ifMatch: etag,
+    );
+    final archiveEtag = first.etag ?? etag;
+    if (archiveEtag == null) throw StateError('$key has no ETag');
+    final planning = await native.archivePlanner(key, first.bytes, tiles);
+    for (var leaves = planning.neededLeaves(); leaves.isNotEmpty;) {
+      for (final (start, length) in leaves) {
+        final leaf = await bucket.range(
+          key,
+          start,
+          length,
+          ifMatch: archiveEtag,
+        );
+        await planning.addLeaf(start, leaf.bytes);
+      }
+      leaves = planning.neededLeaves();
+    }
+    return TransferArchive(
+      path: key,
+      mode: mode,
+      etag: archiveEtag,
+      planning: planning,
+    );
+  }
+
+  Future<(Map<String, Object?>, Map<String, Object?>)> _entry(
     String release,
     String id,
+  ) async => (
+    await bucket.json('transit/$release/feeds/$id.json')
+        as Map<String, Object?>,
+    await bucket.json('transit/$release/manifest/feeds/$id.json')
+        as Map<String, Object?>,
+  );
+
+  /// The feed's transfer tiles, by mode, that intersect [polygon].
+  static Map<String, List<(int, int)>> _inside(
+    Map<String, Object?> entry,
+    GeoPolygon polygon,
+  ) => {
+    for (final MapEntry(key: mode, value: list)
+        in (entry['transfer_tiles'] as Map<String, Object?>? ?? const {})
+            .cast<String, List<Object?>>()
+            .entries)
+      mode: [
+        for (final t in list.cast<List<Object?>>())
+          if (polygon.intersects(
+            SlippyTiles.bounds(12, t[0]! as int, t[1]! as int),
+          ))
+            (t[0]! as int, t[1]! as int),
+      ],
+  };
+
+  CandidateFeed _feed(
+    String release,
+    Map<String, Object?> summary,
+    Map<String, Object?> entry,
     GeoPolygon polygon,
     Map<(String, int, int), int> sizes,
-  ) async {
-    final summary = await bucket.json(
-      'transit/$release/feeds/$id.json',
-    ) as Map<String, Object?>;
-    final entry = await bucket.json(
-      'transit/$release/manifest/feeds/$id.json',
-    ) as Map<String, Object?>;
+  ) {
+    final id = summary['id']! as String;
     PlannedFile file(Map<String, Object?> ref) => PlannedFile(
       kind: ReleaseKind.transit,
       release: release,
@@ -408,26 +524,23 @@ class Planner {
     );
     final modes = (summary['modes'] as Map<String, Object?>? ?? const {})
         .cast<String, Map<String, Object?>>();
-    final entryTiles =
-        (entry['transfer_tiles'] as Map<String, Object?>? ?? const {})
-            .cast<String, List<Object?>>();
-    final tiles = <String, List<(int, int, int)>>{};
-    for (final MapEntry(key: mode, value: list) in entryTiles.entries) {
-      tiles[mode] = [
-        for (final t in list.cast<List<Object?>>())
-          if (polygon.intersects(
-            SlippyTiles.bounds(12, t[0]! as int, t[1]! as int),
-          ))
+    final tiles = {
+      for (final MapEntry(key: mode, value: list) in _inside(
+        entry,
+        polygon,
+      ).entries)
+        mode: [
+          for (final (x, y) in list)
             (
-              t[0]! as int,
-              t[1]! as int,
-              sizes[(mode, t[0]! as int, t[1]! as int)] ??
+              x,
+              y,
+              sizes[(mode, x, y)] ??
                   (throw StateError(
-                    'transfer tile $mode ${t[0]}/${t[1]} of $id is in no shard',
+                    'transfer tile $mode $x/$y of $id isn\'t in its archive',
                   )),
             ),
-      ];
-    }
+        ],
+    };
     final manifestPath = 'manifest/feeds/$id.json';
     return CandidateFeed(
       id: id,
@@ -460,7 +573,7 @@ class Planner {
     String? etag,
     String? basemap,
   }) async {
-    final key = 'map/$release/planet.pmtiles';
+    final key = mapArchivePath(release);
     final first = await bucket.range(
       key,
       0,
