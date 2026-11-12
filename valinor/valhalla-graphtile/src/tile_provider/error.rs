@@ -87,6 +87,24 @@ pub enum GraphTileProviderError {
         /// The base graph ID in the header of the stored tile.
         actual: GraphId,
     },
+    /// A tile is from another build than the tile set it was loaded into.
+    ///
+    /// A tile set mixed from builds would route over edges whose IDs
+    /// mean different things in different tiles.
+    #[error(
+        "load tile {graph_id}: it is from build {found}, but the tile set is from build {expected}"
+    )]
+    BuildMismatch {
+        /// The base graph ID of the tile.
+        graph_id: GraphId,
+        /// The build ID of the tile set.
+        expected: u16,
+        /// The build ID of the tile.
+        found: u16,
+    },
+    /// A tile has no checksum (it was built before Valhalla 3.9), so its build can't be known.
+    #[error("load tile {0}: it has no build ID (it was built before Valhalla 3.9)")]
+    NoBuildId(GraphId),
     /// A record inside an already loaded tile could not be decoded.
     #[error("decode a tile record: {0}")]
     Decoding(#[from] GraphTileDecodingError),
@@ -163,6 +181,8 @@ impl GraphTileProviderError {
             Self::InvalidGraphId(_)
             | Self::InvalidTile { .. }
             | Self::TileIdMismatch { .. }
+            | Self::BuildMismatch { .. }
+            | Self::NoBuildId(_)
             | Self::Decoding(_)
             | Self::InvalidShape { .. }
             | Self::Lookup(_)

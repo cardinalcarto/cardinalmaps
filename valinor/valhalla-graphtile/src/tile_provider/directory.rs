@@ -1,31 +1,81 @@
 //! # Directory tile provider
 //!
 //! Reads graph tiles from a directory tree of tile files,
-//! laid out the way Valhalla writes them (`mjolnir.tile_dir`).
+//! laid out the way Valhalla writes them (`mjolnir.tile_dir`):
+//! `<root>/<level>/nnn/nnn/nnn.gph`.
+//!
+//! This is what a phone keeps its tiles in: files arrive one at a time
+//! (an offline download, or tiles fetched for a route) while the router is open.
+//!
+//! # Tiles are memory-mapped
+//!
+//! Each tile file is mapped on its own, as a tarball is mapped as a whole,
+//! so the tile's bytes are file-backed pages that the operating system pages in
+//! when a search touches them and drops again under memory pressure.
+//! Reading tiles into memory would instead make every byte of every used tile
+//! anonymous memory (a city's local tile is tens of megabytes), which is what gets
+//! an app killed for memory.
+//! A mapped tile costs one mapping (a VMA) and its handle (about 500 bytes),
+//! plus whatever pages are resident.
+//!
+//! # Writers
+//!
+//! A tile file must never be written in place or truncated while it may be mapped:
+//! a mapped page past the new end of a truncated file faults (`SIGBUS`).
+//! Write a new tile to a temporary file and rename it over the tile's path
+//! (as [`DirectoryGraphTileProvider::overwrite_tile`] does).
+//! A rename doesn't touch the old file, so mappings of it stay valid
+//! (the old file lives on until its last mapping goes),
+//! and the next mapping of the path sees the new file.
+//!
+//! # Tiles that appear later
+//!
+//! A tile without a file is [`GraphTileProviderError::TileNotAvailable`].
+//! The provider remembers that a tile was missing (so a search that keeps reaching the
+//! edge of the tiles doesn't keep asking the file system) until
+//! [`DirectoryGraphTileProvider::refresh`] is called, which an app calls once new tile files
+//! are in place.
 
 use crate::GraphId;
 use crate::graph_id::InvalidGraphIdError;
+use crate::graph_tile::handles::{MmapGraphTileHandle, MmapTilePointer, TileOffset};
 use crate::graph_tile::{
     GraphTile, GraphTileBuildError, GraphTileBuilder, GraphTileDecodingError, GraphTileHeader,
+    GraphTileView,
 };
-use crate::graph_tile::{GraphTileView, handles::OwnedGraphTileHandle};
 use crate::tile_provider::{GraphTileProvider, GraphTileProviderError, LockTable};
+use core::hash::{Hash, Hasher};
 use core::num::NonZeroUsize;
 use lru::LruCache;
+use memmap2::MmapOptions;
+use std::collections::hash_map::DefaultHasher;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::{fs::File, io::BufWriter};
 use zerocopy::FromBytes;
 
-/// A graph tile provider that is backed by a directory of tiles.
+/// The most shards the tile cache is split into (each has its own lock).
+const MAX_SHARDS: usize = 16;
+
+/// What the cache knows about a tile.
+#[derive(Clone)]
+enum Cached {
+    /// The tile's file, mapped and validated.
+    Tile(Arc<MmapGraphTileHandle>),
+    /// The tile had no file in this generation (see [`DirectoryGraphTileProvider::refresh`]).
+    Missing(u64),
+}
+
+/// A graph tile provider that is backed by a directory of tiles;
+/// see the [module docs](self).
 ///
 /// # Resource consumption
 ///
-/// To minimize file handle churn and re-validation of the mapped tile memory,
-/// this includes an internal LRU cache.
-/// This is configurable with a max number of cached tiles.
-/// Any cached tiles will remain in memory.
+/// Up to `num_cached_tiles` tiles stay mapped in a cache (split into shards,
+/// each with its own lock, so threads rarely wait for each other).
+/// A handle that was given out keeps its tile mapped after the cache lets it go.
 ///
 /// # Missing tiles
 ///
@@ -33,21 +83,137 @@ use zerocopy::FromBytes;
 /// Tile files are checked to contain the tile their path names.
 pub struct DirectoryGraphTileProvider {
     base_directory: PathBuf,
+    /// Held while a tile is loaded or overwritten,
+    /// so that a load racing an overwrite can't cache the old file.
     lock_table: LockTable<GraphId>,
-    // TODO: This is a bit hackish for now, but even so it speeds things up MASSIVELY for many workloads!
-    lru_cache: Mutex<LruCache<GraphId, Arc<OwnedGraphTileHandle>>>,
+    shards: Box<[Mutex<LruCache<GraphId, Cached>>]>,
+    /// Bumped by [`Self::refresh`]: a tile found missing in an older generation is looked for again.
+    generation: AtomicU64,
 }
 
 impl DirectoryGraphTileProvider {
     /// Creates a provider for the tiles in `base_directory`,
-    /// keeping up to `num_cached_tiles` decoded tiles in memory.
+    /// keeping up to `num_cached_tiles` tiles mapped.
     #[inline]
     pub fn new(base_directory: PathBuf, num_cached_tiles: NonZeroUsize) -> Self {
+        let shard_count = num_cached_tiles.get().min(MAX_SHARDS);
+        let per_shard = NonZeroUsize::new(num_cached_tiles.get().div_ceil(shard_count))
+            .unwrap_or(NonZeroUsize::MIN);
         DirectoryGraphTileProvider {
             base_directory,
             lock_table: LockTable::new(),
-            lru_cache: Mutex::new(LruCache::new(num_cached_tiles)),
+            shards: (0..shard_count)
+                .map(|_| Mutex::new(LruCache::new(per_shard)))
+                .collect(),
+            generation: AtomicU64::new(0),
         }
+    }
+
+    /// The directory the tiles are in.
+    #[inline]
+    pub fn base_directory(&self) -> &Path {
+        &self.base_directory
+    }
+
+    /// Forgets which tiles were missing, so that tile files added since are found.
+    ///
+    /// Call this after new tile files are in place (renamed to their paths).
+    /// It is cheap: tiles that are mapped stay mapped,
+    /// and missing tiles are looked for again the next time they are asked for.
+    #[inline]
+    pub fn refresh(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// The cache shard for a tile.
+    fn shard(&self, graph_id: GraphId) -> &Mutex<LruCache<GraphId, Cached>> {
+        let mut hasher = DefaultHasher::new();
+        graph_id.hash(&mut hasher);
+        // The remainder is less than the shard count, so it fits in a usize.
+        let index = usize::try_from(hasher.finish() % self.shards.len() as u64).unwrap_or(0);
+        &self.shards[index]
+    }
+
+    /// The cached state of a tile, if the cache knows it.
+    fn cached(&self, base_graph_id: GraphId) -> Result<Option<Cached>, GraphTileProviderError> {
+        let mut shard = self
+            .shard(base_graph_id)
+            .lock()
+            .map_err(|_| GraphTileProviderError::PoisonedCacheLock)?;
+        Ok(match shard.get(&base_graph_id) {
+            Some(Cached::Missing(generation))
+                if *generation != self.generation.load(Ordering::Acquire) =>
+            {
+                shard.pop(&base_graph_id);
+                None
+            }
+            cached => cached.cloned(),
+        })
+    }
+
+    fn cache(&self, base_graph_id: GraphId, value: Cached) -> Result<(), GraphTileProviderError> {
+        self.shard(base_graph_id)
+            .lock()
+            .map_err(|_| GraphTileProviderError::PoisonedCacheLock)?
+            .put(base_graph_id, value);
+        Ok(())
+    }
+
+    /// Maps and validates a tile's file, bypassing (and not filling) the cache.
+    ///
+    /// The handle keeps the file mapped until it is dropped,
+    /// even if the file is renamed over or deleted.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphTileProviderError::TileNotAvailable`] if the tile has no file,
+    /// [`GraphTileProviderError::Io`] if it can't be read or mapped,
+    /// [`GraphTileProviderError::InvalidTile`] if it isn't a valid tile
+    /// (for example, a truncated file),
+    /// and [`GraphTileProviderError::TileIdMismatch`] if it is another tile.
+    pub fn map_tile(
+        &self,
+        graph_id: GraphId,
+    ) -> Result<Arc<MmapGraphTileHandle>, GraphTileProviderError> {
+        let base_graph_id = graph_id.tile_base_id();
+        let invalid = |source| GraphTileProviderError::InvalidTile {
+            graph_id: base_graph_id,
+            source,
+        };
+        let path = self.path_for_graph_id(base_graph_id)?;
+        let file = File::open(path).map_err(|e| match e.kind() {
+            ErrorKind::NotFound => GraphTileProviderError::TileNotAvailable(base_graph_id),
+            _ => GraphTileProviderError::Io(e),
+        })?;
+        if !file.metadata()?.is_file() {
+            return Err(GraphTileProviderError::TileNotAvailable(base_graph_id));
+        }
+        // The map is as long as the file is when it is mapped
+        // (memmap2 reads the length from the open file), so every byte of it is backed.
+        let mmap = MmapOptions::new().map_raw_read_only(&file)?;
+        // Tile sizes are 32 bits (as in a tarball's index); an empty file can't be a tile.
+        let size =
+            u32::try_from(mmap.len()).map_err(|_| invalid(GraphTileDecodingError::SliceLength))?;
+        if (size as usize) < size_of::<GraphTileHeader>() {
+            return Err(invalid(GraphTileDecodingError::SliceLength));
+        }
+        let pointer = MmapTilePointer {
+            mmap: Arc::new(mmap),
+            offsets: TileOffset { offset: 0, size },
+        };
+        // SAFETY: The range is the whole map. Tile files are never written in place or
+        // truncated, only replaced by a rename (the contract in the module docs),
+        // and a rename leaves the mapped file as it is.
+        let handle = unsafe { MmapGraphTileHandle::try_from(pointer) }.map_err(invalid)?;
+        // A tile file in the wrong place would otherwise be silently used as another tile.
+        let actual = handle.header().graph_id().tile_base_id();
+        if actual != base_graph_id {
+            return Err(GraphTileProviderError::TileIdMismatch {
+                expected: base_graph_id,
+                actual,
+            });
+        }
+        Ok(Arc::new(handle))
     }
 
     /// Replaces the tile stored at the designated location
@@ -57,29 +223,21 @@ impl DirectoryGraphTileProvider {
     ///
     /// The implementation takes the following steps to ensure data race safety:
     ///
-    /// - Acquires a lock at the start of the call, ensuring that calls to [`GraphTileProvider::get_handle_for_tile_containing`]
-    ///   block until this method exits.
+    /// - Acquires the tile's lock at the start of the call, so loads of this tile
+    ///   through [`GraphTileProvider::get_handle_for_tile_containing`]
+    ///   wait until this method exits.
     /// - Writes to a temporary file initially, so if anything goes wrong, the original file is not affected.
-    ///   After successfully writing the temp file, it is atomically renamed on top of the original.
-    /// - Clears the internal tile cache (local to _this_ [`DirectoryGraphTileProvider`] instance!)
+    ///   After successfully writing the temp file, it is atomically renamed on top of the original
+    ///   (so mappings of the original stay valid; see the [module docs](self)).
+    /// - Removes the tile from the internal cache (local to _this_ [`DirectoryGraphTileProvider`] instance!)
     ///   once the rename succeeds.
-    /// - Releases the lock, unblocking access to this tile, only after everything succeeds,
+    /// - Releases the lock only after everything succeeds,
     ///   or fails mid-write (in which case, only the temporary file is affected).
-    ///
-    /// In this way, a (single!) [`DirectoryGraphTileProvider`] should be safe to use in async contexts,
-    /// without fear of races from writers.
-    /// Additionally, since readers always have to wait for a writer to finish,
-    /// readers will never get a partially written tile, nor will they get a stale tile
-    /// if there is an open write operation.
     ///
     /// ## Edge cases
     ///
     /// Once you have a handle to a graph tile from [`GraphTileProvider::get_handle_for_tile_containing`],
-    /// the lock is freed and a writer may then proceed.
-    /// Your handle will _not_ change or block writers,
-    /// creating an opportunity for edge cases (especially if you plan to create a builder from this tile
-    /// to write changes!).
-    ///
+    /// your handle will _not_ change or block writers: it keeps the old file mapped.
     /// So, if your workload involves both reads and writes,
     /// **you _must_ ensure that your tile references cannot be stale.**
     /// This probably means some sort of partition mutex in your processing loop.
@@ -123,12 +281,11 @@ impl DirectoryGraphTileProvider {
         // Replace the original file atomically
         std::fs::rename(tmp_path, path)?;
 
-        let mut cache = self
-            .lru_cache
-            .lock()
-            .map_err(|e| GraphTileBuildError::PoisonedCacheLock(e.to_string()))?;
         // Invalidate the cache
-        cache.pop(&graph_id);
+        self.shard(graph_id)
+            .lock()
+            .map_err(|e| GraphTileBuildError::PoisonedCacheLock(e.to_string()))?
+            .pop(&graph_id);
 
         Ok(())
     }
@@ -239,7 +396,7 @@ impl DirectoryGraphTileProvider {
 }
 
 impl GraphTileProvider for DirectoryGraphTileProvider {
-    type TileHandle = Arc<OwnedGraphTileHandle>;
+    type TileHandle = Arc<MmapGraphTileHandle>;
 
     #[inline]
     fn with_tile_containing<F, T>(
@@ -257,47 +414,37 @@ impl GraphTileProvider for DirectoryGraphTileProvider {
     fn get_handle_for_tile_containing(
         &self,
         graph_id: GraphId,
-    ) -> Result<Arc<OwnedGraphTileHandle>, GraphTileProviderError> {
-        // TODO: Do we want to move the base ID check inside file_path?
+    ) -> Result<Arc<MmapGraphTileHandle>, GraphTileProviderError> {
         let base_graph_id = graph_id.tile_base_id();
+        match self.cached(base_graph_id)? {
+            Some(Cached::Tile(tile)) => return Ok(tile),
+            Some(Cached::Missing(_)) => {
+                return Err(GraphTileProviderError::TileNotAvailable(base_graph_id));
+            }
+            None => {}
+        }
 
         let lock = self.lock_table.lock_for(base_graph_id);
         // The lock guards no data, so a panic while holding it can't leave anything inconsistent.
         let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
-
-        let mut cache = self
-            .lru_cache
-            .lock()
-            .map_err(|_| GraphTileProviderError::PoisonedCacheLock)?;
-        let tile = cache
-            .try_get_or_insert(base_graph_id, || {
-                // Build up the path from the base directory + tile ID components
-                let path = self.path_for_graph_id(base_graph_id)?;
-                // Open the file and read all bytes into a buffer
-                // NOTE: Does not handle compressed tiles
-                let data = std::fs::read(path).map_err(|e| match e.kind() {
-                    ErrorKind::NotFound => GraphTileProviderError::TileNotAvailable(base_graph_id),
-                    _ => GraphTileProviderError::Io(e),
-                })?;
-                let tile = OwnedGraphTileHandle::try_from(data).map_err(|source| {
-                    GraphTileProviderError::InvalidTile {
-                        graph_id: base_graph_id,
-                        source,
-                    }
-                })?;
-                // A tile file in the wrong place would otherwise be silently used as another tile.
-                let actual = tile.header().graph_id().tile_base_id();
-                if actual != base_graph_id {
-                    return Err(GraphTileProviderError::TileIdMismatch {
-                        expected: base_graph_id,
-                        actual,
-                    });
-                }
-                Ok::<_, GraphTileProviderError>(Arc::new(tile))
-            })
-            .cloned()?;
-
-        Ok(tile)
+        // Another thread may have loaded it while this one waited.
+        if let Some(Cached::Tile(tile)) = self.cached(base_graph_id)? {
+            return Ok(tile);
+        }
+        let generation = self.generation.load(Ordering::Acquire);
+        match self.map_tile(base_graph_id) {
+            Ok(tile) => {
+                self.cache(base_graph_id, Cached::Tile(Arc::clone(&tile)))?;
+                Ok(tile)
+            }
+            Err(GraphTileProviderError::TileNotAvailable(id)) => {
+                // Read before looking, so a refresh during the lookup isn't lost.
+                self.cache(base_graph_id, Cached::Missing(generation))?;
+                Err(GraphTileProviderError::TileNotAvailable(id))
+            }
+            // Corrupt or unreadable tiles aren't cached: replacing the file fixes them.
+            Err(e) => Err(e),
+        }
     }
 
     /// Checks for the tile file in the directory.
@@ -307,16 +454,12 @@ impl GraphTileProvider for DirectoryGraphTileProvider {
     /// This needs a filesystem lookup (`stat`) for tiles that are not in the cache.
     fn contains_tile(&self, graph_id: GraphId) -> Result<bool, GraphTileProviderError> {
         let base_graph_id = graph_id.tile_base_id();
-        let cached = self
-            .lru_cache
-            .lock()
-            .map_err(|_| GraphTileProviderError::PoisonedCacheLock)?
-            .contains(&base_graph_id);
-        if cached {
-            return Ok(true);
+        match self.cached(base_graph_id)? {
+            Some(Cached::Tile(_)) => return Ok(true),
+            Some(Cached::Missing(_)) => return Ok(false),
+            None => {}
         }
-
-        Ok(self.path_for_graph_id(base_graph_id)?.try_exists()?)
+        Ok(self.path_for_graph_id(base_graph_id)?.is_file())
     }
 }
 
@@ -696,6 +839,176 @@ mod test {
                     );
                 }
             }
+        }
+    }
+
+    /// Puts a tile file in place as an app must: written aside, then renamed into place.
+    fn install(dir: &std::path::Path, relative: &str, bytes: &[u8]) {
+        let path = dir.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let temp = path.with_extension("part");
+        std::fs::write(&temp, bytes).unwrap();
+        std::fs::rename(&temp, &path).unwrap();
+    }
+
+    /// Reads every record a search might read, so that a bad mapping would show.
+    fn read_everything(tile: &impl GraphTile) -> usize {
+        let mut count = 0;
+        for edge in tile.directed_edges() {
+            if let Ok(info) = tile.get_edge_info(edge) {
+                count += info
+                    .decode_raw_shape::<f32>()
+                    .map_or(0, |shape| shape.len());
+            }
+        }
+        count + tile.nodes().len()
+    }
+
+    #[test]
+    fn missing_tiles_appear_after_a_refresh() {
+        let dir = TempDir::new("appear");
+        let tile = std::fs::read(fixture_dir().join("0/003/015.gph")).unwrap();
+        let provider =
+            DirectoryGraphTileProvider::new(dir.0.clone(), NonZeroUsize::new(4).unwrap());
+        let id = GraphId::try_from_components(0, 3015, 0).unwrap();
+        assert!(matches!(
+            provider.get_handle_for_tile_containing(id),
+            Err(GraphTileProviderError::TileNotAvailable(missing)) if missing == id
+        ));
+        assert!(!provider.contains_tile(id).unwrap());
+
+        install(&dir.0, "0/003/015.gph", &tile);
+        // Remembered as missing until the app says that files arrived.
+        assert!(provider.get_handle_for_tile_containing(id).is_err());
+        provider.refresh();
+        assert!(provider.contains_tile(id).unwrap());
+        let handle = provider.get_handle_for_tile_containing(id).unwrap();
+        assert_eq!(handle.header().graph_id(), id);
+        // Mapping it bypassing the cache gives the same tile.
+        assert_eq!(provider.map_tile(id).unwrap().header(), handle.header());
+    }
+
+    #[test]
+    fn replaced_and_deleted_files_leave_mapped_tiles_intact() {
+        let dir = TempDir::new("replace");
+        let original = std::fs::read(fixture_dir().join("0/003/015.gph")).unwrap();
+        // The same tile from another build (mainline stamped a new build ID into it).
+        let replacement = std::fs::read(
+            fixture_dir()
+                .with_file_name("andorra-tiles-with-traffic")
+                .join("0/003/015.gph"),
+        )
+        .unwrap();
+        install(&dir.0, "0/003/015.gph", &original);
+        let provider =
+            DirectoryGraphTileProvider::new(dir.0.clone(), NonZeroUsize::new(4).unwrap());
+        let id = GraphId::try_from_components(0, 3015, 0).unwrap();
+        let old = provider.get_handle_for_tile_containing(id).unwrap();
+        let old_build = old.header().build_id();
+        let records = read_everything(&old);
+
+        install(&dir.0, "0/003/015.gph", &replacement);
+        // The old mapping still reads the old file.
+        assert_eq!(old.header().build_id(), old_build);
+        assert_eq!(read_everything(&old), records);
+        // A new mapping reads the new one.
+        let new = provider.map_tile(id).unwrap();
+        assert_ne!(new.header().build_id(), old_build);
+
+        std::fs::remove_file(dir.0.join("0/003/015.gph")).unwrap();
+        assert_eq!(read_everything(&old), records);
+        assert_eq!(read_everything(&new), read_everything(&new));
+        assert!(matches!(
+            provider.map_tile(id),
+            Err(GraphTileProviderError::TileNotAvailable(_))
+        ));
+    }
+
+    #[test]
+    fn corrupt_and_truncated_files_are_errors() {
+        let dir = TempDir::new("corrupt");
+        let tile = std::fs::read(fixture_dir().join("0/003/015.gph")).unwrap();
+        let provider =
+            DirectoryGraphTileProvider::new(dir.0.clone(), NonZeroUsize::new(4).unwrap());
+        let id = GraphId::try_from_components(0, 3015, 0).unwrap();
+        let header = size_of::<crate::graph_tile::GraphTileHeader>();
+        for length in [
+            0,
+            1,
+            header - 1,
+            header,
+            header + 1,
+            4096,
+            tile.len() / 2,
+            tile.len() - 1,
+        ] {
+            install(&dir.0, "0/003/015.gph", &tile[..length]);
+            assert!(
+                matches!(
+                    provider.get_handle_for_tile_containing(id),
+                    Err(GraphTileProviderError::InvalidTile { graph_id, .. }) if graph_id == id
+                ),
+                "{length} bytes"
+            );
+        }
+        // Corrupt bytes anywhere: an error or a tile, never a panic.
+        let mut rng = rng();
+        let positions = Uniform::try_from(0..tile.len()).unwrap();
+        for _ in 0..200 {
+            let mut bytes = tile.clone();
+            for position in positions.sample_iter(&mut rng).take(8) {
+                bytes[position] ^= 0xa5;
+            }
+            install(&dir.0, "0/003/015.gph", &bytes);
+            if let Ok(handle) = provider.map_tile(id) {
+                read_everything(&handle);
+            }
+        }
+        // A directory where the file should be is no tile.
+        std::fs::remove_file(dir.0.join("0/003/015.gph")).unwrap();
+        std::fs::create_dir_all(dir.0.join("0/003/015.gph")).unwrap();
+        assert!(matches!(
+            provider.map_tile(id),
+            Err(GraphTileProviderError::TileNotAvailable(_))
+        ));
+        // Errors aren't remembered: a good file is read as soon as it is in place.
+        std::fs::remove_dir(dir.0.join("0/003/015.gph")).unwrap();
+        install(&dir.0, "0/003/015.gph", &tile[..100]);
+        assert!(provider.get_handle_for_tile_containing(id).is_err());
+        install(&dir.0, "0/003/015.gph", &tile);
+        assert!(provider.get_handle_for_tile_containing(id).is_ok());
+    }
+
+    #[test]
+    fn threads_read_while_tiles_arrive() {
+        let dir = TempDir::new("threads");
+        let provider =
+            DirectoryGraphTileProvider::new(dir.0.clone(), NonZeroUsize::new(3).unwrap());
+        let ids = fixture_ids();
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    for _ in 0..200 {
+                        for &id in &ids {
+                            match provider.get_handle_for_tile_containing(id) {
+                                Ok(tile) => assert_eq!(tile.header().graph_id(), id),
+                                Err(GraphTileProviderError::TileNotAvailable(_)) => {}
+                                Err(e) => panic!("{e}"),
+                            }
+                        }
+                    }
+                });
+            }
+            for &id in &ids {
+                let relative = id.file_path("gph").unwrap();
+                let bytes = std::fs::read(fixture_dir().join(&relative)).unwrap();
+                install(&dir.0, relative.to_str().unwrap(), &bytes);
+                provider.refresh();
+            }
+        });
+        provider.refresh();
+        for id in ids {
+            assert!(provider.get_handle_for_tile_containing(id).is_ok());
         }
     }
 }
