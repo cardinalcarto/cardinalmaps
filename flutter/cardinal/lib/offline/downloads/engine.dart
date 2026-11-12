@@ -997,7 +997,7 @@ class OfflineDownloads {
     String error, {
     bool permanent = false,
   }) async {
-    debugPrint('offline: map range ${c.start}+${c.length}: $error');
+    debugPrint('offline: ${c.kind.name} range ${c.start}+${c.length}: $error');
     _deleteQuietly(_incomingFile('c${c.id}'));
     final attempts = c.attempts + 1;
     await (db.update(db.chunks)..where((x) => x.id.equals(c.id))).write(
@@ -1137,7 +1137,7 @@ class OfflineDownloads {
         RegionState.failed,
         error: failedFile != null
             ? '${failedFile.path}: ${failedFile.error}'
-            : 'map range ${failedChunk!.start}: ${failedChunk.error}',
+            : '${failedChunk!.kind.name} range ${failedChunk.start}: ${failedChunk.error}',
       );
       return;
     }

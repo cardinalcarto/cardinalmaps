@@ -124,7 +124,7 @@ void main() {
       ]);
 
       // Faults: a level 2 tile always corrupt (until cleared), a level 1 tile cut
-      // off once, and one map tile corrupt once.
+      // off once, one map tile corrupt once, and one walking transfer tile corrupt once.
       server.corrupt.add(
         'routing/${plan.releases.routing}/tiles/2/000/792/230.gph',
       );
@@ -134,6 +134,10 @@ void main() {
       final firstRange = plan.map!.ranges.first;
       final archive = 'map/${plan.releases.map}/planet.pmtiles';
       server.corruptOnceAt[archive] = firstRange.start + 20;
+      final walking = plan.transferArchives['walking']!;
+      final badTransfer = walking.planning.found().first;
+      server.corruptOnceAt[walking.path] =
+          badTransfer.start + badTransfer.length ~/ 2;
 
       watch.reset();
       final a = await engine.start(plan, feeds: {metro, soundTransit});
@@ -163,6 +167,23 @@ void main() {
       expect(first.attempts, 1);
       expect(first.error, contains('gzip'));
       expect(first.state, ChunkState.deleted);
+      // The walking range with the corrupt tile was checked, failed, and came again.
+      final transferRanges = chunks
+          .where((c) => c.kind == ChunkKind.transfers)
+          .toList();
+      final retriedTransfer = transferRanges.singleWhere((c) => c.attempts > 0);
+      log.add(
+        'transfer ranges: ${transferRanges.length} '
+        '(${transferRanges.fold(0, (sum, c) => sum + c.length)} B for '
+        '${transferRanges.fold(0, (sum, c) => sum + c.tileCount)} tiles); corrupt one: '
+        '${retriedTransfer.state.name}, ${retriedTransfer.attempts} failed attempts, '
+        '${retriedTransfer.error}',
+      );
+      expect(retriedTransfer.archive, walking.path);
+      expect(retriedTransfer.attempts, 1);
+      expect(retriedTransfer.state, ChunkState.deleted);
+      // No transfer tile was fetched on its own.
+      expect(server.requestsFor((p) => p.endsWith('.bin.zst')), 0);
 
       server.corrupt.clear();
       watch.reset();
@@ -245,6 +266,25 @@ void main() {
       log.add('region b: ${progress.state.name}: ${progress.error}');
       expect(progress.state, RegionState.failed);
       expect(progress.error, contains('412'));
+      // The region fails at its first 412; the other ranges end soon after.
+      var bRanges = <ChunkRow>[];
+      for (var i = 0; i < 200; i++) {
+        bRanges = await (db.select(
+          db.chunks,
+        )..where((c) => c.regionId.equals(b))).get();
+        if (bRanges.every((c) => c.state == ChunkState.failed)) break;
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      expect(
+        bRanges.every((c) => c.state == ChunkState.failed && c.attempts == 1),
+        isTrue,
+      );
+      expect(bRanges.any((c) => c.kind == ChunkKind.transfers), isTrue);
+      // The transfer tiles region a brought are b's too: not in b's ranges.
+      final shared = (await db.select(db.files).get()).where(
+        (f) => f.archive != null && f.state == FileState.installed,
+      );
+      expect(shared, isNotEmpty);
       // Planning again says so too.
       await expectLater(
         engine.plan(north),

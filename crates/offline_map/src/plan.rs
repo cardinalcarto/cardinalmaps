@@ -366,6 +366,21 @@ mod tests {
         );
     }
 
+    /// A tile larger than the cap (a planet has three cycling transfer tiles over 16 MiB,
+    /// the largest 28 MB) is a range of its own, and its neighbours aren't put with it.
+    #[test]
+    fn a_tile_over_the_cap_is_a_range_of_its_own() {
+        let tiles = [tile(0, 0, 100), tile(1, 100, 1000), tile(2, 1100, 100)];
+        let found = chunks(&tiles, 1000, 500);
+        assert_eq!(
+            found
+                .iter()
+                .map(|c| (c.offset, c.length, c.tiles.len()))
+                .collect::<Vec<_>>(),
+            [(0, 100, 1), (100, 1000, 1), (1100, 100, 1)]
+        );
+    }
+
     #[test]
     fn tile_lists_round_trip() {
         let tiles = chunks(&[tile(7, 10, 3), tile(9, 13, 5)], 0, 100)[0]

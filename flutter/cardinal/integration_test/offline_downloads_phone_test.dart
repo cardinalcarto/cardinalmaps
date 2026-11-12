@@ -126,6 +126,15 @@ void main() {
           k: {'count': n, 'ms': us ~/ 1000},
       };
       note('timings: ${report['timings_a']}');
+      final ranges = await db.select(db.chunks).get();
+      final transferRanges = ranges.where((c) => c.kind == ChunkKind.transfers);
+      note(
+        'ranges: ${ranges.length - transferRanges.length} map, '
+        '${transferRanges.length} transfer '
+        '(${transferRanges.fold(0, (sum, c) => sum + c.tileCount)} tiles)',
+      );
+      expect(transferRanges, isNotEmpty);
+      expect(ranges.every((c) => c.state == ChunkState.deleted), isTrue);
       final retried = (await db.select(db.files).get()).where(
         (f) => f.attempts > 0,
       );

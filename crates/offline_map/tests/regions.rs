@@ -456,3 +456,59 @@ fn reads_a_downloaded_basemap() {
         .unwrap();
     println!("{} tiles read, of {regions} regions", ids.len());
 }
+
+/// The planet's transfer archives (`cardinal-pack transfers` output), from
+/// `CARDINAL_TEST_TRANSFER_ARCHIVES`: the ranges a city's transfer tiles take.
+#[test]
+#[ignore = "needs CARDINAL_TEST_TRANSFER_ARCHIVES"]
+fn plans_the_planet_transfer_archives() {
+    let dir = PathBuf::from(std::env::var("CARDINAL_TEST_TRANSFER_ARCHIVES").unwrap());
+    for (name, polygon) in [
+        ("downtown", downtown()),
+        (
+            "city",
+            Polygon::new(vec![
+                (-122.44, 47.50),
+                (-122.24, 47.50),
+                (-122.24, 47.74),
+                (-122.44, 47.74),
+            ])
+            .unwrap(),
+        ),
+    ] {
+        let wanted = cover(&polygon, 12, 12);
+        for mode in ["walking", "cycling", "wheelchair"] {
+            let archive = std::fs::read(dir.join(format!("{mode}.pmtiles"))).unwrap();
+            let first = &archive[..FIRST_FETCH as usize];
+            let mut planner = MapPlanner::for_tiles(first, &wanted).unwrap();
+            let mut leaves = 0;
+            loop {
+                let needed = planner.needed_leaves();
+                if needed.is_empty() {
+                    break;
+                }
+                for (offset, length) in needed {
+                    leaves += 1;
+                    let at = offset as usize;
+                    planner
+                        .add_leaf(offset, &archive[at..at + length as usize])
+                        .unwrap();
+                }
+            }
+            let tiles = planner.tiles().unwrap();
+            let exact: u64 = tiles.iter().map(|t| u64::from(t.length)).sum();
+            let largest = tiles.iter().map(|t| t.length).max().unwrap_or(0);
+            for gap in [0, 64 * 1024, GAP_BYTES, 1024 * 1024] {
+                let found = chunks(&tiles, gap, MAX_CHUNK_BYTES);
+                let bytes: u64 = found.iter().map(|c| c.length).sum();
+                println!(
+                    "{name} {mode}: {} tiles (largest {largest} B), {leaves} leaves, gap {gap}: \
+                     {} ranges, {bytes} B, exact {exact} ({:.1}% over)",
+                    tiles.len(),
+                    found.len(),
+                    (bytes as f64 / exact.max(1) as f64 - 1.0) * 100.0
+                );
+            }
+        }
+    }
+}
