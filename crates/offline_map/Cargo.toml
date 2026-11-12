@@ -1,0 +1,15 @@
+[package]
+name = "offline_map"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "Offline map regions: reading a PMTiles archive's directories, choosing the tiles and byte ranges that cover a polygon, and unpacking downloaded ranges into the device's MBTiles."
+
+[dependencies]
+flate2 = "1.1.10"
+rusqlite = { version = "0.41.0", features = ["bundled"] }
+thiserror = "2.0.21"
+
+[dev-dependencies]
+sparkle = { version = "0.1.0", path = "../sparkle" }
+sparkle_view = { version = "0.1.0", path = "../sparkle_view" }
