@@ -468,3 +468,57 @@ fn tiles_that_arrive_are_routed_after_a_refresh() {
     cut.refresh_tiles().unwrap();
     assert_eq!(differing(&cut), 0);
 }
+
+/// The paths of this process's mappings of deleted files under `dir` (Linux's
+/// `/proc/self/maps` marks them `(deleted)`): their space isn't freed until they're unmapped.
+#[cfg(target_os = "linux")]
+fn deleted_mappings(dir: &Path) -> Vec<String> {
+    let dir = dir.to_string_lossy().into_owned();
+    std::fs::read_to_string("/proc/self/maps")
+        .unwrap()
+        .lines()
+        .filter(|line| line.contains(&dir) && line.ends_with("(deleted)"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// What deleting tile files (an app evicting downloaded tiles) does to an open router, as
+/// things stand: a refresh forgets only which tiles were missing. A tile that was mapped
+/// stays mapped, so its disk space isn't freed and routes still use it, until the router is
+/// dropped; a tile that was never mapped reads as missing.
+#[cfg(target_os = "linux")]
+#[test]
+fn deleted_tiles_stay_mapped_until_the_router_is_dropped() {
+    let region = TempDir::new("evict").with_tiles(&tiles(), &ALL_TILES);
+    let router = Router::open_for_build(
+        RouterConfig::default(),
+        &[&region.0],
+        Some(FIXTURE_BUILD_ID),
+    )
+    .unwrap();
+    let ok = |router: &Router| router.route(FERROSTAR.as_bytes()).status.as_u16() == 200;
+    assert!(ok(&router));
+
+    for tile in ALL_TILES {
+        std::fs::remove_file(region.0.join(tile)).unwrap();
+    }
+    router.refresh_tiles().unwrap();
+    let mapped = deleted_mappings(&region.0);
+    assert!(
+        !mapped.is_empty(),
+        "a refresh unmapped the deleted tiles; update this test and the app's eviction"
+    );
+    // The route still finds its (deleted) tiles.
+    assert!(ok(&router));
+
+    // A router opened now sees no tiles.
+    let fresh = Router::open_for_build(
+        RouterConfig::default(),
+        &[&region.0],
+        Some(FIXTURE_BUILD_ID),
+    )
+    .unwrap();
+    assert!(!ok(&fresh));
+    drop(router);
+    assert!(deleted_mappings(&region.0).is_empty());
+}
