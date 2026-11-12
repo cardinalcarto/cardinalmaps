@@ -8,10 +8,19 @@ const tilesUrl = String.fromEnvironment('CARDINAL_TILES_URL');
 const geocoderUrl = String.fromEnvironment('CARDINAL_GEOCODER_URL');
 
 /// The offline area that street directions and transit plans use, for development until
-/// areas can be downloaded: a directory holding `tiles.tar`, a transit build, and
-/// `realtime.json`, or the name of one under the app's `offline/` folder. Directions
-/// and transit need it; without it, they say there's no offline area.
-const offlineAreaPath = String.fromEnvironment('CARDINAL_OFFLINE_AREA');
+/// releases can be downloaded: the directory holding `routing/<date>/` and
+/// `transit/<date>/`, laid out as the bucket's `releases/` are. Empty means the app's
+/// `offline/` folder (see `offline/offline_area.dart`).
+const offlineRoot = String.fromEnvironment('CARDINAL_OFFLINE_ROOT');
+
+/// The routing release the offline area's street tiles are from, its date, as in
+/// `routing/<date>/`. Directions and transit need it and [transitRelease]; without
+/// them, they say there's no offline area.
+const routingRelease = String.fromEnvironment('CARDINAL_ROUTING_RELEASE');
+
+/// The transit release the offline area's timetables are from, its date, as in
+/// `transit/<date>/`.
+const transitRelease = String.fromEnvironment('CARDINAL_TRANSIT_RELEASE');
 
 /// The bundled map style, a file in `assets/map`.
 const mapStyle = String.fromEnvironment(

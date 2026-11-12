@@ -1,8 +1,9 @@
-/// The device's offline area: street tiles and transit timetables in one directory,
-/// opened once and shared by street directions and transit plans.
+/// The device's offline area: a routing release's street tiles and a transit release's
+/// timetables, opened once and shared by street directions and transit plans.
 ///
-/// There's no download yet: a dev build is pointed at a directory with the
-/// `CARDINAL_OFFLINE_AREA` define (see `config.dart`).
+/// There's no download yet: a dev build is pointed at its releases with the
+/// `CARDINAL_OFFLINE_ROOT`, `CARDINAL_ROUTING_RELEASE` and `CARDINAL_TRANSIT_RELEASE`
+/// defines (see `config.dart`).
 library;
 
 import 'dart:async';
@@ -15,18 +16,23 @@ import 'package:routing/routing.dart';
 
 import '../config.dart';
 
-/// One offline area's directory:
+/// One offline area, as the releases are laid out under the offline root, the same as
+/// the bucket's `releases/`:
 ///
-/// - `tiles.tar`, the street tiles (a mainline `build_extract` tarball);
-/// - `timetables/` and `transfers/`, a transit build over those tiles, which writes its
-///   `prepared/` beside them on first open;
-/// - `realtime.json`, the GTFS-RT URLs of its feeds.
+/// - `routing/<date>/tiles/`, the street tiles, loose: `{level}/nnn/nnn/nnn.gph`;
+/// - `transit/<date>/`, a transit build over those tiles: `timetables/` and
+///   `transfers/`, which writes its `prepared/` beside them on first open, and
+///   `realtime.json`, the GTFS-RT URLs of its feeds.
 class OfflineArea {
-  OfflineArea(this.directory);
+  OfflineArea({required this.routing, required this.transitBuild});
 
-  final String directory;
+  /// The routing release's directory, `routing/<date>`.
+  final String routing;
 
-  String get _tiles => '$directory/tiles.tar';
+  /// The transit release's directory, `transit/<date>`.
+  final String transitBuild;
+
+  String get _tiles => '$routing/tiles';
 
   /// The street router over the area's tiles, opened on first use.
   Future<OfflineRouter> get router =>
@@ -48,7 +54,7 @@ class OfflineArea {
         final feeds = await _feeds();
         debugPrint('offline: transit feeds ${feeds.join(', ')}');
         return OfflineTransit.open(
-          build: directory,
+          build: transitBuild,
           feeds: feeds,
           tileSets: [_tiles],
         );
@@ -59,7 +65,7 @@ class OfflineArea {
   Future<List<String>> _feeds() async {
     const suffix = '.timetable';
     final names = [
-      await for (final entry in Directory('$directory/timetables').list())
+      await for (final entry in Directory('$transitBuild/timetables').list())
         if (entry is File && entry.path.endsWith(suffix))
           entry.uri.pathSegments.last,
     ]..sort();
@@ -70,7 +76,7 @@ class OfflineArea {
 
   /// The GTFS-RT messages of the area's feeds, as `realtime.json` lists them.
   Future<List<RealtimeSource>> get realtimeSources => _realtime ??= () async {
-    final file = File('$directory/realtime.json');
+    final file = File('$transitBuild/realtime.json');
     if (!await file.exists()) return const <RealtimeSource>[];
     final json = jsonDecode(await file.readAsString()) as Map<String, Object?>;
     return [
@@ -83,52 +89,17 @@ class OfflineArea {
 
   /// Whether the area's streets reach [lat], [lng]: whether the tiles hold the
   /// quarter-degree square it's in.
-  Future<bool> covers(double lat, double lng) async {
-    final squares = await (_coverage ??= _readCoverage());
-    return squares.contains(_square(lat, lng));
-  }
+  Future<bool> covers(double lat, double lng) =>
+      File('$_tiles/${_levelTwoTile(lat, lng)}').exists();
 
-  Future<Set<int>>? _coverage;
-
-  /// Valhalla's level 2 tiles, which are a quarter of a degree on a side, numbered by
-  /// row from the south pole and column from the antimeridian.
-  static int _square(double lat, double lng) {
+  /// The path of the level 2 tile holding [lat], [lng], under the tiles. Level 2 tiles are
+  /// a quarter of a degree on a side, numbered by row from the south pole and column from
+  /// the antimeridian, and tile 789349 is `2/000/789/349.gph`.
+  static String _levelTwoTile(double lat, double lng) {
     final row = ((lat + 90) * 4).floor().clamp(0, 719);
     final column = ((lng + 180) * 4).floor().clamp(0, 1439);
-    return row * 1440 + column;
-  }
-
-  /// The level 2 tiles in the tarball, from its headers: `2/000/789/349.gph` is 789349.
-  Future<Set<int>> _readCoverage() async {
-    final squares = <int>{};
-    final file = await File(_tiles).open();
-    try {
-      final length = await file.length();
-      var offset = 0;
-      while (offset + 512 <= length) {
-        await file.setPosition(offset);
-        final header = await file.read(512);
-        if (header.every((byte) => byte == 0)) break;
-        final name = _field(header, 0, 100);
-        final size =
-            int.tryParse(_field(header, 124, 12).trim(), radix: 8) ?? 0;
-        final match = RegExp(r'^2/(\d{3})/(\d{3})/(\d{3})\.gph')
-            .firstMatch(name);
-        if (match != null) {
-          squares.add(int.parse('${match[1]}${match[2]}${match[3]}'));
-        }
-        offset += 512 + (size + 511) ~/ 512 * 512;
-      }
-    } finally {
-      await file.close();
-    }
-    return squares;
-  }
-
-  static String _field(Uint8List header, int start, int length) {
-    final bytes = header.sublist(start, start + length);
-    final end = bytes.indexOf(0);
-    return latin1.decode(end < 0 ? bytes : bytes.sublist(0, end));
+    final id = (row * 1440 + column).toString().padLeft(9, '0');
+    return '2/${id.substring(0, 3)}/${id.substring(3, 6)}/${id.substring(6)}.gph';
   }
 }
 
@@ -159,13 +130,20 @@ class RealtimeSource {
   }
 }
 
-/// The offline area this build was pointed at, or null if there's none.
-///
-/// [offlineAreaPath] is a directory, or a name under the app's `offline/` folder in its
-/// external files on Android (its support folder elsewhere).
+/// The offline area this build was pointed at, or null if there's none: the routing
+/// and transit releases [routingRelease] and [transitRelease] under [offlineRoot], or
+/// under the app's `offline/` folder in its external files on Android (its support
+/// folder elsewhere) if that's empty.
 Future<OfflineArea?> configuredOfflineArea() async {
-  if (offlineAreaPath.isEmpty) return null;
-  if (offlineAreaPath.startsWith('/')) return OfflineArea(offlineAreaPath);
+  if (routingRelease.isEmpty || transitRelease.isEmpty) return null;
+  final root = offlineRoot.isNotEmpty ? offlineRoot : await _appOfflineFolder();
+  return OfflineArea(
+    routing: '$root/routing/$routingRelease',
+    transitBuild: '$root/transit/$transitRelease',
+  );
+}
+
+Future<String> _appOfflineFolder() async {
   Directory? base;
   try {
     base = await getExternalStorageDirectory();
@@ -173,7 +151,7 @@ Future<OfflineArea?> configuredOfflineArea() async {
     base = null;
   }
   base ??= await getApplicationSupportDirectory();
-  return OfflineArea('${base.path}/offline/$offlineAreaPath');
+  return '${base.path}/offline';
 }
 
 /// Runs [open], logging how long it took, for measuring on a device.

@@ -1,5 +1,6 @@
 {
   "CARDINAL_TILES_URL": "https://tiles.example.org/openmaptiles",
   "CARDINAL_GEOCODER_URL": "http://localhost:3000",
-  "CARDINAL_OFFLINE_AREA": "seattle"
+  "CARDINAL_ROUTING_RELEASE": "2026-11-10",
+  "CARDINAL_TRANSIT_RELEASE": "2026-11-10"
 }
