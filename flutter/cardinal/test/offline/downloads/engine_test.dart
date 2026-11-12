@@ -437,7 +437,7 @@ void main() {
     final onlyFirst = firstFiles.difference({for (final f in left) f.path});
     expect(onlyFirst, isNotEmpty);
     for (final path in onlyFirst) {
-      expect(File('$root/routing/$routingDate/$path').existsSync(), isFalse);
+      expect(File('$root/${installed[path]}').existsSync(), isFalse);
     }
     expect(
       basemap.values.every((r) => r.length == 1 && r.contains(second)),
