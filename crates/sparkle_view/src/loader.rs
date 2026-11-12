@@ -11,6 +11,12 @@
 //! frame, which tiles it wants and in what order ([`TileLoader::set_wanted`]), and queued
 //! tiles it no longer wants are dropped.
 //!
+//! A processed tile can take tens of megabytes, so there are only so many at once: a
+//! worker processes one only while fewer than one per worker are being processed or
+//! waiting for the map to take them in ([`TileMessage::Loaded`] holds its [`Slot`]).
+//! Tiles the map is slow to take in, as when it isn't drawn, hold the workers back
+//! instead of piling up.
+//!
 //! The style, and the data of GeoJSON sources, can be replaced while tiles load
 //! ([`TileLoader::set_style`], [`TileLoader::set_geojson`]); every tile is processed with
 //! what was current when its processing starts, and comes back tagged with that
@@ -18,7 +24,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 
 use anyhow::Result;
@@ -74,8 +80,9 @@ pub(crate) fn rank(wanted: &HashMap<SourceTile, Want>, tile: &SourceTile) -> (bo
 }
 
 pub enum TileMessage {
-    /// A processed tile, with the generation of the style it was processed with.
-    Loaded(usize, ProcessedTile, u64),
+    /// A processed tile, with the generation of the style it was processed with, and the
+    /// slot it takes until it's dropped.
+    Loaded(usize, ProcessedTile, u64, Slot),
     /// The tileset has no such tile, or it could not be read; either way there's nothing to
     /// draw. A tile server that can't be reached is tried again instead.
     Empty(SourceTile),
@@ -169,6 +176,8 @@ enum Job {
 pub struct TileLoader {
     /// Closed when the loader is dropped, which stops the workers.
     requests: Arc<Queue<Job>>,
+    /// Closed with `requests`.
+    slots: Arc<Slots>,
     /// Tiles the view currently needs, and in what order. Workers skip queued requests
     /// that aren't in here.
     wanted: Wanted,
@@ -180,6 +189,7 @@ pub struct TileLoader {
 impl Drop for TileLoader {
     fn drop(&mut self) {
         self.requests.close();
+        self.slots.close();
     }
 }
 
@@ -210,16 +220,17 @@ impl TileLoader {
             false => None,
         };
 
+        let workers = workers();
+        let slots = Arc::new(Slots::new(workers));
         // Made first, so that if a worker can't start, dropping it stops the others.
         let loader = Self {
             requests: requests.clone(),
+            slots: slots.clone(),
             wanted: wanted.clone(),
             current: current.clone(),
             config: config.clone(),
             fetcher: fetcher.clone(),
         };
-        let workers =
-            thread::available_parallelism().map_or(4, |n| n.get().saturating_sub(1).max(1));
         for i in 0..workers {
             let readers = config
                 .sources
@@ -234,8 +245,9 @@ impl TileLoader {
                 .iter()
                 .map(|s| s.local.clone().map(LocalTiles::new))
                 .collect();
-            let (queue, wanted, deliver, config, current, glyphs, fetcher) = (
+            let (queue, slots, wanted, deliver, config, current, glyphs, fetcher) = (
                 requests.clone(),
+                slots.clone(),
                 wanted.clone(),
                 deliver.clone(),
                 config.clone(),
@@ -247,7 +259,9 @@ impl TileLoader {
                 .name(format!("tile-worker-{i}"))
                 .spawn(move || {
                     let mut processor = TileProcessor::new();
-                    while let Some(job) = next(&queue, &wanted) {
+                    while let Some(slot) = slots.take()
+                        && let Some(job) = next(&queue, &wanted)
+                    {
                         let (Job::Load(request, zoom) | Job::Process(request, zoom, ..)) = job;
                         if !wanted.lock().unwrap().contains_key(&request) {
                             // A refresh is of a tile the map has, and isn't waiting for.
@@ -275,7 +289,7 @@ impl TileLoader {
                         };
                         let message = match worker.load(&mut processor, request, zoom, fetched) {
                             Ok(Loaded::Tile(tile)) => {
-                                TileMessage::Loaded(source, tile, current.generation)
+                                TileMessage::Loaded(source, tile, current.generation, slot)
                             }
                             Ok(Loaded::Empty) => TileMessage::Empty(request),
                             // Processed once it arrives.
@@ -363,6 +377,57 @@ impl TileLoader {
     /// Process `tile` with the style evaluated at `zoom`.
     pub fn request(&self, tile: SourceTile, zoom: u8) {
         self.requests.push(Job::Load(tile, zoom));
+    }
+}
+
+/// How many threads process tiles: all but one of the CPUs, for the one drawing.
+fn workers() -> usize {
+    thread::available_parallelism().map_or(4, |n| n.get().saturating_sub(1).max(1))
+}
+
+/// Places for the tiles workers process, taken until the map takes the tile in.
+struct Slots {
+    /// How many are free, and whether the loader is gone.
+    state: Mutex<(usize, bool)>,
+    freed: Condvar,
+}
+
+impl Slots {
+    fn new(count: usize) -> Self {
+        Self {
+            state: Mutex::new((count, false)),
+            freed: Condvar::new(),
+        }
+    }
+
+    /// A free slot, once there is one; `None` once the loader is gone.
+    fn take(self: &Arc<Self>) -> Option<Slot> {
+        let mut state = self.state.lock().unwrap();
+        loop {
+            match *state {
+                (_, true) => return None,
+                (0, false) => state = self.freed.wait(state).unwrap(),
+                (ref mut free, false) => {
+                    *free -= 1;
+                    return Some(Slot(self.clone()));
+                }
+            }
+        }
+    }
+
+    fn close(&self) {
+        self.state.lock().unwrap().1 = true;
+        self.freed.notify_all();
+    }
+}
+
+/// A place for one processed tile, freed when it's dropped.
+pub struct Slot(Arc<Slots>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.state.lock().unwrap().0 += 1;
+        self.0.freed.notify_one();
     }
 }
 
@@ -560,4 +625,101 @@ fn mvt_to_mlt(data: &[u8], keep: &HashSet<String>) -> Result<Vec<u8>> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use serde_json::json;
+    use sparkle::style::Source;
+
+    use super::*;
+
+    /// A loader of a GeoJSON source that covers the world, so every tile has something to
+    /// draw, and the messages it delivers.
+    fn world_loader() -> (TileLoader, Arc<Mutex<Vec<TileMessage>>>) {
+        let style: Style = json!({
+            "version": 8,
+            "sources": {"world": {"type": "geojson", "data": {"type": "FeatureCollection", "features": []}}},
+            "layers": [{"id": "land", "type": "fill", "source": "world"}],
+        })
+        .to_string()
+        .parse()
+        .unwrap();
+        let Some(Source::GeoJson(source)) = style.source("world") else {
+            unreachable!()
+        };
+        let world = json!({"type": "Polygon", "coordinates": [[
+            [-179.0, -80.0], [179.0, -80.0], [179.0, 80.0], [-179.0, 80.0], [-179.0, -80.0]
+        ]]});
+        let index = Arc::new(GeoJsonIndex::new(source, &world).unwrap());
+        let config = LoaderConfig {
+            style: Arc::new(style),
+            sources: vec![SourceConfig {
+                id: "world".into(),
+                path: PathBuf::new(),
+                format: TileFormat::Mlt,
+                image_tile: None,
+                geojson: Some(index),
+                server: None,
+                local: None,
+            }],
+            images: None,
+            fonts: None,
+        };
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let sink = messages.clone();
+        let loader = TileLoader::spawn(config, move |m| sink.lock().unwrap().push(m)).unwrap();
+        (loader, messages)
+    }
+
+    fn loaded(messages: &Mutex<Vec<TileMessage>>) -> usize {
+        let messages = messages.lock().unwrap();
+        messages
+            .iter()
+            .filter(|m| matches!(m, TileMessage::Loaded(..)))
+            .count()
+    }
+
+    /// Wait until `messages` holds `count` processed tiles, or a while longer than that
+    /// should take.
+    fn wait_for(messages: &Mutex<Vec<TileMessage>>, count: usize) -> usize {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while loaded(messages) < count && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        // Long enough for workers that shouldn't deliver more to have done so.
+        thread::sleep(Duration::from_millis(200));
+        loaded(messages)
+    }
+
+    #[test]
+    fn tiles_not_taken_in_hold_the_workers_back() {
+        let (loader, messages) = world_loader();
+        let tiles: Vec<SourceTile> = (0..64).map(|x| (0, TileId::new(6, x, 30))).collect();
+        loader.set_wanted(tiles.iter().map(|&t| (t, Tier::Visible)));
+        for &tile in &tiles {
+            loader.request(tile, 6);
+        }
+        // Only as many as there are workers, however many are wanted.
+        let workers = workers();
+        assert_eq!(wait_for(&messages, workers), workers);
+        // Taking one in frees its slot for another.
+        let taken = messages.lock().unwrap().remove(0);
+        drop(taken);
+        assert_eq!(wait_for(&messages, workers), workers);
+        // Taking all in lets the rest load.
+        let mut total = 1;
+        while total < tiles.len() {
+            let taken = std::mem::take(&mut *messages.lock().unwrap());
+            total += taken
+                .iter()
+                .filter(|m| matches!(m, TileMessage::Loaded(..)))
+                .count();
+            drop(taken);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(total, tiles.len());
+    }
 }

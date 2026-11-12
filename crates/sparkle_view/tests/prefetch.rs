@@ -97,7 +97,7 @@ fn tiles_wanted_for_later_load_and_unwanted_ones_are_dropped() {
     let mut outcomes = HashMap::new();
     for _ in 0..3 {
         match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
-            TileMessage::Loaded(s, t, _) => outcomes.insert((s, t.id), "loaded"),
+            TileMessage::Loaded(s, t, ..) => outcomes.insert((s, t.id), "loaded"),
             TileMessage::Empty(t) => outcomes.insert(t, "empty"),
             TileMessage::Cancelled(t) => outcomes.insert(t, "cancelled"),
         };
@@ -308,7 +308,7 @@ fn a_local_mbtiles_is_read_before_the_server_once_it_exists() {
         loader.set_wanted([((0, id), Tier::Visible)]);
         loader.request((0, id), id.z);
         match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
-            TileMessage::Loaded(_, tile, _) => assert_eq!(tile.id, id),
+            TileMessage::Loaded(_, tile, ..) => assert_eq!(tile.id, id),
             _ => panic!("{id:?} didn't load"),
         }
     };

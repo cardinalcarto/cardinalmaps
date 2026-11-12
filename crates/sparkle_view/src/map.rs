@@ -428,7 +428,8 @@ impl<T> MapState<T> {
         message: TileMessage,
     ) -> bool {
         match message {
-            TileMessage::Loaded(s, mut tile, generation) => {
+            // The slot is freed once the tile has been made ready to draw.
+            TileMessage::Loaded(s, mut tile, generation, _slot) => {
                 if generation < self.min_generation[s] {
                     // Processed with a style that has changed since; a newer request is
                     // under way for anything still wanted.
