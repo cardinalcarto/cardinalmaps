@@ -1252,3 +1252,231 @@ fn concurrent_opens_plan_like_a_single_threaded_open() {
         });
     }
 }
+
+fn read_json(path: &Path) -> serde_json::Value {
+    serde_json::from_slice(&fs::read(path).expect("read")).expect("json")
+}
+
+/// Copies a build-relative file from one build directory into another.
+fn copy_into(from: &Path, to: &Path, relative: &str) {
+    let target = to.join(relative);
+    fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
+    fs::copy(from.join(relative), target).expect("copy");
+}
+
+#[test]
+fn the_feed_index_places_each_stop_and_its_manifest_parts_open_one_feed() {
+    // Two feeds in Andorra, and one far away in another zoom 6 tile.
+    let one = grid(0.0, 40);
+    let two = grid(0.0006, 40);
+    let far = [(42.0, 10.0), (42.0005, 10.0005)];
+    let (_input, build, _report) = compiled_feeds(&[
+        Feed {
+            id: "feed-a",
+            stops: &one,
+        },
+        Feed {
+            id: "feed-b",
+            stops: &two,
+        },
+        Feed {
+            id: "feed-far",
+            stops: &far,
+        },
+    ]);
+    let manifest =
+        transfers::run(&transfer_options(build.path(), build.path())).expect("transfers");
+    let full = TransitBuild::load(build.path(), Some(&["feed-b".to_owned()])).expect("full");
+
+    let out = tempfile::tempdir().expect("out");
+    let index_dir = out.path().join("index");
+    let options = crate::feed_index::FeedIndexOptions {
+        build: build.path().to_path_buf(),
+        output: index_dir.clone(),
+        replace: false,
+        threads: threads(2),
+    };
+    let report = crate::feed_index::run(&options).expect("feed index");
+    assert_eq!(report.feeds, 3);
+    assert_eq!(report.uncompiled, 0);
+    assert_eq!(report.stops_without_location, 0);
+    assert!(!out.path().join("index.part").exists());
+
+    // Every stop's zoom 12 cell is listed for its feed, in the zoom 6 tile holding it.
+    let mut expected: BTreeMap<(u32, u32), BTreeMap<String, BTreeSet<[u32; 2]>>> = BTreeMap::new();
+    for (id, stops) in [
+        ("feed-a", &one[..]),
+        ("feed-b", &two[..]),
+        ("feed-far", &far[..]),
+    ] {
+        for &(lat, lon) in stops {
+            let (x, y) = crate::slippy::tile_of(lat, lon);
+            expected
+                .entry((x >> 6, y >> 6))
+                .or_default()
+                .entry(id.to_owned())
+                .or_default()
+                .insert([x, y]);
+        }
+    }
+    assert!(expected.len() >= 2, "the far feed is in another index tile");
+    let mut found: BTreeMap<(u32, u32), BTreeMap<String, BTreeSet<[u32; 2]>>> = BTreeMap::new();
+    for (relative, bytes) in tree(&index_dir.join("index")) {
+        let parts: Vec<String> = relative
+            .iter()
+            .map(|part| part.to_string_lossy().into_owned())
+            .collect();
+        let x: u32 = parts[0].parse().expect("x");
+        let y: u32 = parts[1].trim_end_matches(".json").parse().expect("y");
+        let document: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(document["tile"], serde_json::json!([x, y]));
+        for feed in document["feeds"].as_array().expect("feeds") {
+            let cells: Vec<[u32; 2]> =
+                serde_json::from_value(feed["cells"].clone()).expect("cells");
+            let mut sorted = cells.clone();
+            sorted.sort_unstable();
+            assert_eq!(cells, sorted, "cells are sorted");
+            let set: BTreeSet<[u32; 2]> = cells.into_iter().collect();
+            let previous = found
+                .entry((x, y))
+                .or_default()
+                .insert(feed["id"].as_str().expect("id").to_owned(), set);
+            assert!(previous.is_none(), "a feed is listed once per index tile");
+        }
+    }
+    assert_eq!(found, expected);
+    assert_eq!(
+        report.cells,
+        expected
+            .values()
+            .flat_map(|feeds| feeds.values().flatten())
+            .collect::<BTreeSet<_>>()
+            .len()
+    );
+
+    // A feed's summary names its agency and the files to download, with their sizes.
+    let summary = read_json(&index_dir.join("feeds/feed-b.json"));
+    assert_eq!(summary["index"], 1);
+    assert_eq!(summary["agencies"], serde_json::json!(["Andorra Bus"]));
+    assert_eq!(summary["display_name"], "Andorra Bus");
+    assert_eq!(summary["first_service_date"], "2026-01-01");
+    assert_eq!(summary["last_service_date"], "2027-12-31");
+    let timetable = &manifest.feeds[1];
+    assert_eq!(
+        summary["timetable"]["sha256"],
+        timetable.timetable_sha256.clone().expect("sha")
+    );
+    assert_eq!(
+        summary["timetable"]["bytes"],
+        fs::metadata(
+            build
+                .path()
+                .join(timetable.timetable.as_ref().expect("path"))
+        )
+        .expect("stat")
+        .len()
+    );
+    for mode in TransferMode::ALL {
+        let files = &summary["modes"][mode.as_str()];
+        let snaps = &timetable.stop_snaps[mode.as_str()];
+        assert_eq!(
+            files["snaps"]["path"],
+            snaps
+                .file
+                .strip_prefix("transfers/")
+                .expect("under transfers")
+        );
+        assert_eq!(files["snaps"]["sha256"], snaps.sha256.as_str());
+        let tiles = &timetable.transfer_tiles[mode.as_str()];
+        assert_eq!(files["transfer_tiles"], tiles.len());
+        let bytes: u64 = manifest.tiles[mode.as_str()]
+            .iter()
+            .filter(|tile| tiles.contains(&[tile.x, tile.y]))
+            .map(|tile| tile.bytes)
+            .sum();
+        assert_eq!(files["transfer_bytes"], bytes);
+    }
+    let all = read_json(&index_dir.join("feeds.json"));
+    assert_eq!(all["feeds"][1], summary);
+    assert_eq!(all["manifest_id"], manifest.manifest_id.as_str());
+
+    // A client with only feed B builds its manifest from the shared part and B's entry, with
+    // the other positions held by stubs, and opens the same walks as from the whole build.
+    let shared = read_json(&index_dir.join("manifest/shared.json"));
+    assert!(shared.get("tiles").is_none() && shared.get("feeds").is_none());
+    let mut entry = read_json(&index_dir.join("manifest/feeds/feed-b.json"));
+    assert_eq!(entry["index"], 1);
+    entry.as_object_mut().expect("object").remove("index");
+    let ids = shared["feed_ids"].as_array().expect("ids").clone();
+    assert_eq!(
+        ids,
+        serde_json::json!(["feed-a", "feed-b", "feed-far"])
+            .as_array()
+            .expect("a")
+            .clone()
+    );
+    let mut client_manifest = shared.clone();
+    let object = client_manifest.as_object_mut().expect("object");
+    object.remove("feed_ids");
+    let feeds: Vec<serde_json::Value> = ids
+        .iter()
+        .map(|id| {
+            if id == "feed-b" {
+                entry.clone()
+            } else {
+                serde_json::json!({ "id": id, "stop_count": 0 })
+            }
+        })
+        .collect();
+    object.insert("feeds".to_owned(), feeds.into());
+    let client = tempfile::tempdir().expect("client");
+    fs::create_dir_all(client.path().join("transfers")).expect("mkdir");
+    fs::write(
+        client.path().join("transfers/manifest.json"),
+        serde_json::to_vec(&client_manifest).expect("json"),
+    )
+    .expect("write manifest");
+    copy_into(
+        build.path(),
+        client.path(),
+        timetable.timetable.as_ref().expect("path"),
+    );
+    for mode in TransferMode::ALL {
+        copy_into(
+            build.path(),
+            client.path(),
+            &timetable.stop_snaps[mode.as_str()].file,
+        );
+        for &[x, y] in &timetable.transfer_tiles[mode.as_str()] {
+            let relative = tile_path(Path::new(""), mode, x, y);
+            copy_into(
+                &build.path().join("transfers"),
+                &client.path().join("transfers"),
+                relative.to_str().expect("utf-8"),
+            );
+        }
+    }
+    let opened = TransitBuild::load(client.path(), Some(&["feed-b".to_owned()])).expect("opens");
+    assert_eq!(opened.report.tiles_absent, [0, 0, 0]);
+    assert_eq!(opened.report.walks, full.report.walks);
+    assert!(opened.report.walks[0] > 0);
+    assert_eq!(opened.set.stop_count(), full.set.stop_count());
+
+    // The realtime sources are passed through as the app reads them.
+    assert_eq!(
+        read_json(&index_dir.join("realtime.json")),
+        serde_json::json!({ "feeds": [] })
+    );
+
+    // An existing output is kept unless replacing is asked for.
+    assert!(matches!(
+        crate::feed_index::run(&options),
+        Err(BuildError::OutputExists(_))
+    ));
+    let replaced = crate::feed_index::run(&crate::feed_index::FeedIndexOptions {
+        replace: true,
+        ..options
+    })
+    .expect("replace");
+    assert_eq!(replaced, report);
+}

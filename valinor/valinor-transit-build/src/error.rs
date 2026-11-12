@@ -97,6 +97,19 @@ pub enum BuildError {
     /// A tile couldn't be compressed.
     #[error("compress a tile: {0}")]
     Compress(std::io::Error),
+    /// The output directory exists already.
+    #[error("write to {0}, which exists already (pass --replace to replace it)")]
+    OutputExists(PathBuf),
+    /// The manifest lists a tile for a feed that its tile list doesn't have.
+    #[error("find the {mode} tile {x}/{y} that a feed lists in the manifest's tiles")]
+    MissingTile {
+        /// The mode.
+        mode: String,
+        /// The tile's column.
+        x: u32,
+        /// The tile's row.
+        y: u32,
+    },
     /// A worker thread panicked.
     #[error("finish the stage: a worker thread panicked")]
     WorkerPanicked,

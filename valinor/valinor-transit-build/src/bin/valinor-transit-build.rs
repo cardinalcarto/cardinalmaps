@@ -6,6 +6,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use valinor_transit_build::compile::{self, CompileOptions, FeedOutcome};
+use valinor_transit_build::feed_index::{self, FeedIndexOptions};
 use valinor_transit_build::transfers::{self, DEFAULT_ZSTD_LEVEL, TransferOptions};
 use valinor_walk::transfer_tile::TransferMode;
 use valinor_walk::{DEFAULT_TRANSFER_SECONDS, SnapConfig};
@@ -64,6 +65,19 @@ enum Stage {
         /// The modes to build; all three by default.
         #[arg(long, value_enum, num_args = 1.., default_values_t = [Mode::Walking, Mode::Cycling, Mode::Wheelchair])]
         modes: Vec<Mode>,
+    },
+    /// Writes what clients fetch to choose and install feeds: a zoom 6 index of where each
+    /// feed's stops are, feed summaries, the manifest split by feed, and GTFS-RT sources.
+    FeedIndex {
+        /// A finished build: `compile.json`, `timetables/`, and `transfers/manifest.json`.
+        #[arg(long)]
+        build: PathBuf,
+        /// Where to write the files; it must not exist yet.
+        #[arg(long)]
+        output: PathBuf,
+        /// Replace `output` if it exists.
+        #[arg(long)]
+        replace: bool,
     },
 }
 
@@ -150,6 +164,19 @@ fn run(cli: Cli) -> Result<(), Box<dyn core::error::Error>> {
                     .collect(),
             })?;
             println!("{}", serde_json::to_string_pretty(&manifest.totals)?);
+        }
+        Stage::FeedIndex {
+            build,
+            output,
+            replace,
+        } => {
+            let report = feed_index::run(&FeedIndexOptions {
+                build,
+                output,
+                replace,
+                threads,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
     }
     Ok(())
