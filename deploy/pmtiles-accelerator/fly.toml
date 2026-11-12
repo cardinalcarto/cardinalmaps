@@ -1,0 +1,39 @@
+# An example PMTiles accelerator on fly.io: `pmtiles serve` reading the published map from the
+# public bucket, and serving it as TileJSON and z/x/y tiles. See README.md for adapting it.
+
+app = "cardinal-tiles-example"
+primary_region = "sea"
+
+[build]
+  # go-pmtiles 1.31.2, pinned by digest (the multi-architecture index).
+  image = "docker.io/protomaps/go-pmtiles:v1.31.2@sha256:06574f01f55a78f78f887bc7ebf729a5c093c0d6e17d9876300cfcb0758b59d3"
+
+[processes]
+  # The image's entrypoint is go-pmtiles; this is its command. The bucket URL includes the
+  # release's prefix: with an HTTP bucket, go-pmtiles reads <bucket URL>/<name>.pmtiles and
+  # ignores the path argument. TileJSON is at /planet.json, tiles at /planet/{z}/{x}/{y}.mlt.
+  app = "serve / --bucket=https://BUCKET.t3.storage.dev/releases/map/2026-11-11 --public-url=https://cardinal-tiles-example.fly.dev --cors=* --cache-size=384 --port=8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  processes = ["app"]
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 400
+    hard_limit = 800
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/planet.json"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
