@@ -185,24 +185,33 @@ void main() {
         valhallaBuildId: releases.valhallaBuildId,
       );
       engine.addListener(area);
-      final router = await area.router;
-      final walk = await router.route(
-        body: utf8.encode(route(westlake, calAnderson)),
+      watch.reset();
+      final walk = await area.useRouter(
+        (router) =>
+            router.route(body: utf8.encode(route(westlake, calAnderson))),
       );
       expect(walk.status, 200, reason: utf8.decode(walk.body));
       expect(utf8.decode(walk.body), contains('"code":"Ok"'));
-      final transit = await area.transit;
+      log.add(
+        'first route (router open included): ${watch.elapsedMilliseconds} ms',
+      );
+      watch.reset();
       final cancel = TransitCancel();
-      final trip = await transit.plan(
-        request: utf8.encode(
-          jsonEncode({
-            'origin': {'lat': westlake.lat, 'lon': westlake.lon},
-            'destination': {'lat': calAnderson.lat, 'lon': calAnderson.lon},
-            'mode': 'walking',
-          }),
+      final trip = await area.useTransit(
+        (transit) => transit.plan(
+          request: utf8.encode(
+            jsonEncode({
+              'origin': {'lat': westlake.lat, 'lon': westlake.lon},
+              'destination': {'lat': calAnderson.lat, 'lon': calAnderson.lon},
+              'mode': 'walking',
+            }),
+          ),
+          feeds: const [],
+          cancel: cancel,
         ),
-        feeds: const [],
-        cancel: cancel,
+      );
+      log.add(
+        'first transit plan (transit open included): ${watch.elapsedMilliseconds} ms',
       );
       final body = jsonDecode(utf8.decode(trip.body)) as Map<String, Object?>;
       log.add(
@@ -212,8 +221,8 @@ void main() {
       expect(body['journeys'], isNotEmpty);
       // Kirkland's level 2 tile isn't here yet.
       expect(await area.covers(kirkland.lat, kirkland.lon), isFalse);
-      final across = await router.route(
-        body: utf8.encode(route(greenLake, kirkland)),
+      final across = await area.useRouter(
+        (router) => router.route(body: utf8.encode(route(greenLake, kirkland))),
       );
       expect(across.status, isNot(200));
 
@@ -250,8 +259,8 @@ void main() {
       expect(progress.state, RegionState.ready, reason: progress.error);
 
       // Routes reach the new tiles once the router refreshes (the engine told it).
-      final northWalk = await router.route(
-        body: utf8.encode(route(greenLake, kirkland)),
+      final northWalk = await area.useRouter(
+        (router) => router.route(body: utf8.encode(route(greenLake, kirkland))),
       );
       expect(northWalk.status, 200, reason: utf8.decode(northWalk.body));
 
@@ -286,9 +295,14 @@ void main() {
         'deleted a: ${aFiles.difference(bFiles).length} of its ${aFiles.length} '
         'files went, ${aFiles.intersection(bFiles).length} stayed for b',
       );
-      // The router still has (and maps) what b needs.
-      final again = await router.route(
-        body: utf8.encode(route(greenLake, kirkland)),
+      // The old router was dropped, so nothing deleted stays mapped; a new one routes.
+      bool mapsDeleted() =>
+          File('/proc/self/maps')
+              .readAsLinesSync()
+              .any((l) => l.contains(root) && l.endsWith('(deleted)'));
+      log.add('deleted files still mapped after delete: ${mapsDeleted()}');
+      final again = await area.useRouter(
+        (router) => router.route(body: utf8.encode(route(greenLake, kirkland))),
       );
       expect(again.status, 200);
       final reopened = await OfflineRouter.open(
@@ -301,6 +315,10 @@ void main() {
         200,
       );
 
+      expect(mapsDeleted(), isFalse);
+      log.add(
+        'timings: ${[for (final MapEntry(key: k, value: (n, us)) in engine.timings.entries) '$k $n× ${us ~/ 1000} ms'].join(', ')}',
+      );
       await File('$scratch/e2e.log').writeAsString('${log.join('\n')}\n');
       await File('$scratch/basemap.path')
           .writeAsString(engine.basemapPath(releases.map!));

@@ -128,6 +128,21 @@ class OfflineDownloads {
   final DateTime Function() _clock;
 
   final _listeners = <OfflineListener>{};
+
+  /// Time spent in each step, as `(count, microseconds)`, for measuring on a device:
+  /// `sha256`, `transfer tile check`, `json check`, `unpack`, `install`.
+  final timings = <String, (int, int)>{};
+
+  Future<T> _timed<T>(String step, Future<T> Function() work) async {
+    final watch = Stopwatch()..start();
+    try {
+      return await work();
+    } finally {
+      final (count, micros) = timings[step] ?? (0, 0);
+      timings[step] = (count + 1, micros + watch.elapsedMicroseconds);
+    }
+  }
+
   StreamSubscription<TransferResult>? _results;
   Future<void> _last = Future.value();
 
@@ -827,21 +842,19 @@ class OfflineDownloads {
           await _failFile(f, 'no manifest ID to check it against');
           return;
         }
-        final problem = await native.checkTransferTile(
-          path,
-          mode,
-          x,
-          y,
-          manifest,
+        final problem = await _timed(
+          'transfer tile check',
+          () => native.checkTransferTile(path, mode, x, y, manifest),
         );
         if (problem != null) {
           await _failFile(f, problem);
           return;
         }
       } else if (f.path.endsWith('.json')) {
-        final problem = await _checkJson(
-          f,
-          jsonDecode(await File(path).readAsString()),
+        final problem = await _timed(
+          'json check',
+          () async =>
+              _checkJson(f, jsonDecode(await File(path).readAsString())),
         );
         if (problem != null) {
           await _failFile(f, problem, permanent: true);
@@ -849,7 +862,7 @@ class OfflineDownloads {
         }
         found = await native.sha256File(path);
       } else if (f.expectedSha256 case final expected?) {
-        found = await native.sha256File(path);
+        found = await _timed('sha256', () => native.sha256File(path));
         if (found != expected.toLowerCase()) {
           await _failFile(f, 'SHA-256 $found, not $expected');
           return;
@@ -924,12 +937,15 @@ class OfflineDownloads {
     )..where((r) => r.id.equals(c.regionId))).getSingle();
     final file = _incomingFile('c${c.id}');
     try {
-      await native.basemapUnpack(
-        basemapPath(region.mapRelease!),
-        file,
-        c.length,
-        c.tiles,
-        c.regionId,
+      await _timed(
+        'unpack',
+        () => native.basemapUnpack(
+          basemapPath(region.mapRelease!),
+          file,
+          c.length,
+          c.tiles,
+          c.regionId,
+        ),
       );
     } on MapRangeError catch (e) {
       await _failChunk(c, e.message);
@@ -990,7 +1006,7 @@ class OfflineDownloads {
         chunks.every((c) => c.state == ChunkState.deleted);
     if (!done) return;
     await _setRegion(region.id, RegionState.installing);
-    await _install(region, files);
+    await _timed('install', () => _install(region, files));
   }
 
   Future<List<FileRow>> _regionFiles(int region) =>
