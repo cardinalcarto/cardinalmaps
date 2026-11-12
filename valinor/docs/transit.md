@@ -428,6 +428,7 @@ never built on a device.
 ```text
 valinor-transit-build compile --input <fetch-output> --output <build-dir>
 valinor-transit-build transfers --compiled <build-dir> --street-tiles <tiles> --output <build-dir>
+valinor-transit-build feed-index --build <build-dir> --output <staging-dir>
 ```
 
 `compile` writes one timetable per feed to `timetables/`.
@@ -455,6 +456,18 @@ Stops are addressed as `(feed index, stop number)` where the feed index is the p
 in the manifest. A client decodes the tiles of its feeds, and
 `transfer_tile::assemble_transfer_table` gathers them into one `TransferTable` in the
 client's own stop numbering; walks to feeds it doesn't have are left out.
+
+`feed-index` writes what a client fetches to choose and install feeds, for publishing
+beside the build (see `feed_index`). Its `index/<x>/<y>.json` lists, for each zoom 6 tile, the
+feeds with stops there and the zoom 12 cells of those stops, read from the timetables;
+`feeds/<id>.json` and `feeds.json` summarize feeds (agencies, license, service dates, and
+download sizes). `manifest/shared.json` is the manifest without its feeds and global tile list,
+with `feed_count` and `feed_ids` in index order, and `manifest/feeds/<id>.json` is one feed's
+entry with its `index`. The loader reads only the scalar fields and the loaded feeds' entries,
+so a client opens the shared fields (less `feed_ids`) with `feeds` holding just its own
+entries, in increasing index order. A feed's `index` is what transfer tiles address its stops
+by; without one, it is the feed's position in `feeds`. Indices are given by every feed or by
+none, and must be strictly increasing and below `feed_count`.
 
 ## Testing
 

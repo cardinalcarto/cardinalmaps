@@ -4,12 +4,14 @@
 //! - [`transfers`] computes walking and cycling transfers between every stop of every feed
 //!   and writes them tiled by the origin stop's zoom 12 tile.
 //! - The [`manifest`] ties them together for clients: feeds, bounds, tiles, and per-feed tile lists.
+//! - [`feed_index`] writes what a client fetches to choose feeds near it and install them.
 //!
 //! Each stage is a plain command with explicit input and output directories
 //! (see the `valinor-transit-build` binary and `docs/transit.md`).
 
 pub mod compile;
 pub mod error;
+pub mod feed_index;
 pub mod feeds;
 pub mod manifest;
 pub mod slippy;

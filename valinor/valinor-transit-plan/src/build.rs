@@ -91,6 +91,10 @@ pub enum BuildLoadError {
     /// The manifest's tiles are of another zoom.
     #[error("load tiles at zoom {0}")]
     Zoom(u8),
+    /// The feeds' explicit indices are inconsistent: given for some feeds but not all, given
+    /// without `feed_count`, not below it, or not strictly increasing (so repeated).
+    #[error("use the manifest's feed indices: {0}")]
+    FeedIndices(String),
     /// A feed that was asked for isn't in the manifest.
     #[error("load unknown feed {0}")]
     UnknownFeed(String),
@@ -196,12 +200,21 @@ struct ManifestFile {
     cycling_bound_seconds: u32,
     #[serde(default)]
     wheelchair_bound_seconds: Option<u32>,
+    /// How many feeds the build has, when `feeds` lists only some of them (see `index`).
+    #[serde(default)]
+    feed_count: Option<u32>,
     feeds: Vec<ManifestFeedFile>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ManifestFeedFile {
     id: String,
+    /// The feed's index in the build, which transfer tiles address its stops by.
+    ///
+    /// Absent, it is the feed's position in `feeds`, as in a build's own manifest. A client
+    /// that keeps only some feeds lists just those, each with its index, in increasing order.
+    #[serde(default)]
+    index: Option<u32>,
     timetable: Option<String>,
     timetable_sha256: Option<String>,
     stop_count: u32,
@@ -328,6 +341,7 @@ impl TransitBuild {
         let manifest_id = u64::from_str_radix(&manifest.manifest_id, 16)
             .map_err(|_| BuildLoadError::ManifestId(manifest.manifest_id.clone()))?;
 
+        let indices = feed_indices(&manifest)?;
         let selected = select_feeds(&manifest, feeds)?;
         let mut files = Vec::with_capacity(selected.len());
         for &index in &selected {
@@ -339,7 +353,8 @@ impl TransitBuild {
             .iter()
             .zip(set.parts())
             .map(|(&index, part)| FeedPlacement {
-                feed_index: u32::try_from(index).unwrap_or(u32::MAX),
+                // `feed_indices` gives one per feed, so every selected position has one.
+                feed_index: indices.get(index).copied().unwrap_or(u32::MAX),
                 stops: StopPlacement::Contiguous {
                     first: part.first_stop(),
                     count: u32::try_from(part.compiled().stop_count()).unwrap_or(u32::MAX),
@@ -444,6 +459,58 @@ impl TransitBuild {
             report,
         })
     }
+}
+
+/// Each feed's index in the build, by its position in the manifest.
+///
+/// Either every feed gives its `index` or none does; given, they must be strictly increasing
+/// and below `feed_count`, so the numbering is the build's own and no two feeds share one.
+fn feed_indices(manifest: &ManifestFile) -> Result<Vec<u32>, BuildLoadError> {
+    let explicit = manifest
+        .feeds
+        .iter()
+        .filter(|feed| feed.index.is_some())
+        .count();
+    if explicit == 0 {
+        return manifest
+            .feeds
+            .iter()
+            .enumerate()
+            .map(|(position, _)| {
+                u32::try_from(position)
+                    .map_err(|_| BuildLoadError::FeedIndices("more feeds than indices".to_owned()))
+            })
+            .collect();
+    }
+    if explicit != manifest.feeds.len() {
+        return Err(BuildLoadError::FeedIndices(format!(
+            "{explicit} of {} feeds give an index; all or none must",
+            manifest.feeds.len()
+        )));
+    }
+    let count = manifest.feed_count.ok_or_else(|| {
+        BuildLoadError::FeedIndices(
+            "feeds give indices but the manifest has no feed_count".to_owned(),
+        )
+    })?;
+    let mut indices = Vec::with_capacity(manifest.feeds.len());
+    for feed in &manifest.feeds {
+        let index = feed.index.unwrap_or(u32::MAX);
+        if index >= count {
+            return Err(BuildLoadError::FeedIndices(format!(
+                "feed {} has index {index}, but the build has {count} feeds",
+                feed.id
+            )));
+        }
+        if indices.last().is_some_and(|&last| index <= last) {
+            return Err(BuildLoadError::FeedIndices(format!(
+                "feed {} has index {index}, not above the previous feed's",
+                feed.id
+            )));
+        }
+        indices.push(index);
+    }
+    Ok(indices)
 }
 
 /// The positions of the chosen feeds in the manifest, in manifest order.
