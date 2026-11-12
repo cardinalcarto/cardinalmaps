@@ -4,11 +4,14 @@
 //!
 //! ```text
 //! cargo run --release --example device_memory -- \
-//!     --area DIR --rt DIR[,DIR...] [--out DIR] [--threads N] [--rounds N] [--stop-after STEP]
+//!     --area DIR --rt DIR[,DIR...] [--tiles PATH] [--out DIR] [--threads N] [--rounds N] \
+//!     [--stop-after STEP]
 //! ```
 //!
 //! - `--area` is an offline area as the app reads it (`tiles.tar`, `timetables/`, `transfers/`);
 //!   its first transit open writes `prepared/`, so point it at a copy.
+//! - `--tiles` opens other tiles than the area's `tiles.tar`: a tarball or a tile directory
+//!   (as the app keeps its tiles loose); put it under `--area` so its pages are reported.
 //! - `--rt` names real-time captures, each a directory of `<index>-<feed>.pb` messages and an
 //!   `index.tsv` of `index, feed, url` (as the area's `realtime.json` lists them).
 //!   The first plan gets every message of the first capture, as the app's first plan waits
@@ -158,6 +161,8 @@ fn file_rss(root: &Path) -> BTreeMap<&'static str, isize> {
             current = path.contains(&*root).then(|| {
                 if path.ends_with("tiles.tar") {
                     "tiles.tar"
+                } else if path.ends_with(".gph") {
+                    "tile files"
                 } else if path.contains("/timetables/") {
                     "timetables"
                 } else if path.contains("/prepared/") {
@@ -406,7 +411,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     finish("launch", Instant::now(), None);
 
-    let tiles = area.join("tiles.tar").to_string_lossy().into_owned();
+    let tiles =
+        flag("tiles").unwrap_or_else(|| area.join("tiles.tar").to_string_lossy().into_owned());
     let started = Instant::now();
     let router = {
         let tiles = tiles.clone();
