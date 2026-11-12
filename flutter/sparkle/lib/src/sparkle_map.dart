@@ -64,6 +64,11 @@ const double _rotateThreshold = 7;
 const double _rotateThresholdPerLevel = 30;
 const double _maxRotateThreshold = 45;
 
+/// How long the finger left down after lifting one of two waits before it pans: fingers
+/// lifted together from a pinch rarely leave at once, and the last one shouldn't drag the
+/// map, or stop the zoom carrying on, in the moment before it lifts too.
+const Duration _leftoverGrace = Duration(milliseconds: 80);
+
 /// How far a finger can stray, in logical pixels, and still be a tap. The map doesn't pan
 /// until it goes further.
 const double _tapSlop = kTouchSlop;
@@ -207,6 +212,15 @@ class SparkleMapController {
       return;
     }
     map.flyTo(lng: lng, lat: lat, zoom: zoom);
+    _state!._requestFrame();
+  }
+
+  /// Turn the map back to north up, keeping the middle of the map less the padding
+  /// where it is and the zoom and tilt as they are. Moving the map stops it.
+  void turnNorth() {
+    final map = _map;
+    if (map == null) return;
+    map.turnNorth();
     _state!._requestFrame();
   }
 
@@ -377,6 +391,10 @@ class _SparkleMapState extends State<SparkleMap> {
   /// has zoomed in or out from there, which raise the threshold to rotate.
   double _pinchSpread = 0;
   double _pinchZoomed = 0;
+
+  /// The finger left down after the other of two lifted, and when that was, until it
+  /// pans (after [_leftoverGrace]) or lifts.
+  (int, Duration)? _leftover;
 
   /// Where a lone finger went down, until it leaves [_tapSlop] and starts panning.
   Offset? _tapDown;
@@ -801,6 +819,7 @@ class _SparkleMapState extends State<SparkleMap> {
           }
           _quickZoom = null;
           _tapDown = null;
+          _leftover = null;
           _twoFingers = _TwoFingers.undecided;
           _travel.clear();
           _turned = 0;
@@ -858,6 +877,25 @@ class _SparkleMapState extends State<SparkleMap> {
         dy: e.localDelta.dy,
       );
       _requestFrame();
+      return;
+    }
+    if (_leftover case (final pointer, final since) when pointer == e.pointer) {
+      _touches[e.pointer] = e.localPosition;
+      if (e.timeStamp - since < _leftoverGrace) {
+        return;
+      }
+      // Pan on with it from here, so the map doesn't jump to catch up.
+      _leftover = null;
+      _pointer = e.pointer;
+      _button = 0;
+      _redrawIf(
+        map.pointerDown(
+          x: e.localPosition.dx,
+          y: e.localPosition.dy,
+          button: 0,
+          rotate: false,
+        ),
+      );
       return;
     }
     if (_touches.containsKey(e.pointer) && _touches.length >= 2) {
@@ -983,11 +1021,17 @@ class _SparkleMapState extends State<SparkleMap> {
       _pointerDown(held);
     }
     _touches.remove(e.pointer);
+    if (_leftover?.$1 == e.pointer) {
+      _leftover = null;
+    }
     if (_touches.length < 2) {
       if (_twoFingers == _TwoFingers.pinch && e is PointerUpEvent) {
-        // Lifted while zooming quickly, it zooms on.
+        // Lifted while zooming quickly, it zooms on, unless the finger left down pans.
         _map?.panZoomEnd();
         _requestFrame();
+      }
+      if (_twoFingers != null && _touches.length == 1) {
+        _leftover = (_touches.keys.single, e.timeStamp);
       }
       _twoFingers = null;
     }

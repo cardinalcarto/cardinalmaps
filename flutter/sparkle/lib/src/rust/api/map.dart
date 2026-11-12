@@ -169,6 +169,10 @@ abstract class SparkleMap implements RustOpaqueInterface {
   /// Two fingers dragged up or down together by `dy` logical pixels: up tilts further.
   void tilt({required double dy});
 
+  /// Turn back to north up, keeping the middle of the view less the padding where it
+  /// is and the zoom and tilt as they are. Touching the map stops it. Draw frames after.
+  void turnNorth();
+
   /// An event whenever a tile has loaded, so a frame should be drawn.
   Stream<int> wakeStream();
 }

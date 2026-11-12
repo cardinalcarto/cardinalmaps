@@ -500,6 +500,13 @@ impl MapView {
         self.motion.release_zoom(&self.camera, Instant::now());
     }
 
+    /// Turn the map back to north up, keeping the middle of the view less the padding
+    /// where it is and the zoom and tilt as they are.
+    pub fn turn_north(&mut self) {
+        self.motion
+            .turn_north(&self.camera, self.padding, Instant::now());
+    }
+
     /// Two fingers dragged up or down together by `dy` logical pixels: up tilts further.
     pub fn tilt(&mut self, dy: f64) {
         self.subject = None;
@@ -597,6 +604,7 @@ impl MapView {
         }
         let middle = self.camera.padded_center(self.padding);
         self.padding = padding;
+        self.motion.repad(padding);
         self.follow_padding(middle);
         true
     }

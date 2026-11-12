@@ -3,12 +3,13 @@ import 'package:material_ui/material_ui.dart';
 import '../sheet/sheet.dart';
 import '../ui/adaptive.dart';
 import '../ui/glass.dart';
+import 'compass.dart';
 import 'layers.dart';
 import 'location.dart';
 import 'map_control.dart';
 
-/// The map's buttons, the layer picker's over my location, riding the top of the sheet
-/// at the end of the screen. They fade out as the sheet rises past halfway, as the map
+/// The map's buttons, the layer picker's over my location, with the compass above them
+/// while the map isn't north up, riding the top of the sheet at the end of the screen. They fade out as the sheet rises past halfway, as the map
 /// does under it.
 class MapButtons extends StatelessWidget {
   const MapButtons({super.key, this.location = const MyLocationButton()});
@@ -19,36 +20,16 @@ class MapButtons extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final padding = MediaQuery.paddingOf(context);
+    final cupertino = isCupertinoOf(context);
     return SheetBuilder(
-      child: isCupertinoOf(context)
-          // One glass capsule, the way iOS groups a map's controls.
-          ? AppGlassLayer(
-              // More tinted than the rest: the map behind it can be anything.
-              tintAmount: 0.8,
-              child: GlassSurface(
-                radius: MapControl.size / 2,
-                floating: true,
-                child: SizedBox(
-                  width: MapControl.size,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const LayerButton(),
-                      const Divider(indent: 10, endIndent: 10),
-                      location,
-                    ],
-                  ),
-                ),
-              ),
-            )
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const LayerButton(),
-                const SizedBox(height: 16),
-                location,
-              ],
-            ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CompassButton(),
+          SizedBox(height: cupertino ? 12 : 16),
+          _buttons(cupertino),
+        ],
+      ),
       builder: (context, sheet, child) {
         final docked = sheet.geometry.placement == SheetPlacement.docked;
         final height = sheet.geometry.size.height;
@@ -73,4 +54,31 @@ class MapButtons extends StatelessWidget {
       },
     );
   }
+
+  /// The layer and my location buttons: on iOS one glass capsule, the way it groups a
+  /// map's controls.
+  Widget _buttons(bool cupertino) => cupertino
+      ? AppGlassLayer(
+          // More tinted than the rest: the map behind it can be anything.
+          tintAmount: 0.8,
+          child: GlassSurface(
+            radius: MapControl.size / 2,
+            floating: true,
+            child: SizedBox(
+              width: MapControl.size,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const LayerButton(),
+                  const Divider(indent: 10, endIndent: 10),
+                  location,
+                ],
+              ),
+            ),
+          ),
+        )
+      : Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [const LayerButton(), const SizedBox(height: 16), location],
+        );
 }

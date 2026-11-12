@@ -458,6 +458,13 @@ impl SparkleMap {
         self.view().fly_to(lng, lat, zoom);
     }
 
+    /// Turn back to north up, keeping the middle of the view less the padding where it
+    /// is and the zoom and tilt as they are. Touching the map stops it. Draw frames after.
+    #[frb(sync)]
+    pub fn turn_north(&self) {
+        self.view().turn_north();
+    }
+
     /// `key`: a character, or a named key such as `ArrowLeft`.
     #[frb(sync)]
     pub fn key(&self, key: String, shift: bool) -> bool {

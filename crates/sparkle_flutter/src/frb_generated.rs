@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -681566055;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1224253473;
 
 // Section: executor
 
@@ -1539,6 +1539,54 @@ fn wire__crate__api__map__SparkleMap_tilt_impl(
         },
     )
 }
+fn wire__crate__api__map__SparkleMap_turn_north_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "SparkleMap_turn_north",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<SparkleMap>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>({
+                    crate::api::map::SparkleMap::turn_north(&*api_that_guard);
+                })?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__map__SparkleMap_wake_stream_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2020,8 +2068,8 @@ fn pde_ffi_dispatcher_primary_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         11 => wire__crate__api__map__SparkleMap_new_impl(port, ptr, rust_vec_len, data_len),
-        30 => wire__crate__api__map__SparkleMap_wake_stream_impl(port, ptr, rust_vec_len, data_len),
-        31 => wire__crate__api__map__init_app_impl(port, ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__map__SparkleMap_wake_stream_impl(port, ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__map__init_app_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2062,6 +2110,7 @@ fn pde_ffi_dispatcher_sync_impl(
         27 => wire__crate__api__map__SparkleMap_take_clicked_impl(ptr, rust_vec_len, data_len),
         28 => wire__crate__api__map__SparkleMap_tile_feature_impl(ptr, rust_vec_len, data_len),
         29 => wire__crate__api__map__SparkleMap_tilt_impl(ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__map__SparkleMap_turn_north_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

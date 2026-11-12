@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -681566055;
+  int get rustContentHash => 1224253473;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -239,6 +239,8 @@ abstract class RustLibApi extends BaseApi {
     required SparkleMap that,
     required double dy,
   });
+
+  void crateApiMapSparkleMapTurnNorth({required SparkleMap that});
 
   Stream<int> crateApiMapSparkleMapWakeStream({required SparkleMap that});
 
@@ -1271,6 +1273,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
+  void crateApiMapSparkleMapTurnNorth({required SparkleMap that}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiMapSparkleMapTurnNorthConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMapSparkleMapTurnNorthConstMeta =>
+      const TaskConstMeta(
+        debugName: "SparkleMap_turn_north",
+        argNames: ["that"],
+      );
+
+  @override
   Stream<int> crateApiMapSparkleMapWakeStream({required SparkleMap that}) {
     final sink = RustStreamSink<int>();
     unawaited(
@@ -1286,7 +1317,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 30,
+              funcId: 31,
               port: port_,
             );
           },
@@ -1318,7 +1349,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 31,
+            funcId: 32,
             port: port_,
           );
         },
@@ -2639,6 +2670,11 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
   /// Two fingers dragged up or down together by `dy` logical pixels: up tilts further.
   void tilt({required double dy}) =>
       RustLib.instance.api.crateApiMapSparkleMapTilt(that: this, dy: dy);
+
+  /// Turn back to north up, keeping the middle of the view less the padding where it
+  /// is and the zoom and tilt as they are. Touching the map stops it. Draw frames after.
+  void turnNorth() =>
+      RustLib.instance.api.crateApiMapSparkleMapTurnNorth(that: this);
 
   /// An event whenever a tile has loaded, so a frame should be drawn.
   Stream<int> wakeStream() =>

@@ -1,11 +1,12 @@
 //! Easing for window input: wheel zooms that glide to their level, flings that carry a
 //! pan on after the mouse lets go and a pinch zoom on after the fingers lift; and flights the app starts, which zoom out and back in
-//! to get somewhere. All advance once per frame through [`Motion::step`].
+//! to get somewhere, or turn back to north up. All advance once per frame through
+//! [`Motion::step`].
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::camera::{Camera, MAX_ZOOM, TILE_SIZE};
+use crate::camera::{Camera, MAX_ZOOM, Padding, TILE_SIZE};
 
 /// The zoom still to go shrinks by a factor of e every this many seconds.
 const ZOOM_TIME: f64 = 0.06;
@@ -27,7 +28,7 @@ const ZOOM_FLING_TIME: f64 = 0.25;
 /// Zoom fling speeds in levels per second: faster ones are capped, and slower ones don't
 /// start, so a slow, careful pinch stays where it was let go. Once going, one stops when
 /// it slows to [`ZOOM_FLING_STOP`].
-const MAX_ZOOM_SPEED: f64 = 6.0;
+const MAX_ZOOM_SPEED: f64 = 9.0;
 const MIN_ZOOM_SPEED: f64 = 1.5;
 const ZOOM_FLING_STOP: f64 = 0.1;
 /// The longest time one step advances, so a stalled frame doesn't jump.
@@ -40,6 +41,9 @@ const FLY_SPEED: f64 = 1.2;
 /// Flights take at least and at most this many seconds.
 const FLY_MIN_TIME: f64 = 0.3;
 const FLY_MAX_TIME: f64 = 2.5;
+/// Turning north up takes this long for the least turn, and up to twice as long for a
+/// half turn.
+const TURN_TIME: f64 = 0.3;
 
 #[derive(Default)]
 pub struct Motion {
@@ -60,6 +64,28 @@ pub struct Motion {
     /// When the last step ran, while anything is moving.
     last: Option<Instant>,
     flight: Option<Flight>,
+    turn: Option<Turn>,
+}
+
+/// Turning the bearing to north up, keeping the middle of the view less `padding` where
+/// it is.
+struct Turn {
+    start: Instant,
+    /// Seconds.
+    duration: f64,
+    from: f64,
+    padding: Padding,
+}
+
+impl Turn {
+    /// Turn `camera` to where it is at `now`. Returns whether it has further to go.
+    fn step(&self, camera: &mut Camera, now: Instant) -> bool {
+        let t = ((now - self.start).as_secs_f64() / self.duration).min(1.0);
+        let middle = camera.padded_center(self.padding);
+        camera.set_bearing(self.from * (1.0 - ease(t)));
+        camera.center = camera.center_for(middle, camera.zoom, self.padding);
+        t < 1.0
+    }
 }
 
 /// A flight from one view to another along van Wijk and Nuttall's path, as MapLibre's
@@ -197,6 +223,31 @@ impl Motion {
             || self.velocity != [0.0; 2]
             || self.zoom_velocity != 0.0
             || self.flight.is_some()
+            || self.turn.is_some()
+    }
+
+    /// Turn to north up the short way, keeping the middle of the view less `padding`
+    /// where it is and changing nothing else.
+    pub fn turn_north(&mut self, camera: &Camera, padding: Padding, now: Instant) {
+        if camera.bearing == 0.0 {
+            self.turn = None;
+            return;
+        }
+        self.wake(now);
+        // The camera keeps its bearing within ±180°, so heading for 0 is the short way.
+        self.turn = Some(Turn {
+            start: now,
+            duration: TURN_TIME * (1.0 + camera.bearing.abs() / 180.0),
+            from: camera.bearing,
+            padding,
+        });
+    }
+
+    /// The view's padding changed: keep the new middle where it is through any turn.
+    pub fn repad(&mut self, padding: Padding) {
+        if let Some(turn) = &mut self.turn {
+            turn.padding = padding;
+        }
     }
 
     /// Fly to `center` (world coordinates) at `zoom`, ending anything else in progress.
@@ -237,11 +288,14 @@ impl Motion {
     /// A pan or pinch starts at `p`: stop any fling or flight. Returns whether there was
     /// one.
     pub fn grab(&mut self, p: [f64; 2], now: Instant) -> bool {
-        let stopped =
-            self.velocity != [0.0; 2] || self.zoom_velocity != 0.0 || self.flight.is_some();
+        let stopped = self.velocity != [0.0; 2]
+            || self.zoom_velocity != 0.0
+            || self.flight.is_some()
+            || self.turn.is_some();
         self.velocity = [0.0; 2];
         self.zoom_velocity = 0.0;
         self.flight = None;
+        self.turn = None;
         self.samples.clear();
         self.samples.push_back((now, p));
         self.zoom_samples.clear();
@@ -334,6 +388,12 @@ impl Motion {
             && !flight.step(camera, now)
         {
             self.flight = None;
+        }
+
+        if let Some(turn) = &self.turn
+            && !turn.step(camera, now)
+        {
+            self.turn = None;
         }
 
         if self.zoom != 0.0 {
@@ -636,6 +696,51 @@ mod tests {
         let end = pinch(&mut m, t, 10, 0.05);
         m.release_zoom(&c, end);
         assert!(m.grab([400.0, 300.0], end + Duration::from_millis(10)));
+        assert!(!m.active());
+    }
+
+    #[test]
+    fn turning_north_changes_only_the_bearing() {
+        let mut c = camera();
+        c.set_bearing(-150.0);
+        c.set_pitch(30.0);
+        let padding = Padding {
+            top: 50.0,
+            right: 0.0,
+            bottom: 300.0,
+            left: 0.0,
+        };
+        let middle = c.padded_center(padding);
+        let mut m = Motion::default();
+        let t = Instant::now();
+        m.turn_north(&c, padding, t);
+        m.step(&mut c, t + Duration::from_millis(100));
+        // Partway, it's turning the short way, straight back toward 0.
+        assert!(c.bearing > -150.0 && c.bearing < 0.0, "{}", c.bearing);
+        let frames = settle(&mut m, &mut c, t + Duration::from_millis(100));
+        assert!(frames < 40, "{frames} frames");
+        assert_eq!(c.bearing, 0.0);
+        assert_eq!((c.zoom, c.pitch), (12.0, 30.0));
+        let after = c.padded_center(padding);
+        assert!((after[0] - middle[0]).abs() < 1e-12 && (after[1] - middle[1]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn turning_north_when_north_up_does_nothing() {
+        let c = camera();
+        let mut m = Motion::default();
+        m.turn_north(&c, Padding::default(), Instant::now());
+        assert!(!m.active());
+    }
+
+    #[test]
+    fn grabbing_stops_a_turn() {
+        let mut c = camera();
+        c.set_bearing(90.0);
+        let mut m = Motion::default();
+        let t = Instant::now();
+        m.turn_north(&c, Padding::default(), t);
+        assert!(m.grab([400.0, 300.0], t + Duration::from_millis(10)));
         assert!(!m.active());
     }
 
