@@ -108,6 +108,7 @@ dependencies = [
  "geo",
  "jsonschema",
  "log",
+ "memmap2 0.9.12",
  "serde",
  "serde_json",
  "serde_yaml",

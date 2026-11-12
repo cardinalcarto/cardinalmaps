@@ -16,6 +16,9 @@ pub struct Problem {
     pub detail: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub invalid_params: Vec<InvalidParam>,
+    /// Extension members (RFC 9457 section 3.2), such as a `poi:` ID's status.
+    #[serde(flatten)]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -27,7 +30,14 @@ pub struct InvalidParam {
 impl Problem {
     #[must_use]
     pub fn new(status: StatusCode, title: &'static str, detail: Option<String>) -> Self {
-        Self { problem_type: "about:blank", title, status: status.as_u16(), detail, invalid_params: Vec::new() }
+        Self {
+            problem_type: "about:blank",
+            title,
+            status: status.as_u16(),
+            detail,
+            invalid_params: Vec::new(),
+            extensions: serde_json::Map::new(),
+        }
     }
 
     #[must_use]

@@ -10,6 +10,7 @@ use airmail::{
     poi::{AdminBand, Kind, OsmRef, OsmType, SchemafiedPoi, ToIndexPoi, WofPlace},
 };
 use airmail_service::api::AppState;
+use airmail_service::poi_status::PoiStatus;
 use axum::{body::Body, http::Request};
 use geo::{Geometry, Point, Rect, coord};
 use serde_json::Value;
@@ -223,6 +224,7 @@ fn state() -> Arc<AppState> {
             categories: CategoryModels::default(),
             schema_version: SCHEMA_VERSION,
             documents: 13,
+            poi_status: None,
         });
         (dir, state)
     });
@@ -518,7 +520,7 @@ async fn place(query: &str) -> (u16, Value) {
         assert_matches_schema(&body, "PlaceResponse");
     } else {
         assert_eq!(content_type, "application/problem+json");
-        assert_matches_schema(&body, "Problem");
+        assert_matches_schema(&body, if status == 404 { "PlaceNotFound" } else { "Problem" });
         assert_eq!(body["status"], status);
     }
     (status, body)
@@ -554,7 +556,130 @@ async fn place_not_found_is_a_404() {
         let (status, body) = place(&format!("id={id}")).await;
         assert_eq!(status, 404, "{id}");
         assert_eq!(body["title"], "Not Found");
+        // Without a status file, nothing more is said.
+        assert!(body.get("state").is_none(), "{body}");
     }
+}
+
+/// A status file as `poi_service status` writes one: a 128-byte header, then
+/// an 8-byte record per `poi_id` below `next_poi_id`.
+fn status_file(sequence: i64, timestamp: i64, next_poi_id: i64, records: &[(u64, u64)]) -> Vec<u8> {
+    let mut bytes = vec![0u8; 128];
+    bytes[..8].copy_from_slice(b"CPOISTAT");
+    bytes[8..12].copy_from_slice(&1u32.to_le_bytes());
+    bytes[12..16].copy_from_slice(&8u32.to_le_bytes());
+    bytes[16..24].copy_from_slice(&sequence.to_le_bytes());
+    bytes[24..32].copy_from_slice(&timestamp.to_le_bytes());
+    bytes[32..40].copy_from_slice(&next_poi_id.to_le_bytes());
+    bytes[40..48].copy_from_slice(&next_poi_id.to_le_bytes());
+    bytes.resize(128 + 8 * usize::try_from(next_poi_id).unwrap(), 0);
+    for &(poi_id, record) in records {
+        let i = 128 + 8 * usize::try_from(poi_id).unwrap();
+        bytes[i..i + 8].copy_from_slice(&record.to_le_bytes());
+    }
+    bytes
+}
+
+/// A record: state (1 active, 2 inactive, 3 replaced), OSM type (0 node, 1
+/// way, 2 relation), version and ID.
+fn record(state: u64, osm_type: u64, version: u64, osm_id: u64) -> u64 {
+    state | osm_type << 2 | version << 4 | osm_id << 24
+}
+
+/// A service over the fixture index with a POI status file, which lookups
+/// check for replacement every time.
+fn router_with_status(status: &std::path::Path) -> axum::Router {
+    let dir = tempfile::tempdir().unwrap();
+    let index = build_index(dir.path());
+    let mut poi_status = PoiStatus::open(status).unwrap();
+    poi_status.check_interval = std::time::Duration::ZERO;
+    // The index is open, so its directory can go once the test ends.
+    std::mem::forget(dir);
+    airmail_service::router(Arc::new(AppState {
+        index,
+        categories: CategoryModels::default(),
+        schema_version: SCHEMA_VERSION,
+        documents: 13,
+        poi_status: Some(poi_status),
+    }))
+}
+
+async fn place_with(router: &axum::Router, id: &str) -> (u16, Value) {
+    let uri = format!("/v1/place?id={id}");
+    let response = router.clone().oneshot(Request::get(uri).body(Body::empty()).unwrap()).await.unwrap();
+    let status = response.status().as_u16();
+    let body = axum::body::to_bytes(response.into_body(), 10 << 20).await.unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_matches_schema(&body, if status == 200 { "PlaceResponse" } else { "PlaceNotFound" });
+    (status, body)
+}
+
+const OCT_5: i64 = 1_791_158_403; // 2026-10-05T00:00:03Z
+
+#[tokio::test]
+async fn poi_404s_say_what_became_of_the_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("poi-status.bin");
+    let records = [(5, record(1, 0, 3, 77)), (6, record(2, 1, 12, 13_000_000_000)), (7, record(3, 2, 6165, 9))];
+    std::fs::write(&path, status_file(5136, OCT_5, 30_000, &records)).unwrap();
+    let router = router_with_status(&path);
+    let as_of = serde_json::json!({ "sequence": 5136, "timestamp": "2026-10-05T00:00:03Z" });
+
+    // Places in the index are found as before.
+    let (status, body) = place_with(&router, "poi:28349").await;
+    assert_eq!((status, body["result"]["id"].as_str()), (200, Some("poi:28349")));
+
+    for (id, state, osm, version) in [
+        ("poi:5", "active", serde_json::json!({ "type": "node", "id": 77 }), 3),
+        ("poi:6", "inactive", serde_json::json!({ "type": "way", "id": 13_000_000_000_i64 }), 12),
+        ("poi:7", "replaced", serde_json::json!({ "type": "relation", "id": 9 }), 6165),
+    ] {
+        let (status, body) = place_with(&router, id).await;
+        assert_eq!(status, 404, "{id}");
+        assert_eq!((&body["state"], &body["osm"], &body["version"]), (&serde_json::json!(state), &osm, &serde_json::json!(version)), "{body}");
+        assert_eq!(body["as_of"], as_of);
+        assert!(body.get("replaced_by").is_none());
+    }
+
+    // Numbers no identity had yet, at or above next_poi_id, are unknown as of
+    // the checkpoint; so is an unassigned one below it.
+    for id in ["poi:30000", "poi:999999999999", "poi:8", "poi:0"] {
+        let (status, body) = place_with(&router, id).await;
+        assert_eq!((status, body["state"].as_str()), (404, Some("unknown")), "{id}");
+        assert_eq!(body["as_of"], as_of);
+        assert!(body.get("osm").is_none() && body.get("version").is_none(), "{body}");
+    }
+
+    // Other kinds of ID say nothing more.
+    let (status, body) = place_with(&router, "wof:1").await;
+    assert_eq!(status, 404);
+    assert!(body.get("state").is_none() && body.get("as_of").is_none(), "{body}");
+}
+
+#[tokio::test]
+async fn poi_status_reloads_when_the_file_is_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("poi-status.bin");
+    std::fs::write(&path, status_file(5136, OCT_5, 10, &[(5, record(1, 0, 3, 77))])).unwrap();
+    let router = router_with_status(&path);
+    let (_, body) = place_with(&router, "poi:5").await;
+    assert_eq!((body["state"].as_str(), &body["as_of"]["sequence"]), (Some("active"), &serde_json::json!(5136)));
+
+    // A new file renamed over the old one is picked up on the next lookup.
+    let next = dir.path().join("poi-status.bin.partial");
+    std::fs::write(&next, status_file(5137, OCT_5 + 86_400, 12, &[(5, record(3, 0, 3, 77)), (11, record(1, 0, 4, 77))])).unwrap();
+    std::fs::rename(&next, &path).unwrap();
+    let (_, body) = place_with(&router, "poi:5").await;
+    assert_eq!(body["state"], "replaced");
+    assert_eq!(body["as_of"], serde_json::json!({ "sequence": 5137, "timestamp": "2026-10-06T00:00:03Z" }));
+    let (_, body) = place_with(&router, "poi:11").await;
+    assert_eq!(body["state"], "active");
+
+    // A broken replacement is refused, and the loaded file kept.
+    std::fs::write(&next, b"not a status file").unwrap();
+    std::fs::rename(&next, &path).unwrap();
+    let (_, body) = place_with(&router, "poi:11").await;
+    assert_eq!((body["state"].as_str(), &body["as_of"]["sequence"]), (Some("active"), &serde_json::json!(5137)));
 }
 
 #[tokio::test]

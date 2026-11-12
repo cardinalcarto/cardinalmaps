@@ -232,11 +232,14 @@ paths:
         '404':
           description: |
             There's no place with this ID in this release, for example because
-            it was deleted from OpenStreetMap or its `poi:` ID ended.
+            it was deleted from OpenStreetMap or its `poi:` ID ended. For a
+            `poi:` ID, a service with POI identity status also says what
+            became of it, as of an OpenStreetMap replication checkpoint that
+            may be newer or older than the index.
           content:
             application/problem+json:
               schema:
-                $ref: '#/components/schemas/Problem'
+                $ref: '#/components/schemas/PlaceNotFound'
         '500':
           description: The lookup failed.
           content:
@@ -710,6 +713,54 @@ components:
                 type: string
               reason:
                 type: string
+
+    PlaceNotFound:
+      description: |
+        A `Problem`. For a `poi:` ID, when the service has POI identity
+        status, it also carries `state` and `as_of`, and for an identity that
+        exists, `version` and `osm`.
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          dependentRequired:
+            state: [as_of]
+            osm: [state, version]
+          properties:
+            state:
+              description: |
+                What became of the identity as of `as_of`: `active` (its
+                element is a place in OpenStreetMap, though not in this
+                index), `inactive` (its element was deleted or isn't a place
+                in its latest version; it can become active again),
+                `replaced` (its element is another place now, with another
+                ID), or `unknown` (no place had this ID yet).
+              type: string
+              enum: [active, inactive, replaced, unknown]
+            version:
+              description: The last OpenStreetMap version of the element with this identity.
+              type: integer
+              minimum: 1
+            osm:
+              description: The OpenStreetMap element the identity belongs to.
+              type: object
+              required: [type, id]
+              properties:
+                type:
+                  type: string
+                  enum: [node, way, relation]
+                id:
+                  type: integer
+                  minimum: 1
+            as_of:
+              description: The OpenStreetMap replication checkpoint the state is as of.
+              type: object
+              required: [sequence, timestamp]
+              properties:
+                sequence:
+                  type: integer
+                timestamp:
+                  type: string
+                  format: date-time
 
     Health:
       type: object

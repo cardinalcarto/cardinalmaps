@@ -1,4 +1,5 @@
-#![forbid(unsafe_code)]
+// Only `poi_status` maps a file, with `#[allow(unsafe_code)]`.
+#![deny(unsafe_code)]
 #![warn(clippy::pedantic)]
 
 use std::sync::Arc;
@@ -7,6 +8,7 @@ use axum::{Router, routing::get};
 
 pub mod api;
 pub mod error;
+pub mod poi_status;
 
 /// The service's routes.
 pub fn router(state: Arc<api::AppState>) -> Router {

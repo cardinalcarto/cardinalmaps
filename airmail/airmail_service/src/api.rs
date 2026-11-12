@@ -19,6 +19,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::error::Problem;
+use crate::poi_status::{PoiStatus, Status, rfc3339};
 
 /// The API's description.
 pub const OPENAPI: &str = include_str!("../openapi.yaml");
@@ -31,6 +32,8 @@ pub struct AppState {
     pub categories: CategoryModels,
     pub schema_version: u32,
     pub documents: u64,
+    /// What became of `poi:` IDs this index doesn't have.
+    pub poi_status: Option<PoiStatus>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -379,8 +382,38 @@ pub async fn place(RawQuery(raw): RawQuery, State(state): State<Arc<AppState>>) 
         Some(hit) => {
             Json(json!({ "result": result_json(hit, &results.admins, params.lang.as_deref(), params.geometry) })).into_response()
         }
-        None => Problem::new(StatusCode::NOT_FOUND, "Not Found", Some(format!("There's no place {}.", params.id))).into_response(),
+        None => not_found_place(&params.id, state.poi_status.as_ref()).into_response(),
     }
+}
+
+/// A 404 for a place the index doesn't have. For a `poi:` ID, with a status
+/// file, it says what became of the identity: `state` (`active`,
+/// `inactive`, `replaced`, or `unknown` if no identity had the number yet),
+/// the OSM element and the last version of it with this identity, and the
+/// replication checkpoint (`as_of`) that's as of.
+fn not_found_place(id: &PlaceId, status: Option<&PoiStatus>) -> Problem {
+    let mut problem = Problem::new(StatusCode::NOT_FOUND, "Not Found", Some(format!("There's no place {id}.")));
+    let (PlaceId::Poi(poi_id), Some(status)) = (id, status) else { return problem };
+    let (found, as_of) = status.lookup(*poi_id);
+    let ext = &mut problem.extensions;
+    ext.insert("as_of".into(), json!({ "sequence": as_of.sequence, "timestamp": rfc3339(as_of.timestamp) }));
+    match found {
+        Status::Unknown => {
+            ext.insert("state".into(), json!("unknown"));
+            problem.detail = Some(format!("No place had the ID {id} as of OpenStreetMap replication sequence {}.", as_of.sequence));
+        }
+        Status::Known { state, osm_type, osm_id, version } => {
+            ext.insert("state".into(), json!(state.as_str()));
+            ext.insert("version".into(), json!(version));
+            ext.insert("osm".into(), json!({ "type": osm_type, "id": osm_id }));
+            problem.detail = Some(match state {
+                crate::poi_status::State::Active => format!("{id} isn't in this index, though it's a place in OpenStreetMap."),
+                crate::poi_status::State::Inactive => format!("{id} was deleted from OpenStreetMap or isn't a place anymore."),
+                crate::poi_status::State::Replaced => format!("{id}'s OpenStreetMap element is another place now."),
+            });
+        }
+    }
+    problem
 }
 
 fn categories_json(categories: &QueryCategories) -> Value {

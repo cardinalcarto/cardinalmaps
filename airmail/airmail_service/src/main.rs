@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use airmail::categories::CategoryModels;
 use airmail::index::{self, AirmailIndex};
 use airmail_service::api::AppState;
+use airmail_service::poi_status::PoiStatus;
 use anyhow::Result;
 use axum::http::HeaderValue;
 use clap::Parser;
@@ -37,6 +38,12 @@ struct Args {
     /// query are what, rather than finding area names at its end.
     #[arg(long, env = "AIRMAIL_TAGGER")]
     tagger: Option<PathBuf>,
+
+    /// A POI identity status file (from `poi_service status`), so 404s for
+    /// `poi:` IDs say what became of them. Replace it by renaming a new file
+    /// over it; it's reloaded without a restart.
+    #[arg(long, env = "AIRMAIL_POI_STATUS")]
+    poi_status: Option<PathBuf>,
 
     /// Cors origins to allow
     #[arg(
@@ -78,6 +85,7 @@ async fn main() -> Result<()> {
         categories,
         schema_version: index::schema_version(std::path::Path::new(&args.index))?,
         documents,
+        poi_status: args.poi_status.as_deref().map(PoiStatus::open).transpose()?,
     });
 
     let mut cors = CorsLayer::new();
