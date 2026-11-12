@@ -161,7 +161,9 @@ pub struct SparkleMap {
 impl SparkleMap {
     /// A map set up from command line `args` (as `sparkle_harness` takes them), `width`
     /// by `height` physical pixels with `pixel_ratio` of them per logical pixel.
-    #[frb(sync)]
+    ///
+    /// Not sync: setting up reads files and fetches the tile servers' TileJSON, which
+    /// takes the network's time, and would hold the app's UI thread until it was done.
     pub fn new(
         args: Vec<String>,
         device: DeviceInfo,

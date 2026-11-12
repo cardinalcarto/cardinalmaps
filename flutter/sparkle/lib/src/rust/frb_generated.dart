@@ -121,7 +121,7 @@ abstract class RustLibApi extends BaseApi {
     required bool shift,
   });
 
-  SparkleMap crateApiMapSparkleMapNew({
+  Future<SparkleMap> crateApiMapSparkleMapNew({
     required List<String> args,
     required DeviceInfo device,
     required int width,
@@ -565,23 +565,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
-  SparkleMap crateApiMapSparkleMapNew({
+  Future<SparkleMap> crateApiMapSparkleMapNew({
     required List<String> args,
     required DeviceInfo device,
     required int width,
     required int height,
     required double pixelRatio,
   }) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_String(args, serializer);
           sse_encode_box_autoadd_device_info(device, serializer);
           sse_encode_u_32(width, serializer);
           sse_encode_u_32(height, serializer);
           sse_encode_f_64(pixelRatio, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 11,
+            port: port_,
+          );
         },
         codec: SseCodec(
           decodeSuccessData:

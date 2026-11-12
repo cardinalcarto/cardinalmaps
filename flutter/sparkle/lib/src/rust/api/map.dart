@@ -47,9 +47,13 @@ abstract class SparkleMap implements RustOpaqueInterface {
   /// `key`: a character, or a named key such as `ArrowLeft`.
   bool key({required String key, required bool shift});
 
+  // HINT: Make it `#[frb(sync)]` to let it become the default constructor of Dart class.
   /// A map set up from command line `args` (as `sparkle_harness` takes them), `width`
   /// by `height` physical pixels with `pixel_ratio` of them per logical pixel.
-  factory SparkleMap({
+  ///
+  /// Not sync: setting up reads files and fetches the tile servers' TileJSON, which
+  /// takes the network's time, and would hold the app's UI thread until it was done.
+  static Future<SparkleMap> newInstance({
     required List<String> args,
     required DeviceInfo device,
     required int width,

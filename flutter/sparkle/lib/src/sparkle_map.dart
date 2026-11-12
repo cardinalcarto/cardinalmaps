@@ -159,6 +159,7 @@ class SparkleMapController {
     double margin = 0,
   }) {
     _subject = (west, south, east, north, maxZoom, margin);
+    _flight = null;
     final map = _map;
     if (map == null) return;
     map.setSubject(
@@ -185,6 +186,9 @@ class SparkleMapController {
   /// The subject set before the map was.
   (double, double, double, double, double, double)? _subject;
 
+  /// Where [flyTo] asked to go before the map was made.
+  (double, double, double)? _flight;
+
   /// Fly to show [lng], [lat] at [zoom] in the middle of the map less the padding,
   /// zooming out on the way if it's far, and dropping any subject. Moving the map stops
   /// it.
@@ -192,6 +196,8 @@ class SparkleMapController {
     _subject = null;
     final map = _map;
     if (map == null) {
+      // The map is still being made: it flies there once it is.
+      _flight = (lng, lat, zoom);
       return;
     }
     map.flyTo(lng: lng, lat: lat, zoom: zoom);
@@ -258,6 +264,10 @@ class SparkleMapController {
         maxZoom: zoom,
         margin: margin,
       );
+    }
+    if (_flight case (final lng, final lat, final zoom)?) {
+      map.flyTo(lng: lng, lat: lat, zoom: zoom);
+      _flight = null;
     }
     if (_images.isNotEmpty) map.addImages(images: _images.values.toList());
     for (final MapEntry(key: source, value: text) in _pending.entries) {
@@ -464,41 +474,71 @@ class _SparkleMapState extends State<SparkleMap> {
     _size = (width, height, pixelRatio);
     _surface = surface;
     final map = _map;
-    if (map == null) {
-      try {
-        final created = rust.SparkleMap(
-          args: widget.args,
-          device: rust.DeviceInfo(
-            uniformAlignment: context.minimumUniformByteAlignment,
-            sampleCount: widget.multisample && context.doesSupportOffscreenMSAA
-                ? 4
-                : 1,
-            halfFloat: context.supportsTextureFormat(
-              gpu.PixelFormat.r16g16b16a16Float,
-              renderTarget: true,
-            ),
-          ),
-          width: width,
-          height: height,
-          pixelRatio: pixelRatio,
-        );
-        _map = created;
-        _executor = GpuExecutor(context, _library!, _surface!.format);
-        _screenshot = created.screenshotPath();
-        _wake = created.wakeStream().listen((_) => _requestFrame());
-        widget.controller?._attached(created);
-        _stylePoll = Timer.periodic(const Duration(milliseconds: 500), (_) {
-          if (_map?.pollStyle() ?? false) {
-            _requestFrame();
-          }
-        });
-      } on Object catch (e) {
-        // Not during build: report it after.
-        scheduleMicrotask(() => _fail(e));
-        return;
-      }
-    } else {
+    if (map != null) {
       map.resize(width: width, height: height, pixelRatio: pixelRatio);
+      _requestFrame();
+    } else if (!_creating) {
+      _create(context, width, height, pixelRatio);
+    }
+    // While the map is being made, the size is noted, and it's resized when it comes.
+  }
+
+  /// Whether the map is being made, off the UI thread.
+  bool _creating = false;
+
+  /// Makes the map on the bridge's worker threads: setting up reads files and fetches
+  /// the tile servers' TileJSON, which would hold the UI thread for the network's time.
+  /// Until it's made, the map draws nothing and takes no input.
+  Future<void> _create(
+    gpu.GpuContext context,
+    int width,
+    int height,
+    double pixelRatio,
+  ) async {
+    _creating = true;
+    final rust.SparkleMap created;
+    try {
+      created = await rust.SparkleMap.newInstance(
+        args: widget.args,
+        device: rust.DeviceInfo(
+          uniformAlignment: context.minimumUniformByteAlignment,
+          sampleCount: widget.multisample && context.doesSupportOffscreenMSAA
+              ? 4
+              : 1,
+          halfFloat: context.supportsTextureFormat(
+            gpu.PixelFormat.r16g16b16a16Float,
+            renderTarget: true,
+          ),
+        ),
+        width: width,
+        height: height,
+        pixelRatio: pixelRatio,
+      );
+    } on Object catch (e) {
+      _creating = false;
+      if (mounted) _fail(e);
+      return;
+    }
+    _creating = false;
+    // Gone while it was being made.
+    if (!mounted) {
+      created.dispose();
+      return;
+    }
+    _map = created;
+    _executor = GpuExecutor(context, _library!, _surface!.format);
+    _screenshot = created.screenshotPath();
+    _wake = created.wakeStream().listen((_) => _requestFrame());
+    widget.controller?._attached(created);
+    _stylePoll = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (_map?.pollStyle() ?? false) {
+        _requestFrame();
+      }
+    });
+    // Laid out again at another size while it was being made.
+    if (_size case (final w, final h, final r)
+        when (w, h, r) != (width, height, pixelRatio)) {
+      created.resize(width: w, height: h, pixelRatio: r);
     }
     _requestFrame();
   }

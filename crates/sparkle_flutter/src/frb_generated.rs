@@ -544,15 +544,16 @@ fn wire__crate__api__map__SparkleMap_key_impl(
     )
 }
 fn wire__crate__api__map__SparkleMap_new_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "SparkleMap_new",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -570,18 +571,20 @@ fn wire__crate__api__map__SparkleMap_new_impl(
             let api_height = <u32>::sse_decode(&mut deserializer);
             let api_pixel_ratio = <f64>::sse_decode(&mut deserializer);
             deserializer.end();
-            transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
-                (move || {
-                    let output_ok = crate::api::map::SparkleMap::new(
-                        api_args,
-                        api_device,
-                        api_width,
-                        api_height,
-                        api_pixel_ratio,
-                    )?;
-                    std::result::Result::Ok(output_ok)
-                })(),
-            )
+            move |context| {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || {
+                        let output_ok = crate::api::map::SparkleMap::new(
+                            api_args,
+                            api_device,
+                            api_width,
+                            api_height,
+                            api_pixel_ratio,
+                        )?;
+                        std::result::Result::Ok(output_ok)
+                    })(),
+                )
+            }
         },
     )
 }
@@ -1918,6 +1921,7 @@ fn pde_ffi_dispatcher_primary_impl(
 ) {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
+        11 => wire__crate__api__map__SparkleMap_new_impl(port, ptr, rust_vec_len, data_len),
         28 => wire__crate__api__map__SparkleMap_wake_stream_impl(port, ptr, rust_vec_len, data_len),
         29 => wire__crate__api__map__init_app_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
@@ -1942,7 +1946,6 @@ fn pde_ffi_dispatcher_sync_impl(
         8 => wire__crate__api__map__SparkleMap_has_subject_impl(ptr, rust_vec_len, data_len),
         9 => wire__crate__api__map__SparkleMap_hover_argument_impl(ptr, rust_vec_len, data_len),
         10 => wire__crate__api__map__SparkleMap_key_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__map__SparkleMap_new_impl(ptr, rust_vec_len, data_len),
         12 => wire__crate__api__map__SparkleMap_pan_zoom_impl(ptr, rust_vec_len, data_len),
         13 => wire__crate__api__map__SparkleMap_pointer_down_impl(ptr, rust_vec_len, data_len),
         14 => wire__crate__api__map__SparkleMap_pointer_move_impl(ptr, rust_vec_len, data_len),
