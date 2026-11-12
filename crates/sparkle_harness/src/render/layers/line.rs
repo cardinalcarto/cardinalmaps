@@ -1,6 +1,7 @@
 //! `line` layers: triangles widened in the vertex shader (see `sparkle::tile::LineBucket`),
 //! drawn with a color, dashes, a sprite pattern or a gradient.
 
+use crate::render::indices::GpuIndices;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -44,8 +45,7 @@ pub struct LineRenderer {
 
 struct GpuLine {
     vertices: wgpu::Buffer,
-    triangles: wgpu::Buffer,
-    triangle_count: u32,
+    triangles: GpuIndices,
     paint_buffer: Option<wgpu::Buffer>,
     /// The layout of `paint_buffer`; its data isn't kept.
     paint: PaintArrays,
@@ -247,12 +247,7 @@ impl LayerRenderer for LineRenderer {
                 bytemuck::cast_slice(&line.vertices),
                 wgpu::BufferUsages::VERTEX,
             ),
-            triangles: gpu.buffer(
-                "line triangles",
-                bytemuck::cast_slice(&line.triangles),
-                wgpu::BufferUsages::INDEX,
-            ),
-            triangle_count: line.triangles.len() as u32,
+            triangles: GpuIndices::new(gpu, "line triangles", &line.triangles, 3),
             paint_buffer: gpu.paint_buffer(&line.paint),
             paint,
             images: (!line.images.is_empty()).then(|| {
@@ -336,9 +331,7 @@ impl LayerRenderer for LineRenderer {
             if let Some(buffer) = &bucket.paint_buffer {
                 cx.pass.set_vertex_buffer(2, buffer.slice(..));
             }
-            cx.pass
-                .set_index_buffer(bucket.triangles.slice(..), wgpu::IndexFormat::Uint32);
-            cx.pass.draw_indexed(0..bucket.triangle_count, 0, 0..1);
+            bucket.triangles.draw(cx.pass);
         }
     }
 }

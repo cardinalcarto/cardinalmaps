@@ -4,11 +4,13 @@
 use std::collections::HashMap;
 
 use sparkle::style::{CirclePitchAlignment, CirclePitchScale, LayerKind, StyleLayer};
+use sparkle::tile::CircleVertex;
 use sparkle::{Bucket, BucketGeometry};
 
 use super::{BucketData, DrawContext, LayerDraw, LayerRenderer, translate_units};
-use crate::gpu::{Buffer, Pipeline, PipelineSpec, VertexBufferLayout, VertexFormat};
+use crate::gpu::{Buffer, Pass, Pipeline, PipelineSpec, VertexBufferLayout, VertexFormat};
 use crate::render::Gpu;
+use crate::render::indices::GpuIndices;
 use crate::render::paint::{GpuPaint, UniformsMemo};
 
 pub struct CircleRenderer {
@@ -18,8 +20,7 @@ pub struct CircleRenderer {
 
 struct GpuCircles {
     vertices: Buffer,
-    triangles: Buffer,
-    triangle_count: u32,
+    triangles: GpuIndices,
     paint: GpuPaint,
 }
 
@@ -63,8 +64,7 @@ impl LayerRenderer for CircleRenderer {
         }
         Some(Box::new(GpuCircles {
             vertices: gpu.buffer(bytemuck::cast_slice(&circles.vertices)),
-            triangles: gpu.buffer(bytemuck::cast_slice(&circles.triangles)),
-            triangle_count: circles.triangles.len() as u32,
+            triangles: GpuIndices::new(gpu, &circles.triangles, 3),
             paint: GpuPaint::new(gpu, &circles.paint),
         }))
     }
@@ -101,10 +101,14 @@ impl LayerRenderer for CircleRenderer {
             let pipeline = self.pipeline(cx.gpu, &bucket.paint);
             cx.pass.set_pipeline(&pipeline);
             cx.bind_uniforms(&u, Some(tile));
-            cx.pass.set_vertex_buffer(0, bucket.vertices.slice());
-            bucket.paint.bind(cx.gpu, cx.pass, 1);
-            cx.pass.set_index_buffer(bucket.triangles.slice(), false);
-            cx.pass.draw_indexed(bucket.triangle_count, 1);
+            let gpu = cx.gpu;
+            bucket
+                .triangles
+                .draw(cx.pass, |pass: &mut Pass<'_>, first| {
+                    let stride = size_of::<CircleVertex>();
+                    pass.set_vertex_buffer(0, bucket.vertices.slice_from(first, stride));
+                    bucket.paint.bind_from(gpu, pass, 1, first);
+                });
         }
     }
 }

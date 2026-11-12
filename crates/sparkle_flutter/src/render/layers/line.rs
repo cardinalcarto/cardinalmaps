@@ -16,14 +16,16 @@ use std::sync::Arc;
 use sparkle::paint::Binding;
 use sparkle::pattern::{CrossFade, DashAtlas, DashPattern, FeatureImage};
 use sparkle::style::{LayerKind, LineCap, LineLayer, LinePaint, StyleLayer};
+use sparkle::tile::LineVertex;
 use sparkle::{Bucket, BucketGeometry};
 
 use super::pattern::crossfaded_pattern;
 use super::{BucketData, DrawContext, LayerDraw, LayerRenderer, translate_pixels, translate_units};
 use crate::gpu::{
-    Buffer, Pipeline, PipelineSpec, Sampler, Slice, StepMode, Texture, TextureFormat,
+    Buffer, Pass, Pipeline, PipelineSpec, Sampler, Slice, StepMode, Texture, TextureFormat,
     VertexBufferLayout, VertexFormat,
 };
+use crate::render::indices::GpuIndices;
 use crate::render::paint::{GpuPaint, UniformsMemo};
 use crate::render::{Gpu, LINEAR};
 
@@ -68,8 +70,7 @@ pub struct LineRenderer {
 
 struct GpuLine {
     vertices: Buffer,
-    triangles: Buffer,
-    triangle_count: u32,
+    triangles: GpuIndices,
     paint: GpuPaint,
     /// Per-vertex [`FeatureImage`]s.
     images: Option<Buffer>,
@@ -82,8 +83,7 @@ struct MergedLines {
     vertices: Buffer,
     /// The style index of each vertex's layer, as a float.
     layers: Buffer,
-    triangles: Buffer,
-    triangle_count: u32,
+    triangles: GpuIndices,
 }
 
 /// What each of the merged buckets is.
@@ -257,8 +257,7 @@ impl LayerRenderer for LineRenderer {
         });
         Some(Box::new(GpuLine {
             vertices: gpu.buffer(bytemuck::cast_slice(&line.vertices)),
-            triangles: gpu.buffer(bytemuck::cast_slice(&line.triangles)),
-            triangle_count: line.triangles.len() as u32,
+            triangles: GpuIndices::new(gpu, &line.triangles, 3),
             paint: GpuPaint::new(gpu, &line.paint),
             images: (!line.images.is_empty())
                 .then(|| gpu.buffer(bytemuck::cast_slice(&line.images))),
@@ -309,8 +308,7 @@ impl LayerRenderer for LineRenderer {
         let merged = Arc::new(MergedLines {
             vertices: gpu.buffer(bytemuck::cast_slice(&vertices)),
             layers: gpu.buffer(bytemuck::cast_slice(&layers)),
-            triangles: gpu.buffer(bytemuck::cast_slice(&triangles)),
-            triangle_count: triangles.len() as u32,
+            triangles: GpuIndices::new(gpu, &triangles, 3),
         });
         buckets
             .iter()
@@ -442,10 +440,13 @@ impl LineRenderer {
         let texture = self.dash_texture(cx.gpu).clone();
         cx.pass.set_texture("image", &texture, DASH_SAMPLER);
         cx.pass.set_stencil_reference(tile.stencil_ref);
-        cx.pass.set_vertex_buffer(0, merged.vertices.slice());
-        cx.pass.set_vertex_buffer(1, merged.layers.slice());
-        cx.pass.set_index_buffer(merged.triangles.slice(), false);
-        cx.pass.draw_indexed(merged.triangle_count, 1);
+        merged
+            .triangles
+            .draw(cx.pass, |pass: &mut Pass<'_>, first| {
+                let stride = size_of::<LineVertex>();
+                pass.set_vertex_buffer(0, merged.vertices.slice_from(first, stride));
+                pass.set_vertex_buffer(1, merged.layers.slice_from(first, size_of::<f32>()));
+            });
     }
 
     /// Draw one tile's bucket of `layer` on its own.
@@ -502,11 +503,20 @@ impl LineRenderer {
         cx.bind_uniforms(&u, Some(tile));
         cx.pass.set_texture("image", &texture, sampler);
         cx.pass.set_stencil_reference(tile.stencil_ref);
-        cx.pass.set_vertex_buffer(0, bucket.vertices.slice());
-        cx.pass.set_vertex_buffer(1, images.slice());
-        bucket.paint.bind(cx.gpu, cx.pass, 2);
-        cx.pass.set_index_buffer(bucket.triangles.slice(), false);
-        cx.pass.draw_indexed(bucket.triangle_count, 1);
+        let gpu = cx.gpu;
+        let per_vertex = mode.per_vertex;
+        bucket
+            .triangles
+            .draw(cx.pass, |pass: &mut Pass<'_>, first| {
+                let stride = size_of::<LineVertex>();
+                pass.set_vertex_buffer(0, bucket.vertices.slice_from(first, stride));
+                let images = match per_vertex {
+                    true => images.slice_from(first, size_of::<FeatureImage>()),
+                    false => images.slice(),
+                };
+                pass.set_vertex_buffer(1, images);
+                bucket.paint.bind_from(gpu, pass, 2, first);
+            });
     }
 }
 

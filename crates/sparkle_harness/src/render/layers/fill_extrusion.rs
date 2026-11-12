@@ -21,6 +21,7 @@
 //! [`WallPoint`] to the next, read from the same buffer bound twice, the second time one
 //! point on.
 
+use crate::render::indices::GpuIndices;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -82,8 +83,7 @@ struct GpuRoofs {
     vertices: wgpu::Buffer,
     /// `None` when the bucket has no patterns.
     patterns: Option<wgpu::Buffer>,
-    triangles: wgpu::Buffer,
-    triangle_count: u32,
+    triangles: GpuIndices,
     paint_buffer: Option<wgpu::Buffer>,
     /// The layout of `paint_buffer`; its data isn't kept.
     paint: PaintArrays,
@@ -372,8 +372,7 @@ impl FillExtrusionRenderer {
                 if let Some(buffer) = &roofs.paint_buffer {
                     pass.set_vertex_buffer(2, buffer.slice(..));
                 }
-                pass.set_index_buffer(roofs.triangles.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..roofs.triangle_count, 0, 0..1);
+                roofs.triangles.draw(pass);
             }
             if let Some(walls) = &bucket.walls {
                 u.paint = walls.paint.uniforms(&wall_props, zoom);
@@ -421,12 +420,7 @@ impl LayerRenderer for FillExtrusionRenderer {
                     vertex,
                 ),
                 patterns: patterns(&roofs.patterns),
-                triangles: gpu.buffer(
-                    "fill-extrusion roof triangles",
-                    bytemuck::cast_slice(&roofs.triangles),
-                    wgpu::BufferUsages::INDEX,
-                ),
-                triangle_count: roofs.triangles.len() as u32,
+                triangles: GpuIndices::new(gpu, "fill-extrusion roofs", &roofs.triangles, 3),
                 paint_buffer: gpu.paint_buffer(&roofs.paint),
                 paint: roofs.paint.layout(),
             }),

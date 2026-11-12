@@ -10,14 +10,16 @@
 use std::collections::HashMap;
 
 use sparkle::style::{HeatmapPaint, LayerKind, StyleLayer};
+use sparkle::tile::HeatmapVertex;
 use sparkle::{Bucket, BucketGeometry};
 use sparkle_view::camera::Placement;
 
 use super::{BucketData, DrawContext, LayerDraw, LayerRenderer, PrepareContext, bind_uniforms};
 use crate::gpu::{
-    Blend, Buffer, Load, PassDesc, Pipeline, PipelineSpec, Store, Texture, TextureFormat, Topology,
-    VertexBufferLayout, VertexFormat,
+    Blend, Buffer, Load, Pass, PassDesc, Pipeline, PipelineSpec, Store, Texture, TextureFormat,
+    Topology, VertexBufferLayout, VertexFormat,
 };
+use crate::render::indices::GpuIndices;
 use crate::render::paint::{GpuPaint, UniformsMemo};
 use crate::render::{Gpu, LINEAR};
 
@@ -46,8 +48,7 @@ struct LayerTarget {
 
 struct GpuHeatmap {
     vertices: Buffer,
-    indices: Buffer,
-    index_count: u32,
+    indices: GpuIndices,
     paint: GpuPaint,
 }
 
@@ -150,8 +151,7 @@ impl LayerRenderer for HeatmapRenderer {
         }
         Some(Box::new(GpuHeatmap {
             vertices: gpu.buffer(bytemuck::cast_slice(&heat.vertices)),
-            indices: gpu.buffer(bytemuck::cast_slice(&heat.indices)),
-            index_count: heat.indices.len() as u32,
+            indices: GpuIndices::new(gpu, &heat.indices, 3),
             paint: GpuPaint::new(gpu, &heat.paint),
         }))
     }
@@ -203,10 +203,13 @@ impl LayerRenderer for HeatmapRenderer {
             let pipeline = self.density_pipeline(gpu, &bucket.paint);
             pass.set_pipeline(&pipeline);
             bind_uniforms(gpu, &mut pass, &u, tile.geo.dem_texture.as_ref());
-            pass.set_vertex_buffer(0, bucket.vertices.slice());
-            bucket.paint.bind(gpu, &mut pass, 1);
-            pass.set_index_buffer(bucket.indices.slice(), false);
-            pass.draw_indexed(bucket.index_count, 1);
+            bucket
+                .indices
+                .draw(&mut pass, |pass: &mut Pass<'_>, first| {
+                    let stride = size_of::<HeatmapVertex>();
+                    pass.set_vertex_buffer(0, bucket.vertices.slice_from(first, stride));
+                    bucket.paint.bind_from(gpu, pass, 1, first);
+                });
         }
     }
 

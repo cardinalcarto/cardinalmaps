@@ -36,6 +36,7 @@ use crate::gpu::{
     Blend, Buffer, DepthMode, DepthStencilDesc, Load, Pass, PassDesc, Pipeline, PipelineSpec,
     Slice, StepMode, Store, Texture, TextureFormat, Topology, VertexBufferLayout, VertexFormat,
 };
+use crate::render::indices::GpuIndices;
 use crate::render::paint::{GpuPaint, UniformsMemo};
 use crate::render::view::View;
 use crate::render::{Gpu, LINEAR, NEAREST};
@@ -85,8 +86,7 @@ struct GpuRoofs {
     vertices: Buffer,
     /// `None` when the bucket has no patterns.
     patterns: Option<Buffer>,
-    triangles: Buffer,
-    triangle_count: u32,
+    triangles: GpuIndices,
     paint: GpuPaint,
 }
 
@@ -266,11 +266,19 @@ impl FillExtrusionRenderer {
                 u.paint = roof_memo.uniforms(&roofs.paint.layout, &roof_props, zoom);
                 bind_uniforms(gpu, pass, &u, tile.geo.dem_texture.as_ref());
                 pass.set_texture("pattern_atlas", atlas, LINEAR);
-                pass.set_vertex_buffer(0, roofs.vertices.slice());
-                pass.set_vertex_buffer(1, patterns.unwrap_or(&self.no_pattern).slice());
-                roofs.paint.bind(gpu, pass, 2);
-                pass.set_index_buffer(roofs.triangles.slice(), false);
-                pass.draw_indexed(roofs.triangle_count, 1);
+                let no_pattern = &self.no_pattern;
+                roofs.triangles.draw(pass, |pass: &mut Pass<'_>, first| {
+                    pass.set_vertex_buffer(
+                        0,
+                        roofs.vertices.slice_from(first, size_of::<[f32; 2]>()),
+                    );
+                    let patterns = match patterns {
+                        Some(p) => p.slice_from(first, size_of::<FillExtrusionPattern>()),
+                        None => no_pattern.slice(),
+                    };
+                    pass.set_vertex_buffer(1, patterns);
+                    roofs.paint.bind_from(gpu, pass, 2, first);
+                });
             }
             if let Some(walls) = &bucket.walls {
                 let patterns = walls.patterns.as_ref();
@@ -311,8 +319,7 @@ impl LayerRenderer for FillExtrusionRenderer {
             roofs: (!roofs.triangles.is_empty()).then(|| GpuRoofs {
                 vertices: gpu.buffer(bytemuck::cast_slice(&roofs.vertices)),
                 patterns: patterns(&roofs.patterns),
-                triangles: gpu.buffer(bytemuck::cast_slice(&roofs.triangles)),
-                triangle_count: roofs.triangles.len() as u32,
+                triangles: GpuIndices::new(gpu, &roofs.triangles, 3),
                 paint: GpuPaint::new(gpu, &roofs.paint),
             }),
             walls: (walls.instances() > 0).then(|| GpuWalls {

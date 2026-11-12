@@ -7,6 +7,7 @@
 //! the library drops points outside their tile), so each tile placement is drawn once even
 //! when several clip areas share it.
 
+use crate::render::indices::GpuIndices;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -45,8 +46,7 @@ struct LayerTarget {
 
 struct GpuHeatmap {
     vertices: wgpu::Buffer,
-    indices: wgpu::Buffer,
-    index_count: u32,
+    indices: GpuIndices,
     paint_buffer: Option<wgpu::Buffer>,
     /// The layout of `paint_buffer`; its data isn't kept.
     paint: PaintArrays,
@@ -202,12 +202,7 @@ impl LayerRenderer for HeatmapRenderer {
                 bytemuck::cast_slice(&heat.vertices),
                 wgpu::BufferUsages::VERTEX,
             ),
-            indices: gpu.buffer(
-                "heatmap indices",
-                bytemuck::cast_slice(&heat.indices),
-                wgpu::BufferUsages::INDEX,
-            ),
-            index_count: heat.indices.len() as u32,
+            indices: GpuIndices::new(gpu, "heatmap indices", &heat.indices, 3),
             paint_buffer: gpu.paint_buffer(&heat.paint),
             paint,
         }))
@@ -271,8 +266,7 @@ impl LayerRenderer for HeatmapRenderer {
             if let Some(buffer) = &bucket.paint_buffer {
                 pass.set_vertex_buffer(1, buffer.slice(..));
             }
-            pass.set_index_buffer(bucket.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..bucket.index_count, 0, 0..1);
+            bucket.indices.draw(&mut pass);
         }
     }
 

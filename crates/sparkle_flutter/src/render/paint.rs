@@ -174,9 +174,16 @@ impl GpuPaint {
 
     /// Bind the paint slots from `first_slot` on.
     pub fn bind(&self, gpu: &Gpu, pass: &mut Pass<'_>, first_slot: u32) {
+        self.bind_from(gpu, pass, first_slot, 0);
+    }
+
+    /// [`Self::bind`], with the per-vertex values from vertex `first_vertex` on: for an
+    /// index batch.
+    pub fn bind_from(&self, gpu: &Gpu, pass: &mut Pass<'_>, first_slot: u32, first_vertex: u32) {
         let mut slot = first_slot;
         if let Some(buffer) = &self.buffer {
-            pass.set_vertex_buffer(slot, buffer.slice());
+            let floats: u32 = self.layout.attributes.iter().map(repacked_floats).sum();
+            pass.set_vertex_buffer(slot, buffer.slice_from(first_vertex, floats as usize * 4));
             slot += 1;
         }
         if self

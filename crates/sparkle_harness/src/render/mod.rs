@@ -15,6 +15,7 @@
 //! the masks.
 
 pub mod gpu;
+pub mod indices;
 pub mod layers;
 mod paint;
 pub mod terrain;

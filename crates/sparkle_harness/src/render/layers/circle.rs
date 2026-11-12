@@ -1,6 +1,7 @@
 //! `circle` layers: a quad per circle, sized in the vertex shader and rounded in the
 //! fragment shader.
 
+use crate::render::indices::GpuIndices;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -18,8 +19,7 @@ pub struct CircleRenderer {
 
 struct GpuCircles {
     vertices: wgpu::Buffer,
-    triangles: wgpu::Buffer,
-    triangle_count: u32,
+    triangles: GpuIndices,
     paint_buffer: Option<wgpu::Buffer>,
     /// The layout of `paint_buffer`; its data isn't kept.
     paint: PaintArrays,
@@ -68,12 +68,7 @@ impl LayerRenderer for CircleRenderer {
                 bytemuck::cast_slice(&circles.vertices),
                 wgpu::BufferUsages::VERTEX,
             ),
-            triangles: gpu.buffer(
-                "circle triangles",
-                bytemuck::cast_slice(&circles.triangles),
-                wgpu::BufferUsages::INDEX,
-            ),
-            triangle_count: circles.triangles.len() as u32,
+            triangles: GpuIndices::new(gpu, "circle triangles", &circles.triangles, 3),
             paint_buffer: gpu.paint_buffer(&circles.paint),
             paint,
         }))
@@ -113,9 +108,7 @@ impl LayerRenderer for CircleRenderer {
             if let Some(buffer) = &bucket.paint_buffer {
                 cx.pass.set_vertex_buffer(1, buffer.slice(..));
             }
-            cx.pass
-                .set_index_buffer(bucket.triangles.slice(..), wgpu::IndexFormat::Uint32);
-            cx.pass.draw_indexed(0..bucket.triangle_count, 0, 0..1);
+            bucket.triangles.draw(cx.pass);
         }
     }
 }

@@ -321,6 +321,13 @@ impl Buffer {
     pub fn slice(&self) -> Slice<'_> {
         Slice::Buffer(self, 0, self.size)
     }
+
+    /// The buffer from vertex `first` on, for vertices of `stride` bytes: for drawing an
+    /// index batch (see [`crate::render::indices::GpuIndices::draw`]).
+    pub fn slice_from(&self, first: u32, stride: usize) -> Slice<'_> {
+        let offset = (first * stride as u32).min(self.size);
+        Slice::Buffer(self, offset, self.size - offset)
+    }
 }
 
 /// A texture on the Dart side, freed when the last clone is dropped (except the frame's

@@ -15,6 +15,7 @@
 //! The per-type drawing lives in [`layers`]; this module owns the targets, the frame, and
 //! the masks.
 
+pub mod indices;
 pub mod layers;
 pub mod paint;
 pub mod terrain;

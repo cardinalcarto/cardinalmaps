@@ -18,6 +18,7 @@ mod fill_extrusion;
 pub(crate) mod geojson;
 mod heatmap;
 mod hillshade;
+mod indices;
 mod line;
 pub mod raster;
 mod sort_key;
@@ -39,6 +40,7 @@ pub use fill_extrusion::{
 };
 pub use heatmap::{HeatmapBucket, HeatmapVertex};
 pub use hillshade::{HillshadeBucket, HillshadeLight, LightSource, latitude_range};
+pub use indices::{IndexBatch, batch_indices};
 pub use line::{LineBucket, LineVertex};
 pub use raster::{IMAGE_EXTENT, RasterBucket, RasterImage, RasterVertex, image_source_tile};
 pub use symbol::{SymbolBucket, SymbolQuads, SymbolVertex, symbol_flags};

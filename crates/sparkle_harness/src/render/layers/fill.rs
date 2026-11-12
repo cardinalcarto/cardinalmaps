@@ -1,5 +1,6 @@
 //! `fill` layers: triangles, plus an outline pass with `fill-antialias`.
 
+use crate::render::indices::GpuIndices;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -24,10 +25,9 @@ pub struct FillRenderer {
 
 struct GpuFill {
     vertices: wgpu::Buffer,
-    triangles: wgpu::Buffer,
-    triangle_count: u32,
+    triangles: GpuIndices,
     /// Ring edges as a line list.
-    outlines: Option<(wgpu::Buffer, u32)>,
+    outlines: Option<GpuIndices>,
     paint_buffer: Option<wgpu::Buffer>,
     /// The layout of `paint_buffer`; its data isn't kept.
     paint: PaintArrays,
@@ -123,7 +123,7 @@ impl LayerRenderer for FillRenderer {
         let BucketGeometry::Fill(fill) = &bucket.geometry else {
             return None;
         };
-        let (vertex, index) = (wgpu::BufferUsages::VERTEX, wgpu::BufferUsages::INDEX);
+        let vertex = wgpu::BufferUsages::VERTEX;
         let paint = fill.paint.layout();
         Some(Box::new(GpuFill {
             vertices: gpu.buffer(
@@ -131,18 +131,9 @@ impl LayerRenderer for FillRenderer {
                 bytemuck::cast_slice(&fill.vertices),
                 vertex,
             ),
-            triangles: gpu.buffer(
-                "fill triangles",
-                bytemuck::cast_slice(&fill.triangles),
-                index,
-            ),
-            triangle_count: fill.triangles.len() as u32,
-            outlines: (!fill.outlines.is_empty()).then(|| {
-                (
-                    gpu.buffer("fill outlines", bytemuck::cast_slice(&fill.outlines), index),
-                    fill.outlines.len() as u32,
-                )
-            }),
+            triangles: GpuIndices::new(gpu, "fill triangles", &fill.triangles, 3),
+            outlines: (!fill.outlines.is_empty())
+                .then(|| GpuIndices::new(gpu, "fill outlines", &fill.outlines, 2)),
             paint_buffer: gpu.paint_buffer(&fill.paint),
             paint,
             images: (!fill.images.is_empty())
@@ -215,18 +206,14 @@ impl LayerRenderer for FillRenderer {
             if let Some(buffer) = &bucket.paint_buffer {
                 cx.pass.set_vertex_buffer(2, buffer.slice(..));
             }
-            cx.pass
-                .set_index_buffer(bucket.triangles.slice(..), wgpu::IndexFormat::Uint32);
-            cx.pass.draw_indexed(0..bucket.triangle_count, 0, 0..1);
+            bucket.triangles.draw(cx.pass);
 
-            if let (true, Some((outlines, count))) = (antialias, &bucket.outlines) {
+            if let (true, Some(outlines)) = (antialias, &bucket.outlines) {
                 u.extra[0][0] = 1.0;
                 cx.pass
                     .set_pipeline(self.pipeline(cx.gpu, &bucket.paint, true, per_vertex));
                 cx.bind_uniforms(&u);
-                cx.pass
-                    .set_index_buffer(outlines.slice(..), wgpu::IndexFormat::Uint32);
-                cx.pass.draw_indexed(0..*count, 0, 0..1);
+                outlines.draw(cx.pass);
             }
         }
     }

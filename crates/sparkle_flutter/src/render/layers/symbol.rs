@@ -24,8 +24,10 @@ use super::{
     BucketData, DrawContext, LayerDraw, LayerRenderer, PrepareContext, TileDraw, translate_units,
 };
 use crate::gpu::{
-    Buffer, Pipeline, PipelineSpec, Texture, TextureFormat, VertexBufferLayout, VertexFormat,
+    Buffer, Pass, Pipeline, PipelineSpec, Slice, Texture, TextureFormat, VertexBufferLayout,
+    VertexFormat,
 };
+use crate::render::indices::GpuIndices;
 use crate::render::paint::{GpuPaint, UniformsMemo, bytes};
 use crate::render::{Gpu, LINEAR};
 
@@ -69,8 +71,7 @@ struct GpuQuads {
     vertices: Buffer,
     vertex_count: usize,
     /// The bucket's own triangle order, drawn unless placement sorts them by viewport `y`.
-    triangles: Buffer,
-    triangle_count: u32,
+    triangles: GpuIndices,
     paint: GpuPaint,
 }
 
@@ -155,8 +156,7 @@ impl SymbolRenderer {
         Some(GpuQuads {
             vertices: gpu.buffer(bytemuck::cast_slice(&vertices)),
             vertex_count: vertices.len(),
-            triangles: gpu.buffer(bytemuck::cast_slice(&quads.triangles)),
-            triangle_count: quads.triangles.len() as u32,
+            triangles: GpuIndices::new(gpu, &quads.triangles, 3),
             paint: GpuPaint::new(gpu, &quads.paint),
         })
     }
@@ -201,18 +201,17 @@ fn draw_part(
     let pipeline = pipeline(pipelines, cx.gpu, &quads.paint, part.is_text);
     cx.pass.set_pipeline(&pipeline);
     cx.pass.set_texture("atlas", texture, LINEAR);
-    cx.pass.set_vertex_buffer(0, quads.vertices.slice());
-    cx.pass.set_vertex_buffer(1, bytes(placed));
-    quads.paint.bind(cx.gpu, cx.pass, 2);
-    let count = match sorted {
-        Some(triangles) => {
-            cx.pass.set_index_buffer(bytes(triangles), false);
-            triangles.len() as u32
-        }
-        None => {
-            cx.pass.set_index_buffer(quads.triangles.slice(), false);
-            quads.triangle_count
-        }
+    let gpu = cx.gpu;
+    // Sent once, for every pass and batch to bind part of.
+    let Slice::Frame(placed_at, placed_len) = cx.pass.frame_data(bytemuck::cast_slice(placed))
+    else {
+        unreachable!("frame data is in the frame")
+    };
+    let bind = |pass: &mut Pass<'_>, first: u32| {
+        pass.set_vertex_buffer(0, quads.vertices.slice_from(first, size_of::<Vertex>()));
+        let skip = (first * size_of::<[f32; 4]>() as u32).min(placed_len);
+        pass.set_vertex_buffer(1, Slice::Frame(placed_at + skip, placed_len - skip));
+        quads.paint.bind_from(gpu, pass, 2, first);
     };
     let passes: &[bool] = if part.halo { &[true, false] } else { &[false] };
     let mode = match mode {
@@ -228,7 +227,15 @@ fn draw_part(
             mode,
         ];
         cx.bind_uniforms(&u, Some(tile));
-        cx.pass.draw_indexed(count, 1);
+        match sorted {
+            // Sorted each frame, as 32-bit indices from the first vertex.
+            Some(triangles) => {
+                bind(cx.pass, 0);
+                cx.pass.set_index_buffer(bytes(triangles), false);
+                cx.pass.draw_indexed(triangles.len() as u32, 1);
+            }
+            None => quads.triangles.draw(cx.pass, bind),
+        }
     }
 }
 

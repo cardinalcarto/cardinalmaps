@@ -5,14 +5,16 @@ use std::collections::HashMap;
 
 use sparkle::pattern::{CrossFade, FeatureImage, pattern_placement};
 use sparkle::style::{FillLayer, LayerKind, StyleLayer};
+use sparkle::tile::FillVertex;
 use sparkle::{Bucket, BucketGeometry};
 use sparkle_view::camera::TILE_SIZE;
 
 use super::pattern::crossfaded_pattern;
 use super::{BucketData, DrawContext, LayerDraw, LayerRenderer, TileDraw, translate_units};
 use crate::gpu::{
-    Buffer, Pipeline, PipelineSpec, StepMode, Topology, VertexBufferLayout, VertexFormat,
+    Buffer, Pass, Pipeline, PipelineSpec, StepMode, Topology, VertexBufferLayout, VertexFormat,
 };
+use crate::render::indices::GpuIndices;
 use crate::render::paint::{GpuPaint, UniformsMemo};
 use crate::render::{Gpu, LINEAR};
 
@@ -25,10 +27,9 @@ pub struct FillRenderer {
 
 struct GpuFill {
     vertices: Buffer,
-    triangles: Buffer,
-    triangle_count: u32,
+    triangles: GpuIndices,
     /// Ring edges as a line list.
-    outlines: Option<(Buffer, u32)>,
+    outlines: Option<GpuIndices>,
     paint: GpuPaint,
     /// Per-vertex [`FeatureImage`]s of a feature-dependent `fill-pattern`.
     images: Option<Buffer>,
@@ -116,14 +117,8 @@ impl LayerRenderer for FillRenderer {
         };
         Some(Box::new(GpuFill {
             vertices: gpu.buffer(bytemuck::cast_slice(&fill.vertices)),
-            triangles: gpu.buffer(bytemuck::cast_slice(&fill.triangles)),
-            triangle_count: fill.triangles.len() as u32,
-            outlines: (!fill.outlines.is_empty()).then(|| {
-                (
-                    gpu.buffer(bytemuck::cast_slice(&fill.outlines)),
-                    fill.outlines.len() as u32,
-                )
-            }),
+            triangles: GpuIndices::new(gpu, &fill.triangles, 3),
+            outlines: (!fill.outlines.is_empty()).then(|| GpuIndices::new(gpu, &fill.outlines, 2)),
             paint: GpuPaint::new(gpu, &fill.paint),
             images: (!fill.images.is_empty())
                 .then(|| gpu.buffer(bytemuck::cast_slice(&fill.images))),
@@ -190,19 +185,27 @@ impl LayerRenderer for FillRenderer {
             cx.bind_uniforms(&u, Some(tile));
             cx.pass.set_texture("atlas", texture, LINEAR);
             cx.pass.set_stencil_reference(tile.stencil_ref);
-            cx.pass.set_vertex_buffer(0, bucket.vertices.slice());
-            cx.pass.set_vertex_buffer(1, images.slice());
-            bucket.paint.bind(cx.gpu, cx.pass, 2);
-            cx.pass.set_index_buffer(bucket.triangles.slice(), false);
-            cx.pass.draw_indexed(bucket.triangle_count, 1);
+            let gpu = cx.gpu;
+            let bind = |pass: &mut Pass<'_>, first| {
+                pass.set_vertex_buffer(
+                    0,
+                    bucket.vertices.slice_from(first, size_of::<FillVertex>()),
+                );
+                let images = match per_vertex {
+                    true => images.slice_from(first, size_of::<FeatureImage>()),
+                    false => images.slice(),
+                };
+                pass.set_vertex_buffer(1, images);
+                bucket.paint.bind_from(gpu, pass, 2, first);
+            };
+            bucket.triangles.draw(cx.pass, bind);
 
-            if let (true, Some((outlines, count))) = (antialias, &bucket.outlines) {
+            if let (true, Some(outlines)) = (antialias, &bucket.outlines) {
                 u.extra[0][0] = 1.0;
                 let pipeline = self.pipeline(cx.gpu, &bucket.paint, true, per_vertex);
                 cx.pass.set_pipeline(&pipeline);
                 cx.bind_uniforms(&u, Some(tile));
-                cx.pass.set_index_buffer(outlines.slice(), false);
-                cx.pass.draw_indexed(*count, 1);
+                outlines.draw(cx.pass, bind);
             }
         }
     }
