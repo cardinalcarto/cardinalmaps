@@ -102,7 +102,9 @@ pub async fn fetch(url: &str, dir: &Path, to: Option<i64>) -> Result<i64> {
         let release: Release = client.json(&format!("{remote}/{RELEASE_FILE}")).await?;
         client.release(&remote, &releases.snapshot_dir(snapshot), &release).await?;
     }
-    for sequence in snapshot..=to {
+    // The deltas after the snapshot, and the target's release. The snapshot's
+    // own checkpoint release isn't needed, and may be pruned before it.
+    for sequence in (snapshot + 1).min(to)..=to {
         if let Some(local) = releases.daily(sequence)? {
             if sequence == to && local != target {
                 bail!("{} has another release {sequence}", dir.display());

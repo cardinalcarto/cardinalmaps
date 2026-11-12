@@ -70,6 +70,11 @@ impl PoiIds {
         self.by_type.iter().map(Vec::len).sum()
     }
 
+    #[cfg(test)]
+    pub fn get_for_test(&self, osm_type: OsmType, osm_id: i64, version: i32) -> Option<i64> {
+        self.get(osm_type, osm_id, version)
+    }
+
     fn get(&self, osm_type: OsmType, osm_id: i64, version: i32) -> Option<i64> {
         let entries = &self.by_type[osm_type as usize];
         let i = entries.binary_search_by_key(&(osm_id, version), |&(id, v, _)| (id, v)).ok()?;

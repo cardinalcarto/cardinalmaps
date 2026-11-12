@@ -179,3 +179,260 @@ pub fn write_status(releases: &Releases, to: Option<i64>, output: &Path) -> Resu
     std::fs::rename(&partial, output)?;
     Ok(chain.target)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use chrono::{DateTime, Utc};
+
+    use super::*;
+    use crate::db::{CheckpointRow, Origin};
+    use crate::identity::{Checksum, PoiChange, Tracked, VersionRow};
+    use crate::osm::{ElementKey, OsmType};
+    use crate::published::{
+        CHECKPOINTS_FILE, CheckpointJson, DELTA_FILE, Kind, POIS_FILE, Previous, RELEASE_FILE, Release, STATUS_FILE,
+        VERSIONS_FILE, file_info, json_bytes,
+    };
+    use crate::rules::tags;
+    use crate::tables::{
+        Delta, POIS_MAGIC, PoisWriter, State, VERSIONS_MAGIC, VersionsWriter, create_zst, finish_zst, unpack_status,
+        write_header,
+    };
+
+    fn node(osm_id: i64) -> ElementKey {
+        ElementKey { osm_type: OsmType::Node, osm_id }
+    }
+
+    fn poi(osm_id: i64, version: i32, poi_id: i64, active: bool, name: &str, previous: Option<i64>) -> PoiChange {
+        PoiChange {
+            key: node(osm_id),
+            state: Tracked { version, poi_id, active, tags: tags([("amenity", "cafe"), ("name", name)]) },
+            previous_poi_id: previous,
+        }
+    }
+
+    fn time(sequence: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(1_791_158_403 + (sequence - 10) * 86_400, 0).unwrap()
+    }
+
+    fn checkpoint(sequence: i64, next_poi_id: i64, previous: &[u8], rows: &[VersionRow]) -> Checkpoint {
+        let mut checksum = Checksum::new(previous);
+        for row in rows {
+            checksum.add(row);
+        }
+        Checkpoint { sequence, timestamp: time(sequence), next_poi_id, checksum: checksum.finish() }
+    }
+
+    fn origin() -> Origin {
+        Origin { planet_timestamp: time(10), ruleset: 3, replication_url: "https://example.org/day/".into() }
+    }
+
+    /// Writes a snapshot of `versions` and `pois` with `checkpoints`, as
+    /// `export` would.
+    fn write_snapshot(
+        releases: &Releases,
+        versions: &[(VersionRow, Option<i64>)],
+        pois: &[PoiChange],
+        checkpoints: &[CheckpointRow],
+    ) {
+        let latest = &checkpoints.last().unwrap().checkpoint;
+        let dir = releases.snapshot_dir(latest.sequence);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut release = Release::new(Kind::Snapshot, latest, &origin(), latest.sequence);
+        let mut status = Status::new();
+        let mut out = create_zst(&dir.join(VERSIONS_FILE)).unwrap();
+        write_header(&mut out, VERSIONS_MAGIC).unwrap();
+        out.write_all(&checkpoints[0].checkpoint.sequence.to_le_bytes()).unwrap();
+        let mut writer = VersionsWriter::new(Some(checkpoints[0].checkpoint.sequence));
+        for (row, sequence) in versions {
+            writer.row(&mut out, row, *sequence).unwrap();
+            status.version(row).unwrap();
+        }
+        writer.finish(&mut out).unwrap();
+        finish_zst(out).unwrap();
+        let mut out = create_zst(&dir.join(POIS_FILE)).unwrap();
+        write_header(&mut out, POIS_MAGIC).unwrap();
+        let mut writer = PoisWriter::new(false);
+        for row in pois {
+            writer.row(&mut out, row).unwrap();
+            status.poi(row).unwrap();
+        }
+        writer.finish(&mut out).unwrap();
+        finish_zst(out).unwrap();
+        let mut out = create_zst(&dir.join(STATUS_FILE)).unwrap();
+        status.write(&mut out, latest).unwrap();
+        finish_zst(out).unwrap();
+        let json: Vec<CheckpointJson> = checkpoints.iter().map(CheckpointJson::from).collect();
+        std::fs::write(dir.join(CHECKPOINTS_FILE), json_bytes(&json).unwrap()).unwrap();
+        for name in [VERSIONS_FILE, POIS_FILE, STATUS_FILE, CHECKPOINTS_FILE] {
+            release.files.insert(name.into(), file_info(&dir.join(name)).unwrap());
+        }
+        release.counts.insert("pois".into(), pois.len() as u64);
+        std::fs::write(dir.join(RELEASE_FILE), json_bytes(&release).unwrap()).unwrap();
+    }
+
+    fn write_daily(releases: &Releases, delta: Option<&Delta>, checkpoint: &Checkpoint, snapshot: i64) {
+        let dir = releases.daily_dir(checkpoint.sequence);
+        std::fs::create_dir_all(&dir).unwrap();
+        let kind = if delta.is_some() { Kind::Delta } else { Kind::Planet };
+        let mut release = Release::new(kind, checkpoint, &origin(), snapshot);
+        if let Some(delta) = delta {
+            let mut out = create_zst(&dir.join(DELTA_FILE)).unwrap();
+            delta.write(&mut out).unwrap();
+            finish_zst(out).unwrap();
+            release.files.insert(DELTA_FILE.into(), file_info(&dir.join(DELTA_FILE)).unwrap());
+            let p = &delta.previous;
+            release.previous =
+                Some(Previous { sequence: p.sequence, next_poi_id: p.next_poi_id, checksum: hex::encode(&p.checksum) });
+            release.counts.insert("versions".into(), delta.versions.len() as u64);
+            release.counts.insert("pois".into(), delta.pois.len() as u64);
+        }
+        std::fs::write(dir.join(RELEASE_FILE), json_bytes(&release).unwrap()).unwrap();
+    }
+
+    fn row(checkpoint: &Checkpoint) -> CheckpointRow {
+        CheckpointRow { checkpoint: checkpoint.clone(), applied_at: time(30), journaled: checkpoint.sequence > 10 }
+    }
+
+    /// A planet with nodes 1 and 2 (identities 1 and 2) at sequence 10;
+    /// diff 11 renames node 1 (same identity) and replaces node 2's business
+    /// (identity 3); diff 12 adds node 5 (identity 4) and deletes node 1.
+    /// Snapshots at 10 and 12.
+    fn releases(dir: &Path) -> Releases {
+        let releases = Releases::new(dir);
+        let planet_rows =
+            [VersionRow { key: node(1), version: 1, poi_id: 1 }, VersionRow { key: node(2), version: 4, poi_id: 2 }];
+        let c10 = checkpoint(10, 3, &[0; 32], &planet_rows);
+        let planet_pois = [poi(1, 1, 1, true, "Ritual", None), poi(2, 4, 2, true, "Blue Bottle", None)];
+        write_snapshot(&releases, &planet_rows.map(|r| (r, None)), &planet_pois, &[row(&c10)]);
+        write_daily(&releases, None, &c10, 10);
+
+        let rows11 = vec![
+            VersionRow { key: node(1), version: 2, poi_id: 1 },
+            VersionRow { key: node(2), version: 5, poi_id: 3 },
+        ];
+        let c11 = checkpoint(11, 4, &c10.checksum, &rows11);
+        let delta11 = Delta {
+            previous: c10.clone(),
+            checkpoint: c11.clone(),
+            applied_at: time(30),
+            versions: rows11.clone(),
+            pois: vec![poi(1, 2, 1, true, "Ritual Coffee", Some(1)), poi(2, 5, 3, true, "Sightglass", Some(2))],
+        };
+        write_daily(&releases, Some(&delta11), &c11, 10);
+
+        let rows12 = vec![VersionRow { key: node(5), version: 1, poi_id: 4 }];
+        let c12 = checkpoint(12, 5, &c11.checksum, &rows12);
+        let delta12 = Delta {
+            previous: c11.clone(),
+            checkpoint: c12.clone(),
+            applied_at: time(30),
+            versions: rows12.clone(),
+            pois: vec![poi(1, 3, 1, false, "Ritual Coffee", Some(1)), poi(5, 1, 4, true, "Zeitgeist", None)],
+        };
+        write_daily(&releases, Some(&delta12), &c12, 12);
+
+        let mut all: Vec<_> = planet_rows.iter().map(|r| (*r, None)).collect();
+        all.extend(rows11.iter().map(|r| (*r, Some(11))));
+        all.extend(rows12.iter().map(|r| (*r, Some(12))));
+        all.sort_by_key(|(r, _)| (r.key, r.version));
+        let pois = [
+            poi(1, 3, 1, false, "Ritual Coffee", None),
+            poi(2, 5, 3, true, "Sightglass", None),
+            poi(5, 1, 4, true, "Zeitgeist", None),
+        ];
+        write_snapshot(&releases, &all, &pois, &[row(&c10), row(&c11), row(&c12)]);
+        releases
+    }
+
+    #[test]
+    fn snapshots_and_deltas_agree() {
+        let dir = tempfile::tempdir().unwrap();
+        let releases = releases(dir.path());
+        for sequence in [10, 12] {
+            releases.snapshot(sequence).unwrap().verify().unwrap();
+        }
+
+        // The status from snapshot 10 and both deltas is snapshot 12's, byte
+        // for byte; so is the one at 12 that starts from snapshot 12.
+        let output = dir.path().join("status.bin");
+        let mut from_snapshot = Vec::new();
+        Status::read(&mut crate::tables::open_zst(&releases.snapshot_dir(12).join(STATUS_FILE)).unwrap())
+            .unwrap()
+            .0
+            .write(&mut from_snapshot, &releases.daily(12).unwrap().unwrap().checkpoint().unwrap())
+            .unwrap();
+        // Release 12 names snapshot 12; build 12 from snapshot 10 by
+        // pretending release 11 is the target, then applying 12's delta.
+        let chain = releases.chain(Some(11), None).unwrap();
+        assert_eq!((chain.snapshot.as_ref().unwrap().sequence, chain.dailies.len()), (10, 1));
+        let mut status = releases.snapshot(10).unwrap().status().unwrap();
+        status.apply(&releases.delta(&chain.dailies[0]).unwrap()).unwrap();
+        status.apply(&releases.delta(&releases.daily(12).unwrap().unwrap()).unwrap()).unwrap();
+        let mut from_deltas = Vec::new();
+        status.write(&mut from_deltas, &releases.daily(12).unwrap().unwrap().checkpoint().unwrap()).unwrap();
+        assert_eq!(from_deltas, from_snapshot);
+        let state = |poi_id: usize| unpack_status(status.records[poi_id]).0;
+        assert_eq!(
+            (state(1), state(2), state(3), state(4)),
+            (State::Inactive, State::Replaced, State::Active, State::Active)
+        );
+
+        let reached = write_status(&releases, Some(11), &output).unwrap();
+        assert_eq!(reached.sequence, 11);
+        let (written, _) = Status::read(&mut std::fs::File::open(&output).unwrap()).unwrap();
+        assert_eq!(unpack_status(written.records[2]).0, State::Replaced);
+        assert_eq!(written.records.len(), 4);
+
+        // Identifiers for patch are the same from either snapshot.
+        let ids = |to| {
+            let (ids, checkpoint) = load_ids(&releases, Some(to)).unwrap();
+            let found: Vec<_> = [(1, 1), (1, 2), (2, 4), (2, 5), (5, 1), (5, 2)]
+                .map(|(id, version)| ids.get_for_test(OsmType::Node, id, version))
+                .to_vec();
+            (found, checkpoint.sequence)
+        };
+        assert_eq!(ids(11), (vec![Some(1), Some(1), Some(2), Some(3), None, None], 11));
+        assert_eq!(ids(12), (vec![Some(1), Some(1), Some(2), Some(3), Some(4), None], 12));
+        assert_eq!(latest_checkpoint(&releases).unwrap().sequence, 12);
+    }
+
+    #[test]
+    fn broken_releases_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let releases = releases(dir.path());
+        // A delta whose file was changed.
+        let path = releases.daily_dir(11).join(DELTA_FILE);
+        let mut bytes = std::fs::read(&path).unwrap();
+        *bytes.last_mut().unwrap() ^= 1;
+        std::fs::write(&path, bytes).unwrap();
+        assert!(load_ids(&releases, Some(11)).is_err());
+
+        // A release that doesn't follow the one before.
+        let dir = tempfile::tempdir().unwrap();
+        let releases = super::tests::releases(dir.path());
+        let path = releases.daily_dir(11).join(RELEASE_FILE);
+        let mut release: Release = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        release.previous.as_mut().unwrap().checksum = "00".repeat(32);
+        std::fs::write(&path, json_bytes(&release).unwrap()).unwrap();
+        let error = releases.chain(Some(11), None).err().unwrap().to_string();
+        assert!(error.contains("doesn't follow"), "{error}");
+
+        // A snapshot whose status file disagrees with its tables.
+        let dir = tempfile::tempdir().unwrap();
+        let releases = super::tests::releases(dir.path());
+        let snapshot = releases.snapshot(12).unwrap();
+        let mut status = snapshot.status().unwrap();
+        status.records[2] = 0;
+        let mut out = create_zst(&snapshot.path(STATUS_FILE)).unwrap();
+        status.write(&mut out, snapshot.latest()).unwrap();
+        finish_zst(out).unwrap();
+        let path = snapshot.path(RELEASE_FILE);
+        let mut release = snapshot.release.clone();
+        release.files.insert(STATUS_FILE.into(), file_info(&snapshot.path(STATUS_FILE)).unwrap());
+        std::fs::write(&path, json_bytes(&release).unwrap()).unwrap();
+        let error = releases.snapshot(12).unwrap().verify().err().unwrap().to_string();
+        assert!(error.contains("status file differs"), "{error}");
+    }
+}
