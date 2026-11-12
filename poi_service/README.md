@@ -193,7 +193,14 @@ map it and look up any ID without parsing or building anything.
 Sizes for the planet (68,185,562 POIs, October 2026), against 29 GB in
 PostgreSQL: `versions.bin.zst` 90 MB, `pois.bin.zst` 1.65 GB,
 `status.bin.zst` 178 MB (545 MB uncompressed), so a snapshot is 1.9 GB.
-DAILY_SIZES
+A day's delta is 2 to 6 MB (median 2.3 MB for 55,000 changed elements), and
+four weeks of deltas plus the snapshots they restore from is about 4 GB.
+`poi_changes` grows the database by about 20 MB a day; it's only needed until
+a diff is exported.
+
+Measured on the build host: a snapshot export takes 6 to 9 minutes (mostly
+zstd) and 2.2 GB of memory, a day's delta about a second; importing the
+planet snapshot takes 8 minutes and 1.6 GB, and a delta about 5 seconds.
 
 ### Reading them without PostgreSQL
 

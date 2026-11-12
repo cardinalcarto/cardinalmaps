@@ -165,6 +165,10 @@ def plan_prune(publisher, keep_days: int, base: str = POI):
     current = (publisher.get_json(latest.LATEST) or {}).get("poi") if base == POI else None
     if current is not None:
         keep.add(current)
+    # Restoring a checkpoint needs its snapshot and every delta after it, so those stay too.
+    for sequence in list(keep):
+        if sequence in dailies:
+            keep.update(s for s in range(dailies[sequence]["snapshot"] + 1, sequence) if s in dailies)
     keep_snapshots = {dailies[s]["snapshot"] for s in keep if s in dailies}
     doomed = {}
     for (kind, sequence), keys in groups.items():
@@ -181,7 +185,8 @@ def plan_prune(publisher, keep_days: int, base: str = POI):
 
 def prune(publisher, keep_days: int, base: str = POI):
     """Deletes checkpoint releases more than `keep_days` older than the newest, and snapshots none of
-    the rest restores from. Never the newest release, nor the one `latest.json` names."""
+    the rest restores from. A release kept keeps its snapshot and every delta between them, and the
+    newest release and the one `latest.json` names are always kept."""
     if keep_days < 1:
         raise PublishError("--keep-days must be at least 1")
     doomed, keep, keep_snapshots = plan_prune(publisher, keep_days, base)

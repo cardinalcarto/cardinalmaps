@@ -523,10 +523,16 @@ def test_poi_prune_keeps_four_weeks_and_their_snapshots(tmp_path):
 
     poi.prune(publisher, 28)
     dailies, snapshots = published_poi(tmp_path / "bucket")
-    # 144 is the newest; 116 is 28 days older. 110 is what latest.json names.
-    assert dailies == [110] + list(range(116, 145))
-    # 110 restores from 107, 116..120 from 114, and so on.
+    # 144 is the newest; 116 is 28 days older, and restores from snapshot 114
+    # with delta 115. 110 is what latest.json names, restored from 107 with
+    # 108 and 109.
+    assert dailies == [108, 109, 110] + list(range(115, 145))
     assert snapshots == [107, 114, 121, 128, 135, 142]
+    # Every checkpoint left can be restored: its snapshot and every delta after it are there.
+    for sequence in dailies:
+        release = json.loads((tmp_path / f"bucket/releases/poi/{sequence}/release.json").read_text())
+        assert release["snapshot"] in snapshots
+        assert set(range(release["snapshot"] + 1, sequence + 1)) <= set(dailies), sequence
     assert not (tmp_path / "bucket/releases/poi/100").exists()
     assert not (tmp_path / "bucket/.meta/releases/poi/100").exists()
     # Pruning again changes nothing.
@@ -539,7 +545,8 @@ def test_poi_prune_works_on_a_staging_directory(tmp_path):
     publisher = Publisher(DirTarget(staging), "", None, 4, False)
     poi.prune(publisher, 28, base="")
     dailies = sorted(int(p.name) for p in staging.iterdir() if p.name.isdigit())
-    assert dailies == list(range(111, 140))
+    # 111 is 28 days before 139, and restores from 107.
+    assert dailies == list(range(108, 140))
     assert sorted(int(p.name) for p in (staging / "snapshots").iterdir()) == [107, 114, 121, 128, 135]
 
 
@@ -578,6 +585,6 @@ def test_poi_on_s3(tmp_path, s3):
     assert body == b"P" * (6 << 20)
     poi.prune(publisher, 28)
     keys = s3.list("releases/poi/")
-    assert "releases/poi/110/release.json" not in keys and "releases/poi/111/delta.bin.zst" in keys
+    assert "releases/poi/107/release.json" not in keys and "releases/poi/108/delta.bin.zst" in keys
     assert not any(k.startswith("releases/poi/snapshots/100/") for k in keys)
     assert "releases/poi/snapshots/107/versions.bin.zst" in keys
