@@ -101,6 +101,10 @@ abstract class ArchivePlanner implements RustOpaqueInterface {
   /// Looks for `tiles` instead, keeping the leaf directories fetched so far: sizing another
   /// set of tiles costs only the leaves it needs that aren't fetched yet.
   void want({required List<ArchiveTile> tiles});
+
+  /// The archive's zoom: transfer archives hold one zoom (the build's tile zoom), which
+  /// is where a plan takes it from.
+  int zoom();
 }
 
 /// One range to download and the tiles in it.

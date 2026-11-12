@@ -10,6 +10,8 @@ import 'package:cardinal/offline/downloads/native.dart';
 import 'package:cardinal/offline/downloads/transfers.dart';
 import 'package:crypto/crypto.dart';
 
+import 'fake_release.dart';
+
 /// [Transfers] that download over `dart:io` as soon as they're handed jobs (or when
 /// [run], with [hold]), reporting results as `background_downloader` does.
 class FakeTransfers implements Transfers {
@@ -290,6 +292,9 @@ class _FakeArchivePlanning implements ArchivePlanning {
 
   @override
   void want(List<TileKey> tiles) => _wanted = tiles;
+
+  @override
+  int get zoom => at.keys.firstOrNull?.$1 ?? FakeRelease.transferZoom;
 
   @override
   List<ArchiveTileAt> found() => [

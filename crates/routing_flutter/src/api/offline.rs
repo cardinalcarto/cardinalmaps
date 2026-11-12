@@ -210,6 +210,22 @@ impl ArchivePlanner {
         })
     }
 
+    /// The archive's zoom: transfer archives hold one zoom (the build's tile zoom), which
+    /// is where a plan takes it from.
+    #[frb(sync)]
+    pub fn zoom(&self) -> Result<u8, ArchiveError> {
+        let header = self.inner.header();
+        if header.min_zoom != header.max_zoom {
+            return Err(ArchiveError {
+                message: format!(
+                    "the archive holds zooms {} to {}, not one",
+                    header.min_zoom, header.max_zoom
+                ),
+            });
+        }
+        Ok(header.min_zoom)
+    }
+
     /// Looks for `tiles` instead, keeping the leaf directories fetched so far: sizing another
     /// set of tiles costs only the leaves it needs that aren't fetched yet.
     #[frb(sync)]
@@ -495,6 +511,7 @@ mod tests {
             .ok()
             .unwrap();
         assert!(planner.needed_leaves().is_empty());
+        assert_eq!(planner.zoom().ok(), Some(12));
         let found = planner.found().ok().unwrap();
         assert_eq!(found.len(), 2);
         let ranges = planner

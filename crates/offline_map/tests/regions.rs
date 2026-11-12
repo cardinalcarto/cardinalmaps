@@ -476,10 +476,11 @@ fn plans_the_planet_transfer_archives() {
             .unwrap(),
         ),
     ] {
-        let wanted = cover(&polygon, 12, 12);
         for mode in ["walking", "cycling", "wheelchair"] {
             let archive = std::fs::read(dir.join(format!("{mode}.pmtiles"))).unwrap();
             let first = &archive[..FIRST_FETCH as usize];
+            let zoom = Header::parse(first).unwrap().min_zoom;
+            let wanted = cover(&polygon, zoom, zoom);
             let mut planner = MapPlanner::for_tiles(first, &wanted).unwrap();
             let mut leaves = 0;
             loop {
@@ -502,7 +503,7 @@ fn plans_the_planet_transfer_archives() {
                 let found = chunks(&tiles, gap, MAX_CHUNK_BYTES);
                 let bytes: u64 = found.iter().map(|c| c.length).sum();
                 println!(
-                    "{name} {mode}: {} tiles (largest {largest} B), {leaves} leaves, gap {gap}: \
+                    "{name} {mode} z{zoom}: {} tiles (largest {largest} B), {leaves} leaves, gap {gap}: \
                      {} ranges, {bytes} B, exact {exact} ({:.1}% over)",
                     tiles.len(),
                     found.len(),

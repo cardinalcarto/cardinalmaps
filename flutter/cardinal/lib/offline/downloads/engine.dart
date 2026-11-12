@@ -409,12 +409,12 @@ class OfflineDownloads {
             PlannedFile(
               kind: ReleaseKind.transit,
               release: r.transit!,
-              path: transferPath(mode, x, y),
+              path: transferPath(mode, plan.transferArchives[mode]!.zoom, x, y),
               bytes: bytes,
               archive: transferArchivePath(r.transit!, mode),
               installPath: transitInstallPath(
                 r.transit!,
-                transferPath(mode, x, y),
+                transferPath(mode, plan.transferArchives[mode]!.zoom, x, y),
               ),
             ),
     ];
@@ -446,8 +446,8 @@ class OfflineDownloads {
       final fetch = {
         for (final f in transferFiles)
           if (f.archive == archive.path && !have.contains(f.path))
-            if (parseTransferPath(f.path) case (_, final x, final y))
-              (12, x, y),
+            if (parseTransferPath(f.path) case (_, final z, final x, final y))
+              (z, x, y),
       }.toList();
       if (fetch.isEmpty) continue;
       archive.planning.want(fetch);
@@ -614,7 +614,13 @@ class OfflineDownloads {
               for (final t in range.tiles)
                 ChunkFilesCompanion.insert(
                   chunkId: chunk,
-                  fileId: fileIds[transferPath(mode, t.tile.$2, t.tile.$3)]!,
+                  fileId:
+                      fileIds[transferPath(
+                        mode,
+                        t.tile.$1,
+                        t.tile.$2,
+                        t.tile.$3,
+                      )]!,
                   start: t.start,
                   length: t.length,
                 ),
@@ -1068,7 +1074,7 @@ class OfflineDownloads {
     ];
     final items = <RangeTransferItem>[
       for (final (at, f) in wanted)
-        if (parseTransferPath(f.path) case (final mode, final x, final y))
+        if (parseTransferPath(f.path) case (final mode, _, final x, final y))
           (
             start: at.start,
             length: at.length,

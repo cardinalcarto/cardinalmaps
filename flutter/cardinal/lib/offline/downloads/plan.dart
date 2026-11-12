@@ -176,7 +176,7 @@ class OfflinePlan {
             key(
               ReleaseKind.transit,
               releases.transit!,
-              transferPath(mode, x, y),
+              transferPath(mode, transferArchives[mode]!.zoom, x, y),
             ),
           )) {
             tiles[(mode, x, y)] = bytes;
@@ -237,11 +237,15 @@ class PlanTotals {
 
 /// Where a transfer tile is under its release (and, under the offline folder, on the
 /// phone; the bucket holds them in [transferArchivePath]).
-String transferPath(String mode, int x, int y) =>
-    'transfers/$mode/12/$x/$y.bin.zst';
+String transferPath(String mode, int zoom, int x, int y) =>
+    'transfers/$mode/$zoom/$x/$y.bin.zst';
 
 /// The map archive in the bucket, under `releases/`.
 String mapArchivePath(String release) => 'map/$release/planet.pmtiles';
+
+/// The zoom the transit index gives feeds' stop cells at (`cell_zoom` in its
+/// `feeds.json`): coarser than transfer tiles, whose zoom comes from their archive.
+const cellZoom = 12;
 
 /// A mode's transfer archive in the bucket, under `releases/`.
 String transferArchivePath(String release, String mode) =>
@@ -253,12 +257,16 @@ class TransferArchive {
     required this.path,
     required this.mode,
     required this.etag,
+    required this.zoom,
     required this.planning,
   });
 
   /// Under `releases/`.
   final String path;
   final String mode;
+
+  /// The zoom its tiles are at (the transit build's tile zoom).
+  final int zoom;
 
   /// What its ranges must match (`If-Match`).
   final String etag;
@@ -272,12 +280,17 @@ String transitInstallPath(String release, String path) =>
     ? 'transit/$release/transfers/$path'
     : 'transit/$release/$path';
 
-/// The mode and tile of a transfer tile's path under its release, or null.
-(String, int, int)? parseTransferPath(String path) {
-  final match = RegExp(r'^transfers/([a-z]+)/12/(\d+)/(\d+)\.bin\.zst$')
+/// The mode, zoom, and tile of a transfer tile's path under its release, or null.
+(String, int, int, int)? parseTransferPath(String path) {
+  final match = RegExp(r'^transfers/([a-z]+)/(\d+)/(\d+)/(\d+)\.bin\.zst$')
       .firstMatch(path);
   if (match == null) return null;
-  return (match[1]!, int.parse(match[2]!), int.parse(match[3]!));
+  return (
+    match[1]!,
+    int.parse(match[2]!),
+    int.parse(match[3]!),
+    int.parse(match[4]!),
+  );
 }
 
 /// Reading what a plan needs from the bucket.
@@ -404,7 +417,7 @@ class Planner {
         final cells = (f['cells']! as List<Object?>).cast<List<Object?>>();
         if (cells.any(
           (c) => polygon.intersects(
-            SlippyTiles.bounds(12, c[0]! as int, c[1]! as int),
+            SlippyTiles.bounds(cellZoom, c[0]! as int, c[1]! as int),
           ),
         )) {
           ids.add(f['id']! as String);
@@ -412,30 +425,40 @@ class Planner {
       }
     }
     final entries = await Future.wait(ids.map((id) => _entry(release, id)));
-    // Each mode's tiles the feeds need inside the polygon, sized by the archive.
-    final wanted = <String, Set<(int, int)>>{};
-    for (final (_, entry) in entries) {
-      for (final MapEntry(key: mode, value: tiles) in _inside(
-        entry,
-        polygon,
-      ).entries) {
-        wanted.putIfAbsent(mode, () => {}).addAll(tiles);
-      }
-    }
-    final archives = <String, TransferArchive>{};
+    // Each mode's archive gives the zoom its tiles are at; the feeds' tiles inside the
+    // polygon at that zoom are sized by its directory.
+    final modes = {
+      for (final (_, entry) in entries)
+        ...(entry['transfer_tiles'] as Map<String, Object?>? ?? const {}).keys,
+    };
+    final archives = <String, TransferArchive>{
+      for (final mode in modes)
+        mode: await transferArchive(
+          release,
+          mode,
+          const [],
+          etag: etags[transferArchivePath(release, mode)],
+        ),
+    };
+    final zooms = {for (final a in archives.values) a.mode: a.zoom};
     final sizes = <(String, int, int), int>{};
-    for (final MapEntry(key: mode, value: tiles) in wanted.entries) {
-      final archive = await transferArchive(release, mode, [
-        for (final (x, y) in tiles) (12, x, y),
-      ], etag: etags[transferArchivePath(release, mode)]);
-      archives[mode] = archive;
+    for (final archive in archives.values) {
+      final wanted = {
+        for (final (_, entry) in entries)
+          for (final (x, y)
+              in _inside(entry, polygon, zooms)[archive.mode] ??
+                  const <(int, int)>[])
+            (archive.zoom, x, y),
+      }.toList();
+      archive.planning.want(wanted);
+      await _loadLeaves(archive);
       for (final found in archive.planning.found()) {
-        sizes[(mode, found.tile.$2, found.tile.$3)] = found.length;
+        sizes[(archive.mode, found.tile.$2, found.tile.$3)] = found.length;
       }
     }
     final feeds = [
       for (final (summary, entry) in entries)
-        _feed(release, summary, entry, polygon, sizes),
+        _feed(release, summary, entry, polygon, sizes, zooms),
     ];
     return (feeds..sort((a, b) => a.index.compareTo(b.index)), archives);
   }
@@ -458,24 +481,32 @@ class Planner {
     final archiveEtag = first.etag ?? etag;
     if (archiveEtag == null) throw StateError('$key has no ETag');
     final planning = await native.archivePlanner(key, first.bytes, tiles);
+    final archive = TransferArchive(
+      path: key,
+      mode: mode,
+      etag: archiveEtag,
+      zoom: planning.zoom,
+      planning: planning,
+    );
+    await _loadLeaves(archive);
+    return archive;
+  }
+
+  /// Fetches the leaf directories the archive's wanted tiles need.
+  Future<void> _loadLeaves(TransferArchive archive) async {
+    final planning = archive.planning;
     for (var leaves = planning.neededLeaves(); leaves.isNotEmpty;) {
       for (final (start, length) in leaves) {
         final leaf = await bucket.range(
-          key,
+          archive.path,
           start,
           length,
-          ifMatch: archiveEtag,
+          ifMatch: archive.etag,
         );
         await planning.addLeaf(start, leaf.bytes);
       }
       leaves = planning.neededLeaves();
     }
-    return TransferArchive(
-      path: key,
-      mode: mode,
-      etag: archiveEtag,
-      planning: planning,
-    );
   }
 
   Future<(Map<String, Object?>, Map<String, Object?>)> _entry(
@@ -488,22 +519,25 @@ class Planner {
         as Map<String, Object?>,
   );
 
-  /// The feed's transfer tiles, by mode, that intersect [polygon].
+  /// The feed's transfer tiles, by mode, that intersect [polygon], each mode's at the
+  /// zoom its archive is ([zooms]).
   static Map<String, List<(int, int)>> _inside(
     Map<String, Object?> entry,
     GeoPolygon polygon,
+    Map<String, int> zooms,
   ) => {
     for (final MapEntry(key: mode, value: list)
         in (entry['transfer_tiles'] as Map<String, Object?>? ?? const {})
             .cast<String, List<Object?>>()
             .entries)
-      mode: [
-        for (final t in list.cast<List<Object?>>())
-          if (polygon.intersects(
-            SlippyTiles.bounds(12, t[0]! as int, t[1]! as int),
-          ))
-            (t[0]! as int, t[1]! as int),
-      ],
+      if (zooms[mode] case final zoom?)
+        mode: [
+          for (final t in list.cast<List<Object?>>())
+            if (polygon.intersects(
+              SlippyTiles.bounds(zoom, t[0]! as int, t[1]! as int),
+            ))
+              (t[0]! as int, t[1]! as int),
+        ],
   };
 
   CandidateFeed _feed(
@@ -512,6 +546,7 @@ class Planner {
     Map<String, Object?> entry,
     GeoPolygon polygon,
     Map<(String, int, int), int> sizes,
+    Map<String, int> zooms,
   ) {
     final id = summary['id']! as String;
     PlannedFile file(Map<String, Object?> ref) => PlannedFile(
@@ -528,6 +563,7 @@ class Planner {
       for (final MapEntry(key: mode, value: list) in _inside(
         entry,
         polygon,
+        zooms,
       ).entries)
         mode: [
           for (final (x, y) in list)

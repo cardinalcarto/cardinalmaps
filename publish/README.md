@@ -26,7 +26,7 @@ releases/
     release.json                    Valhalla build ID, source, commits, counts, index cells
   transit/DATE/
     timetables/FEED.timetable
-    transfers/MODE.pmtiles          one PMTiles archive per mode: each mode's zoom 12 transfer tiles, as built
+    transfers/MODE.pmtiles          one PMTiles archive per mode: each mode's zoom 14 transfer tiles, as built
     snaps/MODE/FEED_INDEX.bin
     index/X/Y.json                  zoom 6 tiles: feeds with stops there, and their zoom 12 cells
     feeds/FEED.json, feeds.json     feed summaries: names, agencies, license, dates, sizes
@@ -50,7 +50,7 @@ routing release's.
 On a phone, transit files go where the manifest names them: `snaps/MODE/N.bin`
 is stored at `transfers/snaps/MODE/N.bin`, everything else at the same path. A
 phone takes the transfer tiles it needs out of `transfers/MODE.pmtiles` by range
-requests, and stores each loose at `transfers/MODE/12/X/Y.bin.zst`, as the build
+requests, and stores each loose at `transfers/MODE/14/X/Y.bin.zst`, as the build
 wrote it, so the loader reads the same layout either way.
 The phone writes `transfers/manifest.json` as `manifest/shared.json` without
 `feed_ids`, plus `feeds`: its own feeds' entries from `manifest/feeds/`, as

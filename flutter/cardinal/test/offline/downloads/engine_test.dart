@@ -133,7 +133,12 @@ void main() {
         for (final (x, y, bytes) in tiles) {
           // Sized by the archive's directory.
           expect(bytes, release.transferTileBytes[(mode, x, y)]!.length);
-          expect(downtown.intersects(SlippyTiles.bounds(12, x, y)), isTrue);
+          expect(
+            downtown.intersects(
+              SlippyTiles.bounds(FakeRelease.transferZoom, x, y),
+            ),
+            isTrue,
+          );
         }
       }
       expect(feed.transferBytes, greaterThan(0));
@@ -252,7 +257,7 @@ void main() {
           );
         } else if (f.archive != null) {
           // Out of a range of its archive, loose as the build wrote it.
-          final (mode, x, y) = parseTransferPath(f.path)!;
+          final (mode, _, x, y) = parseTransferPath(f.path)!;
           expect(
             await installed.readAsBytes(),
             release.transferTileBytes[(mode, x, y)],
@@ -497,7 +502,8 @@ void main() {
         .map((e) => (e.key, e.value.first.$1, e.value.first.$2, 0))
         .first;
     final archive = transferArchivePath(transitDate, mode);
-    final (start, _) = release.archives[archive]![(12, x, y)]!;
+    final (start, _) =
+        release.archives[archive]![(FakeRelease.transferZoom, x, y)]!;
     // A byte of the tile changed once: the range fails its check and comes again.
     server.corruptOnceAt[archive] = start + 3;
     final id = await engine.start(plan, feeds: {metro});
@@ -510,7 +516,7 @@ void main() {
     expect(retried.error, contains('checksum mismatch'));
     expect(retried.state, ChunkState.deleted);
     final row = (await files()).singleWhere(
-      (f) => f.path == transferPath(mode, x, y),
+      (f) => f.path == transferPath(mode, FakeRelease.transferZoom, x, y),
     );
     expect(row.state, FileState.installed);
 
@@ -975,9 +981,16 @@ void main() {
       throwsArgumentError,
     );
     expect(SlippyTiles.at(12, 47.6062, -122.3321), (656, 1430));
+    expect(SlippyTiles.at(14, 47.6062, -122.3321), (2624, 5721));
     expect(
-      transferPath('walking', 656, 1430),
-      'transfers/walking/12/656/1430.bin.zst',
+      transferPath('walking', 14, 2624, 5721),
+      'transfers/walking/14/2624/5721.bin.zst',
     );
+    expect(parseTransferPath('transfers/walking/14/2624/5721.bin.zst'), (
+      'walking',
+      14,
+      2624,
+      5721,
+    ));
   });
 }

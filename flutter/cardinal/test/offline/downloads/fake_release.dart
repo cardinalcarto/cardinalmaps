@@ -108,6 +108,9 @@ class FakeRelease {
   /// The bytes before an archive's first tile.
   static const archiveHeader = 16384;
 
+  /// The zoom of the transfer tiles (valinor's `TILE_ZOOM`).
+  static const transferZoom = 14;
+
   /// Publishes another transit release, over another routing release, as latest.
   Future<void> publishOtherTransit(String date) async {
     await putJson('latest.json', {
@@ -160,28 +163,36 @@ class FakeRelease {
     }, gzipped: false);
 
     // Transit.
-    final cellsOf = <String, List<(int, int)>>{
+    // Each feed's stops: the index lists their zoom 12 cells, and transfer tiles are at
+    // zoom [transferZoom].
+    final stopsOf = <String, List<(double, double)>>{
       'us-wa-Metro-Transit': [
-        SlippyTiles.at(12, 47.61, -122.335),
-        SlippyTiles.at(12, 47.62, -122.31),
-        SlippyTiles.at(12, 47.63, -122.30),
+        (47.61, -122.335),
+        (47.62, -122.31),
+        (47.63, -122.30),
       ],
-      'us-wa-Kitsap-Transit': [SlippyTiles.at(12, 47.63, -122.52)],
-      'us-wa-Far-Away': [SlippyTiles.at(12, 47.2, -122.9)],
+      'us-wa-Kitsap-Transit': [(47.63, -122.52)],
+      'us-wa-Far-Away': [(47.2, -122.9)],
     };
     final byIndexTile = <(int, int), List<Map<String, Object?>>>{};
     final shared = <String, Object?>{
       'manifest_id': 'bd1c61618c8c9ac9',
       'valhalla_build_id': buildId,
       'tile_format_version': 1,
-      'zoom': 12,
+      'zoom': transferZoom,
       'walking_bound_seconds': 900,
       'cycling_bound_seconds': 900,
       'feed_count': 2170,
       'feed_ids': ['a', 'b'],
     };
     for (final MapEntry(key: id, value: index) in feeds.entries) {
-      final cells = cellsOf[id]!;
+      final cells = {
+        for (final (lat, lng) in stopsOf[id]!) SlippyTiles.at(12, lat, lng),
+      };
+      final stopTiles = [
+        for (final (lat, lng) in stopsOf[id]!)
+          SlippyTiles.at(transferZoom, lat, lng),
+      ];
       for (final (x, y) in cells) {
         byIndexTile.putIfAbsent((x >> 6, y >> 6), () => []).add({
           'id': id,
@@ -201,7 +212,7 @@ class FakeRelease {
         var transferBytes = 0;
         // A tile per stop cell, and its neighbour to the east.
         final modeTiles = <List<int>>[
-          for (final (x, y) in cells) ...[
+          for (final (x, y) in stopTiles) ...[
             [x, y],
             [x + 1, y],
           ],
@@ -270,7 +281,7 @@ class FakeRelease {
       for (final MapEntry(key: (m, x, y), value: tile)
           in transferTileBytes.entries) {
         if (m != mode) continue;
-        at[(12, x, y)] = (body.length, tile.length);
+        at[(transferZoom, x, y)] = (body.length, tile.length);
         body.add(tile);
       }
       final key = 'transit/$transitDate/transfers/$mode.pmtiles';

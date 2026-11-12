@@ -268,13 +268,13 @@ def write_transit_build(root: Path, build_id=4060):
                         "sha256": put(f"transfers/snaps/{mode}/{index}.bin", f"{mode}{index}".encode())}
                  for mode in ("walking", "cycling")}
         feeds.append({"id": feed_id, "timetable": timetable, "timetable_bytes": 50, "timetable_sha256": sha,
-                      "stop_count": 3, "stop_snaps": snaps, "transfer_tiles": {"walking": [[656, 1430]]}})
+                      "stop_count": 3, "stop_snaps": snaps, "transfer_tiles": {"walking": [[2624, 5721]]}})
     tiles = {}
     for mode in ("walking", "cycling"):
         data = mode.encode() * 10
-        put(f"transfers/{mode}/12/656/1430.bin.zst", data)
-        tiles[mode] = [{"x": 656, "y": 1430, "bytes": len(data)}]
-    manifest = {"manifest_id": "00ff", "valhalla_build_id": build_id, "tile_format_version": 1, "zoom": 12,
+        put(f"transfers/{mode}/14/2624/5721.bin.zst", data)
+        tiles[mode] = [{"x": 2624, "y": 5721, "bytes": len(data)}]
+    manifest = {"manifest_id": "00ff", "valhalla_build_id": build_id, "tile_format_version": 1, "zoom": 14,
                 "feeds": feeds, "tiles": tiles}
     put("transfers/manifest.json", json.dumps(manifest).encode())
     staging = root / "staging"
@@ -298,8 +298,8 @@ def pack_bin():
     return transit.default_pack_bin()
 
 
-def read_archive_tile(archive: bytes, x, y):
-    """A zoom 12 tile's bytes from an archive cardinal-pack wrote (no leaf directories)."""
+def read_archive_tile(archive: bytes, z, x, y):
+    """A tile's bytes from an archive cardinal-pack wrote (no leaf directories)."""
     import gzip as gz
 
     def varints(data):
@@ -336,7 +336,7 @@ def read_archive_tile(archive: bytes, x, y):
         at = at if offsets[i] == 0 and i > 0 else offsets[i] - 1
         position[tile_ids[i]] = (at, lengths[i])
         at += lengths[i]
-    start, length = position[hilbert(12, x, y)]
+    start, length = position[hilbert(z, x, y)]
     return archive[data_offset + start:data_offset + start + length]
 
 
@@ -360,10 +360,10 @@ def test_transit_publishes_against_its_routing_release(tmp_path, pack_bin):
     assert (root / "timetables/a.timetable").read_bytes() == b"a" * 50
     assert (root / "snaps/cycling/1.bin").read_bytes() == b"cycling1"
     # Transfer tiles are in one archive per mode, not loose.
-    assert not (root / "transfers/walking/12").exists()
+    assert not (root / "transfers/walking/14").exists()
     archive = (root / "transfers/walking.pmtiles").read_bytes()
     assert archive[:8] == b"PMTiles\x03" and archive[98:100] == bytes([1, 0])
-    assert read_archive_tile(archive, 656, 1430) == b"walking" * 10
+    assert read_archive_tile(archive, 14, 2624, 5721) == b"walking" * 10
     assert release["transfer_archives"]["walking"] == {
         "path": "transfers/walking.pmtiles", "bytes": len(archive),
         "sha256": __import__("hashlib").sha256(archive).hexdigest(), "tiles": 1,
@@ -384,7 +384,7 @@ def test_transit_publishes_against_its_routing_release(tmp_path, pack_bin):
     assert not (tmp_path / "bucket/releases/transit/2026-11-13").exists()
 
     # A transfer tile that isn't the size the manifest gives is refused when packing.
-    tile = build / "transfers/cycling/12/656/1430.bin.zst"
+    tile = build / "transfers/cycling/14/2624/5721.bin.zst"
     tile.write_bytes(b"short")
     for path in work.rglob("cycling.*"):
         path.unlink()

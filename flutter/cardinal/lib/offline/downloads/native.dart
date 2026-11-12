@@ -70,6 +70,9 @@ abstract class ArchivePlanning {
   /// Looks for [tiles] instead, keeping the leaves fetched so far.
   void want(List<TileKey> tiles);
 
+  /// The one zoom the archive holds.
+  int get zoom;
+
   /// The wanted tiles the archive has, with their sizes.
   List<ArchiveTileAt> found();
 
@@ -341,6 +344,15 @@ class _RustArchivePlanning implements ArchivePlanning {
 
   @override
   void want(List<TileKey> tiles) => _planner.want(tiles: _archiveTiles(tiles));
+
+  @override
+  int get zoom {
+    try {
+      return _planner.zoom();
+    } on routing.ArchiveError catch (e) {
+      throw StateError(e.message);
+    }
+  }
 
   @override
   List<ArchiveTileAt> found() => [

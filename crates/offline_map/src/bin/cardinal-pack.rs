@@ -6,8 +6,8 @@
 //! cardinal-pack transfers --build BUILD --mode MODE --out OUT.pmtiles [--report REPORT.json]
 //! ```
 //!
-//! Tiles stay as the build wrote them (`transfers/MODE/12/X/Y.bin.zst`, a zstd frame each),
-//! at zoom 12, in tile ID (Hilbert) order; the header says tile type unknown and
+//! Tiles stay as the build wrote them (`transfers/MODE/ZOOM/X/Y.bin.zst`, a zstd frame each),
+//! at the manifest's zoom (14), in tile ID (Hilbert) order; the header says tile type unknown and
 //! compression none, and the metadata says what the tiles are. Every tile the manifest
 //! lists for the mode must be there at the size it gives. The archive is written beside
 //! `OUT` and renamed into place once whole.
