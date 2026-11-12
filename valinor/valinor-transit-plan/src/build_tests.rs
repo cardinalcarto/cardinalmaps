@@ -247,6 +247,94 @@ fn a_subset_of_feeds_leaves_out_walks_to_the_others() {
     assert_eq!(build.report.walks[0], 1, "only the walk within feed one");
 }
 
+/// The fixture's manifest with only the feeds at `keep`, each giving its index.
+fn with_explicit_indices(fixture: &mut Fixture, keep: &[usize]) {
+    let feeds = fixture.manifest["feeds"].as_array().expect("feeds").clone();
+    let kept: Vec<serde_json::Value> = keep
+        .iter()
+        .map(|&position| {
+            let mut feed = feeds[position].clone();
+            feed["index"] = json!(position);
+            feed
+        })
+        .collect();
+    fixture.manifest["feeds"] = json!(kept);
+    fixture.manifest["feed_count"] = json!(feeds.len());
+    fixture.write_manifest();
+}
+
+#[test]
+fn a_manifest_of_only_some_feeds_keeps_their_indices() {
+    let full = Fixture::new();
+    let expected =
+        TransitBuild::load(full.path(), Some(&Fixture::feeds(&["one", "two"]))).expect("full");
+    let mut fixture = Fixture::new();
+    with_explicit_indices(&mut fixture, &[0, 2]);
+    let build = TransitBuild::load(fixture.path(), None).expect("loads");
+    assert_eq!(build.report, expected.report);
+    for (from, to) in [(1, 2), (1, 0), (2, 1)] {
+        assert_eq!(
+            build.walking.seconds(StopId::new(from), StopId::new(to)),
+            expected.walking.seconds(StopId::new(from), StopId::new(to)),
+        );
+    }
+    assert_eq!(
+        build.walking.seconds(StopId::new(1), StopId::new(2)),
+        Some(90),
+        "feed two is still index 2, though it's second in the list"
+    );
+
+    // Only `two`: walks to `one` (index 0) are left out, as for a subset of the full manifest.
+    let mut only_two = Fixture::new();
+    with_explicit_indices(&mut only_two, &[2]);
+    let build = TransitBuild::load(only_two.path(), None).expect("loads");
+    let subset = TransitBuild::load(full.path(), Some(&Fixture::feeds(&["two"]))).expect("subset");
+    assert_eq!(build.report, subset.report);
+    assert_eq!(build.walking.stop_count(), 2);
+}
+
+#[test]
+fn inconsistent_feed_indices_are_errors() {
+    type Edit = fn(&mut serde_json::Value);
+    let cases: [(&str, Edit); 6] = [
+        ("mixed", |m| {
+            m["feeds"][0].as_object_mut().expect("feed").remove("index");
+        }),
+        ("no feed_count", |m| {
+            m.as_object_mut().expect("manifest").remove("feed_count");
+        }),
+        ("out of range", |m| m["feeds"][1]["index"] = json!(3)),
+        ("duplicate", |m| m["feeds"][1]["index"] = json!(0)),
+        ("decreasing", |m| {
+            m["feeds"][0]["index"] = json!(2);
+            m["feeds"][1]["index"] = json!(0);
+        }),
+        ("too large for an index", |m| {
+            m["feeds"][1]["index"] = json!(1_u64 << 32);
+        }),
+    ];
+    for (name, edit) in cases {
+        let mut fixture = Fixture::new();
+        with_explicit_indices(&mut fixture, &[0, 2]);
+        edit(&mut fixture.manifest);
+        fixture.write_manifest();
+        let error = TransitBuild::load(fixture.path(), None).expect_err(name);
+        assert!(
+            matches!(
+                error,
+                BuildLoadError::FeedIndices(_) | BuildLoadError::Manifest { .. }
+            ),
+            "{name}: {error}"
+        );
+        if name != "too large for an index" {
+            assert!(
+                matches!(error, BuildLoadError::FeedIndices(_)),
+                "{name}: {error}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_tile_missing_from_disk_simply_has_no_walks() {
     let fixture = Fixture::new();

@@ -1400,13 +1400,11 @@ fn the_feed_index_places_each_stop_and_its_manifest_parts_open_one_feed() {
     assert_eq!(all["feeds"][1], summary);
     assert_eq!(all["manifest_id"], manifest.manifest_id.as_str());
 
-    // A client with only feed B builds its manifest from the shared part and B's entry, with
-    // the other positions held by stubs, and opens the same walks as from the whole build.
+    // A client with only feed B opens a manifest of the shared part and B's entry as published,
+    // index included, and gets the same walks as from the whole build.
     let shared = read_json(&index_dir.join("manifest/shared.json"));
     assert!(shared.get("tiles").is_none() && shared.get("feeds").is_none());
-    let mut entry = read_json(&index_dir.join("manifest/feeds/feed-b.json"));
-    assert_eq!(entry["index"], 1);
-    entry.as_object_mut().expect("object").remove("index");
+    assert_eq!(shared["feed_count"], 3);
     let ids = shared["feed_ids"].as_array().expect("ids").clone();
     assert_eq!(
         ids,
@@ -1415,20 +1413,12 @@ fn the_feed_index_places_each_stop_and_its_manifest_parts_open_one_feed() {
             .expect("a")
             .clone()
     );
+    let entry = read_json(&index_dir.join("manifest/feeds/feed-b.json"));
+    assert_eq!(entry["index"], 1);
     let mut client_manifest = shared.clone();
     let object = client_manifest.as_object_mut().expect("object");
     object.remove("feed_ids");
-    let feeds: Vec<serde_json::Value> = ids
-        .iter()
-        .map(|id| {
-            if id == "feed-b" {
-                entry.clone()
-            } else {
-                serde_json::json!({ "id": id, "stop_count": 0 })
-            }
-        })
-        .collect();
-    object.insert("feeds".to_owned(), feeds.into());
+    object.insert("feeds".to_owned(), serde_json::json!([entry]));
     let client = tempfile::tempdir().expect("client");
     fs::create_dir_all(client.path().join("transfers")).expect("mkdir");
     fs::write(

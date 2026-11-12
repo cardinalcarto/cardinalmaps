@@ -462,10 +462,12 @@ beside the build (see `feed_index`). Its `index/<x>/<y>.json` lists, for each zo
 feeds with stops there and the zoom 12 cells of those stops, read from the timetables;
 `feeds/<id>.json` and `feeds.json` summarize feeds (agencies, license, service dates, and
 download sizes). `manifest/shared.json` is the manifest without its feeds and global tile list,
-with `feed_ids` in index order, and `manifest/feeds/<id>.json` is one feed's entry with its
-`index`. The loader reads only the scalar fields and the loaded feeds' entries, at their
-positions, so a client can write the manifest it opens from these: the shared fields, its
-feeds' entries, and `{"id": ..., "stop_count": 0}` for every other position.
+with `feed_count` and `feed_ids` in index order, and `manifest/feeds/<id>.json` is one feed's
+entry with its `index`. The loader reads only the scalar fields and the loaded feeds' entries,
+so a client opens the shared fields (less `feed_ids`) with `feeds` holding just its own
+entries, in increasing index order. A feed's `index` is what transfer tiles address its stops
+by; without one, it is the feed's position in `feeds`. Indices are given by every feed or by
+none, and must be strictly increasing and below `feed_count`.
 
 ## Testing
 

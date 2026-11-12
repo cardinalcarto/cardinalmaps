@@ -12,10 +12,11 @@
 //!   dates, and the files a client downloads for it, with their sizes; and `feeds.json`, all of
 //!   them in one file, for browsing the whole build. A client choosing feeds in an area fetches
 //!   only the summaries it shows: `feeds.json` is megabytes, a summary about one kilobyte.
-//! - `manifest/shared.json`, the manifest's scalar fields and its feed IDs in index order
-//!   (transfer tiles address a stop by its feed's position in that order),
+//! - `manifest/shared.json`, the manifest's scalar fields with `feed_count`, and its feed IDs
+//!   in index order as `feed_ids` (transfer tiles address a stop by its feed's index),
 //!   and `manifest/feeds/<id>.json`, each feed's manifest entry with its `index`.
-//!   A client builds the manifest it opens from these; it never needs the global tile list
+//!   A client opens the manifest made of the shared fields (less `feed_ids`) and, as `feeds`,
+//!   the entries of its own feeds in index order; it never needs the global tile list
 //!   or another feed's entry.
 //! - `realtime.json`, the compile stage's GTFS-RT sources, as `{"feeds": [...]}`.
 //!
@@ -376,7 +377,7 @@ fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(), Build
     write_atomic(path, &bytes)
 }
 
-/// The manifest without its feeds and tiles, with the feeds' IDs in index order.
+/// The manifest without its feeds and tiles, with the feeds' IDs in index order and their count.
 fn shared_manifest(
     raw: &BTreeMap<String, Box<RawValue>>,
     manifest: &Manifest,
@@ -393,6 +394,12 @@ fn shared_manifest(
         source,
     })?;
     shared.insert("feed_ids".to_owned(), ids);
+    let count = u32::try_from(manifest.feeds.len()).map_err(|_| BuildError::TooManyEntries)?;
+    let count = serde_json::value::to_raw_value(&count).map_err(|source| BuildError::Json {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    shared.insert("feed_count".to_owned(), count);
     Ok(shared)
 }
 
