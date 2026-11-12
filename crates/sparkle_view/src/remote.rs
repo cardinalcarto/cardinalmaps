@@ -102,7 +102,9 @@ impl TileServer {
         let metadata = Metadata {
             format: match json["format"].as_str() {
                 Some(name) => TileFormat::from_name(name).with_context(|| url.to_owned())?,
-                None => format,
+                // Without `format` (as go-pmtiles serves TileJSON), the tile URLs'
+                // extension, such as `.mlt`, says; failing that, `format`.
+                None => template_format(&template).unwrap_or(format),
             },
             min_zoom: zoom("minzoom", 0),
             max_zoom: zoom("maxzoom", 22),
@@ -225,4 +227,26 @@ fn get(
         None
     };
     Ok((status, body, etag))
+}
+
+/// The tile format a tile URL template's extension names (`…/{z}/{x}/{y}.mlt`), if any.
+fn template_format(template: &str) -> Option<TileFormat> {
+    let path = template.split(['?', '#']).next()?;
+    let (_, ext) = path.rsplit_once('/')?.1.rsplit_once('.')?;
+    TileFormat::from_name(&ext.to_ascii_lowercase()).ok()
+}
+
+#[cfg(test)]
+mod template_format_tests {
+    use super::*;
+
+    #[test]
+    fn the_tile_urls_extension_names_the_format() {
+        let mlt = template_format("https://tiles.example.org/2026-11-11/planet/{z}/{x}/{y}.mlt");
+        assert!(matches!(mlt, Some(TileFormat::Mlt)));
+        let mvt = template_format("https://example.org/t/{z}/{x}/{y}.pbf?key=1");
+        assert!(matches!(mvt, Some(TileFormat::Mvt)));
+        assert!(template_format("http://127.0.0.1:3001/tiles/basemap/{z}/{x}/{y}").is_none());
+        assert!(template_format("https://example.org/v1.2/{z}/{x}/{y}").is_none());
+    }
 }
