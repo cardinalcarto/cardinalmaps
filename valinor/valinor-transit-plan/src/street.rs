@@ -341,6 +341,15 @@ impl ModeWorker<'_> {
         self.egress.release_search();
         self.transfer.release_search();
     }
+
+    /// Forgets the tiles this mode's searches have read, and those they found missing,
+    /// and the stops they attached (a stop whose tile was missing wasn't attached).
+    fn forget_tiles(&mut self) {
+        for table in [&mut self.access, &mut self.egress, &mut self.transfer] {
+            table.forget_tiles();
+            table.unbind();
+        }
+    }
 }
 
 /// One thread's search storage: per-mode searches and a Thor workspace.
@@ -350,11 +359,15 @@ struct Worker<'a> {
     wheelchair: ModeWorker<'a>,
     thor: Thor<&'a TileSets>,
     workspace: Workspace,
+    /// The tile sets' [`TileSets::generation`] when the searches last forgot their tiles:
+    /// a search remembers tiles it found missing, which may have arrived since.
+    tiles_generation: u64,
 }
 
 impl<'a> Worker<'a> {
     fn new(tiles: &'a TileSets, retention: Retention) -> Result<Self, StreetError> {
         Ok(Self {
+            tiles_generation: tiles.generation(),
             walking: ModeWorker::new(tiles, TravelMode::Walking)?,
             cycling: ModeWorker::new(tiles, TravelMode::Cycling)?,
             wheelchair: ModeWorker::new(tiles, TravelMode::Wheelchair)?,
@@ -376,6 +389,18 @@ impl<'a> Worker<'a> {
         self.walking.release_search();
         self.cycling.release_search();
         self.wheelchair.release_search();
+    }
+
+    /// Makes the searches see tiles that arrived since they last looked
+    /// (they remember missing tiles), if the tile sets were refreshed since.
+    fn catch_up_with(&mut self, tiles: &TileSets) {
+        let generation = tiles.generation();
+        if generation != self.tiles_generation {
+            self.walking.forget_tiles();
+            self.cycling.forget_tiles();
+            self.wheelchair.forget_tiles();
+            self.tiles_generation = generation;
+        }
     }
 }
 
@@ -765,7 +790,10 @@ impl<'a> WorkerPool<'a> {
             .unwrap_or_else(PoisonError::into_inner)
             .pop();
         match idle {
-            Some(worker) => Ok(worker),
+            Some(mut worker) => {
+                worker.catch_up_with(self.tiles);
+                Ok(worker)
+            }
             None => Worker::new(self.tiles, self.retention),
         }
     }
@@ -1151,6 +1179,22 @@ impl StreetPlanner {
         })
     }
 
+    /// The street tile sets.
+    #[inline]
+    pub fn tiles(&self) -> &TileSets {
+        self.cell.borrow_owner()
+    }
+
+    /// Makes street tiles that arrived in the tile directories since the planner was opened
+    /// (or last refreshed) available to plans ([`TileSets::refresh`]).
+    ///
+    /// Search workers remember tiles they found missing; each forgets them the next time
+    /// it is taken for a plan. Call it once new tile files are in place.
+    /// It is safe while plans run; a plan that is running may or may not see the new tiles.
+    pub fn refresh_tiles(&self) {
+        self.tiles().refresh();
+    }
+
     /// The latest real-time state of a vehicle.
     ///
     /// # Errors
@@ -1180,6 +1224,7 @@ impl StreetPlanner {
             wheelchair,
             thor,
             workspace,
+            tiles_generation: _,
         } = worker;
         let mode_worker = match request.mode {
             TravelMode::Walking => walking,

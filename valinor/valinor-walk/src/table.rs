@@ -699,6 +699,12 @@ impl<P: GraphTileProvider, C: Costing> StopTables<P, C> {
         self.attachments = Some(attachments);
     }
 
+    /// Forgets the bound stops, so that the next [`Self::bind`] attaches them again
+    /// (for tiles that have arrived since: a stop whose tile was absent wasn't attached).
+    pub fn unbind(&mut self) {
+        self.attachments = None;
+    }
+
     /// The attachments of the bound stops, to bind another search of the same stops to
     /// with [`Self::bind_shared`] rather than build them again.
     pub fn attachments(&self) -> Option<&Arc<StopAttachments>> {

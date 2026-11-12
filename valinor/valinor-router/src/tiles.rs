@@ -483,6 +483,17 @@ impl TileSets {
         }
     }
 
+    /// How many times the sets have been refreshed ([`TileSets::refresh`]).
+    ///
+    /// Whoever remembers that a tile was missing (a search's own tile table, say)
+    /// forgets that when this changes.
+    #[inline]
+    pub fn generation(&self) -> u64 {
+        self.late
+            .as_ref()
+            .map_or(0, |late| late.generation.load(Ordering::Acquire))
+    }
+
     /// The tile's handle from its slot (validated on first use).
     #[inline]
     fn handle(&self, graph_id: GraphId) -> Result<TileRef<'_>, GraphTileProviderError> {
