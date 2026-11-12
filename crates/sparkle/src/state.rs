@@ -202,14 +202,14 @@ impl Bucket {
 
 impl BucketGeometry {
     /// The bucket's paint attributes. Layer types with several sets of them (symbol icons
-    /// and text) list each.
+    /// and text, extrusion roofs and walls) list each.
     pub fn paint(&self) -> Vec<&PaintArrays> {
         match self {
             Self::Fill(b) => vec![&b.paint],
             Self::Line(b) => vec![&b.paint],
             Self::Circle(b) => vec![&b.paint],
             Self::Heatmap(b) => vec![&b.paint],
-            Self::FillExtrusion(b) => vec![&b.paint],
+            Self::FillExtrusion(b) => vec![&b.roofs.paint, &b.walls.paint],
             Self::Symbol(b) => vec![&b.text.paint, &b.icons.paint],
             // Raster-based layer types have no per-feature paint attributes.
             _ => Vec::new(),
@@ -229,7 +229,8 @@ impl BucketGeometry {
             (Self::Circle(b), LayerKind::Circle(l)) => f(&mut b.paint, &l.paint.attributes()),
             (Self::Heatmap(b), LayerKind::Heatmap(l)) => f(&mut b.paint, &l.paint.attributes()),
             (Self::FillExtrusion(b), LayerKind::FillExtrusion(l)) => {
-                f(&mut b.paint, &l.paint.attributes())
+                f(&mut b.roofs.paint, &l.paint.roof_attributes());
+                f(&mut b.walls.paint, &l.paint.attributes());
             }
             (Self::Symbol(b), LayerKind::Symbol(l)) => {
                 f(&mut b.text.paint, &l.text_attributes());

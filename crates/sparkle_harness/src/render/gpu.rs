@@ -223,6 +223,8 @@ pub struct PipelineSpec<'a> {
     /// The layout of the buckets this pipeline draws, if it reads paint attributes.
     pub paint: Option<&'a PaintArrays>,
     pub paint_location: u32,
+    /// Whether the paint buffer has values per vertex (the default) or per instance.
+    pub paint_step: wgpu::VertexStepMode,
     pub topology: wgpu::PrimitiveTopology,
     /// Only draw inside the tile's clip mask (stencil equal to the tile's reference).
     pub clip: bool,
@@ -249,6 +251,7 @@ impl Default for PipelineSpec<'_> {
             vertex_buffers: &[],
             paint: None,
             paint_location: PAINT_LOCATION,
+            paint_step: wgpu::VertexStepMode::Vertex,
             topology: wgpu::PrimitiveTopology::TriangleList,
             clip: true,
             depth: DepthMode::Ignore,
@@ -489,7 +492,7 @@ impl Gpu {
         {
             buffers.push(Some(wgpu::VertexBufferLayout {
                 array_stride: u64::from(p.stride) * 4,
-                step_mode: wgpu::VertexStepMode::Vertex,
+                step_mode: spec.paint_step,
                 attributes: &paint_attributes,
             }));
         }

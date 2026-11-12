@@ -90,32 +90,42 @@ fn extrudes_buildings() {
         let LayerKind::FillExtrusion(layer) = &style.layers[0].kind else {
             panic!()
         };
-        let props = layer.paint.attributes();
+        let (props, roof_props) = (layer.paint.attributes(), layer.paint.roof_attributes());
 
-        // Roof vertices plus four per wall: 4 tower walls, 4 + 4 around the courtyard.
-        let roof = b.vertices.iter().filter(|v| v.normal[2] == 1.0).count();
-        assert_eq!(roof, 4 + 8, "{tessellation:?}");
-        assert_eq!(b.vertices.len(), roof + 4 * 12);
-        assert!(b.triangles.iter().all(|&i| (i as usize) < b.vertices.len()));
-        // Every wall has as many bottom vertices as top ones.
-        let tops = b.vertices.iter().filter(|v| v.top == 1.0).count();
-        assert_eq!(tops, roof + 2 * 12);
+        // Roof vertices; a wall point per ring vertex, plus one to end each ring: the
+        // tower and the block's outside and courtyard.
+        assert_eq!(b.roofs.vertices.len(), 4 + 8, "{tessellation:?}");
+        assert!(
+            b.roofs
+                .triangles
+                .iter()
+                .all(|&i| (i as usize) < b.roofs.vertices.len())
+        );
+        assert_eq!(b.walls.points.len(), 3 * 5);
+        let walls = b.walls.points.iter().filter(|p| p.normal != [0.0; 2]);
+        assert_eq!(walls.count(), 12);
 
-        let ids: Vec<_> = b.paint.features.iter().map(|f| f.id).collect();
-        assert_eq!(ids, [Some(1), Some(2)]);
-        assert_eq!(b.paint.vertex_count(), b.vertices.len());
-        let [color, height, base] = [0, 1, 2].map(|i| b.paint.attributes[i].binding);
-        assert_eq!(color, Binding::Uniform);
-        assert_eq!(height, Binding::Source);
-        assert_eq!(base, Binding::Composite);
-        let value = |name, feature: usize| {
-            let at = b.paint.features[feature].vertices.end as usize - 1;
-            b.paint.value(&props, name, at)
-        };
-        assert_eq!(value("height", 0), [120.0]);
-        assert_eq!(value("height", 1), [15.0]);
-        assert_eq!(value("base", 1), [0.0], "at zoom 14");
-        assert!(b.patterns.is_empty());
+        // Roofs are at the height whatever the base, so they have no base values.
+        for (paint, props, count) in [
+            (&b.roofs.paint, &roof_props[..], b.roofs.vertices.len()),
+            (&b.walls.paint, &props[..], b.walls.points.len()),
+        ] {
+            let ids: Vec<_> = paint.features.iter().map(|f| f.id).collect();
+            assert_eq!(ids, [Some(1), Some(2)]);
+            assert_eq!(paint.vertex_count(), count);
+            let bindings: Vec<_> = paint.attributes.iter().map(|a| a.binding).collect();
+            let expected = [Binding::Uniform, Binding::Source, Binding::Composite];
+            assert_eq!(bindings, expected[..props.len()]);
+            let value = |name, feature: usize| {
+                let at = paint.features[feature].vertices.end as usize - 1;
+                paint.value(props, name, at)
+            };
+            assert_eq!(value("height", 0), [120.0]);
+            assert_eq!(value("height", 1), [15.0]);
+        }
+        let at = b.walls.paint.features[1].vertices.end as usize - 1;
+        assert_eq!(b.walls.paint.value(&props, "base", at), [0.0], "at zoom 14");
+        assert!(b.roofs.patterns.is_empty() && b.walls.patterns.is_empty());
     }
 }
 
@@ -147,14 +157,19 @@ fn patterns_come_from_the_sprite() {
     let BucketGeometry::FillExtrusion(b) = &processed.buckets[0].geometry else {
         panic!()
     };
-    assert_eq!(b.patterns.len(), b.vertices.len());
-    let tower = b.patterns[b.paint.features[0].vertices.start as usize];
-    let square = atlas.get("square").unwrap();
-    assert_eq!(tower.rect, square.rect.map(|v| v as f32));
-    assert_eq!(tower.size, [4.0, 4.0]);
-    // A missing image leaves the feature plain.
-    let block = b.patterns[b.paint.features[1].vertices.start as usize];
-    assert_eq!(block.rect, [0.0; 4]);
+    for (patterns, paint, count) in [
+        (&b.roofs.patterns, &b.roofs.paint, b.roofs.vertices.len()),
+        (&b.walls.patterns, &b.walls.paint, b.walls.points.len()),
+    ] {
+        assert_eq!(patterns.len(), count);
+        let tower = patterns[paint.features[0].vertices.start as usize];
+        let square = atlas.get("square").unwrap();
+        assert_eq!(tower.rect, square.rect.map(|v| v as f32));
+        assert_eq!(tower.size, [4.0, 4.0]);
+        // A missing image leaves the feature plain.
+        let block = patterns[paint.features[1].vertices.start as usize];
+        assert_eq!(block.rect, [0.0; 4]);
+    }
 
     // Without sprites there is nothing to take patterns from.
     let processed = TileProcessor::new()
@@ -163,5 +178,5 @@ fn patterns_come_from_the_sprite() {
     let BucketGeometry::FillExtrusion(b) = &processed.buckets[0].geometry else {
         panic!()
     };
-    assert!(b.patterns.is_empty());
+    assert!(b.roofs.patterns.is_empty() && b.walls.patterns.is_empty());
 }

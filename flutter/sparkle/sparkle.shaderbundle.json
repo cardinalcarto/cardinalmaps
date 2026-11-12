@@ -47,6 +47,14 @@
     "type": "fragment",
     "file": "shaders/fill_extrusion.frag"
   },
+  "FillExtrusionWallVertex": {
+    "type": "vertex",
+    "file": "shaders/fill_extrusion_wall.vert"
+  },
+  "FillExtrusionWallFragment": {
+    "type": "fragment",
+    "file": "shaders/fill_extrusion_wall.frag"
+  },
   "FillExtrusionCompositeVertex": {
     "type": "vertex",
     "file": "shaders/fill_extrusion_composite.vert"

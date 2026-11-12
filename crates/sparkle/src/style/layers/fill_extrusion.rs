@@ -41,4 +41,9 @@ impl FillExtrusionPaint {
             ("base", &self.base),
         ]
     }
+
+    /// [`Self::attributes`] that roofs read: all but `base`, at the same indices.
+    pub fn roof_attributes(&self) -> [(&'static str, &dyn PaintProperty); 2] {
+        [("color", &self.color), ("height", &self.height)]
+    }
 }

@@ -2,9 +2,14 @@
 //! `fill-extrusion-height` and walls down to `fill-extrusion-base`.
 //!
 //! Heights are per-feature paint values that can change with zoom, so vertices don't carry
-//! a height: each has a `top` flag, and the vertex shader puts it at the feature's height or
-//! base. Normals are computed here as MapLibre computes them, so that the shader's lighting
-//! (see [`crate::light`]) matches MapLibre's.
+//! a height: the vertex shader puts each at the feature's height or base. Normals are
+//! computed here as MapLibre computes them, so that the shader's lighting (see
+//! [`crate::light`]) matches MapLibre's.
+//!
+//! Roofs are triangles, as `fill` polygons are. Walls are drawn instanced, a quad per
+//! instance: one [`WallPoint`] per ring vertex, each wall running from a point to the next
+//! one. That takes one point per ring vertex where four vertices and six indices per wall
+//! would take several times as much memory.
 
 use bytemuck::{Pod, Zeroable};
 use mlt_core::geo_types::{Coord, Geometry, LineString};
@@ -15,26 +20,30 @@ use crate::paint::PaintArrays;
 use crate::sprite::ImageAtlas;
 use crate::style::FillExtrusionLayer;
 
+/// A ring vertex, and the wall from it to the next point of its bucket's
+/// [`ExtrusionWalls::points`].
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
-pub struct FillExtrusionVertex {
+pub struct WallPoint {
     /// In tile coordinates.
     pub position: [f32; 2],
-    /// For walls, the distance along the ring from where its wall starts, in tile units;
-    /// the horizontal coordinate of `fill-extrusion-pattern` on walls. Zero on roofs.
+    /// How far along its ring the point is, in tile units, counting only the edges that
+    /// have walls: the horizontal coordinate of `fill-extrusion-pattern` on walls. As in
+    /// MapLibre, a wall's quad has this point's distance at the *next* point's end and
+    /// the next point's distance at this end.
     pub edge_distance: f32,
-    /// A unit normal in tile coordinates (y down): `[0, 0, 1]` on roofs, horizontal on
-    /// walls.
+    /// The unit normal of the wall to the next point, horizontal in tile coordinates
+    /// (y down); zero where no wall starts here (at the end of a ring, and along edges
+    /// that have none).
     ///
     /// As in MapLibre, wall normals point *into* the building (MapLibre takes
     /// `(p1 - p0).perp()` for an edge from `p0` to `p1` of a correctly wound ring). Its light
     /// direction is mirrored the same way, so keep both as they are.
-    pub normal: [f32; 3],
-    /// 1 for vertices at the feature's height, 0 for those at its base.
-    pub top: f32,
+    pub normal: [f32; 2],
 }
 
-/// Where a feature's `fill-extrusion-pattern` image is, repeated for each of its vertices.
+/// Where a feature's `fill-extrusion-pattern` image is, repeated for each of its vertices
+/// (or wall points).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Default, Pod, Zeroable)]
 pub struct FillExtrusionPattern {
@@ -48,7 +57,15 @@ pub struct FillExtrusionPattern {
 /// Roofs and walls of every extruded feature of a style layer in one tile.
 #[derive(Debug, Clone, Default)]
 pub struct FillExtrusionBucket {
-    pub vertices: Vec<FillExtrusionVertex>,
+    pub roofs: ExtrusionRoofs,
+    pub walls: ExtrusionWalls,
+}
+
+/// The roofs of a [`FillExtrusionBucket`]: flat, at each feature's height.
+#[derive(Debug, Clone, Default)]
+pub struct ExtrusionRoofs {
+    /// In tile coordinates.
+    pub vertices: Vec<[f32; 2]>,
     /// Triangle list indices into [`Self::vertices`]. Triangles aren't consistently wound,
     /// so draw them without back-face culling.
     pub triangles: Vec<u32>,
@@ -56,8 +73,29 @@ pub struct FillExtrusionBucket {
     /// to take it from; empty otherwise.
     pub patterns: Vec<FillExtrusionPattern>,
     /// Per-vertex values of
+    /// [`FillExtrusionPaint::roof_attributes`](crate::style::FillExtrusionPaint::roof_attributes):
+    /// roofs are at the feature's height, whatever its base.
+    pub paint: PaintArrays,
+}
+
+/// The walls of a [`FillExtrusionBucket`]: one quad from each point to the next, where the
+/// point has a normal. Draw `points.len() - 1` instances.
+#[derive(Debug, Clone, Default)]
+pub struct ExtrusionWalls {
+    /// Each ring's points in order, then its first point again.
+    pub points: Vec<WallPoint>,
+    /// One per point, as [`ExtrusionRoofs::patterns`] has one per vertex.
+    pub patterns: Vec<FillExtrusionPattern>,
+    /// Per-point values of
     /// [`FillExtrusionPaint::attributes`](crate::style::FillExtrusionPaint::attributes).
     pub paint: PaintArrays,
+}
+
+impl ExtrusionWalls {
+    /// How many walls to draw: one per point but the last.
+    pub fn instances(&self) -> usize {
+        self.points.len().saturating_sub(1)
+    }
 }
 
 pub(crate) fn builder<'a>(
@@ -69,8 +107,14 @@ pub(crate) fn builder<'a>(
     Some(Box::new(FillExtrusionBuilder {
         layer,
         bucket: FillExtrusionBucket {
-            paint: PaintArrays::new(&layer.paint.attributes(), cx.zoom),
-            ..Default::default()
+            roofs: ExtrusionRoofs {
+                paint: PaintArrays::new(&layer.paint.roof_attributes(), cx.zoom),
+                ..Default::default()
+            },
+            walls: ExtrusionWalls {
+                paint: PaintArrays::new(&layer.paint.attributes(), cx.zoom),
+                ..Default::default()
+            },
         },
         extent: cx.extent as i32,
         images: cx.resources.images.filter(|_| has_pattern),
@@ -101,7 +145,8 @@ impl LayerBuilder for FillExtrusionBuilder<'_> {
 
     fn add_feature(&mut self, feature: &mut FeatureInput<'_, '_>) {
         let bucket = &mut self.bucket;
-        let first_vertex = bucket.vertices.len();
+        let counts = |b: &FillExtrusionBucket| (b.roofs.vertices.len(), b.walls.points.len());
+        let before = counts(bucket);
         add_extrusion(
             bucket,
             &mut self.roofs,
@@ -109,9 +154,10 @@ impl LayerBuilder for FillExtrusionBuilder<'_> {
             feature.pre_tessellated,
             self.extent,
         );
-        if bucket.vertices.len() == first_vertex {
+        if counts(bucket) == before {
             return;
         }
+        let (roofs, walls) = (&mut bucket.roofs, &mut bucket.walls);
         if let Some(images) = self.images {
             let pattern = self
                 .layer
@@ -124,19 +170,24 @@ impl LayerBuilder for FillExtrusionBuilder<'_> {
                     size: image.logical_size(),
                 })
                 .unwrap_or_default();
-            bucket.patterns.resize(bucket.vertices.len(), pattern);
+            roofs.patterns.resize(roofs.vertices.len(), pattern);
+            walls.patterns.resize(walls.points.len(), pattern);
         }
-        bucket.paint.populate(
-            &self.layer.paint.attributes(),
-            feature.ctx,
-            feature.id,
-            bucket.vertices.len(),
-        );
+        let paint = &self.layer.paint;
+        let (id, ctx) = (feature.id, &mut *feature.ctx);
+        let count = roofs.vertices.len();
+        roofs
+            .paint
+            .populate(&paint.roof_attributes(), ctx, id, count);
+        let count = walls.points.len();
+        walls.paint.populate(&paint.attributes(), ctx, id, count);
     }
 
     fn finish(self: Box<Self>, scratch: &mut Scratch) -> Option<BucketGeometry> {
         scratch.put(self.roofs);
-        (!self.bucket.vertices.is_empty()).then_some(BucketGeometry::FillExtrusion(self.bucket))
+        let b = self.bucket;
+        (!b.roofs.vertices.is_empty() || !b.walls.points.is_empty())
+            .then_some(BucketGeometry::FillExtrusion(b))
     }
 }
 
@@ -164,30 +215,24 @@ fn add_extrusion(
     {
         return;
     }
-    let base = bucket.vertices.len() as u32;
-    bucket
-        .vertices
-        .extend(fill.vertices.iter().map(|v| FillExtrusionVertex {
-            position: v.position,
-            edge_distance: 0.0,
-            normal: [0.0, 0.0, 1.0],
-            top: 1.0,
-        }));
-    bucket
-        .triangles
+    let roof = &mut bucket.roofs;
+    let base = roof.vertices.len() as u32;
+    roof.vertices
+        .extend(fill.vertices.iter().map(|v| v.position));
+    roof.triangles
         .extend(fill.triangles.iter().map(|&i| i + base));
 
     for polygon in polygons {
-        add_walls(bucket, polygon.exterior(), false, extent);
+        add_walls(&mut bucket.walls, polygon.exterior(), false, extent);
         for hole in polygon.interiors() {
-            add_walls(bucket, hole, true, extent);
+            add_walls(&mut bucket.walls, hole, true, extent);
         }
     }
 }
 
-/// A quad per ring edge, except for edges along the tile's clipped border: the neighbouring
+/// A wall per ring edge, except for edges along the tile's clipped border: the neighbouring
 /// tile's copy of the polygon continues there, so the wall would be inside the building.
-fn add_walls(bucket: &mut FillExtrusionBucket, ring: &LineString<i32>, hole: bool, extent: i32) {
+fn add_walls(walls: &mut ExtrusionWalls, ring: &LineString<i32>, hole: bool, extent: i32) {
     // Rings may or may not repeat their first vertex at the end; walk them as closed.
     let points = match ring.0.as_slice() {
         [first, rest @ .., last] if first == last => &ring.0[..rest.len() + 1],
@@ -204,29 +249,31 @@ fn add_walls(bucket: &mut FillExtrusionBucket, ring: &LineString<i32>, hole: boo
         .map(|(a, b)| i64::from(a.x) * i64::from(b.y) - i64::from(b.x) * i64::from(a.y))
         .sum();
     let sign = if (area > 0) != hole { 1.0 } else { -1.0 };
+    let start = walls.points.len();
     let mut edge_distance = 0.0;
+    let mut any = false;
+    let point = |p: Coord<i32>, edge_distance, normal| WallPoint {
+        position: [p.x as f32, p.y as f32],
+        edge_distance,
+        normal,
+    };
     for (&p0, &p1) in edges() {
         if p0 == p1 || is_boundary_edge(p0, p1, extent) {
+            walls.points.push(point(p0, edge_distance, [0.0; 2]));
             continue;
         }
         let d = [(p1.x - p0.x) as f32, (p1.y - p0.y) as f32];
         let length = d[0].hypot(d[1]);
-        let normal = [-d[1] / length * sign, d[0] / length * sign, 0.0];
-        let first = bucket.vertices.len() as u32;
-        for (p, distance) in [(p1, edge_distance), (p0, edge_distance + length)] {
-            for top in [0.0, 1.0] {
-                bucket.vertices.push(FillExtrusionVertex {
-                    position: [p.x as f32, p.y as f32],
-                    edge_distance: distance,
-                    normal,
-                    top,
-                });
-            }
-        }
+        let normal = [-d[1] / length * sign, d[0] / length * sign];
+        walls.points.push(point(p0, edge_distance, normal));
         edge_distance += length;
-        bucket
-            .triangles
-            .extend([0, 2, 1, 1, 2, 3].map(|i| first + i));
+        any = true;
+    }
+    if any {
+        // The last wall ends at the first point; no wall starts there.
+        walls.points.push(point(points[0], edge_distance, [0.0; 2]));
+    } else {
+        walls.points.truncate(start);
     }
 }
 
@@ -255,11 +302,22 @@ mod tests {
         bucket
     }
 
-    fn roof_vertices(b: &FillExtrusionBucket) -> usize {
-        b.vertices
-            .iter()
-            .filter(|v| v.normal == [0.0, 0.0, 1.0])
-            .count()
+    /// A wall as the shaders draw it: its corners `(position, edge distance)`, bottom and
+    /// top at the next point's end, then bottom and top at this one's, and its normal.
+    type Quad = ([([f32; 2], f32); 4], [f32; 2]);
+
+    fn quads(b: &FillExtrusionBucket) -> Vec<Quad> {
+        b.walls
+            .points
+            .windows(2)
+            .filter(|w| w[0].normal != [0.0; 2])
+            .map(|w| {
+                let (this, next) = (w[0], w[1]);
+                let at_next = (next.position, this.edge_distance);
+                let at_this = (this.position, next.edge_distance);
+                ([at_next, at_next, at_this, at_this], this.normal)
+            })
+            .collect()
     }
 
     #[test]
@@ -267,35 +325,34 @@ mod tests {
         let square =
             polygon![(x: 0, y: 0), (x: 10, y: 0), (x: 10, y: 10), (x: 0, y: 10), (x: 0, y: 0)];
         let b = extrude(&Geometry::Polygon(square));
-        assert_eq!(roof_vertices(&b), 4);
-        assert_eq!(b.vertices.len(), 4 + 4 * 4);
-        assert_eq!(b.triangles.len(), 2 * 3 + 4 * 6);
-        assert!(b.triangles.iter().all(|&i| (i as usize) < b.vertices.len()));
+        assert_eq!(b.roofs.vertices.len(), 4);
+        assert_eq!(b.roofs.triangles.len(), 2 * 3);
+        assert!(b.roofs.triangles.iter().all(|&i| (i as usize) < 4));
+        // A point per corner and the first again, to end the last wall.
+        assert_eq!(b.walls.points.len(), 5);
+        assert_eq!(b.walls.instances(), 4);
+        assert_eq!(b.walls.points[4].position, b.walls.points[0].position);
+        assert_eq!(b.walls.points[4].normal, [0.0; 2]);
 
         // The first edge runs east along the top (north) side; MapLibre's normal for it
         // points south, into the square.
-        let wall = &b.vertices[4..8];
-        assert!(wall.iter().all(|v| v.normal == [0.0, 1.0, 0.0]));
-        assert_eq!(
-            wall.iter().map(|v| v.top).collect::<Vec<_>>(),
-            [0.0, 1.0, 0.0, 1.0]
-        );
+        let walls = quads(&b);
+        assert_eq!(walls.len(), 4);
+        let (corners, normal) = walls[0];
+        assert_eq!(normal, [0.0, 1.0]);
+        assert_eq!(corners[0], ([10.0, 0.0], 0.0));
+        assert_eq!(corners[2], ([0.0, 0.0], 10.0));
         // Edge distances accumulate around the ring.
-        assert_eq!(wall[0].edge_distance, 0.0);
-        assert_eq!(wall[2].edge_distance, 10.0);
-        assert_eq!(b.vertices.last().unwrap().edge_distance, 40.0);
+        assert_eq!(walls[3].0[2].1, 40.0);
     }
 
     /// Each wall's normal and the midpoint of its bottom edge.
-    fn walls(b: &FillExtrusionBucket) -> Vec<([f32; 3], [f32; 2])> {
-        b.vertices
-            .iter()
-            .filter(|v| v.normal[2] == 0.0)
-            .collect::<Vec<_>>()
-            .chunks(4)
-            .map(|q| {
-                let [a, c] = [q[0].position, q[2].position];
-                (q[0].normal, [(a[0] + c[0]) / 2.0, (a[1] + c[1]) / 2.0])
+    fn walls(b: &FillExtrusionBucket) -> Vec<([f32; 2], [f32; 2])> {
+        quads(b)
+            .into_iter()
+            .map(|(q, normal)| {
+                let [a, c] = [q[0].0, q[2].0];
+                (normal, [(a[0] + c[0]) / 2.0, (a[1] + c[1]) / 2.0])
             })
             .collect()
     }
@@ -332,13 +389,31 @@ mod tests {
             (x: -64, y: 4000), (x: 100, y: 4000), (x: 100, y: 4160), (x: -64, y: 4160), (x: -64, y: 4000)
         ];
         let b = extrude(&Geometry::Polygon(clipped));
-        let walls = (b.vertices.len() - roof_vertices(&b)) / 4;
-        assert_eq!(walls, 2);
+        assert_eq!(quads(&b).len(), 2);
+        // Skipped edges add nothing to the distance along the ring: 164 along the top,
+        // then 160 down the right side.
+        assert_eq!(b.walls.points.last().unwrap().edge_distance, 324.0);
         // An edge exactly on the tile border is a real wall, as in MapLibre.
         let on_border =
             polygon![(x: 0, y: 0), (x: 10, y: 0), (x: 10, y: 10), (x: 0, y: 10), (x: 0, y: 0)];
-        let b = extrude(&Geometry::Polygon(on_border));
-        assert_eq!((b.vertices.len() - roof_vertices(&b)) / 4, 4);
+        assert_eq!(quads(&extrude(&Geometry::Polygon(on_border))).len(), 4);
+        // A ring entirely along the border has no wall, and takes no points.
+        let border_only = polygon![
+            (x: -64, y: -64), (x: 4160, y: -64), (x: 4160, y: 4160), (x: -64, y: 4160), (x: -64, y: -64)
+        ];
+        let b = extrude(&Geometry::Polygon(border_only));
+        assert_eq!(b.roofs.vertices.len(), 4);
+        assert!(b.walls.points.is_empty());
+    }
+
+    #[test]
+    fn repeated_points_have_no_wall() {
+        let ring =
+            polygon![(x: 0, y: 0), (x: 10, y: 0), (x: 10, y: 0), (x: 10, y: 10), (x: 0, y: 0)];
+        let b = extrude(&Geometry::Polygon(ring));
+        assert_eq!(b.walls.points.len(), 5);
+        assert_eq!(quads(&b).len(), 3);
+        assert_eq!(b.walls.points[1].normal, [0.0; 2]);
     }
 
     #[test]
@@ -352,7 +427,14 @@ mod tests {
             polygon![(x: 20, y: 20), (x: 30, y: 20), (x: 30, y: 30), (x: 20, y: 20)],
         ]));
         let b = extrude(&two);
-        assert_eq!((b.vertices.len() - roof_vertices(&b)) / 4, 4 + 4 + 3);
-        assert!(extrude(&Geometry::Point((1, 2).into())).vertices.is_empty());
+        assert_eq!(quads(&b).len(), 4 + 4 + 3);
+        // Each ring ends with a point without a wall, so no wall joins two rings.
+        assert_eq!(b.walls.points.len(), 5 + 5 + 4);
+        assert!(
+            extrude(&Geometry::Point((1, 2).into()))
+                .walls
+                .points
+                .is_empty()
+        );
     }
 }

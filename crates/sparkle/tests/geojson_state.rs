@@ -344,7 +344,10 @@ fn feature_state_reaches_every_paint_kind() {
                 b.paint.value(&l.paint.attributes(), "weight", 0)[0]
             }
             (BucketGeometry::FillExtrusion(b), LayerKind::FillExtrusion(l)) => {
-                b.paint.value(&l.paint.attributes(), "height", 0)[0]
+                let roofs = b.roofs.paint.value(&l.paint.roof_attributes(), "height", 0)[0];
+                let walls = b.walls.paint.value(&l.paint.attributes(), "height", 0)[0];
+                assert_eq!(roofs, walls);
+                roofs
             }
             (BucketGeometry::Symbol(b), LayerKind::Symbol(l)) => {
                 b.icons.paint.value(&l.icon_attributes(), "opacity", 0)[0]

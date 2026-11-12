@@ -16,29 +16,37 @@
 //!
 //! Tiles don't clip extrusions with the stencil masks, since walls rise above the tile's
 //! footprint on screen; the shader cuts them at the tile's edges instead.
+//!
+//! Each tile draws its roofs, then its walls: instanced, a quad from each
+//! [`WallPoint`] to the next, read from the same buffer bound twice, the second time one
+//! point on.
 
 use std::any::Any;
 use std::collections::HashMap;
 
 use sparkle::paint::PaintArrays;
 use sparkle::style::{LayerKind, StyleLayer};
-use sparkle::tile::{FillExtrusionPattern, FillExtrusionVertex};
+use sparkle::tile::{FillExtrusionPattern, WallPoint};
 use sparkle::{Bucket, BucketGeometry};
 
 use super::{DrawContext, LayerDraw, LayerRenderer, PrepareContext, translate_units};
 use crate::render::gpu::{DEPTH_STENCIL_FORMAT, DepthMode, Gpu, PipelineSpec, UniformArena, View};
 
 pub struct FillExtrusionRenderer {
-    /// By paint signature, whether buckets have per-vertex patterns, and whether the
-    /// pipeline only writes depth (into the map's depth buffer).
-    pipelines: HashMap<(u32, bool, bool), wgpu::RenderPipeline>,
+    /// By whether they draw walls, paint signature, whether buckets have patterns, and
+    /// whether the pipeline only writes depth (into the map's depth buffer).
+    pipelines: HashMap<(bool, u32, bool, bool), wgpu::RenderPipeline>,
+    /// The corners of a wall's quad, two triangles, as `fill_extrusion_wall.wgsl` reads
+    /// them: 1 at the next point's end (x) and at the top (y).
+    wall_corners: wgpu::Buffer,
     composite: wgpu::RenderPipeline,
     pattern_layout: wgpu::BindGroupLayout,
     image_layout: wgpu::BindGroupLayout,
     /// Bound in place of the sprite atlas when there is none.
     empty_atlas: wgpu::TextureView,
-    /// A no-pattern [`FillExtrusionPattern`], read once per instance by buckets without
-    /// patterns so that every pipeline can use the same shader.
+    /// No-pattern [`FillExtrusionPattern`]s, read by buckets without patterns so that
+    /// their pipelines can use the same shaders: the first once per instance by roofs, one
+    /// per corner by walls.
     no_pattern: wgpu::Buffer,
     targets: Option<Targets>,
     /// Whether a layer was drawn since the last `prepare`: the next one starts a frame and
@@ -64,11 +72,28 @@ struct LayerImage {
 }
 
 struct GpuExtrusion {
+    /// `None` when the bucket has no roofs.
+    roofs: Option<GpuRoofs>,
+    /// `None` when the bucket has no walls.
+    walls: Option<GpuWalls>,
+}
+
+struct GpuRoofs {
     vertices: wgpu::Buffer,
     /// `None` when the bucket has no patterns.
     patterns: Option<wgpu::Buffer>,
     triangles: wgpu::Buffer,
     triangle_count: u32,
+    paint_buffer: Option<wgpu::Buffer>,
+    /// The layout of `paint_buffer`; its data isn't kept.
+    paint: PaintArrays,
+}
+
+struct GpuWalls {
+    points: wgpu::Buffer,
+    /// `None` when the bucket has no patterns.
+    patterns: Option<wgpu::Buffer>,
+    instances: u32,
     paint_buffer: Option<wgpu::Buffer>,
     /// The layout of `paint_buffer`; its data isn't kept.
     paint: PaintArrays,
@@ -105,11 +130,18 @@ impl FillExtrusionRenderer {
             .create_view(&Default::default());
         let no_pattern = gpu.buffer(
             "no fill-extrusion pattern",
-            bytemuck::bytes_of(&FillExtrusionPattern::default()),
+            bytemuck::cast_slice(&[FillExtrusionPattern::default(); 6]),
             wgpu::BufferUsages::VERTEX,
         );
+        // In the order MapLibre's two triangles take a wall's four vertices.
+        let corners: [[f32; 2]; 6] = [[1., 0.], [0., 0.], [1., 1.], [1., 1.], [0., 0.], [0., 1.]];
         Self {
             pipelines: HashMap::new(),
+            wall_corners: gpu.buffer(
+                "fill-extrusion wall corners",
+                bytemuck::cast_slice(&corners),
+                wgpu::BufferUsages::VERTEX,
+            ),
             composite,
             pattern_layout,
             image_layout,
@@ -123,39 +155,91 @@ impl FillExtrusionRenderer {
     fn pipeline(
         &mut self,
         gpu: &Gpu,
+        walls: bool,
         paint: &PaintArrays,
         patterns: bool,
         depth_only: bool,
     ) -> &wgpu::RenderPipeline {
         let pattern_layout = &self.pattern_layout;
         self.pipelines
-            .entry((paint.signature(), patterns, depth_only))
+            .entry((walls, paint.signature(), patterns, depth_only))
             .or_insert_with(|| {
-                gpu.create_pipeline(&PipelineSpec {
-                    label: if depth_only {
-                        "fill-extrusion depth"
+                let pattern = wgpu::VertexBufferLayout {
+                    array_stride: size_of::<FillExtrusionPattern>() as u64,
+                    // Per roof vertex or per wall; without patterns, the zeros of
+                    // `no_pattern`, read by vertex index on walls (each of the six corners
+                    // reads its own).
+                    step_mode: if walls == patterns {
+                        wgpu::VertexStepMode::Instance
                     } else {
-                        "fill-extrusion"
+                        wgpu::VertexStepMode::Vertex
                     },
-                    shader: include_str!("../../shaders/fill_extrusion.wgsl"),
-                    vertex_buffers: &[
+                    attributes: &wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x2],
+                };
+                let point_stride = size_of::<WallPoint>() as u64;
+                let point = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2];
+                let next = wgpu::vertex_attr_array![4 => Float32x3];
+                let corner = wgpu::vertex_attr_array![5 => Float32x2];
+                let roof = wgpu::vertex_attr_array![0 => Float32x2];
+                let vertex_buffers = if walls {
+                    vec![
+                        // Position and edge distance, then normal.
                         wgpu::VertexBufferLayout {
-                            array_stride: size_of::<FillExtrusionVertex>() as u64,
+                            array_stride: point_stride,
+                            step_mode: wgpu::VertexStepMode::Instance,
+                            attributes: &point,
+                        },
+                        pattern,
+                        // The next point's position and edge distance.
+                        wgpu::VertexBufferLayout {
+                            array_stride: point_stride,
+                            step_mode: wgpu::VertexStepMode::Instance,
+                            attributes: &next,
+                        },
+                        wgpu::VertexBufferLayout {
+                            array_stride: 8,
                             step_mode: wgpu::VertexStepMode::Vertex,
-                            // Position and edge distance, then normal and top.
-                            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
+                            attributes: &corner,
                         },
+                    ]
+                } else {
+                    vec![
                         wgpu::VertexBufferLayout {
-                            array_stride: size_of::<FillExtrusionPattern>() as u64,
-                            step_mode: if patterns {
-                                wgpu::VertexStepMode::Vertex
-                            } else {
-                                wgpu::VertexStepMode::Instance
-                            },
-                            attributes: &wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x2],
+                            array_stride: 8,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &roof,
                         },
-                    ],
+                        pattern,
+                    ]
+                };
+                let common = include_str!("../../shaders/fill_extrusion.wgsl");
+                let shader = if walls {
+                    format!(
+                        "{common}\n{}",
+                        include_str!("../../shaders/fill_extrusion_wall.wgsl")
+                    )
+                } else {
+                    format!(
+                        "{common}\n{}",
+                        include_str!("../../shaders/fill_extrusion_roof.wgsl")
+                    )
+                };
+                gpu.create_pipeline(&PipelineSpec {
+                    label: match (walls, depth_only) {
+                        (false, false) => "fill-extrusion roofs",
+                        (false, true) => "fill-extrusion roofs depth",
+                        (true, false) => "fill-extrusion walls",
+                        (true, true) => "fill-extrusion walls depth",
+                    },
+                    shader: &shader,
+                    vertex_buffers: &vertex_buffers,
                     paint: Some(paint),
+                    paint_location: 6,
+                    paint_step: if walls {
+                        wgpu::VertexStepMode::Instance
+                    } else {
+                        wgpu::VertexStepMode::Vertex
+                    },
                     clip: false,
                     depth: DepthMode::TestWrite,
                     bind_group_layouts: &[pattern_layout],
@@ -246,7 +330,7 @@ impl FillExtrusionRenderer {
         let pattern_group = gpu.bind_textures(&self.pattern_layout, &[atlas], &gpu.linear_sampler);
         pass.set_bind_group(1, &pattern_group, &[]);
 
-        let props = paint.attributes();
+        let (roof_props, wall_props) = (paint.roof_attributes(), paint.attributes());
         let translate = paint.translate.evaluate_at_zoom(zoom);
         let anchor = paint.translate_anchor.evaluate_at_zoom(zoom);
         let vertical_gradient = paint.vertical_gradient.evaluate_at_zoom(zoom);
@@ -261,7 +345,6 @@ impl FillExtrusionRenderer {
             let mut u = view.tile_uniforms(tile.matrix, &tile.geo);
             u.units_per_pixel = tile.units_per_pixel;
             u.extent = tile.extent as f32;
-            u.paint = bucket.paint.uniforms(&props, zoom);
             let [tx, ty] = translate_units(translate, anchor, tile, view);
             let [lx, ly, lz] = light.position;
             let [r, g, b] = light.color;
@@ -275,27 +358,42 @@ impl FillExtrusionRenderer {
             ];
             u.extra[3][0] = tile.units_per_pixel * pattern_scale;
 
-            let has_patterns = bucket.patterns.is_some();
-            let pipeline = self
-                .pipeline(gpu, &bucket.paint, has_patterns, depth_only)
-                .clone();
-            pass.set_pipeline(&pipeline);
-            let (group, offset) = uniforms.push(gpu, &u);
-            pass.set_bind_group(0, &group, &[offset]);
-            pass.set_vertex_buffer(0, bucket.vertices.slice(..));
-            pass.set_vertex_buffer(
-                1,
-                bucket
-                    .patterns
-                    .as_ref()
-                    .unwrap_or(&self.no_pattern)
-                    .slice(..),
-            );
-            if let Some(buffer) = &bucket.paint_buffer {
-                pass.set_vertex_buffer(2, buffer.slice(..));
+            if let Some(roofs) = &bucket.roofs {
+                u.paint = roofs.paint.uniforms(&roof_props, zoom);
+                let (group, offset) = uniforms.push(gpu, &u);
+                let patterns = roofs.patterns.as_ref();
+                let pipeline = self
+                    .pipeline(gpu, false, &roofs.paint, patterns.is_some(), depth_only)
+                    .clone();
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &group, &[offset]);
+                pass.set_vertex_buffer(0, roofs.vertices.slice(..));
+                pass.set_vertex_buffer(1, patterns.unwrap_or(&self.no_pattern).slice(..));
+                if let Some(buffer) = &roofs.paint_buffer {
+                    pass.set_vertex_buffer(2, buffer.slice(..));
+                }
+                pass.set_index_buffer(roofs.triangles.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..roofs.triangle_count, 0, 0..1);
             }
-            pass.set_index_buffer(bucket.triangles.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..bucket.triangle_count, 0, 0..1);
+            if let Some(walls) = &bucket.walls {
+                u.paint = walls.paint.uniforms(&wall_props, zoom);
+                let (group, offset) = uniforms.push(gpu, &u);
+                let patterns = walls.patterns.as_ref();
+                let pipeline = self
+                    .pipeline(gpu, true, &walls.paint, patterns.is_some(), depth_only)
+                    .clone();
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &group, &[offset]);
+                let stride = size_of::<WallPoint>() as u64;
+                pass.set_vertex_buffer(0, walls.points.slice(..));
+                pass.set_vertex_buffer(1, patterns.unwrap_or(&self.no_pattern).slice(..));
+                pass.set_vertex_buffer(2, walls.points.slice(stride..));
+                pass.set_vertex_buffer(3, self.wall_corners.slice(..));
+                if let Some(buffer) = &walls.paint_buffer {
+                    pass.set_vertex_buffer(4, buffer.slice(..));
+                }
+                pass.draw(0..6, 0..walls.instances);
+            }
         }
     }
 }
@@ -310,28 +408,39 @@ impl LayerRenderer for FillExtrusionRenderer {
             return None;
         };
         let vertex = wgpu::BufferUsages::VERTEX;
-        let paint = extrusion.paint.layout();
+        let (roofs, walls) = (&extrusion.roofs, &extrusion.walls);
+        let patterns = |p: &[FillExtrusionPattern]| {
+            (!p.is_empty())
+                .then(|| gpu.buffer("fill-extrusion patterns", bytemuck::cast_slice(p), vertex))
+        };
         Some(Box::new(GpuExtrusion {
-            vertices: gpu.buffer(
-                "fill-extrusion vertices",
-                bytemuck::cast_slice(&extrusion.vertices),
-                vertex,
-            ),
-            patterns: (!extrusion.patterns.is_empty()).then(|| {
-                gpu.buffer(
-                    "fill-extrusion patterns",
-                    bytemuck::cast_slice(&extrusion.patterns),
+            roofs: (!roofs.triangles.is_empty()).then(|| GpuRoofs {
+                vertices: gpu.buffer(
+                    "fill-extrusion roofs",
+                    bytemuck::cast_slice(&roofs.vertices),
                     vertex,
-                )
+                ),
+                patterns: patterns(&roofs.patterns),
+                triangles: gpu.buffer(
+                    "fill-extrusion roof triangles",
+                    bytemuck::cast_slice(&roofs.triangles),
+                    wgpu::BufferUsages::INDEX,
+                ),
+                triangle_count: roofs.triangles.len() as u32,
+                paint_buffer: gpu.paint_buffer(&roofs.paint),
+                paint: roofs.paint.layout(),
             }),
-            triangles: gpu.buffer(
-                "fill-extrusion triangles",
-                bytemuck::cast_slice(&extrusion.triangles),
-                wgpu::BufferUsages::INDEX,
-            ),
-            triangle_count: extrusion.triangles.len() as u32,
-            paint_buffer: gpu.paint_buffer(&extrusion.paint),
-            paint,
+            walls: (walls.instances() > 0).then(|| GpuWalls {
+                points: gpu.buffer(
+                    "fill-extrusion walls",
+                    bytemuck::cast_slice(&walls.points),
+                    vertex,
+                ),
+                patterns: patterns(&walls.patterns),
+                instances: walls.instances() as u32,
+                paint_buffer: gpu.paint_buffer(&walls.paint),
+                paint: walls.paint.layout(),
+            }),
         }))
     }
 

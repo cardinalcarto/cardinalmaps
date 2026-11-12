@@ -1,5 +1,7 @@
 // Roofs and walls of extruded polygons, lit as MapLibre lights them (see
-// `sparkle::light::ExtrusionLight::shade`), drawn into the layer's offscreen target.
+// `sparkle::light::ExtrusionLight::shade`), drawn into the layer's offscreen target: what
+// `fill_extrusion_roof.wgsl` and `fill_extrusion_wall.wgsl` share. Each is appended to
+// this file.
 //
 // `extra[0]`: the light's position (xyz, tile coordinates) and intensity (w).
 // `extra[1].rgb`: the light's color.
@@ -22,22 +24,24 @@ struct VertexOut {
     @location(4) tile_pos: vec2<f32>,
 };
 
-@vertex
-fn vs_main(
-    @location(0) pos_edge: vec3<f32>,
-    @location(1) normal_top: vec4<f32>,
-    @location(2) pattern_rect: vec4<f32>,
-    @location(3) pattern_size: vec2<f32>,
+// A vertex at `pos` (tile coordinates), `edge` along its wall's ring, with unit `normal`
+// (`[0, 0, 1]` on roofs), at the feature's `height` (`top` 1) or `base` (`top` 0), both
+// in meters and at least 0. Roofs, at the height, don't read the base.
+fn extrude(
+    pos: vec2<f32>,
+    edge: f32,
+    normal: vec3<f32>,
+    top: f32,
+    base: f32,
+    height: f32,
+    pattern_rect: vec4<f32>,
+    pattern_size: vec2<f32>,
     p: PaintIn,
 ) -> VertexOut {
-    let base = max(paint_base(p), 0.0);
-    let height = max(paint_height(p), 0.0);
-    let normal = normal_top.xyz;
-    let top = normal_top.w;
     let z = select(base, height, top > 0.5) * draw.extra[2].z;
 
     var out: VertexOut;
-    out.position = to_clip_above(pos_edge.xy + draw.extra[2].xy, z);
+    out.position = to_clip_above(pos + draw.extra[2].xy, z);
 
     let light_pos = draw.extra[0].xyz;
     let intensity = draw.extra[0].w;
@@ -62,13 +66,13 @@ fn vs_main(
 
     let units_per_pattern_pixel = draw.extra[3].x;
     if normal.z == 0.0 {
-        out.pattern_pos = vec2<f32>(pos_edge.z, -z * draw.units_per_pixel) / units_per_pattern_pixel;
+        out.pattern_pos = vec2<f32>(edge, -z * draw.units_per_pixel) / units_per_pattern_pixel;
     } else {
-        out.pattern_pos = pos_edge.xy / units_per_pattern_pixel;
+        out.pattern_pos = pos / units_per_pattern_pixel;
     }
     out.pattern_rect = pattern_rect;
     out.pattern_size = pattern_size;
-    out.tile_pos = pos_edge.xy;
+    out.tile_pos = pos;
     return out;
 }
 
