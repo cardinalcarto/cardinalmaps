@@ -11,7 +11,6 @@
 //! The planner, like [`TransitState`], has no runtime and reads no clock.
 
 use core::fmt;
-use core::num::NonZeroUsize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -128,8 +127,6 @@ pub struct StreetConfig {
     ///
     /// A build's stops come snapped by the offline build.
     pub snap: SnapConfig,
-    /// How many tiles each tile directory keeps in memory.
-    pub tile_cache_size: NonZeroUsize,
     /// The most one query may ask for and keep.
     pub limits: ServiceLimits,
     /// How much of a Thor workspace a worker keeps between queries.
@@ -149,7 +146,6 @@ impl Default for StreetConfig {
         Self {
             state: StateConfig::default(),
             snap: SnapConfig::default(),
-            tile_cache_size: valinor_router::DEFAULT_TILE_CACHE_SIZE,
             limits: ServiceLimits::default(),
             retention: Retention::default(),
             max_walking_transfer_seconds: DEFAULT_TRANSFER_SECONDS,
@@ -896,7 +892,8 @@ impl StopSnapper for TileSnapper {
             } => {
                 let tiles: &TileSets = &self.tiles;
                 let costing = any_costing(mode).map_err(snap_setup_error)?;
-                let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+                let threads =
+                    std::thread::available_parallelism().unwrap_or(core::num::NonZeroUsize::MIN);
                 let seconds = match mode {
                     TravelMode::Walking => *walking_seconds,
                     TravelMode::Cycling => *cycling_seconds,
@@ -999,7 +996,7 @@ impl StreetPlanner {
         tile_sets: &[P],
         config: StreetConfig,
     ) -> Result<Self, OpenPlannerError> {
-        let tiles = Arc::new(TileSets::open(tile_sets, config.tile_cache_size)?);
+        let tiles = Arc::new(TileSets::open(tile_sets)?);
         if u32::from(tiles.build_id().value()) != build.valhalla_build_id {
             return Err(OpenPlannerError::Build(
                 BuildLoadError::StreetBuildMismatch {
@@ -1033,7 +1030,7 @@ impl StreetPlanner {
         tile_sets: &[P],
         config: StreetConfig,
     ) -> Result<Self, OpenPlannerError> {
-        let tiles = Arc::new(TileSets::open(tile_sets, config.tile_cache_size)?);
+        let tiles = Arc::new(TileSets::open(tile_sets)?);
         let transfers = BaseTransfers::Build {
             walking_seconds: config.max_walking_transfer_seconds,
             cycling_seconds: config.max_cycling_transfer_seconds,

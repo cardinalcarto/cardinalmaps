@@ -64,7 +64,7 @@ fn main() {
         .iter()
         .map(|c| c.expect("coordinate"))
         .collect();
-    let tiles = TileSets::open(&[street], NonZeroUsize::new(64).expect("nonzero")).expect("tiles");
+    let tiles = TileSets::open(&[street]).expect("tiles");
     let manifest_id = u64::from_str_radix(&manifest.manifest_id, 16).expect("hex");
     let root = output.join("transfers");
 

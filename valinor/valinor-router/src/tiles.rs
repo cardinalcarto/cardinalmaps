@@ -283,9 +283,6 @@ impl TileSets {
     /// Opens tile sets (`build_extract` tarballs or tile directories) as one provider,
     /// after checking that they come from one build (see the [module docs](self)).
     ///
-    /// `directory_cache` is no longer used: directory tiles are mapped and kept
-    /// as tarball tiles are.
-    ///
     /// # Performance
     ///
     /// A tarball is memory-mapped, and only its index and the sampled headers are read.
@@ -293,10 +290,7 @@ impl TileSets {
     /// # Errors
     ///
     /// See [`OpenError`].
-    pub fn open<P: AsRef<Path>>(
-        paths: &[P],
-        directory_cache: NonZeroUsize,
-    ) -> Result<Self, OpenError> {
+    pub fn open<P: AsRef<Path>>(paths: &[P]) -> Result<Self, OpenError> {
         if paths.is_empty() {
             return Err(OpenError::NoTileSets);
         }
@@ -315,7 +309,7 @@ impl TileSets {
                 source,
             })?;
             let (set, mut ids) = if metadata.is_dir() {
-                let tiles = DirectoryGraphTileProvider::new(path.to_path_buf(), directory_cache);
+                let tiles = DirectoryGraphTileProvider::new(path.to_path_buf(), NonZeroUsize::MIN);
                 let ids = tiles.tile_ids().map_err(tiles_error)?;
                 (TileSet::Directory(tiles), ids)
             } else {
@@ -838,7 +832,7 @@ mod tests {
     }
 
     fn open(dir: &TempDir) -> TileSets {
-        TileSets::open(&[&dir.0], NonZeroUsize::MIN).unwrap()
+        TileSets::open(&[&dir.0]).unwrap()
     }
 
     fn get(sets: &TileSets, path: &str) -> Result<GraphId, GraphTileProviderError> {
@@ -986,8 +980,7 @@ mod tests {
 
     #[test]
     fn tarballs_have_no_late_tiles() {
-        let sets =
-            TileSets::open(&[fixtures().join("andorra-tiles.tar")], NonZeroUsize::MIN).unwrap();
+        let sets = TileSets::open(&[fixtures().join("andorra-tiles.tar")]).unwrap();
         assert!(sets.late.is_none());
         let elsewhere = GraphId::try_from_components(2, 1, 0).unwrap();
         assert!(matches!(

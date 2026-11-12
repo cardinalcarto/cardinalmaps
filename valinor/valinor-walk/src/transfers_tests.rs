@@ -26,7 +26,7 @@ const RADIUS: u32 = 900;
 fn andorra() -> TileSets {
     let tiles = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../valhalla-graphtile/fixtures/andorra-tiles");
-    TileSets::open(&[tiles], NonZeroUsize::new(64).expect("nonzero")).expect("tiles")
+    TileSets::open(&[tiles]).expect("tiles")
 }
 
 fn threads(count: usize) -> NonZeroUsize {

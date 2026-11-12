@@ -43,7 +43,7 @@ fn costing(name: &str) -> AnyCosting {
 const TIMETABLES: &str = "/mnt/maps/cardinal/transit/global/us-wa-2026-11-09/timetables";
 
 fn tiles() -> TileSets {
-    TileSets::open(&[PathBuf::from(TAR)], NonZeroUsize::new(64).unwrap()).expect("tiles")
+    TileSets::open(&[PathBuf::from(TAR)]).expect("tiles")
 }
 
 /// Metro stops in greater Seattle, in an order that mixes the neighborhoods.

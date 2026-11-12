@@ -1073,11 +1073,7 @@ fn wa_fixture(
     Arc<StopSnaps>,
     Vec<(f64, f64)>,
 ) {
-    let tile_sets = valinor_router::tiles::TileSets::open(
-        &[WA_TILES],
-        NonZeroUsize::new(1024).expect("nonzero"),
-    )
-    .expect("open tiles");
+    let tile_sets = valinor_router::tiles::TileSets::open(&[WA_TILES]).expect("open tiles");
     // The tests live for the whole process, and a provider is `Copy` through a reference.
     let provider: &'static valinor_router::tiles::TileSets = Box::leak(Box::new(tile_sets));
     let stops = kcm_stops();

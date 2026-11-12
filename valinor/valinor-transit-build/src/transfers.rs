@@ -137,13 +137,11 @@ pub fn run(options: &TransferOptions) -> Result<Manifest, BuildError> {
     if let Some(pair) = feeds.windows(2).find(|pair| pair[0].id == pair[1].id) {
         return Err(BuildError::DuplicateFeedId(pair[0].id.clone()));
     }
-    let tiles = TileSets::open(
-        core::slice::from_ref(&options.street_tiles),
-        NonZeroUsize::new(64).unwrap_or(NonZeroUsize::MIN),
-    )
-    .map_err(|source| BuildError::StreetTiles {
-        path: options.street_tiles.clone(),
-        source: Box::new(source),
+    let tiles = TileSets::open(core::slice::from_ref(&options.street_tiles)).map_err(|source| {
+        BuildError::StreetTiles {
+            path: options.street_tiles.clone(),
+            source: Box::new(source),
+        }
     })?;
     let build_id = tiles.build_id();
     let stops = StopList::load(&options.compiled, &feeds, options.threads)?;
