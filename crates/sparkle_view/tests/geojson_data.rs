@@ -93,7 +93,7 @@ impl Fixture {
     /// Draw frames until every tile has loaded.
     fn settle(&mut self) {
         for _ in 0..100 {
-            let frame = self.map.frame(&self.camera);
+            let frame = self.map.frame(&self.camera, None);
             if frame.complete && frame.loading == 0 {
                 return;
             }
@@ -179,7 +179,7 @@ fn replaced_data_is_never_drawn_again() {
     // Before the new tiles arrive, at this zoom or another, nothing draws the old pin.
     for zoom in [14.0, 13.0, 12.0] {
         f.camera.look_at(-122.33, 47.6, zoom);
-        f.map.frame(&f.camera);
+        f.map.frame(&f.camera, None);
         assert!(
             f.map.query_point(&f.camera, [400.0, 300.0]).is_empty(),
             "zoom {zoom}"

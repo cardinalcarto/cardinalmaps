@@ -328,6 +328,8 @@ Future<List<String>> _mapArgs(MapLayers layers, MapViewport view) async {
     '$d/sprites',
     '--cache',
     '${cache.path}/tiles',
+    '--cache-size',
+    '500',
     '--view',
     view.arg,
     '--tiles',

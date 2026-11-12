@@ -1,5 +1,7 @@
 //! Which tiles to draw: per source, the tiles covering the view, with loaded ancestors or
-//! children standing in for tiles that are still loading. Also what the map changes at
+//! children standing in for tiles that are still loading. And which to load ahead of the
+//! view, after the tiles it covers: ancestors to stand in, the tiles where a motion under
+//! way comes to rest, and a ring just past the view's edges. Also what the map changes at
 //! runtime: the style (tiles are processed again or repainted as the change requires),
 //! the data of GeoJSON sources, feature state, and queries of what is under a point.
 //!
@@ -20,12 +22,21 @@ use sparkle::terrain::TerrainTiles;
 use sparkle::{ProcessedTile, Style, TileId};
 
 use crate::camera::{Camera, MAX_ZOOM, Placement};
-use crate::loader::{TileLoader, TileMessage};
+use crate::loader::{SourceTile, Tier, TileLoader, TileMessage};
 
 /// How many levels up to look for a loaded tile to show while a tile is loading.
 const MAX_FALLBACK_LEVELS: u8 = 8;
 /// How many levels down to look for loaded tiles to show while a tile is loading.
 const MAX_DESCENDANT_LEVELS: u8 = 2;
+/// How many levels up the ancestors of visible tiles loaded to stand in for them are.
+const FALLBACK_LEVELS: u8 = 2;
+/// The most tiles, across sources, wanted ahead of the view (loaded or loading).
+const MAX_PREDICTED: usize = 100;
+/// Tiles wanted ahead of the view, with those drawn, take at most this share of the
+/// memory budget, leaving the rest for tiles the view comes to need.
+const PREDICTED_SHARE: [usize; 2] = [3, 4];
+/// What a tile is taken to need in memory until some have loaded.
+const GUESSED_TILE_BYTES: usize = 256 << 10;
 
 /// What a renderer keeps of each loaded tile, and how it changes them in place.
 pub trait TileUploader {
@@ -228,8 +239,11 @@ impl<T> MapState<T> {
         }
     }
 
-    /// Pick the tiles to draw for `camera`, requesting the ones that are missing.
-    pub fn frame(&mut self, camera: &Camera) -> Frame {
+    /// Pick the tiles to draw for `camera`, requesting the ones that are missing, and
+    /// then, as far as memory allows, tiles it may need soon: ancestors to stand in for
+    /// the tiles it covers, those where it comes to rest (`end`, if it's moving; see
+    /// [`crate::motion::Motion::end`]), and those around it.
+    pub fn frame(&mut self, camera: &Camera, end: Option<&Camera>) -> Frame {
         self.frame += 1;
         let zoom = camera.zoom as f32;
         // Only sources that a visible layer draws from need tiles.
@@ -249,6 +263,8 @@ impl<T> MapState<T> {
         };
 
         let mut wanted = Vec::new();
+        // Tiles to load ahead, per tier: `(tier, source index, tile, zoom to process at)`.
+        let mut ahead: Vec<(Tier, usize, TileId, u8)> = Vec::new();
         let mut tiles = Vec::new();
         // Per source, the tiles drawn this frame.
         let mut drawn: Vec<HashSet<TileId>> = vec![HashSet::new(); self.sources.len()];
@@ -277,11 +293,29 @@ impl<T> MapState<T> {
                     id.z
                 }
             };
+            let destination = end.map(|end| {
+                let mut covering = end.covering_tiles_with(
+                    source.min_zoom,
+                    source.max_zoom,
+                    source.tile_size,
+                    &range,
+                );
+                if let Some(bounds) = source.bounds {
+                    covering.retain(|p| intersects(p.id(), bounds));
+                }
+                covering
+            });
+            ahead.extend(
+                predictions(&covering, destination.as_deref(), source.min_zoom)
+                    .into_iter()
+                    .filter(|&(_, id)| source.bounds.is_none_or(|b| intersects(id, b)))
+                    .map(|(tier, id)| (tier, s, id, zoom_for(id))),
+            );
             let cache = &mut self.caches[s];
             for p in &covering {
                 let id = p.id();
                 let zoom = zoom_for(id);
-                wanted.push((s, id));
+                wanted.push(((s, id), Tier::Visible));
                 match cache.get_mut(&id) {
                     None => {
                         self.loader.request((s, id), zoom);
@@ -312,7 +346,35 @@ impl<T> MapState<T> {
             drawn[s] = used;
             tiles.extend(chosen.into_iter().map(|(clip, p)| (s, clip, p)));
         }
-        for (s, id) in evict(&mut self.caches, &drawn, self.memory_budget) {
+        // Tiers across sources: all fallbacks before any destination tile, and so on.
+        ahead.sort_by_key(|&(tier, ..)| tier);
+        let drawn_bytes: usize = drawn
+            .iter()
+            .enumerate()
+            .flat_map(|(s, ids)| ids.iter().map(move |id| (s, id)))
+            .map(|(s, id)| match self.caches[s].get(id) {
+                Some(CacheEntry::Ready { bytes, .. }) => *bytes,
+                _ => 0,
+            })
+            .sum();
+        let allowance = (self.memory_budget / PREDICTED_SHARE[1] * PREDICTED_SHARE[0])
+            .saturating_sub(drawn_bytes);
+        let candidates: Vec<SourceTile> = ahead.iter().map(|&(_, s, id, _)| (s, id)).collect();
+        for i in select(&self.caches, &candidates, allowance, MAX_PREDICTED) {
+            let (tier, s, id, zoom) = ahead[i];
+            if !self.caches[s].contains_key(&id) {
+                self.loader.request((s, id), zoom);
+                self.caches[s].insert(id, CacheEntry::Loading);
+            }
+            wanted.push(((s, id), tier));
+        }
+        let ranks: HashMap<SourceTile, usize> = wanted
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(rank, &(tile, _))| (tile, rank))
+            .collect();
+        for (s, id) in evict(&mut self.caches, &drawn, &ranks, self.memory_budget) {
             if Some(s) == self.terrain_source {
                 self.terrain.remove(id);
             }
@@ -744,12 +806,114 @@ fn descendants<T>(
     found
 }
 
-/// Drop the least recently drawn tiles, of any source, until the loaded ones take no more
-/// than `budget` bytes, never ones drawn this frame (`drawn`, per source). Returns the
-/// tiles dropped, as `(source index, tile)`.
+/// Tiles to load ahead of a view that `covering` covers, in the order they're wanted,
+/// none of them covering and none twice: the ancestors [`FALLBACK_LEVELS`] up (no
+/// higher than `min_zoom`) to stand in for them, then the tiles covering the view where
+/// it comes to rest (`destination`, if it's moving), then those just past the covering
+/// tiles at their own zoom, nearest the middle of the view first.
+fn predictions(
+    covering: &[Placement],
+    destination: Option<&[Placement]>,
+    min_zoom: u8,
+) -> Vec<(Tier, TileId)> {
+    let visible: HashSet<TileId> = covering.iter().map(|p| p.id()).collect();
+    let mut seen = visible.clone();
+    let mut out = Vec::new();
+    let mut add = |tier, id| {
+        if seen.insert(id) {
+            out.push((tier, id));
+        }
+    };
+    for p in covering {
+        let levels = FALLBACK_LEVELS.min(p.z.saturating_sub(min_zoom));
+        if levels > 0 {
+            add(Tier::Fallback, p.ancestor(levels).id());
+        }
+    }
+    for p in destination.unwrap_or_default() {
+        add(Tier::Destination, p.id());
+    }
+    // A neighbor whose parent or child covers part of the view is in it, not past it.
+    let in_view = |n: Placement| {
+        visible.contains(&n.id())
+            || (n.z > 0 && visible.contains(&n.ancestor(1).id()))
+            || n.children().iter().any(|c| visible.contains(&c.id()))
+    };
+    for p in covering {
+        for (dx, dy) in [
+            (-1, -1),
+            (0, -1),
+            (1, -1),
+            (-1, 0),
+            (1, 0),
+            (-1, 1),
+            (0, 1),
+            (1, 1),
+        ] {
+            let y = i64::from(p.y) + dy;
+            if !(0..1 << p.z).contains(&y) {
+                continue;
+            }
+            let n = Placement {
+                z: p.z,
+                x: p.x + dx,
+                y: y as u32,
+            };
+            if !in_view(n) {
+                add(Tier::Ring, n.id());
+            }
+        }
+    }
+    out
+}
+
+/// Which of `candidates` (in the order they're wanted) to keep loaded or load: the first
+/// of them, up to `max` and as many as fit in `allowance` bytes, those loaded counting what
+/// they take and those not yet what loaded tiles take on average. Those known to be empty
+/// need nothing and are left out. Returns their indices.
+fn select<T>(
+    caches: &[HashMap<TileId, CacheEntry<T>>],
+    candidates: &[SourceTile],
+    allowance: usize,
+    max: usize,
+) -> Vec<usize> {
+    let (total, count) = caches
+        .iter()
+        .flat_map(|c| c.values())
+        .filter_map(|e| match e {
+            CacheEntry::Ready { bytes, .. } => Some(*bytes),
+            _ => None,
+        })
+        .fold((0, 0), |(total, count), bytes| (total + bytes, count + 1));
+    let guess = total.checked_div(count).unwrap_or(GUESSED_TILE_BYTES);
+    let mut spent = 0;
+    let mut chosen = Vec::new();
+    for (i, &(s, id)) in candidates.iter().enumerate() {
+        if chosen.len() >= max {
+            break;
+        }
+        let bytes = match caches[s].get(&id) {
+            Some(CacheEntry::Empty) => continue,
+            Some(CacheEntry::Ready { bytes, .. }) => *bytes,
+            Some(CacheEntry::Loading) | None => guess,
+        };
+        if spent + bytes > allowance {
+            break;
+        }
+        spent += bytes;
+        chosen.push(i);
+    }
+    chosen
+}
+
+/// Drop tiles, of any source, until the loaded ones take no more than `budget` bytes,
+/// never ones drawn this frame (`drawn`, per source): first the least recently drawn of
+/// those not wanted, then the wanted ones (`wanted`, by their place in the view's order),
+/// least wanted first. Returns the tiles dropped, as `(source index, tile)`.
 fn evict<T>(
     caches: &mut [HashMap<TileId, CacheEntry<T>>],
     drawn: &[HashSet<TileId>],
+    wanted: &HashMap<SourceTile, usize>,
     budget: usize,
 ) -> Vec<(usize, TileId)> {
     let mut total = 0;
@@ -762,7 +926,11 @@ fn evict<T>(
             {
                 total += bytes;
                 if !drawn[s].contains(id) {
-                    droppable.push((*last_used, s, *id, *bytes));
+                    let order = match wanted.get(&(s, *id)) {
+                        None => (false, *last_used),
+                        Some(&rank) => (true, u64::MAX - rank as u64),
+                    };
+                    droppable.push((order, s, *id, *bytes));
                 }
             }
         }
@@ -770,7 +938,7 @@ fn evict<T>(
     if total <= budget {
         return Vec::new();
     }
-    droppable.sort_unstable_by_key(|&(last_used, ..)| last_used);
+    droppable.sort_unstable_by_key(|&(order, ..)| order);
     let mut dropped = Vec::new();
     for (_, s, id, bytes) in droppable {
         if total <= budget {
@@ -892,7 +1060,7 @@ mod tests {
             sized(&[(c, 2, 400), (d, 4, 400)]),
         ];
         let drawn = vec![HashSet::new(), HashSet::new()];
-        let dropped = evict(&mut caches, &drawn, 900);
+        let dropped = evict(&mut caches, &drawn, &HashMap::new(), 900);
         assert_eq!(dropped, vec![(0, a.id()), (1, c.id())]);
         assert!(caches[0].contains_key(&b.id()) && caches[1].contains_key(&d.id()));
     }
@@ -902,15 +1070,136 @@ mod tests {
         let [a, b, ..] = at(1, 0, 0).children();
         let mut caches = vec![sized(&[(a, 1, 1000), (b, 2, 1000)])];
         let drawn = vec![HashSet::from([a.id()])];
-        assert_eq!(evict(&mut caches, &drawn, 500), vec![(0, b.id())]);
+        assert_eq!(
+            evict(&mut caches, &drawn, &HashMap::new(), 500),
+            vec![(0, b.id())]
+        );
         assert!(caches[0].contains_key(&a.id()));
+    }
+
+    #[test]
+    fn wanted_tiles_go_after_unwanted_ones_least_wanted_first() {
+        let [a, b, c, d] = at(1, 0, 0).children();
+        // `c` and `d` were drawn longest ago, but are wanted, `d` more than `c`.
+        let mut caches = vec![sized(&[(a, 5, 400), (b, 6, 400), (c, 1, 400), (d, 2, 400)])];
+        let wanted = HashMap::from([((0, c.id()), 7), ((0, d.id()), 3)]);
+        let dropped = evict(&mut caches, &[HashSet::new()], &wanted, 500);
+        assert_eq!(dropped, vec![(0, a.id()), (0, b.id()), (0, c.id())]);
+    }
+
+    fn kinds(predicted: &[(Tier, TileId)]) -> Vec<Tier> {
+        predicted.iter().map(|&(tier, _)| tier).collect()
+    }
+
+    #[test]
+    fn predicts_fallbacks_then_the_destination_then_the_ring() {
+        let view = [at(10, 100, 100), at(10, 101, 100)];
+        let destination = [at(10, 101, 100), at(10, 102, 100), at(10, 103, 100)];
+        let predicted = predictions(&view, Some(&destination), 0);
+        let fallback = view[0].ancestor(2).id();
+        // One fallback for both; the destination less what's in view; then the ring of 10
+        // around the two, less the two destination tiles it overlaps.
+        assert_eq!(predicted[0], (Tier::Fallback, fallback));
+        assert_eq!(
+            predicted[1..3],
+            [
+                (Tier::Destination, at(10, 102, 100).id()),
+                (Tier::Destination, at(10, 103, 100).id())
+            ]
+        );
+        assert_eq!(kinds(&predicted[3..]), vec![Tier::Ring; 9]);
+        let ids: HashSet<TileId> = predicted.iter().map(|&(_, id)| id).collect();
+        assert_eq!(ids.len(), predicted.len(), "no tile twice");
+        assert!(view.iter().all(|p| !ids.contains(&p.id())));
+        assert!(ids.contains(&at(10, 99, 99).id()) && ids.contains(&at(10, 102, 101).id()));
+    }
+
+    #[test]
+    fn fallbacks_go_no_higher_than_the_min_zoom() {
+        let predicted = predictions(&[at(5, 3, 3)], None, 4);
+        assert_eq!(predicted[0], (Tier::Fallback, at(5, 3, 3).ancestor(1).id()));
+        assert!(
+            predictions(&[at(4, 3, 3)], None, 4)
+                .iter()
+                .all(|&(tier, _)| tier == Tier::Ring)
+        );
+    }
+
+    #[test]
+    fn the_ring_leaves_out_tiles_whose_parent_or_children_are_in_view() {
+        // In a pitched view, a far tile a level up next to the near ones.
+        let near = at(10, 100, 100);
+        let far = at(9, 50, 49);
+        let predicted = predictions(&[near, far], None, 10);
+        let ring: HashSet<TileId> = predicted.iter().map(|&(_, id)| id).collect();
+        // Above `near` is a child of `far`, so in view.
+        assert!(!ring.contains(&at(10, 100, 99).id()));
+        // Below `far` is the parent of `near`: in view.
+        assert!(!ring.contains(&at(9, 50, 50).id()));
+        assert!(ring.contains(&at(10, 99, 101).id()));
+    }
+
+    #[test]
+    fn the_ring_stops_at_the_poles_and_wraps_around_the_world() {
+        let predicted = predictions(&[at(2, 0, 0)], None, 2);
+        let ring: HashSet<TileId> = predicted.iter().map(|&(_, id)| id).collect();
+        assert_eq!(ring.len(), 5);
+        assert!(ring.contains(&at(2, 3, 0).id()) && ring.contains(&at(2, 3, 1).id()));
+    }
+
+    fn entries(entries: Vec<(Placement, CacheEntry<()>)>) -> HashMap<TileId, CacheEntry<()>> {
+        entries.into_iter().map(|(p, e)| (p.id(), e)).collect()
+    }
+
+    fn ready_bytes(bytes: usize) -> CacheEntry<()> {
+        CacheEntry::Ready {
+            tile: (),
+            features: None,
+            last_used: 0,
+            zoom: 0,
+            stale: false,
+            requested: false,
+            bytes,
+        }
+    }
+
+    #[test]
+    fn selection_stops_at_the_memory_allowance_guessing_unloaded_tiles_average() {
+        let [a, b, c, d] = at(1, 0, 0).children();
+        let [e, ..] = at(1, 1, 1).children();
+        let caches = vec![entries(vec![
+            (a, ready_bytes(300)),
+            (b, ready_bytes(100)),
+            (c, CacheEntry::Empty),
+            (d, CacheEntry::Loading),
+        ])];
+        let candidates: Vec<SourceTile> = [a, b, c, d, e].iter().map(|p| (0, p.id())).collect();
+        // `a` 300, `b` 100, `c` nothing (left out), `d` and `e` the average 200.
+        assert_eq!(select(&caches, &candidates, 600, 100), vec![0, 1, 3]);
+        assert_eq!(select(&caches, &candidates, 800, 100), vec![0, 1, 3, 4]);
+        // Stopping at the first that doesn't fit, so they're kept in order.
+        assert_eq!(select(&caches, &candidates, 350, 100), vec![0]);
+        assert!(select(&caches, &candidates, 0, 100).is_empty());
+    }
+
+    #[test]
+    fn selection_stops_at_the_most_tiles() {
+        let tiles = at(2, 0, 0).children();
+        let caches = vec![HashMap::<TileId, CacheEntry<()>>::new()];
+        let candidates: Vec<SourceTile> = tiles.iter().map(|p| (0, p.id())).collect();
+        // Before any tile has loaded, each is guessed at GUESSED_TILE_BYTES.
+        assert_eq!(select(&caches, &candidates, usize::MAX, 3), vec![0, 1, 2]);
+        assert_eq!(
+            select(&caches, &candidates, GUESSED_TILE_BYTES * 2, 10),
+            vec![0, 1]
+        );
     }
 
     #[test]
     fn nothing_is_dropped_within_the_budget() {
         let [a, b, ..] = at(1, 0, 0).children();
         let mut caches = vec![sized(&[(a, 1, 400), (b, 2, 400)])];
-        assert!(evict(&mut caches, &[HashSet::new()], 800).is_empty());
+        assert!(evict(&mut caches, &[HashSet::new()], &HashMap::new(), 800).is_empty());
         assert_eq!(caches[0].len(), 2);
     }
 }

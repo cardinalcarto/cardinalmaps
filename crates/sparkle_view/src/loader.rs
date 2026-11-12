@@ -4,17 +4,21 @@
 //! [`SourceConfig`] list) and the tile. Each worker opens its own reader per source.
 //! GeoJSON sources are cut from their in-memory index instead. A tile server's tiles come
 //! from its cache, or else are handed to a [`Fetcher`] and processed once they arrive, so
-//! no worker waits on the network.
+//! no worker waits on the network. A tile server source can also have a local MBTiles
+//! file that is read first, so only the tiles it lacks are fetched.
+//!
+//! Workers and fetchers take the tiles the view wants most first: the view says, each
+//! frame, which tiles it wants and in what order ([`TileLoader::set_wanted`]), and queued
+//! tiles it no longer wants are dropped.
 //!
 //! The style, and the data of GeoJSON sources, can be replaced while tiles load
 //! ([`TileLoader::set_style`], [`TileLoader::set_geojson`]); every tile is processed with
 //! what was current when its processing starts, and comes back tagged with that
 //! generation so the map can tell stale results.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
 use anyhow::Result;
@@ -26,10 +30,48 @@ use sparkle::{ProcessedTile, Style, TileId, TileProcessor, TileResources};
 
 use crate::fetch::{FetchJob, Fetcher};
 use crate::mbtiles::{MbTiles, TileFormat, decompress};
+use crate::queue::{Queue, lowest};
 use crate::remote::{Fetched, REVALIDATE_AFTER, TileServer};
 
 /// A tile of one source: `(source index, tile)`.
 pub type SourceTile = (usize, TileId);
+
+/// Why the view wants a tile, the tiers it loads them in: all of one before any of the
+/// next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Tier {
+    /// It covers the view.
+    Visible,
+    /// An ancestor of a visible tile, to stand in for it while it loads.
+    Fallback,
+    /// It covers the view where the motion under way comes to rest.
+    Destination,
+    /// It's just past the edge of the view.
+    Ring,
+}
+
+impl Tier {
+    /// Wanted for later rather than for the view as it is.
+    pub fn predicted(self) -> bool {
+        self != Self::Visible
+    }
+}
+
+/// Where a wanted tile stands: its place in the view's order, and its tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Want {
+    pub rank: u32,
+    pub tier: Tier,
+}
+
+/// The tiles the view wants, shared by the workers and fetchers.
+pub type Wanted = Arc<Mutex<HashMap<SourceTile, Want>>>;
+
+/// How a queue of jobs for `tile` ranks one: unwanted ones first, to be dropped, then
+/// wanted ones in the view's order.
+pub(crate) fn rank(wanted: &HashMap<SourceTile, Want>, tile: &SourceTile) -> (bool, u32) {
+    wanted.get(tile).map_or((false, 0), |w| (true, w.rank))
+}
 
 pub enum TileMessage {
     /// A processed tile, with the generation of the style it was processed with.
@@ -58,6 +100,9 @@ pub struct SourceConfig {
     pub geojson: Option<Arc<GeoJsonIndex>>,
     /// Set for sources fetched from a tile server instead of read from `path`.
     pub server: Option<Arc<TileServer>>,
+    /// For a tile server, an MBTiles file of its tiles to read first, fetching only those
+    /// it lacks. It needn't exist yet, and may gain tiles as the map runs.
+    pub local: Option<PathBuf>,
 }
 
 pub struct LoaderConfig {
@@ -122,13 +167,20 @@ enum Job {
 }
 
 pub struct TileLoader {
-    /// The only strong reference, so that dropping the loader stops the workers: the
-    /// fetcher's threads hold weak ones.
-    requests: Arc<Sender<Job>>,
-    /// Tiles the view currently needs. Workers skip queued requests that aren't in here.
-    wanted: Arc<Mutex<HashSet<SourceTile>>>,
+    /// Closed when the loader is dropped, which stops the workers.
+    requests: Arc<Queue<Job>>,
+    /// Tiles the view currently needs, and in what order. Workers skip queued requests
+    /// that aren't in here.
+    wanted: Wanted,
     current: Arc<RwLock<Arc<CurrentStyle>>>,
     config: Arc<LoaderConfig>,
+    fetcher: Option<Arc<Fetcher>>,
+}
+
+impl Drop for TileLoader {
+    fn drop(&mut self) {
+        self.requests.close();
+    }
 }
 
 impl TileLoader {
@@ -136,10 +188,8 @@ impl TileLoader {
         config: LoaderConfig,
         deliver: impl Fn(TileMessage) + Send + Sync + 'static,
     ) -> Result<Self> {
-        let (requests, queue) = mpsc::channel::<Job>();
-        let requests = Arc::new(requests);
-        let queue = Arc::new(Mutex::new(queue));
-        let wanted = Arc::new(Mutex::new(HashSet::new()));
+        let requests = Arc::new(Queue::default());
+        let wanted: Wanted = Arc::default();
         let deliver = Arc::new(deliver);
         let current = Arc::new(RwLock::new(Arc::new(CurrentStyle::new(
             0,
@@ -153,13 +203,21 @@ impl TileLoader {
         let config = Arc::new(config);
         let fetcher = match config.sources.iter().any(|s| s.server.is_some()) {
             true => Some(Arc::new(fetcher(
-                Arc::downgrade(&requests),
+                requests.clone(),
                 wanted.clone(),
                 deliver.clone(),
             )?)),
             false => None,
         };
 
+        // Made first, so that if a worker can't start, dropping it stops the others.
+        let loader = Self {
+            requests: requests.clone(),
+            wanted: wanted.clone(),
+            current: current.clone(),
+            config: config.clone(),
+            fetcher: fetcher.clone(),
+        };
         let workers =
             thread::available_parallelism().map_or(4, |n| n.get().saturating_sub(1).max(1));
         for i in 0..workers {
@@ -171,8 +229,13 @@ impl TileLoader {
                     _ => Ok(None),
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let mut locals: Vec<Option<LocalTiles>> = config
+                .sources
+                .iter()
+                .map(|s| s.local.clone().map(LocalTiles::new))
+                .collect();
             let (queue, wanted, deliver, config, current, glyphs, fetcher) = (
-                queue.clone(),
+                requests.clone(),
                 wanted.clone(),
                 deliver.clone(),
                 config.clone(),
@@ -184,9 +247,9 @@ impl TileLoader {
                 .name(format!("tile-worker-{i}"))
                 .spawn(move || {
                     let mut processor = TileProcessor::new();
-                    while let Some(job) = next(&queue) {
+                    while let Some(job) = next(&queue, &wanted) {
                         let (Job::Load(request, zoom) | Job::Process(request, zoom, ..)) = job;
-                        if !wanted.lock().unwrap().contains(&request) {
+                        if !wanted.lock().unwrap().contains_key(&request) {
                             // A refresh is of a tile the map has, and isn't waiting for.
                             if !matches!(job, Job::Process(.., true)) {
                                 deliver(TileMessage::Cancelled(request));
@@ -195,8 +258,9 @@ impl TileLoader {
                         }
                         let (source, id) = request;
                         let current = current.read().unwrap().clone();
-                        let worker = Worker {
+                        let mut worker = Worker {
                             reader: readers[source].as_ref(),
+                            local: locals[source].as_mut(),
                             fetcher: fetcher.as_deref(),
                             style: &current.style,
                             source: &config.sources[source],
@@ -231,12 +295,7 @@ impl TileLoader {
                     }
                 })?;
         }
-        Ok(Self {
-            requests,
-            wanted,
-            current,
-            config,
-        })
+        Ok(loader)
     }
 
     /// Process tiles requested from now on with `style`. Returns the new style's
@@ -285,24 +344,32 @@ impl TileLoader {
         generation
     }
 
-    /// Replace the set of tiles the view needs.
-    pub fn set_wanted(&self, tiles: impl IntoIterator<Item = SourceTile>) {
-        let mut wanted = self.wanted.lock().unwrap();
-        wanted.clear();
-        wanted.extend(tiles);
+    /// Replace the tiles the view needs with `tiles`, most needed first; a tile listed
+    /// twice keeps its first place.
+    pub fn set_wanted(&self, tiles: impl IntoIterator<Item = (SourceTile, Tier)>) {
+        {
+            let mut wanted = self.wanted.lock().unwrap();
+            wanted.clear();
+            for (tile, tier) in tiles {
+                let rank = wanted.len() as u32;
+                wanted.entry(tile).or_insert(Want { rank, tier });
+            }
+        }
+        if let Some(fetcher) = &self.fetcher {
+            fetcher.wake();
+        }
     }
 
     /// Process `tile` with the style evaluated at `zoom`.
     pub fn request(&self, tile: SourceTile, zoom: u8) {
-        // The workers only stop when this loader is dropped, so sending can't fail before then.
-        let _ = self.requests.send(Job::Load(tile, zoom));
+        self.requests.push(Job::Load(tile, zoom));
     }
 }
 
 /// A fetcher that hands what it fetches to the workers through `requests`.
 fn fetcher(
-    requests: Weak<Sender<Job>>,
-    wanted: Arc<Mutex<HashSet<SourceTile>>>,
+    requests: Arc<Queue<Job>>,
+    wanted: Wanted,
     deliver: Arc<impl Fn(TileMessage) + Send + Sync + 'static>,
 ) -> Result<Fetcher> {
     Fetcher::spawn(wanted, move |job, fetched| {
@@ -313,15 +380,20 @@ fn fetcher(
             None if job.refresh => return,
             None => return deliver(TileMessage::Cancelled(job.tile)),
         };
-        // Gone once the loader is.
-        if let Some(requests) = requests.upgrade() {
-            let _ = requests.send(job);
-        }
+        // Dropped once the loader is gone.
+        requests.push(job);
     })
 }
 
-fn next(queue: &Mutex<Receiver<Job>>) -> Option<Job> {
-    queue.lock().unwrap().recv().ok()
+/// The job for the tile the view wants most, or one it no longer wants, to drop.
+fn next(queue: &Queue<Job>, wanted: &Mutex<HashMap<SourceTile, Want>>) -> Option<Job> {
+    queue.pop(|jobs| {
+        let wanted = wanted.lock().unwrap();
+        lowest(jobs, |job| {
+            let (Job::Load(tile, _) | Job::Process(tile, ..)) = job;
+            Some(rank(&wanted, tile))
+        })
+    })
 }
 
 enum Loaded {
@@ -338,9 +410,46 @@ impl Loaded {
     }
 }
 
+/// A tile server's local MBTiles file, opened once it exists.
+struct LocalTiles {
+    path: PathBuf,
+    reader: Option<MbTiles>,
+}
+
+impl LocalTiles {
+    fn new(path: PathBuf) -> Self {
+        Self { path, reader: None }
+    }
+
+    /// The tile, if the file exists and has it.
+    fn tile(&mut self, id: TileId) -> Option<Vec<u8>> {
+        if self.reader.is_none() {
+            // Opening read-only doesn't create it.
+            if !self.path.exists() {
+                return None;
+            }
+            match MbTiles::open(&self.path) {
+                Ok(reader) => self.reader = Some(reader),
+                Err(err) => {
+                    log::debug!("{err:#}");
+                    return None;
+                }
+            }
+        }
+        // A file just created may not have its tables yet.
+        let reader = self.reader.as_ref()?;
+        reader
+            .tile(id)
+            .inspect_err(|err| log::debug!("{}: {err:#}", self.path.display()))
+            .ok()?
+    }
+}
+
 struct Worker<'a> {
     /// `None` for image, GeoJSON and tile server sources.
     reader: Option<&'a MbTiles>,
+    /// A tile server's local tiles, if it has any.
+    local: Option<&'a mut LocalTiles>,
     /// Set if some source is a tile server.
     fetcher: Option<&'a Fetcher>,
     style: &'a Style,
@@ -355,7 +464,7 @@ struct Worker<'a> {
 impl Worker<'_> {
     /// Read and process a tile, or process its `fetched` data.
     fn load(
-        &self,
+        &mut self,
         processor: &mut TileProcessor,
         request: SourceTile,
         zoom: u8,
@@ -388,6 +497,9 @@ impl Worker<'_> {
             (None, Some(reader), ..) => reader.tile(id)?,
             (None, None, Some(tile), _) if tile == id => Some(std::fs::read(&self.source.path)?),
             (None, None, _, Some(server)) => {
+                if let Some(data) = self.local.as_mut().and_then(|l| l.tile(id)) {
+                    return self.process(processor, id, zoom, data, resources);
+                }
                 let Some(cached) = server.cached(id)? else {
                     let fetcher = self.fetcher.expect("spawned for tile servers");
                     fetcher.fetch(FetchJob::new(request, zoom, server.clone()));
@@ -405,6 +517,17 @@ impl Worker<'_> {
         let Some(data) = data else {
             return Ok(Loaded::Empty);
         };
+        self.process(processor, id, zoom, data, resources)
+    }
+
+    fn process(
+        &self,
+        processor: &mut TileProcessor,
+        id: TileId,
+        zoom: u8,
+        data: Vec<u8>,
+        resources: TileResources<'_>,
+    ) -> Result<Loaded> {
         // MBTiles readers decompress already; servers' tiles are cached as sent.
         let data = match self.source.server {
             Some(_) => decompress(data)?,
