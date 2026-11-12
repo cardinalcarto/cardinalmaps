@@ -7,7 +7,6 @@
 //! the library drops points outside their tile), so each tile placement is drawn once even
 //! when several clip areas share it.
 
-use crate::render::indices::GpuIndices;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -18,6 +17,7 @@ use sparkle::{Bucket, BucketGeometry};
 use super::{DrawContext, LayerDraw, LayerRenderer, PrepareContext};
 use crate::camera::Placement;
 use crate::render::gpu::{Gpu, PipelineSpec};
+use crate::render::indices::GpuIndices;
 
 /// The density texture is this many times smaller than the viewport in each direction:
 /// the kernels are smooth, so the lower resolution doesn't show and the pass is cheap.

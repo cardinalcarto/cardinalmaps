@@ -1,6 +1,5 @@
 //! `fill` layers: triangles, plus an outline pass with `fill-antialias`.
 
-use crate::render::indices::GpuIndices;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -13,6 +12,7 @@ use super::pattern::{AtlasGroup, TextureGroup, crossfaded_pattern};
 use super::{DrawContext, LayerDraw, LayerRenderer, TileDraw, translate_units};
 use crate::camera::TILE_SIZE;
 use crate::render::gpu::{Gpu, PipelineSpec};
+use crate::render::indices::GpuIndices;
 
 pub struct FillRenderer {
     /// By paint signature, whether it draws outlines, and whether patterns are per vertex.

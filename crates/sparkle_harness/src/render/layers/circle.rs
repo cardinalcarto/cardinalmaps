@@ -1,7 +1,6 @@
 //! `circle` layers: a quad per circle, sized in the vertex shader and rounded in the
 //! fragment shader.
 
-use crate::render::indices::GpuIndices;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -11,6 +10,7 @@ use sparkle::{Bucket, BucketGeometry};
 
 use super::{DrawContext, LayerDraw, LayerRenderer, translate_units};
 use crate::render::gpu::{Gpu, PipelineSpec};
+use crate::render::indices::GpuIndices;
 
 pub struct CircleRenderer {
     /// By paint signature.

@@ -45,7 +45,7 @@ impl ExtrusionLight {
     }
 
     /// The color of an extrusion vertex: `color` (premultiplied) lit by this light, on a
-    /// surface with unit `normal` (as in [`WallPoint`](crate::tile::WallPoint), or up on roofs),
+    /// surface with unit `normal` (as in [`WallVertex`](crate::tile::WallVertex), or up on roofs),
     /// `top` 1 at the roof and 0 at the base, between `base` and `height` meters. The
     /// result is opaque; `fill-extrusion-opacity` applies to the whole layer afterwards.
     ///
@@ -156,7 +156,7 @@ mod tests {
         let gray = [0.5, 0.5, 0.5, 1.0];
         let shade = |normal| l.shade(gray, normal, 1.0, [0.0, 30.0], false, false);
         let roof = shade([0.0, 0.0, 1.0]);
-        // Walls facing the light's side (normals are mirrored, see WallPoint).
+        // Walls facing the light's side (normals are mirrored, see WallVertex).
         let lit = shade([0.0, -1.0, 0.0]);
         let shaded = shade([0.0, 1.0, 0.0]);
         assert!(roof[0] > lit[0] || roof[0] == 1.0);

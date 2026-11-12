@@ -146,7 +146,7 @@ impl Renderer {
         let quad: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
         let gpu = Gpu {
             quad: core.buffer(bytemuck::cast_slice(&quad)),
-            paint_zeros: core.buffer(&[0; paint::PAINT_ZEROS * paint::PAINT_ZERO_VERTICES]),
+            paint_zeros: core.buffer(&[0; paint::PAINT_ZEROS]),
             images: None,
             core,
         };

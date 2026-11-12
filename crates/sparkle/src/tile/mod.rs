@@ -36,7 +36,7 @@ pub use circle::{CircleBucket, CircleVertex};
 pub use color_relief::{ColorRamp, ColorReliefBucket};
 pub use fill::{FillBucket, FillVertex};
 pub use fill_extrusion::{
-    ExtrusionRoofs, ExtrusionWalls, FillExtrusionBucket, FillExtrusionPattern, WallPoint,
+    ExtrusionRoofs, ExtrusionWalls, FillExtrusionBucket, FillExtrusionPattern, WallVertex,
 };
 pub use heatmap::{HeatmapBucket, HeatmapVertex};
 pub use hillshade::{HillshadeBucket, HillshadeLight, LightSource, latitude_range};

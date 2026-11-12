@@ -1,7 +1,6 @@
 //! `line` layers: triangles widened in the vertex shader (see `sparkle::tile::LineBucket`),
 //! drawn with a color, dashes, a sprite pattern or a gradient.
 
-use crate::render::indices::GpuIndices;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -13,6 +12,7 @@ use sparkle::{Bucket, BucketGeometry};
 use super::pattern::{AtlasGroup, TextureGroup, crossfaded_pattern};
 use super::{DrawContext, LayerDraw, LayerRenderer, translate_units};
 use crate::render::gpu::{Gpu, PipelineSpec};
+use crate::render::indices::GpuIndices;
 
 /// Texels in a `line-gradient` ramp.
 const GRADIENT_SIZE: usize = 256;

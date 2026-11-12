@@ -92,8 +92,7 @@ fn extrudes_buildings() {
         };
         let (props, roof_props) = (layer.paint.attributes(), layer.paint.roof_attributes());
 
-        // Roof vertices; a wall point per ring vertex, plus one to end each ring: the
-        // tower and the block's outside and courtyard.
+        // Roof vertices, and four per wall: 4 tower walls, 4 + 4 around the courtyard.
         assert_eq!(b.roofs.vertices.len(), 4 + 8, "{tessellation:?}");
         assert!(
             b.roofs
@@ -101,14 +100,13 @@ fn extrudes_buildings() {
                 .iter()
                 .all(|&i| (i as usize) < b.roofs.vertices.len())
         );
-        assert_eq!(b.walls.points.len(), 3 * 5);
-        let walls = b.walls.points.iter().filter(|p| p.normal != [0.0; 2]);
-        assert_eq!(walls.count(), 12);
+        assert_eq!(b.walls.vertices.len(), 4 * 12);
+        assert_eq!(b.walls.triangles.len(), 6 * 12);
 
         // Roofs are at the height whatever the base, so they have no base values.
         for (paint, props, count) in [
             (&b.roofs.paint, &roof_props[..], b.roofs.vertices.len()),
-            (&b.walls.paint, &props[..], b.walls.points.len()),
+            (&b.walls.paint, &props[..], b.walls.vertices.len()),
         ] {
             let ids: Vec<_> = paint.features.iter().map(|f| f.id).collect();
             assert_eq!(ids, [Some(1), Some(2)]);
@@ -160,7 +158,7 @@ fn patterns_come_from_the_sprite() {
     };
     for (patterns, paint, count) in [
         (&b.roofs.patterns, &b.roofs.paint, b.roofs.vertices.len()),
-        (&b.walls.patterns, &b.walls.paint, b.walls.points.len()),
+        (&b.walls.patterns, &b.walls.paint, b.walls.vertices.len()),
     ] {
         assert_eq!(patterns.len(), count);
         let tower = patterns[paint.features[0].vertices.start as usize];
@@ -173,7 +171,7 @@ fn patterns_come_from_the_sprite() {
     }
 
     // Walls with patterns know how far along their rings they are.
-    assert_eq!(b.walls.edge_distances.len(), b.walls.points.len());
+    assert_eq!(b.walls.edge_distances.len(), b.walls.vertices.len());
 
     // Without sprites there is nothing to take patterns from.
     let processed = TileProcessor::new()
