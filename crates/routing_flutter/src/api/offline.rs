@@ -47,8 +47,10 @@ pub struct TileCheckError {
     pub message: String,
 }
 
-/// The most a transfer tile may decompress to on a phone; real tiles are a few megabytes.
-const MAX_TILE_BYTES: usize = 64 * 1024 * 1024;
+/// The most a transfer tile may decompress to: the transit loader's limit, so a download
+/// is never refused that the loader would load (nine planet cycling tiles decompress to
+/// 64-256 MB; two, over it, load nowhere).
+const MAX_TILE_BYTES: usize = valinor_walk::transfer_tile::DEFAULT_MAX_DECOMPRESSED_BYTES;
 
 /// Checks a downloaded transfer tile without a published hash: its zstd frame must decode
 /// whole with nothing after it, the CRC-32 in its header must match the whole decompressed
