@@ -18,7 +18,7 @@ use chrono::{DateTime, Days, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, T
 use geo::{Coord, coord};
 use std::borrow::Cow;
 use thiserror::Error;
-use zerocopy::{F32, FromBytes, LE, U16, U32, U64};
+use zerocopy::{F32, FromBytes as _, LE, U16, U32, U64};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 mod builder;

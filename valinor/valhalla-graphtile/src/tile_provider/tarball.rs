@@ -21,7 +21,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tar::Archive;
 use thiserror::Error;
-use zerocopy::{FromBytes, IntoBytes, LE, U32, U64};
+use zerocopy::{FromBytes as _, IntoBytes as _, LE, U32, U64};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, Unaligned};
 
 // Offsets into an extract are 64-bit,

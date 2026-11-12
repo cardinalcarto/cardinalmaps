@@ -8,7 +8,7 @@ use enumset::EnumSet;
 use geo::{Coord, CoordFloat};
 use num_traits::FromPrimitive;
 use std::borrow::Cow;
-use zerocopy::{FromBytes, LE, U16, U32};
+use zerocopy::{FromBytes as _, LE, U16, U32};
 use zerocopy_derive::{FromBytes, Immutable, KnownLayout, Unaligned};
 
 use crate::shape_codec::decode_first_coordinate;

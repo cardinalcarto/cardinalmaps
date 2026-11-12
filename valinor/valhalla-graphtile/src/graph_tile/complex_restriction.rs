@@ -15,7 +15,7 @@ use crate::Access;
 use bitfield_struct::bitfield;
 use enumset::EnumSet;
 use num_enum::TryFromPrimitive;
-use zerocopy::{FromBytes, LE, U64};
+use zerocopy::{FromBytes as _, LE, U64};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 /// Turn restriction types (mainline's `RestrictionType`).
