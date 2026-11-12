@@ -466,6 +466,14 @@ impl MapView {
             .zoom(&self.camera, levels, self.cursor, Instant::now());
     }
 
+    /// A touchpad or pinch gesture started at `position`: stop anything moving, so it
+    /// zooms from where things are.
+    pub fn pan_zoom_start(&mut self, position: [f64; 2]) {
+        self.subject = None;
+        self.cursor = self.physical(position);
+        self.motion.grab(self.cursor, Instant::now());
+    }
+
     /// A touchpad or pinch gesture at `position` moved by `pan` logical pixels, scaled by
     /// `scale` and turned clockwise by `rotation` degrees since its last update.
     pub fn pan_zoom(&mut self, position: [f64; 2], pan: [f64; 2], scale: f64, rotation: f64) {
@@ -474,14 +482,22 @@ impl MapView {
         let ratio = self.camera.pixel_ratio;
         let to = [p[0] + pan[0] * ratio, p[1] + pan[1] * ratio];
         self.camera.drag(p, to);
-        if scale > 0.0 && scale != 1.0 {
-            self.camera.zoom_around(scale.log2(), to);
+        let levels = if scale > 0.0 { scale.log2() } else { 0.0 };
+        if levels != 0.0 {
+            self.camera.zoom_around(levels, to);
         }
+        // Every update counts, so a pinch held still before letting go doesn't zoom on.
+        self.motion.track_zoom(levels, to, Instant::now());
         if rotation != 0.0 {
             // Turning the map clockwise turns the view to the west.
             self.camera.rotate_around(-rotation, to);
         }
         self.cursor = to;
+    }
+
+    /// A touchpad or pinch gesture ended: if it was zooming quickly, zoom on as it slows.
+    pub fn pan_zoom_end(&mut self) {
+        self.motion.release_zoom(&self.camera, Instant::now());
     }
 
     /// Two fingers dragged up or down together by `dy` logical pixels: up tilts further.

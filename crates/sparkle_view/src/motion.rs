@@ -1,5 +1,5 @@
-//! Easing for window input: wheel zooms that glide to their level, and flings that carry a
-//! pan on after the mouse lets go; and flights the app starts, which zoom out and back in
+//! Easing for window input: wheel zooms that glide to their level, flings that carry a
+//! pan on after the mouse lets go and a pinch zoom on after the fingers lift; and flights the app starts, which zoom out and back in
 //! to get somewhere. All advance once per frame through [`Motion::step`].
 
 use std::collections::VecDeque;
@@ -21,6 +21,15 @@ const FLING_TIME: f64 = 0.3;
 /// Fling speeds in logical pixels per second: faster ones are capped, slower ones stop.
 const MAX_SPEED: f64 = 2000.0;
 const MIN_SPEED: f64 = 20.0;
+/// A zoom fling's speed shrinks by a factor of e every this many seconds, so it zooms on
+/// for its speed times this.
+const ZOOM_FLING_TIME: f64 = 0.25;
+/// Zoom fling speeds in levels per second: faster ones are capped, and slower ones don't
+/// start, so a slow, careful pinch stays where it was let go. Once going, one stops when
+/// it slows to [`ZOOM_FLING_STOP`].
+const MAX_ZOOM_SPEED: f64 = 6.0;
+const MIN_ZOOM_SPEED: f64 = 1.5;
+const ZOOM_FLING_STOP: f64 = 0.1;
 /// The longest time one step advances, so a stalled frame doesn't jump.
 const MAX_STEP: f64 = 0.05;
 /// How far a flight zooms out on the way, as MapLibre's `flyTo` `curve`.
@@ -42,6 +51,12 @@ pub struct Motion {
     fling_anchor: [f64; 2],
     /// Recent pan positions, oldest first.
     samples: VecDeque<(Instant, [f64; 2])>,
+    /// The zoom fling's speed in levels per second, and the point it zooms around.
+    zoom_velocity: f64,
+    zoom_fling_anchor: [f64; 2],
+    /// Recent pinch zooms, oldest first: the levels zoomed since the pinch started, and
+    /// the point it zoomed around.
+    zoom_samples: VecDeque<(Instant, f64, [f64; 2])>,
     /// When the last step ran, while anything is moving.
     last: Option<Instant>,
     flight: Option<Flight>,
@@ -178,14 +193,19 @@ fn ease(t: f64) -> f64 {
 
 impl Motion {
     pub fn active(&self) -> bool {
-        self.zoom != 0.0 || self.velocity != [0.0; 2] || self.flight.is_some()
+        self.zoom != 0.0
+            || self.velocity != [0.0; 2]
+            || self.zoom_velocity != 0.0
+            || self.flight.is_some()
     }
 
     /// Fly to `center` (world coordinates) at `zoom`, ending anything else in progress.
     pub fn fly(&mut self, camera: &Camera, center: [f64; 2], zoom: f64, now: Instant) {
         self.zoom = 0.0;
         self.velocity = [0.0; 2];
+        self.zoom_velocity = 0.0;
         self.samples.clear();
+        self.zoom_samples.clear();
         self.flight = Some(Flight::new(camera, center, zoom.clamp(0.0, MAX_ZOOM), now));
         self.last = Some(now);
     }
@@ -214,13 +234,17 @@ impl Motion {
         true
     }
 
-    /// A pan starts at `p`: stop any fling or flight. Returns whether there was one.
+    /// A pan or pinch starts at `p`: stop any fling or flight. Returns whether there was
+    /// one.
     pub fn grab(&mut self, p: [f64; 2], now: Instant) -> bool {
-        let stopped = self.velocity != [0.0; 2] || self.flight.is_some();
+        let stopped =
+            self.velocity != [0.0; 2] || self.zoom_velocity != 0.0 || self.flight.is_some();
         self.velocity = [0.0; 2];
+        self.zoom_velocity = 0.0;
         self.flight = None;
         self.samples.clear();
         self.samples.push_back((now, p));
+        self.zoom_samples.clear();
         stopped
     }
 
@@ -234,6 +258,45 @@ impl Motion {
         {
             self.samples.pop_front();
         }
+    }
+
+    /// A pinch zoomed by `levels` (none when it only panned or turned) around `anchor`.
+    pub fn track_zoom(&mut self, levels: f64, anchor: [f64; 2], now: Instant) {
+        let total = self.zoom_samples.back().map_or(0.0, |&(_, z, _)| z) + levels;
+        self.zoom_samples.push_back((now, total, anchor));
+        while self
+            .zoom_samples
+            .front()
+            .is_some_and(|&(t, _, _)| now - t > FLING_WINDOW)
+        {
+            self.zoom_samples.pop_front();
+        }
+    }
+
+    /// The pinch let go: zoom on at its recent speed, if it was still zooming quickly.
+    pub fn release_zoom(&mut self, camera: &Camera, now: Instant) {
+        let samples = std::mem::take(&mut self.zoom_samples);
+        let (Some(&(t0, z0, _)), Some(&(t1, z1, anchor))) = (samples.front(), samples.back())
+        else {
+            return;
+        };
+        let duration = (t1 - t0).as_secs_f64();
+        if now - t1 > FLING_PAUSE || duration <= 0.0 {
+            return;
+        }
+        let speed = (z1 - z0) / duration;
+        // Already at the limit it's heading for.
+        let limited = if speed > 0.0 {
+            camera.zoom >= MAX_ZOOM
+        } else {
+            camera.zoom <= 0.0
+        };
+        if speed.abs() < MIN_ZOOM_SPEED || limited {
+            return;
+        }
+        self.wake(now);
+        self.zoom_velocity = speed.clamp(-MAX_ZOOM_SPEED, MAX_ZOOM_SPEED);
+        self.zoom_fling_anchor = anchor;
     }
 
     /// The pan let go: fling on at its recent velocity, if it was still moving.
@@ -295,6 +358,17 @@ impl Motion {
             self.velocity = self.velocity.map(|v| v * decay);
             if self.velocity[0].hypot(self.velocity[1]) < MIN_SPEED * camera.pixel_ratio {
                 self.velocity = [0.0; 2];
+            }
+        }
+
+        if self.zoom_velocity != 0.0 {
+            let decay = (-dt / ZOOM_FLING_TIME).exp();
+            let levels = self.zoom_velocity * ZOOM_FLING_TIME * (1.0 - decay);
+            camera.zoom_around(levels, self.zoom_fling_anchor);
+            self.zoom_velocity *= decay;
+            let limited = camera.zoom <= 0.0 || camera.zoom >= MAX_ZOOM;
+            if self.zoom_velocity.abs() < ZOOM_FLING_STOP || limited {
+                self.zoom_velocity = 0.0;
             }
         }
 
@@ -478,6 +552,90 @@ mod tests {
         m.fly(&c, [0.2, 0.3], 10.0, t);
         m.step(&mut c, t + Duration::from_millis(16));
         m.grab([400.0, 300.0], t + Duration::from_millis(20));
+        assert!(!m.active());
+    }
+
+    /// Pinch at `levels_per_frame` every 16 ms for `frames` frames from `t`, returning when
+    /// the last update came.
+    fn pinch(m: &mut Motion, t: Instant, frames: u32, levels_per_frame: f64) -> Instant {
+        m.grab([400.0, 300.0], t);
+        let mut now = t;
+        for _ in 0..frames {
+            now += Duration::from_millis(16);
+            m.track_zoom(levels_per_frame, [400.0, 300.0], now);
+        }
+        now
+    }
+
+    #[test]
+    fn a_quick_pinch_zooms_on() {
+        let mut c = camera();
+        let mut m = Motion::default();
+        // About 3 levels a second.
+        let end = pinch(&mut m, Instant::now(), 10, 0.05);
+        m.release_zoom(&c, end);
+        assert!(m.active());
+        settle(&mut m, &mut c, end);
+        // It carries on by about its speed times ZOOM_FLING_TIME.
+        let carried = c.zoom - 12.0;
+        assert!(carried > 0.5 && carried < 0.8, "{carried}");
+    }
+
+    #[test]
+    fn a_quick_pinch_out_zooms_out() {
+        let mut c = camera();
+        let mut m = Motion::default();
+        let end = pinch(&mut m, Instant::now(), 10, -0.05);
+        m.release_zoom(&c, end);
+        settle(&mut m, &mut c, end);
+        assert!(c.zoom < 11.5, "{}", c.zoom);
+    }
+
+    #[test]
+    fn a_slow_pinch_stops_where_it_lets_go() {
+        let c = camera();
+        let mut m = Motion::default();
+        // Half a level a second.
+        let end = pinch(&mut m, Instant::now(), 10, 0.008);
+        m.release_zoom(&c, end);
+        assert!(!m.active());
+    }
+
+    #[test]
+    fn a_pinch_held_still_does_not_zoom_on() {
+        let c = camera();
+        let mut m = Motion::default();
+        let t = Instant::now();
+        let mut now = pinch(&mut m, t, 10, 0.05);
+        // Held apart, still moving the fingers a little but not zooming.
+        for _ in 0..10 {
+            now += Duration::from_millis(16);
+            m.track_zoom(0.0, [400.0, 300.0], now);
+        }
+        m.release_zoom(&c, now);
+        assert!(!m.active());
+    }
+
+    #[test]
+    fn a_zoom_fling_stops_at_the_limit() {
+        let mut c = camera();
+        c.zoom = MAX_ZOOM - 0.1;
+        let mut m = Motion::default();
+        let end = pinch(&mut m, Instant::now(), 10, 0.2);
+        m.release_zoom(&c, end);
+        let frames = settle(&mut m, &mut c, end);
+        assert_eq!(c.zoom, MAX_ZOOM);
+        assert!(frames < 5, "{frames} frames");
+    }
+
+    #[test]
+    fn grabbing_stops_a_zoom_fling() {
+        let c = camera();
+        let mut m = Motion::default();
+        let t = Instant::now();
+        let end = pinch(&mut m, t, 10, 0.05);
+        m.release_zoom(&c, end);
+        assert!(m.grab([400.0, 300.0], end + Duration::from_millis(10)));
         assert!(!m.active());
     }
 

@@ -319,11 +319,24 @@ impl SparkleMap {
         self.view().scroll([x, y], delta);
     }
 
+    /// A touchpad or pinch gesture started at `x, y`: stop anything moving.
+    #[frb(sync)]
+    pub fn pan_zoom_start(&self, x: f64, y: f64) {
+        self.view().pan_zoom_start([x, y]);
+    }
+
     /// A touchpad or pinch gesture moved by `dx, dy`, scaled by `scale` and turned
     /// clockwise by `rotation` degrees since its last update.
     #[frb(sync)]
     pub fn pan_zoom(&self, x: f64, y: f64, dx: f64, dy: f64, scale: f64, rotation: f64) {
         self.view().pan_zoom([x, y], [dx, dy], scale, rotation);
+    }
+
+    /// A touchpad or pinch gesture ended (its fingers lifted): if it was zooming quickly,
+    /// it zooms on as it slows. Draw frames after.
+    #[frb(sync)]
+    pub fn pan_zoom_end(&self) {
+        self.view().pan_zoom_end();
     }
 
     /// Two fingers dragged up or down together by `dy` logical pixels: up tilts further.

@@ -56,7 +56,13 @@ enum _TwoFingers {
 
 /// Two fingers must turn this many degrees before a pinch starts rotating, so that
 /// zooming doesn't also turn the map a little.
-const double _rotateThreshold = 20;
+const double _rotateThreshold = 7;
+
+/// How much further, in degrees per zoom level the pinch has zoomed (at most), they must
+/// turn: fingers spreading or closing quickly also twist a little, so a pinch that's
+/// mostly a zoom needs a deliberate turn to rotate as well. Up to [_maxRotateThreshold].
+const double _rotateThresholdPerLevel = 30;
+const double _maxRotateThreshold = 45;
 
 /// How far a finger can stray, in logical pixels, and still be a tap. The map doesn't pan
 /// until it goes further.
@@ -366,6 +372,11 @@ class _SparkleMapState extends State<SparkleMap> {
 
   /// How far a pinch has turned, in degrees, until it passes [_rotateThreshold].
   double? _turned;
+
+  /// How far apart the fingers were when the pinch started, and the most zoom levels it
+  /// has zoomed in or out from there, which raise the threshold to rotate.
+  double _pinchSpread = 0;
+  double _pinchZoomed = 0;
 
   /// Where a lone finger went down, until it leaves [_tapSlop] and starts panning.
   Offset? _tapDown;
@@ -910,6 +921,12 @@ class _SparkleMapState extends State<SparkleMap> {
           vertical(tb) &&
           ta.dy.sign == tb.dy.sign;
       _twoFingers = tilt ? _TwoFingers.tilt : _TwoFingers.pinch;
+      if (!tilt) {
+        _pinchSpread = apart.distance;
+        _pinchZoomed = 0;
+        final c = (a1 + b1) / 2;
+        map.panZoomStart(x: c.dx, y: c.dy);
+      }
       return;
     }
     final c0 = (a0 + b0) / 2;
@@ -926,7 +943,18 @@ class _SparkleMapState extends State<SparkleMap> {
     turn = (turn + 180) % 360 - 180;
     if (_turned case final turned?) {
       _turned = turned + turn;
-      if (_turned!.abs() < _rotateThreshold) {
+      final spread = (a1 - b1).distance;
+      if (_pinchSpread > 0 && spread > 0) {
+        _pinchZoomed = max(
+          _pinchZoomed,
+          (log(spread / _pinchSpread) / ln2).abs(),
+        );
+      }
+      final threshold = min(
+        _rotateThreshold + _pinchZoomed * _rotateThresholdPerLevel,
+        _maxRotateThreshold,
+      );
+      if (_turned!.abs() < threshold) {
         turn = 0;
       } else {
         _turned = null;
@@ -956,6 +984,11 @@ class _SparkleMapState extends State<SparkleMap> {
     }
     _touches.remove(e.pointer);
     if (_touches.length < 2) {
+      if (_twoFingers == _TwoFingers.pinch && e is PointerUpEvent) {
+        // Lifted while zooming quickly, it zooms on.
+        _map?.panZoomEnd();
+        _requestFrame();
+      }
       _twoFingers = null;
     }
     if (_quickZoom case final quick? when quick.pointer == e.pointer) {
@@ -1043,6 +1076,12 @@ class _SparkleMapState extends State<SparkleMap> {
   void _onPanZoomStart(PointerPanZoomStartEvent e) {
     _lastPanZoomScale = 1;
     _lastPanZoomRotation = 0;
+    _map?.panZoomStart(x: e.localPosition.dx, y: e.localPosition.dy);
+  }
+
+  void _onPanZoomEnd(PointerPanZoomEndEvent e) {
+    _map?.panZoomEnd();
+    _requestFrame();
   }
 
   void _onPanZoomUpdate(PointerPanZoomUpdateEvent e) {
@@ -1112,6 +1151,7 @@ class _SparkleMapState extends State<SparkleMap> {
             onPointerSignal: _onPointerSignal,
             onPointerPanZoomStart: _onPanZoomStart,
             onPointerPanZoomUpdate: _onPanZoomUpdate,
+            onPointerPanZoomEnd: _onPanZoomEnd,
             child: RepaintBoundary(
               key: _boundary,
               child: RawImage(

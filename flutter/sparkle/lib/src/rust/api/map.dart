@@ -78,6 +78,13 @@ abstract class SparkleMap implements RustOpaqueInterface {
     required double rotation,
   });
 
+  /// A touchpad or pinch gesture ended (its fingers lifted): if it was zooming quickly,
+  /// it zooms on as it slows. Draw frames after.
+  void panZoomEnd();
+
+  /// A touchpad or pinch gesture started at `x, y`: stop anything moving.
+  void panZoomStart({required double x, required double y});
+
   /// `button`: 0 primary, 1 secondary, else another. `rotate`: a primary drag rotates.
   bool pointerDown({
     required double x,
