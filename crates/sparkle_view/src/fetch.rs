@@ -17,10 +17,10 @@ use crate::queue::{Queue, lowest};
 use crate::remote::{Fetched, TileServer};
 
 /// Requests in flight at once, across servers.
-const THREADS: usize = 8;
-/// Threads kept for tiles on screen: tiles wanted for later are only fetched by the rest,
-/// so one the view needs now never waits for a request already under way to finish.
-const KEPT_FOR_VISIBLE: usize = 2;
+const THREADS: usize = 16;
+/// Threads that may fetch tiles wanted for later at once: the rest are kept for tiles on
+/// screen, so one the view needs now never waits for a request already under way to finish.
+const MAX_PREDICTING: usize = 8;
 /// The wait before the first retry, doubling with each failure up to [`MAX_BACKOFF`].
 const FIRST_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
@@ -207,7 +207,7 @@ fn next<J>(
         let wanted = wanted.lock().unwrap();
         // Only raised under the queue's lock, held here, so no two threads take the last
         // place.
-        let busy = predicting.load(Ordering::Relaxed) >= THREADS - KEPT_FOR_VISIBLE;
+        let busy = predicting.load(Ordering::Relaxed) >= MAX_PREDICTING;
         let i = lowest(jobs, |job| match wanted.get(&tile(job)) {
             Some(w) if w.tier.predicted() && busy => None,
             _ => Some(rank(&wanted, &tile(job))),
@@ -307,21 +307,21 @@ mod tests {
 
     #[test]
     fn tiles_for_later_leave_threads_for_visible_ones() {
-        let mut tiers: Vec<_> = (0..10).map(|x| (x, Tier::Destination)).collect();
-        tiers.push((10, Tier::Visible));
-        let (queue, wanted) = setup(10, &tiers);
+        let mut tiers: Vec<_> = (0..20).map(|x| (x, Tier::Destination)).collect();
+        tiers.push((20, Tier::Visible));
+        let (queue, wanted) = setup(20, &tiers);
         let predicting = AtomicUsize::new(0);
-        for x in 0..(THREADS - KEPT_FOR_VISIBLE) as u32 {
+        for x in 0..MAX_PREDICTING as u32 {
             let (t, predicted) = next(&queue, |&t| t, &wanted, &predicting).unwrap();
             assert_eq!((t.1.x, predicted), (x, true));
         }
         // The rest wait while those are fetched, but a visible tile is taken at once.
-        queue.push(tile(10));
+        queue.push(tile(20));
         let (t, predicted) = next(&queue, |&t| t, &wanted, &predicting).unwrap();
-        assert_eq!((t.1.x, predicted), (10, false));
+        assert_eq!((t.1.x, predicted), (20, false));
         // Once one is done, the next tile for later goes.
         predicting.fetch_sub(1, Ordering::Relaxed);
         let (t, _) = next(&queue, |&t| t, &wanted, &predicting).unwrap();
-        assert_eq!(t.1.x, (THREADS - KEPT_FOR_VISIBLE) as u32);
+        assert_eq!(t.1.x, MAX_PREDICTING as u32);
     }
 }
