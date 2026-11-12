@@ -162,4 +162,45 @@ void main() {
       ),
     );
   });
+
+  test('tiles that arrive are routed after refreshTiles', () async {
+    final dir = await Directory.systemTemp.createTemp('routing-arrive');
+    addTearDown(() => dir.delete(recursive: true));
+    // The fixture's build ID, as mainline 3.9.1 stamped it.
+    const build = 53174;
+    final router = await OfflineRouter.open(
+      tileSets: [dir.path],
+      expectedBuildId: build,
+    );
+    expect((await router.route(body: utf8.encode(ferrostarBody))).status, 400);
+
+    const fixture = '../../valinor/valhalla-graphtile/fixtures/andorra-tiles';
+    for (final tile in const [
+      '0/003/015.gph',
+      '1/047/701.gph',
+      '2/000/762/485.gph',
+      '2/000/762/486.gph',
+      '2/000/763/925.gph',
+      '2/000/763/926.gph',
+      '2/000/763/927.gph',
+    ]) {
+      final to = File('${dir.path}/$tile');
+      await to.parent.create(recursive: true);
+      // Whole files only: written aside, then renamed into place.
+      final part = await File('$fixture/$tile').copy('${to.path}.part');
+      await part.rename(to.path);
+    }
+    await router.refreshTiles();
+    expect((await router.route(body: utf8.encode(ferrostarBody))).status, 200);
+    await expectLater(
+      OfflineRouter.open(tileSets: [dir.path], expectedBuildId: build + 1),
+      throwsA(
+        isA<OpenError>().having(
+          (e) => e.kind,
+          'kind',
+          OpenErrorKind.wrongBuild,
+        ),
+      ),
+    );
+  });
 }

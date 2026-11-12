@@ -159,23 +159,47 @@ impl OfflineTransit {
     ///
     /// The build's files are memory-mapped: to replace one, write a new file and rename it over
     /// the old one; truncating or rewriting it in place while it is open can fault.
+    ///
+    /// `expected_build_id` is as for `OfflineRouter.open` (the routing release's
+    /// `valhalla_build_id`): with it, a street tile directory may have no tiles yet,
+    /// and tiles that arrive later are used after [`Self::refresh_tiles`].
     pub fn open(
         build: String,
         feeds: Option<Vec<String>>,
         tile_sets: Vec<String>,
+        expected_build_id: Option<u32>,
     ) -> Result<OfflineTransit, TransitOpenError> {
+        let street_build =
+            crate::api::router::street_build(expected_build_id).map_err(|error| {
+                TransitOpenError {
+                    message: error.message,
+                }
+            })?;
         let loaded = TransitBuild::load(Path::new(&build), feeds.as_deref()).map_err(|error| {
             TransitOpenError {
                 message: format!("{build}: {error}"),
             }
         })?;
         Ok(Self {
-            planner: StreetPlanner::from_build(loaded, &tile_sets, device_config()).map_err(
-                |error| TransitOpenError {
-                    message: error.to_string(),
-                },
-            )?,
+            planner: StreetPlanner::from_build_for(
+                loaded,
+                &tile_sets,
+                device_config(),
+                street_build,
+            )
+            .map_err(|error| TransitOpenError {
+                message: error.to_string(),
+            })?,
         })
+    }
+
+    /// Makes street tiles that arrived in the tile directories since this was opened (or last
+    /// refreshed) available to plans. Call it once a download's files are in place.
+    ///
+    /// It is cheap and safe while plans run; each search worker forgets the tiles it found
+    /// missing the next time it plans.
+    pub fn refresh_tiles(&self) {
+        self.planner.refresh_tiles();
     }
 
     /// Opens one compiled timetable, with its walks built in memory, for tests.
@@ -466,9 +490,10 @@ mod tests {
 
     #[test]
     fn reports_why_it_cannot_open() {
-        let error = OfflineTransit::open("/nonexistent/build".to_owned(), None, vec![tiles()])
-            .err()
-            .unwrap();
+        let error =
+            OfflineTransit::open("/nonexistent/build".to_owned(), None, vec![tiles()], None)
+                .err()
+                .unwrap();
         assert!(error.message.contains("/nonexistent/build"));
     }
 }

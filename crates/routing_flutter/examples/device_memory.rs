@@ -416,7 +416,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
     let router = {
         let tiles = tiles.clone();
-        pool.run(move || OfflineRouter::open(vec![tiles]))
+        pool.run(move || OfflineRouter::open(vec![tiles], None))
             .map_err(|e| e.message)?
     };
     let router = Arc::new(router);
@@ -481,7 +481,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
     let transit = {
         let area = area.to_string_lossy().into_owned();
-        pool.run(move || OfflineTransit::open(area, Some(feeds), vec![tiles]))
+        pool.run(move || OfflineTransit::open(area, Some(feeds), vec![tiles], None))
             .map_err(|e| e.message)?
     };
     let transit = Arc::new(transit);

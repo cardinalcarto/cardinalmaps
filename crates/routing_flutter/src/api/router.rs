@@ -6,6 +6,7 @@
 
 use core::num::NonZeroUsize;
 use flutter_rust_bridge::frb;
+use valhalla_graphtile::graph_tile::BuildId;
 use valinor_loki::LokiConfig;
 use valinor_router::{Router, RouterConfig};
 use valinor_thor::{Retention, ThorConfig};
@@ -63,6 +64,9 @@ pub enum OpenErrorKind {
     NoBuildId,
     /// The tile sets come from different builds: every region must come from the same one.
     MixedBuilds,
+    /// A tile is from another build than the expected one, or the expected build ID
+    /// isn't one (Valhalla's are 16 bits).
+    WrongBuild,
 }
 
 /// Why the regions couldn't be opened.
@@ -81,6 +85,7 @@ impl From<valinor_router::OpenError> for OpenError {
             E::Io { .. } | E::Tiles { .. } | E::Empty { .. } => OpenErrorKind::Unreadable,
             E::NoBuildId { .. } => OpenErrorKind::NoBuildId,
             E::MixedBuilds { .. } => OpenErrorKind::MixedBuilds,
+            E::WrongBuild { .. } => OpenErrorKind::WrongBuild,
         };
         Self {
             kind,
@@ -89,15 +94,57 @@ impl From<valinor_router::OpenError> for OpenError {
     }
 }
 
+/// Why tiles that arrived couldn't be made available.
+pub struct RefreshError {
+    /// A description for logs, naming the directory.
+    pub message: String,
+}
+
+/// The Valhalla build ID to open tiles for: the routing release's `valhalla_build_id`.
+pub(crate) fn street_build(expected_build_id: Option<u32>) -> Result<Option<BuildId>, OpenError> {
+    expected_build_id
+        .map(|id| {
+            u16::try_from(id).map(BuildId::new).map_err(|_| OpenError {
+                kind: OpenErrorKind::WrongBuild,
+                message: format!("{id} is not a Valhalla build ID (they are 16 bits)"),
+            })
+        })
+        .transpose()
+}
+
 impl OfflineRouter {
     /// Opens tile sets (mainline `build_extract` tarballs or tile directories) as one router.
     ///
     /// Fails if they don't all come from one build (the build ID in each tile's checksum).
     /// Opening maps the tarballs and reads their indexes and a sample of tile headers;
     /// it doesn't read the tiles.
-    pub fn open(tile_sets: Vec<String>) -> Result<OfflineRouter, OpenError> {
+    ///
+    /// With `expected_build_id` (the routing release's `valhalla_build_id`), every tile must
+    /// be from that build, and a tile directory may have no tiles yet: tiles that arrive later
+    /// are used after [`Self::refresh_tiles`].
+    /// Without it, every tile set must have tiles.
+    ///
+    /// Tile files must arrive whole: write each to a temporary file and rename it into place.
+    pub fn open(
+        tile_sets: Vec<String>,
+        expected_build_id: Option<u32>,
+    ) -> Result<OfflineRouter, OpenError> {
         Ok(Self {
-            router: Router::open(device_config(), &tile_sets)?,
+            router: Router::open_for_build(
+                device_config(),
+                &tile_sets,
+                street_build(expected_build_id)?,
+            )?,
+        })
+    }
+
+    /// Makes tiles that arrived in the tile directories since the router was opened (or last
+    /// refreshed) available to routes. Call it once a download's files are in place.
+    ///
+    /// It reads the tile directories' listings (not the tiles), and is safe while routes run.
+    pub fn refresh_tiles(&self) -> Result<(), RefreshError> {
+        self.router.refresh_tiles().map_err(|error| RefreshError {
+            message: error.to_string(),
         })
     }
 
@@ -152,7 +199,7 @@ mod tests {
     #[ignore = "needs CARDINAL_SEATTLE_TILES"]
     fn bicycles_route_to_and_from_cal_anderson_park() {
         let tiles = std::env::var("CARDINAL_SEATTLE_TILES").expect("CARDINAL_SEATTLE_TILES");
-        let router = OfflineRouter::open(vec![tiles]).ok().unwrap();
+        let router = OfflineRouter::open(vec![tiles], None).ok().unwrap();
         // The geocoder's point for the park, and Westlake.
         let park = r#"{"lat": 47.6170378, "lon": -122.3191692}"#;
         let westlake = r#"{"lat": 47.6114, "lon": -122.3375}"#;
@@ -176,7 +223,7 @@ mod tests {
 
     #[test]
     fn routes_ferrostar_bodies() {
-        let router = OfflineRouter::open(vec![tiles()]).ok().unwrap();
+        let router = OfflineRouter::open(vec![tiles()], None).ok().unwrap();
         let body = br#"{"format": "osrm", "banner_instructions": true, "voice_instructions": true, "costing": "auto", "locations": [{"lat": 42.5078, "lon": 1.5211, "street_side_tolerance": 5, "heading": 90}, {"lat": 42.5355, "lon": 1.583, "type": "break"}]}"#;
         let response = router.route(body.to_vec());
         assert_eq!(response.status, 200);
@@ -198,12 +245,67 @@ mod tests {
 
     #[test]
     fn reports_why_it_cannot_open() {
-        let error = OfflineRouter::open(vec![]).err().unwrap();
+        let error = OfflineRouter::open(vec![], None).err().unwrap();
         assert!(matches!(error.kind, OpenErrorKind::NoTileSets));
-        let error = OfflineRouter::open(vec!["/nonexistent/region.tar".to_owned()])
+        let error = OfflineRouter::open(vec!["/nonexistent/region.tar".to_owned()], None)
             .err()
             .unwrap();
         assert!(matches!(error.kind, OpenErrorKind::Unreadable));
         assert!(error.message.contains("/nonexistent/region.tar"));
+    }
+
+    /// An empty tile directory opened for the fixture's build, then filled as a download does.
+    #[test]
+    fn routes_over_tiles_that_arrive_after_a_refresh() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../valinor/valhalla-graphtile/fixtures/andorra-tiles");
+        let dir =
+            std::env::temp_dir().join(format!("routing-flutter-arrive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let tiles = vec![dir.to_string_lossy().into_owned()];
+        // The fixture's build ID, as mainline 3.9.1 stamped it.
+        let build = 53174;
+
+        let error = OfflineRouter::open(tiles.clone(), None).err().unwrap();
+        assert!(matches!(error.kind, OpenErrorKind::Unreadable));
+        let error = OfflineRouter::open(tiles.clone(), Some(70_000))
+            .err()
+            .unwrap();
+        assert!(matches!(error.kind, OpenErrorKind::WrongBuild));
+        let router = OfflineRouter::open(tiles.clone(), Some(build))
+            .ok()
+            .unwrap();
+        let body = br#"{"format": "osrm", "costing": "auto", "locations": [{"lat": 42.5078, "lon": 1.5211}, {"lat": 42.5355, "lon": 1.583}]}"#;
+        assert_eq!(router.route(body.to_vec()).status, 400);
+
+        for tile in [
+            "0/003/015.gph",
+            "1/047/701.gph",
+            "2/000/762/485.gph",
+            "2/000/762/486.gph",
+            "2/000/763/925.gph",
+            "2/000/763/926.gph",
+            "2/000/763/927.gph",
+        ] {
+            let to = dir.join(tile);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            let part = to.with_extension("part");
+            std::fs::copy(fixture.join(tile), &part).unwrap();
+            std::fs::rename(&part, &to).unwrap();
+        }
+        router.refresh_tiles().ok().unwrap();
+        let response = router.route(body.to_vec());
+        assert_eq!(
+            response.status,
+            200,
+            "{}",
+            String::from_utf8_lossy(&response.body)
+        );
+
+        // Tiles there must be from the expected build.
+        let error = OfflineRouter::open(tiles, Some(build + 1)).err().unwrap();
+        assert!(matches!(error.kind, OpenErrorKind::WrongBuild));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
