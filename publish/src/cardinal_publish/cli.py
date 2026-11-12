@@ -6,9 +6,9 @@ import os
 import sys
 from pathlib import Path
 
-from . import latest, mapfile, routing, transit
+from . import latest, mapfile, poi, routing, transit
 from .common import PublishError, check_date
-from .target import Publisher, State, parse_target
+from .target import DirTarget, Publisher, State, parse_target
 
 DEFAULT_ENDPOINT = "https://t3.storage.dev"
 
@@ -23,8 +23,8 @@ def cache_home():
     return Path(base) / "cardinal-publish"
 
 
-def add_target_args(parser):
-    parser.add_argument("--target", required=True,
+def add_target_args(parser, required=True):
+    parser.add_argument("--target", required=required,
                         help="s3://BUCKET, or dir:/PATH to write the bucket's layout to a local directory")
     parser.add_argument("--prefix", default="releases", help="key prefix in the bucket (default: releases)")
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT, help=f"S3 endpoint (default: {DEFAULT_ENDPOINT}, Tigris)")
@@ -83,10 +83,26 @@ def parser():
                       help="a cardinal-pack binary (default: crates/target/release/cardinal-pack in this checkout)")
     step.add_argument("--part-size-mib", type=int, default=128, help="multipart part size (default: 128 MiB)")
 
+    step = steps.add_parser("poi", help="publish the POI identity releases `poi_service export` staged")
+    add_target_args(step)
+    step.add_argument("--staging", type=Path, required=True, help="poi_service export's --staging directory")
+    step.add_argument("--latest", action="store_true",
+                      help="then point latest.json's poi at the newest checkpoint published")
+    step.add_argument("--part-size-mib", type=int, default=128, help="multipart part size (default: 128 MiB)")
+
+    step = steps.add_parser("poi-prune", help="delete old POI identity releases (never during an upload)")
+    add_target_args(step, required=False)
+    step.add_argument("--staging", type=Path,
+                      help="prune this local staging directory instead of a --target")
+    step.add_argument("--keep-days", type=int, default=28,
+                      help="keep checkpoints this many days older than the newest, and the snapshots "
+                           "they restore from (default: 28)")
+
     step = steps.add_parser("latest", help="point latest.json at releases, checking they fit together")
     add_target_args(step)
     for kind in ("map", "routing", "transit"):
         step.add_argument(f"--{kind}", help=f"the {kind} release (default: keep the current one)")
+    step.add_argument("--poi", help="the POI identity checkpoint, a replication sequence (default: keep the current one)")
     return top
 
 
@@ -100,6 +116,14 @@ def run(args):
 
     if args.jobs < 1:
         raise PublishError("--jobs must be at least 1")
+    if args.step == "poi-prune" and args.staging:
+        if args.target:
+            raise PublishError("poi-prune takes --target or --staging, not both")
+        publisher = Publisher(DirTarget(args.staging.resolve()), "", None, args.jobs, args.dry_run)
+        poi.prune(publisher, args.keep_days, base="")
+        return
+    if args.target is None:
+        raise PublishError("--target is required")
     target = parse_target(args.target, args, args.jobs)
     state_path = args.state or state_home() / (
         hashlib.sha256(f"{target.describe()}/{args.prefix}".encode()).hexdigest()[:16] + ".sqlite"
@@ -122,8 +146,12 @@ def run(args):
             transit.run(publisher, args.build.resolve(), args.staging.resolve(), check_date(args.date),
                         args.routing_date, args.build_commit, args.work.resolve(),
                         args.pack_bin.resolve() if args.pack_bin else None, args.part_size_mib << 20)
+        elif args.step == "poi":
+            poi.run(publisher, args.staging.resolve(), args.latest, args.part_size_mib << 20)
+        elif args.step == "poi-prune":
+            poi.prune(publisher, args.keep_days)
         elif args.step == "latest":
-            latest.run(publisher, {"map": args.map, "routing": args.routing, "transit": args.transit})
+            latest.run(publisher, {"map": args.map, "routing": args.routing, "transit": args.transit, "poi": args.poi})
     finally:
         state.close()
 

@@ -396,3 +396,188 @@ def test_transit_publishes_against_its_routing_release(tmp_path, pack_bin):
     (build / "timetables/b.timetable").write_bytes(b"c" * 50)
     with pytest.raises(PublishError, match="SHA-256"):
         publish("2026-11-12", "2026-11-11", None, dir_publisher(tmp_path))
+
+
+# The poi steps.
+
+from datetime import datetime, timedelta, timezone
+
+from cardinal_publish import poi
+
+T0 = datetime(2026, 10, 5, tzinfo=timezone.utc)
+
+
+def poi_release(kind, sequence, snapshot, files, previous=True):
+    checksum = f"{sequence:064x}"
+    return {
+        "format": 1, "kind": kind, "sequence": sequence,
+        "timestamp": (T0 + timedelta(days=sequence - 100)).isoformat().replace("+00:00", "Z"),
+        "next_poi_id": 1000 + sequence, "checksum": checksum,
+        "previous": ({"sequence": sequence - 1, "next_poi_id": 999 + sequence, "checksum": f"{sequence - 1:064x}"}
+                     if previous else None),
+        "snapshot": snapshot, "ruleset": 3, "planet_timestamp": "2026-10-05T00:00:03Z",
+        "replication_url": "https://planet.openstreetmap.org/replication/day/", "files": files, "counts": {},
+    }
+
+
+def stage_dir(directory: Path, kind, sequence, snapshot, contents, previous=True):
+    import hashlib
+
+    directory.mkdir(parents=True)
+    files = {}
+    for name, data in contents.items():
+        (directory / name).write_bytes(data)
+        files[name] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    release = poi_release(kind, sequence, snapshot, files, previous)
+    (directory / "release.json").write_text(json.dumps(release, indent=2))
+    return release
+
+
+def stage_poi(staging: Path, sequences, snapshot_every=7, first=100):
+    """A staging directory as `poi_service export` leaves it: the planet's checkpoint, a delta per
+    later one, and a snapshot every `snapshot_every` checkpoints."""
+    for sequence in sequences:
+        snapshot = first + (sequence - first) // snapshot_every * snapshot_every
+        if snapshot == sequence:
+            stage_dir(staging / "snapshots" / str(sequence), "snapshot", sequence, sequence, {
+                "versions.bin.zst": b"v" * sequence, "pois.bin.zst": b"p" * sequence,
+                "status.bin.zst": b"s" * sequence, "checkpoints.json": b"[]",
+            }, previous=False)
+        if sequence == first:
+            stage_dir(staging / str(sequence), "planet", sequence, snapshot, {}, previous=False)
+        else:
+            stage_dir(staging / str(sequence), "delta", sequence, snapshot, {"delta.bin.zst": b"d" * sequence})
+
+
+def test_poi_publishes_staged_releases_and_reruns_cleanly(tmp_path):
+    staging = tmp_path / "staging"
+    stage_poi(staging, range(100, 103))
+    # An export in progress is ignored.
+    (staging / ".103.partial").mkdir()
+    publisher = dir_publisher(tmp_path)
+    assert poi.run(publisher, staging, True, 1 << 20) == 102
+    bucket = tmp_path / "bucket/releases"
+    assert json.loads((bucket / "latest.json").read_text()) == {"poi": 102}
+    assert (bucket / "poi/snapshots/100/pois.bin.zst").read_bytes() == b"p" * 100
+    assert (bucket / "poi/102/delta.bin.zst").read_bytes() == b"d" * 102
+    assert json.loads((bucket / "poi/100/release.json").read_text())["kind"] == "planet"
+    meta = json.loads((tmp_path / "bucket/.meta/releases/poi/101/delta.bin.zst.json").read_text())
+    assert (meta["content_type"], meta["content_encoding"]) == ("application/octet-stream", None)
+    meta = json.loads((tmp_path / "bucket/.meta/releases/poi/101/release.json.json").read_text())
+    assert meta["cache_control"] == "public, max-age=300"
+
+    # A rerun uploads nothing; more checkpoints go up on their own.
+    before = {p: p.stat().st_mtime_ns for p in bucket.rglob("*") if p.is_file() and "latest" not in p.name}
+    stage_poi(staging, range(103, 105), first=100)
+    assert poi.run(publisher, staging, False, 1 << 20) == 104
+    assert all(p.stat().st_mtime_ns == t for p, t in before.items())
+    assert json.loads((bucket / "latest.json").read_text()) == {"poi": 102}
+
+    # Staging that disagrees with what's published is refused.
+    release = json.loads((staging / "101/release.json").read_text())
+    release["checksum"] = "0" * 64
+    (staging / "101/release.json").write_text(json.dumps(release))
+    with pytest.raises(PublishError, match="other contents"):
+        poi.run(publisher, staging, False, 1 << 20)
+
+
+def test_poi_needs_the_snapshot_and_previous_checkpoint(tmp_path):
+    staging = tmp_path / "staging"
+    stage_poi(staging, range(100, 104))
+    import shutil
+
+    shutil.rmtree(staging / "snapshots/100")
+    with pytest.raises(PublishError, match="snapshot 100"):
+        poi.run(dir_publisher(tmp_path), staging, False, 1 << 20)
+    staging = tmp_path / "staging2"
+    stage_poi(staging, [100, 101, 103])
+    with pytest.raises(PublishError, match="follows 102"):
+        poi.run(dir_publisher(tmp_path / "other"), staging, False, 1 << 20)
+
+
+def test_poi_dry_run_writes_nothing(tmp_path):
+    staging = tmp_path / "staging"
+    stage_poi(staging, range(100, 103))
+    poi.run(dir_publisher(tmp_path, dry_run=True), staging, True, 1 << 20)
+    assert not (tmp_path / "bucket").exists()
+
+
+def published_poi(bucket: Path):
+    root = bucket / "releases/poi"
+    dailies = sorted(int(p.name) for p in root.iterdir() if p.name.isdigit())
+    snapshots = sorted(int(p.name) for p in (root / "snapshots").iterdir())
+    return dailies, snapshots
+
+
+def test_poi_prune_keeps_four_weeks_and_their_snapshots(tmp_path):
+    staging = tmp_path / "staging"
+    stage_poi(staging, range(100, 145))  # 45 days, snapshots at 100, 107, ..., 142
+    publisher = dir_publisher(tmp_path)
+    poi.run(publisher, staging, False, 1 << 20)
+    latest.run(publisher, {"poi": 110})
+
+    # A dry run deletes nothing.
+    doomed = poi.prune(dir_publisher(tmp_path, dry_run=True), 28)
+    assert published_poi(tmp_path / "bucket") == (list(range(100, 145)), list(range(100, 143, 7)))
+    assert "poi/100/" in doomed and "poi/110/" not in doomed
+
+    poi.prune(publisher, 28)
+    dailies, snapshots = published_poi(tmp_path / "bucket")
+    # 144 is the newest; 116 is 28 days older. 110 is what latest.json names.
+    assert dailies == [110] + list(range(116, 145))
+    # 110 restores from 107, 116..120 from 114, and so on.
+    assert snapshots == [107, 114, 121, 128, 135, 142]
+    assert not (tmp_path / "bucket/releases/poi/100").exists()
+    assert not (tmp_path / "bucket/.meta/releases/poi/100").exists()
+    # Pruning again changes nothing.
+    assert poi.prune(publisher, 28) == []
+
+
+def test_poi_prune_works_on_a_staging_directory(tmp_path):
+    staging = tmp_path / "staging"
+    stage_poi(staging, range(100, 140))
+    publisher = Publisher(DirTarget(staging), "", None, 4, False)
+    poi.prune(publisher, 28, base="")
+    dailies = sorted(int(p.name) for p in staging.iterdir() if p.name.isdigit())
+    assert dailies == list(range(111, 140))
+    assert sorted(int(p.name) for p in (staging / "snapshots").iterdir()) == [107, 114, 121, 128, 135]
+
+
+def test_latest_names_a_poi_checkpoint_without_pairing(tmp_path):
+    publisher = dir_publisher(tmp_path)
+    fake_release(publisher, "map", "2026-11-11")
+    stage_poi(tmp_path / "staging", range(100, 102))
+    poi.run(publisher, tmp_path / "staging", False, 1 << 20)
+    assert latest.run(publisher, {"map": "2026-11-11", "poi": "101"}) == {"map": "2026-11-11", "poi": 101}
+    with pytest.raises(PublishError, match="isn't published"):
+        latest.run(publisher, {"poi": "102"})
+    with pytest.raises(PublishError, match="replication sequence"):
+        latest.run(publisher, {"poi": "2026-11-11"})
+
+
+def test_poi_on_s3(tmp_path, s3):
+    staging = tmp_path / "staging"
+    stage_poi(staging, range(100, 140))
+    publisher = Publisher(s3, "releases", state_at(tmp_path / "state.sqlite"), 4, False)
+    # Snapshot files this big go up as a multipart upload.
+    big = staging / "snapshots/135/pois.bin.zst"
+    big.write_bytes(b"P" * (6 << 20))
+    release = json.loads((staging / "snapshots/135/release.json").read_text())
+    import hashlib
+
+    release["files"]["pois.bin.zst"] = {"size": 6 << 20, "sha256": hashlib.sha256(big.read_bytes()).hexdigest()}
+    (staging / "snapshots/135/release.json").write_text(json.dumps(release))
+    old_large = poi.LARGE_FILE
+    poi.LARGE_FILE = 1 << 20
+    try:
+        # S3's smallest part is 5 MiB.
+        assert poi.run(publisher, staging, True, 5 << 20) == 139
+    finally:
+        poi.LARGE_FILE = old_large
+    body = s3.client.get_object(Bucket="bucket", Key="releases/poi/snapshots/135/pois.bin.zst")["Body"].read()
+    assert body == b"P" * (6 << 20)
+    poi.prune(publisher, 28)
+    keys = s3.list("releases/poi/")
+    assert "releases/poi/110/release.json" not in keys and "releases/poi/111/delta.bin.zst" in keys
+    assert not any(k.startswith("releases/poi/snapshots/100/") for k in keys)
+    assert "releases/poi/snapshots/107/versions.bin.zst" in keys

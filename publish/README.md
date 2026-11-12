@@ -15,7 +15,7 @@ source, which Dagger loads on every call) so its virtualenv doesn't either.
 
 ```
 releases/
-  latest.json                       {"map": DATE, "routing": DATE, "transit": DATE}
+  latest.json                       {"map": DATE, "routing": DATE, "transit": DATE, "poi": SEQ}
   map/DATE/
     planet.pmtiles
     release.json                    size, SHA-256, tile type, zooms, bounds
@@ -35,7 +35,18 @@ releases/
     manifest/manifest.json          the whole manifest, for servers
     realtime.json                   GTFS-RT sources
     release.json                    manifest ID, Valhalla build ID, routing release, counts
+  poi/SEQ/                          a POI identity checkpoint, by OSM replication sequence
+    delta.bin.zst                   that diff's changes (none for the planet's checkpoint)
+    release.json                    checkpoint, checksum, origin, files, and the snapshot it restores from
+  poi/snapshots/SEQ/
+    versions.bin.zst, pois.bin.zst, status.bin.zst, checkpoints.json
+    release.json
 ```
+
+POI releases are named by sequence rather than date: there's one per daily
+OSM diff, and `poi_service/README.md` ("Published tables") describes them.
+POI identifiers are stable, so `latest.json`'s `poi` pairs with any map or
+geocoder release and isn't checked against them.
 
 `DATE` is `YYYY-MM-DD`; a second release of one kind on the same day is
 `YYYY-MM-DD.1`, then `.2`. A release is complete once its `release.json`
@@ -69,7 +80,8 @@ the feeds the phone doesn't have. See `feed-index` in
 | `release.json` | `application/json` | none | 5 minutes |
 | `latest.json` | `application/json` | none | 1 minute |
 | `*.pmtiles` | `application/vnd.pmtiles` | none | 1 week |
-| `*.gph`, `*.timetable`, `*.bin` | `application/octet-stream` | none | 1 week |
+| `*.gph`, `*.timetable`, `*.bin`, `poi/**.zst` | `application/octet-stream` | none | 1 week |
+| `poi/snapshots/*/checkpoints.json` | `application/json` | none | 1 week |
 
 JSON that a phone fetches is stored gzipped with `Content-Encoding: gzip`, so
 HTTP clients (Dart's included) inflate it transparently: transit indexes and
@@ -177,6 +189,39 @@ archive's size, SHA-256, and tile count under `transfer_archives`.
 `--routing-date` must be a published routing release with the build ID the
 transfers were computed on.
 
+### POI identities
+
+```sh
+poi_service export --staging poi-staging
+uv run cardinal-publish poi --target s3://BUCKET --access-key-id ID --secret-access-key KEY \
+  --staging poi-staging --latest
+```
+
+uploads every complete release `poi_service export` staged that the bucket
+doesn't have: snapshots first, then checkpoints in order, each one's files
+before its `release.json`. Each checkpoint must follow one that's staged or
+published, and restore from a snapshot that is. A release already published
+is only compared with the staged one, and a difference fails the step: the
+staging directory belongs to another database, or history changed, which
+never should. Snapshot files of 256 MiB or more go up as resumable multipart
+uploads. `--latest` then points `latest.json`'s `poi` at the newest
+checkpoint.
+
+```sh
+uv run cardinal-publish poi-prune --target s3://BUCKET --access-key-id ID --secret-access-key KEY \
+  --keep-days 28 --dry-run
+```
+
+deletes checkpoint releases more than `--keep-days` (28) older than the
+newest, then every snapshot that none of the remaining checkpoints restores
+from. It never deletes the newest checkpoint, the one `latest.json` names, a
+snapshot newer than every checkpoint (one whose checkpoint is still being
+uploaded), or a prefix without a `release.json`. Each release's
+`release.json` goes first, so an interrupted prune leaves incomplete releases
+rather than broken ones. Uploads never delete anything. `--dry-run` lists
+what it would delete; `--staging DIR` prunes a local staging directory the
+same way instead of the bucket.
+
 ### Latest
 
 ```sh
@@ -185,6 +230,7 @@ uv run cardinal-publish latest --target s3://BUCKET --access-key-id ID --secret-
 ```
 
 points `latest.json` at those releases; a kind left out keeps its current one.
+`--poi SEQ` names a POI identity checkpoint.
 
 ## Testing
 

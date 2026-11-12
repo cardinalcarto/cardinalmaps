@@ -89,6 +89,20 @@ class DirTarget:
             "cache_control": upload.cache_control,
         }))
 
+    def delete(self, keys):
+        for key in keys:
+            (self.root / key).unlink(missing_ok=True)
+            self._meta(key).unlink(missing_ok=True)
+            # Remove directories left empty, up to the root.
+            for path, top in ((self.root / key, self.root), (self._meta(key), self.root / META_DIR)):
+                for parent in path.parents:
+                    if parent == top or not parent.is_relative_to(top):
+                        break
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        break
+
     def put_large(self, path: Path, key: str, upload: Upload, part_size: int, jobs: int, state, dry_run):
         """Copies the file, hashing it as it goes; returns its SHA-256."""
         digest = hashlib.sha256()
@@ -167,6 +181,17 @@ class S3Target:
         body = response["Body"].read()
         # boto3 doesn't inflate Content-Encoding: gzip, so the stored bytes come back.
         return body
+
+    def delete(self, keys):
+        keys = list(keys)
+        for start in range(0, len(keys), 1000):
+            batch = keys[start:start + 1000]
+            response = self.client.delete_objects(
+                Bucket=self.bucket, Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True}
+            )
+            errors = response.get("Errors", [])
+            if errors:
+                raise PublishError(f"couldn't delete {len(errors)} objects, e.g. {errors[0]}")
 
     def _headers(self, upload: Upload):
         headers = {
@@ -314,6 +339,10 @@ class State:
                 self.db.execute("BEGIN")
                 self.pending = 0
 
+    def forget(self, target, keys):
+        with self.lock:
+            self.db.executemany("DELETE FROM objects WHERE target = ? AND key = ?", [(target, k) for k in keys])
+
     def multipart(self, target, key, identity):
         with self.lock:
             row = self.db.execute(
@@ -409,6 +438,14 @@ class Publisher:
         self.target.put(upload, self.key(upload.key))
         if self.state:
             self.state.record(self.target.describe(), upload.key, upload.size, upload.sha256)
+
+    def delete(self, relative_keys):
+        """Deletes objects, and forgets them; does nothing in a dry run."""
+        if self.dry_run or not relative_keys:
+            return
+        self.target.delete([self.key(key) for key in relative_keys])
+        if self.state:
+            self.state.forget(self.target.describe(), relative_keys)
 
     def sync(self, uploads, remote, label, total_items=None, total_bytes=None):
         """Publishes each upload not already in `remote` with the same bytes, `jobs` at a time.

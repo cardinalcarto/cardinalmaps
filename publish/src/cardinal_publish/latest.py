@@ -2,6 +2,9 @@
 
 The app downloads one release of each kind, so `latest.json` must never pair a transit
 release with routing tiles other than the ones its walks were computed on.
+
+`poi` names a POI identity checkpoint by its replication sequence. Identifiers are stable, so
+it pairs with any map or geocoder release and isn't checked against them.
 """
 
 import sys
@@ -11,12 +14,22 @@ from .common import CACHE_LATEST, KINDS, PublishError, Upload, check_date
 LATEST = "latest.json"
 
 
+def check_sequence(sequence) -> int:
+    try:
+        value = int(sequence)
+    except (TypeError, ValueError):
+        value = -1
+    if value < 0 or str(value) != str(sequence).strip():
+        raise PublishError(f"POI checkpoint {sequence!r} isn't a replication sequence number")
+    return value
+
+
 def run(publisher, wanted):
     current = publisher.get_json(LATEST) or {}
-    latest = {kind: current.get(kind) for kind in KINDS}
+    latest = {kind: current.get(kind) for kind in (*KINDS, "poi")}
     for kind, date in wanted.items():
         if date is not None:
-            latest[kind] = check_date(date)
+            latest[kind] = check_sequence(date) if kind == "poi" else check_date(date)
     releases = {}
     for kind, date in latest.items():
         if date is None:
