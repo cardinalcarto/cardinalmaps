@@ -7,19 +7,22 @@ const tilesUrl = String.fromEnvironment('CARDINAL_TILES_URL');
 /// Where the geocoder's API is: requests go to `<url>/v1/...`.
 const geocoderUrl = String.fromEnvironment('CARDINAL_GEOCODER_URL');
 
-/// The offline area that street directions and transit plans use, for development until
-/// releases can be downloaded: the directory holding `routing/<date>/` and
-/// `transit/<date>/`, laid out as the bucket's `releases/` are. Empty means the app's
+/// Where offline releases are published: the bucket's `releases/` over HTTPS, holding
+/// `latest.json` (see `publish/README.md`). Empty means no downloads.
+const releasesUrl = String.fromEnvironment('CARDINAL_RELEASES_URL');
+
+/// The offline folder: the directory holding `routing/<date>/`, `transit/<date>/` and
+/// `map/<date>/`, laid out as the bucket's `releases/` are. Empty means the app's
 /// `offline/` folder (see `offline/offline_area.dart`).
 const offlineRoot = String.fromEnvironment('CARDINAL_OFFLINE_ROOT');
 
-/// The routing release the offline area's street tiles are from, its date, as in
-/// `routing/<date>/`. Directions and transit need it and [transitRelease]; without
-/// them, they say there's no offline area.
+/// For development, a routing release put in the offline folder by hand, its date, as
+/// in `routing/<date>/`: with [transitRelease], directions and transit use these rather
+/// than the releases downloads pinned.
 const routingRelease = String.fromEnvironment('CARDINAL_ROUTING_RELEASE');
 
-/// The transit release the offline area's timetables are from, its date, as in
-/// `transit/<date>/`.
+/// For development, the transit release put in the offline folder by hand with
+/// [routingRelease], its date, as in `transit/<date>/`.
 const transitRelease = String.fromEnvironment('CARDINAL_TRANSIT_RELEASE');
 
 /// The bundled map style, a file in `assets/map`.

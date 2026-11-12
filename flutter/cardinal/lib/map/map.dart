@@ -26,11 +26,19 @@ class MapScope extends InheritedWidget {
     super.key,
     required this.controller,
     required this.overlays,
+    this.offlineBasemap,
     required super.child,
   });
 
   final SparkleMapController controller;
   final MapOverlays overlays;
+
+  /// The downloaded map tiles' MBTiles, if there is one; the map reads it before the
+  /// tile server.
+  final Future<String?> Function()? offlineBasemap;
+
+  static Future<String?> Function()? offlineBasemapOf(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<MapScope>()!.offlineBasemap;
 
   static SparkleMapController of(BuildContext context) =>
       context.getInheritedWidgetOfExactType<MapScope>()!.controller;
@@ -40,7 +48,9 @@ class MapScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(MapScope oldWidget) =>
-      controller != oldWidget.controller || overlays != oldWidget.overlays;
+      controller != oldWidget.controller ||
+      overlays != oldWidget.overlays ||
+      offlineBasemap != oldWidget.offlineBasemap;
 }
 
 /// The map: [tilesUrl]'s tiles in the style the layer picker chose (see `layers.dart`),
@@ -112,10 +122,12 @@ class _CardinalMapState extends State<CardinalMap> {
         WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio,
       ),
     )..start();
+    final basemap = MapScope.offlineBasemapOf(context);
     final layers = await MapLayers.read(settings, dark: _dark);
     final args = await _mapArgs(
       layers,
       openingView(await settings.get(savedViewport)),
+      await basemap?.call(),
     );
     _layers = layers;
     _watching.addAll([
@@ -303,7 +315,13 @@ Future<void> _writeStyle(MapLayers layers) async {
 
 /// Arguments for sparkle (as `sparkle_harness` takes them): the style for [layers] and
 /// the bundled sprites, copied out to files, [tilesUrl]'s tiles, and the [view] to open.
-Future<List<String>> _mapArgs(MapLayers layers, MapViewport view) async {
+/// The map's arguments; with [basemap], the downloaded tiles are read before the
+/// tile server's (`--local-tiles`).
+Future<List<String>> _mapArgs(
+  MapLayers layers,
+  MapViewport view,
+  String? basemap,
+) async {
   if (tilesUrl.isEmpty) {
     throw StateError(
       'no tiles: build with --dart-define=CARDINAL_TILES_URL=<TileJSON URL>',
@@ -334,5 +352,6 @@ Future<List<String>> _mapArgs(MapLayers layers, MapViewport view) async {
     view.arg,
     '--tiles',
     'openmaptiles=$tilesUrl',
+    if (basemap != null) ...['--local-tiles', 'openmaptiles=$basemap'],
   ];
 }

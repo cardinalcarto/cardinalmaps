@@ -105,8 +105,11 @@ Future<T> _abortable<T>(Future<T> work, Future<void>? abort) {
   ]);
 }
 
-Future<OfflineArea> _need(Future<OfflineArea?> area) async =>
-    await area ?? (throw const NoOfflineArea());
+/// Where the offline area comes from: null until there is one.
+typedef OfflineAreaSource = Future<OfflineArea?> Function();
+
+Future<OfflineArea> _need(OfflineAreaSource area) async =>
+    await area() ?? (throw const NoOfflineArea());
 
 Future<void> _checkCovers(OfflineArea area, LngLat from, LngLat to) async {
   if (!await area.covers(from.lat, from.lon) ||
@@ -118,9 +121,13 @@ Future<void> _checkCovers(OfflineArea area, LngLat from, LngLat to) async {
 /// [RouteSource] on the device, over the offline area's streets: Ferrostar makes the
 /// request and reads the answer, as it would from a server.
 class OfflineRouteSource implements RouteSource {
-  OfflineRouteSource(this._area);
+  OfflineRouteSource(this._area, {this.used});
 
-  final Future<OfflineArea?> _area;
+  final OfflineAreaSource _area;
+
+  /// Told the line of each route found, so the tiles it passes through count as used
+  /// (`OfflineDownloads.touchRoute`).
+  final void Function(List<DirectionsPoint> shape)? used;
   final _adapters = <TravelMode, DirectionsAdapter>{};
 
   /// How many routes to ask for besides the best.
@@ -158,31 +165,39 @@ class OfflineRouteSource implements RouteSource {
       'cardinal-timing: street route ${mode.name} '
       '${watch.elapsedMilliseconds} ms (${response.status})',
     );
-    return adapter.parse(body: response.body);
+    final routes = await adapter.parse(body: response.body);
+    if (routes.isNotEmpty) used?.call(routes.first.geometry);
+    return routes;
   }
 }
 
 /// [TransitSource] on the device, over the offline area's timetables, with the latest
 /// real-time data its agencies publish when there's a network.
 class OfflineTransitSource implements TransitSource {
-  OfflineTransitSource(this._area, {http.Client? client})
-    : _realtime = _area.then(
-        (area) => RealtimeFeeds(
-          area?.realtimeSources ?? Future.value(const []),
-          client: client,
-        ),
-      );
+  OfflineTransitSource(this._area, {this.client});
 
-  final Future<OfflineArea?> _area;
-  final Future<RealtimeFeeds> _realtime;
+  final OfflineAreaSource _area;
+
+  /// What real-time messages are fetched with.
+  final http.Client? client;
+
+  /// The real-time feeds of the area they were made for.
+  (OfflineArea, RealtimeFeeds)? _feeds;
+
+  RealtimeFeeds _realtime(OfflineArea area) {
+    if (_feeds case (final made, final feeds) when made == area) return feeds;
+    final feeds = RealtimeFeeds(area.realtimeSources, client: client);
+    _feeds = (area, feeds);
+    return feeds;
+  }
 
   @override
   void prepare() {
     unawaited(() async {
       try {
-        final area = await _area;
+        final area = await _area();
         if (area == null) return;
-        await Future.wait([area.transit, _realtime.then((r) => r.prefetch())]);
+        await Future.wait([area.transit, _realtime(area).prefetch()]);
       } on Object catch (e) {
         debugPrint('transit: $e');
       }
@@ -210,7 +225,7 @@ class OfflineTransitSource implements TransitSource {
     final area = await _need(_area);
     await _checkCovers(area, from, to);
     // Real-time messages are fetched while the timetables open.
-    final fetching = _realtime.then((r) => r.fresh());
+    final fetching = _realtime(area).fresh();
     final transit = await area.transit;
     final feeds = await fetching;
     final request = utf8.encode(

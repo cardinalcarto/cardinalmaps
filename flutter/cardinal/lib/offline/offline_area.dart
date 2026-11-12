@@ -1,9 +1,9 @@
 /// The device's offline area: a routing release's street tiles and a transit release's
 /// timetables, opened once and shared by street directions and transit plans.
 ///
-/// There's no download yet: a dev build is pointed at its releases with the
-/// `CARDINAL_OFFLINE_ROOT`, `CARDINAL_ROUTING_RELEASE` and `CARDINAL_TRANSIT_RELEASE`
-/// defines (see `config.dart`).
+/// Its releases are the ones downloads pinned (`downloads/engine.dart`), once a region
+/// is ready. A dev build can point at releases put in place by hand instead, with the
+/// `CARDINAL_ROUTING_RELEASE` and `CARDINAL_TRANSIT_RELEASE` defines (see `config.dart`).
 library;
 
 import 'dart:async';
@@ -15,6 +15,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:routing/routing.dart';
 
 import '../config.dart';
+import 'downloads/bucket.dart';
+import 'downloads/database.dart';
+import 'downloads/engine.dart';
+import 'downloads/transfers.dart';
 
 /// One offline area, as the releases are laid out under the offline root, the same as
 /// the bucket's `releases/`:
@@ -23,8 +27,14 @@ import '../config.dart';
 /// - `transit/<date>/`, a transit build over those tiles: `timetables/` and
 ///   `transfers/`, which writes its `prepared/` beside them on first open, and
 ///   `realtime.json`, the GTFS-RT URLs of its feeds.
-class OfflineArea {
-  OfflineArea({required this.routing, required this.transitBuild});
+///
+/// Downloads tell it when files arrive or go ([offlineChanged]).
+class OfflineArea implements OfflineListener {
+  OfflineArea({
+    required this.routing,
+    required this.transitBuild,
+    this.valhallaBuildId,
+  });
 
   /// The routing release's directory, `routing/<date>`.
   final String routing;
@@ -32,13 +42,20 @@ class OfflineArea {
   /// The transit release's directory, `transit/<date>`.
   final String transitBuild;
 
+  /// The routing release's Valhalla build, when known: the router then opens with no
+  /// tiles yet, and refuses tiles of another build.
+  final int? valhallaBuildId;
+
   String get _tiles => '$routing/tiles';
 
   /// The street router over the area's tiles, opened on first use.
   Future<OfflineRouter> get router =>
       _router ??= _timed('street router open', () async {
         await initRouting();
-        return OfflineRouter.open(tileSets: [_tiles]);
+        return OfflineRouter.open(
+          tileSets: [_tiles],
+          expectedBuildId: valhallaBuildId,
+        );
       });
   Future<OfflineRouter>? _router;
 
@@ -57,21 +74,56 @@ class OfflineArea {
           build: transitBuild,
           feeds: feeds,
           tileSets: [_tiles],
+          expectedBuildId: valhallaBuildId,
         );
       });
   Future<OfflineTransit>? _transit;
 
-  /// The feeds whose timetables are in the area, by ID.
+  /// The feeds the manifest lists whose timetables are in the area, by ID. (A build put
+  /// in place by hand lists every feed it was built with; downloads list only theirs.)
   Future<List<String>> _feeds() async {
-    const suffix = '.timetable';
-    final names = [
-      await for (final entry in Directory('$transitBuild/timetables').list())
-        if (entry is File && entry.path.endsWith(suffix))
-          entry.uri.pathSegments.last,
-    ]..sort();
-    return [
-      for (final name in names) name.substring(0, name.length - suffix.length),
+    final manifest = File('$transitBuild/transfers/manifest.json');
+    final listed =
+        jsonDecode(await manifest.readAsString()) as Map<String, Object?>;
+    final ids = <String>[
+      for (final feed in listed['feeds'] as List<Object?>? ?? const [])
+        if (feed case {'id': final String id}) id,
     ];
+    return [
+      for (final id in ids)
+        if (await File('$transitBuild/timetables/$id.timetable').exists()) id,
+    ]..sort();
+  }
+
+  /// Makes files that arrived usable: the router and transit planner find new street
+  /// tiles, and when the feeds changed, transit opens again on next use (its feeds are
+  /// fixed when it opens). One that failed to open tries again on next use.
+  @override
+  Future<void> offlineChanged({required bool feedsChanged}) async {
+    if (_router case final opening?) {
+      final router = await _settled(opening);
+      if (router == null) {
+        _router = null;
+      } else {
+        await router.refreshTiles();
+      }
+    }
+    if (_transit case final opening?) {
+      final transit = await _settled(opening);
+      if (transit == null || feedsChanged) {
+        _transit = null;
+      } else {
+        await transit.refreshTiles();
+      }
+    }
+  }
+
+  static Future<T?> _settled<T extends Object>(Future<T> opening) async {
+    try {
+      return await opening;
+    } on Object {
+      return null;
+    }
   }
 
   /// The GTFS-RT messages of the area's feeds, as `realtime.json` lists them.
@@ -130,18 +182,69 @@ class RealtimeSource {
   }
 }
 
-/// The offline area this build was pointed at, or null if there's none: the routing
-/// and transit releases [routingRelease] and [transitRelease] under [offlineRoot], or
-/// under the app's `offline/` folder in its external files on Android (its support
-/// folder elsewhere) if that's empty.
-Future<OfflineArea?> configuredOfflineArea() async {
-  if (routingRelease.isEmpty || transitRelease.isEmpty) return null;
-  final root = offlineRoot.isNotEmpty ? offlineRoot : await _appOfflineFolder();
-  return OfflineArea(
-    routing: '$root/routing/$routingRelease',
-    transitBuild: '$root/transit/$transitRelease',
-  );
+/// The app's offline downloads and the offline area they make, for directions and the
+/// map. The area appears once a region is ready, so it is looked for on each use until
+/// then.
+class OfflineAreas {
+  OfflineAreas(this.downloads);
+
+  /// Downloads, opened (null if this build has no [releasesUrl]).
+  final Future<OfflineDownloads?> downloads;
+
+  /// Starts downloads on the app's database and folder: handling downloads that ended
+  /// while the app was away, and finishing deletions.
+  factory OfflineAreas.open() => OfflineAreas(() async {
+    if (releasesUrl.isEmpty) return null;
+    final downloads = OfflineDownloads(
+      db: OfflineDatabase.open(),
+      root: await offlineFolder(),
+      bucket: Bucket(Uri.parse(releasesUrl)),
+      transfers: BackgroundTransfers(),
+    );
+    try {
+      await downloads.open();
+    } on Object catch (e) {
+      debugPrint('offline: downloads did not open: $e');
+    }
+    return downloads;
+  }());
+
+  OfflineArea? _area;
+
+  /// The offline area, or null if there's none yet.
+  Future<OfflineArea?> area() async =>
+      _area ??= await configuredOfflineArea(await downloads);
+
+  /// The downloaded map tiles, if there are some.
+  Future<String?> basemap() async => (await downloads)?.basemap();
 }
+
+/// The offline area, or null if there's none yet: the releases [routingRelease] and
+/// [transitRelease] if this build was pointed at some, or else those [downloads] pinned,
+/// once a region is ready. It is under [offlineFolder].
+Future<OfflineArea?> configuredOfflineArea(OfflineDownloads? downloads) async {
+  final root = await offlineFolder();
+  if (routingRelease.isNotEmpty && transitRelease.isNotEmpty) {
+    return OfflineArea(
+      routing: '$root/routing/$routingRelease',
+      transitBuild: '$root/transit/$transitRelease',
+    );
+  }
+  final releases = await downloads?.readyReleases();
+  if (releases == null) return null;
+  final area = OfflineArea(
+    routing: '$root/routing/${releases.routing}',
+    transitBuild: '$root/transit/${releases.transit ?? '-'}',
+    valhallaBuildId: releases.valhallaBuildId,
+  );
+  downloads!.addListener(area);
+  return area;
+}
+
+/// The offline folder: [offlineRoot] if set, or else the app's `offline/` folder in its
+/// external files on Android (its support folder elsewhere).
+Future<String> offlineFolder() async =>
+    offlineRoot.isNotEmpty ? offlineRoot : await _appOfflineFolder();
 
 Future<String> _appOfflineFolder() async {
   Directory? base;

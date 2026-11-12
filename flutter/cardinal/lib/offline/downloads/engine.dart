@@ -1,0 +1,1164 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart';
+
+import 'bucket.dart';
+import 'database.dart';
+import 'geometry.dart';
+import 'native.dart';
+import 'plan.dart';
+import 'transfers.dart';
+
+/// A region and how far along it is, for the screen that lists them.
+@immutable
+class RegionProgress {
+  const RegionProgress({
+    required this.id,
+    required this.kind,
+    required this.name,
+    required this.polygon,
+    required this.state,
+    required this.error,
+    required this.bytesDone,
+    required this.bytesTotal,
+    required this.filesDone,
+    required this.filesTotal,
+    required this.failed,
+  });
+
+  final int id;
+  final RegionKind kind;
+  final String? name;
+  final GeoPolygon? polygon;
+  final RegionState state;
+  final String? error;
+
+  /// Bytes of files verified or installed and of map ranges unpacked, of all the
+  /// region's (files whose size isn't known yet count once they arrive).
+  final int bytesDone;
+  final int bytesTotal;
+
+  /// Files and map ranges done, of all.
+  final int filesDone;
+  final int filesTotal;
+
+  /// Files and ranges that failed too often (retry the region to try them again).
+  final int failed;
+
+  @override
+  String toString() =>
+      'RegionProgress($id, ${state.name}, $filesDone/$filesTotal, $bytesDone/$bytesTotal'
+      '${error == null ? '' : ', $error'})';
+}
+
+/// The offline area's releases once a region is ready, for opening the router.
+typedef ReadyReleases = ({
+  String routing,
+  String? transit,
+  String? map,
+  int valhallaBuildId,
+});
+
+/// Something holding open what downloads change: the router and transit planner, told
+/// when files arrive or go.
+abstract interface class OfflineListener {
+  /// Files were installed or deleted. [feedsChanged]: the transit feeds did too.
+  Future<void> offlineChanged({required bool feedsChanged});
+}
+
+/// Thrown by [OfflineDownloads.start] when a plan no longer fits what's on the device.
+class StalePlan implements Exception {
+  const StalePlan(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'StalePlan($message)';
+}
+
+/// Offline downloads: regions of routing tiles, transit feeds, and map tiles, planned
+/// from the bucket's releases, downloaded in the background, checked, and installed
+/// under [root]:
+///
+/// - `routing/<date>/tiles/…`, loose, as the router reads them;
+/// - `transit/<date>/`: `timetables/`, `transfers/` (with `snaps/` and the
+///   `manifest.json` assembled from the installed feeds' entries), `realtime.json`;
+/// - `map/<date>/basemap.mbtiles`, one for every region;
+/// - `.incoming/`, where downloads land until they're checked and renamed into place
+///   (the router maps tiles, so nothing is written in place).
+///
+/// Files and map tiles are shared between regions, and deleting a region deletes only
+/// what no other region needs. Every change of state goes through the database first,
+/// so a restart picks up where the app stopped.
+class OfflineDownloads {
+  OfflineDownloads({
+    required this.db,
+    required this.root,
+    required this.bucket,
+    required this.transfers,
+    this.native = const RustOfflineNative(),
+    this.maxAttempts = 3,
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now;
+
+  final OfflineDatabase db;
+
+  /// The offline folder.
+  final String root;
+  final Bucket bucket;
+  final Transfers transfers;
+  final OfflineNative native;
+
+  /// How many times a file or range is tried before it counts as failed.
+  final int maxAttempts;
+  final DateTime Function() _clock;
+
+  final _listeners = <OfflineListener>{};
+  StreamSubscription<TransferResult>? _results;
+  Future<void> _last = Future.value();
+
+  String get incoming => '$root/.incoming';
+
+  String basemapPath(String mapRelease) =>
+      '$root/map/$mapRelease/basemap.mbtiles';
+
+  /// Runs [work] after everything before it: the database and the files change one
+  /// step at a time.
+  Future<T> _serially<T>(Future<T> Function() work) {
+    final run = _last.then((_) => work());
+    _last = run.then<void>((_) {}, onError: (_) {});
+    return run;
+  }
+
+  /// Completes once the work queued so far (and any it queued) is done.
+  @visibleForTesting
+  Future<void> get settled async {
+    Future<void> seen;
+    do {
+      seen = _last;
+      await seen;
+    } while (!identical(seen, _last));
+  }
+
+  void addListener(OfflineListener listener) => _listeners.add(listener);
+
+  void removeListener(OfflineListener listener) => _listeners.remove(listener);
+
+  Future<void> _notify({required bool feedsChanged}) async {
+    for (final listener in List.of(_listeners)) {
+      try {
+        await listener.offlineChanged(feedsChanged: feedsChanged);
+      } on Object catch (e) {
+        debugPrint('offline: refreshing after a change failed: $e');
+      }
+    }
+  }
+
+  /// Starts handling downloads, and picks up where the last run stopped: deletions
+  /// finish, and downloads that ended while the app wasn't running are handled.
+  Future<void> open() async {
+    _results ??= transfers.results.listen(
+      (result) => unawaited(_serially(() => _handle(result))),
+    );
+    await transfers.start();
+    await _serially(() async {
+      final active = await transfers.active();
+      // Queued work the downloader no longer has (it was lost, or finished unseen
+      // and wasn't reported): queue it again.
+      await (db.update(db.files)..where(
+            (f) =>
+                f.state.equalsValue(FileState.queued) &
+                f.id.isNotIn(_ids(active, 'f')),
+          ))
+          .write(const FilesCompanion(state: Value(FileState.pending)));
+      await (db.update(db.mapChunks)..where(
+            (c) =>
+                c.state.equalsValue(ChunkState.queued) &
+                c.id.isNotIn(_ids(active, 'c')),
+          ))
+          .write(const MapChunksCompanion(state: Value(ChunkState.pending)));
+      for (final region in await (db.select(
+        db.regions,
+      )..where((r) => r.state.equalsValue(RegionState.deleting))).get()) {
+        await _delete(region);
+      }
+      await _pump();
+    });
+  }
+
+  static List<int> _ids(Set<String> active, String prefix) => [
+    for (final id in active)
+      if (id.startsWith(prefix)) ?int.tryParse(id.substring(1)),
+  ];
+
+  Future<void> close() async {
+    await _results?.cancel();
+    _results = null;
+    await _last;
+  }
+
+  /// The pinned releases, by kind.
+  Future<Map<ReleaseKind, ReleaseRow>> pinned() async => {
+    for (final row in await db.select(db.releases).get()) row.kind: row,
+  };
+
+  /// The releases the offline area opens, once some region is ready.
+  Future<ReadyReleases?> readyReleases() async {
+    final ready =
+        await (db.select(db.regions)
+              ..where((r) => r.state.equalsValue(RegionState.ready))
+              ..limit(1))
+            .getSingleOrNull();
+    if (ready == null) return null;
+    final releases = await pinned();
+    final routing = releases[ReleaseKind.routing];
+    if (routing == null) return null;
+    return (
+      routing: routing.date,
+      transit: releases[ReleaseKind.transit]?.date,
+      map: releases[ReleaseKind.map]?.date,
+      valhallaBuildId: routing.valhallaBuildId!,
+    );
+  }
+
+  /// The basemap, if a map release is pinned and it exists.
+  Future<String?> basemap() async {
+    final map = (await pinned())[ReleaseKind.map];
+    if (map == null) return null;
+    final path = basemapPath(map.date);
+    return File(path).existsSync() ? path : null;
+  }
+
+  // Planning.
+
+  /// What downloading [polygon] takes: its routing tiles, the transit feeds with stops
+  /// in it (for the user to choose), and its map ranges, with sizes. Reads the bucket
+  /// (in the foreground: a few small requests per kind) and downloads nothing.
+  Future<OfflinePlan> plan(GeoPolygon polygon) async {
+    final planner = Planner(bucket, native);
+    final releases = await planner.releases(await pinned());
+    final routing = await planner.routing(releases.routing, polygon);
+    final feeds = releases.transit == null
+        ? const <CandidateFeed>[]
+        : await planner.feeds(releases.transit!, polygon);
+    MapPlanResult? map;
+    Uint8List? header;
+    var mapEtag = releases.mapEtag;
+    if (releases.map case final release?) {
+      final (result, first, etag) = await planner.map(
+        release,
+        polygon,
+        etag: releases.mapEtag,
+        basemap: basemapPath(release),
+      );
+      (map, header, mapEtag) = (result, first, etag);
+    }
+    final present = {
+      for (final f
+          in await (db.select(db.files)..where(
+                (f) => f.state.isInValues([
+                  FileState.verified,
+                  FileState.installed,
+                ]),
+              ))
+              .get())
+        OfflinePlan.key(f.kind, f.release, f.path),
+    };
+    return OfflinePlan(
+      polygon: polygon,
+      releases: PlanReleases(
+        map: releases.map,
+        routing: releases.routing,
+        transit: releases.transit,
+        valhallaBuildId: releases.valhallaBuildId,
+        mapEtag: mapEtag,
+        pinned: releases.pinned,
+      ),
+      routingFiles: routing,
+      transitShared: [
+        if (releases.transit case final t?)
+          for (final path in ['manifest/shared.json', 'realtime.json'])
+            PlannedFile(
+              kind: ReleaseKind.transit,
+              release: t,
+              path: path,
+              installPath: transitInstallPath(t, path),
+            ),
+      ],
+      feeds: feeds,
+      map: map,
+      mapHeader: header,
+      present: present,
+    );
+  }
+
+  // Starting.
+
+  /// Downloads [plan] with the feeds [feeds] (by ID) as a new region, and returns its
+  /// ID. Pins the plan's releases if none are pinned. Throws [StalePlan] if the
+  /// releases were pinned otherwise since, or the basemap lost tiles the plan counted on.
+  Future<int> start(
+    OfflinePlan plan, {
+    Set<String> feeds = const {},
+    String? name,
+  }) => _serially(() async {
+    final now = _clock();
+    final r = plan.releases;
+    final chosen = plan.feeds.where((f) => feeds.contains(f.id)).toList();
+    final transferFiles = [
+      for (final feed in chosen)
+        for (final MapEntry(key: mode, value: tiles)
+            in feed.transferTiles.entries)
+          for (final (x, y) in tiles)
+            PlannedFile(
+              kind: ReleaseKind.transit,
+              release: r.transit!,
+              path: transferPath(mode, x, y),
+              installPath: transitInstallPath(
+                r.transit!,
+                transferPath(mode, x, y),
+              ),
+            ),
+    ];
+    final files = {
+      for (final f in [
+        ...plan.routingFiles,
+        if (chosen.isNotEmpty) ...plan.transitShared,
+        for (final feed in chosen) ...feed.files,
+        ...transferFiles,
+      ])
+        OfflinePlan.key(f.kind, f.release, f.path): f,
+    };
+    final regionId = await db.transaction(() async {
+      final pinned = await this.pinned();
+      if (pinned.isEmpty) {
+        await db.batch((b) {
+          b.insertAll(db.releases, [
+            ReleasesCompanion.insert(
+              kind: ReleaseKind.routing,
+              date: r.routing,
+              valhallaBuildId: Value(r.valhallaBuildId),
+              pinnedAt: now,
+            ),
+            if (r.transit case final t?)
+              ReleasesCompanion.insert(
+                kind: ReleaseKind.transit,
+                date: t,
+                valhallaBuildId: Value(r.valhallaBuildId),
+                pinnedAt: now,
+              ),
+            if (r.map case final m?)
+              ReleasesCompanion.insert(
+                kind: ReleaseKind.map,
+                date: m,
+                etag: Value(r.mapEtag),
+                pinnedAt: now,
+              ),
+          ]);
+        });
+      } else if (pinned[ReleaseKind.routing]?.date != r.routing ||
+          pinned[ReleaseKind.transit]?.date != r.transit ||
+          pinned[ReleaseKind.map]?.date != r.map ||
+          (r.map != null && pinned[ReleaseKind.map]?.etag != r.mapEtag)) {
+        throw const StalePlan('the pinned releases changed; plan again');
+      }
+      final id = await db
+          .into(db.regions)
+          .insert(
+            RegionsCompanion.insert(
+              kind: RegionKind.explicit,
+              name: Value(name),
+              polygon: Value(jsonEncode(plan.polygon.toJson())),
+              mapRelease: Value(r.map),
+              routingRelease: Value(r.routing),
+              transitRelease: Value(chosen.isEmpty ? null : r.transit),
+              state: RegionState.planned,
+              mapTiles: Value(plan.map?.tileKeys),
+              mapBytes: Value(plan.map?.rangeBytes ?? 0),
+              createdAt: now,
+              updatedAt: now,
+            ),
+          );
+      for (final f in files.values) {
+        await db
+            .into(db.files)
+            .insert(
+              FilesCompanion.insert(
+                kind: f.kind,
+                release: f.release,
+                path: f.path,
+                installPath: f.installPath,
+                bytes: Value(f.bytes),
+                expectedSha256: Value(f.sha256),
+                state: FileState.pending,
+              ),
+              mode: InsertMode.insertOrIgnore,
+            );
+      }
+      // Link every file, including those other regions brought.
+      for (final f in files.values) {
+        final row =
+            await (db.select(db.files)..where(
+                  (x) =>
+                      x.kind.equalsValue(f.kind) &
+                      x.release.equals(f.release) &
+                      x.path.equals(f.path),
+                ))
+                .getSingle();
+        await db
+            .into(db.regionFiles)
+            .insert(RegionFilesCompanion.insert(regionId: id, fileId: row.id));
+      }
+      await db.batch((b) {
+        b.insertAll(db.regionFeeds, [
+          for (final feed in chosen)
+            RegionFeedsCompanion.insert(
+              regionId: id,
+              feedId: feed.id,
+              feedIndex: feed.index,
+            ),
+        ]);
+        b.insertAll(db.mapChunks, [
+          for (final range in plan.map?.ranges ?? const <MapRange>[])
+            MapChunksCompanion.insert(
+              regionId: id,
+              start: range.start,
+              length: range.length,
+              tileCount: range.tileCount,
+              tiles: range.tiles,
+              state: ChunkState.pending,
+            ),
+        ]);
+      });
+      return id;
+    });
+    if (plan.map case final map? when r.map != null) {
+      final basemap = basemapPath(r.map!);
+      await native.basemapPrepare(
+        basemap,
+        plan.mapHeader!,
+        'Cardinal offline map',
+      );
+      // Tiles other regions brought are this region's too from now on, so deleting
+      // those regions keeps them.
+      final missing = await native.basemapClaim(
+        basemap,
+        regionId,
+        map.tileKeys,
+      );
+      final planned = map.archiveTiles - map.presentTiles;
+      if (missing != planned) {
+        await _setRegion(
+          regionId,
+          RegionState.failed,
+          error:
+              'the map has $missing tiles to download, not $planned; plan again',
+        );
+        throw const StalePlan('the basemap changed since planning; plan again');
+      }
+    }
+    await _setRegion(regionId, RegionState.downloading);
+    await _pump();
+    return regionId;
+  });
+
+  Future<void> _setRegion(int id, RegionState state, {String? error}) =>
+      (db.update(db.regions)..where((r) => r.id.equals(id))).write(
+        RegionsCompanion(
+          state: Value(state),
+          error: Value(error),
+          updatedAt: Value(_clock()),
+        ),
+      );
+
+  // Downloading.
+
+  String _incomingFile(String id) => '$incoming/$id';
+
+  Uri _fileUrl(FileRow f) =>
+      bucket.url('${f.kind.name}/${f.release}/${f.path}');
+
+  /// Hands pending work of regions that are downloading to the downloader, and fetches
+  /// small JSON files itself. Runs serially.
+  Future<void> _pump() async {
+    final downloading = db.regions.state.equalsValue(RegionState.downloading);
+    final pending =
+        await (db.select(db.files).join([
+                innerJoin(
+                  db.regionFiles,
+                  db.regionFiles.fileId.equalsExp(db.files.id),
+                ),
+                innerJoin(
+                  db.regions,
+                  db.regions.id.equalsExp(db.regionFiles.regionId),
+                ),
+              ])
+              ..where(
+                db.files.state.equalsValue(FileState.pending) & downloading,
+              )
+              ..groupBy([db.files.id]))
+            .map((row) => row.readTable(db.files))
+            .get();
+    final jobs = <TransferJob>[];
+    for (final f in pending) {
+      if (f.path.endsWith('.json')) {
+        await _fetchForeground(f);
+      } else {
+        jobs.add(
+          TransferJob(
+            id: 'f${f.id}',
+            url: _fileUrl(f),
+            path: _incomingFile('f${f.id}'),
+          ),
+        );
+      }
+    }
+    final chunks =
+        await (db.select(db.mapChunks).join([
+              innerJoin(
+                db.regions,
+                db.regions.id.equalsExp(db.mapChunks.regionId),
+              ),
+            ])..where(
+              db.mapChunks.state.equalsValue(ChunkState.pending) & downloading,
+            ))
+            .get();
+    final etag = (await pinned())[ReleaseKind.map]?.etag;
+    for (final row in chunks) {
+      final c = row.readTable(db.mapChunks);
+      final region = row.readTable(db.regions);
+      jobs.add(
+        TransferJob(
+          id: 'c${c.id}',
+          url: bucket.url('map/${region.mapRelease}/planet.pmtiles'),
+          path: _incomingFile('c${c.id}'),
+          headers: {
+            'Range': 'bytes=${c.start}-${c.start + c.length - 1}',
+            'If-Match': ?etag,
+          },
+        ),
+      );
+    }
+    if (jobs.isEmpty) {
+      await _advanceAll();
+      return;
+    }
+    await Directory(incoming).create(recursive: true);
+    // Marked queued before handing them over, so a result can't arrive for work that's
+    // still pending.
+    await db.batch((b) {
+      for (final job in jobs) {
+        final id = int.parse(job.id.substring(1));
+        if (job.id.startsWith('f')) {
+          b.update(
+            db.files,
+            const FilesCompanion(state: Value(FileState.queued)),
+            where: (f) => f.id.equals(id),
+          );
+        } else {
+          b.update(
+            db.mapChunks,
+            const MapChunksCompanion(state: Value(ChunkState.queued)),
+            where: (c) => c.id.equals(id),
+          );
+        }
+      }
+    });
+    await transfers.enqueue(jobs);
+    await _advanceAll();
+  }
+
+  /// Fetches a small JSON file as stored (gzipped): `downloaded`, then checked against
+  /// the bucket's SHA-256 of the object.
+  Future<void> _fetchForeground(FileRow f) async {
+    final to = File(_incomingFile('f${f.id}'));
+    final String? sha;
+    try {
+      sha = await bucket.download('${f.kind.name}/${f.release}/${f.path}', to);
+    } on BucketError catch (e) {
+      await _failFile(f, '$e', permanent: e.status == 404);
+      return;
+    }
+    await _downloaded(f, sha);
+  }
+
+  Future<void> _handle(TransferResult result) async {
+    final id = int.tryParse(result.id.substring(1));
+    if (id == null) return;
+    if (result.id.startsWith('f')) {
+      final f = await (db.select(
+        db.files,
+      )..where((x) => x.id.equals(id))).getSingleOrNull();
+      if (f == null || f.state != FileState.queued) return;
+      switch (result.outcome) {
+        case TransferOutcome.complete:
+          if (result.statusCode case final status?
+              when status != HttpStatus.ok) {
+            await _failFile(f, 'status $status');
+          } else {
+            await _downloaded(f, result.headers[sha256Header]);
+          }
+        case TransferOutcome.notFound:
+          await _failFile(f, 'not in the bucket (404)', permanent: true);
+        case TransferOutcome.failed:
+          await _failFile(f, result.error ?? 'status ${result.statusCode}');
+        case TransferOutcome.canceled:
+          await _setFile(f.id, FileState.pending);
+      }
+    } else if (result.id.startsWith('c')) {
+      final c = await (db.select(
+        db.mapChunks,
+      )..where((x) => x.id.equals(id))).getSingleOrNull();
+      if (c == null || c.state != ChunkState.queued) return;
+      switch (result.outcome) {
+        case TransferOutcome.complete:
+          if (result.statusCode case final status?
+              when status != HttpStatus.partialContent) {
+            await _failChunk(c, 'status $status, not a range');
+          } else {
+            await _setChunk(c.id, ChunkState.downloaded);
+            await _unpack(c);
+          }
+        case TransferOutcome.failed || TransferOutcome.notFound:
+          final changed = result.statusCode == HttpStatus.preconditionFailed;
+          await _failChunk(
+            c,
+            changed
+                ? 'the map archive changed since its release was pinned (412)'
+                : result.error ?? 'status ${result.statusCode}',
+            permanent: changed || result.outcome == TransferOutcome.notFound,
+          );
+        case TransferOutcome.canceled:
+          await _setChunk(c.id, ChunkState.pending);
+      }
+    }
+    await _pump();
+  }
+
+  Future<void> _setFile(int id, FileState state) => (db.update(
+    db.files,
+  )..where((f) => f.id.equals(id))).write(FilesCompanion(state: Value(state)));
+
+  Future<void> _setChunk(int id, ChunkState state) =>
+      (db.update(db.mapChunks)..where((c) => c.id.equals(id))).write(
+        MapChunksCompanion(state: Value(state)),
+      );
+
+  /// A file is whole in `.incoming/`: checks it, against the index's SHA-256, or the
+  /// bucket's ([reported] by the response, or asked for) where the index gives none.
+  Future<void> _downloaded(FileRow f, String? reported) async {
+    await (db.update(db.files)..where((x) => x.id.equals(f.id))).write(
+      const FilesCompanion(state: Value(FileState.downloaded)),
+    );
+    var expected = f.expectedSha256;
+    if (expected == null) {
+      try {
+        expected =
+            reported ??
+            await bucket.storedSha256('${f.kind.name}/${f.release}/${f.path}');
+      } on BucketError catch (e) {
+        await _failFile(f, 'no SHA-256 to check against: $e');
+        return;
+      }
+      if (expected == null) {
+        await _failFile(f, 'the bucket gives no SHA-256 for it');
+        return;
+      }
+      await (db.update(db.files)..where((x) => x.id.equals(f.id))).write(
+        FilesCompanion(expectedSha256: Value(expected)),
+      );
+    }
+    final path = _incomingFile('f${f.id}');
+    final String found;
+    try {
+      if (f.bytes case final bytes? when File(path).lengthSync() != bytes) {
+        await _failFile(f, '${File(path).lengthSync()} bytes, not $bytes');
+        return;
+      }
+      found = await native.sha256File(path);
+    } on Object catch (e) {
+      await _failFile(f, 'unreadable: $e');
+      return;
+    }
+    if (found != expected.toLowerCase()) {
+      await _failFile(f, 'SHA-256 $found, not $expected');
+      return;
+    }
+    await (db.update(db.files)..where((x) => x.id.equals(f.id))).write(
+      FilesCompanion(
+        state: const Value(FileState.verified),
+        verifiedSha256: Value(found),
+        error: const Value(null),
+      ),
+    );
+  }
+
+  /// Counts a failed attempt: the file goes back to `pending`, or after the last
+  /// attempt (or a [permanent] failure, such as a 404) to `failed`.
+  Future<void> _failFile(
+    FileRow f,
+    String error, {
+    bool permanent = false,
+  }) async {
+    debugPrint('offline: ${f.path}: $error');
+    _deleteQuietly(_incomingFile('f${f.id}'));
+    final attempts = f.attempts + 1;
+    await (db.update(db.files)..where((x) => x.id.equals(f.id))).write(
+      FilesCompanion(
+        state: Value(
+          permanent || attempts >= maxAttempts
+              ? FileState.failed
+              : FileState.pending,
+        ),
+        attempts: Value(attempts),
+        error: Value(error),
+        // A SHA-256 taken from a response is only as good as that response.
+        expectedSha256: f.bytes == null && f.expectedSha256 == null
+            ? const Value(null)
+            : const Value.absent(),
+      ),
+    );
+  }
+
+  Future<void> _failChunk(
+    MapChunkRow c,
+    String error, {
+    bool permanent = false,
+  }) async {
+    debugPrint('offline: map range ${c.start}+${c.length}: $error');
+    _deleteQuietly(_incomingFile('c${c.id}'));
+    final attempts = c.attempts + 1;
+    await (db.update(db.mapChunks)..where((x) => x.id.equals(c.id))).write(
+      MapChunksCompanion(
+        state: Value(
+          permanent || attempts >= maxAttempts
+              ? ChunkState.failed
+              : ChunkState.pending,
+        ),
+        attempts: Value(attempts),
+        error: Value(error),
+      ),
+    );
+  }
+
+  /// Writes a downloaded range's tiles into the basemap: `unpacked`, then its file goes:
+  /// `deleted`. A bad tile or a short range fails it, to be downloaded again.
+  Future<void> _unpack(MapChunkRow c) async {
+    final region = await (db.select(
+      db.regions,
+    )..where((r) => r.id.equals(c.regionId))).getSingle();
+    final file = _incomingFile('c${c.id}');
+    try {
+      await native.basemapUnpack(
+        basemapPath(region.mapRelease!),
+        file,
+        c.length,
+        c.tiles,
+        c.regionId,
+      );
+    } on MapRangeError catch (e) {
+      await _failChunk(c, e.message);
+      return;
+    }
+    await _setChunk(c.id, ChunkState.unpacked);
+    _deleteQuietly(file);
+    await _setChunk(c.id, ChunkState.deleted);
+  }
+
+  static void _deleteQuietly(String path) {
+    try {
+      File(path).deleteSync();
+    } on FileSystemException {
+      // Not there.
+    }
+  }
+
+  // Installing.
+
+  Future<void> _advanceAll() async {
+    final regions = await (db.select(
+      db.regions,
+    )..where((r) => r.state.equalsValue(RegionState.downloading))).get();
+    for (final region in regions) {
+      await _advance(region);
+    }
+  }
+
+  /// A downloading region whose files are all checked and ranges unpacked installs;
+  /// one with a file or range that failed for good fails.
+  Future<void> _advance(RegionRow region) async {
+    final files = await _regionFiles(region.id);
+    final chunks = await (db.select(
+      db.mapChunks,
+    )..where((c) => c.regionId.equals(region.id))).get();
+    final failedFile = files
+        .where((f) => f.state == FileState.failed)
+        .firstOrNull;
+    final failedChunk = chunks
+        .where((c) => c.state == ChunkState.failed)
+        .firstOrNull;
+    if (failedFile != null || failedChunk != null) {
+      await _setRegion(
+        region.id,
+        RegionState.failed,
+        error: failedFile != null
+            ? '${failedFile.path}: ${failedFile.error}'
+            : 'map range ${failedChunk!.start}: ${failedChunk.error}',
+      );
+      return;
+    }
+    final done =
+        files.every(
+          (f) =>
+              f.state == FileState.verified || f.state == FileState.installed,
+        ) &&
+        chunks.every((c) => c.state == ChunkState.deleted);
+    if (!done) return;
+    await _setRegion(region.id, RegionState.installing);
+    await _install(region, files);
+  }
+
+  Future<List<FileRow>> _regionFiles(int region) =>
+      (db.select(db.files).join([
+            innerJoin(
+              db.regionFiles,
+              db.regionFiles.fileId.equalsExp(db.files.id),
+            ),
+          ])..where(db.regionFiles.regionId.equals(region)))
+          .map((row) => row.readTable(db.files))
+          .get();
+
+  /// Renames the region's checked files into place (`installed`), assembles the transit
+  /// manifest from every ready region's feeds, and tells listeners: `ready`.
+  Future<void> _install(RegionRow region, List<FileRow> files) async {
+    final now = _clock();
+    for (final f in files.where((f) => f.state == FileState.verified)) {
+      final to = File('$root/${f.installPath}');
+      await to.parent.create(recursive: true);
+      await File(_incomingFile('f${f.id}')).rename(to.path);
+      await (db.update(db.files)..where((x) => x.id.equals(f.id))).write(
+        FilesCompanion(
+          state: const Value(FileState.installed),
+          lastUsed: Value(now),
+        ),
+      );
+    }
+    final feeds = await (db.select(
+      db.regionFeeds,
+    )..where((f) => f.regionId.equals(region.id))).get();
+    if (region.transitRelease case final release? when feeds.isNotEmpty) {
+      await _assembleTransit(release, including: region.id);
+    }
+    await _setRegion(region.id, RegionState.ready);
+    await _notify(feedsChanged: feeds.isNotEmpty);
+  }
+
+  /// Writes `transit/<release>/transfers/manifest.json`: the shared fields (less
+  /// `feed_ids`) and, as `feeds`, the entries of every feed a ready region (or
+  /// [including]) holds, by index; and `realtime.json`. Removes the manifest when no
+  /// feeds are left.
+  Future<void> _assembleTransit(String release, {int? including}) async {
+    final rows =
+        await (db.select(db.regionFeeds).join([
+              innerJoin(
+                db.regions,
+                db.regions.id.equalsExp(db.regionFeeds.regionId),
+              ),
+            ])..where(
+              db.regions.transitRelease.equals(release) &
+                  (db.regions.state.equalsValue(RegionState.ready) |
+                      db.regions.id.equals(including ?? -1)),
+            ))
+            .map((row) => row.readTable(db.regionFeeds))
+            .get();
+    final feeds = {for (final f in rows) f.feedId: f.feedIndex};
+    final manifest = File('$root/transit/$release/transfers/manifest.json');
+    if (feeds.isEmpty) {
+      _deleteQuietly(manifest.path);
+      return;
+    }
+    Future<Map<String, Object?>> gunzipped(String path) async => jsonDecode(
+      utf8.decode(gzip.decode(await File('$root/$path').readAsBytes())),
+    ) as Map<String, Object?>;
+    final shared =
+        await gunzipped(transitInstallPath(release, 'manifest/shared.json'))
+          ..remove('feed_ids');
+    final ordered = feeds.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    shared['feeds'] = [
+      for (final f in ordered)
+        await gunzipped(
+          transitInstallPath(release, 'manifest/feeds/${f.key}.json'),
+        ),
+    ];
+    await _writeAtomically(manifest, utf8.encode(jsonEncode(shared)));
+    final realtime = File(
+      '$root/${transitInstallPath(release, 'realtime.json')}',
+    );
+    if (realtime.existsSync()) {
+      await _writeAtomically(
+        File('$root/transit/$release/realtime.json'),
+        gzip.decode(await realtime.readAsBytes()),
+      );
+    }
+  }
+
+  Future<void> _writeAtomically(File to, List<int> bytes) async {
+    await Directory(incoming).create(recursive: true);
+    final part = File(
+      '$incoming/${to.uri.pathSegments.last}.${_clock().microsecondsSinceEpoch}',
+    );
+    await part.writeAsBytes(bytes, flush: true);
+    await to.parent.create(recursive: true);
+    await part.rename(to.path);
+  }
+
+  // Retrying and deleting.
+
+  /// Tries a failed region's failed files and ranges again.
+  Future<void> retry(int region) => _serially(() async {
+    final row = await (db.select(
+      db.regions,
+    )..where((r) => r.id.equals(region))).getSingleOrNull();
+    if (row == null || row.state != RegionState.failed) return;
+    final files = await _regionFiles(region);
+    await db.batch((b) {
+      for (final f in files.where((f) => f.state == FileState.failed)) {
+        b.update(
+          db.files,
+          const FilesCompanion(
+            state: Value(FileState.pending),
+            attempts: Value(0),
+          ),
+          where: (x) => x.id.equals(f.id),
+        );
+      }
+      b.update(
+        db.mapChunks,
+        const MapChunksCompanion(
+          state: Value(ChunkState.pending),
+          attempts: Value(0),
+        ),
+        where: (c) =>
+            c.regionId.equals(region) & c.state.equalsValue(ChunkState.failed),
+      );
+    });
+    await _setRegion(region, RegionState.downloading);
+    await _pump();
+  });
+
+  /// Deletes a region, and the files and map tiles no other region needs.
+  Future<void> delete(int region) => _serially(() async {
+    final row = await (db.select(
+      db.regions,
+    )..where((r) => r.id.equals(region))).getSingleOrNull();
+    if (row == null) return;
+    await _setRegion(region, RegionState.deleting);
+    await _delete(row);
+  });
+
+  Future<void> _delete(RegionRow region) async {
+    final files = await _regionFiles(region.id);
+    final others = {
+      for (final row
+          in await (db.select(db.regionFiles)..where(
+                (x) =>
+                    x.fileId.isIn(files.map((f) => f.id)) &
+                    x.regionId.equals(region.id).not(),
+              ))
+              .get())
+        row.fileId,
+    };
+    final orphans = files.where((f) => !others.contains(f.id)).toList();
+    final chunks = await (db.select(
+      db.mapChunks,
+    )..where((c) => c.regionId.equals(region.id))).get();
+    await transfers.cancel([
+      for (final f in orphans)
+        if (f.state == FileState.queued) 'f${f.id}',
+      for (final c in chunks)
+        if (c.state == ChunkState.queued) 'c${c.id}',
+    ]);
+    if (region.mapRelease case final map?) {
+      await native.basemapRelease(basemapPath(map), region.id);
+    }
+    final hadFeeds = await (db.select(
+      db.regionFeeds,
+    )..where((f) => f.regionId.equals(region.id))).get();
+    // The region leaves the manifest before its files go.
+    await (db.delete(
+      db.regionFeeds,
+    )..where((f) => f.regionId.equals(region.id))).go();
+    if (region.transitRelease case final release? when hadFeeds.isNotEmpty) {
+      await _assembleTransit(release);
+    }
+    for (final f in orphans) {
+      _deleteQuietly('$root/${f.installPath}');
+      _deleteQuietly(_incomingFile('f${f.id}'));
+    }
+    for (final c in chunks) {
+      _deleteQuietly(_incomingFile('c${c.id}'));
+    }
+    await db.transaction(() async {
+      await (db.delete(
+        db.files,
+      )..where((f) => f.id.isIn(orphans.map((f) => f.id)))).go();
+      await (db.delete(db.regions)..where((r) => r.id.equals(region.id))).go();
+    });
+    await _notify(feedsChanged: hadFeeds.isNotEmpty);
+  }
+
+  // On-demand files.
+
+  /// Deletes installed files that only on-demand regions hold, least recently used
+  /// first, until [bytesToFree] bytes are freed or none are left; returns the bytes
+  /// freed. Files any explicitly downloaded region holds are never evicted.
+  ///
+  /// The open router keeps a deleted tile mapped (and its space taken) until it's
+  /// reopened: `refreshTiles` only finds new tiles (see `valinor-router`'s
+  /// `deleted_tiles_stay_mapped_until_the_router_is_dropped`).
+  Future<int> evictOnDemand(int bytesToFree) => _serially(() async {
+    final explicit = db.alias(db.regions, 'explicit_region');
+    final explicitRefs = db.alias(db.regionFiles, 'explicit_refs');
+    final candidates =
+        await (db.select(db.files)
+              ..where(
+                (f) =>
+                    f.state.equalsValue(FileState.installed) &
+                    existsQuery(
+                      db.select(db.regionFiles)
+                        ..where((x) => x.fileId.equalsExp(f.id)),
+                    ) &
+                    notExistsQuery(
+                      db.select(explicitRefs).join([
+                        innerJoin(
+                          explicit,
+                          explicit.id.equalsExp(explicitRefs.regionId),
+                        ),
+                      ])..where(
+                        explicitRefs.fileId.equalsExp(f.id) &
+                            explicit.kind.equalsValue(RegionKind.explicit),
+                      ),
+                    ),
+              )
+              ..orderBy([
+                (f) => OrderingTerm(
+                  expression: f.lastUsed,
+                  nulls: NullsOrder.first,
+                ),
+                (f) => OrderingTerm(expression: f.id),
+              ]))
+            .get();
+    var freed = 0;
+    final evicted = <int>[];
+    for (final f in candidates) {
+      if (freed >= bytesToFree) break;
+      final file = File('$root/${f.installPath}');
+      final size = file.existsSync() ? file.lengthSync() : (f.bytes ?? 0);
+      _deleteQuietly(file.path);
+      freed += size;
+      evicted.add(f.id);
+    }
+    if (evicted.isEmpty) return 0;
+    await (db.delete(db.files)..where((f) => f.id.isIn(evicted))).go();
+    await _notify(feedsChanged: false);
+    return freed;
+  });
+
+  /// Marks installed files (by path under the offline folder) as just used, for
+  /// eviction's least-recently-used order. One statement, however many paths.
+  Future<void> touch(Iterable<String> installPaths) async {
+    final paths = installPaths.toSet();
+    if (paths.isEmpty) return;
+    await (db.update(db.files)..where((f) => f.installPath.isIn(paths))).write(
+      FilesCompanion(lastUsed: Value(_clock())),
+    );
+  }
+
+  /// Marks the routing tiles under a route's [shape] as just used. The router doesn't
+  /// report the tiles its search read, so this takes those the route passes through
+  /// (levels 0 to 2): the tiles a route needs again if it's asked for again.
+  Future<void> touchRoute(List<GeoPoint> shape) async {
+    final routing = (await pinned())[ReleaseKind.routing];
+    if (routing == null || shape.isEmpty) return;
+    final paths = <String>{};
+    for (final p in shape) {
+      for (var level = 0; level < 3; level++) {
+        paths.add(
+          'routing/${routing.date}/tiles/'
+          '${ValhallaTiles.path(level, ValhallaTiles.idAt(level, p.lat, p.lng))}',
+        );
+      }
+    }
+    await touch(paths);
+  }
+
+  // Watching.
+
+  /// Every region with its progress, as it changes.
+  Stream<List<RegionProgress>> watch() {
+    final query = db.customSelect(
+      '''
+      SELECT r.id, r.kind, r.name, r.polygon, r.state, r.error,
+        COALESCE(f.done_bytes, 0) + COALESCE(c.done_bytes, 0) AS done_bytes,
+        COALESCE(f.total_bytes, 0) + COALESCE(c.total_bytes, 0) AS total_bytes,
+        COALESCE(f.done, 0) + COALESCE(c.done, 0) AS done,
+        COALESCE(f.total, 0) + COALESCE(c.total, 0) AS total,
+        COALESCE(f.failed, 0) + COALESCE(c.failed, 0) AS failed
+      FROM regions r
+      LEFT JOIN (
+        SELECT rf.region_id,
+          SUM(CASE WHEN files.state IN ('verified', 'installed')
+            THEN COALESCE(files.bytes, 0) ELSE 0 END) AS done_bytes,
+          SUM(COALESCE(files.bytes, 0)) AS total_bytes,
+          SUM(files.state IN ('verified', 'installed')) AS done,
+          COUNT(*) AS total,
+          SUM(files.state = 'failed') AS failed
+        FROM region_files rf JOIN files ON files.id = rf.file_id
+        GROUP BY rf.region_id
+      ) f ON f.region_id = r.id
+      LEFT JOIN (
+        SELECT region_id,
+          SUM(CASE WHEN state IN ('unpacked', 'deleted') THEN length ELSE 0 END)
+            AS done_bytes,
+          SUM(length) AS total_bytes,
+          SUM(state IN ('unpacked', 'deleted')) AS done,
+          COUNT(*) AS total,
+          SUM(state = 'failed') AS failed
+        FROM map_chunks GROUP BY region_id
+      ) c ON c.region_id = r.id
+      ORDER BY r.id
+      ''',
+      readsFrom: {db.regions, db.files, db.regionFiles, db.mapChunks},
+    );
+    return query.watch().map(
+      (rows) => [
+        for (final row in rows)
+          RegionProgress(
+            id: row.read<int>('id'),
+            kind: RegionKind.values.byName(row.read<String>('kind')),
+            name: row.readNullable<String>('name'),
+            polygon: switch (row.readNullable<String>('polygon')) {
+              final json? => GeoPolygon.fromJson(
+                jsonDecode(json) as List<Object?>,
+              ),
+              null => null,
+            },
+            state: RegionState.values.byName(row.read<String>('state')),
+            error: row.readNullable<String>('error'),
+            bytesDone: row.read<int>('done_bytes'),
+            bytesTotal: row.read<int>('total_bytes'),
+            filesDone: row.read<int>('done'),
+            filesTotal: row.read<int>('total'),
+            failed: row.read<int>('failed'),
+          ),
+      ],
+    );
+  }
+
+  /// Every region with its progress, now.
+  Future<List<RegionProgress>> regions() => watch().first;
+}
