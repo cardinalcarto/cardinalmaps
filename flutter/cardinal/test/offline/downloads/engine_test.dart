@@ -493,6 +493,8 @@ void main() {
       isFalse,
     );
     expect(listener.changes.length, 4);
+    // Installs add files; deletions remove them.
+    expect(listener.removals, [false, false, true, true]);
   });
 
   test('feeds of two regions are in the manifest by index', () async {
@@ -717,6 +719,7 @@ void main() {
         isFalse,
       );
       expect(listener.changes.length, changes + 1);
+      expect(listener.removals.last, isTrue);
 
       expect(await engine.evictOnDemand(1 << 30), 1000);
       left = {for (final f in await files()) f.path};

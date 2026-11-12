@@ -307,7 +307,15 @@ class _FakePlanning implements MapPlanning {
 class RecordingListener implements OfflineListener {
   final changes = <bool>[];
 
+  /// Whether each change removed files.
+  final removals = <bool>[];
+
   @override
-  Future<void> offlineChanged({required bool feedsChanged}) async =>
-      changes.add(feedsChanged);
+  Future<void> offlineChanged({
+    required bool feedsChanged,
+    bool filesRemoved = false,
+  }) async {
+    changes.add(feedsChanged);
+    removals.add(filesRemoved);
+  }
 }

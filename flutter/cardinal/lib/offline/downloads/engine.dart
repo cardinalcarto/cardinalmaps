@@ -66,7 +66,12 @@ typedef ReadyReleases = ({
 /// when files arrive or go.
 abstract interface class OfflineListener {
   /// Files were installed or deleted. [feedsChanged]: the transit feeds did too.
-  Future<void> offlineChanged({required bool feedsChanged});
+  /// [filesRemoved]: files were deleted, which an open router keeps mapped (and their
+  /// space taken) until it is dropped.
+  Future<void> offlineChanged({
+    required bool feedsChanged,
+    bool filesRemoved = false,
+  });
 }
 
 /// Thrown by [OfflineDownloads.start] when a plan no longer fits what's on the device.
@@ -147,10 +152,16 @@ class OfflineDownloads {
 
   void removeListener(OfflineListener listener) => _listeners.remove(listener);
 
-  Future<void> _notify({required bool feedsChanged}) async {
+  Future<void> _notify({
+    required bool feedsChanged,
+    bool filesRemoved = false,
+  }) async {
     for (final listener in List.of(_listeners)) {
       try {
-        await listener.offlineChanged(feedsChanged: feedsChanged);
+        await listener.offlineChanged(
+          feedsChanged: feedsChanged,
+          filesRemoved: filesRemoved,
+        );
       } on Object catch (e) {
         debugPrint('offline: refreshing after a change failed: $e');
       }
@@ -1067,7 +1078,7 @@ class OfflineDownloads {
       )..where((f) => f.id.isIn(orphans.map((f) => f.id)))).go();
       await (db.delete(db.regions)..where((r) => r.id.equals(region.id))).go();
     });
-    await _notify(feedsChanged: hadFeeds.isNotEmpty);
+    await _notify(feedsChanged: hadFeeds.isNotEmpty, filesRemoved: true);
   }
 
   // On-demand files.
@@ -1076,9 +1087,10 @@ class OfflineDownloads {
   /// first, until [bytesToFree] bytes are freed or none are left; returns the bytes
   /// freed. Files any explicitly downloaded region holds are never evicted.
   ///
-  /// The open router keeps a deleted tile mapped (and its space taken) until it's
-  /// reopened: `refreshTiles` only finds new tiles (see `valinor-router`'s
-  /// `deleted_tiles_stay_mapped_until_the_router_is_dropped`).
+  /// An open router keeps a deleted tile mapped (and its space taken) until it's
+  /// dropped (see `valinor-router`'s `deleted_tiles_stay_mapped_until_the_router_is_dropped`),
+  /// so listeners are told files were removed, and the offline area reopens its router
+  /// and transit planner once their running calls finish.
   Future<int> evictOnDemand(int bytesToFree) => _serially(() async {
     final explicit = db.alias(db.regions, 'explicit_region');
     final explicitRefs = db.alias(db.regionFiles, 'explicit_refs');
@@ -1123,7 +1135,7 @@ class OfflineDownloads {
     }
     if (evicted.isEmpty) return 0;
     await (db.delete(db.files)..where((f) => f.id.isIn(evicted))).go();
-    await _notify(feedsChanged: false);
+    await _notify(feedsChanged: false, filesRemoved: true);
     return freed;
   });
 

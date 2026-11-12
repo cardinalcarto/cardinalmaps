@@ -34,7 +34,10 @@ class OfflineArea implements OfflineListener {
     required this.routing,
     required this.transitBuild,
     this.valhallaBuildId,
-  });
+    @visibleForTesting Future<OfflineRouter> Function()? openRouter,
+    @visibleForTesting Future<OfflineTransit> Function()? openTransit,
+  }) : _openRouterWith = openRouter,
+       _openTransitWith = openTransit;
 
   /// The routing release's directory, `routing/<date>`.
   final String routing;
@@ -46,27 +49,49 @@ class OfflineArea implements OfflineListener {
   /// tiles yet, and refuses tiles of another build.
   final int? valhallaBuildId;
 
+  final Future<OfflineRouter> Function()? _openRouterWith;
+  final Future<OfflineTransit> Function()? _openTransitWith;
+
   String get _tiles => '$routing/tiles';
 
-  /// The street router over the area's tiles, opened on first use.
-  Future<OfflineRouter> get router =>
-      _router ??= _timed('street router open', () async {
+  /// The street router over the area's tiles, opened on first use. Prefer [useRouter],
+  /// which keeps it open while the call runs.
+  Future<OfflineRouter> get router => (_router ??= _openedRouter()).value;
+  _Opened<OfflineRouter>? _router;
+
+  _Opened<OfflineRouter> _openedRouter() =>
+      _Opened(_openRouter(), free: (r) => r.isDisposed ? null : r.dispose());
+
+  Future<OfflineRouter> _openRouter() =>
+      _openRouterWith?.call() ??
+      _timed('street router open', () async {
         await initRouting();
         return OfflineRouter.open(
           tileSets: [_tiles],
           expectedBuildId: valhallaBuildId,
         );
       });
-  Future<OfflineRouter>? _router;
+
+  /// Runs [work] with the router, which stays open until it's done even if downloads
+  /// delete files meanwhile (the next call then gets a router opened afresh).
+  Future<R> useRouter<R>(Future<R> Function(OfflineRouter router) work) =>
+      _use(_router ??= _openedRouter(), work);
 
   /// Transit planning over the area's timetables and tiles, opened on first use. This
   /// takes seconds, and the first open of a build takes longer, as it prepares its
-  /// transfer tables.
+  /// transfer tables. Prefer [useTransit].
   ///
   /// The build's manifest lists every feed it was built with; the area holds only some
   /// of their timetables, and those are the feeds it loads.
-  Future<OfflineTransit> get transit =>
-      _transit ??= _timed('transit open', () async {
+  Future<OfflineTransit> get transit => (_transit ??= _openedTransit()).value;
+  _Opened<OfflineTransit>? _transit;
+
+  _Opened<OfflineTransit> _openedTransit() =>
+      _Opened(_openTransit(), free: (t) => t.isDisposed ? null : t.dispose());
+
+  Future<OfflineTransit> _openTransit() =>
+      _openTransitWith?.call() ??
+      _timed('transit open', () async {
         await initRouting();
         final feeds = await _feeds();
         debugPrint('offline: transit feeds ${feeds.join(', ')}');
@@ -77,7 +102,23 @@ class OfflineArea implements OfflineListener {
           expectedBuildId: valhallaBuildId,
         );
       });
-  Future<OfflineTransit>? _transit;
+
+  /// Runs [work] with the transit planner, as [useRouter] does with the router.
+  Future<R> useTransit<R>(Future<R> Function(OfflineTransit transit) work) =>
+      _use(_transit ??= _openedTransit(), work);
+
+  static Future<R> _use<T extends Object, R>(
+    _Opened<T> opened,
+    Future<R> Function(T value) work,
+  ) async {
+    opened.users++;
+    try {
+      return await work(await opened.value);
+    } finally {
+      opened.users--;
+      if (opened.retired && opened.users == 0) await opened.dispose();
+    }
+  }
 
   /// The feeds the manifest lists whose timetables are in the area, by ID. (A build put
   /// in place by hand lists every feed it was built with; downloads list only theirs.)
@@ -98,20 +139,29 @@ class OfflineArea implements OfflineListener {
   /// Makes files that arrived usable: the router and transit planner find new street
   /// tiles, and when the feeds changed, transit opens again on next use (its feeds are
   /// fixed when it opens). One that failed to open tries again on next use.
+  ///
+  /// When files were removed, both open again on next use: an open router keeps a
+  /// deleted file mapped, and its space taken, until it is dropped. Each old one is
+  /// dropped once the calls running on it finish.
   @override
-  Future<void> offlineChanged({required bool feedsChanged}) async {
-    if (_router case final opening?) {
-      final router = await _settled(opening);
-      if (router == null) {
+  Future<void> offlineChanged({
+    required bool feedsChanged,
+    bool filesRemoved = false,
+  }) async {
+    if (_router case final opened?) {
+      final router = await _settled(opened.value);
+      if (router == null || filesRemoved) {
         _router = null;
+        await opened.retire();
       } else {
         await router.refreshTiles();
       }
     }
-    if (_transit case final opening?) {
-      final transit = await _settled(opening);
-      if (transit == null || feedsChanged) {
+    if (_transit case final opened?) {
+      final transit = await _settled(opened.value);
+      if (transit == null || feedsChanged || filesRemoved) {
         _transit = null;
+        await opened.retire();
       } else {
         await transit.refreshTiles();
       }
@@ -152,6 +202,34 @@ class OfflineArea implements OfflineListener {
     final column = ((lng + 180) * 4).floor().clamp(0, 1439);
     final id = (row * 1440 + column).toString().padLeft(9, '0');
     return '2/${id.substring(0, 3)}/${id.substring(3, 6)}/${id.substring(6)}.gph';
+  }
+}
+
+/// A router or transit planner being opened or open, and how many calls use it.
+class _Opened<T extends Object> {
+  _Opened(this.value, {required this.free});
+
+  final Future<T> value;
+
+  /// Frees the native object.
+  final void Function(T value) free;
+  var users = 0;
+
+  /// Replaced: dropped once no call uses it.
+  var retired = false;
+
+  Future<void> retire() async {
+    retired = true;
+    if (users == 0) await dispose();
+  }
+
+  /// Frees it now (its mapped files with it) rather than when it's collected.
+  Future<void> dispose() async {
+    try {
+      free(await value);
+    } on Object {
+      // It never opened.
+    }
   }
 }
 

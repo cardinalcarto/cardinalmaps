@@ -151,7 +151,7 @@ class OfflineRouteSource implements RouteSource {
   ) async {
     final area = await _need(_area);
     await _checkCovers(area, from, to);
-    final router = await area.router;
+
     final adapter = _adapters[mode] ??= DirectionsAdapter.valhalla(
       // Ferrostar wants an endpoint to make the request for; nothing is sent to it.
       endpointUrl: 'offline:route',
@@ -160,7 +160,9 @@ class OfflineRouteSource implements RouteSource {
     );
     final made = adapter.request(from: _point(from), to: _point(to));
     final watch = Stopwatch()..start();
-    final response = await router.route(body: made.body);
+    final response = await area.useRouter(
+      (router) => router.route(body: made.body),
+    );
     debugPrint(
       'cardinal-timing: street route ${mode.name} '
       '${watch.elapsedMilliseconds} ms (${response.status})',
@@ -226,8 +228,9 @@ class OfflineTransitSource implements TransitSource {
     await _checkCovers(area, from, to);
     // Real-time messages are fetched while the timetables open.
     final fetching = _realtime(area).fresh();
-    final transit = await area.transit;
+    final opening = area.transit;
     final feeds = await fetching;
+    await opening;
     final request = utf8.encode(
       jsonEncode({
         'origin': {'lat': from.lat, 'lon': from.lon},
@@ -236,10 +239,8 @@ class OfflineTransitSource implements TransitSource {
       }),
     );
     final watch = Stopwatch()..start();
-    final response = await transit.plan(
-      request: request,
-      feeds: feeds,
-      cancel: cancel,
+    final response = await area.useTransit(
+      (transit) => transit.plan(request: request, feeds: feeds, cancel: cancel),
     );
     debugPrint(
       'cardinal-timing: transit plan ${access.mode} '
