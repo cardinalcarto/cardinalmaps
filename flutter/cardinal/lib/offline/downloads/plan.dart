@@ -18,12 +18,16 @@ class PlanReleases {
     required this.valhallaBuildId,
     required this.mapEtag,
     required this.pinned,
+    this.manifestId,
   });
 
   final String? map;
   final String routing;
   final String? transit;
   final int valhallaBuildId;
+
+  /// The transit build's manifest ID, which its transfer tiles carry.
+  final String? manifestId;
 
   /// The map archive's ETag, which its ranges must match.
   final String? mapEtag;
@@ -69,7 +73,6 @@ class CandidateFeed {
     required this.lastServiceDate,
     required this.files,
     required this.transferTiles,
-    required this.estimatedTransferBytes,
   });
 
   final String id;
@@ -85,16 +88,19 @@ class CandidateFeed {
   final List<PlannedFile> files;
 
   /// By mode (`walking`, `cycling`, `wheelchair`), the transfer tiles with walks from
-  /// its stops that intersect the polygon, as `(x, y)` at zoom 12.
-  final Map<String, List<(int, int)>> transferTiles;
+  /// its stops that intersect the polygon, as `(x, y, bytes)` at zoom 12, sizes from the
+  /// index shards.
+  final Map<String, List<(int, int, int)>> transferTiles;
 
-  /// Their size: transfer tiles' sizes aren't published one by one, so this is the
-  /// feed's average tile size for each mode times the tiles.
-  final int estimatedTransferBytes;
+  /// The transfer tiles' size.
+  int get transferBytes => transferTiles.values.fold(
+    0,
+    (sum, tiles) => tiles.fold(sum, (sum, t) => sum + t.$3),
+  );
 
-  /// What the feed costs alone: its files, and its transfer tiles, estimated.
+  /// What the feed costs alone: its files and its transfer tiles.
   int get bytes =>
-      files.fold(0, (sum, f) => sum + (f.bytes ?? 0)) + estimatedTransferBytes;
+      files.fold(0, (sum, f) => sum + (f.bytes ?? 0)) + transferBytes;
 
   int get fileCount =>
       files.length +
@@ -152,28 +158,20 @@ class OfflinePlan {
       for (final f in chosen) ...f.files,
     ];
     final missing = files.where((f) => !_isPresent(f));
-    // Transfer tiles are shared between feeds: each counted once, at the largest
-    // estimate of the feeds that use it.
+    // Transfer tiles are shared between feeds: each counted once.
     final tiles = <(String, int, int), int>{};
     for (final feed in chosen) {
-      final count = feed.transferTiles.values.fold(
-        0,
-        (sum, t) => sum + t.length,
-      );
-      final each = count == 0 ? 0 : feed.estimatedTransferBytes ~/ count;
       for (final MapEntry(key: mode, value: list)
           in feed.transferTiles.entries) {
-        for (final (x, y) in list) {
-          final k = (mode, x, y);
-          tiles[k] = math.max(tiles[k] ?? 0, each);
-          if (present.contains(
+        for (final (x, y, bytes) in list) {
+          if (!present.contains(
             key(
               ReleaseKind.transit,
               releases.transit!,
               transferPath(mode, x, y),
             ),
           )) {
-            tiles[k] = 0;
+            tiles[(mode, x, y)] = bytes;
           }
         }
       }
@@ -195,10 +193,9 @@ class OfflinePlan {
               .fold(0, (sum, f) => sum + (f.bytes ?? 0)) +
           transferBytes,
       mapBytes: mapBytes,
-      files: missing.length + tiles.values.where((b) => b > 0).length,
+      files: missing.length + tiles.length,
       mapRanges: map?.ranges.length ?? 0,
       mapTiles: map?.archiveTiles ?? 0,
-      transferBytesEstimated: tiles.isNotEmpty,
     );
   }
 }
@@ -214,7 +211,6 @@ class PlanTotals {
     required this.files,
     required this.mapRanges,
     required this.mapTiles,
-    required this.transferBytesEstimated,
   });
 
   /// Everything to download, less what other regions brought already.
@@ -229,9 +225,6 @@ class PlanTotals {
   final int files;
   final int mapRanges;
   final int mapTiles;
-
-  /// Whether [transitBytes] includes an estimate of transfer tiles' sizes.
-  final bool transferBytesEstimated;
 }
 
 /// Where a transfer tile is under its release.
@@ -243,9 +236,15 @@ String transferPath(String mode, int x, int y) =>
 String transitInstallPath(String release, String path) =>
     path.startsWith('snaps/')
     ? 'transit/$release/transfers/$path'
-    : path.endsWith('.json')
-    ? 'transit/$release/$path.gz'
     : 'transit/$release/$path';
+
+/// The mode and tile of a transfer tile's path under its release, or null.
+(String, int, int)? parseTransferPath(String path) {
+  final match = RegExp(r'^transfers/([a-z]+)/12/(\d+)/(\d+)\.bin\.zst$')
+      .firstMatch(path);
+  if (match == null) return null;
+  return (match[1]!, int.parse(match[2]!), int.parse(match[3]!));
+}
 
 /// Reading what a plan needs from the bucket.
 class Planner {
@@ -265,6 +264,7 @@ class Planner {
         valhallaBuildId: routing.valhallaBuildId!,
         mapEtag: pinned[ReleaseKind.map]?.etag,
         pinned: true,
+        manifestId: pinned[ReleaseKind.transit]?.manifestId,
       );
     }
     final latest = await bucket.json('latest.json') as Map<String, Object?>;
@@ -277,6 +277,7 @@ class Planner {
     ) as Map<String, Object?>;
     final build = routingRelease['valhalla_build_id']! as int;
     final transit = latest['transit'] as String?;
+    String? manifestId;
     if (transit != null) {
       final transitRelease = await bucket.json(
         'transit/$transit/release.json',
@@ -290,6 +291,7 @@ class Planner {
           '(build $build)',
         );
       }
+      manifestId = transitRelease['manifest_id']! as String;
     }
     return PlanReleases(
       map: latest['map'] as String?,
@@ -298,6 +300,7 @@ class Planner {
       valhallaBuildId: build,
       mapEtag: null,
       pinned: false,
+      manifestId: manifestId,
     );
   }
 
@@ -341,6 +344,8 @@ class Planner {
   /// The feeds with stops in [polygon], with what each needs there.
   Future<List<CandidateFeed>> feeds(String release, GeoPolygon polygon) async {
     final ids = <String>{};
+    // Every transfer tile's size, by mode and tile, from the shards.
+    final sizes = <(String, int, int), int>{};
     for (final (x, y) in SlippyTiles.covering(6, polygon)) {
       final Object? shard;
       try {
@@ -350,8 +355,20 @@ class Planner {
         if (e.status == 404) continue;
         rethrow;
       }
-      for (final feed
-          in (shard! as Map<String, Object?>)['feeds'] as List<Object?>) {
+      final document = shard! as Map<String, Object?>;
+      final transfers = document['transfers'];
+      if (transfers is! Map<String, Object?>) {
+        throw StateError(
+          'transit $release\'s index has no transfer tile sizes; it needs '
+          'the feed index from valinor-transit-build with them',
+        );
+      }
+      for (final MapEntry(key: mode, value: tiles) in transfers.entries) {
+        for (final t in (tiles! as List<Object?>).cast<List<Object?>>()) {
+          sizes[(mode, t[0]! as int, t[1]! as int)] = t[2]! as int;
+        }
+      }
+      for (final feed in document['feeds']! as List<Object?>) {
         final f = feed! as Map<String, Object?>;
         final cells = (f['cells']! as List<Object?>).cast<List<Object?>>();
         if (cells.any(
@@ -364,7 +381,7 @@ class Planner {
       }
     }
     final feeds = await Future.wait(
-      ids.map((id) => _feed(release, id, polygon)),
+      ids.map((id) => _feed(release, id, polygon, sizes)),
     );
     return feeds..sort((a, b) => a.index.compareTo(b.index));
   }
@@ -373,6 +390,7 @@ class Planner {
     String release,
     String id,
     GeoPolygon polygon,
+    Map<(String, int, int), int> sizes,
   ) async {
     final summary = await bucket.json(
       'transit/$release/feeds/$id.json',
@@ -393,23 +411,22 @@ class Planner {
     final entryTiles =
         (entry['transfer_tiles'] as Map<String, Object?>? ?? const {})
             .cast<String, List<Object?>>();
-    final tiles = <String, List<(int, int)>>{};
-    var estimate = 0;
+    final tiles = <String, List<(int, int, int)>>{};
     for (final MapEntry(key: mode, value: list) in entryTiles.entries) {
-      final inside = [
+      tiles[mode] = [
         for (final t in list.cast<List<Object?>>())
           if (polygon.intersects(
             SlippyTiles.bounds(12, t[0]! as int, t[1]! as int),
           ))
-            (t[0]! as int, t[1]! as int),
+            (
+              t[0]! as int,
+              t[1]! as int,
+              sizes[(mode, t[0]! as int, t[1]! as int)] ??
+                  (throw StateError(
+                    'transfer tile $mode ${t[0]}/${t[1]} of $id is in no shard',
+                  )),
+            ),
       ];
-      tiles[mode] = inside;
-      final totals = modes[mode];
-      final count = totals?['transfer_tiles'] as int? ?? 0;
-      if (count > 0) {
-        estimate +=
-            (totals!['transfer_bytes']! as int) * inside.length ~/ count;
-      }
     }
     final manifestPath = 'manifest/feeds/$id.json';
     return CandidateFeed(
@@ -432,7 +449,6 @@ class Planner {
         ),
       ],
       transferTiles: tiles,
-      estimatedTransferBytes: estimate,
     );
   }
 

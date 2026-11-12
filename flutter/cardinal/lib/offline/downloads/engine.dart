@@ -206,9 +206,9 @@ class OfflineDownloads {
           break;
         case FileState.queued || FileState.downloaded:
           if (arrived(id)) {
-            // It finished unseen: its response's headers are gone, so a SHA-256 the
-            // index doesn't give is asked for.
-            await _downloaded(f, null);
+            // It finished unseen.
+            await _setFile(f.id, FileState.downloaded);
+            await _verify(f);
           } else {
             await _setFile(f.id, FileState.pending);
           }
@@ -340,6 +340,7 @@ class OfflineDownloads {
         valhallaBuildId: releases.valhallaBuildId,
         mapEtag: mapEtag,
         pinned: releases.pinned,
+        manifestId: releases.manifestId,
       ),
       routingFiles: routing,
       transitShared: [
@@ -376,11 +377,12 @@ class OfflineDownloads {
       for (final feed in chosen)
         for (final MapEntry(key: mode, value: tiles)
             in feed.transferTiles.entries)
-          for (final (x, y) in tiles)
+          for (final (x, y, bytes) in tiles)
             PlannedFile(
               kind: ReleaseKind.transit,
               release: r.transit!,
               path: transferPath(mode, x, y),
+              bytes: bytes,
               installPath: transitInstallPath(
                 r.transit!,
                 transferPath(mode, x, y),
@@ -412,6 +414,7 @@ class OfflineDownloads {
                 kind: ReleaseKind.transit,
                 date: t,
                 valhallaBuildId: Value(r.valhallaBuildId),
+                manifestId: Value(r.manifestId),
                 pinnedAt: now,
               ),
             if (r.map case final m?)
@@ -569,7 +572,8 @@ class OfflineDownloads {
               ..where(
                 db.files.state.equalsValue(FileState.pending) & downloading,
               )
-              ..groupBy([db.files.id]))
+              ..groupBy([db.files.id])
+              ..orderBy([OrderingTerm(expression: db.files.id)]))
             .map((row) => row.readTable(db.files))
             .get();
     final jobs = <TransferJob>[];
@@ -641,18 +645,77 @@ class OfflineDownloads {
     await _advanceAll();
   }
 
-  /// Fetches a small JSON file as stored (gzipped): `downloaded`, then checked against
-  /// the bucket's SHA-256 of the object.
+  /// Fetches a small JSON file over HTTPS (inflated): `downloaded`, then checked by
+  /// reading it ([_checkJson]); the bucket publishes no hash of these.
   Future<void> _fetchForeground(FileRow f) async {
-    final to = File(_incomingFile('f${f.id}'));
-    final String? sha;
+    final Object? json;
     try {
-      sha = await bucket.download('${f.kind.name}/${f.release}/${f.path}', to);
+      json = await bucket.json('${f.kind.name}/${f.release}/${f.path}');
     } on BucketError catch (e) {
       await _failFile(f, '$e', permanent: e.status == 404);
       return;
     }
-    await _downloaded(f, sha);
+    final to = File(_incomingFile('f${f.id}'));
+    await to.parent.create(recursive: true);
+    await to.writeAsString(jsonEncode(json), flush: true);
+    await _setFile(f.id, FileState.downloaded);
+    await _verify(f);
+  }
+
+  /// What's wrong with a transit JSON file, or null: it must be the release's, and
+  /// agree with what the region downloads with it.
+  Future<String?> _checkJson(FileRow f, Object? json) async {
+    if (json is! Map<String, Object?>) return 'not a JSON object';
+    final transit = (await pinned())[ReleaseKind.transit];
+    if (f.path == 'realtime.json') {
+      return json['feeds'] is List ? null : 'no feeds';
+    }
+    if (f.path == 'manifest/shared.json') {
+      if (transit?.manifestId case final id? when json['manifest_id'] != id) {
+        return 'manifest ${json['manifest_id']}, not $id';
+      }
+      if (json['valhalla_build_id'] != transit?.valhallaBuildId) {
+        return 'Valhalla build ${json['valhalla_build_id']}, '
+            'not ${transit?.valhallaBuildId}';
+      }
+      return json['feed_count'] is int ? null : 'no feed_count';
+    }
+    final feed = RegExp(r'^manifest/feeds/(.+)\.json$').firstMatch(f.path)?[1];
+    if (feed == null) return 'not a file this checks';
+    if (json['id'] != feed) return 'the entry of ${json['id']}, not $feed';
+    final index = await (db.select(
+      db.regionFeeds,
+    )..where((r) => r.feedId.equals(feed))).get();
+    if (index.isNotEmpty && json['index'] != index.first.feedIndex) {
+      return 'index ${json['index']}, not ${index.first.feedIndex}';
+    }
+    // Its files' hashes are those the summary gave, which they're checked against.
+    Future<String?> expected(String path) async =>
+        (await (db.select(db.files)..where(
+                  (x) => x.release.equals(f.release) & x.path.equals(path),
+                ))
+                .getSingleOrNull())
+            ?.expectedSha256;
+    if (json['timetable'] case final String timetable) {
+      final sha = await expected(timetable);
+      if (sha != null && sha != json['timetable_sha256']) {
+        return 'its timetable is $sha in the summary, '
+            '${json['timetable_sha256']} here';
+      }
+    }
+    final snaps = json['stop_snaps'];
+    if (snaps is Map<String, Object?>) {
+      for (final MapEntry(key: mode, value: snap) in snaps.entries) {
+        if (snap case {'file': final String file, 'sha256': final String sha}) {
+          final published = file.replaceFirst('transfers/', '');
+          if (await expected(published) case final summary?
+              when summary != sha) {
+            return 'its $mode snaps are $summary in the summary, $sha here';
+          }
+        }
+      }
+    }
+    return null;
   }
 
   Future<void> _handle(TransferResult result) async {
@@ -669,7 +732,8 @@ class OfflineDownloads {
               when status != HttpStatus.ok) {
             await _failFile(f, 'status $status');
           } else {
-            await _downloaded(f, result.headers[sha256Header]);
+            await _setFile(f.id, FileState.downloaded);
+            await _verify(f);
           }
         case TransferOutcome.notFound:
           await _failFile(f, 'not in the bucket (404)', permanent: true);
@@ -717,49 +781,68 @@ class OfflineDownloads {
         MapChunksCompanion(state: Value(state)),
       );
 
-  /// A file is whole in `.incoming/`: checks it, against the index's SHA-256, or the
-  /// bucket's ([reported] by the response, or asked for) where the index gives none.
-  Future<void> _downloaded(FileRow f, String? reported) async {
-    await (db.update(db.files)..where((x) => x.id.equals(f.id))).write(
-      const FilesCompanion(state: Value(FileState.downloaded)),
-    );
-    var expected = f.expectedSha256;
-    if (expected == null) {
-      try {
-        expected =
-            reported ??
-            await bucket.storedSha256('${f.kind.name}/${f.release}/${f.path}');
-      } on BucketError catch (e) {
-        await _failFile(f, 'no SHA-256 to check against: $e');
-        return;
-      }
-      if (expected == null) {
-        await _failFile(f, 'the bucket gives no SHA-256 for it');
-        return;
-      }
-      await (db.update(db.files)..where((x) => x.id.equals(f.id))).write(
-        FilesCompanion(expectedSha256: Value(expected)),
-      );
-    }
+  /// A file is whole in `.incoming/` (`downloaded`): checks it, and it's `verified`.
+  ///
+  /// - Files the index gives a SHA-256 for (routing tiles, timetables, snaps) must
+  ///   hash to it.
+  /// - Transfer tiles must be the size their index shard gives, and decode whole: the
+  ///   CRC-32 in their header covers every byte of the decompressed tile, and the header
+  ///   must name the tile and the build's manifest (in Rust, `checkTransferTile`).
+  /// - JSON must read as the release's ([_checkJson]).
+  Future<void> _verify(FileRow f) async {
     final path = _incomingFile('f${f.id}');
-    final String found;
+    String? found;
     try {
-      if (f.bytes case final bytes? when File(path).lengthSync() != bytes) {
-        await _failFile(f, '${File(path).lengthSync()} bytes, not $bytes');
+      final length = File(path).lengthSync();
+      if (f.bytes case final bytes? when length != bytes) {
+        await _failFile(f, '$length bytes, not $bytes');
         return;
       }
-      found = await native.sha256File(path);
+      if (parseTransferPath(f.path) case (final mode, final x, final y)) {
+        final manifest = (await pinned())[ReleaseKind.transit]?.manifestId;
+        if (manifest == null) {
+          await _failFile(f, 'no manifest ID to check it against');
+          return;
+        }
+        final problem = await native.checkTransferTile(
+          path,
+          mode,
+          x,
+          y,
+          manifest,
+        );
+        if (problem != null) {
+          await _failFile(f, problem);
+          return;
+        }
+      } else if (f.path.endsWith('.json')) {
+        final problem = await _checkJson(
+          f,
+          jsonDecode(await File(path).readAsString()),
+        );
+        if (problem != null) {
+          await _failFile(f, problem, permanent: true);
+          return;
+        }
+        found = await native.sha256File(path);
+      } else if (f.expectedSha256 case final expected?) {
+        found = await native.sha256File(path);
+        if (found != expected.toLowerCase()) {
+          await _failFile(f, 'SHA-256 $found, not $expected');
+          return;
+        }
+      } else {
+        await _failFile(f, 'nothing to check it against', permanent: true);
+        return;
+      }
     } on Object catch (e) {
       await _failFile(f, 'unreadable: $e');
-      return;
-    }
-    if (found != expected.toLowerCase()) {
-      await _failFile(f, 'SHA-256 $found, not $expected');
       return;
     }
     await (db.update(db.files)..where((x) => x.id.equals(f.id))).write(
       FilesCompanion(
         state: const Value(FileState.verified),
+        // For JSON, the hash of what was stored, for the record; none is published.
         verifiedSha256: Value(found),
         error: const Value(null),
       ),
@@ -785,10 +868,6 @@ class OfflineDownloads {
         ),
         attempts: Value(attempts),
         error: Value(error),
-        // A SHA-256 taken from a response is only as good as that response.
-        expectedSha256: f.bytes == null && f.expectedSha256 == null
-            ? const Value(null)
-            : const Value.absent(),
       ),
     );
   }
@@ -928,7 +1007,7 @@ class OfflineDownloads {
 
   /// Writes `transit/<release>/transfers/manifest.json`: the shared fields (less
   /// `feed_ids`) and, as `feeds`, the entries of every feed a ready region (or
-  /// [including]) holds, by index; and `realtime.json`. Removes the manifest when no
+  /// [including]) holds, by index. Removes the manifest when no
   /// feeds are left.
   Future<void> _assembleTransit(String release, {int? including}) async {
     final rows =
@@ -950,30 +1029,19 @@ class OfflineDownloads {
       _deleteQuietly(manifest.path);
       return;
     }
-    Future<Map<String, Object?>> gunzipped(String path) async => jsonDecode(
-      utf8.decode(gzip.decode(await File('$root/$path').readAsBytes())),
-    ) as Map<String, Object?>;
+    Future<Map<String, Object?>> read(String path) async =>
+        jsonDecode(await File('$root/$path').readAsString())
+            as Map<String, Object?>;
     final shared =
-        await gunzipped(transitInstallPath(release, 'manifest/shared.json'))
+        await read(transitInstallPath(release, 'manifest/shared.json'))
           ..remove('feed_ids');
     final ordered = feeds.entries.toList()
       ..sort((a, b) => a.value.compareTo(b.value));
     shared['feeds'] = [
       for (final f in ordered)
-        await gunzipped(
-          transitInstallPath(release, 'manifest/feeds/${f.key}.json'),
-        ),
+        await read(transitInstallPath(release, 'manifest/feeds/${f.key}.json')),
     ];
     await _writeAtomically(manifest, utf8.encode(jsonEncode(shared)));
-    final realtime = File(
-      '$root/${transitInstallPath(release, 'realtime.json')}',
-    );
-    if (realtime.existsSync()) {
-      await _writeAtomically(
-        File('$root/transit/$release/realtime.json'),
-        gzip.decode(await realtime.readAsBytes()),
-      );
-    }
   }
 
   Future<void> _writeAtomically(File to, List<int> bytes) async {

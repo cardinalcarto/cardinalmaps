@@ -47,6 +47,17 @@ class $ReleasesTable extends Releases
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _manifestIdMeta = const VerificationMeta(
+    'manifestId',
+  );
+  @override
+  late final GeneratedColumn<String> manifestId = GeneratedColumn<String>(
+    'manifest_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _pinnedAtMeta = const VerificationMeta(
     'pinnedAt',
   );
@@ -64,6 +75,7 @@ class $ReleasesTable extends Releases
     date,
     valhallaBuildId,
     etag,
+    manifestId,
     pinnedAt,
   ];
   @override
@@ -101,6 +113,12 @@ class $ReleasesTable extends Releases
         etag.isAcceptableOrUnknown(data['etag']!, _etagMeta),
       );
     }
+    if (data.containsKey('manifest_id')) {
+      context.handle(
+        _manifestIdMeta,
+        manifestId.isAcceptableOrUnknown(data['manifest_id']!, _manifestIdMeta),
+      );
+    }
     if (data.containsKey('pinned_at')) {
       context.handle(
         _pinnedAtMeta,
@@ -136,6 +154,10 @@ class $ReleasesTable extends Releases
         DriftSqlType.string,
         data['${effectivePrefix}etag'],
       ),
+      manifestId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}manifest_id'],
+      ),
       pinnedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}pinned_at'],
@@ -163,12 +185,16 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
 
   /// Map: the archive's ETag, which every range request must match (`If-Match`).
   final String? etag;
+
+  /// Transit: the build's manifest ID, which its transfer tiles carry.
+  final String? manifestId;
   final DateTime pinnedAt;
   const ReleaseRow({
     required this.kind,
     required this.date,
     this.valhallaBuildId,
     this.etag,
+    this.manifestId,
     required this.pinnedAt,
   });
   @override
@@ -184,6 +210,9 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
     if (!nullToAbsent || etag != null) {
       map['etag'] = Variable<String>(etag);
     }
+    if (!nullToAbsent || manifestId != null) {
+      map['manifest_id'] = Variable<String>(manifestId);
+    }
     map['pinned_at'] = Variable<DateTime>(pinnedAt);
     return map;
   }
@@ -196,6 +225,9 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
           ? const Value.absent()
           : Value(valhallaBuildId),
       etag: etag == null && nullToAbsent ? const Value.absent() : Value(etag),
+      manifestId: manifestId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(manifestId),
       pinnedAt: Value(pinnedAt),
     );
   }
@@ -212,6 +244,7 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
       date: serializer.fromJson<String>(json['date']),
       valhallaBuildId: serializer.fromJson<int?>(json['valhallaBuildId']),
       etag: serializer.fromJson<String?>(json['etag']),
+      manifestId: serializer.fromJson<String?>(json['manifestId']),
       pinnedAt: serializer.fromJson<DateTime>(json['pinnedAt']),
     );
   }
@@ -225,6 +258,7 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
       'date': serializer.toJson<String>(date),
       'valhallaBuildId': serializer.toJson<int?>(valhallaBuildId),
       'etag': serializer.toJson<String?>(etag),
+      'manifestId': serializer.toJson<String?>(manifestId),
       'pinnedAt': serializer.toJson<DateTime>(pinnedAt),
     };
   }
@@ -234,6 +268,7 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
     String? date,
     Value<int?> valhallaBuildId = const Value.absent(),
     Value<String?> etag = const Value.absent(),
+    Value<String?> manifestId = const Value.absent(),
     DateTime? pinnedAt,
   }) => ReleaseRow(
     kind: kind ?? this.kind,
@@ -242,6 +277,7 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
         ? valhallaBuildId.value
         : this.valhallaBuildId,
     etag: etag.present ? etag.value : this.etag,
+    manifestId: manifestId.present ? manifestId.value : this.manifestId,
     pinnedAt: pinnedAt ?? this.pinnedAt,
   );
   ReleaseRow copyWithCompanion(ReleasesCompanion data) {
@@ -252,6 +288,9 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
           ? data.valhallaBuildId.value
           : this.valhallaBuildId,
       etag: data.etag.present ? data.etag.value : this.etag,
+      manifestId: data.manifestId.present
+          ? data.manifestId.value
+          : this.manifestId,
       pinnedAt: data.pinnedAt.present ? data.pinnedAt.value : this.pinnedAt,
     );
   }
@@ -263,13 +302,15 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
           ..write('date: $date, ')
           ..write('valhallaBuildId: $valhallaBuildId, ')
           ..write('etag: $etag, ')
+          ..write('manifestId: $manifestId, ')
           ..write('pinnedAt: $pinnedAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(kind, date, valhallaBuildId, etag, pinnedAt);
+  int get hashCode =>
+      Object.hash(kind, date, valhallaBuildId, etag, manifestId, pinnedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -278,6 +319,7 @@ class ReleaseRow extends DataClass implements Insertable<ReleaseRow> {
           other.date == this.date &&
           other.valhallaBuildId == this.valhallaBuildId &&
           other.etag == this.etag &&
+          other.manifestId == this.manifestId &&
           other.pinnedAt == this.pinnedAt);
 }
 
@@ -286,6 +328,7 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
   final Value<String> date;
   final Value<int?> valhallaBuildId;
   final Value<String?> etag;
+  final Value<String?> manifestId;
   final Value<DateTime> pinnedAt;
   final Value<int> rowid;
   const ReleasesCompanion({
@@ -293,6 +336,7 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
     this.date = const Value.absent(),
     this.valhallaBuildId = const Value.absent(),
     this.etag = const Value.absent(),
+    this.manifestId = const Value.absent(),
     this.pinnedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -301,6 +345,7 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
     required String date,
     this.valhallaBuildId = const Value.absent(),
     this.etag = const Value.absent(),
+    this.manifestId = const Value.absent(),
     required DateTime pinnedAt,
     this.rowid = const Value.absent(),
   }) : kind = Value(kind),
@@ -311,6 +356,7 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
     Expression<String>? date,
     Expression<int>? valhallaBuildId,
     Expression<String>? etag,
+    Expression<String>? manifestId,
     Expression<DateTime>? pinnedAt,
     Expression<int>? rowid,
   }) {
@@ -319,6 +365,7 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
       if (date != null) 'date': date,
       if (valhallaBuildId != null) 'valhalla_build_id': valhallaBuildId,
       if (etag != null) 'etag': etag,
+      if (manifestId != null) 'manifest_id': manifestId,
       if (pinnedAt != null) 'pinned_at': pinnedAt,
       if (rowid != null) 'rowid': rowid,
     });
@@ -329,6 +376,7 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
     Value<String>? date,
     Value<int?>? valhallaBuildId,
     Value<String?>? etag,
+    Value<String?>? manifestId,
     Value<DateTime>? pinnedAt,
     Value<int>? rowid,
   }) {
@@ -337,6 +385,7 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
       date: date ?? this.date,
       valhallaBuildId: valhallaBuildId ?? this.valhallaBuildId,
       etag: etag ?? this.etag,
+      manifestId: manifestId ?? this.manifestId,
       pinnedAt: pinnedAt ?? this.pinnedAt,
       rowid: rowid ?? this.rowid,
     );
@@ -359,6 +408,9 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
     if (etag.present) {
       map['etag'] = Variable<String>(etag.value);
     }
+    if (manifestId.present) {
+      map['manifest_id'] = Variable<String>(manifestId.value);
+    }
     if (pinnedAt.present) {
       map['pinned_at'] = Variable<DateTime>(pinnedAt.value);
     }
@@ -375,6 +427,7 @@ class ReleasesCompanion extends UpdateCompanion<ReleaseRow> {
           ..write('date: $date, ')
           ..write('valhallaBuildId: $valhallaBuildId, ')
           ..write('etag: $etag, ')
+          ..write('manifestId: $manifestId, ')
           ..write('pinnedAt: $pinnedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -2999,6 +3052,7 @@ typedef $$ReleasesTableCreateCompanionBuilder = ReleasesCompanion Function({
   required String date,
   Value<int?> valhallaBuildId,
   Value<String?> etag,
+  Value<String?> manifestId,
   required DateTime pinnedAt,
   Value<int> rowid,
 });
@@ -3007,6 +3061,7 @@ typedef $$ReleasesTableUpdateCompanionBuilder = ReleasesCompanion Function({
   Value<String> date,
   Value<int?> valhallaBuildId,
   Value<String?> etag,
+  Value<String?> manifestId,
   Value<DateTime> pinnedAt,
   Value<int> rowid,
 });
@@ -3038,6 +3093,11 @@ class $$ReleasesTableFilterComposer
 
   ColumnFilters<String> get etag => $composableBuilder(
     column: $table.etag,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get manifestId => $composableBuilder(
+    column: $table.manifestId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3076,6 +3136,11 @@ class $$ReleasesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get manifestId => $composableBuilder(
+    column: $table.manifestId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get pinnedAt => $composableBuilder(
     column: $table.pinnedAt,
     builder: (column) => ColumnOrderings(column),
@@ -3104,6 +3169,11 @@ class $$ReleasesTableAnnotationComposer
 
   GeneratedColumn<String> get etag =>
       $composableBuilder(column: $table.etag, builder: (column) => column);
+
+  GeneratedColumn<String> get manifestId => $composableBuilder(
+    column: $table.manifestId,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<DateTime> get pinnedAt =>
       $composableBuilder(column: $table.pinnedAt, builder: (column) => column);
@@ -3144,6 +3214,7 @@ class $$ReleasesTableTableManager
                 Value<String> date = const Value.absent(),
                 Value<int?> valhallaBuildId = const Value.absent(),
                 Value<String?> etag = const Value.absent(),
+                Value<String?> manifestId = const Value.absent(),
                 Value<DateTime> pinnedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => ReleasesCompanion(
@@ -3151,6 +3222,7 @@ class $$ReleasesTableTableManager
                 date: date,
                 valhallaBuildId: valhallaBuildId,
                 etag: etag,
+                manifestId: manifestId,
                 pinnedAt: pinnedAt,
                 rowid: rowid,
               ),
@@ -3160,6 +3232,7 @@ class $$ReleasesTableTableManager
                 required String date,
                 Value<int?> valhallaBuildId = const Value.absent(),
                 Value<String?> etag = const Value.absent(),
+                Value<String?> manifestId = const Value.absent(),
                 required DateTime pinnedAt,
                 Value<int> rowid = const Value.absent(),
               }) => ReleasesCompanion.insert(
@@ -3167,6 +3240,7 @@ class $$ReleasesTableTableManager
                 date: date,
                 valhallaBuildId: valhallaBuildId,
                 etag: etag,
+                manifestId: manifestId,
                 pinnedAt: pinnedAt,
                 rowid: rowid,
               ),

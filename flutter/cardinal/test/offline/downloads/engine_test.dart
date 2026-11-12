@@ -78,7 +78,10 @@ void main() {
     server = await FakeBucket.serve(release.root);
     db = OfflineDatabase(NativeDatabase.memory());
     transfers = FakeTransfers();
-    native = FakeNative('${release.root}/releases/map/$mapDate/planet.pmtiles');
+    native = FakeNative(
+      '${release.root}/releases/map/$mapDate/planet.pmtiles',
+      '${release.root}/releases',
+    );
     root = '${tmp.path}/offline';
     engine = newEngine();
     listener = RecordingListener();
@@ -94,185 +97,217 @@ void main() {
     await tmp.delete(recursive: true);
   });
 
+  test('a plan has the polygon\'s tiles, feeds and map ranges, and sizes', () async {
+    final plan = await engine.plan(downtown);
+    expect(plan.releases.pinned, isFalse);
+    expect(plan.releases.valhallaBuildId, buildId);
+    final paths = plan.routingFiles.map((f) => f.path).toSet();
+    expect(paths, contains('tiles/0/003/074.gph'));
+    expect(paths, contains('tiles/1/049/377.gph'));
+    // Only tiles that intersect it.
+    for (final f in plan.routingFiles) {
+      final (level, id) = ValhallaTiles.parsePath(f.path)!;
+      expect(downtown.intersects(ValhallaTiles.bounds(level, id)), isTrue);
+      expect(f.bytes, isNotNull);
+      expect(f.sha256, hasLength(64));
+    }
+    expect(paths.length, lessThan(release.routingTiles.length));
+    expect(plan.feeds.map((f) => f.id), [metro]);
+    final feed = plan.feeds.single;
+    expect(feed.index, 2140);
+    expect(feed.files.map((f) => f.installPath), [
+      'transit/$transitDate/timetables/$metro.timetable',
+      'transit/$transitDate/transfers/snaps/walking/2140.bin',
+      'transit/$transitDate/transfers/snaps/cycling/2140.bin',
+      'transit/$transitDate/manifest/feeds/$metro.json',
+    ]);
+    // Transfer tiles in the polygon, from the feed's manifest entry.
+    for (final MapEntry(key: mode, value: tiles)
+        in feed.transferTiles.entries) {
+      expect(tiles, isNotEmpty);
+      for (final (x, y, bytes) in tiles) {
+        expect(
+          bytes,
+          File(
+            '${release.root}/releases/transit/$transitDate/${transferPath(mode, x, y)}',
+          ).lengthSync(),
+        );
+        expect(downtown.intersects(SlippyTiles.bounds(12, x, y)), isTrue);
+      }
+    }
+    expect(feed.transferBytes, greaterThan(0));
+    expect(plan.map!.ranges, isNotEmpty);
+
+    final none = plan.totals({});
+    final all = plan.totals({metro});
+    expect(none.transitBytes, 0);
+    expect(all.transitBytes, greaterThan(feed.files.first.bytes!));
+    // Exact: the files and the tiles, each once.
+    final tileBytes = {
+      for (final MapEntry(key: mode, value: tiles)
+          in feed.transferTiles.entries)
+        for (final (x, y, bytes) in tiles) (mode, x, y): bytes,
+    }.values.fold(0, (a, b) => a + b);
+    expect(
+      all.transitBytes,
+      feed.files.fold(0, (sum, f) => sum + (f.bytes ?? 0)) + tileBytes,
+    );
+    expect(
+      none.routingBytes,
+      plan.routingFiles.fold(0, (sum, f) => sum + f.bytes!),
+    );
+    expect(none.mapBytes, plan.map!.rangeBytes);
+    expect(all.downloadBytes, none.downloadBytes + all.transitBytes);
+    // Nothing downloaded or pinned yet.
+    expect(await engine.pinned(), isEmpty);
+    expect(await engine.regions(), isEmpty);
+    expect(transfers.history, isEmpty);
+  });
+
   test(
-    'a plan has the polygon\'s tiles, feeds and map ranges, and sizes',
+    'a region goes from planned to downloading to installing to ready',
     () async {
       final plan = await engine.plan(downtown);
-      expect(plan.releases.pinned, isFalse);
-      expect(plan.releases.valhallaBuildId, buildId);
-      final paths = plan.routingFiles.map((f) => f.path).toSet();
-      expect(paths, contains('tiles/0/003/074.gph'));
-      expect(paths, contains('tiles/1/049/377.gph'));
-      // Only tiles that intersect it.
-      for (final f in plan.routingFiles) {
-        final (level, id) = ValhallaTiles.parsePath(f.path)!;
-        expect(downtown.intersects(ValhallaTiles.bounds(level, id)), isTrue);
-        expect(f.bytes, isNotNull);
-        expect(f.sha256, hasLength(64));
-      }
-      expect(paths.length, lessThan(release.routingTiles.length));
-      expect(plan.feeds.map((f) => f.id), [metro]);
-      final feed = plan.feeds.single;
-      expect(feed.index, 2140);
-      expect(feed.files.map((f) => f.installPath), [
-        'transit/$transitDate/timetables/$metro.timetable',
-        'transit/$transitDate/transfers/snaps/walking/2140.bin',
-        'transit/$transitDate/transfers/snaps/cycling/2140.bin',
-        'transit/$transitDate/manifest/feeds/$metro.json.gz',
+      RegionState? atClaim;
+      native.onClaim = (id) async {
+        final row = await (db.select(
+          db.regions,
+        )..where((r) => r.id.equals(id))).getSingle();
+        atClaim = row.state;
+      };
+      final transitions = <RegionState>[];
+      engine.onRegionState = (_, state) => transitions.add(state);
+      // Files are hashed once downloaded, and ranges unpacked once downloaded.
+      final hashed = <FileState>{}, unpacked = <ChunkState>{};
+      native.onHash = (path) async {
+        final id = int.parse(path.split('/').last.substring(1));
+        hashed.add(
+          (await (db.select(
+            db.files,
+          )..where((f) => f.id.equals(id))).getSingle()).state,
+        );
+      };
+      native.onUnpack = (path) async {
+        final id = int.parse(path.split('/').last.substring(1));
+        unpacked.add(
+          (await (db.select(
+            db.mapChunks,
+          )..where((c) => c.id.equals(id))).getSingle()).state,
+        );
+      };
+      // Held, so the downloading state can be seen.
+      transfers.hold = true;
+      final id = await engine.start(plan, feeds: {metro});
+      expect(atClaim, RegionState.planned);
+      expect((await region(id)).state, RegionState.downloading);
+      expect(await files(state: FileState.queued), isNotEmpty);
+      // Small JSON is fetched in the foreground and checked straight away.
+      final verified = await files(state: FileState.verified);
+      expect(verified.map((f) => f.path).toSet(), {
+        'manifest/shared.json',
+        'realtime.json',
+        'manifest/feeds/$metro.json',
+      });
+      final states = <RegionState>[];
+      final watching = engine.watch().listen(
+        (regions) => states.add(regions.single.state),
+      );
+      transfers.hold = false;
+      transfers.run();
+      await settle();
+      await watching.cancel();
+      expect(
+        states,
+        containsAllInOrder([RegionState.downloading, RegionState.ready]),
+      );
+
+      expect(transitions, [
+        RegionState.downloading,
+        RegionState.installing,
+        RegionState.ready,
       ]);
-      // Transfer tiles in the polygon, from the feed's manifest entry.
-      for (final tiles in feed.transferTiles.values) {
-        expect(tiles, isNotEmpty);
-        for (final (x, y) in tiles) {
-          expect(downtown.intersects(SlippyTiles.bounds(12, x, y)), isTrue);
+      expect(hashed, {FileState.downloaded});
+      expect(unpacked, {ChunkState.downloaded});
+      final progress = await region(id);
+      expect(progress.state, RegionState.ready);
+      expect(progress.filesDone, progress.filesTotal);
+      expect(progress.bytesDone, progress.bytesTotal);
+      expect(progress.failed, 0);
+      expect(progress.polygon!.points, downtown.points);
+      // Every file installed where it belongs, with its published bytes.
+      for (final f in await files()) {
+        expect(f.state, FileState.installed, reason: f.path);
+        final stored = File(
+          '${release.root}/releases/${f.kind.name}/${f.release}/${f.path}',
+        );
+        final installed = File('$root/${f.installPath}');
+        if (f.path.endsWith('.json')) {
+          // Checked by reading it; stored as JSON, as the bucket serves it inflated.
+          expect(f.expectedSha256, isNull);
+          expect(
+            jsonDecode(await installed.readAsString()),
+            jsonDecode(utf8.decode(gzip.decode(await stored.readAsBytes()))),
+          );
+        } else {
+          if (f.expectedSha256 != null) {
+            expect(f.verifiedSha256, f.expectedSha256);
+          }
+          expect(await installed.readAsBytes(), await stored.readAsBytes());
         }
       }
-      expect(feed.estimatedTransferBytes, greaterThan(0));
-      expect(plan.map!.ranges, isNotEmpty);
-
-      final none = plan.totals({});
-      final all = plan.totals({metro});
-      expect(none.transitBytes, 0);
-      expect(all.transitBytes, greaterThan(feed.files.first.bytes!));
-      expect(all.transferBytesEstimated, isTrue);
-      expect(
-        none.routingBytes,
-        plan.routingFiles.fold(0, (sum, f) => sum + f.bytes!),
+      expect(Directory('$root/.incoming').listSync(), isEmpty);
+      // Transfer tiles have their sizes from the index, no SHA-256, and were checked by
+      // decoding them.
+      final tiles = (await files()).where(
+        (f) => f.path.startsWith('transfers/'),
       );
-      expect(none.mapBytes, plan.map!.rangeBytes);
-      expect(all.downloadBytes, none.downloadBytes + all.transitBytes);
-      // Nothing downloaded or pinned yet.
-      expect(await engine.pinned(), isEmpty);
-      expect(await engine.regions(), isEmpty);
-      expect(transfers.history, isEmpty);
+      expect(tiles, isNotEmpty);
+      expect(
+        tiles.every((f) => f.bytes != null && f.expectedSha256 == null),
+        isTrue,
+      );
+      expect(native.checkedTiles.length, tiles.length);
+      expect(server.heads, isEmpty);
+      // Map ranges unpacked and deleted.
+      final chunks = await db.select(db.mapChunks).get();
+      expect(chunks, isNotEmpty);
+      expect(chunks.every((c) => c.state == ChunkState.deleted), isTrue);
+      final basemap = engine.basemapPath(mapDate);
+      expect(await engine.basemap(), basemap);
+      expect(
+        native.basemaps[basemap]!.values.every((r) => r.contains(id)),
+        isTrue,
+      );
+      // The releases are pinned.
+      final pinned = await engine.pinned();
+      expect(pinned[ReleaseKind.routing]!.date, routingDate);
+      expect(pinned[ReleaseKind.routing]!.valhallaBuildId, buildId);
+      expect(pinned[ReleaseKind.map]!.etag, isNotNull);
+      // The transit manifest: shared fields without feed IDs, and the region's feed.
+      final manifest = jsonDecode(
+        await File('$root/transit/$transitDate/transfers/manifest.json')
+            .readAsString(),
+      ) as Map<String, Object?>;
+      expect(manifest['feed_count'], 2170);
+      expect(manifest.containsKey('feed_ids'), isFalse);
+      expect((manifest['feeds']! as List).map((f) => (f as Map)['id']), [
+        metro,
+      ]);
+      expect(
+        jsonDecode(
+          await File('$root/transit/$transitDate/realtime.json').readAsString(),
+        ),
+        containsPair('feeds', isNotEmpty),
+      );
+      expect(listener.changes, [true]);
+      expect(await engine.readyReleases(), (
+        routing: routingDate,
+        transit: transitDate,
+        map: mapDate,
+        valhallaBuildId: buildId,
+      ));
     },
   );
-
-  test('a region goes from planned to downloading to installing to ready', () async {
-    final plan = await engine.plan(downtown);
-    RegionState? atClaim;
-    native.onClaim = (id) async {
-      final row = await (db.select(
-        db.regions,
-      )..where((r) => r.id.equals(id))).getSingle();
-      atClaim = row.state;
-    };
-    final transitions = <RegionState>[];
-    engine.onRegionState = (_, state) => transitions.add(state);
-    // Files are hashed once downloaded, and ranges unpacked once downloaded.
-    final hashed = <FileState>{}, unpacked = <ChunkState>{};
-    native.onHash = (path) async {
-      final id = int.parse(path.split('/').last.substring(1));
-      hashed.add(
-        (await (db.select(
-          db.files,
-        )..where((f) => f.id.equals(id))).getSingle()).state,
-      );
-    };
-    native.onUnpack = (path) async {
-      final id = int.parse(path.split('/').last.substring(1));
-      unpacked.add(
-        (await (db.select(
-          db.mapChunks,
-        )..where((c) => c.id.equals(id))).getSingle()).state,
-      );
-    };
-    // Held, so the downloading state can be seen.
-    transfers.hold = true;
-    final id = await engine.start(plan, feeds: {metro});
-    expect(atClaim, RegionState.planned);
-    expect((await region(id)).state, RegionState.downloading);
-    expect(await files(state: FileState.queued), isNotEmpty);
-    // Small JSON is fetched in the foreground and checked straight away.
-    final verified = await files(state: FileState.verified);
-    expect(verified.map((f) => f.path).toSet(), {
-      'manifest/shared.json',
-      'realtime.json',
-      'manifest/feeds/$metro.json',
-    });
-    final states = <RegionState>[];
-    final watching = engine.watch().listen(
-      (regions) => states.add(regions.single.state),
-    );
-    transfers.hold = false;
-    transfers.run();
-    await settle();
-    await watching.cancel();
-    expect(
-      states,
-      containsAllInOrder([RegionState.downloading, RegionState.ready]),
-    );
-
-    expect(transitions, [
-      RegionState.downloading,
-      RegionState.installing,
-      RegionState.ready,
-    ]);
-    expect(hashed, {FileState.downloaded});
-    expect(unpacked, {ChunkState.downloaded});
-    final progress = await region(id);
-    expect(progress.state, RegionState.ready);
-    expect(progress.filesDone, progress.filesTotal);
-    expect(progress.bytesDone, progress.bytesTotal);
-    expect(progress.failed, 0);
-    expect(progress.polygon!.points, downtown.points);
-    // Every file installed where it belongs, with its published bytes.
-    for (final f in await files()) {
-      expect(f.state, FileState.installed, reason: f.path);
-      expect(f.verifiedSha256, f.expectedSha256);
-      final stored = File(
-        '${release.root}/releases/${f.kind.name}/${f.release}/${f.path}',
-      );
-      expect(
-        await File('$root/${f.installPath}').readAsBytes(),
-        await stored.readAsBytes(),
-      );
-    }
-    expect(Directory('$root/.incoming').listSync(), isEmpty);
-    // Transfer tiles came with the bucket's SHA-256, as their index gives none.
-    final tiles = (await files()).where((f) => f.path.startsWith('transfers/'));
-    expect(tiles, isNotEmpty);
-    expect(
-      tiles.every((f) => f.bytes == null && f.expectedSha256 != null),
-      isTrue,
-    );
-    // Map ranges unpacked and deleted.
-    final chunks = await db.select(db.mapChunks).get();
-    expect(chunks, isNotEmpty);
-    expect(chunks.every((c) => c.state == ChunkState.deleted), isTrue);
-    final basemap = engine.basemapPath(mapDate);
-    expect(await engine.basemap(), basemap);
-    expect(
-      native.basemaps[basemap]!.values.every((r) => r.contains(id)),
-      isTrue,
-    );
-    // The releases are pinned.
-    final pinned = await engine.pinned();
-    expect(pinned[ReleaseKind.routing]!.date, routingDate);
-    expect(pinned[ReleaseKind.routing]!.valhallaBuildId, buildId);
-    expect(pinned[ReleaseKind.map]!.etag, isNotNull);
-    // The transit manifest: shared fields without feed IDs, and the region's feed.
-    final manifest = jsonDecode(
-      await File('$root/transit/$transitDate/transfers/manifest.json')
-          .readAsString(),
-    ) as Map<String, Object?>;
-    expect(manifest['feed_count'], 2170);
-    expect(manifest.containsKey('feed_ids'), isFalse);
-    expect((manifest['feeds']! as List).map((f) => (f as Map)['id']), [metro]);
-    expect(
-      jsonDecode(
-        await File('$root/transit/$transitDate/realtime.json').readAsString(),
-      ),
-      containsPair('feeds', isNotEmpty),
-    );
-    expect(listener.changes, [true]);
-    expect(await engine.readyReleases(), (
-      routing: routingDate,
-      transit: transitDate,
-      map: mapDate,
-      valhallaBuildId: buildId,
-    ));
-  });
 
   test('a corrupt file fails its check, is retried, and fails the region; retry downloads it again', () async {
     final plan = await engine.plan(downtown);
@@ -427,6 +462,53 @@ void main() {
     expect((await region(id)).state, RegionState.failed);
   });
 
+  test('a transfer tile that does not decode fails its check and is downloaded again', () async {
+    final plan = await engine.plan(downtown);
+    final (mode, x, y, _) = plan.feeds.single.transferTiles.entries
+        .map((e) => (e.key, e.value.first.$1, e.value.first.$2, 0))
+        .first;
+    final key = 'transit/$transitDate/${transferPath(mode, x, y)}';
+    server.corrupt.add(key);
+    final id = await engine.start(plan, feeds: {metro});
+    await settle();
+    final row = (await files()).singleWhere(
+      (f) => f.path == transferPath(mode, x, y),
+    );
+    expect(row.state, FileState.failed);
+    expect(row.attempts, engine.maxAttempts);
+    expect(row.error, 'checksum mismatch');
+    expect((await region(id)).state, RegionState.failed);
+    server.corrupt.clear();
+    await engine.retry(id);
+    await settle();
+    expect((await region(id)).state, RegionState.ready);
+  });
+
+  test(
+    'a manifest entry that disagrees with the feed summary fails for good',
+    () async {
+      final plan = await engine.plan(downtown);
+      final key = 'transit/$transitDate/manifest/feeds/$metro.json';
+      final entry = jsonDecode(
+        utf8.decode(
+          gzip.decode(File('${release.root}/releases/$key').readAsBytesSync()),
+        ),
+      ) as Map<String, Object?>;
+      await release.putJson(key, {...entry, 'index': 7});
+      final id = await engine.start(plan, feeds: {metro});
+      await settle();
+      final row = (await files()).singleWhere(
+        (f) => f.path == 'manifest/feeds/$metro.json',
+      );
+      expect(row.state, FileState.failed);
+      expect(row.attempts, 1);
+      expect(row.error, 'index 7, not 2140');
+      final failed = await region(id);
+      expect(failed.state, RegionState.failed);
+      expect(failed.error, contains('index 7'));
+    },
+  );
+
   test('overlapping regions share files and tiles, and deleting one keeps what the other needs', () async {
     final first = await download(capitolHill, feeds: {metro});
     final firstFiles = {for (final f in await files()) f.path};
@@ -574,8 +656,9 @@ void main() {
     // Transfer tiles' SHA-256s came from the bucket, asked for.
     final tiles = (await files()).where((f) => f.path.startsWith('transfers/'));
     expect(tiles, isNotEmpty);
-    expect(server.heads.length, tiles.length);
-    expect(server.heads.keys.every((k) => k.contains('/transfers/')), isTrue);
+    // Checked from what arrived: no requests to the bucket for them.
+    expect(server.heads, isEmpty);
+    expect(native.checkedTiles.length, tiles.length);
   });
 
   test('a restart finishes unpacking and installing', () async {

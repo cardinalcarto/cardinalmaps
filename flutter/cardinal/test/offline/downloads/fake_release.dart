@@ -109,6 +109,7 @@ class FakeRelease {
     await putJson('transit/$date/release.json', {
       'kind': 'transit',
       'date': date,
+      'manifest_id': '0000000000000001',
       'routing_release': '2026-10-01',
       'valhalla_build_id': buildId + 1,
     }, gzipped: false);
@@ -160,6 +161,8 @@ class FakeRelease {
       'us-wa-Far-Away': [SlippyTiles.at(12, 47.2, -122.9)],
     };
     final byIndexTile = <(int, int), List<Map<String, Object?>>>{};
+    // By zoom 6 tile and mode, transfer tiles as `[x, y, bytes]`.
+    final transfers = <(int, int), Map<String, Map<(int, int), int>>>{};
     final shared = <String, Object?>{
       'manifest_id': 'bd1c61618c8c9ac9',
       'valhalla_build_id': buildId,
@@ -199,9 +202,18 @@ class FakeRelease {
         for (final [x, y] in modeTiles) {
           final key = 'transit/$transitDate/transfers/$mode/12/$x/$y.bin.zst';
           if (!File('$root/releases/$key').existsSync()) {
-            await put(key, bytes(800), contentType: 'application/zstd');
+            await put(
+              key,
+              bytes(700 + (x + y) % 200),
+              contentType: 'application/zstd',
+            );
           }
-          transferBytes += File('$root/releases/$key').lengthSync();
+          final size = File('$root/releases/$key').lengthSync();
+          transferBytes += size;
+          transfers
+                  .putIfAbsent((x >> 6, y >> 6), () => {})
+                  .putIfAbsent(mode, () => {})[(x, y)] =
+              size;
         }
         tiles[mode] = modeTiles;
         modes[mode] = {
@@ -244,10 +256,18 @@ class FakeRelease {
         'stop_snaps': snaps,
       });
     }
-    for (final MapEntry(key: (x, y), value: feeds) in byIndexTile.entries) {
+    for (final (x, y) in {...byIndexTile.keys, ...transfers.keys}) {
       await putJson('transit/$transitDate/index/$x/$y.json', {
         'tile': [x, y],
-        'feeds': feeds,
+        'feeds': byIndexTile[(x, y)] ?? const [],
+        'transfers': {
+          for (final MapEntry(key: mode, value: tiles)
+              in (transfers[(x, y)] ?? const {}).entries)
+            mode: [
+              for (final MapEntry(key: (tx, ty), value: size) in tiles.entries)
+                [tx, ty, size],
+            ],
+        },
       });
     }
     await putJson('transit/$transitDate/manifest/shared.json', shared);
@@ -262,6 +282,7 @@ class FakeRelease {
     await putJson('transit/$transitDate/release.json', {
       'kind': 'transit',
       'date': transitDate,
+      'manifest_id': 'bd1c61618c8c9ac9',
       'routing_release': routingDate,
       'valhalla_build_id': buildId,
     }, gzipped: false);

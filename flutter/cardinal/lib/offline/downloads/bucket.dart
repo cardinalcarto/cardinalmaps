@@ -31,9 +31,6 @@ class Bucket {
   Bucket(this.base, {Duration timeout = const Duration(seconds: 30)})
     : _timeout = timeout {
     _client.connectionTimeout = timeout;
-    _raw
-      ..connectionTimeout = timeout
-      ..autoUncompress = false;
   }
 
   /// The bucket's `releases/`, such as `https://example.org/releases`.
@@ -41,26 +38,18 @@ class Bucket {
   final Duration _timeout;
   final _client = HttpClient();
 
-  /// For objects whose stored bytes are wanted as they are (gzipped JSON, to check
-  /// against the bucket's SHA-256 of them).
-  final _raw = HttpClient();
-
   Uri url(String key) =>
       base.replace(path: '${base.path.replaceFirst(RegExp(r'/$'), '')}/$key');
 
-  void close() {
-    _client.close(force: true);
-    _raw.close(force: true);
-  }
+  void close() => _client.close(force: true);
 
   Future<HttpClientResponse> _send(
-    HttpClient client,
     String key, {
     Map<String, String> headers = const {},
     String method = 'GET',
   }) async {
     try {
-      final request = await client.openUrl(method, url(key)).timeout(_timeout);
+      final request = await _client.openUrl(method, url(key)).timeout(_timeout);
       headers.forEach(request.headers.set);
       return await request.close().timeout(_timeout);
     } on TimeoutException {
@@ -84,7 +73,7 @@ class Bucket {
 
   /// A JSON object, inflated if the bucket stored it gzipped.
   Future<Object?> json(String key) async {
-    final response = await _send(_client, key);
+    final response = await _send(key);
     final body = await _body(key, response);
     if (response.statusCode != HttpStatus.ok) {
       throw BucketError(key, response.statusCode);
@@ -104,7 +93,6 @@ class Bucket {
     String? ifMatch,
   }) async {
     final response = await _send(
-      _client,
       key,
       headers: {
         'range': 'bytes=$start-${start + length - 1}',
@@ -134,30 +122,4 @@ class Bucket {
           : int.parse(total[1]!),
     );
   }
-
-  /// Writes an object's stored bytes to [to] (not inflated), and returns the bucket's
-  /// SHA-256 of them (`x-amz-meta-sha256`), or null if it gave none.
-  Future<String?> download(String key, File to) async {
-    final response = await _send(_raw, key);
-    final body = await _body(key, response);
-    if (response.statusCode != HttpStatus.ok) {
-      throw BucketError(key, response.statusCode);
-    }
-    await to.parent.create(recursive: true);
-    await to.writeAsBytes(body, flush: true);
-    return response.headers.value(sha256Header);
-  }
-
-  /// The bucket's SHA-256 of an object, from a `HEAD`.
-  Future<String?> storedSha256(String key) async {
-    final response = await _send(_raw, key, method: 'HEAD');
-    await response.drain<void>();
-    if (response.statusCode != HttpStatus.ok) {
-      throw BucketError(key, response.statusCode);
-    }
-    return response.headers.value(sha256Header);
-  }
 }
-
-/// The header every object in the bucket carries: the SHA-256 of its stored bytes.
-const sha256Header = 'x-amz-meta-sha256';

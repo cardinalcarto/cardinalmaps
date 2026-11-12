@@ -57,6 +57,16 @@ abstract class OfflineNative {
   /// The SHA-256 of a file, in lowercase hexadecimal.
   Future<String> sha256File(String path);
 
+  /// What's wrong with a downloaded transfer tile, or null if it decodes whole (its
+  /// CRC-32 covers the whole tile) as [mode] tile [x], [y] of build [manifestId].
+  Future<String?> checkTransferTile(
+    String path,
+    String mode,
+    int x,
+    int y,
+    String manifestId,
+  );
+
   /// How many bytes of the archive to fetch first, for [mapPlanner].
   Future<int> mapFirstFetch();
 
@@ -91,6 +101,29 @@ class RustOfflineNative implements OfflineNative {
   Future<String> sha256File(String path) async {
     await routing.initRouting();
     return routing.sha256File(path: path);
+  }
+
+  @override
+  Future<String?> checkTransferTile(
+    String path,
+    String mode,
+    int x,
+    int y,
+    String manifestId,
+  ) async {
+    await routing.initRouting();
+    try {
+      await routing.checkTransferTile(
+        path: path,
+        mode: mode,
+        x: x,
+        y: y,
+        manifestId: manifestId,
+      );
+      return null;
+    } on routing.TileCheckError catch (e) {
+      return e.message;
+    }
   }
 
   @override

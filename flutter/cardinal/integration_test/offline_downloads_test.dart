@@ -111,7 +111,7 @@ void main() {
         'plan: ${watch.elapsedMilliseconds} ms; ${plan.routingFiles.length} routing '
         'tiles (${totals.routingBytes} B), feeds '
         '${plan.feeds.map((f) => f.id).join(', ')}, transit ${totals.transitBytes} B '
-        '(estimated: ${totals.transferBytesEstimated}), map ${plan.map!.archiveTiles} '
+        '(exact), map ${plan.map!.archiveTiles} '
         'tiles in ${plan.map!.ranges.length} ranges: ${plan.map!.rangeBytes} B for '
         '${plan.map!.tileBytes} B of tiles; ${totals.files} files, '
         '${totals.downloadBytes} B in all',

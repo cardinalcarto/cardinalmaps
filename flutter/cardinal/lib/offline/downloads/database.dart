@@ -54,6 +54,9 @@ class Releases extends Table {
   /// Map: the archive's ETag, which every range request must match (`If-Match`).
   TextColumn get etag => text().nullable()();
 
+  /// Transit: the build's manifest ID, which its transfer tiles carry.
+  TextColumn get manifestId => text().nullable()();
+
   DateTimeColumn get pinnedAt => dateTime()();
 
   @override

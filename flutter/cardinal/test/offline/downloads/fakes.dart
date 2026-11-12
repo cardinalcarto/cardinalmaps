@@ -120,10 +120,36 @@ class FakeTransfers implements Transfers {
 /// The Rust side in Dart: SHA-256 with `package:crypto`, and a map whose "tiles" are
 /// 0.02° cells of a polygon, each a kilobyte of the archive, kept in memory.
 class FakeNative implements OfflineNative {
-  FakeNative(this.archive);
+  FakeNative(this.archive, this.releases);
 
   /// The map archive in the bucket, which ranges are checked against.
   final String archive;
+
+  /// The bucket's `releases/`: transfer tiles are checked against what's there, as the
+  /// tile's CRC-32 would be.
+  final String releases;
+
+  /// Transfer tiles checked, as `mode/x/y`.
+  final checkedTiles = <String>[];
+
+  @override
+  Future<String?> checkTransferTile(
+    String path,
+    String mode,
+    int x,
+    int y,
+    String manifestId,
+  ) async {
+    checkedTiles.add('$mode/$x/$y');
+    if (manifestId != 'bd1c61618c8c9ac9') return 'build $manifestId';
+    final published = File(
+      '$releases/transit/2026-11-11/transfers/$mode/12/$x/$y.bin.zst',
+    );
+    final same =
+        sha256.convert(await File(path).readAsBytes()) ==
+        sha256.convert(await published.readAsBytes());
+    return same ? null : 'checksum mismatch';
+  }
 
   /// Basemap tiles, by path, and the regions holding each.
   final basemaps = <String, Map<String, Set<int>>>{};
