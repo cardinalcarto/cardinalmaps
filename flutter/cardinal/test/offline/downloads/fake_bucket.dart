@@ -11,10 +11,11 @@ class FakeBucket {
     _server.listen(_serve);
   }
 
-  static Future<FakeBucket> serve(String root) async => FakeBucket._(
-    root,
-    await HttpServer.bind(InternetAddress.loopbackIPv4, 0),
-  );
+  static Future<FakeBucket> serve(String root, {int port = 0}) async =>
+      FakeBucket._(
+        root,
+        await HttpServer.bind(InternetAddress.loopbackIPv4, port),
+      );
 
   final String root;
   final HttpServer _server;
@@ -46,6 +47,9 @@ class FakeBucket {
 
   /// When set, every object's ETag, as if they had all been replaced.
   String? etagOverride;
+
+  /// When set, bodies are sent no faster than this.
+  int? bytesPerSecond;
 
   Future<void> close() => _server.close(force: true);
 
@@ -131,7 +135,20 @@ class FakeBucket {
         socket.destroy();
         return;
       }
-      response.add(body);
+      final rate = bytesPerSecond;
+      if (rate == null) {
+        response.add(body);
+      } else {
+        const chunk = 64 * 1024;
+        for (var at = 0; at < body.length; at += chunk) {
+          final end = at + chunk < body.length ? at + chunk : body.length;
+          response.add(body.sublist(at, end));
+          await response.flush();
+          await Future<void>.delayed(
+            Duration(microseconds: (end - at) * 1000000 ~/ rate),
+          );
+        }
+      }
     } finally {
       try {
         await response.close();
