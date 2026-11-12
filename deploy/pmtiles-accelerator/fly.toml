@@ -9,10 +9,11 @@ primary_region = "sea"
   image = "docker.io/protomaps/go-pmtiles:v1.31.2@sha256:06574f01f55a78f78f887bc7ebf729a5c093c0d6e17d9876300cfcb0758b59d3"
 
 [processes]
-  # The image's entrypoint is go-pmtiles; this is its command. The bucket URL includes the
-  # release's prefix: with an HTTP bucket, go-pmtiles reads <bucket URL>/<name>.pmtiles and
-  # ignores the path argument. TileJSON is at /planet.json, tiles at /planet/{z}/{x}/{y}.mlt.
-  app = "serve / --bucket=https://BUCKET.t3.storage.dev/releases/map/2026-11-11 --public-url=https://cardinal-tiles-example.fly.dev --cors=* --cache-size=384 --port=8080"
+  # The image's entrypoint is go-pmtiles; this is its command. The bucket URL is the map
+  # releases' prefix, so every published release is served: with an HTTP bucket, go-pmtiles
+  # reads <bucket URL>/<name>.pmtiles (ignoring the path argument), and a name may contain
+  # slashes. TileJSON is at /DATE/planet.json, tiles at /DATE/planet/{z}/{x}/{y}.mlt.
+  app = "serve / --bucket=https://BUCKET.t3.storage.dev/releases/map --public-url=https://cardinal-tiles-example.fly.dev --cors=* --cache-size=384 --port=8080"
 
 [http_service]
   internal_port = 8080
@@ -27,11 +28,12 @@ primary_region = "sea"
     soft_limit = 400
     hard_limit = 800
 
+  # Any release still in the bucket will do; move it forward before deleting that release.
   [[http_service.checks]]
     grace_period = "10s"
     interval = "30s"
     method = "GET"
-    path = "/planet.json"
+    path = "/2026-11-11/planet.json"
     timeout = "5s"
 
 [[vm]]

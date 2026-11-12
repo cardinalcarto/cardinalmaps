@@ -818,6 +818,48 @@ void main() {
   });
 
   test(
+    'the map release is pinned the first time it is asked for, then kept',
+    () async {
+      expect(await engine.mapRelease(), mapDate);
+      expect((await engine.pinned()).keys, [ReleaseKind.map]);
+      await release.putJson('latest.json', {
+        'map': '2026-12-01',
+        'routing': routingDate,
+        'transit': transitDate,
+      }, gzipped: false);
+      expect(await engine.mapRelease(), mapDate);
+    },
+  );
+
+  test(
+    'without latest.json and nothing pinned, there is no map release',
+    () async {
+      await File('${release.root}/releases/latest.json').delete();
+      expect(await engine.mapRelease(), isNull);
+      expect(await engine.pinned(), isEmpty);
+    },
+  );
+
+  test('a download after the map release was pinned alone keeps it, and pins routing and transit', () async {
+    await engine.mapRelease();
+    await release.putJson('latest.json', {
+      'map': '2026-12-01',
+      'routing': routingDate,
+      'transit': transitDate,
+    }, gzipped: false);
+    final plan = await engine.plan(downtown);
+    expect(plan.releases.map, mapDate);
+    final id = await engine.start(plan, feeds: {metro});
+    await settle();
+    expect((await region(id)).state, RegionState.ready);
+    final pinned = await engine.pinned();
+    expect(pinned[ReleaseKind.map]!.date, mapDate);
+    expect(pinned[ReleaseKind.routing]!.date, routingDate);
+    expect(pinned[ReleaseKind.transit]!.date, transitDate);
+    expect(await engine.basemap(), isNotNull);
+  });
+
+  test(
     'a transit release that is not over the routing release is refused',
     () async {
       await release.publishOtherTransit('2026-12-01');

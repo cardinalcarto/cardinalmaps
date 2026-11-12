@@ -293,8 +293,23 @@ class OfflineAreas {
   Future<OfflineArea?> area() async =>
       _area ??= await configuredOfflineArea(await downloads);
 
-  /// The downloaded map tiles, if there are some.
-  Future<String?> basemap() async => (await downloads)?.basemap();
+  /// Where the map's tiles come from. With [releasesUrl], the accelerator at [tilesUrl]
+  /// serves the pinned map release (`<url>/<release>/planet.json`), read after the
+  /// downloaded tiles of that release; without, [tilesUrl] is a TileJSON URL as is.
+  Future<({String tileJson, String? basemap})> tiles() async {
+    final downloads = await this.downloads;
+    if (downloads == null) return (tileJson: tilesUrl, basemap: null);
+    final release = await downloads.mapRelease();
+    if (release == null) {
+      throw StateError(
+        'no map release: none pinned, and latest.json unreadable',
+      );
+    }
+    return (
+      tileJson: '$tilesUrl/$release/planet.json',
+      basemap: await downloads.basemap(),
+    );
+  }
 }
 
 /// The offline area, or null if there's none yet: the releases [routingRelease] and

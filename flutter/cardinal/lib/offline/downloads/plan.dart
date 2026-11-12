@@ -346,12 +346,14 @@ class Planner {
       }
       manifestId = transitRelease['manifest_id']! as String;
     }
+    // A map release pinned on its own (before any download) stays; the rest is latest.
+    final pinnedMap = pinned[ReleaseKind.map]?.date;
     return PlanReleases(
-      map: latest['map'] as String?,
+      map: pinnedMap ?? latest['map'] as String?,
       routing: routing,
       transit: transit,
       valhallaBuildId: build,
-      mapEtag: null,
+      mapEtag: pinnedMap == null ? null : etags[mapArchivePath(pinnedMap)],
       pinned: false,
       manifestId: manifestId,
     );

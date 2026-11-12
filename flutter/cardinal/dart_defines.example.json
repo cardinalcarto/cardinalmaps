@@ -1,5 +1,5 @@
 {
-  "CARDINAL_TILES_URL": "https://tiles.example.org/openmaptiles",
+  "CARDINAL_TILES_URL": "https://tiles.example.org",
   "CARDINAL_GEOCODER_URL": "http://localhost:3000",
   "CARDINAL_RELEASES_URL": "https://example.org/releases"
 }

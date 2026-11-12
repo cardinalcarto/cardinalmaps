@@ -1,7 +1,10 @@
 /// Where the app's servers are, from `--dart-define`s (see `dart_defines.example.json`).
 library;
 
-/// The tile server's TileJSON URL for the `openmaptiles` source.
+/// The tile server for the `openmaptiles` source. With [releasesUrl], it's a PMTiles
+/// accelerator serving every map release (`deploy/pmtiles-accelerator/`), and the map
+/// reads `<url>/<release>/planet.json` for the release the app pinned. Without, it's a
+/// TileJSON URL, used as is (a development tile server).
 const tilesUrl = String.fromEnvironment('CARDINAL_TILES_URL');
 
 /// Where the geocoder's API is: requests go to `<url>/v1/...`.

@@ -309,6 +309,35 @@ class OfflineDownloads {
     );
   }
 
+  /// The map release the app shows: the pinned one, or else `latest.json`'s, which this
+  /// pins. Online tiles and the downloaded basemap then come from one release, and a
+  /// tile cache never mixes two (that shows as seams); moving to a newer release is
+  /// the update flow's job. Null if none is pinned and `latest.json` can't be read
+  /// (offline on the first launch) or names no map release.
+  Future<String?> mapRelease() => _serially(() async {
+    if ((await pinned())[ReleaseKind.map] case final map?) return map.date;
+    final String? latest;
+    try {
+      final json = await bucket.json('latest.json') as Map<String, Object?>;
+      latest = json['map'] as String?;
+    } on Object catch (e) {
+      debugPrint('offline: no map release pinned, and latest.json: $e');
+      return null;
+    }
+    if (latest == null) return null;
+    await db
+        .into(db.releases)
+        .insert(
+          ReleasesCompanion.insert(
+            kind: ReleaseKind.map,
+            date: latest,
+            pinnedAt: _clock(),
+          ),
+          mode: InsertMode.insertOrIgnore,
+        );
+    return (await pinned())[ReleaseKind.map]!.date;
+  });
+
   /// The basemap, if a map release is pinned and it exists.
   Future<String?> basemap() async {
     final map = (await pinned())[ReleaseKind.map];
@@ -476,7 +505,13 @@ class OfflineDownloads {
     };
     final regionId = await db.transaction(() async {
       final pinned = await this.pinned();
-      if (pinned.isEmpty) {
+      // The map release may be pinned on its own, before any download (see
+      // [mapRelease]); routing and transit are pinned together by the first download.
+      final pinnedMap = pinned[ReleaseKind.map]?.date;
+      if (pinnedMap != null && pinnedMap != r.map) {
+        throw const StalePlan('the pinned releases changed; plan again');
+      }
+      if (pinned[ReleaseKind.routing] == null) {
         await db.batch((b) {
           b.insertAll(db.releases, [
             ReleasesCompanion.insert(
@@ -493,7 +528,7 @@ class OfflineDownloads {
                 manifestId: Value(r.manifestId),
                 pinnedAt: now,
               ),
-            if (r.map case final m?)
+            if (r.map case final m? when pinnedMap == null)
               ReleasesCompanion.insert(
                 kind: ReleaseKind.map,
                 date: m,
@@ -503,7 +538,7 @@ class OfflineDownloads {
         });
       } else if (pinned[ReleaseKind.routing]?.date != r.routing ||
           pinned[ReleaseKind.transit]?.date != r.transit ||
-          pinned[ReleaseKind.map]?.date != r.map) {
+          pinnedMap != r.map) {
         throw const StalePlan('the pinned releases changed; plan again');
       }
       final etags = await archiveEtags();

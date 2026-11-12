@@ -20,25 +20,29 @@ import 'route_layer.dart';
 import 'saved_layer.dart';
 import 'viewport.dart';
 
+/// Where the map's tiles come from: a TileJSON URL, and the downloaded tiles' MBTiles
+/// (read before the tile server), if there is one.
+typedef MapTiles = ({String tileJson, String? basemap});
+
 /// Provides the map's controller to the widgets below it.
 class MapScope extends InheritedWidget {
   const MapScope({
     super.key,
     required this.controller,
     required this.overlays,
-    this.offlineBasemap,
+    this.tiles,
     required super.child,
   });
 
   final SparkleMapController controller;
   final MapOverlays overlays;
 
-  /// The downloaded map tiles' MBTiles, if there is one; the map reads it before the
-  /// tile server.
-  final Future<String?> Function()? offlineBasemap;
+  /// Where the map's tiles come from; without it, [tilesUrl]'s TileJSON and no
+  /// downloaded tiles.
+  final Future<MapTiles> Function()? tiles;
 
-  static Future<String?> Function()? offlineBasemapOf(BuildContext context) =>
-      context.getInheritedWidgetOfExactType<MapScope>()!.offlineBasemap;
+  static Future<MapTiles> Function()? tilesOf(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<MapScope>()!.tiles;
 
   static SparkleMapController of(BuildContext context) =>
       context.getInheritedWidgetOfExactType<MapScope>()!.controller;
@@ -50,10 +54,10 @@ class MapScope extends InheritedWidget {
   bool updateShouldNotify(MapScope oldWidget) =>
       controller != oldWidget.controller ||
       overlays != oldWidget.overlays ||
-      offlineBasemap != oldWidget.offlineBasemap;
+      tiles != oldWidget.tiles;
 }
 
-/// The map: [tilesUrl]'s tiles in the style the layer picker chose (see `layers.dart`),
+/// The map: the tile server's tiles in the style the layer picker chose (see `layers.dart`),
 /// with the selected place on top (see `selection.dart`). The body of a [SheetScaffold]:
 /// the camera keeps what it shows clear of the sheet.
 class CardinalMap extends StatefulWidget {
@@ -122,12 +126,12 @@ class _CardinalMapState extends State<CardinalMap> {
         WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio,
       ),
     )..start();
-    final basemap = MapScope.offlineBasemapOf(context);
+    final tiles = MapScope.tilesOf(context);
     final layers = await MapLayers.read(settings, dark: _dark);
     final args = await _mapArgs(
       layers,
       openingView(await settings.get(savedViewport)),
-      await basemap?.call(),
+      await tiles?.call() ?? (tileJson: tilesUrl, basemap: null),
     );
     _layers = layers;
     _watching.addAll([
@@ -314,17 +318,17 @@ Future<void> _writeStyle(MapLayers layers) async {
 }
 
 /// Arguments for sparkle (as `sparkle_harness` takes them): the style for [layers] and
-/// the bundled sprites, copied out to files, [tilesUrl]'s tiles, and the [view] to open.
-/// The map's arguments; with [basemap], the downloaded tiles are read before the
-/// tile server's (`--local-tiles`).
+/// the bundled sprites, copied out to files, [tiles]' TileJSON, and the [view] to open.
+/// With a basemap, the downloaded tiles are read before the tile server's
+/// (`--local-tiles`).
 Future<List<String>> _mapArgs(
   MapLayers layers,
   MapViewport view,
-  String? basemap,
+  MapTiles tiles,
 ) async {
-  if (tilesUrl.isEmpty) {
+  if (tiles.tileJson.isEmpty) {
     throw StateError(
-      'no tiles: build with --dart-define=CARDINAL_TILES_URL=<TileJSON URL>',
+      'no tiles: build with --dart-define=CARDINAL_TILES_URL=<tile server URL>',
     );
   }
   final dir = await _mapDir();
@@ -351,7 +355,10 @@ Future<List<String>> _mapArgs(
     '--view',
     view.arg,
     '--tiles',
-    'openmaptiles=$tilesUrl',
-    if (basemap != null) ...['--local-tiles', 'openmaptiles=$basemap'],
+    'openmaptiles=${tiles.tileJson}',
+    if (tiles.basemap case final basemap?) ...[
+      '--local-tiles',
+      'openmaptiles=$basemap',
+    ],
   ];
 }

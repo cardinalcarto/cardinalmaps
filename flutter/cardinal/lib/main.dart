@@ -46,7 +46,7 @@ void main() {
           child: MapScope(
             controller: map,
             overlays: MapOverlays(),
-            offlineBasemap: offline.basemap,
+            tiles: offline.tiles,
             child: MainApp(router: appRouter(map)),
           ),
         ),
