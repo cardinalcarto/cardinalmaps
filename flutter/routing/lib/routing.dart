@@ -38,6 +38,7 @@ export 'src/rust/api/offline.dart'
         unpackTransferRange;
 export 'src/rust/api/router.dart'
     show OfflineRouter, OpenError, OpenErrorKind, RouterResponse;
+export 'src/rust/api/storage.dart' show FreeSpaceError, freeBytes;
 export 'src/rust/api/transit.dart'
     show
         OfflineTransit,

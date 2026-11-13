@@ -6,6 +6,7 @@
 import 'api/directions.dart';
 import 'api/offline.dart';
 import 'api/router.dart';
+import 'api/storage.dart';
 import 'api/transit.dart';
 
 import 'dart:async';
@@ -187,6 +188,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   FoundTile dco_decode_found_tile(dynamic raw);
+
+  @protected
+  FreeSpaceError dco_decode_free_space_error(dynamic raw);
 
   @protected
   HashError dco_decode_hash_error(dynamic raw);
@@ -448,6 +452,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   FoundTile sse_decode_found_tile(SseDeserializer deserializer);
+
+  @protected
+  FreeSpaceError sse_decode_free_space_error(SseDeserializer deserializer);
 
   @protected
   HashError sse_decode_hash_error(SseDeserializer deserializer);
@@ -764,6 +771,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_found_tile(FoundTile self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_free_space_error(
+    FreeSpaceError self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_hash_error(HashError self, SseSerializer serializer);

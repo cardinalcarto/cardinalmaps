@@ -6,6 +6,7 @@
 import 'api/directions.dart';
 import 'api/offline.dart';
 import 'api/router.dart';
+import 'api/storage.dart';
 import 'api/transit.dart';
 
 import 'dart:async';
@@ -70,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 1679117270;
+  int get rustContentHash => -1330973004;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -188,6 +189,8 @@ abstract class RustLibApi extends BaseApi {
     required int y,
     required String manifestId,
   });
+
+  Future<PlatformInt64> crateApiStorageFreeBytes({required String path});
 
   Future<String> crateApiOfflineSha256File({required String path});
 
@@ -1049,7 +1052,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<String> crateApiOfflineSha256File({required String path}) {
+  Future<PlatformInt64> crateApiStorageFreeBytes({required String path}) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -1059,6 +1062,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             generalizedFrbRustBinding,
             serializer,
             funcId: 25,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: sse_decode_free_space_error,
+        ),
+        constMeta: kCrateApiStorageFreeBytesConstMeta,
+        argValues: [path],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiStorageFreeBytesConstMeta =>
+      const TaskConstMeta(debugName: "free_bytes", argNames: ["path"]);
+
+  @override
+  Future<String> crateApiOfflineSha256File({required String path}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 26,
             port: port_,
           );
         },
@@ -1094,7 +1125,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 27,
             port: port_,
           );
         },
@@ -1462,6 +1493,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       offset: dco_decode_i_64(arr[3]),
       length: dco_decode_i_64(arr[4]),
     );
+  }
+
+  @protected
+  FreeSpaceError dco_decode_free_space_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 1)
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+    return FreeSpaceError(message: dco_decode_String(arr[0]));
   }
 
   @protected
@@ -2095,6 +2135,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       offset: var_offset,
       length: var_length,
     );
+  }
+
+  @protected
+  FreeSpaceError sse_decode_free_space_error(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_message = sse_decode_String(deserializer);
+    return FreeSpaceError(message: var_message);
   }
 
   @protected
@@ -2824,6 +2871,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.y, serializer);
     sse_encode_i_64(self.offset, serializer);
     sse_encode_i_64(self.length, serializer);
+  }
+
+  @protected
+  void sse_encode_free_space_error(
+    FreeSpaceError self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.message, serializer);
   }
 
   @protected
