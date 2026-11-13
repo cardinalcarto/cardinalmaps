@@ -16,6 +16,42 @@ List<Offset> circle({
     center + Offset(math.cos(a), math.sin(a)) * (radius + 2 * math.sin(a * 7)),
 ];
 
+/// Whether [p] is inside [ring] (even-odd).
+bool _inside(List<Offset> ring, Offset p) {
+  var inside = false;
+  for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    final (a, b) = (ring[i], ring[j]);
+    if ((a.dy > p.dy) != (b.dy > p.dy) &&
+        p.dx < (b.dx - a.dx) * (p.dy - a.dy) / (b.dy - a.dy) + a.dx) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+double _toRing(List<Offset> ring, Offset p) {
+  var nearest = double.infinity;
+  for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    final (a, b) = (ring[j], ring[i]);
+    final ab = b - a;
+    final t = ab.distanceSquared == 0
+        ? 0.0
+        : (((p - a).dx * ab.dx + (p - a).dy * ab.dy) / ab.distanceSquared)
+              .clamp(0.0, 1.0);
+    nearest = math.min(nearest, (p - (a + ab * t)).distance);
+  }
+  return nearest;
+}
+
+/// Every point of [stroke] is inside [ring], or within a few pixels of its outline,
+/// which simplifying may cut across.
+void _expectAround(List<Offset> ring, List<Offset> stroke) {
+  for (final p in stroke) {
+    if (_inside(ring, p)) continue;
+    expect(_toRing(ring, p), lessThan(8), reason: '$p is outside');
+  }
+}
+
 void main() {
   group('closing a lasso', () {
     test(
@@ -42,7 +78,7 @@ void main() {
       expect(ringSelfIntersects(lasso.ring!), isFalse);
     });
 
-    test('overshooting the start is trimmed off', () {
+    test('overshooting the start adds nothing', () {
       // A loop and a sixth, the end crossing the start.
       final stroke = circle(turns: 1.17, start: -0.4);
       final lasso = closeLasso(stroke);
@@ -56,7 +92,7 @@ void main() {
       );
     });
 
-    test('a little curl along the way is trimmed off', () {
+    test('a little curl along the way adds only what it encloses', () {
       // A loop, with a small loop-de-loop a quarter of the way round.
       final stroke = circle(turns: 1.1);
       final at = stroke.length ~/ 4;
@@ -86,8 +122,108 @@ void main() {
       expect(ringSelfIntersects(lasso.ring!), isFalse);
     });
 
-    test('a figure eight crosses itself', () {
-      // Starting at the top of one loop, as a finger would.
+    test('an open C is closed across its gap', () {
+      // Three quarters of the way round.
+      final stroke = circle(turns: 0.75);
+      final lasso = closeLasso(stroke);
+      expect(lasso.problem, isNull);
+      final ring = lasso.ring!;
+      expect(ringSelfIntersects(ring), isFalse);
+      // The arc and the triangle the chord cuts off with the middle.
+      const r = 120.0;
+      expect(
+        ringArea(ring),
+        closeTo(0.75 * math.pi * r * r + r * r / 2, 0.05 * math.pi * r * r),
+      );
+      _expectAround(ring, stroke);
+    });
+
+    test('overshooting inwards, the line back to the start cutting across, '
+        'keeps all it encloses', () {
+      // A turn and a third, closing in from 120 to 80 pixels round: the end is inside
+      // the loop, and the line back to the start crosses the stroke.
+      final stroke = [
+        for (var a = 0.0; a <= 1.33 * 2 * math.pi; a += 0.02)
+          const Offset(200, 300) +
+              Offset(math.cos(a), math.sin(a)) *
+                  (120 - 40 * a / (1.33 * 2 * math.pi)),
+      ];
+      final lasso = closeLasso(stroke);
+      expect(lasso.problem, isNull);
+      final ring = lasso.ring!;
+      expect(ringSelfIntersects(ring), isFalse);
+      expect(
+        ringArea(ring),
+        inInclusiveRange(math.pi * 90 * 90, math.pi * 120 * 120),
+      );
+      _expectAround(ring, stroke);
+    });
+
+    test('a spiral is the outside of its outer turn', () {
+      // Three turns, from 150 pixels round to 40.
+      final stroke = [
+        for (var a = 0.0; a <= 3 * 2 * math.pi; a += 0.02)
+          const Offset(200, 300) +
+              Offset(math.cos(a), math.sin(a)) *
+                  (150 - 110 * a / (3 * 2 * math.pi)),
+      ];
+      final lasso = closeLasso(thinStroke(stroke));
+      expect(lasso.problem, isNull);
+      final ring = lasso.ring!;
+      expect(ring.length, lessThanOrEqualTo(lassoMaxVertices));
+      expect(ringSelfIntersects(ring), isFalse);
+      expect(
+        ringArea(ring),
+        inInclusiveRange(math.pi * 113 * 113, math.pi * 150 * 150),
+      );
+      _expectAround(ring, stroke);
+    });
+
+    test('a tangle is the outside of all of it', () {
+      // A Lissajous scribble, crossing itself over and over.
+      final stroke = [
+        for (var t = 0.0; t <= 2 * math.pi; t += 0.01)
+          Offset(
+            200 + 120 * math.sin(3 * t + 0.3),
+            300 + 120 * math.sin(2 * t),
+          ),
+      ];
+      final lasso = closeLasso(stroke);
+      expect(lasso.problem, isNull);
+      final ring = lasso.ring!;
+      expect(ring.length, lessThanOrEqualTo(lassoMaxVertices));
+      expect(ringSelfIntersects(ring), isFalse);
+      // Most of the square it scribbles over.
+      expect(ringArea(ring), inInclusiveRange(0.5 * 240 * 240, 240 * 240));
+      _expectAround(ring, stroke);
+    });
+
+    test('a figure eight keeps its larger loop', () {
+      // Starting at the top of one loop, as a finger would; the second loop smaller.
+      final eight = [
+        for (var a = math.pi / 2; a <= 2.5 * math.pi; a += 0.02)
+          () {
+            final k = math.sin(a) >= 0 ? 1.0 : 0.6;
+            return Offset(
+              200 + 140 * k * math.sin(a),
+              300 + 140 * k * math.sin(a) * math.cos(a),
+            );
+          }(),
+      ];
+      final lasso = closeLasso(eight);
+      expect(lasso.problem, isNull);
+      final ring = lasso.ring!;
+      expect(ringSelfIntersects(ring), isFalse);
+      // All on the larger loop's side of where they cross.
+      expect(ring.every((p) => p.dx >= 199), isTrue);
+      final loop = [
+        for (final p in eight)
+          if (p.dx >= 200) p,
+      ];
+      expect(ringArea(ring), closeTo(ringArea(loop), 0.06 * ringArea(loop)));
+    });
+
+    test('an even figure eight keeps one loop', () {
       final eight = [
         for (var a = math.pi / 2; a <= 2.5 * math.pi; a += 0.02)
           Offset(
@@ -95,7 +231,14 @@ void main() {
             300 + 140 * math.sin(a) * math.cos(a),
           ),
       ];
-      expect(closeLasso(eight).problem, LassoProblem.crossesItself);
+      final lasso = closeLasso(eight);
+      expect(lasso.problem, isNull);
+      final ring = lasso.ring!;
+      expect(ringSelfIntersects(ring), isFalse);
+      expect(
+        ring.every((p) => p.dx >= 199) || ring.every((p) => p.dx <= 201),
+        isTrue,
+      );
     });
 
     test('a small loop is too small', () {

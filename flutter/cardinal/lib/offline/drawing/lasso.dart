@@ -1,8 +1,9 @@
 /// Turning a finger's lasso on the screen into a region's polygon: closing the stroke,
-/// trimming where it overshoots its start, simplifying it, and checking it encloses a
+/// taking the outer boundary of what it encloses, simplifying it, and checking it encloses a
 /// usable area. Pure functions, in logical pixels, so they can be tested without a map.
 library;
 
+import 'dart:math' as math;
 import 'dart:ui' show Offset;
 
 import '../downloads/geometry.dart';
@@ -12,7 +13,8 @@ enum LassoProblem {
   /// It encloses too little to download.
   tooSmall,
 
-  /// It crosses itself, beyond overshooting where it started.
+  /// Its outline still crosses itself: only if the stroke met itself exactly, as a
+  /// finger all but never does.
   crossesItself,
 
   /// Part of it isn't over the ground (the sky of a tilted map, say).
@@ -32,14 +34,6 @@ const lassoMaxVertices = 48;
 /// about a fingertip and a half on a side.
 const lassoMinArea = 56.0 * 56.0;
 
-/// Where a stroke crosses itself, how much area the smaller part may enclose, as a
-/// share of the larger's, to be dropped: an overshoot past the start, or a little curl.
-/// More is a second loop (a figure eight).
-const lassoMaxTrimmedShare = 0.2;
-
-/// The most crossings a stroke may have trimmed.
-const _maxCrossings = 6;
-
 /// A lasso's outline, or why there's none.
 typedef LassoResult = ({List<Offset>? ring, LassoProblem? problem});
 
@@ -57,46 +51,151 @@ bool isLassoTap(List<Offset> points) {
 /// Closes a stroke into an outline: a ring of at most [maxVertices] corners, without the
 /// first point repeated.
 ///
-/// Where the stroke crosses itself, the part enclosing far more is kept and the rest
-/// trimmed: the usual overshoot past where the finger started, or a little curl. If
-/// neither part does (a figure eight), or what's left still crosses itself, it's
-/// [LassoProblem.crossesItself]; if the outline encloses less than [minArea], it's
-/// [LassoProblem.tooSmall].
+/// The end of the stroke is joined back to its start, and the outline is the outer
+/// boundary of everything the closed stroke encloses: an open C is closed across its
+/// gap, and an overshoot, a curl or a tangle add only what they enclose beyond the rest.
+/// Where that leaves pieces touching only at a point (a figure eight), the largest is
+/// kept. If the outline encloses less than [minArea], it's [LassoProblem.tooSmall].
 LassoResult closeLasso(
   List<Offset> stroke, {
   double tolerance = lassoTolerance,
   int maxVertices = lassoMaxVertices,
   double minArea = lassoMinArea,
 }) {
-  var ring = _spaced(stroke);
-  if (ring.length < 3) return (ring: null, problem: LassoProblem.tooSmall);
-  // Each crossing splits the stroke in two: keep the part that encloses far more, and
-  // look again. Neither does: two loops, as a figure eight has.
-  for (var i = 0; i < _maxCrossings; i++) {
-    final split = _largestLoop(ring);
-    if (split == null) break;
-    final (:loop, :trimmed) = split;
-    final (inside, outside) = (ringArea(loop), ringArea(trimmed));
-    if (outside <= lassoMaxTrimmedShare * inside) {
-      ring = loop;
-    } else if (inside <= lassoMaxTrimmedShare * outside) {
-      ring = trimmed;
-    } else {
-      return (ring: null, problem: LassoProblem.crossesItself);
-    }
+  final spaced = _spaced(stroke);
+  if (spaced.length < 3) return (ring: null, problem: LassoProblem.tooSmall);
+  final ring = _outerBoundary(spaced);
+  if (ring == null || ring.length < 3 || ringArea(ring) < minArea) {
+    return (ring: null, problem: LassoProblem.tooSmall);
   }
-  // Before the area, which a ring crossing itself can cancel out.
+  // The boundary is simple unless the stroke met itself exactly (three edges through
+  // one point, or edges lying along each other), which a finger all but never does.
   if (ringSelfIntersects(ring)) {
     return (ring: null, problem: LassoProblem.crossesItself);
-  }
-  if (ring.length < 3 || ringArea(ring) < minArea) {
-    return (ring: null, problem: LassoProblem.tooSmall);
   }
   final simplified = _simplifyWithin(ring, tolerance, maxVertices);
   if (simplified == null || ringArea(simplified) < minArea) {
     return (ring: null, problem: LassoProblem.tooSmall);
   }
   return (ring: simplified, problem: null);
+}
+
+/// The outer boundary of what the closed [ring] encloses, however it crosses itself:
+/// the edge of the area outside it all, traced round. Where that goes through a point
+/// twice, the pieces either side meet only there, and the one enclosing the most is
+/// kept. Null if it encloses nothing.
+List<Offset>? _outerBoundary(List<Offset> ring) {
+  final n = ring.length;
+  // The corners, with any the stroke went through twice as one, then the crossings.
+  final points = <Offset>[];
+  final ids = <Offset, int>{};
+  final corner = [
+    for (final p in ring)
+      ids.putIfAbsent(p, () {
+        points.add(p);
+        return points.length - 1;
+      }),
+  ];
+  // Where each edge (from corner i to i + 1) is crossed, how far along it.
+  final crossings = List.generate(n, (_) => <(double, int)>[]);
+  for (var i = 0; i < n; i++) {
+    final a = ring[i], b = ring[(i + 1) % n];
+    final (left, right) = (math.min(a.dx, b.dx), math.max(a.dx, b.dx));
+    final (top, bottom) = (math.min(a.dy, b.dy), math.max(a.dy, b.dy));
+    for (var j = i + 2; j < n; j++) {
+      // The last edge shares a corner with the first.
+      if (i == 0 && j == n - 1) continue;
+      final c = ring[j], d = ring[(j + 1) % n];
+      if (math.max(c.dx, d.dx) < left ||
+          math.min(c.dx, d.dx) > right ||
+          math.max(c.dy, d.dy) < top ||
+          math.min(c.dy, d.dy) > bottom) {
+        continue;
+      }
+      final x = _crossingAlong(a, b, c, d);
+      if (x == null) continue;
+      final id = points.length;
+      points.add(a + (b - a) * x.$1);
+      crossings[i].add((x.$1, id));
+      crossings[j].add((x.$2, id));
+    }
+  }
+  // The edges, split where they're crossed.
+  final next = List.generate(points.length, (_) => <int>{});
+  for (var i = 0; i < n; i++) {
+    final along = crossings[i]..sort((x, y) => x.$1.compareTo(y.$1));
+    final chain = [
+      corner[i],
+      for (final (_, id) in along) id,
+      corner[(i + 1) % n],
+    ];
+    for (var k = 1; k < chain.length; k++) {
+      final (p, q) = (chain[k - 1], chain[k]);
+      if (p == q) continue;
+      next[p].add(q);
+      next[q].add(p);
+    }
+  }
+  // From the leftmost point, which is on the outer boundary, follow it round with the
+  // outside on one hand, taking the sharpest turn that way at each point.
+  var start = 0;
+  for (var i = 1; i < points.length; i++) {
+    final (p, s) = (points[i], points[start]);
+    if (p.dx < s.dx || (p.dx == s.dx && p.dy < s.dy)) start = i;
+  }
+  if (next[start].isEmpty) return null;
+  int turn(int from, int at, Offset heading) {
+    var best = -1;
+    var sharpest = double.infinity;
+    for (final to in next[at]) {
+      final out = points[to] - points[at];
+      final angle = to == from
+          ? math.pi
+          : math.atan2(
+              heading.dx * out.dy - heading.dy * out.dx,
+              heading.dx * out.dx + heading.dy * out.dy,
+            );
+      if (angle < sharpest) (best, sharpest) = (to, angle);
+    }
+    return best;
+  }
+
+  final edges = next.fold(0, (sum, to) => sum + to.length);
+  final walk = <int>[];
+  final first = turn(-1, start, const Offset(1, 0));
+  var (from, at) = (start, first);
+  do {
+    walk.add(from);
+    if (walk.length > edges + 1) return null;
+    final to = turn(from, at, points[at] - points[from]);
+    (from, at) = (at, to);
+  } while (from != start || at != first);
+  // Where the walk comes back to a point, what it went round in between is a piece.
+  final pieces = <List<int>>[];
+  final stack = <int>[];
+  final onStack = <int, int>{};
+  for (final p in walk) {
+    final at = onStack[p];
+    if (at == null) {
+      onStack[p] = stack.length;
+      stack.add(p);
+      continue;
+    }
+    pieces.add(stack.sublist(at));
+    for (final q in stack.skip(at + 1)) {
+      onStack.remove(q);
+    }
+    stack.length = at + 1;
+  }
+  pieces.add(stack);
+  List<Offset>? largest;
+  var most = 0.0;
+  for (final piece in pieces) {
+    final outline = [for (final p in piece) points[p]];
+    final area = outline.length < 3 ? 0.0 : ringArea(outline);
+    if (area > most) (largest, most) = (outline, area);
+  }
+  return largest;
 }
 
 /// [ring], screen points, as a polygon on the ground, through [toGeo] (the map's
@@ -246,33 +345,16 @@ List<Offset> _spaced(List<Offset> stroke) {
   return points;
 }
 
-/// Where the open stroke [points] crosses itself, the loop between a crossing that
-/// encloses the most, and what's left outside it (closed through the crossing); null
-/// if it doesn't cross.
-({List<Offset> loop, List<Offset> trimmed})? _largestLoop(List<Offset> points) {
-  ({List<Offset> loop, List<Offset> trimmed})? best;
-  var bestArea = -1.0;
-  for (var i = 0; i < points.length - 1; i++) {
-    for (var j = i + 2; j < points.length - 1; j++) {
-      final x = _crossing(points[i], points[i + 1], points[j], points[j + 1]);
-      if (x == null) continue;
-      final loop = [x, ...points.sublist(i + 1, j + 1)];
-      final area = ringArea(loop);
-      if (area > bestArea) {
-        bestArea = area;
-        best = (
-          loop: loop,
-          trimmed: [...points.sublist(0, i + 1), x, ...points.sublist(j + 1)],
-        );
-      }
-    }
-  }
-  return best;
-}
-
 /// Where segments [a]–[b] and [c]–[d] cross, if they do (touching at an end doesn't
 /// count).
 Offset? _crossing(Offset a, Offset b, Offset c, Offset d) {
+  final along = _crossingAlong(a, b, c, d);
+  return along == null ? null : a + (b - a) * along.$1;
+}
+
+/// How far along [a]–[b] and along [c]–[d] they cross, if they do (touching at an end
+/// doesn't count).
+(double, double)? _crossingAlong(Offset a, Offset b, Offset c, Offset d) {
   final r = b - a, s = d - c;
   final denominator = r.dx * s.dy - r.dy * s.dx;
   if (denominator.abs() < 1e-9) return null;
@@ -281,7 +363,7 @@ Offset? _crossing(Offset a, Offset b, Offset c, Offset d) {
   final u = (ac.dx * r.dy - ac.dy * r.dx) / denominator;
   const e = 1e-9;
   if (t <= e || t >= 1 - e || u <= e || u >= 1 - e) return null;
-  return a + r * t;
+  return (t, u);
 }
 
 /// The longest a lasso's stroke is kept, in points: a finger dragged for minutes

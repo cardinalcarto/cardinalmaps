@@ -44,8 +44,8 @@ enum DownloadStep {
 ///
 /// | In | When | Then |
 /// |---|---|---|
-/// | drawing | a loop is drawn and the finger lifts | it's on the map; measuring |
-/// | drawing | a loop too small, crossing itself, or off the map | drawing, saying why |
+/// | drawing | the finger lifts | its outline, closed round all it encloses, is on the map; measuring |
+/// | drawing | its outline is too small, or off the map | drawing, saying why |
 /// | drawing | Cancel, or back | the Offline tab |
 /// | measuring | the plan comes | page 1 |
 /// | measuring | the plan fails | failed, saying why |
