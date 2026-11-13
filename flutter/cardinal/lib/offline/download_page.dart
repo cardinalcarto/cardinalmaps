@@ -40,14 +40,15 @@ enum DownloadStep {
 
 /// Downloading an area: drawing it on the map, measuring it, then the pages that
 /// confirm it, all in the one sheet over the map. The map is held still throughout
-/// (see `map/map_drawing.dart`), so it shows the area where it was drawn.
+/// (see `map/map_drawing.dart`); once the area is measured, the camera keeps it in view
+/// above the pages.
 ///
 /// | In | When | Then |
 /// |---|---|---|
 /// | drawing | the finger lifts | its outline, closed round all it encloses, is on the map; measuring |
 /// | drawing | its outline is too small, or off the map | drawing, saying why |
 /// | drawing | Cancel, or back | the Offline tab |
-/// | measuring | the plan comes | page 1 |
+/// | measuring | the plan comes | page 1, the area kept in view above it |
 /// | measuring | the plan fails | failed, saying why |
 /// | measuring, failed, page 1 | Redraw, or back | drawing, the area gone |
 /// | failed | Try again | measuring |
@@ -89,6 +90,12 @@ class _DownloadAreaPageState extends State<DownloadAreaPage> {
   /// Counts measurements, so one overtaken by a redraw is dropped when it comes.
   int _measuring = 0;
 
+  /// Whether the area is the map's subject, kept in view above the sheet.
+  bool _framed = false;
+
+  /// Space kept around the area, in logical pixels, as around a place.
+  static const _margin = 48.0;
+
   @override
   void initState() {
     super.initState();
@@ -113,6 +120,7 @@ class _DownloadAreaPageState extends State<DownloadAreaPage> {
   /// Lets the map go, without the area.
   void _leave() {
     _measuring++;
+    _unframe();
     showArea(_map, null);
     _drawing.release(this);
   }
@@ -174,7 +182,30 @@ class _DownloadAreaPageState extends State<DownloadAreaPage> {
     _name ??= TextEditingController(
       text: defaultAreaName(context, DateTime.now()),
     );
+    _frame(area);
     _go(DownloadStep.size);
+  }
+
+  /// Makes [area] the map's subject, so it's framed above page 1 as the sheet grows,
+  /// zoomed in no closer than it was drawn.
+  void _frame(GeoPolygon area) {
+    final b = area.bounds;
+    _framed = true;
+    _map.setSubject(
+      west: b.west,
+      south: b.south,
+      east: b.east,
+      north: b.north,
+      maxZoom: _map.camera?.zoom ?? 22,
+      margin: _margin,
+    );
+  }
+
+  /// Lets the camera go of the area, if it's the subject, leaving it where it is.
+  void _unframe() {
+    if (!_framed) return;
+    _framed = false;
+    _map.clearSubject();
   }
 
   void _redraw() {
@@ -182,6 +213,7 @@ class _DownloadAreaPageState extends State<DownloadAreaPage> {
     _plan = null;
     _area = null;
     _problem = null;
+    _unframe();
     showArea(_map, null);
     _drawing.hold(this, onStroke: _stroke);
     FocusScope.of(context).unfocus();

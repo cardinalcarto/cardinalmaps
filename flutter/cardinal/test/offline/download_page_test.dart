@@ -105,6 +105,35 @@ void main() {
     expect(drawing.frozen, isTrue);
   });
 
+  testWidgets('page 1 keeps the area in view above it, and Redraw lets it go', (
+    tester,
+  ) async {
+    await startDrawing(tester);
+    final plan = Completer<OfflinePlan>();
+    downloads.onPlan = (_) => plan.future;
+    await _lasso(tester);
+    await tester.pump(const Duration(milliseconds: 400));
+    // Measuring: the map stays where it was drawn.
+    expect(map.subjectsSet, 0);
+
+    final polygon = downloads.planned.single;
+    plan.complete(fakeAreaPlan(polygon));
+    await tester.pump();
+    expect(map.subject, isTrue);
+    expect(map.subjectsSet, 1);
+    final bounds = map.subjectBounds!;
+    expect(bounds.west, polygon.bounds.west);
+    expect(bounds.south, polygon.bounds.south);
+    expect(bounds.east, polygon.bounds.east);
+    expect(bounds.north, polygon.bounds.north);
+    await tester.pumpAndSettle();
+    expect(find.text('Download this area?'), findsOneWidget);
+
+    await tester.tap(find.text('Redraw'));
+    await tester.pumpAndSettle();
+    expect(map.subject, isFalse);
+  });
+
   testWidgets('a lasso too small to download asks to draw again', (
     tester,
   ) async {

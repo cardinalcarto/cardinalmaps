@@ -26,7 +26,11 @@ class FakeMap extends SparkleMapController {
     subject = true;
     subjectsSet++;
     subjectMaxZoom = maxZoom;
+    subjectBounds = (west: west, south: south, east: east, north: north);
   }
+
+  /// The bounds of the last subject set.
+  ({double west, double south, double east, double north})? subjectBounds;
 
   @override
   void clearSubject() => subject = false;
