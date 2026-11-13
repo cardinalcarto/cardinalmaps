@@ -5,6 +5,7 @@ import 'package:cardinal/geocoder/geocoder.dart';
 import 'package:cardinal/home/navigation_bar.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/map.dart';
+import 'package:cardinal/map/map_drawing.dart';
 import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
@@ -45,6 +46,7 @@ Future<GoRouter> pumpFakeApp(
   LocationSource? locationSource,
   FakeMap? map,
   MapOverlays? overlays,
+  MapDrawing? drawing,
   TargetPlatform? platform,
 }) async {
   tester.view
@@ -62,6 +64,7 @@ Future<GoRouter> pumpFakeApp(
           resizeToAvoidBottomInset: false,
           body: SheetScaffold(
             body: const SizedBox.expand(),
+            floating: const MapDrawingLayer(child: SizedBox.shrink()),
             bottomBar: const AppNavigationBar(),
             bottomBarHeight: appBarHeight,
             backdrop: sheetGlassOf(context),
@@ -90,6 +93,7 @@ Future<GoRouter> pumpFakeApp(
           child: MapScope(
             controller: map ?? FakeMap(),
             overlays: overlays ?? MapOverlays(),
+            drawing: drawing ?? MapDrawing(),
             child: MaterialApp.router(
               // The app's theme for [platform], or the test's default theme.
               theme: platform == null

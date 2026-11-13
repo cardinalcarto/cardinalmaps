@@ -6,6 +6,7 @@ import 'package:cupertino_ui/cupertino_ui.dart'
 import 'package:material_ui/material_ui.dart';
 
 import '../config.dart';
+import '../offline/drawing/area_layer.dart';
 import '../store/store.dart';
 import '../saved/saved_layers_sheet.dart';
 import '../ui/adaptive.dart';
@@ -98,6 +99,7 @@ Future<Map<String, Object?>> styleFor(MapLayers layers) async {
   ) as Map<String, Object?>;
   setGlobalStateDefaults(style, {'units': layers.units.name});
   addSavedLayers(style);
+  addAreaLayers(style);
   addRouteLayers(style);
   addSelectionLayers(style);
   addLocationLayers(style);

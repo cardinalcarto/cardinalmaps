@@ -7,6 +7,7 @@ import 'home/navigation_bar.dart';
 import 'home/stub_page.dart';
 import 'map/buttons.dart';
 import 'map/map.dart';
+import 'map/map_drawing.dart';
 import 'map/overlays.dart';
 import 'place/place_page.dart';
 import 'saved/saved_page.dart';
@@ -62,7 +63,7 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
         resizeToAvoidBottomInset: false,
         body: SheetScaffold(
           body: CardinalMap(controller: map),
-          floating: const MapButtons(),
+          floating: const MapDrawingLayer(child: MapButtons()),
           bottomBar: const AppNavigationBar(),
           backdrop: sheetGlassOf(context),
           sheet: child,

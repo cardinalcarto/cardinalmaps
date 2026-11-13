@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/geocoder/geocoder.dart';
 import 'package:cardinal/map/map.dart';
+import 'package:cardinal/map/map_drawing.dart';
 import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/place/place_page.dart';
 import 'package:cardinal/routes.dart';
@@ -102,6 +103,7 @@ Future<Store> _pumpApp(
           child: MapScope(
             controller: map ?? FakeMap(),
             overlays: MapOverlays(),
+            drawing: MapDrawing(),
             child: MaterialApp.router(routerConfig: router),
           ),
         ),

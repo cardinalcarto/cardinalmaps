@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:cardinal/map/layers.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/map.dart';
+import 'package:cardinal/map/map_drawing.dart';
 import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -165,6 +166,7 @@ void main() {
         MapScope(
           controller: map,
           overlays: MapOverlays(),
+          drawing: MapDrawing(),
           child: StoreScope(
             store: Store.withoutDatabase(
               places: FakePlaceStore(),

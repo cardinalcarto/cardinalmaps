@@ -10,6 +10,7 @@ import 'directions/route_source.dart';
 import 'geocoder/geocoder.dart';
 import 'map/location.dart';
 import 'map/map.dart';
+import 'map/map_drawing.dart';
 import 'map/overlays.dart';
 import 'offline/downloads/geometry.dart';
 import 'offline/offline_area.dart';
@@ -46,6 +47,7 @@ void main() {
           child: MapScope(
             controller: map,
             overlays: MapOverlays(),
+            drawing: MapDrawing(),
             tiles: offline.tiles,
             child: MainApp(router: appRouter(map)),
           ),

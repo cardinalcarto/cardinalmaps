@@ -14,6 +14,7 @@ import '../routes.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
 import 'layers.dart';
+import 'map_drawing.dart';
 import 'overlays.dart';
 import 'poi.dart';
 import 'route_layer.dart';
@@ -30,12 +31,16 @@ class MapScope extends InheritedWidget {
     super.key,
     required this.controller,
     required this.overlays,
+    required this.drawing,
     this.tiles,
     required super.child,
   });
 
   final SparkleMapController controller;
   final MapOverlays overlays;
+
+  /// Whether a page holds the map still to draw on it (see `map_drawing.dart`).
+  final MapDrawing drawing;
 
   /// Where the map's tiles come from; without it, [tilesUrl]'s TileJSON and no
   /// downloaded tiles.
@@ -50,10 +55,14 @@ class MapScope extends InheritedWidget {
   static MapOverlays overlaysOf(BuildContext context) =>
       context.getInheritedWidgetOfExactType<MapScope>()!.overlays;
 
+  static MapDrawing drawingOf(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<MapScope>()!.drawing;
+
   @override
   bool updateShouldNotify(MapScope oldWidget) =>
       controller != oldWidget.controller ||
       overlays != oldWidget.overlays ||
+      drawing != oldWidget.drawing ||
       tiles != oldWidget.tiles;
 }
 
