@@ -342,9 +342,11 @@ class StepSwitcher extends StatelessWidget {
       alignment: Alignment.topCenter,
       child: AnimatedSwitcher(
         duration: duration,
-        // Sized to the new content alone, the old laid over it from the top as it goes.
+        // Sized to the new content alone, the old laid over it from the top as it goes,
+        // unclipped: the AnimatedSize clips to the sheet's size as it changes.
         layoutBuilder: (current, previous) => Stack(
           alignment: Alignment.topCenter,
+          clipBehavior: Clip.none,
           children: [
             for (final old in previous)
               Positioned(top: 0, left: 0, right: 0, child: old),
