@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:routing/routing.dart' show freeBytes, initRouting;
 import 'package:sparkle/sparkle.dart';
 
 import 'config.dart';
@@ -14,6 +15,7 @@ import 'map/map_drawing.dart';
 import 'map/overlays.dart';
 import 'offline/downloads/geometry.dart';
 import 'offline/offline_area.dart';
+import 'offline/offline_scope.dart';
 import 'routes.dart';
 import 'store/store.dart';
 import 'ui/theme.dart';
@@ -49,7 +51,14 @@ void main() {
             overlays: MapOverlays(),
             drawing: MapDrawing(),
             tiles: offline.tiles,
-            child: MainApp(router: appRouter(map)),
+            child: OfflineScope(
+              downloads: offline.downloads,
+              freeBytes: () async {
+                await initRouting();
+                return freeBytes(path: await offlineFolder());
+              },
+              child: MainApp(router: appRouter(map)),
+            ),
           ),
         ),
       ),

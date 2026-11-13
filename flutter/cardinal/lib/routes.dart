@@ -9,6 +9,8 @@ import 'map/buttons.dart';
 import 'map/map.dart';
 import 'map/map_drawing.dart';
 import 'map/overlays.dart';
+import 'offline/download_page.dart';
+import 'offline/offline_page.dart';
 import 'place/place_page.dart';
 import 'saved/saved_page.dart';
 import 'search/search_sheet.dart';
@@ -115,12 +117,26 @@ List<RouteBase> sheetRoutes() => [
   ),
   _topLevel('/nearby', const StubPage(title: 'Nearby places')),
   _topLevel('/transit', const StubPage(title: 'Nearby transit')),
-  _topLevel('/offline', const StubPage(title: 'Offline maps')),
+  _topLevel(
+    '/offline',
+    const OfflinePage(),
+    routes: [
+      GoRoute(
+        path: 'download',
+        pageBuilder: (context, state) => _page(state, const DownloadAreaPage()),
+      ),
+    ],
+  ),
 ];
 
 /// An app bar page other than search.
-GoRoute _topLevel(String path, Widget child) => GoRoute(
+GoRoute _topLevel(
+  String path,
+  Widget child, {
+  List<RouteBase> routes = const [],
+}) => GoRoute(
   path: path,
+  routes: routes,
   pageBuilder: (context, state) => _page(
     state,
     PopScope(

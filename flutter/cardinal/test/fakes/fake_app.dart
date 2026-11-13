@@ -7,6 +7,8 @@ import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/map.dart';
 import 'package:cardinal/map/map_drawing.dart';
 import 'package:cardinal/map/overlays.dart';
+import 'package:cardinal/offline/downloads/engine.dart';
+import 'package:cardinal/offline/offline_scope.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
@@ -47,6 +49,8 @@ Future<GoRouter> pumpFakeApp(
   FakeMap? map,
   MapOverlays? overlays,
   MapDrawing? drawing,
+  Future<OfflineDownloads?>? downloads,
+  Future<int> Function()? freeBytes,
   TargetPlatform? platform,
 }) async {
   tester.view
@@ -94,12 +98,17 @@ Future<GoRouter> pumpFakeApp(
             controller: map ?? FakeMap(),
             overlays: overlays ?? MapOverlays(),
             drawing: drawing ?? MapDrawing(),
-            child: MaterialApp.router(
-              // The app's theme for [platform], or the test's default theme.
-              theme: platform == null
-                  ? null
-                  : appTheme(Brightness.light, platform: platform),
-              routerConfig: router,
+            child: OfflineScope(
+              // A build without downloads, unless the test gives some.
+              downloads: downloads ?? Future.value(),
+              freeBytes: freeBytes ?? () async => 64 * 1000 * 1000 * 1000,
+              child: MaterialApp.router(
+                // The app's theme for [platform], or the test's default theme.
+                theme: platform == null
+                    ? null
+                    : appTheme(Brightness.light, platform: platform),
+                routerConfig: router,
+              ),
             ),
           ),
         ),

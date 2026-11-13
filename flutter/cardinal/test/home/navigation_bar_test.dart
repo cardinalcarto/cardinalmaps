@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cardinal/home/navigation_bar.dart';
 import 'package:cardinal/home/stub_page.dart';
+import 'package:cardinal/offline/offline_page.dart';
 import 'package:cardinal/place/place_page.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/saved/saved_page.dart';
@@ -59,7 +60,6 @@ void main() {
   for (final (tip, title) in [
     ('Nearby places', 'Nearby places'),
     ('Nearby transit', 'Nearby transit'),
-    ('Offline maps', 'Offline maps'),
   ]) {
     testWidgets('$tip opens its page, and Search comes back', (tester) async {
       await pumpFakeApp(tester, store: _store());
@@ -74,6 +74,21 @@ void main() {
       expect(find.byType(StubPage), findsNothing);
     });
   }
+
+  testWidgets('Offline maps opens its page, and Search comes back', (
+    tester,
+  ) async {
+    await pumpFakeApp(tester, store: _store());
+    await tester.tap(_tab('Offline maps'));
+    await tester.pumpAndSettle();
+    expect(find.byType(OfflinePage), findsOneWidget);
+    expect(find.byType(SearchBar), findsNothing);
+
+    await tester.tap(_tab('Search'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SearchBar), findsOneWidget);
+    expect(find.byType(OfflinePage), findsNothing);
+  });
 
   testWidgets('switching pages replaces the page, with the sheet in between', (
     tester,
