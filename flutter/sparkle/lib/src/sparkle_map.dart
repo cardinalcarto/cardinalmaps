@@ -86,6 +86,36 @@ class _QuickZoom {
   bool dragging = false;
 }
 
+/// Which gestures on a [SparkleMap] move it (see [SparkleMapController.gestures]).
+class MapGestures {
+  const MapGestures({
+    this.oneFinger = true,
+    this.rotate = true,
+    this.tilt = true,
+  });
+
+  /// Every gesture.
+  static const all = MapGestures();
+
+  /// Two fingers pinch to zoom and pan, and nothing else: one finger (or a mouse)
+  /// doesn't pan, tap or zoom, and the map isn't turned or tilted from how it is.
+  static const pinch = MapGestures(
+    oneFinger: false,
+    rotate: false,
+    tilt: false,
+  );
+
+  /// Whether one finger, or a mouse, pans, taps, double taps and quick-zooms. Without
+  /// it, the finger left down when one of two lifts doesn't pan either.
+  final bool oneFinger;
+
+  /// Whether two fingers turning rotate the map.
+  final bool rotate;
+
+  /// Whether two fingers dragged up or down together tilt it; without it, that pans.
+  final bool tilt;
+}
+
 /// Moves a [SparkleMap]'s camera and changes its GeoJSON sources' data.
 ///
 /// Until the map is set up (it waits for its first layout), [camera] and the other queries
@@ -98,6 +128,9 @@ class _CameraMoved extends ChangeNotifier {
 
 class SparkleMapController {
   _SparkleMapState? _state;
+
+  /// Which gestures move the map. A change applies to gestures that start after it.
+  MapGestures gestures = MapGestures.all;
 
   /// GeoJSON set before the map was, by source.
   final Map<String, String> _pending = {};
@@ -762,6 +795,8 @@ class _SparkleMapState extends State<SparkleMap> {
     }
   }
 
+  MapGestures get _gestures => widget.controller?.gestures ?? MapGestures.all;
+
   bool _inBackGestureZone(Offset position) =>
       position.dx < _gestureInsets.left ||
       position.dx > _windowWidth - _gestureInsets.right;
@@ -793,6 +828,10 @@ class _SparkleMapState extends State<SparkleMap> {
     if (e.kind == PointerDeviceKind.touch) {
       _touches[e.pointer] = e.localPosition;
       if (_touches.length == 1) {
+        if (!_gestures.oneFinger) {
+          _lastTap = null;
+          return;
+        }
         final last = _lastTap;
         _lastTap = null;
         if (last != null &&
@@ -827,7 +866,7 @@ class _SparkleMapState extends State<SparkleMap> {
         return;
       }
     }
-    if (_pointer != null) {
+    if (_pointer != null || !_gestures.oneFinger) {
       return;
     }
     _pointer = e.pointer;
@@ -881,7 +920,7 @@ class _SparkleMapState extends State<SparkleMap> {
     }
     if (_leftover case (final pointer, final since) when pointer == e.pointer) {
       _touches[e.pointer] = e.localPosition;
-      if (e.timeStamp - since < _leftoverGrace) {
+      if (e.timeStamp - since < _leftoverGrace || !_gestures.oneFinger) {
         return;
       }
       // Pan on with it from here, so the map doesn't jump to catch up.
@@ -954,6 +993,7 @@ class _SparkleMapState extends State<SparkleMap> {
       bool vertical(Offset t) => t.dy.abs() > t.dx.abs() * 2;
       final apart = a1 - b1;
       final tilt =
+          _gestures.tilt &&
           apart.dy.abs() < apart.dx.abs() &&
           vertical(ta) &&
           vertical(tb) &&
@@ -979,7 +1019,9 @@ class _SparkleMapState extends State<SparkleMap> {
     // Clockwise on screen, as y points down.
     var turn = ((b1 - a1).direction - (b0 - a0).direction) * 180 / pi;
     turn = (turn + 180) % 360 - 180;
-    if (_turned case final turned?) {
+    if (!_gestures.rotate) {
+      turn = 0;
+    } else if (_turned case final turned?) {
       _turned = turned + turn;
       final spread = (a1 - b1).distance;
       if (_pinchSpread > 0 && spread > 0) {

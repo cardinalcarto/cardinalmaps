@@ -10,6 +10,7 @@ import 'package:cardinal/offline/offline_page.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:sparkle/sparkle.dart';
 
 import '../fakes/fake_app.dart';
 import '../fakes/fake_downloads.dart';
@@ -132,6 +133,36 @@ void main() {
     await tester.tap(find.text('Redraw'));
     await tester.pumpAndSettle();
     expect(map.subject, isFalse);
+  });
+
+  testWidgets('a second finger landing mid-stroke throws the stroke away, and '
+      'two fingers move the map', (tester) async {
+    await startDrawing(tester);
+    expect(map.gestures, MapGestures.pinch);
+    const center = Offset(200, 300);
+    final one = await tester.startGesture(center + const Offset(120, 0));
+    for (var a = 0.1; a <= 1.5 * math.pi; a += 0.1) {
+      await one.moveTo(center + Offset(math.cos(a), math.sin(a)) * 120);
+    }
+    final two = await tester.startGesture(const Offset(300, 200));
+    await two.moveTo(const Offset(330, 180));
+    for (var a = 1.5 * math.pi; a <= 2 * math.pi + 0.3; a += 0.1) {
+      await one.moveTo(center + Offset(math.cos(a), math.sin(a)) * 120);
+    }
+    await two.up();
+    await one.up();
+    await tester.pumpAndSettle();
+    expect(downloads.planned, isEmpty);
+    expect(_area(map), isEmpty);
+    expect(find.text('Draw around the area you want'), findsOneWidget);
+
+    // Then one finger draws as before, and the map is held still on page 1.
+    await _lasso(tester);
+    await tester.pumpAndSettle();
+    expect(downloads.planned, hasLength(1));
+    expect(find.text('Download this area?'), findsOneWidget);
+    expect(map.gestures, MapGestures.all);
+    expect(drawing.frozen, isTrue);
   });
 
   testWidgets('a lasso too small to download asks to draw again', (

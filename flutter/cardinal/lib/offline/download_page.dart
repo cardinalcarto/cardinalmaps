@@ -22,7 +22,7 @@ import 'offline_scope.dart';
 
 /// The steps of downloading an area.
 enum DownloadStep {
-  /// A finger draws around the area on the frozen map.
+  /// A finger draws around the area on the map, which two fingers pinch and pan.
   drawing,
 
   /// The area's plan is being read from the bucket.
@@ -39,9 +39,9 @@ enum DownloadStep {
 }
 
 /// Downloading an area: drawing it on the map, measuring it, then the pages that
-/// confirm it, all in the one sheet over the map. The map is held still throughout
-/// (see `map/map_drawing.dart`); once the area is measured, the camera keeps it in view
-/// above the pages.
+/// confirm it, all in the one sheet over the map. While drawing, one finger draws and
+/// two pinch and pan the map; from then on it's held still (see `map/map_drawing.dart`),
+/// and once the area is measured, the camera keeps it in view above the pages.
 ///
 /// | In | When | Then |
 /// |---|---|---|

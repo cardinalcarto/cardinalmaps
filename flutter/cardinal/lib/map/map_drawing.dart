@@ -1,23 +1,27 @@
-/// Drawing on the map with a finger: a page freezes the map, so nothing reaches it, and
-/// takes the strokes drawn over it.
+/// Drawing on the map with a finger: a page freezes the map, so nothing reaches it, or
+/// takes the strokes drawn over it, while two fingers still pinch and pan the map.
 ///
 /// [MapDrawing] is the state, in [MapScope], and [MapDrawingLayer] is what lies over the
-/// map, under the sheet, taking the touches while a page holds it. Neither the map nor
-/// its gestures know about it: the layer simply sits on top.
+/// map, under the sheet, taking the touches while a page holds it. The map doesn't know
+/// about it: the layer sits on top, and while strokes are taken lets touches through
+/// with the map's gestures cut down to [MapGestures.pinch].
 library;
 
 import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:sparkle/sparkle.dart';
 
 import 'map.dart';
 
 /// Whether a page holds the map still, and what it does with strokes drawn over it.
 ///
-/// While a page holds it, nothing reaches the map, no pan, zoom, rotation or tap with
-/// any number of fingers, and the map's buttons fade away. While the page also takes
-/// strokes, one finger's path is drawn as it moves and handed to the page when it lifts;
-/// other fingers are ignored.
+/// While a page holds it, the map's buttons fade away. Without strokes being taken,
+/// nothing reaches the map, no pan, zoom, rotation or tap with any number of fingers.
+/// While the page takes strokes, a finger down alone draws, its path handed to the page
+/// when it lifts; two fingers pinch to zoom and pan the map, which stays as flat and
+/// turned as it was, and a second finger landing while a stroke is drawn throws the
+/// stroke away. One finger never pans it.
 class MapDrawing extends ChangeNotifier {
   Object? _holder;
   ValueChanged<List<Offset>>? _onStroke;
@@ -80,8 +84,10 @@ class MapDrawingLayer extends StatelessWidget {
   }
 }
 
-/// Takes every touch, so none reach the map, and draws one finger's stroke while
-/// [onStroke] is set, fading it away once the finger lifts.
+/// While [onStroke] isn't set, takes every touch, so none reach the map. While it is,
+/// draws the stroke of a finger down alone, fading it away once the finger lifts or a
+/// second lands, and lets touches through to the map, which only pinches and pans
+/// ([MapGestures.pinch]).
 class _StrokeSurface extends StatefulWidget {
   const _StrokeSurface({required this.onStroke});
 
@@ -95,19 +101,37 @@ class _StrokeSurfaceState extends State<_StrokeSurface>
     with SingleTickerProviderStateMixin {
   /// The finger drawing, while it's down.
   int? _pointer;
+
+  /// Every finger down.
+  final _down = <int>{};
   final _points = <Offset>[];
   final _changed = ValueNotifier(0);
 
-  /// Fades a finished stroke out.
+  /// Fades a finished stroke out, or one thrown away.
   late final _fade = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 300),
     value: 0,
   );
 
+  late final SparkleMapController _map;
+
+  @override
+  void initState() {
+    super.initState();
+    _map = MapScope.of(context);
+    _setGestures();
+  }
+
+  /// Two fingers move the map while strokes are taken; one doesn't.
+  void _setGestures() => _map.gestures = widget.onStroke == null
+      ? MapGestures.all
+      : MapGestures.pinch;
+
   @override
   void didUpdateWidget(_StrokeSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _setGestures();
     // Strokes stopped being taken: drop one being drawn.
     if (widget.onStroke == null && _pointer != null) {
       _pointer = null;
@@ -118,13 +142,21 @@ class _StrokeSurfaceState extends State<_StrokeSurface>
 
   @override
   void dispose() {
+    _map.gestures = MapGestures.all;
     _fade.dispose();
     _changed.dispose();
     super.dispose();
   }
 
-  void _down(PointerDownEvent e) {
-    if (widget.onStroke == null || _pointer != null) return;
+  void _onDown(PointerDownEvent e) {
+    _down.add(e.pointer);
+    if (_pointer != null) {
+      // A second finger: it's moving the map, not drawing.
+      _pointer = null;
+      unawaited(_fade.reverse());
+      return;
+    }
+    if (widget.onStroke == null || _down.length > 1) return;
     _pointer = e.pointer;
     _fade.value = 1;
     _points
@@ -140,6 +172,7 @@ class _StrokeSurfaceState extends State<_StrokeSurface>
   }
 
   void _up(PointerUpEvent e) {
+    _down.remove(e.pointer);
     if (e.pointer != _pointer) return;
     _pointer = null;
     final stroke = List.of(_points);
@@ -148,6 +181,7 @@ class _StrokeSurfaceState extends State<_StrokeSurface>
   }
 
   void _cancel(PointerCancelEvent e) {
+    _down.remove(e.pointer);
     if (e.pointer != _pointer) return;
     _pointer = null;
     unawaited(_fade.reverse());
@@ -156,21 +190,25 @@ class _StrokeSurfaceState extends State<_StrokeSurface>
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final drawing = widget.onStroke != null;
     return Listener(
-      // Every touch stops here, whether or not it draws: the map is frozen.
-      behavior: HitTestBehavior.opaque,
-      onPointerDown: _down,
+      // Frozen, every touch stops here; drawing, they go on to the map, too.
+      behavior: drawing ? HitTestBehavior.translucent : HitTestBehavior.opaque,
+      onPointerDown: _onDown,
       onPointerMove: _move,
       onPointerUp: _up,
       onPointerCancel: _cancel,
-      child: CustomPaint(
-        size: Size.infinite,
-        painter: _StrokePainter(
-          points: _points,
-          repaint: Listenable.merge([_changed, _fade]),
-          fade: _fade,
-          color: areaColor,
-          halo: colors.surface,
+      // The stroke itself takes no touches, so they can go through it.
+      child: IgnorePointer(
+        child: CustomPaint(
+          size: Size.infinite,
+          painter: _StrokePainter(
+            points: _points,
+            repaint: Listenable.merge([_changed, _fade]),
+            fade: _fade,
+            color: areaColor,
+            halo: colors.surface,
+          ),
         ),
       ),
     );

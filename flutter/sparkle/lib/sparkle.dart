@@ -2,5 +2,7 @@
 /// with Flutter GPU.
 library;
 
-export 'src/rust/api/map.dart' show CameraState, ClickedFeature, SpriteImageInput;
-export 'src/sparkle_map.dart' show MapStatus, SparkleMap, SparkleMapController, initSparkle;
+export 'src/rust/api/map.dart'
+    show CameraState, ClickedFeature, SpriteImageInput;
+export 'src/sparkle_map.dart'
+    show MapGestures, MapStatus, SparkleMap, SparkleMapController, initSparkle;
