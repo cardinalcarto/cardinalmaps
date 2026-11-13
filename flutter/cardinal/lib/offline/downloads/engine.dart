@@ -22,6 +22,7 @@ class RegionProgress {
     required this.polygon,
     required this.state,
     required this.error,
+    required this.createdAt,
     required this.bytesDone,
     required this.bytesTotal,
     required this.filesDone,
@@ -35,6 +36,9 @@ class RegionProgress {
   final GeoPolygon? polygon;
   final RegionState state;
   final String? error;
+
+  /// When it was started.
+  final DateTime createdAt;
 
   /// Bytes of files verified or installed and of map ranges unpacked, of all the
   /// region's (files whose size isn't known yet count once they arrive).
@@ -1464,7 +1468,7 @@ class OfflineDownloads {
   Stream<List<RegionProgress>> watch() {
     final query = db.customSelect(
       '''
-      SELECT r.id, r.kind, r.name, r.polygon, r.state, r.error,
+      SELECT r.id, r.kind, r.name, r.polygon, r.state, r.error, r.created_at,
         COALESCE(f.done_bytes, 0) + COALESCE(c.done_bytes, 0) AS done_bytes,
         COALESCE(f.total_bytes, 0) + COALESCE(c.total_bytes, 0) AS total_bytes,
         COALESCE(f.done, 0) + COALESCE(c.done, 0) AS done,
@@ -1511,6 +1515,7 @@ class OfflineDownloads {
             },
             state: RegionState.values.byName(row.read<String>('state')),
             error: row.readNullable<String>('error'),
+            createdAt: row.read<DateTime>('created_at'),
             bytesDone: row.read<int>('done_bytes'),
             bytesTotal: row.read<int>('total_bytes'),
             filesDone: row.read<int>('done'),

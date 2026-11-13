@@ -171,6 +171,23 @@ void main() {
     },
   );
 
+  test('a region shows its name and when it was started', () async {
+    final before = DateTime.now();
+    final id = await engine.start(
+      await engine.plan(downtown),
+      name: 'Nov 12, 9:41 PM',
+    );
+    final started = await region(id);
+    expect(started.name, 'Nov 12, 9:41 PM');
+    // Stored to the second.
+    expect(
+      started.createdAt.isBefore(before.subtract(const Duration(seconds: 1))),
+      isFalse,
+    );
+    expect(started.createdAt.isAfter(DateTime.now()), isFalse);
+    await settle();
+  });
+
   test(
     'a region goes from planned to downloading to installing to ready',
     () async {
