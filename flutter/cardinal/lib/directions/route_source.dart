@@ -152,6 +152,8 @@ class OfflineRouteSource implements RouteSource {
     final area = await _need(_area);
     await _checkCovers(area, from, to);
 
+    // Ferrostar's adapter is in the routing library too, made before the router opens.
+    await initRouting();
     final adapter = _adapters[mode] ??= DirectionsAdapter.valhalla(
       // Ferrostar wants an endpoint to make the request for; nothing is sent to it.
       endpointUrl: 'offline:route',
