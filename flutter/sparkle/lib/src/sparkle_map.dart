@@ -974,8 +974,9 @@ class _SparkleMapState extends State<SparkleMap> {
       commandBuffer.submit();
       if (tRust + tExec > 9000) {
         // PERF-TEMP
-        debugPrint(
-          'PERF slow after ${gap ~/ 1000} ms idle: rust ${tRust ~/ 100 / 10} exec ${tExec ~/ 100 / 10} ms, '
+        _perf.slow(
+          tRust + tExec,
+          'after ${gap ~/ 1000} ms idle: rust ${tRust ~/ 100 / 10} exec ${tExec ~/ 100 / 10} ms, '
           'uploads ${out.uploads.length ~/ 1024} KB, ${executor.draws} draws, ${out.commands.length} words',
         );
       }
@@ -1540,6 +1541,41 @@ class _PerfLog {
 
   int _draws = 0;
   int lineIndices = 0;
+
+  /// How often [slow] logs at most. Under continuous camera motion, as while
+  /// navigating, frames can run over 9 ms one after another, and a line each
+  /// flooded logcat at 30 a second.
+  static const _slowEvery = Duration(seconds: 5);
+  final _sinceSlowLog = Stopwatch();
+  int _slowCount = 0, _slowWorst = 0;
+  String? _slowWorstDetail;
+
+  /// A map frame took [time] µs (rust + exec) over 9 ms, as [detail] describes. The
+  /// first after a quiet spell is logged at once, so a lone slow frame (as after idle)
+  /// shows with its own numbers; the rest are counted, and logged as one line with the
+  /// worst one's numbers at most every [_slowEvery].
+  void slow(int time, String detail) {
+    _slowCount++;
+    if (time > _slowWorst) {
+      _slowWorst = time;
+      _slowWorstDetail = detail;
+    }
+    if (_sinceSlowLog.isRunning && _sinceSlowLog.elapsed < _slowEvery) return;
+    final seconds = _sinceSlowLog.isRunning
+        ? _sinceSlowLog.elapsedMilliseconds / 1000
+        : 0.0;
+    debugPrint(
+      _slowCount == 1
+          ? 'PERF slow $_slowWorstDetail'
+          : 'PERF slow: $_slowCount frames over 9 ms in '
+                '${seconds.toStringAsFixed(1)} s, worst $_slowWorstDetail',
+    );
+    _slowCount = _slowWorst = 0;
+    _slowWorstDetail = null;
+    _sinceSlowLog
+      ..reset()
+      ..start();
+  }
 
   void add(int rust, int exec, int submit, int words, int draws) {
     _draws += draws;
