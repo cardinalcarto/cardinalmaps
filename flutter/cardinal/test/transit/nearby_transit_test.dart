@@ -129,6 +129,7 @@ void main() {
         'mode': 'wheelchair',
         'max_walk_seconds': 1800,
         'horizon_seconds': 7200,
+        'max_departures': 3,
       },
     );
     expect(nearbyAccess(wheelchair: true), TransitAccess.wheelchair);
@@ -147,6 +148,7 @@ void main() {
       'mode': 'walking',
       'walk_seconds': 42,
       'horizon_seconds': 7200,
+      'max_departures': 6,
     });
     final r1 = nearby.routes.last;
     final north = r1.directions.first;
@@ -163,6 +165,7 @@ void main() {
         'mode': 'wheelchair',
         'walk_seconds': 42,
         'horizon_seconds': 7200,
+        'max_departures': 6,
         'trip_id': 'R1N-0820',
         'start_date': '20260615',
       },

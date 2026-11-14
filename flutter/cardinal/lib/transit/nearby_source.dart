@@ -22,6 +22,13 @@ const nearbyWalkLimit = Duration(minutes: 30);
 /// How far ahead nearby departures are listed.
 const nearbyHorizon = Duration(hours: 2);
 
+/// How many departures that run a nearby row lists in each direction. Canceled and
+/// skipped ones among them are listed too, and don't count.
+const nearbyRowDepartures = 3;
+
+/// How many departures that run a route's detail lists, counted as for a row.
+const routeDetailDepartures = 6;
+
 /// How nearby transit gets to stops: by [wheelchair] (the `wheelchairByDefault`
 /// setting), or else on foot. Nearby departures are never by bike.
 TransitAccess nearbyAccess({required bool wheelchair}) =>
@@ -81,6 +88,7 @@ Map<String, Object?> nearbyRequest(LngLat location, TransitAccess access) {
     'mode': access.mode,
     'max_walk_seconds': nearbyWalkLimit.inSeconds,
     'horizon_seconds': nearbyHorizon.inSeconds,
+    'max_departures': nearbyRowDepartures,
   };
 }
 
@@ -101,6 +109,7 @@ Map<String, Object?> routeRequest(
     'mode': access.mode,
     'walk_seconds': query.walkSeconds,
     'horizon_seconds': nearbyHorizon.inSeconds,
+    'max_departures': routeDetailDepartures,
     if (query.tripId != null) 'trip_id': query.tripId,
     if (query.tripId != null && query.startDate != null)
       'start_date': query.startDate,
