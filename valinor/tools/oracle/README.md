@@ -434,6 +434,69 @@ Mainline behavior to know when comparing:
   three-stop routes and 2 of their 56 legs);
   the `edge_walk_exact` cases include both kinds of routes.
 
+### The trace_attributes serializer (Tyr)
+
+Mainline's Thor serializes trace_attributes responses itself
+(`thor_worker_t::trace_attributes` calls `tyr::serializeTraceAttributes` with the request,
+its strict `AttributesController`, and the map matching results),
+so no message between services carries the serializer's input.
+[`cpp/trace_attributes.cc`](cpp/trace_attributes.cc) runs Loki (`ParseApi` and `trace`) and then
+the steps of `thor_worker_t::trace_attributes`, line for line, in a subclass of the worker
+(so it can reach `map_match` and `route_match`), and dumps what the serializer got:
+the `Api` (with Thor's `trip` and options), the scores and every `meili::MatchResult`
+of each match (as JSON, with numbers as strings of their round-tripping digits),
+and the response. It then runs the worker's own `trace_attributes` on the same Loki output
+and fails if the responses differ, so the dump is what mainline's serializer saw.
+For trace_route it runs Thor's `trace_route`, Odin's `DirectionsBuilder`, and
+`tyr::serializeDirections`, and dumps the `Api` Odin hands Tyr (before the PBF serializer
+clears it). The helper subclasses `thor_worker_t`, so it is compiled with `ENABLE_SERVICES`,
+as libvalhalla is ([`cpp/build-trace.sh`](cpp/build-trace.sh)); without it, the subclass's
+vtable has another layout and the worker crashes in `measure_scope_time`.
+
+[`trace-attributes-corpus.py`](trace-attributes-corpus.py) writes 30 requests aimed at the
+serializer, from the shapes of captured Andorra routes: every `shape_match` mode
+(edge walks on exact shapes, which succeed, and on noisy ones, which fail),
+clean and noisy traces, `polyline5`, a discontinuity, a point far from any road,
+`alternates`, timestamps and `durations`, break points, strict `include` and `exclude` filters
+(with an unknown name), miles with an `id` and `elevation_interval`, bicycles, PBF,
+and the same kinds of trace_route requests in OSRM and Valhalla JSON.
+The map matching corpora above (their JSON body lines) run through the same helper.
+[`copy-trace-attributes-fixtures.py`](copy-trace-attributes-fixtures.py) copies every
+targeted case and the first corpus case of each action and kind (leaving out the `limit_`
+cases and any over 512 KB) into `valinor-tyr/fixtures/trace-attributes/andorra`
+(`api.bin`, `matches.json` for trace_attributes, and `response.json` or `response.bin`),
+which `responses_match_mainline` in `valinor-tyr`'s `trace_attributes` tests checks.
+The ignored `trace_oracle_external` test checks a whole run.
+
+```shell
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" valinor-valhalla-dev:3.9.1 /w/build-trace.sh
+work=/mnt/maps/cardinal/valhalla-oracle/trace-attributes
+python3 -I tools/oracle/trace-attributes-corpus.py valinor-tyr/fixtures/captures/andorra \
+  > "$work/targeted.tsv"
+python3 -I -c 'import json, sys
+for line in open(sys.argv[1]):
+    d = json.loads(line)
+    if isinstance(d.get("body"), dict) and not {"method", "raw_body", "pbf_text"} & d.keys():
+        print(d["name"], d["action"], json.dumps(d["body"]), sep="\t")' \
+  /mnt/maps/cardinal/valhalla-oracle/traces/andorra.jsonl > "$work/andorra-corpus.tsv"
+cat "$work/targeted.tsv" "$work/andorra-corpus.tsv" > "$work/requests.tsv"
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" \
+  -v "$PWD/valhalla-graphtile/fixtures/andorra-tiles:/fx:ro,z" \
+  -v /mnt/maps/cardinal/valhalla-oracle/andorra-oracle:/cfg:ro,z -v "$work:/io:z" \
+  valinor-valhalla-dev:3.9.1 sh -c '/w/trace_attributes /cfg/valhalla.json /fx /io/requests.tsv \
+    > /io/results.tsv'
+python3 -I tools/oracle/copy-trace-attributes-fixtures.py "$work/results.tsv" "$work/targeted.tsv" \
+  valinor-tyr/fixtures/trace-attributes/andorra
+VALINOR_TYR_TRACE_ORACLE=$work/results.tsv \
+  cargo test -p valinor-tyr trace_oracle_external -- --ignored --nocapture
+```
+
+On the Andorra run (30 targeted and 348 corpus requests), 182 trace_attributes responses
+(JSON and PBF) and 146 trace_route responses (Valhalla JSON, OSRM, and PBF) match mainline's;
+the Seattle corpus (with the Seattle build's tiles and config) gives 160 and 137.
+The only difference is one OSRM miles request's approach alert, the documented divergence,
+which the test leaves out.
+
 ## Message fixtures
 
 [`copy-message-fixtures.sh`](copy-message-fixtures.sh) copies the captured

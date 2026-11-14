@@ -5,6 +5,8 @@
 //! (an `Api` with `options`, `trip`, and `directions`)
 //! into the response body for the requested format.
 //! [`serialize_locate`] and [`serialize_status`] write the `/locate` and `/status` responses.
+//! [`serialize_trace_attributes`] is mainline's `tyr::serializeTraceAttributes`,
+//! which Thor calls for `trace_attributes` with its map matching results.
 //! Errors are serialized by [`ValhallaError::serialize`] instead.
 
 mod gpx;
@@ -16,12 +18,14 @@ mod osrm;
 mod pbf;
 mod polyline;
 mod status;
+mod trace_attributes;
 mod trip;
 mod valhalla;
 mod writer;
 
 pub use locate::serialize_locate;
 pub use status::serialize_status;
+pub use trace_attributes::{MapMatchResult, serialize_trace_attributes};
 use valhalla_proto::Api;
 use valhalla_proto::options::Format;
 use valhalla_response::{ErrorCode, ValhallaError};

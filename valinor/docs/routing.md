@@ -226,6 +226,42 @@ Ferrostar sums these into its annotations).
 On the oracle corpora (see `tools/oracle/README.md`), every trip matches mainline's exactly,
 apart from paths that tie at equal cost.
 
+## Map matching responses (Tyr)
+
+`valinor_tyr::tyr::serialize_trace_attributes` is mainline's `tyr::serializeTraceAttributes`,
+which Thor's `trace_attributes` action calls itself, as in mainline (there is no Odin step):
+it takes the `Api` (Thor's `trip`, a route per match, and the options),
+the strict `AttributesController` the trip was built with
+(`AttributesController::new(options, true)`), and, per match (the best, then each alternate),
+a `MapMatchResult`: the confidence score, the raw score,
+and the `valinor_meili::MatchResult` of every trace point
+(an edge walk is one match with scores 1 and 0 and no results).
+It adds the scores and matched points to each `TripRoute`, then answers with the request as PBF
+(the `trip`) or with Valhalla JSON: `id`, `units`, the best match's attributes at the top level
+(edges with every attribute the filter allows and their end nodes, admins, the shape,
+`osm_changeset`, elevation, `matched_points`, and `shape_attributes`),
+the alternates' in `alternate_paths`, and the warnings.
+Errors (inputs that disagree, where mainline would read out of bounds) are Thor's 499.
+
+- rapidjson's precision is state that later numbers inherit, and mainline sets it as it goes
+  (the matched points leave it at six places for the next alternate);
+  the serializer follows its calls exactly, and a limit of 0 (an edge's whole levels) keeps
+  one decimal, as rapidjson does.
+- What mainline writes whatever the filter says is written too: names, lane connectivity,
+  traffic segments, signs, admins, and `speeds_non_faded` (as `{"no_flow": 0}` when unset).
+  Enum names follow mainline's tables, `"null"` included (motor scooters, blind pedestrians).
+- A matched point on an edge whose index Thor never set gets mainline's `kInvalidEdgeIndex`
+  (2^64 - 1 in JSON, 2^32 - 1 in PBF), as mainline writes it.
+
+`trace_route` responses go through Odin and `serialize_directions` like routes:
+OSRM `tracepoints` (each trace point's match, with `alternatives_count`, `waypoint_index`,
+null for points that are neither breaks nor leg ends, and `matchings_index`,
+or `null` for unmatched points), `matchings` (a route per discontinuity, each with
+mainline's placeholder `confidence` of 1), and Valhalla JSON as for routes.
+On the oracle runs (see `tools/oracle/README.md`), every trace_attributes response
+(182 in Andorra and 160 in Seattle, JSON and PBF) and every trace_route response
+(146 and 137) matches mainline's, given mainline's serializer input.
+
 ## The router and the server
 
 `valinor-router` is mainline's whole server in one process.
