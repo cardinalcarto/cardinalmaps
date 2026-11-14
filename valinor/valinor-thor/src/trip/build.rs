@@ -8,11 +8,11 @@ use valhalla_proto::{Api, Trip, TripRoute};
 use valhalla_response::ValhallaError;
 use valinor_sif::AnyCosting;
 
-use super::attributes::AttributesController;
 use super::leg::{LegContext, build_leg};
 use crate::error::ThorError;
 use crate::path::Paths;
 use crate::route::Thor;
+use valinor_tyr::AttributesController;
 
 impl<P: GraphTileProvider> Thor<P> {
     /// Builds the request's `trip` from the paths [`Thor::route`] found
@@ -71,7 +71,7 @@ impl<P: GraphTileProvider> Thor<P> {
         // Trip building only asks the costing for edge speeds and travel types,
         // which path search's adjustments (passes and hierarchy limits) don't change.
         let costing = AnyCosting::new(&proto).map_err(|e| ThorError::Options(e.to_string()))?;
-        let controller = AttributesController::new(options);
+        let controller = AttributesController::new(options, false);
         let ctx = LegContext {
             provider: self.provider(),
             options,

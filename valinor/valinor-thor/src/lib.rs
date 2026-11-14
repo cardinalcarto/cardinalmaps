@@ -16,7 +16,7 @@
 //! - [`Thor::build_trip`] is mainline's trip building (`TripLegBuilder`):
 //!   it turns the [`Paths`] into the request's `trip`, a `TripLeg` per leg,
 //!   with the shape, the attributes of each edge and node the request asks for
-//!   (mainline's `AttributesController`), and the locations' shape indexes.
+//!   (mainline's `AttributesController`, from `valinor-tyr`), and the locations' shape indexes.
 //! - A [`Workspace`] holds the searches' storage, kept between requests so that searches
 //!   don't allocate as they go.
 //!

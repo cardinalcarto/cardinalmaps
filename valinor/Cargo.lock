@@ -3030,6 +3030,7 @@ dependencies = [
  "valhalla-proto",
  "valhalla-response",
  "valinor-sif",
+ "valinor-tyr",
 ]
 
 [[package]]

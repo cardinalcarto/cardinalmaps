@@ -1,8 +1,14 @@
-//! Which attributes trip building writes (mainline's `baldr::AttributesController`).
+//! Which attributes trip building writes and the serializers print
+//! (mainline's `baldr::AttributesController`).
+//!
+//! Thor's trip building and Tyr's serializers share it, as in mainline,
+//! so it lives here, next to the front's parsing of the filters it reads.
 //!
 //! Every attribute has a default (most are on); a request's `filter_attributes`
 //! turn the named ones on (`filter_action: include`) or off (`exclude`),
 //! and `elevation_interval` alone decides `edge.elevation`.
+//! A strict filter (`trace_attributes`) first turns every other attribute off (`include`)
+//! or on (`exclude`), so the response holds exactly what was listed (or all but that).
 //! Names that aren't attributes are ignored, as mainline only logs them.
 //!
 //! The table lists mainline's attributes in its order.
@@ -20,11 +26,10 @@ macro_rules! attributes {
         /// An attribute trip building may write (mainline's `kEdge…`, `kNode…`, and other keys).
         ///
         /// Every attribute is listed, for the names a request can give,
-        /// though trip building for routes reads only some of them.
+        /// though trip building and the serializers read only some of them.
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         #[repr(usize)]
-        #[allow(dead_code, reason = "the names of attributes other actions write")]
-        pub(crate) enum Attribute {
+        pub enum Attribute {
             $($attribute,)*
         }
 
@@ -239,25 +244,37 @@ attributes! {
 }
 
 /// A category of attributes: the attributes whose names start with it
-/// (mainline's `kNodeCategory`, `kAdminCategory`, and so on).
+/// (mainline's `kNodeCategory`, `kAdminCategory`, `kMatchedCategory`,
+/// and `kShapeAttributesCategory`).
+///
+/// Mainline's category of an attribute is its name up to the first dot,
+/// which for these four is the same as the name starting with the prefix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Category {
+pub enum Category {
+    /// `node.`
+    Node,
+    /// `admin.`
     Admin,
+    /// `matched.`
+    Matched,
+    /// `shape_attributes.`
     ShapeAttributes,
 }
 
 impl Category {
     const fn prefix(self) -> &'static str {
         match self {
+            Self::Node => "node.",
             Self::Admin => "admin.",
+            Self::Matched => "matched.",
             Self::ShapeAttributes => "shape_attributes.",
         }
     }
 }
 
-/// The attributes a request turns on (mainline's `AttributesController(options)`).
+/// The attributes a request turns on (mainline's `AttributesController`).
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct AttributesController {
+pub struct AttributesController {
     enabled: Vec<bool>,
 }
 
@@ -271,9 +288,16 @@ impl Default for AttributesController {
 }
 
 impl AttributesController {
-    /// The attributes a request asks for, with a non-strict filter
-    /// (`AttributesController(options)`, as Thor builds it for routes).
-    pub(crate) fn new(options: &Options) -> Self {
+    /// The attributes a request asks for
+    /// (mainline's `AttributesController(options, is_strict_filter)`).
+    ///
+    /// Thor builds it with a non-strict filter for routes and `trace_route`
+    /// (the listed attributes change, the others keep their defaults),
+    /// and with a strict one for `trace_attributes`
+    /// (`include` turns every other attribute off, `exclude` every other one on).
+    /// Either way, `edge.elevation` is on exactly when `elevation_interval` is positive.
+    #[must_use]
+    pub fn new(options: &Options, is_strict_filter: bool) -> Self {
         let mut controller = Self::default();
         let value = match FilterAction::try_from(options.filter_action) {
             Ok(FilterAction::Include) => Some(true),
@@ -281,6 +305,10 @@ impl AttributesController {
             _ => None,
         };
         if let Some(value) = value {
+            if is_strict_filter {
+                // `set_all(false)` before an include, `set_all(true)` before an exclude.
+                controller.enabled.fill(!value);
+            }
             for name in &options.filter_attributes {
                 if let Some(index) = ATTRIBUTES.iter().position(|&(n, _)| n == name)
                     && let Some(slot) = controller.enabled.get_mut(index)
@@ -301,7 +329,8 @@ impl AttributesController {
 
     /// Whether an attribute is on (mainline's `controller(key)`).
     #[inline]
-    pub(crate) fn get(&self, attribute: Attribute) -> bool {
+    #[must_use]
+    pub fn get(&self, attribute: Attribute) -> bool {
         self.enabled
             .get(attribute as usize)
             .copied()
@@ -309,7 +338,8 @@ impl AttributesController {
     }
 
     /// Whether any attribute of a category is on (`category_attribute_enabled`).
-    pub(crate) fn category_enabled(&self, category: Category) -> bool {
+    #[must_use]
+    pub fn category_enabled(&self, category: Category) -> bool {
         let prefix = category.prefix();
         ATTRIBUTES
             .iter()
@@ -349,7 +379,7 @@ mod tests {
 
     #[test]
     fn defaults_and_filters_as_mainline() {
-        let defaults = AttributesController::new(&Options::default());
+        let defaults = AttributesController::new(&Options::default(), false);
         assert!(defaults.get(Attribute::EdgeNames));
         assert!(defaults.get(Attribute::EdgeSpeedType));
         assert!(!defaults.get(Attribute::EdgeElevation));
@@ -358,16 +388,19 @@ mod tests {
         assert!(!defaults.category_enabled(Category::ShapeAttributes));
 
         // Ferrostar's annotations.
-        let ferrostar = AttributesController::new(&options(
-            FilterAction::Include,
-            &[
-                "shape_attributes.speed",
-                "shape_attributes.speed_limit",
-                "shape_attributes.time",
-                "shape_attributes.length",
-                "not.an.attribute",
-            ],
-        ));
+        let ferrostar = AttributesController::new(
+            &options(
+                FilterAction::Include,
+                &[
+                    "shape_attributes.speed",
+                    "shape_attributes.speed_limit",
+                    "shape_attributes.time",
+                    "shape_attributes.length",
+                    "not.an.attribute",
+                ],
+            ),
+            false,
+        );
         assert!(ferrostar.get(Attribute::ShapeAttributesSpeed));
         assert!(ferrostar.get(Attribute::ShapeAttributesLength));
         assert!(!ferrostar.get(Attribute::ShapeAttributesClosure));
@@ -375,23 +408,99 @@ mod tests {
         // A non-strict include keeps the defaults.
         assert!(ferrostar.get(Attribute::EdgeNames));
 
-        let exclude = AttributesController::new(&options(
-            FilterAction::Exclude,
-            &[
-                "admin.country_code",
-                "admin.country_text",
-                "admin.state_code",
-                "admin.state_text",
-                "edge.names",
-            ],
-        ));
+        let exclude = AttributesController::new(
+            &options(
+                FilterAction::Exclude,
+                &[
+                    "admin.country_code",
+                    "admin.country_text",
+                    "admin.state_code",
+                    "admin.state_text",
+                    "edge.names",
+                ],
+            ),
+            false,
+        );
         assert!(!exclude.category_enabled(Category::Admin));
         assert!(!exclude.get(Attribute::EdgeNames));
 
         // Elevation only follows the interval, even when it's included.
         let mut elevation = options(FilterAction::Include, &["edge.elevation"]);
-        assert!(!AttributesController::new(&elevation).get(Attribute::EdgeElevation));
+        assert!(!AttributesController::new(&elevation, false).get(Attribute::EdgeElevation));
         elevation.elevation_interval = 30.0;
-        assert!(AttributesController::new(&elevation).get(Attribute::EdgeElevation));
+        assert!(AttributesController::new(&elevation, false).get(Attribute::EdgeElevation));
+    }
+
+    #[test]
+    fn strict_filters_as_mainline() {
+        // No filter action: strict changes nothing.
+        assert_eq!(
+            AttributesController::new(&Options::default(), true),
+            AttributesController::default()
+        );
+        // A strict filter with an unset action keeps the defaults too.
+        let mut unset = options(FilterAction::Include, &["edge.names"]);
+        unset.filter_action = 0;
+        assert_eq!(
+            AttributesController::new(&unset, true),
+            AttributesController::default()
+        );
+
+        // A strict include turns on exactly what is listed.
+        let include = AttributesController::new(
+            &options(
+                FilterAction::Include,
+                &["edge.names", "matched.point", "not.an.attribute"],
+            ),
+            true,
+        );
+        let on: Vec<&str> = ATTRIBUTES
+            .iter()
+            .zip(include.enabled.iter().copied())
+            .filter_map(|(&(name, _), on)| on.then_some(name))
+            .collect();
+        assert_eq!(on, ["edge.names", "matched.point"]);
+        assert!(include.category_enabled(Category::Matched));
+        assert!(!include.category_enabled(Category::Node));
+        assert!(!include.category_enabled(Category::Admin));
+        assert!(!include.category_enabled(Category::ShapeAttributes));
+
+        // A strict exclude turns on everything else, including what is off by default.
+        let exclude = AttributesController::new(
+            &options(FilterAction::Exclude, &["edge.names", "node.elapsed_time"]),
+            true,
+        );
+        let off: Vec<&str> = ATTRIBUTES
+            .iter()
+            .zip(exclude.enabled.iter().copied())
+            .filter_map(|(&(name, _), on)| (!on).then_some(name))
+            .collect();
+        // Elevation still only follows the interval.
+        assert_eq!(off, ["edge.names", "edge.elevation", "node.elapsed_time"]);
+        assert!(exclude.get(Attribute::ShapeAttributesSpeed));
+        assert!(exclude.get(Attribute::EdgeIsUrban));
+        assert!(exclude.category_enabled(Category::ShapeAttributes));
+
+        // And elevation follows the interval under a strict include as well.
+        let mut elevation = options(FilterAction::Include, &[]);
+        elevation.elevation_interval = 30.0;
+        let elevation = AttributesController::new(&elevation, true);
+        assert!(elevation.get(Attribute::EdgeElevation));
+        assert!(!elevation.get(Attribute::EdgeNames));
+        // `edge.` isn't one of the four categories, so nothing else is on.
+        assert!(!elevation.category_enabled(Category::Node));
+    }
+
+    #[test]
+    fn categories_as_mainline() {
+        let defaults = AttributesController::default();
+        for category in [Category::Node, Category::Admin, Category::Matched] {
+            assert!(defaults.category_enabled(category), "{category:?}");
+        }
+        assert!(!defaults.category_enabled(Category::ShapeAttributes));
+        // One attribute of a category is enough.
+        let one = AttributesController::new(&options(FilterAction::Include, &["node.fork"]), true);
+        assert!(one.category_enabled(Category::Node));
+        assert!(!one.category_enabled(Category::Matched));
     }
 }

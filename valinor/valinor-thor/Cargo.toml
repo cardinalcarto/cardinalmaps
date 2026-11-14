@@ -18,6 +18,9 @@ valhalla-graphtile = { workspace = true }
 valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
 valinor-sif = { workspace = true }
+# Mainline's `AttributesController` is shared with Tyr's serializers, as in mainline;
+# Thor will also call Tyr's `trace_attributes` serializer, as mainline's Thor does.
+valinor-tyr = { workspace = true }
 
 [dev-dependencies]
 base64 = { workspace = true }

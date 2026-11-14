@@ -192,10 +192,13 @@ and location time matches mainline exactly.
 `Thor::build_trip` is mainline's `TripLegBuilder` and the parts of `route_action.cc` that assemble
 the `trip`: a route per path (the best, then each alternate) and a `TripLeg` per leg.
 
-- Which attributes are written follows mainline's `AttributesController`: its defaults,
-  the request's `filters` (`include` and `exclude`; unknown names are ignored),
-  and `elevation_interval` for elevation. Ferrostar's `shape_attributes` filter gives
-  per-point times, lengths, speeds, and speed limits.
+- Which attributes are written follows mainline's `AttributesController`
+  (`valinor_tyr::AttributesController`, shared with Tyr's serializers as in mainline):
+  its defaults, the request's `filters` (`include` and `exclude`; unknown names are ignored),
+  and `elevation_interval` for elevation. Routes and `trace_route` use a non-strict filter
+  (listed attributes change, the rest keep their defaults); `trace_attributes` uses a strict one
+  (`include` turns everything else off, `exclude` turns everything else on).
+  Ferrostar's `shape_attributes` filter gives per-point times, lengths, speeds, and speed limits.
 - Each leg gets its locations (each keeping only the candidate edge the path uses,
   with the projected point and side of street at the ends, and each intermediate location's
   `leg_shape_index` and `distance_from_leg_origin`), a node per edge with the edge's attributes

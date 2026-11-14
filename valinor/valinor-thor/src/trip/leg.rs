@@ -30,7 +30,6 @@ use valhalla_proto::{BoundingBox, LatLng, LevelChange, Location, Options, Summar
 use valinor_sif::datetime::time_zone_name;
 use valinor_sif::{AnyCosting, Costing, PedestrianType, TimeInfo, TravelMode, recost_forward};
 
-use super::attributes::{Attribute, AttributesController, Category};
 use super::edge::{TripEdgeInput, add_intersecting_edges, add_trip_edge, set_elevation, tags};
 use super::shape::{
     bounding_box, encode_polyline, heading_along_polyline, heading_at_end_of_polyline, trim_shape,
@@ -41,6 +40,7 @@ use crate::graph;
 use crate::path::{EdgeTrim, Leg};
 use crate::search::point_of;
 use crate::time::{graph_id, location_time_info};
+use valinor_tyr::{Attribute, AttributesController, Category};
 
 /// Mainline's "no level" (`kMaxLevel`).
 const MAX_LEVEL: f32 = f32::MAX;
