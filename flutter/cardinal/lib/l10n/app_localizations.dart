@@ -99,6 +99,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Rerouting'**
   String get rerouting;
+
+  /// How long is left of a trip, in whole hours and minutes, shown while navigating in a narrow space: short forms of hour and minute, the same as the directions sheet's.
+  ///
+  /// In en, this message translates to:
+  /// **'{hours} hr {minutes} min'**
+  String tripHoursMinutes(int hours, int minutes);
+
+  /// How long is left of a trip when it's a whole number of hours, as tripHoursMinutes without the minutes.
+  ///
+  /// In en, this message translates to:
+  /// **'{hours} hr'**
+  String tripHours(int hours);
+
+  /// How long is left of a trip when it's under an hour, as tripHoursMinutes without the hours.
+  ///
+  /// In en, this message translates to:
+  /// **'{minutes} min'**
+  String tripMinutes(int minutes);
+
+  /// How long is left of a trip when it's less than a minute, as the directions sheet shows it.
+  ///
+  /// In en, this message translates to:
+  /// **'<1 min'**
+  String get tripUnderAMinute;
 }
 
 class _AppLocalizationsDelegate

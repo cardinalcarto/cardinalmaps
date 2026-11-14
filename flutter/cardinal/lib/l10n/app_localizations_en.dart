@@ -11,4 +11,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get rerouting => 'Rerouting';
+
+  @override
+  String tripHoursMinutes(int hours, int minutes) {
+    return '$hours hr $minutes min';
+  }
+
+  @override
+  String tripHours(int hours) {
+    return '$hours hr';
+  }
+
+  @override
+  String tripMinutes(int minutes) {
+    return '$minutes min';
+  }
+
+  @override
+  String get tripUnderAMinute => '<1 min';
 }

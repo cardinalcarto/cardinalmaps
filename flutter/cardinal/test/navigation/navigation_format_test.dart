@@ -1,6 +1,8 @@
+import 'package:cardinal/l10n/app_localizations.dart';
 import 'package:cardinal/navigation/navigation_format.dart';
 import 'package:cardinal/units.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() {
   String metric(double meters) =>
@@ -53,5 +55,80 @@ void main() {
     expect(imperial(2414), '1.5 mi');
     expect(imperial(16093.44), '10 mi');
     expect(imperial(16900), '11 mi');
+  });
+
+  group('trip duration', () {
+    final words = lookupAppLocalizations(const Locale('en'));
+    String duration(double seconds) => formatTripDuration(seconds, words);
+
+    test('under a minute is 0m, and nothing left is too', () {
+      expect(duration(0), '<1 min');
+      expect(duration(1), '<1 min');
+      expect(duration(59.9), '<1 min');
+      // Never negative, nor anything for a value that isn't one.
+      expect(duration(-5), '<1 min');
+      expect(duration(double.nan), '<1 min');
+      expect(duration(double.infinity), '<1 min');
+    });
+
+    test('minutes count down, truncated rather than rounded', () {
+      expect(duration(60), '1 min');
+      expect(duration(119), '1 min');
+      expect(duration(18 * 60 + 45), '18 min');
+      expect(duration(3599), '59 min');
+    });
+
+    test('at an hour, the minutes drop out when they are zero', () {
+      expect(duration(3600), '1 hr');
+      expect(duration(3659), '1 hr');
+      expect(duration(3660), '1 hr 1 min');
+      expect(duration(3600 + 5 * 60), '1 hr 5 min');
+      expect(duration(2 * 3600), '2 hr');
+      expect(duration(2 * 3600 - 1), '1 hr 59 min');
+    });
+
+    test('a long trip stays in hours, never days', () {
+      expect(duration(24 * 3600), '24 hr');
+      expect(duration(26 * 3600 + 5 * 60), '26 hr 5 min');
+      expect(duration(100 * 3600 + 59 * 60 + 59), '100 hr 59 min');
+    });
+  });
+
+  group('arrival time', () {
+    Future<String> arrival(
+      WidgetTester tester,
+      DateTime when, {
+      required bool use24,
+    }) async {
+      late String shown;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(alwaysUse24HourFormat: use24),
+            child: Builder(
+              builder: (context) {
+                shown = formatArrivalTime(context, when);
+                return const SizedBox();
+              },
+            ),
+          ),
+        ),
+      );
+      return shown;
+    }
+
+    testWidgets('in the 12-hour clock, or the 24-hour one if set', (
+      tester,
+    ) async {
+      final afternoon = DateTime(2026, 11, 14, 17, 20);
+      final morning = DateTime(2026, 11, 14, 9, 5);
+      final midnight = DateTime(2026, 11, 15, 0, 7);
+      expect(await arrival(tester, afternoon, use24: false), '5:20 PM');
+      expect(await arrival(tester, afternoon, use24: true), '17:20');
+      expect(await arrival(tester, morning, use24: false), '9:05 AM');
+      expect(await arrival(tester, morning, use24: true), '09:05');
+      expect(await arrival(tester, midnight, use24: false), '12:07 AM');
+      expect(await arrival(tester, midnight, use24: true), '00:07');
+    });
   });
 }

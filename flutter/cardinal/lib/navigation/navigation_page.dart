@@ -6,8 +6,8 @@
 /// one map, in its style, and going back to directions finds them as they were.
 ///
 /// The layout follows Ferrostar's in each orientation (see `NavigationView`); for now
-/// it holds the maneuver banner, the recenter button, and End, where Ferrostar's trip
-/// progress goes.
+/// it holds the maneuver banner, the recenter button, and the trip-progress pill with
+/// End.
 library;
 
 import 'dart:async';
@@ -29,6 +29,7 @@ import 'navigation_camera.dart';
 import 'navigation_controller.dart';
 import 'navigation_map.dart';
 import 'navigation_scope.dart';
+import 'trip_progress.dart';
 
 /// The navigation screen's page in the sheet: it hides the sheet and shows the
 /// navigation screen over the map while it's open.
@@ -141,8 +142,7 @@ class NavigationLayer extends StatelessWidget {
 ///   recenter button at the top of the end half.
 ///
 /// Content keeps at least 16 px from each edge, counting the system's bars, as iOS's
-/// overlay does (spec §1.3). For now only End is where trip progress goes, at its end,
-/// where Ferrostar's trip progress has its own exit button.
+/// overlay does (spec §1.3).
 class NavigationView extends StatefulWidget {
   const NavigationView({super.key});
 
@@ -256,11 +256,13 @@ class _NavigationViewState extends State<NavigationView> {
           start: start,
           end: startHalfEnd,
           bottom: bottom,
-          child: Align(
-            alignment: AlignmentDirectional.centerEnd,
-            child: AppButton(
-              label: 'End',
-              onPressed: () => endNavigation(context),
+          child: ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) => TripProgressPill(
+              progress: controller.update?.progress,
+              arrived: controller.state == NavigationState.arrived,
+              units: _units.onDevice,
+              onEnd: () => endNavigation(context),
             ),
           ),
         ),

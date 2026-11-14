@@ -315,7 +315,7 @@ void main() {
       expect(navigation.state, NavigationState.acquiring);
       expect(navigation.route, same(best));
       expect(navigation.mode, TravelMode.driving);
-      expect(find.widgetWithText(FilledButton, 'End'), findsOneWidget);
+      expect(find.byTooltip('End'), findsOneWidget);
       expect(find.text('Start Navigation'), findsNothing);
       // The trip's own drawing takes the place of the directions'.
       expect(lines(), isEmpty);
@@ -409,21 +409,60 @@ void main() {
     testWidgets('Go starts it on iOS, with Cupertino controls', (tester) async {
       await start(tester, platform: TargetPlatform.iOS);
       expect(navigation.state, NavigationState.acquiring);
-      expect(find.widgetWithText(CupertinoButton, 'End'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.bySemanticsLabel('End'),
+          matching: find.byType(CupertinoButton),
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('End goes back to directions, with the trip over', (
       tester,
     ) async {
       await start(tester);
-      await tester.tap(find.text('End'));
+      await tester.tap(find.byTooltip('End'));
       await tester.pumpAndSettle();
       expect(navigation.state, NavigationState.idle);
       expect(find.text('Start Navigation'), findsOneWidget);
-      expect(find.text('End'), findsNothing);
+      expect(find.byTooltip('End'), findsNothing);
       expect(lines(), hasLength(2));
       expect(features(navigationSource), isEmpty);
       expect(map.subject, isTrue);
+    });
+
+    testWidgets(
+      'trip progress shows the time and distance left, in the units set',
+      (tester) async {
+        navigateInTestTime();
+        await start(tester);
+        await fix(tester, toManeuver: 250);
+        // 1,250 m and 125 s left, the test's region being the US.
+        expect(find.text('0.8 mi'), findsOneWidget);
+        expect(find.text('2 min'), findsOneWidget);
+        await store.settings.set(unitSystem, UnitSystem.metric);
+        await tester.pumpAndSettle();
+        expect(find.text('1.3 km'), findsOneWidget);
+      },
+    );
+
+    testWidgets('arrived, trip progress stays, with nothing left, until End', (
+      tester,
+    ) async {
+      navigateInTestTime();
+      await start(tester);
+      await fix(tester);
+      sessions.last.next = fakeUpdate(status: TripStatus.complete);
+      navigationLocation.send(fakeFix(4, 1));
+      await tester.pumpAndSettle();
+      expect(navigation.state, NavigationState.arrived);
+      expect(find.text('<1 min'), findsOneWidget);
+      expect(find.text('0 ft'), findsOneWidget);
+      await tester.tap(find.byTooltip('End'));
+      await tester.pumpAndSettle();
+      expect(navigation.state, NavigationState.idle);
+      expect(find.text('Start Navigation'), findsOneWidget);
     });
 
     testWidgets('ending it fits the routes again, flat and north up', (
@@ -434,7 +473,7 @@ void main() {
       expect(map.subjectBearing, isNull);
       expect(map.subjectPitch, isNull);
       final before = map.subjectsSet;
-      await tester.tap(find.text('End'));
+      await tester.tap(find.byTooltip('End'));
       await tester.pumpAndSettle();
       expect(map.subjectsSet, greaterThan(before));
       expect(map.subjectBearing, 0);
