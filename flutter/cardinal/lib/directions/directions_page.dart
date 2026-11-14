@@ -286,6 +286,10 @@ class _DirectionsPageState extends State<DirectionsPage> {
       route: route,
       mode: directions.mode,
       wheelchair: directions.wheelchair,
+      destinationName: switch (directions.to) {
+        RouteEndpoint(:final place?) => placeTitle(place),
+        _ => null,
+      },
     );
     unawaited(context.push(navigationLocation(widget.to)));
   }

@@ -46,6 +46,14 @@
   "@navigationUnmute": {
     "description": "The navigation screen's button that lets spoken directions be heard again, as its tooltip and spoken label, shown while they're silenced."
   },
+  "navigationShowSteps": "Show upcoming maneuvers",
+  "@navigationShowSteps": {
+    "description": "The handle along the bottom of the navigation screen's maneuver banner, as its spoken label while closed: opens the banner into the list of the trip's maneuvers after the next one."
+  },
+  "navigationHideSteps": "Hide upcoming maneuvers",
+  "@navigationHideSteps": {
+    "description": "The handle at the bottom of the navigation screen's list of upcoming maneuvers, as its spoken label while the list is open: closes the list back into the maneuver banner."
+  },
   "navigationEnd": "End",
   "@navigationEnd": {
     "description": "The button at the end of the trip-progress bar that ends turn-by-turn navigation and goes back to directions, as its tooltip and spoken label."
@@ -85,5 +93,73 @@
   "navigationNotificationChannel": "Navigation",
   "@navigationNotificationChannel": {
     "description": "The name of the Android notification channel for the notification shown while navigating, as the system's notification settings list it."
+  },
+  "navigationWaitingForGps": "Waiting for GPS…",
+  "@navigationWaitingForGps": {
+    "description": "The navigation screen's status card, where the maneuver banner goes, after the trip starts and before the first location fix good enough to start from."
+  },
+  "navigationOffRoute": "Off route",
+  "@navigationOffRoute": {
+    "description": "The navigation screen's status card, where the maneuver banner goes, for the few seconds after you leave the route before a new one is asked for; the app finds the new route by itself."
+  },
+  "navigationRerouting": "Finding a new route…",
+  "@navigationRerouting": {
+    "description": "The navigation screen's status card, where the maneuver banner goes, while a new route from where you are is being found, after you left the route."
+  },
+  "navigationRerouteNoRoute": "No route from here",
+  "@navigationRerouteNoRoute": {
+    "description": "The navigation screen's status card, after a new route couldn't be found because the router knows no way from where you are, as when you're off any road it knows."
+  },
+  "navigationRerouteOutsideArea": "Outside the offline area",
+  "@navigationRerouteOutsideArea": {
+    "description": "The navigation screen's status card, after a new route couldn't be found because where you are is outside the downloaded offline area's streets."
+  },
+  "navigationRerouteNoOfflineArea": "No offline area to route in",
+  "@navigationRerouteNoOfflineArea": {
+    "description": "The navigation screen's status card, after a new route couldn't be found because there's no downloaded offline area to find one in."
+  },
+  "navigationRerouteFailed": "Couldn't find a new route",
+  "@navigationRerouteFailed": {
+    "description": "The navigation screen's status card, after a new route couldn't be found for any other reason."
+  },
+  "navigationRerouteRetrying": "Will keep trying",
+  "@navigationRerouteRetrying": {
+    "description": "The line under the navigation screen's status card that says a new route couldn't be found: the app tries again by itself, every so often, until it finds one or you're back on the route."
+  },
+  "navigationLocationOff": "Location is off",
+  "@navigationLocationOff": {
+    "description": "The navigation screen's status card when the device's location service was turned off during a trip, so there are no more location fixes."
+  },
+  "navigationLocationOffDetail": "Turn it on to keep navigating",
+  "@navigationLocationOffDetail": {
+    "description": "The line under the navigation screen's \"Location is off\" status card, above its Open settings button."
+  },
+  "navigationLocationDenied": "Location is turned off for Cardinal",
+  "@navigationLocationDenied": {
+    "description": "The navigation screen's status card when the app's permission to use your location was taken away during a trip."
+  },
+  "navigationLocationDeniedDetail": "Allow it to keep navigating",
+  "@navigationLocationDeniedDetail": {
+    "description": "The line under the navigation screen's \"Location is turned off for Cardinal\" status card, above its Open settings button."
+  },
+  "navigationLocationFailed": "Your location stopped updating",
+  "@navigationLocationFailed": {
+    "description": "The navigation screen's status card when the device's location service failed or stopped sending fixes during a trip, for a reason it didn't say."
+  },
+  "navigationOpenSettings": "Open settings",
+  "@navigationOpenSettings": {
+    "description": "The button on the navigation screen's status card for location turned off or not allowed: opens the device's location settings, or the app's settings, to put it right."
+  },
+  "navigationTryAgain": "Try again",
+  "@navigationTryAgain": {
+    "description": "The button on the navigation screen's status card for location that stopped updating: listens for location fixes again."
+  },
+  "navigationGpsLost": "GPS signal lost",
+  "@navigationGpsLost": {
+    "description": "The small indicator under the navigation screen's map buttons when no location fix has come for a few seconds, as in a tunnel; it goes once fixes come again."
+  },
+  "navigationArrived": "You've arrived",
+  "@navigationArrived": {
+    "description": "The navigation screen's banner at the end of a trip, above the destination's name, until you end the trip."
   }
 }

@@ -43,6 +43,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get navigationUnmute => 'Unmute';
 
   @override
+  String get navigationShowSteps => 'Show upcoming maneuvers';
+
+  @override
+  String get navigationHideSteps => 'Hide upcoming maneuvers';
+
+  @override
   String get navigationEnd => 'End';
 
   @override
@@ -70,4 +76,55 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get navigationNotificationChannel => 'Navigation';
+
+  @override
+  String get navigationWaitingForGps => 'Waiting for GPS…';
+
+  @override
+  String get navigationOffRoute => 'Off route';
+
+  @override
+  String get navigationRerouting => 'Finding a new route…';
+
+  @override
+  String get navigationRerouteNoRoute => 'No route from here';
+
+  @override
+  String get navigationRerouteOutsideArea => 'Outside the offline area';
+
+  @override
+  String get navigationRerouteNoOfflineArea => 'No offline area to route in';
+
+  @override
+  String get navigationRerouteFailed => 'Couldn\'t find a new route';
+
+  @override
+  String get navigationRerouteRetrying => 'Will keep trying';
+
+  @override
+  String get navigationLocationOff => 'Location is off';
+
+  @override
+  String get navigationLocationOffDetail => 'Turn it on to keep navigating';
+
+  @override
+  String get navigationLocationDenied => 'Location is turned off for Cardinal';
+
+  @override
+  String get navigationLocationDeniedDetail => 'Allow it to keep navigating';
+
+  @override
+  String get navigationLocationFailed => 'Your location stopped updating';
+
+  @override
+  String get navigationOpenSettings => 'Open settings';
+
+  @override
+  String get navigationTryAgain => 'Try again';
+
+  @override
+  String get navigationGpsLost => 'GPS signal lost';
+
+  @override
+  String get navigationArrived => 'You\'ve arrived';
 }

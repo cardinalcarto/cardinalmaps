@@ -39,6 +39,36 @@
 // 4. `4-portrait-muted.png`: 1, muted.
 // 5. `5-portrait-dark.png`: 1 in the dark theme.
 //
+// `steps`, for the maneuver banner's list of steps, on the long drive once it's 300 m
+// along with steps ahead:
+//
+// 1. `1-portrait-collapsed.png`: the banner closed, with its handle.
+// 2. `2-portrait-expanded.png`: the banner open into the list.
+// 3. `3-landscape-expanded.png`: 2 in landscape.
+// 4. `4-portrait-expanded-dark.png`: 2 in the dark theme.
+//
+// The list is opened and closed through the banner's own `expanded` notifier, as a tap
+// on its handle sets it, rather than by tapping.
+//
+// `status`, for the status cards in the banner's place, the GPS-lost indicator and the
+// arrival, each made by steering the simulated trip (`SimulatedTripLocation`, as
+// `main.dart`'s `simulatedTrip`): holding its fixes back, setting them off the route,
+// or putting a location error on them.
+//
+// 1. `1-waiting-for-gps.png`: the long drive started with its fixes held back.
+// 2. `2-gps-lost.png`: 300 m along a named road, fixes held back for longer than
+//    `staleFixAge`.
+// 3. `3-location-off.png`: then the location service's "off" error on them.
+// 4. `4-off-route.png`: fixes set 150 m north of the route, before the hold is up.
+// 5. `5-rerouting.png`: the new route being found, if a frame catches it: the offline
+//    router answers in a fraction of a second, so it's tried on a few reroutes.
+// 6. `6-reroute-failed.png`: fixes set 60 km north, outside the offline area, so the
+//    new route fails and the controller waits to try again.
+// 7. `7-arrival.png`: a short drive to the end of the long drive's route, arrived,
+//    once the camera has eased to the destination.
+// 8. `8-arrival-landscape.png`: 7 in landscape.
+// 9. `9-arrival-dark.png`: 7 in the dark theme.
+//
 // The overview and Recenter are pressed by calling the buttons' own callbacks, as a tap
 // would, rather than by tapping.
 //
@@ -52,6 +82,7 @@
 // it if there was none. That's all the drives change in the store.
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:cardinal/config.dart' show simulateNavigation;
@@ -59,9 +90,12 @@ import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/main.dart' as app;
 import 'package:cardinal/map/map.dart';
 import 'package:cardinal/map/map_control.dart';
+import 'package:cardinal/navigation/maneuver_banner.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
+import 'package:cardinal/navigation/navigation_location.dart';
 import 'package:cardinal/navigation/navigation_page.dart';
 import 'package:cardinal/navigation/navigation_scope.dart';
+import 'package:cardinal/navigation/navigation_status.dart';
 import 'package:cardinal/navigation/road_name.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/store/src/database.dart' show SettingRow;
@@ -86,7 +120,8 @@ const outDir = String.fromEnvironment('CARDINAL_SCREENSHOTS_DIR');
 const bucketDir = String.fromEnvironment('CARDINAL_SCREENSHOTS_BUCKET');
 const releasesUrl = String.fromEnvironment('CARDINAL_RELEASES_URL');
 
-/// Which screenshots to take: `banner`, `progress` or `buttons` (see above).
+/// Which screenshots to take: `banner`, `progress`, `buttons`, `steps` or `status` (see
+/// above).
 const shotSet = String.fromEnvironment(
   'CARDINAL_SCREENSHOTS_SET',
   defaultValue: 'banner',
@@ -122,10 +157,16 @@ void main() {
           'needs CARDINAL_SCREENSHOTS_DIR and CARDINAL_SIMULATE_NAVIGATION=true',
         );
       }
-      if (!const {'banner', 'progress', 'buttons'}.contains(shotSet)) {
+      if (!const {
+        'banner',
+        'progress',
+        'buttons',
+        'steps',
+        'status',
+      }.contains(shotSet)) {
         fail(
-          'CARDINAL_SCREENSHOTS_SET is banner, progress or buttons, '
-          'not $shotSet',
+          'CARDINAL_SCREENSHOTS_SET is banner, progress, buttons, steps or '
+          'status, not $shotSet',
         );
       }
       await Directory(outDir).create(recursive: true);
@@ -171,6 +212,29 @@ void main() {
           await _navigate(tester, context, route);
           await _progress(tester, binding, controller);
           await _end(tester, context);
+          return;
+        }
+        if (shotSet == 'steps') {
+          await _navigate(tester, context, route);
+          await _steps(tester, binding, controller);
+          await _end(tester, context);
+          return;
+        }
+        if (shotSet == 'status') {
+          final trip = app.simulatedTrip!;
+          try {
+            await _status(tester, context, controller, trip, route);
+            await _end(tester, context);
+            final short = await _route(routes, _beforeEnd(route));
+            _logSteps(short);
+            await _navigate(tester, context, short);
+            await _arrival(tester, binding, controller);
+            await _end(tester, context);
+          } finally {
+            trip
+              ..paused = false
+              ..offsetNorth = 0;
+          }
           return;
         }
         if (shotSet == 'buttons') {
@@ -315,6 +379,209 @@ Future<void> _buttons(
   await _settle(tester, const Duration(seconds: 2));
 }
 
+/// On the long drive, once it's [into] meters along with steps ahead to list: the
+/// banner closed with its handle, then open into the list in portrait, landscape and
+/// the dark theme.
+Future<void> _steps(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding,
+  NavigationController controller, {
+  double into = 300,
+}) async {
+  double? first;
+  final along = await _waitFor(tester, controller, (update) {
+    final left = update.progress?.distanceRemaining;
+    if (left == null) return false;
+    first ??= left;
+    return update.visualInstruction != null &&
+        left < first! - into &&
+        update.stepIndex + 2 < controller.steps.length;
+  }, within: const Duration(minutes: 8));
+  if (along == null) {
+    debugPrint('nav-shots: the drive never got $into m along with steps ahead');
+    return;
+  }
+  final expanded = tester
+      .widget<ManeuverBanner>(find.byType(ManeuverBanner))
+      .expanded!;
+  await _shoot(tester, '1-portrait-collapsed', controller);
+  expanded.value = true;
+  await _settle(tester, const Duration(seconds: 1));
+  await _shoot(tester, '2-portrait-expanded', controller);
+
+  _setView(tester, landscape: true);
+  await _settle(tester, const Duration(seconds: 2));
+  await _shoot(tester, '3-landscape-expanded', controller);
+  _setView(tester, landscape: false);
+  await _settle(tester, const Duration(seconds: 2));
+
+  _brightness(binding, Brightness.dark);
+  await _settle(tester, const Duration(seconds: 2));
+  await _shoot(tester, '4-portrait-expanded-dark', controller);
+  _brightness(binding, Brightness.light);
+  expanded.value = false;
+  await _settle(tester, const Duration(seconds: 1));
+}
+
+/// The status cards and the GPS-lost indicator, on the long drive, made by steering
+/// [trip] (see the set's description above).
+Future<void> _status(
+  WidgetTester tester,
+  BuildContext context,
+  NavigationController controller,
+  SimulatedTripLocation trip,
+  DirectionsRoute route,
+) async {
+  trip.paused = true;
+  await _navigate(tester, context, route);
+  await _shoot(tester, '1-waiting-for-gps', controller);
+  trip.paused = false;
+
+  double? first;
+  const into = 300.0;
+  final along = await _waitFor(tester, controller, (update) {
+    final left = update.progress?.distanceRemaining;
+    if (left == null) return false;
+    first ??= left;
+    return update.visualInstruction != null &&
+        left < first! - into &&
+        roadNameToShow(controller, following: true) != null;
+  }, within: const Duration(minutes: 8));
+  if (along == null) {
+    debugPrint('nav-shots: the drive never got $into m along a named road');
+    return;
+  }
+
+  trip.paused = true;
+  await _settle(tester, staleFixAge + const Duration(seconds: 2));
+  await _shoot(tester, '2-gps-lost', controller);
+  trip.fail(const NavigationLocationError(LocationProblem.off));
+  await _settle(tester, const Duration(seconds: 1));
+  await _shoot(tester, '3-location-off', controller);
+  // The next fix puts it right.
+  trip.paused = false;
+  await _settle(tester, const Duration(seconds: 3));
+
+  trip.offsetNorth = 150;
+  if (await _waitForState(
+    tester,
+    controller,
+    (c) => c.state == NavigationState.offRoute && c.rerouteFailure == null,
+    within: const Duration(seconds: 20),
+  )) {
+    // A moment for the chevron to get there.
+    await _settle(tester, const Duration(seconds: 1));
+    if (controller.state == NavigationState.offRoute) {
+      await _shoot(tester, '4-off-route', controller);
+    }
+  } else {
+    debugPrint('nav-shots: never off the route');
+  }
+
+  var caught = false;
+  for (var attempt = 0; attempt < 4 && !caught; attempt++) {
+    caught = await _catchRerouting(tester, controller);
+  }
+  if (!caught) debugPrint('nav-shots: no frame caught a reroute');
+
+  trip.offsetNorth = 60000;
+  if (await _waitForState(
+    tester,
+    controller,
+    (c) => c.state == NavigationState.offRoute && c.rerouteFailure != null,
+    within: const Duration(seconds: 60),
+  )) {
+    await _settle(tester, const Duration(seconds: 1));
+    await _shoot(tester, '6-reroute-failed', controller);
+    debugPrint(
+      'nav-shots: reroute failed: ${controller.rerouteFailure} '
+      '(${controller.rerouteError})',
+    );
+  } else {
+    debugPrint('nav-shots: no new route failed');
+  }
+  trip.offsetNorth = 0;
+}
+
+/// Waits for a frame that shows the new route being found, and screenshots it as
+/// `5-rerouting`; false if none came before the next reroute could have.
+Future<bool> _catchRerouting(
+  WidgetTester tester,
+  NavigationController controller,
+) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 20));
+  while (DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 16));
+    if (controller.state != NavigationState.rerouting) continue;
+    // A frame built with it, as captured.
+    await tester.pump();
+    if (find.text('Finding a new route…').evaluate().isEmpty) continue;
+    await _capture(tester, '5-rerouting', controller);
+    return true;
+  }
+  return false;
+}
+
+/// Waits for [test] of [controller] to hold, for up to [within]; whether it did.
+Future<bool> _waitForState(
+  WidgetTester tester,
+  NavigationController controller,
+  bool Function(NavigationController controller) test, {
+  required Duration within,
+}) async {
+  final deadline = DateTime.now().add(within);
+  while (DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 100));
+    if (test(controller)) return true;
+  }
+  return false;
+}
+
+/// Where to start a short drive to the end of [route]: about 500 m before it, along
+/// its line.
+LngLat _beforeEnd(DirectionsRoute route) {
+  final line = route.geometry;
+  var left = 500.0;
+  for (var i = line.length - 1; i > 0; i--) {
+    final a = line[i], b = line[i - 1];
+    final dLat = (b.lat - a.lat) * 111320;
+    final dLng = (b.lng - a.lng) * 111320 * math.cos(a.lat * math.pi / 180);
+    left -= math.sqrt(dLat * dLat + dLng * dLng);
+    if (left <= 0) return LngLat(b.lng, b.lat);
+  }
+  return LngLat(line.first.lng, line.first.lat);
+}
+
+/// Waits for the short drive to arrive, then screenshots the arrival once the camera
+/// has eased to the destination, in portrait, landscape and the dark theme.
+Future<void> _arrival(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding,
+  NavigationController controller,
+) async {
+  if (!await _waitForState(
+    tester,
+    controller,
+    (c) => c.state == NavigationState.arrived,
+    within: const Duration(minutes: 3),
+  )) {
+    debugPrint('nav-shots: the short drive never arrived');
+    return;
+  }
+  await _settle(tester, const Duration(seconds: 3));
+  await _shoot(tester, '7-arrival', controller);
+  _setView(tester, landscape: true);
+  await _settle(tester, const Duration(seconds: 3));
+  await _shoot(tester, '8-arrival-landscape', controller);
+  _setView(tester, landscape: false);
+  await _settle(tester, const Duration(seconds: 2));
+  _brightness(binding, Brightness.dark);
+  await _settle(tester, const Duration(seconds: 2));
+  await _shoot(tester, '9-arrival-dark', controller);
+  _brightness(binding, Brightness.light);
+  await _settle(tester, const Duration(seconds: 1));
+}
+
 /// Presses the navigation screen's map button labeled [tooltip] by calling its own
 /// callback, as a tap on it would.
 void _press(WidgetTester tester, String tooltip) {
@@ -338,8 +605,13 @@ Future<void> _navigate(
   BuildContext context,
   DirectionsRoute route,
 ) async {
-  NavigationScope.of(context).controller
-      .start(route: route, mode: TravelMode.driving, wheelchair: false);
+  // Named as directions name the stored place.
+  NavigationScope.of(context).controller.start(
+    route: route,
+    mode: TravelMode.driving,
+    wheelchair: false,
+    destinationName: 'Navigation screenshots',
+  );
   unawaited(GoRouter.of(context).push(navigationLocation(destinationId)));
   await _settle(tester, const Duration(seconds: 2));
 }
@@ -493,6 +765,15 @@ Future<void> _shoot(
 ) async {
   // A frame with whatever just changed.
   await tester.pump(const Duration(milliseconds: 100));
+  await _capture(tester, name, controller);
+}
+
+/// Saves the app's view as `<name>.png` as last drawn, and logs what the banner shows.
+Future<void> _capture(
+  WidgetTester tester,
+  String name,
+  NavigationController controller,
+) async {
   final boundary = _rootBoundary(tester);
   final image = await boundary.toImage(pixelRatio: 2);
   final png = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -508,7 +789,9 @@ Future<void> _shoot(
     '"${visual?.primary.text}" / "${visual?.secondary?.text}" '
     'in ${controller.update?.progress?.distanceToNextManeuver.round()} m; '
     '${controller.update?.progress?.distanceRemaining.round()} m and '
-    '${controller.update?.progress?.durationRemaining.round()} s left',
+    '${controller.update?.progress?.durationRemaining.round()} s left; '
+    '${controller.state.name}, ${controller.locationProblem?.name}, '
+    '${controller.rerouteFailure?.name}',
   );
 }
 

@@ -248,12 +248,66 @@ class SimulatedLocationSource implements NavigationLocationSource {
 ///
 /// A new route doesn't change where the fixes go: they keep following the route the trip
 /// started with, as a driver who ignores the new route would.
+///
+/// Development tools can steer it, as the navigation screenshots do to show the
+/// screen's status cards: [paused] holds the fixes back, as a tunnel would;
+/// [offsetNorth] sets them off the route; and [fail] puts an error on the fixes being
+/// listened to, as the location service does when it's turned off.
 class SimulatedTripLocation implements NavigationLocationSource {
   SimulatedTripLocation(this.route);
 
   final NavigableRoute Function() route;
 
+  /// Whether fixes are held back: the simulation goes on, but none of its fixes come
+  /// while this is set.
+  bool paused = false;
+
+  /// How far north of where the simulation is each fix is put, in meters.
+  double offsetNorth = 0;
+
+  /// The fixes being listened to, if any.
+  StreamController<NavLocation>? _listened;
+
+  /// Puts [error] on the fixes being listened to, if any.
+  void fail(Object error) => _listened?.addError(error);
+
   @override
-  Stream<NavLocation> fixes(NavigationMode mode) =>
-      SimulatedLocationSource(route()).fixes(mode);
+  Stream<NavLocation> fixes(NavigationMode mode) {
+    StreamSubscription<NavLocation>? simulated;
+    late final StreamController<NavLocation> out;
+    out = StreamController<NavLocation>(
+      onListen: () {
+        _listened = out;
+        simulated = SimulatedLocationSource(route())
+            .fixes(mode)
+            .listen(
+              (fix) {
+                if (!paused) out.add(_offset(fix));
+              },
+              onError: out.addError,
+              onDone: out.close,
+            );
+      },
+      onCancel: () {
+        if (_listened == out) _listened = null;
+        return simulated?.cancel();
+      },
+    );
+    return out.stream;
+  }
+
+  NavLocation _offset(NavLocation fix) {
+    if (offsetNorth == 0) return fix;
+    // A degree of latitude is 111,320 m, near enough anywhere.
+    return NavLocation(
+      lat: fix.lat + offsetNorth / 111320,
+      lng: fix.lng,
+      horizontalAccuracy: fix.horizontalAccuracy,
+      course: fix.course,
+      courseAccuracy: fix.courseAccuracy,
+      speed: fix.speed,
+      speedAccuracy: fix.speedAccuracy,
+      timestampMs: fix.timestampMs,
+    );
+  }
 }

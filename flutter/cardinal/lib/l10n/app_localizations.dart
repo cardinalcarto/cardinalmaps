@@ -148,6 +148,18 @@ abstract class AppLocalizations {
   /// **'Unmute'**
   String get navigationUnmute;
 
+  /// The handle along the bottom of the navigation screen's maneuver banner, as its spoken label while closed: opens the banner into the list of the trip's maneuvers after the next one.
+  ///
+  /// In en, this message translates to:
+  /// **'Show upcoming maneuvers'**
+  String get navigationShowSteps;
+
+  /// The handle at the bottom of the navigation screen's list of upcoming maneuvers, as its spoken label while the list is open: closes the list back into the maneuver banner.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide upcoming maneuvers'**
+  String get navigationHideSteps;
+
   /// The button at the end of the trip-progress bar that ends turn-by-turn navigation and goes back to directions, as its tooltip and spoken label.
   ///
   /// In en, this message translates to:
@@ -189,6 +201,108 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Navigation'**
   String get navigationNotificationChannel;
+
+  /// The navigation screen's status card, where the maneuver banner goes, after the trip starts and before the first location fix good enough to start from.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for GPS…'**
+  String get navigationWaitingForGps;
+
+  /// The navigation screen's status card, where the maneuver banner goes, for the few seconds after you leave the route before a new one is asked for; the app finds the new route by itself.
+  ///
+  /// In en, this message translates to:
+  /// **'Off route'**
+  String get navigationOffRoute;
+
+  /// The navigation screen's status card, where the maneuver banner goes, while a new route from where you are is being found, after you left the route.
+  ///
+  /// In en, this message translates to:
+  /// **'Finding a new route…'**
+  String get navigationRerouting;
+
+  /// The navigation screen's status card, after a new route couldn't be found because the router knows no way from where you are, as when you're off any road it knows.
+  ///
+  /// In en, this message translates to:
+  /// **'No route from here'**
+  String get navigationRerouteNoRoute;
+
+  /// The navigation screen's status card, after a new route couldn't be found because where you are is outside the downloaded offline area's streets.
+  ///
+  /// In en, this message translates to:
+  /// **'Outside the offline area'**
+  String get navigationRerouteOutsideArea;
+
+  /// The navigation screen's status card, after a new route couldn't be found because there's no downloaded offline area to find one in.
+  ///
+  /// In en, this message translates to:
+  /// **'No offline area to route in'**
+  String get navigationRerouteNoOfflineArea;
+
+  /// The navigation screen's status card, after a new route couldn't be found for any other reason.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t find a new route'**
+  String get navigationRerouteFailed;
+
+  /// The line under the navigation screen's status card that says a new route couldn't be found: the app tries again by itself, every so often, until it finds one or you're back on the route.
+  ///
+  /// In en, this message translates to:
+  /// **'Will keep trying'**
+  String get navigationRerouteRetrying;
+
+  /// The navigation screen's status card when the device's location service was turned off during a trip, so there are no more location fixes.
+  ///
+  /// In en, this message translates to:
+  /// **'Location is off'**
+  String get navigationLocationOff;
+
+  /// The line under the navigation screen's "Location is off" status card, above its Open settings button.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn it on to keep navigating'**
+  String get navigationLocationOffDetail;
+
+  /// The navigation screen's status card when the app's permission to use your location was taken away during a trip.
+  ///
+  /// In en, this message translates to:
+  /// **'Location is turned off for Cardinal'**
+  String get navigationLocationDenied;
+
+  /// The line under the navigation screen's "Location is turned off for Cardinal" status card, above its Open settings button.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow it to keep navigating'**
+  String get navigationLocationDeniedDetail;
+
+  /// The navigation screen's status card when the device's location service failed or stopped sending fixes during a trip, for a reason it didn't say.
+  ///
+  /// In en, this message translates to:
+  /// **'Your location stopped updating'**
+  String get navigationLocationFailed;
+
+  /// The button on the navigation screen's status card for location turned off or not allowed: opens the device's location settings, or the app's settings, to put it right.
+  ///
+  /// In en, this message translates to:
+  /// **'Open settings'**
+  String get navigationOpenSettings;
+
+  /// The button on the navigation screen's status card for location that stopped updating: listens for location fixes again.
+  ///
+  /// In en, this message translates to:
+  /// **'Try again'**
+  String get navigationTryAgain;
+
+  /// The small indicator under the navigation screen's map buttons when no location fix has come for a few seconds, as in a tunnel; it goes once fixes come again.
+  ///
+  /// In en, this message translates to:
+  /// **'GPS signal lost'**
+  String get navigationGpsLost;
+
+  /// The navigation screen's banner at the end of a trip, above the destination's name, until you end the trip.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'ve arrived'**
+  String get navigationArrived;
 }
 
 class _AppLocalizationsDelegate

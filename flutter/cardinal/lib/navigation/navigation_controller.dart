@@ -196,6 +196,12 @@ class NavigationController extends ChangeNotifier {
   DirectionsRoute? get route => _route;
   DirectionsRoute? _route;
 
+  /// What the trip's destination is called, as directions named it, to say you've
+  /// arrived there; null when idle, or when it has no name to give, as when it's where
+  /// you are.
+  String? get destinationName => _destinationName;
+  String? _destinationName;
+
   /// [route]'s steps, which [NavUpdate.stepIndex] indexes.
   List<NavStep> get steps => _steps;
   List<NavStep> _steps = const [];
@@ -295,15 +301,16 @@ class NavigationController extends ChangeNotifier {
   Future<void> _calls = Future.value();
 
   /// Starts navigating [route], traveling by [mode], which can't be transit, and by
-  /// wheelchair if [mode] is walking and [wheelchair] is set, as [route] was found. Fixes
-  /// start coming, the screen stays on, and the route's announcements are spoken as
-  /// they're due.
+  /// wheelchair if [mode] is walking and [wheelchair] is set, as [route] was found, to
+  /// the place called [destinationName], if it has a name. Fixes start coming, the
+  /// screen stays on, and the route's announcements are spoken as they're due.
   ///
   /// Only from idle: [end] the trip under way first.
   void start({
     required DirectionsRoute route,
     required TravelMode mode,
     required bool wheelchair,
+    String? destinationName,
   }) {
     if (_state != NavigationState.idle) {
       throw StateError('a trip is under way ($_state)');
@@ -317,6 +324,7 @@ class NavigationController extends ChangeNotifier {
     _wheelchair = mode.byWheelchair(wheelchair: wheelchair);
     _navigationMode = navigation;
     _route = route;
+    _destinationName = destinationName;
     _steps = route.navigable.steps();
     _language = route.navigable.language();
     final end = route.geometry.last;
@@ -611,6 +619,7 @@ class NavigationController extends ChangeNotifier {
     _wheelchair = false;
     _navigationMode = null;
     _route = null;
+    _destinationName = null;
     _steps = const [];
     _language = null;
     _update = null;

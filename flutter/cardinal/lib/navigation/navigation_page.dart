@@ -6,8 +6,9 @@
 /// one map, in its style, and going back to directions finds them as they were.
 ///
 /// The layout follows Ferrostar's in each orientation (see `NavigationView`); for now
-/// it holds the maneuver banner, the camera and mute buttons, the road-name pill, and
-/// the trip-progress pill with End.
+/// it holds the maneuver banner, which opens into the trip's steps and gives way to a
+/// status card or the arrival, the camera and mute buttons with the GPS-lost
+/// indicator under them, the road-name pill, and the trip-progress pill with End.
 library;
 
 import 'dart:async';
@@ -16,6 +17,7 @@ import 'dart:math' as math;
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../directions/route_source.dart';
 import '../l10n/app_localizations.dart';
 import '../map/map.dart';
 import '../map/map_control.dart';
@@ -28,9 +30,12 @@ import '../units.dart';
 import 'maneuver_banner.dart';
 import 'navigation_camera.dart';
 import 'navigation_controller.dart';
+import 'navigation_location.dart';
 import 'navigation_map.dart';
 import 'navigation_scope.dart';
+import 'navigation_status.dart';
 import 'road_name.dart';
+import 'step_list.dart';
 import 'trip_progress.dart';
 
 /// The navigation screen's page in the sheet: it hides the sheet and shows the
@@ -152,6 +157,33 @@ class NavigationLayer extends StatelessWidget {
 /// shows it. There are no zoom buttons, which Ferrostar has: the camera zooms with
 /// your speed, which they'd fight.
 ///
+/// The maneuver banner opens into the list of the trip's steps after the next one
+/// ([ManeuverBanner], [StepList]). Open, it reaches down to the bottom inset, over the
+/// buttons, the road name and trip progress, as iOS's does in both orientations (spec
+/// §1.4 and §4), on every platform: the controls are laid out under the closed banner,
+/// and stay there under the open one, rather than being pushed down as Android pushes
+/// them. In landscape it stays in the start half. The trip carries on under it, the
+/// camera following and the list keeping up with each step and each new route; it
+/// stays open until closed, across new routes and turns of the screen.
+///
+/// ## Status and arrival
+///
+/// While something about the trip itself is wrong or pending, a status card takes the
+/// banner's place, in its card, with no handle ([navigationStatusOf],
+/// [NavigationStatusContent]): a location problem, with Open settings (the device's
+/// location settings for location turned off, the app's for permission taken away) or
+/// Try again ([NavigationController.resumeLocation]); finding a new route; a new route
+/// that couldn't be found, while the controller keeps trying; off the route; and waiting
+/// for GPS. The buttons stay laid out under it as under the banner. Once fixes stop
+/// coming for [staleFixAge], a small "GPS signal lost" pill shows under the buttons
+/// instead ([StaleFixIndicator]), as the trip carries on.
+///
+/// Once arrived, the banner's place says so, with the destination's name
+/// ([ArrivalContent]); the camera stops following and eases to show the destination,
+/// as the overview would, clear of the banner and trip progress
+/// ([NavigationMap.overview]), and the camera button offers Recenter. The road name
+/// goes, and trip progress keeps End, until you end the trip.
+///
 /// Content keeps at least 16 px from each edge, counting the system's bars, as iOS's
 /// overlay does (spec §1.3).
 class NavigationView extends StatefulWidget {
@@ -167,6 +199,24 @@ class _NavigationViewState extends State<NavigationView> {
   /// The sheet's controller, listened to for the sheet's moves (see [_viewChanged]).
   SheetController? _sheet;
 
+  /// The trip's controller, listened to for its arrival (see [_tripChanged]).
+  NavigationController? _controller;
+
+  /// Whether the trip had arrived when [_tripChanged] last looked.
+  bool _arrived = false;
+
+  /// The trip changed: as it arrives, the camera stops following and shows the
+  /// destination, once the frame has laid out the arrival in the banner's place.
+  void _tripChanged() {
+    final arrived = _controller!.state == NavigationState.arrived;
+    if (arrived == _arrived) return;
+    _arrived = arrived;
+    if (!arrived) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _overview();
+    });
+  }
+
   /// The app's [unitSystem] setting, resolved for the device's region as each build
   /// shows a distance. The default stands until the setting is read.
   UnitSystem _units = UnitSystem.locale;
@@ -175,10 +225,14 @@ class _NavigationViewState extends State<NavigationView> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _map ??= NavigationMap(
-      map: MapScope.of(context),
-      controller: NavigationScope.of(context).controller,
-    )..start();
+    final controller = NavigationScope.of(context).controller;
+    if (controller != _controller) {
+      _controller?.removeListener(_tripChanged);
+      _controller = controller..addListener(_tripChanged);
+      _arrived = controller.state == NavigationState.arrived;
+    }
+    _map ??= NavigationMap(map: MapScope.of(context), controller: controller)
+      ..start();
     _watchUnits ??= StoreScope.of(context).settings
         .watch(unitSystem)
         .listen((units) {
@@ -233,9 +287,15 @@ class _NavigationViewState extends State<NavigationView> {
       EdgeInsets.only(top: MediaQuery.paddingOf(context).top) +
       _sheetCovers(context);
 
-  /// The banner, trip progress and the map buttons, measured for the overview to keep
-  /// clear of.
-  final _bannerKey = GlobalKey();
+  /// Whether the banner's list of steps is open.
+  final _stepsExpanded = ValueNotifier(false);
+
+  /// How tall the banner is closed, which the buttons are laid out under in portrait,
+  /// and the overview kept clear of; 0 without a banner. The overview is fitted again
+  /// as it changes, as when a status card or the arrival takes the banner's place.
+  late final _bannerHeight = ValueNotifier(0.0)..addListener(_viewChanged);
+
+  /// Trip progress and the map buttons, measured for the overview to keep clear of.
   final _progressKey = GlobalKey();
   final _buttonsKey = GlobalKey();
 
@@ -245,12 +305,12 @@ class _NavigationViewState extends State<NavigationView> {
   );
 
   /// What the screen draws over the map, edge by edge, as it's laid out now: in
-  /// portrait the top down to the banner's bottom and the bottom up to trip progress's
-  /// top, the full width, and in landscape the start half, where both are. In either,
-  /// the end side in to the far side of the map buttons, so the route isn't fitted
-  /// under them: in portrait they hang under the banner, and in landscape they're at
-  /// the top of the end half the route is fitted in. The road-name pill isn't counted:
-  /// it's hidden in the overview.
+  /// portrait the top down to the closed banner's bottom and the bottom up to trip
+  /// progress's top, the full width, and in landscape the start half, where both are.
+  /// In either, the end side in to the far side of the map buttons, so the route
+  /// isn't fitted under them: in portrait they hang under the banner, and in landscape
+  /// they're at the top of the end half the route is fitted in. The road-name pill
+  /// isn't counted: it's hidden in the overview.
   EdgeInsets _covered() {
     final layout = _Layout.of(context);
     final direction = Directionality.of(context);
@@ -272,7 +332,7 @@ class _NavigationViewState extends State<NavigationView> {
         end: end,
       ).resolve(direction);
     }
-    final bannerBottom = rect(_bannerKey)?.bottom ?? layout.top;
+    final bannerBottom = layout.top + _bannerHeight.value;
     final progressTop =
         rect(_progressKey)?.top ?? layout.size.height - layout.bottom;
     return EdgeInsetsDirectional.only(
@@ -290,7 +350,10 @@ class _NavigationViewState extends State<NavigationView> {
   void dispose() {
     _watchUnits?.cancel();
     _sheet?.removeListener(_viewChanged);
+    _controller?.removeListener(_tripChanged);
     _map?.dispose();
+    _stepsExpanded.dispose();
+    _bannerHeight.dispose();
     super.dispose();
   }
 
@@ -306,11 +369,27 @@ class _NavigationViewState extends State<NavigationView> {
     final startHalfEnd = landscape ? end + layout.width / 2 : end;
     final controller = NavigationScope.of(context).controller;
     final map = _map!;
-    final buttons = _MapButtons(
-      key: _buttonsKey,
-      map: map,
-      controller: controller,
-      onOverview: _overview,
+    // The GPS-lost indicator hangs under the buttons, at the end side, outside their
+    // key: the overview keeps the route clear of the buttons, not of it.
+    final buttons = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      spacing: 8,
+      children: [
+        _MapButtons(
+          key: _buttonsKey,
+          map: map,
+          controller: controller,
+          onOverview: _overview,
+        ),
+        ListenableBuilder(
+          listenable: controller,
+          builder: (context, _) => StaleFixIndicator(
+            lastFixAt: controller.lastFixAt,
+            applies: staleFixApplies(controller),
+          ),
+        ),
+      ],
     );
     final roadName = ListenableBuilder(
       listenable: Listenable.merge([controller, map.cameraMode]),
@@ -331,41 +410,38 @@ class _NavigationViewState extends State<NavigationView> {
         onEnd: () => endNavigation(context),
       ),
     );
+    final banner = ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final update = controller.update;
+        return ManeuverBanner(
+          status: _status(context, controller),
+          instruction: update?.visualInstruction,
+          distance: update?.progress?.distanceToNextManeuver,
+          units: _units.onDevice,
+          upcoming: update == null
+              ? const []
+              : upcomingSteps(controller.steps, update.stepIndex),
+          expanded: _stepsExpanded,
+          collapsedHeight: _bannerHeight,
+        );
+      },
+    );
     return Stack(
       children: [
-        PositionedDirectional(
-          start: start,
-          end: startHalfEnd,
-          top: top,
-          child: ListenableBuilder(
-            listenable: controller,
-            builder: (context, _) {
-              final update = controller.update;
-              final instruction = update?.visualInstruction;
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ManeuverBanner(
-                    key: _bannerKey,
-                    instruction: instruction,
-                    distance: update?.progress?.distanceToNextManeuver,
-                    units: _units.onDevice,
-                  ),
-                  if (!landscape) ...[
-                    if (instruction != null) const SizedBox(height: _gap),
-                    Align(
-                      alignment: AlignmentDirectional.centerEnd,
-                      child: buttons,
-                    ),
-                  ],
-                ],
-              );
-            },
-          ),
-        ),
         if (landscape)
-          PositionedDirectional(end: end, top: top, child: buttons),
+          PositionedDirectional(end: end, top: top, child: buttons)
+        else
+          // Under the closed banner, which covers them open.
+          ValueListenableBuilder(
+            valueListenable: _bannerHeight,
+            builder: (context, height, child) => PositionedDirectional(
+              end: end,
+              top: top + (height > 0 ? height + _gap : 0),
+              child: child!,
+            ),
+            child: buttons,
+          ),
         if (landscape)
           // Under the chevron, in the end half, clear of the start half by the gap
           // between the halves.
@@ -391,6 +467,14 @@ class _NavigationViewState extends State<NavigationView> {
             ],
           ),
         ),
+        // Over everything else, which it covers as it opens, down to the bottom inset.
+        PositionedDirectional(
+          start: start,
+          end: startHalfEnd,
+          top: top,
+          bottom: bottom,
+          child: Align(alignment: Alignment.topCenter, child: banner),
+        ),
       ],
     );
   }
@@ -398,6 +482,34 @@ class _NavigationViewState extends State<NavigationView> {
   /// Between the road-name pill and trip progress under it: iOS stacks them with
   /// SwiftUI's default spacing, 8.
   static const _roadNameGap = 8.0;
+
+  /// What takes the banner's place, if anything: the arrival, or a status card.
+  static Widget? _status(
+    BuildContext context,
+    NavigationController controller,
+  ) {
+    if (controller.state == NavigationState.arrived) {
+      return ArrivalContent(
+        destinationName: controller.destinationName,
+        side: ArrivalContent.sideOf(controller.steps),
+      );
+    }
+    final status = navigationStatusOf(controller);
+    if (status == null) return null;
+    final problem = controller.locationProblem;
+    final location = DirectionsScope.of(context).location;
+    return NavigationStatusContent(
+      status: status,
+      problem: problem,
+      failure: controller.rerouteFailure,
+      onAction: switch (problem) {
+        null => null,
+        LocationProblem.off => location.openLocationSettings,
+        LocationProblem.denied => location.openAppSettings,
+        LocationProblem.failed => controller.resumeLocation,
+      },
+    );
+  }
 }
 
 /// Where the navigation screen's content goes: at least 16 px from each edge, counting
