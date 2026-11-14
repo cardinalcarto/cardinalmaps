@@ -855,6 +855,7 @@ impl<const FORWARD: bool> UnidirectionalAStar<FORWARD> {
                     path_distance,
                     restriction_index: label.restriction_idx,
                     start_node_is_recovered: false,
+                    is_disconnected: false,
                 });
                 if label.is_ferry() {
                     self.has_ferry = true;
@@ -887,6 +888,7 @@ impl<const FORWARD: bool> UnidirectionalAStar<FORWARD> {
                     path_distance,
                     restriction_index: label.restriction_idx,
                     start_node_is_recovered: false,
+                    is_disconnected: false,
                 });
                 if label.is_ferry() {
                     self.has_ferry = true;

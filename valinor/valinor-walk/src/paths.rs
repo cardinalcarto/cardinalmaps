@@ -59,6 +59,7 @@ fn path_edge(
         path_distance: 0.0,
         restriction_index: INVALID_RESTRICTION,
         start_node_is_recovered: false,
+        is_disconnected: false,
     }
 }
 

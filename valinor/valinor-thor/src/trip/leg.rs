@@ -421,6 +421,14 @@ pub(crate) fn build_leg<P: GraphTileProvider>(
         let is_last = edge_index + 1 == path.len();
         let prev = edge_index.checked_sub(1).and_then(|i| path.get(i));
 
+        // A map matched edge after a discontinuity starts at its own start node
+        // (when its opposing edge's tile is there), not at the end of the previous edge.
+        if path_edge.is_disconnected
+            && let Some(start) = graph::start_node(provider, &edge_tile, edge_id)?
+        {
+            startnode = start;
+        }
+
         has_toll |= edge.toll();
         has_ferry |= matches!(edge.road_use(), Ok(RoadUse::Ferry));
         has_highway |= edge.classification() == RoadClass::Motorway;
@@ -475,7 +483,7 @@ pub(crate) fn build_leg<P: GraphTileProvider>(
         }
         // Bike share and transit nodes need costings and tiles Valinor doesn't route with.
 
-        let include_first_point = is_first;
+        let include_first_point = is_first || path_edge.is_disconnected;
         let begin_index = if include_first_point {
             shape.len()
         } else {

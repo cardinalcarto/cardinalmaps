@@ -30,6 +30,10 @@ pub struct PathEdge {
     /// Whether the edge came from recovering a shortcut, and isn't its first edge
     /// (mainline's `start_node_is_recovered`).
     pub start_node_is_recovered: bool,
+    /// Whether the edge doesn't continue from the previous one: map matching starts it after
+    /// a discontinuity, so trip building starts it at its own start node and includes its
+    /// first shape point (mainline's `is_disconnected`). Path search never sets it.
+    pub is_disconnected: bool,
 }
 
 /// How much of an edge a leg uses where it meets an intermediate location
@@ -58,7 +62,8 @@ pub struct EdgeTrim {
 /// A leg: the path between two break locations, through any intermediate ones.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Leg {
-    /// The index of the leg's first location in the request's `options.locations`.
+    /// The index of the leg's first location in the request's `options.locations`
+    /// (for map matching, in its `options.shape`).
     pub origin: usize,
     /// The index of the leg's last location.
     pub destination: usize,

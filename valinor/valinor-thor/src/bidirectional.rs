@@ -1410,6 +1410,7 @@ impl BidirectionalAStar {
                         path_distance,
                         restriction_index: e.restriction_idx,
                         start_node_is_recovered: recovered_inner.contains(&e.edge_id),
+                        is_disconnected: false,
                     });
                 },
             );
