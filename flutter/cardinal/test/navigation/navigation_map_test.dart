@@ -433,6 +433,31 @@ void main() {
       });
     });
 
+    test('hides the chevron once arrived, off the destination', () {
+      fakeAsync((async) {
+        make();
+        controller.start(
+          route: route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        );
+        drawn.start();
+        fix(async, at(2.5, 2));
+        expect(map.puckVisible, isTrue);
+        fix(
+          async,
+          fakeUpdate(
+            status: TripStatus.complete,
+            location: fakeFix(0, 3),
+            snapped: fakeFix(0, 3, course: 90),
+            geometryIndex: 3,
+          ),
+        );
+        expect(controller.state, NavigationState.arrived);
+        expect(map.puckVisible, isFalse);
+      });
+    });
+
     test('takes the trip off the map when it stops', () {
       fakeAsync((async) {
         make();

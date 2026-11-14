@@ -28,7 +28,8 @@ import 'navigation_controller.dart';
 /// [recenter]. [cameraMode] says which it's doing.
 ///
 /// Once the trip has arrived, [overview] shows the destination instead (see there),
-/// which the navigation screen asks for as it arrives.
+/// which the navigation screen asks for as it arrives, and the chevron is hidden: the
+/// trip is over, and its disk would sit on the destination, over its pin.
 class NavigationMap {
   NavigationMap({
     required this.map,
@@ -67,6 +68,10 @@ class NavigationMap {
   double? _speed;
   EdgeInsets _padding = EdgeInsets.zero;
   bool _started = false;
+
+  /// Whether the chevron was last shown: once there's a place to put it, until the
+  /// trip arrives.
+  bool _puckShown = false;
 
   /// Starts drawing the trip, and keeps drawing it until [dispose].
   void start() {
@@ -223,6 +228,12 @@ class NavigationMap {
       _traveled = const [];
     }
     if (newUpdate && update != null) _move(route, update);
+    final puckShown =
+        _at != null && controller.state != NavigationState.arrived;
+    if (puckShown != _puckShown) {
+      _puckShown = puckShown;
+      map.setPuckVisible(puckShown);
+    }
     if (newRoute && _overview) {
       // Showing the old route's rest, unless the map was moved by hand since.
       if (map.hasSubject) {
@@ -261,7 +272,6 @@ class NavigationMap {
       bearing: _bearing,
       duration: glideDuration(since),
     );
-    if (previous == null) map.setPuckVisible(true);
     // The traveled part ends where the route's line has you, wherever the chevron is.
     _traveled = traveledLine(
       route.geometry,
