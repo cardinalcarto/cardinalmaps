@@ -326,6 +326,7 @@ void _press(WidgetTester tester, String tooltip) {
 Future<DirectionsRoute> _route(RouteSource routes, LngLat from) async =>
     (await routes.routes(
       mode: TravelMode.driving,
+      wheelchair: false,
       from: from,
       to: destination,
     )).first;

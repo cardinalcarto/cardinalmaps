@@ -6,9 +6,10 @@ import 'package:routing/routing.dart';
 
 /// A question [FakeRoutes] was asked, waiting to be answered.
 class RouteQuestion {
-  RouteQuestion(this.mode, this.from, this.to, this.abort);
+  RouteQuestion(this.mode, this.wheelchair, this.from, this.to, this.abort);
 
   final TravelMode mode;
+  final bool wheelchair;
   final LngLat from;
   final LngLat to;
   final Future<void>? abort;
@@ -53,11 +54,12 @@ class FakeRoutes implements RouteSource {
   @override
   Future<List<DirectionsRoute>> routes({
     required TravelMode mode,
+    required bool wheelchair,
     required LngLat from,
     required LngLat to,
     Future<void>? abort,
   }) {
-    final question = RouteQuestion(mode, from, to, abort);
+    final question = RouteQuestion(mode, wheelchair, from, to, abort);
     asked.add(question);
     final now = immediately;
     if (now != null) question.answer.complete(now);

@@ -26,6 +26,7 @@ import '../routes.dart';
 import '../saved/saved_feedback.dart';
 import '../saved/saved_names.dart';
 import '../search/place_search.dart';
+import '../settings/accessibility.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
 import '../ui/adaptive.dart';
@@ -109,6 +110,10 @@ class _DirectionsPageState extends State<DirectionsPage> {
   /// is read.
   UnitSystem _units = UnitSystem.locale;
   StreamSubscription<int>? _taps;
+  StreamSubscription<bool>? _watchWheelchair;
+
+  /// How transit last got to and from stops, or null if that's never been chosen.
+  TransitAccess? _rememberedAccess;
   Timer? _calloutTimer;
   Timer? _clock;
 
@@ -201,11 +206,32 @@ class _DirectionsPageState extends State<DirectionsPage> {
     unawaited(_resume(directions));
   }
 
-  /// Starts with the mode last chosen, then from where you are.
+  /// Starts with the mode last chosen, by wheelchair if that's the default, then from
+  /// where you are. The default is followed if it changes while this page is open.
   Future<void> _resume(Directions directions) async {
-    directions.setTransitAccess(await _settings!.get(lastTransitAccess));
-    directions.setMode(await _settings!.get(lastTravelMode));
+    final settings = _settings!;
+    final wheelchair = await settings.get(wheelchairByDefault);
+    _rememberedAccess = await settings.get(lastTransitAccess);
+    directions
+      ..setWheelchair(wheelchair)
+      ..setTransitAccess(
+        transitAccess(_rememberedAccess, wheelchair: wheelchair),
+      )
+      ..setMode(await settings.get(lastTravelMode));
+    if (!mounted) return;
+    _watchWheelchair = settings
+        .watch(wheelchairByDefault)
+        .listen(_wheelchairChanged);
     await directions.startFromMyLocation();
+  }
+
+  /// Walking, and getting to stops if no way has been chosen, follow the default.
+  void _wheelchairChanged(bool wheelchair) {
+    _directions!
+      ..setWheelchair(wheelchair)
+      ..setTransitAccess(
+        transitAccess(_rememberedAccess, wheelchair: wheelchair),
+      );
   }
 
   @override
@@ -214,6 +240,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
     _watchSaved?.cancel();
     _watchUnits?.cancel();
     _taps?.cancel();
+    _watchWheelchair?.cancel();
     _calloutTimer?.cancel();
     _clock?.cancel();
     _map.cameraMoved.removeListener(_viewChanged);
@@ -445,6 +472,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
   }
 
   void _setTransitAccess(TransitAccess access) {
+    _rememberedAccess = access;
     _directions!.setTransitAccess(access);
     unawaited(_settings!.set(lastTransitAccess, access));
   }
@@ -639,6 +667,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
                 child: cupertino
                     ? _CupertinoModes(
                         selected: directions.mode,
+                        wheelchair: directions.wheelchair,
                         onChanged: _setMode,
                       )
                     : Row(
@@ -648,6 +677,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
                             Expanded(
                               child: _ModeChip(
                                 mode: mode,
+                                wheelchair: directions.wheelchair,
                                 selected: mode == directions.mode,
                                 onTap: () => _setMode(mode),
                               ),
@@ -930,11 +960,15 @@ class _EndRow extends StatelessWidget {
 class _ModeChip extends StatelessWidget {
   const _ModeChip({
     required this.mode,
+    required this.wheelchair,
     required this.selected,
     required this.onTap,
   });
 
   final TravelMode mode;
+
+  /// Whether walking is by wheelchair, which the walking chip then says.
+  final bool wheelchair;
   final bool selected;
   final VoidCallback onTap;
 
@@ -943,15 +977,16 @@ class _ModeChip extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final enabled = mode.available;
     final radius = BorderRadius.circular(12);
+    final label = mode.labelFor(wheelchair: wheelchair);
     return Semantics(
       button: true,
       enabled: enabled,
       selected: selected,
-      label: mode.label,
+      label: label,
       excludeSemantics: true,
       onTap: enabled ? onTap : null,
       child: Tooltip(
-        message: mode.label,
+        message: label,
         child: Material(
           color: selected ? scheme.primary : scheme.surfaceContainerHighest,
           borderRadius: radius,
@@ -961,7 +996,7 @@ class _ModeChip extends StatelessWidget {
             child: SizedBox(
               height: 40,
               child: Icon(
-                mode.icon,
+                mode.iconFor(wheelchair: wheelchair),
                 size: 22,
                 color: selected
                     ? scheme.onPrimary
@@ -1368,9 +1403,16 @@ class _CupertinoEnds extends StatelessWidget {
 /// iOS's ways of traveling: a segmented control, with those that can't be routed yet
 /// disabled.
 class _CupertinoModes extends StatelessWidget {
-  const _CupertinoModes({required this.selected, required this.onChanged});
+  const _CupertinoModes({
+    required this.selected,
+    required this.wheelchair,
+    required this.onChanged,
+  });
 
   final TravelMode selected;
+
+  /// Whether walking is by wheelchair, which its segment then says.
+  final bool wheelchair;
   final ValueChanged<TravelMode> onChanged;
 
   @override
@@ -1384,11 +1426,11 @@ class _CupertinoModes extends StatelessWidget {
         children: {
           for (final mode in TravelMode.values)
             mode: Semantics(
-              label: mode.label,
+              label: mode.labelFor(wheelchair: wheelchair),
               excludeSemantics: true,
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Icon(mode.icon, size: 20),
+                child: Icon(mode.iconFor(wheelchair: wheelchair), size: 20),
               ),
             ),
         },

@@ -14,11 +14,12 @@ use valinor_gtfs_rt::{
     VehicleDetails, VehicleRef,
 };
 use valinor_transit::{
-    Leg, Profile, ProfileEntry, Ride, StopEvent, StopId, StopRules, TripId, TripKey,
+    Leg, Profile, ProfileEntry, Ride, RouteId, StopEvent, StopId, StopRules, TripId, TripKey,
 };
 
 use crate::plan::{
-    AccessEgressRequest, AccessEgressSearch, DirectSearch, PlanStage, TransitRequest, TravelMode,
+    AccessEgressRequest, AccessEgressSearch, DepartureRange, DirectSearch, PlanStage,
+    TransitRequest, TravelMode,
 };
 use crate::response::alerts::{LegSelectorContext, LegStop, ServiceRun, leg_alerts};
 use crate::response::departures::DepartureCache;
@@ -40,14 +41,7 @@ pub(crate) fn build_response<A: AccessEgressSearch>(
     access_egress: &mut A,
 ) -> Result<PlanResponse, A::Error> {
     let found = profile.entries.len();
-    let mut builder = Builder {
-        snapshot,
-        request,
-        access_egress,
-        access_paths: HashMap::new(),
-        egress_paths: HashMap::new(),
-        departure_cache: RefCell::new(DepartureCache::default()),
-    };
+    let mut builder = JourneyBuilder::new(snapshot, request, access_egress);
     let mut journeys = Vec::new();
     for entry in profile.entries {
         // A journey no faster than going there directly only adds a wait.
@@ -84,22 +78,13 @@ fn assemble(
     no_journeys_reason: Option<NoJourneysReason>,
     direct: &DirectSearch,
 ) -> PlanResponse {
-    let feeds: Vec<FeedReport> = snapshot
-        .feed_status_at(request.now)
-        .iter()
-        .map(feed_report)
-        .collect();
     PlanResponse {
         generated_at: request.now,
         window: Window {
             earliest: request.departure,
             latest: request.departure + i64::from(request.window_seconds),
         },
-        realtime: RealtimeStatus {
-            level: realtime_level(&feeds),
-            built_at: snapshot.built_at,
-            feeds,
-        },
+        realtime: realtime_status(snapshot, request.now),
         journeys,
         no_journeys_reason,
         direct: direct_response(direct),
@@ -123,6 +108,20 @@ fn direct_response(direct: &DirectSearch) -> DirectResponse {
             DirectSearch::Failed(error) => Some(error.clone()),
             _ => None,
         },
+    }
+}
+
+/// How current a snapshot's real-time data is at `now`, as every response states it.
+pub(crate) fn realtime_status(snapshot: &TransitSnapshot, now: i64) -> RealtimeStatus {
+    let feeds: Vec<FeedReport> = snapshot
+        .feed_status_at(now)
+        .iter()
+        .map(feed_report)
+        .collect();
+    RealtimeStatus {
+        level: realtime_level(&feeds),
+        built_at: snapshot.built_at,
+        feeds,
     }
 }
 
@@ -200,16 +199,33 @@ fn new_stop_name(stop: &valinor_gtfs_rt::NewStop) -> Option<String> {
         .map(|translation| translation.text.clone())
 }
 
-/// One request's context for building a response.
-pub(super) struct Builder<'a, A: AccessEgressSearch> {
+/// Describes rides from one pinned snapshot: their trips, stops, shapes, vehicles, alerts,
+/// departures, and accessibility.
+///
+/// It knows nothing of where a rider starts or ends, or of walks: a plan's
+/// [`JourneyBuilder`] holds those and uses one of these for its rides, and nearby departures
+/// and a route's detail, which have no walks to draw, use one on its own.
+pub(super) struct RideDescriber<'a> {
     pub(super) snapshot: &'a TransitSnapshot,
-    pub(super) request: &'a TransitRequest,
+    /// The travel mode, whose rules a ride's departures are read with.
+    pub(super) mode: TravelMode,
+    /// Which other departures a ride lists; see [`Self::ride_departures`].
+    pub(super) departures: DepartureRange,
+    /// What rides have already worked out about their departures.
+    pub(super) departure_cache: RefCell<DepartureCache>,
+}
+
+/// Builds a plan's journeys: its access, transfer, and egress walks, drawn by an
+/// [`AccessEgressSearch`], around rides a [`RideDescriber`] describes.
+///
+/// Only this reads the request's origin and destination.
+pub(super) struct JourneyBuilder<'a, A: AccessEgressSearch> {
+    rides: RideDescriber<'a>,
+    request: &'a TransitRequest,
     access_egress: &'a mut A,
     /// Expanded once per stop: many journeys of a window share their access and egress.
     access_paths: HashMap<StopId, Option<WalkPath>>,
     egress_paths: HashMap<StopId, Option<WalkPath>>,
-    /// What the journeys' rides have already worked out about their departures.
-    pub(super) departure_cache: RefCell<DepartureCache>,
 }
 
 /// What a ride's trip is, resolved once from the timetable and real-time data.
@@ -251,20 +267,27 @@ pub(super) struct VisitTimes {
 /// The vehicle running a ride: what the overlay stored, and the trip update's descriptor.
 type ChosenVehicle<'a> = (Option<&'a VehicleDetails>, Option<&'a VehicleRef>);
 
-impl<'a, A: AccessEgressSearch> Builder<'a, A> {
-    fn set(&self) -> &'a TimetableSet {
-        &self.snapshot.data.set
-    }
-
-    pub(super) fn origin(&self) -> i64 {
-        self.snapshot.window.origin_unix
+impl<'a, A: AccessEgressSearch> JourneyBuilder<'a, A> {
+    /// A builder for one request's journeys, drawing walks with `access_egress`.
+    fn new(
+        snapshot: &'a TransitSnapshot,
+        request: &'a TransitRequest,
+        access_egress: &'a mut A,
+    ) -> Self {
+        Self {
+            rides: RideDescriber::new(snapshot, request.mode, request.options.departures),
+            request,
+            access_egress,
+            access_paths: HashMap::new(),
+            egress_paths: HashMap::new(),
+        }
     }
 
     fn access_path(&mut self, stop: StopId) -> Result<Option<WalkPath>, A::Error> {
         if let Some(path) = self.access_paths.get(&stop) {
             return Ok(path.clone());
         }
-        let snapshot = self.snapshot;
+        let snapshot = self.rides.snapshot;
         let request = AccessEgressRequest {
             origin: self.request.origin,
             destination: self.request.destination,
@@ -281,7 +304,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         if let Some(path) = self.egress_paths.get(&stop) {
             return Ok(path.clone());
         }
-        let snapshot = self.snapshot;
+        let snapshot = self.rides.snapshot;
         let request = AccessEgressRequest {
             origin: self.request.origin,
             destination: self.request.destination,
@@ -309,7 +332,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         reason = "one linear assembly of a journey's legs"
     )]
     fn journey(&mut self, entry: ProfileEntry<A::Walk>) -> Result<Journey, A::Error> {
-        let origin = self.origin();
+        let origin = self.rides.origin();
         let departure = origin + i64::from(entry.departure.into_inner());
         let arrival = origin + i64::from(entry.arrival.into_inner());
         let mode = self.request.mode.name();
@@ -335,7 +358,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
-                        stop: self.stop_ref(stop),
+                        stop: self.rides.stop_ref(stop),
                         walk,
                         stop_moved: Vec::new(),
                     }));
@@ -349,14 +372,16 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                     if let Some((alighted_at, stop)) = alighted.take() {
                         // Two rides in a row change at one stop.
                         debug_assert_eq!(stop, ride.board_stop, "a change without a walk");
-                        let change = self.snapshot.snapshot.min_change(stop).unwrap_or(0);
+                        let change = self.rides.snapshot.snapshot.min_change(stop).unwrap_or(0);
                         ready = alighted_at + i64::from(change);
                     }
                     self.access_egress.enter_stage(PlanStage::TransitLeg);
-                    let mut leg = self.transit_leg(&ride, wait);
+                    let mut leg = self.rides.transit_leg(&ride, wait, &|stage| {
+                        self.access_egress.enter_stage(stage);
+                    });
                     if !self.request.options.departures.is_empty() {
                         self.access_egress.enter_stage(PlanStage::Departures);
-                        let (departures, alerts) = self.ride_departures(&ride, ready, &leg);
+                        let (departures, alerts) = self.rides.ride_departures(&ride, ready, &leg);
                         leg.departures = departures;
                         leg.departure_alerts = alerts;
                     }
@@ -383,7 +408,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                         .map_or_else(|| i64::from(duration.into_inner()), i64::from);
                     transfers += duration;
                     let path = {
-                        let snapshot = self.snapshot;
+                        let snapshot = self.rides.snapshot;
                         let request = AccessEgressRequest {
                             origin: self.request.origin,
                             destination: self.request.destination,
@@ -400,8 +425,8 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
-                        from: self.stop_ref(from),
-                        to: self.stop_ref(to),
+                        from: self.rides.stop_ref(from),
+                        to: self.rides.stop_ref(to),
                         walk: path,
                         stop_moved: Vec::new(),
                     })));
@@ -417,7 +442,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
-                        stop: self.stop_ref(stop),
+                        stop: self.rides.stop_ref(stop),
                         walk,
                         stop_moved: Vec::new(),
                     }));
@@ -441,8 +466,33 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
             legs,
         })
     }
+}
 
-    fn stop_ref(&self, stop: StopId) -> StopRef {
+impl<'a> RideDescriber<'a> {
+    /// A describer of rides from `snapshot`, reading departures with `mode`'s rules and
+    /// listing a ride's others by `departures`.
+    pub(super) fn new(
+        snapshot: &'a TransitSnapshot,
+        mode: TravelMode,
+        departures: DepartureRange,
+    ) -> Self {
+        Self {
+            snapshot,
+            mode,
+            departures,
+            departure_cache: RefCell::new(DepartureCache::default()),
+        }
+    }
+
+    pub(super) fn set(&self) -> &'a TimetableSet {
+        &self.snapshot.data.set
+    }
+
+    pub(super) fn origin(&self) -> i64 {
+        self.snapshot.window.origin_unix
+    }
+
+    pub(super) fn stop_ref(&self, stop: StopId) -> StopRef {
         if let Some((part, local)) = self.set().stop_part(stop)
             && let Some(info) = part.compiled().stop(local)
         {
@@ -481,6 +531,24 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         }
     }
 
+    /// Where a stop is: the timetable's coordinate, or an added stop's; `None` when neither
+    /// says.
+    pub(super) fn stop_coordinate(&self, stop: StopId) -> Option<LatLon> {
+        if let Some((part, local)) = self.set().stop_part(stop)
+            && let Some(info) = part.compiled().stop(local)
+        {
+            return info.coordinate;
+        }
+        self.snapshot
+            .new_stops
+            .iter()
+            .find(|s| s.stop == stop)
+            .map(|s| LatLon {
+                lat: f64::from(s.latitude),
+                lon: f64::from(s.longitude),
+            })
+    }
+
     fn static_stop_ref(part: TimetablePart<'_>, info: StopInfo<'_>) -> StopRef {
         let parent = info
             .parent_station
@@ -503,9 +571,24 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
 
     /// Resolves what a ride's trip is, for a leg or for one of a leg's departures.
     pub(super) fn ride_view(&self, ride: &Ride) -> RideView<'a> {
+        self.trip_view(
+            ride.trip,
+            ride.route,
+            (ride.board_position, ride.alight_position),
+        )
+    }
+
+    /// Resolves what a run is, ridden on `pattern` between two of its positions: what
+    /// [`Self::ride_view`] reads of a ride, for a run that needn't have been found in a lane.
+    pub(super) fn trip_view(
+        &self,
+        key: TripKey,
+        pattern: RouteId,
+        (board_position, alight_position): (u32, u32),
+    ) -> RideView<'a> {
         let set = self.set();
         let rider = &self.snapshot.rider;
-        let trip_part = set.trip_part(ride.trip.trip);
+        let trip_part = set.trip_part(key.trip);
         let static_trip = trip_part.and_then(|(part, local)| part.compiled().trip(local));
         // The original trip this ride boards, on a combined stay-seated trip.
         let trip_segments = trip_part
@@ -513,28 +596,24 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
             .unwrap_or_default();
         let boarded_segment = trip_segments
             .iter()
-            .find(|s| {
-                s.first_position <= ride.board_position && ride.board_position <= s.last_position
-            })
+            .find(|s| s.first_position <= board_position && board_position <= s.last_position)
             .copied();
         // A combined trip's update is about one original trip, so a leg on another reads nothing
         // from it: `details` belongs to the stretch the rider boards.
         let details = match boarded_segment {
-            Some(segment) => rider.trip_details_named(ride.trip, segment.gtfs_id),
-            None => rider.trip_by_key(ride.trip),
+            Some(segment) => rider.trip_details_named(key, segment.gtfs_id),
+            None => rider.trip_by_key(key),
         };
         // The stretches this ride actually rides, in order; empty for a ride on one plain trip.
         let ridden_segments: Vec<TripSegmentInfo<'_>> = trip_segments
             .iter()
-            .filter(|s| {
-                s.first_position <= ride.alight_position && ride.board_position <= s.last_position
-            })
+            .filter(|s| s.first_position <= alight_position && board_position <= s.last_position)
             .copied()
             .collect();
         // Static positions are valid only when the ride is on the trip's own stop pattern.
         let on_base_pattern = trip_part
             .zip(static_trip)
-            .is_some_and(|((part, _), info)| part.global_route(info.pattern) == ride.route);
+            .is_some_and(|((part, _), info)| part.global_route(info.pattern) == pattern);
         // Which file answers for this leg: its trip's, or for a trip only real-time data knows,
         // the file of its feed or of its route.
         let part = trip_part
@@ -544,7 +623,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                     .and_then(|d| d.feed.as_ref())
                     .and_then(|feed| set.part_of_feed(feed.as_str()))
             })
-            .or_else(|| set.route_part(ride.route).map(|(part, _)| part));
+            .or_else(|| set.route_part(pattern).map(|(part, _)| part));
         let gtfs_route = boarded_segment
             .map(|segment| segment.route)
             .or_else(|| part.and_then(|part| gtfs_route_of(set, part, static_trip, details)));
@@ -576,7 +655,13 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         }
     }
 
-    fn transit_leg(&self, ride: &Ride, wait: i64) -> TransitLeg {
+    /// A ride's leg, telling `stage` when its shape is encoded and done.
+    pub(super) fn transit_leg(
+        &self,
+        ride: &Ride,
+        wait: i64,
+        stage: &impl Fn(PlanStage),
+    ) -> TransitLeg {
         let view = self.ride_view(ride);
         let events = self
             .snapshot
@@ -638,9 +723,9 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                 )
             })
             .map(|points| {
-                self.access_egress.enter_stage(PlanStage::TransitShape);
+                stage(PlanStage::TransitShape);
                 let shape = encode_polyline6(&points);
-                self.access_egress.enter_stage(PlanStage::TransitLeg);
+                stage(PlanStage::TransitLeg);
                 shape
             });
         let segments = Self::ride_segments(view.part, &view.trip_segments, ride, &stop_indices);
@@ -865,7 +950,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         })
     }
 
-    fn stop_gtfs_id_of(&self, stop: StopId) -> Option<&'a str> {
+    pub(super) fn stop_gtfs_id_of(&self, stop: StopId) -> Option<&'a str> {
         self.set()
             .stop_part(stop)
             .and_then(|(part, local)| part.compiled().stop(local))
@@ -1169,6 +1254,17 @@ impl VisitContext<'_> {
     }
 }
 
+/// What a rider waiting at a ride's boarding stop reads on the vehicle, as a leg shows it:
+/// the stop's headsign there (real-time data's, or the schedule's), or else the trip's.
+pub(super) fn boarding_headsign(
+    view: &RideView<'_>,
+    visit: &VisitContext<'_>,
+    index: usize,
+    live: Option<&StopTimeDetails>,
+) -> Option<String> {
+    stop_headsign(visit, index, live).or_else(|| trip_headsign(view))
+}
+
 /// A visit's headsign when it differs from the trip's: from real-time data, or the schedule's.
 pub(super) fn stop_headsign(
     visit: &VisitContext<'_>,
@@ -1213,7 +1309,7 @@ pub(super) fn gtfs_route_of(
     })
 }
 
-fn route_response(route: RouteInfo<'_>) -> RouteResponse {
+pub(super) fn route_response(route: RouteInfo<'_>) -> RouteResponse {
     RouteResponse {
         route_id: route.gtfs_id.to_owned(),
         short_name: route.short_name.map(str::to_owned),
@@ -1226,7 +1322,7 @@ fn route_response(route: RouteInfo<'_>) -> RouteResponse {
     }
 }
 
-fn agency_response(agency: AgencyInfo<'_>) -> AgencyResponse {
+pub(super) fn agency_response(agency: AgencyInfo<'_>) -> AgencyResponse {
     AgencyResponse {
         agency_id: agency.gtfs_id.map(str::to_owned),
         name: agency.name.to_owned(),
@@ -1395,7 +1491,7 @@ fn first_text(text: Option<&valinor_gtfs_rt::proto::TranslatedString>) -> Option
 }
 
 /// Encodes coordinates as a polyline with six decimal places, as Valhalla does.
-fn encode_polyline6(points: &[LatLon]) -> String {
+pub(super) fn encode_polyline6(points: &[LatLon]) -> String {
     let mut encoded = String::with_capacity(points.len() * 8);
     let (mut last_lat, mut last_lon) = (0_i64, 0_i64);
     for point in points {

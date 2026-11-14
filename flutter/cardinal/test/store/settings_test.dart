@@ -9,6 +9,7 @@ enum Shade { light, dark }
 
 final shade = Setting.choice('test.shade', Shade.values, Shade.light);
 final enabled = Setting.flag('test.enabled', false);
+final picked = Setting.optionalChoice('test.picked', Shade.values);
 
 void main() {
   // Each test opens its own database.
@@ -49,6 +50,25 @@ void main() {
         await settings.set(shade, Shade.dark);
         await pumpEventQueue();
         expect(seen, [Shade.light, Shade.dark]);
+      });
+
+      test('read an optional choice as null until one is set', () async {
+        final settings = open();
+        expect(await settings.get(picked), isNull);
+        // The first value is a choice like any other, not the same as unset.
+        await settings.set(picked, Shade.light);
+        expect(await settings.get(picked), Shade.light);
+        // A choice that's since been removed reads as unset.
+        await settings.set(
+          Setting.choice('test.picked', [Shade.dark], Shade.dark),
+          Shade.dark,
+        );
+        expect(
+          await settings.get(
+            Setting.optionalChoice('test.picked', [Shade.light]),
+          ),
+          isNull,
+        );
       });
 
       test('read a value of the wrong kind as the default', () async {

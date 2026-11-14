@@ -7,11 +7,23 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `device_config`, `error_response`, `feed_kind`, `response`, `unix_now`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `plan_at`
+// These functions are ignored because they are not marked as `pub`: `answer_at`, `answer`, `device_config`, `error_response`, `feed_kind`, `response`, `unix_now`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Query`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `nearby_at`, `plan_at`, `route_at`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineTransit>>
 abstract class OfflineTransit implements RustOpaqueInterface {
+  /// The routes a rider can catch near a place, in each direction, and when, from JSON
+  /// request bytes (the server's `/transit/nearby` body), applying `feeds` first as
+  /// [`Self::plan`] does.
+  ///
+  /// It answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+  Future<TransitResponse> nearby({
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  });
+
   /// Opens a transit build directory over tile sets, snapping every stop.
   ///
   /// `feeds` chooses which of the build's feeds to load, by ID; `None` loads every feed that
@@ -59,6 +71,16 @@ abstract class OfflineTransit implements RustOpaqueInterface {
   /// It is cheap and safe while plans run; each search worker forgets the tiles it found
   /// missing the next time it plans.
   Future<void> refreshTiles();
+
+  /// One route and direction from one stop, for a detail view, from JSON request bytes
+  /// (the server's `/transit/route` body), applying `feeds` first as [`Self::plan`] does.
+  ///
+  /// It answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+  Future<TransitResponse> route({
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  });
 
   /// The latest real-time state of a vehicle, as the server's vehicle lookup returns it.
   Future<TransitResponse> vehicle({required String feed, required String id});

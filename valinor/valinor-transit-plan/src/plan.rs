@@ -164,6 +164,18 @@ pub struct AccessEgressRequest<'a> {
     pub snapshot: &'a TransitSnapshot,
 }
 
+/// What an [`AccessEgressSearch`] is asked for an access table alone,
+/// as a nearby-departures query asks: where a rider can walk to from one place.
+#[derive(Debug, Clone, Copy)]
+pub struct AccessRequest<'a> {
+    /// Where the rider starts.
+    pub origin: LatLon,
+    /// How the rider travels.
+    pub mode: TravelMode,
+    /// The pinned state, for its stop numbering and locations.
+    pub snapshot: &'a TransitSnapshot,
+}
+
 /// Stop tables for one query.
 #[derive(Debug, Clone)]
 pub struct AccessEgressTables {
@@ -255,6 +267,28 @@ pub trait AccessEgressSearch {
         request: &AccessEgressRequest<'_>,
         interrupt: &dyn Fn() -> bool,
     ) -> Result<AccessEgressTables, Self::Error>;
+
+    /// Computes the access table alone, by the same search as [`Self::tables`]'s.
+    ///
+    /// By default this computes both tables, the destination being the origin, and keeps the
+    /// access; a search whose egress or direct search costs anything should override it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::tables`].
+    fn access_table(
+        &mut self,
+        request: &AccessRequest<'_>,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<StopTable, Self::Error> {
+        let both = AccessEgressRequest {
+            origin: request.origin,
+            destination: request.origin,
+            mode: request.mode,
+            snapshot: request.snapshot,
+        };
+        Ok(self.tables(&both, interrupt)?.access)
+    }
 
     /// The walking path from the origin to `stop`, or `None` if it has none to show.
     ///
@@ -429,7 +463,7 @@ where
         .map_err(PlanError::AccessEgress)
 }
 
-fn window_time<T: Error + 'static, A: Error + 'static>(
+pub(crate) fn window_time<T: Error + 'static, A: Error + 'static>(
     snapshot: &TransitSnapshot,
     unix: i64,
 ) -> Result<Time, PlanError<T, A>> {
@@ -440,7 +474,7 @@ fn window_time<T: Error + 'static, A: Error + 'static>(
         .ok_or(PlanError::TimeOutOfRange(seconds))
 }
 
-fn coordinates_are_valid(coordinate: LatLon) -> bool {
+pub(crate) fn coordinates_are_valid(coordinate: LatLon) -> bool {
     coordinate.lat.is_finite()
         && coordinate.lon.is_finite()
         && (-90.0..=90.0).contains(&coordinate.lat)

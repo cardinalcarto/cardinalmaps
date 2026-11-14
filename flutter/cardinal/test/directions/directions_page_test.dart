@@ -15,6 +15,7 @@ import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/road_name.dart';
 import 'package:cardinal/navigation/trip_progress.dart';
 import 'package:cardinal/routes.dart';
+import 'package:cardinal/settings/accessibility.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:cardinal/units.dart';
@@ -302,6 +303,67 @@ void main() {
     await store.settings.set(lastTravelMode, TravelMode.walking);
     await open(tester);
     expect(routes.asked.last.mode, TravelMode.walking);
+  });
+
+  group('wheelchair by default', () {
+    testWidgets('off: the walking chip is Walking, routing on foot', (
+      tester,
+    ) async {
+      await open(tester);
+      expect(find.byTooltip('Walking'), findsOneWidget);
+      expect(find.byTooltip('Wheelchair'), findsNothing);
+      expect(find.byIcon(Icons.accessible), findsNothing);
+      await tester.tap(find.byIcon(Icons.directions_walk));
+      await tester.pumpAndSettle();
+      expect(routes.asked.last.mode, TravelMode.walking);
+      expect(routes.asked.last.wheelchair, isFalse);
+    });
+
+    testWidgets('on: the walking chip is Wheelchair, routing by wheelchair', (
+      tester,
+    ) async {
+      await store.settings.set(wheelchairByDefault, true);
+      await open(tester);
+      expect(find.byTooltip('Wheelchair'), findsOneWidget);
+      expect(find.byTooltip('Walking'), findsNothing);
+      expect(find.byIcon(Icons.directions_walk), findsNothing);
+      await tester.tap(find.byIcon(Icons.accessible));
+      await tester.pumpAndSettle();
+      expect(routes.asked.last.mode, TravelMode.walking);
+      expect(routes.asked.last.wheelchair, isTrue);
+      // Remembered as walking, so turning the default off gives Walking back.
+      expect(await store.settings.get(lastTravelMode), TravelMode.walking);
+    });
+
+    testWidgets('turned on while open, walking asks again by wheelchair', (
+      tester,
+    ) async {
+      await store.settings.set(lastTravelMode, TravelMode.walking);
+      await open(tester);
+      expect(routes.asked.last.wheelchair, isFalse);
+      final asked = routes.asked.length;
+
+      await store.settings.set(wheelchairByDefault, true);
+      await tester.pumpAndSettle();
+      expect(routes.asked, hasLength(asked + 1));
+      expect(routes.asked.last.mode, TravelMode.walking);
+      expect(routes.asked.last.wheelchair, isTrue);
+      expect(find.byTooltip('Wheelchair'), findsOneWidget);
+
+      await store.settings.set(wheelchairByDefault, false);
+      await tester.pumpAndSettle();
+      expect(routes.asked.last.wheelchair, isFalse);
+      expect(find.byTooltip('Walking'), findsOneWidget);
+    });
+
+    testWidgets('turned on while open, driving asks nothing', (tester) async {
+      await open(tester);
+      final asked = routes.asked.length;
+      await store.settings.set(wheelchairByDefault, true);
+      await tester.pumpAndSettle();
+      expect(routes.asked, hasLength(asked));
+      expect(find.byTooltip('Wheelchair'), findsOneWidget);
+    });
   });
 
   group('navigation', () {
@@ -1127,6 +1189,60 @@ void main() {
         await store.settings.get(lastTransitAccess),
         TransitAccess.wheelchair,
       );
+    });
+
+    group('getting to stops', () {
+      for (final wheelchair in [false, true]) {
+        final flag = wheelchair ? 'on' : 'off';
+
+        testWidgets('as remembered, with wheelchair by default $flag', (
+          tester,
+        ) async {
+          await store.settings.set(wheelchairByDefault, wheelchair);
+          await store.settings.set(lastTransitAccess, TransitAccess.cycling);
+          await openTransit(tester);
+          expect(transit.asked.single.access, TransitAccess.cycling);
+        });
+
+        testWidgets('unremembered, with wheelchair by default $flag', (
+          tester,
+        ) async {
+          await store.settings.set(wheelchairByDefault, wheelchair);
+          await openTransit(tester);
+          expect(
+            transit.asked.single.access,
+            wheelchair ? TransitAccess.wheelchair : TransitAccess.walking,
+          );
+          // The default isn't remembered as a choice.
+          expect(await store.settings.get(lastTransitAccess), isNull);
+        });
+      }
+
+      testWidgets('unremembered, follow the default as it changes', (
+        tester,
+      ) async {
+        await openTransit(tester);
+        expect(transit.asked.single.access, TransitAccess.walking);
+        await store.settings.set(wheelchairByDefault, true);
+        await tester.pumpAndSettle();
+        expect(transit.asked.last.access, TransitAccess.wheelchair);
+        await store.settings.set(wheelchairByDefault, false);
+        await tester.pumpAndSettle();
+        expect(transit.asked.last.access, TransitAccess.walking);
+      });
+
+      testWidgets('once chosen, stay as chosen when the default changes', (
+        tester,
+      ) async {
+        await openTransit(tester);
+        await tester.tap(find.text('Bike'));
+        await tester.pumpAndSettle();
+        final asked = transit.asked.length;
+        await store.settings.set(wheelchairByDefault, true);
+        await tester.pumpAndSettle();
+        expect(transit.asked, hasLength(asked));
+        expect(transit.asked.last.access, TransitAccess.cycling);
+      });
     });
 
     testWidgets('says why there are no journeys', (tester) async {

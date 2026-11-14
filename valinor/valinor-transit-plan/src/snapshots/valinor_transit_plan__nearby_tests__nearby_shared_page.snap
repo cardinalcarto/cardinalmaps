@@ -1,0 +1,199 @@
+---
+source: valinor-transit-plan/src/nearby_tests.rs
+expression: "&response"
+---
+{
+  "generated_at": 1781535015,
+  "window": {
+    "earliest": 1781548200,
+    "latest": 1781555400
+  },
+  "realtime": {
+    "level": "schedule",
+    "built_at": 1781535015,
+    "feeds": []
+  },
+  "routes": [
+    {
+      "feed": "lines",
+      "route": {
+        "route_id": "L44",
+        "short_name": "44",
+        "route_type": 3
+      },
+      "agency": {
+        "agency_id": "LN",
+        "name": "Lines",
+        "url": "https://l.test"
+      },
+      "pages": [
+        {
+          "headsigns": [
+            "UW Medical Center",
+            "University District"
+          ],
+          "direction_id": 0,
+          "stop": {
+            "accessibility": "unknown",
+            "feed": "lines",
+            "stop_id": "P1",
+            "name": "Line 1st",
+            "latitude": 47.6005,
+            "longitude": -122.33,
+            "time_zone": "America/Los_Angeles"
+          },
+          "walk_seconds": 42,
+          "soonest_departure": 1781548800,
+          "departures": [
+            {
+              "trip_id": "L44-1140",
+              "start_date": "20260615",
+              "headsign": "UW Medical Center",
+              "status": "scheduled",
+              "departure": 1781548800,
+              "scheduled_departure": 1781548800,
+              "accessibility": "unknown"
+            },
+            {
+              "trip_id": "L44-1150",
+              "start_date": "20260615",
+              "headsign": "University District",
+              "status": "scheduled",
+              "departure": 1781549400,
+              "scheduled_departure": 1781549400,
+              "accessibility": "unknown",
+              "continues_as": {
+                "route_id": "L43",
+                "short_name": "43",
+                "headsign": "Capitol Hill"
+              }
+            },
+            {
+              "trip_id": "L44-1200",
+              "start_date": "20260615",
+              "headsign": "UW Medical Center",
+              "status": "scheduled",
+              "departure": 1781550000,
+              "scheduled_departure": 1781550000,
+              "accessibility": "unknown"
+            }
+          ]
+        },
+        {
+          "headsigns": [
+            "Ballard"
+          ],
+          "direction_id": 1,
+          "stop": {
+            "accessibility": "unknown",
+            "feed": "lines",
+            "stop_id": "P1",
+            "name": "Line 1st",
+            "latitude": 47.6005,
+            "longitude": -122.33,
+            "time_zone": "America/Los_Angeles"
+          },
+          "walk_seconds": 42,
+          "soonest_departure": 1781549700,
+          "departures": [
+            {
+              "trip_id": "L44-1135",
+              "start_date": "20260615",
+              "headsign": "Ballard",
+              "status": "scheduled",
+              "departure": 1781549700,
+              "scheduled_departure": 1781549700,
+              "accessibility": "unknown"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "feed": "lines",
+      "route": {
+        "route_id": "L22",
+        "short_name": "22",
+        "route_type": 3
+      },
+      "agency": {
+        "agency_id": "LN",
+        "name": "Lines",
+        "url": "https://l.test"
+      },
+      "pages": [
+        {
+          "headsigns": [
+            "Hazel"
+          ],
+          "direction_id": 0,
+          "stop": {
+            "accessibility": "unknown",
+            "feed": "lines",
+            "stop_id": "P1",
+            "name": "Line 1st",
+            "latitude": 47.6005,
+            "longitude": -122.33,
+            "time_zone": "America/Los_Angeles"
+          },
+          "walk_seconds": 42,
+          "soonest_departure": 1781549040,
+          "departures": [
+            {
+              "trip_id": "L22-H1144",
+              "start_date": "20260615",
+              "headsign": "Hazel",
+              "status": "scheduled",
+              "departure": 1781549040,
+              "scheduled_departure": 1781549040,
+              "accessibility": "unknown"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "feed": "lines",
+      "route": {
+        "route_id": "L62",
+        "short_name": "62",
+        "route_type": 3
+      },
+      "agency": {
+        "agency_id": "LN",
+        "name": "Lines",
+        "url": "https://l.test"
+      },
+      "pages": [
+        {
+          "headsigns": [
+            "Downtown via Fremont"
+          ],
+          "direction_id": 1,
+          "stop": {
+            "accessibility": "unknown",
+            "feed": "lines",
+            "stop_id": "P1",
+            "name": "Line 1st",
+            "latitude": 47.6005,
+            "longitude": -122.33,
+            "time_zone": "America/Los_Angeles"
+          },
+          "walk_seconds": 42,
+          "soonest_departure": 1781549400,
+          "departures": [
+            {
+              "trip_id": "L62-1150",
+              "start_date": "20260615",
+              "headsign": "Downtown via Fremont",
+              "status": "scheduled",
+              "departure": 1781549400,
+              "scheduled_departure": 1781549400,
+              "accessibility": "unknown"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

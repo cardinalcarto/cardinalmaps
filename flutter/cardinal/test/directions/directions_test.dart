@@ -129,6 +129,32 @@ void main() {
     expect(directions.mode, TravelMode.walking);
   });
 
+  test('walking by wheelchair asks for wheelchair routes', () {
+    bothEnds();
+    directions.setMode(TravelMode.walking);
+    expect(routes.asked.last.wheelchair, isFalse);
+    directions.setWheelchair(true);
+    expect(directions.wheelchair, isTrue);
+    expect(routes.asked, hasLength(3));
+    expect(routes.asked.last.mode, TravelMode.walking);
+    expect(routes.asked.last.wheelchair, isTrue);
+    directions.setWheelchair(false);
+    expect(routes.asked.last.wheelchair, isFalse);
+  });
+
+  test('walking by wheelchair changes nothing to ask for driving', () {
+    var changes = 0;
+    bothEnds();
+    directions
+      ..addListener(() => changes++)
+      ..setWheelchair(true);
+    expect(routes.asked, hasLength(1));
+    // The walking chip changes, though.
+    expect(changes, 1);
+    directions.setWheelchair(true);
+    expect(changes, 1);
+  });
+
   test('the same mode again asks nothing', () {
     bothEnds();
     directions.setMode(TravelMode.driving);

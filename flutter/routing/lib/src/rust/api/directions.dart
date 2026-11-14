@@ -29,19 +29,23 @@ abstract class DirectionsAdapter implements RustOpaqueInterface {
   /// An adapter for a Valhalla server's route endpoint and a costing such as `auto`,
   /// asking for up to `alternates` routes besides the best one, with instructions in
   /// `language` (a BCP-47 tag such as `pt-PT`, as [`valhalla_language`] resolves it) and
-  /// distances in `units`.
+  /// distances in `units`. With `wheelchair`, the routes are ones a wheelchair can take:
+  /// Valhalla's `pedestrian` costing of type `wheelchair`, which is the only costing it
+  /// goes with.
   static DirectionsAdapter valhalla({
     required String endpointUrl,
     required String costing,
     required int alternates,
     required String language,
     required DistanceUnits units,
+    required bool wheelchair,
   }) => RustLib.instance.api.crateApiDirectionsDirectionsAdapterValhalla(
     endpointUrl: endpointUrl,
     costing: costing,
     alternates: alternates,
     language: language,
     units: units,
+    wheelchair: wheelchair,
   );
 }
 

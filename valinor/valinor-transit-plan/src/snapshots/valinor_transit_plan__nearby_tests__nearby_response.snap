@@ -1,0 +1,383 @@
+---
+source: valinor-transit-plan/src/nearby_tests.rs
+expression: "&run(&state, &request)"
+---
+{
+  "generated_at": 1781535015,
+  "window": {
+    "earliest": 1781535600,
+    "latest": 1781542800
+  },
+  "realtime": {
+    "level": "realtime",
+    "built_at": 1781535015,
+    "feeds": [
+      {
+        "feed": "metro",
+        "kind": "trip_updates",
+        "state": "applied",
+        "age_seconds": 15,
+        "header_timestamp": 1781535000,
+        "stale_after_seconds": 300,
+        "entities_dropped": 0
+      },
+      {
+        "feed": "metro",
+        "kind": "alerts",
+        "state": "applied",
+        "age_seconds": 15,
+        "header_timestamp": 1781535000,
+        "stale_after_seconds": 1800,
+        "entities_dropped": 0
+      }
+    ]
+  },
+  "routes": [
+    {
+      "feed": "metro",
+      "route": {
+        "route_id": "R4",
+        "short_name": "4",
+        "route_type": 3
+      },
+      "agency": {
+        "agency_id": "MT",
+        "name": "Metro",
+        "url": "https://m.test"
+      },
+      "pages": [
+        {
+          "headsigns": [
+            "No Steps"
+          ],
+          "direction_id": 0,
+          "stop": {
+            "accessibility": "accessible",
+            "feed": "metro",
+            "stop_id": "N1",
+            "name": "North 1st",
+            "latitude": 47.6005,
+            "longitude": -122.33,
+            "wheelchair_boarding": "yes",
+            "time_zone": "America/Los_Angeles"
+          },
+          "walk_seconds": 42,
+          "soonest_departure": 1781535690,
+          "departures": [
+            {
+              "trip_id": "R4-0801",
+              "start_date": "20260615",
+              "headsign": "No Steps",
+              "status": "scheduled",
+              "departure": 1781535690,
+              "scheduled_departure": 1781535690,
+              "accessibility": "inaccessible"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "feed": "metro",
+      "route": {
+        "route_id": "R5",
+        "short_name": "5",
+        "route_type": 3
+      },
+      "agency": {
+        "agency_id": "MT",
+        "name": "Metro",
+        "url": "https://m.test"
+      },
+      "pages": [
+        {
+          "headsigns": [
+            "Up the Steps"
+          ],
+          "direction_id": 0,
+          "stop": {
+            "accessibility": "inaccessible",
+            "feed": "metro",
+            "stop_id": "N3",
+            "name": "Steps",
+            "latitude": 47.5995,
+            "longitude": -122.33,
+            "wheelchair_boarding": "no",
+            "time_zone": "America/Los_Angeles"
+          },
+          "walk_seconds": 42,
+          "soonest_departure": 1781535720,
+          "departures": [
+            {
+              "trip_id": "R5-0802",
+              "start_date": "20260615",
+              "headsign": "Up the Steps",
+              "status": "scheduled",
+              "departure": 1781535720,
+              "scheduled_departure": 1781535720,
+              "accessibility": "inaccessible"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "feed": "metro",
+      "route": {
+        "route_id": "R2",
+        "short_name": "2",
+        "route_type": 3
+      },
+      "agency": {
+        "agency_id": "MT",
+        "name": "Metro",
+        "url": "https://m.test"
+      },
+      "pages": [
+        {
+          "headsigns": [
+            "East End",
+            "East 1st"
+          ],
+          "stop": {
+            "accessibility": "accessible",
+            "feed": "metro",
+            "stop_id": "N1",
+            "name": "North 1st",
+            "latitude": 47.6005,
+            "longitude": -122.33,
+            "wheelchair_boarding": "yes",
+            "time_zone": "America/Los_Angeles"
+          },
+          "walk_seconds": 42,
+          "soonest_departure": 1781536380,
+          "departures": [
+            {
+              "trip_id": "R2E-0803",
+              "start_date": "20260615",
+              "headsign": "East End",
+              "status": "canceled",
+              "departure": 1781535780,
+              "scheduled_departure": 1781535780,
+              "accessibility": "unknown"
+            },
+            {
+              "trip_id": "R2E-0813",
+              "start_date": "20260615",
+              "headsign": "East End",
+              "status": "scheduled",
+              "departure": 1781536380,
+              "scheduled_departure": 1781536380,
+              "accessibility": "unknown"
+            },
+            {
+              "trip_id": "R2S-0820",
+              "start_date": "20260615",
+              "headsign": "East 1st",
+              "status": "scheduled",
+              "departure": 1781536800,
+              "scheduled_departure": 1781536800,
+              "accessibility": "unknown"
+            }
+          ]
+        },
+        {
+          "headsigns": [
+            "West End"
+          ],
+          "stop": {
+            "accessibility": "accessible",
+            "feed": "metro",
+            "stop_id": "N1",
+            "name": "North 1st",
+            "latitude": 47.6005,
+            "longitude": -122.33,
+            "wheelchair_boarding": "yes",
+            "time_zone": "America/Los_Angeles"
+          },
+          "walk_seconds": 42,
+          "soonest_departure": 1781536020,
+          "departures": [
+            {
+              "trip_id": "R2W-0805",
+              "start_date": "20260615",
+              "headsign": "West End",
+              "status": "scheduled",
+              "departure": 1781536020,
+              "scheduled_departure": 1781536020,
+              "accessibility": "unknown"
+            },
+            {
+              "trip_id": "R2W-0825",
+              "start_date": "20260615",
+              "headsign": "West End",
+              "status": "scheduled",
+              "departure": 1781537220,
+              "scheduled_departure": 1781537220,
+              "accessibility": "unknown"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "feed": "metro",
+      "route": {
+        "route_id": "R1",
+        "short_name": "1",
+        "long_name": "First Avenue",
+        "route_type": 3,
+        "color": "FDB71A",
+        "text_color": "000000"
+      },
+      "agency": {
+        "agency_id": "MT",
+        "name": "Metro",
+        "url": "https://m.test"
+      },
+      "pages": [
+        {
+          "headsigns": [
+            "Northgate",
+            "Northgate via 2nd"
+          ],
+          "direction_id": 0,
+          "stop": {
+            "accessibility": "accessible",
+            "feed": "metro",
+            "stop_id": "N1",
+            "name": "North 1st",
+            "latitude": 47.6005,
+            "longitude": -122.33,
+            "wheelchair_boarding": "yes",
+            "time_zone": "America/Los_Angeles"
+          },
+          "walk_seconds": 42,
+          "soonest_departure": 1781536350,
+          "departures": [
+            {
+              "trip_id": "R1N-0810",
+              "start_date": "20260615",
+              "headsign": "Northgate",
+              "status": "live",
+              "departure": 1781536350,
+              "scheduled_departure": 1781536230,
+              "delay_seconds": 120,
+              "realtime": true,
+              "accessibility": "accessible",
+              "alerts": [
+                0
+              ]
+            },
+            {
+              "trip_id": "R1N-0820",
+              "start_date": "20260615",
+              "headsign": "Northgate via 2nd",
+              "status": "scheduled",
+              "departure": 1781536830,
+              "scheduled_departure": 1781536830,
+              "accessibility": "accessible",
+              "alerts": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "headsigns": [
+            "Southcenter"
+          ],
+          "direction_id": 1,
+          "stop": {
+            "accessibility": "accessible",
+            "feed": "metro",
+            "stop_id": "N1",
+            "name": "North 1st",
+            "latitude": 47.6005,
+            "longitude": -122.33,
+            "wheelchair_boarding": "yes",
+            "time_zone": "America/Los_Angeles"
+          },
+          "walk_seconds": 42,
+          "soonest_departure": 1781536140,
+          "departures": [
+            {
+              "trip_id": "R1S-0800",
+              "start_date": "20260615",
+              "headsign": "Southcenter",
+              "status": "scheduled",
+              "departure": 1781536140,
+              "scheduled_departure": 1781536140,
+              "accessibility": "accessible",
+              "alerts": [
+                0
+              ]
+            },
+            {
+              "trip_id": "R1S-0810",
+              "start_date": "20260615",
+              "headsign": "Southcenter",
+              "status": "scheduled",
+              "departure": 1781536740,
+              "scheduled_departure": 1781536740,
+              "accessibility": "accessible",
+              "alerts": [
+                0
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "alerts": [
+    {
+      "feed": "metro",
+      "id": "a1",
+      "cause": "construction",
+      "effect": "detour",
+      "severity": "warning",
+      "active_periods": [
+        {
+          "start": 1700000000,
+          "end": 1900000000
+        }
+      ],
+      "communication_periods": [],
+      "impact_periods": [],
+      "header": [
+        {
+          "text": "Stop relocated",
+          "language": "en"
+        },
+        {
+          "text": "Parada reubicada",
+          "language": "es"
+        }
+      ],
+      "description": [
+        {
+          "text": "The temporary stop is on Pine St just east of the old one.",
+          "language": "en"
+        }
+      ],
+      "url": [
+        {
+          "text": "https://m.test/alert",
+          "language": "en"
+        }
+      ],
+      "tts_header": [],
+      "tts_description": [],
+      "cause_detail": [],
+      "effect_detail": [],
+      "image": [],
+      "image_alternative_text": [],
+      "informed": [
+        {
+          "route_id": "R1"
+        }
+      ]
+    }
+  ]
+}

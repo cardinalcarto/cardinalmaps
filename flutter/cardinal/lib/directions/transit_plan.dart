@@ -1,7 +1,9 @@
 /// A transit plan as the router answers it (`valinor-transit-plan`'s response JSON),
 /// read into what the directions sheet shows.
 ///
-/// Only what the sheet uses is read; everything a feed may omit is nullable.
+/// Only what the sheet uses is read; everything a feed may omit is nullable. Its routes,
+/// stops, departures, vehicles, and alerts are also how nearby transit reads its own
+/// responses (`transit/nearby_transit.dart`).
 library;
 
 import 'dart:convert';
@@ -47,6 +49,28 @@ enum RealtimeLevel {
   };
 }
 
+/// What real-time data an answer used: a response's `realtime`.
+class RealtimeStatus {
+  RealtimeStatus.fromJson(Map<String, Object?> json)
+    : level = RealtimeLevel.parse(json['level']),
+      feedsApplied = _feeds(json, applied: true),
+      feedsReported = _feeds(json, applied: false);
+
+  // One entry per message (a feed may send trip updates, alerts, and vehicles), so
+  // feeds are counted by name.
+  static int _feeds(Map<String, Object?> json, {required bool applied}) => {
+    for (final m in _list(json['feeds']).map(_map))
+      if (!applied || m['state'] == 'applied') m['feed'],
+  }.length;
+
+  final RealtimeLevel level;
+
+  /// How many feeds' real-time data was used (any of their messages), of
+  /// [feedsReported] feeds that have some.
+  final int feedsApplied;
+  final int feedsReported;
+}
+
 /// Why a plan has no journeys.
 enum NoJourneysReason {
   noAccess,
@@ -77,21 +101,13 @@ class TransitPlan {
   });
 
   factory TransitPlan.fromJson(Map<String, Object?> json) {
-    final realtime = _map(json['realtime']);
-    // One entry per message (a feed may send trip updates, alerts, and vehicles), so
-    // feeds are counted by name.
-    final messages = _list(realtime['feeds']).map(_map).toList();
-    final feeds = {for (final m in messages) m['feed']};
-    final applied = {
-      for (final m in messages)
-        if (m['state'] == 'applied') m['feed'],
-    };
+    final realtime = RealtimeStatus.fromJson(_map(json['realtime']));
     final direct = _map(json['direct']);
     return TransitPlan(
       journeys: [for (final j in _list(json['journeys'])) Journey._(_map(j))],
-      realtime: RealtimeLevel.parse(realtime['level']),
-      feedsApplied: applied.length,
-      feedsReported: feeds.length,
+      realtime: realtime.level,
+      feedsApplied: realtime.feedsApplied,
+      feedsReported: realtime.feedsReported,
       noJourneysReason: NoJourneysReason.parse(json['no_journeys_reason']),
       directSeconds: direct['status'] == 'found'
           ? (direct['seconds'] as num?)?.toInt()
@@ -175,7 +191,7 @@ sealed class JourneyLeg {
       duration = (json['duration_seconds'] as num).toInt();
 
   static JourneyLeg _parse(Map<String, Object?> json) => switch (json['type']) {
-    'transit' => TransitLeg._(json),
+    'transit' => TransitLeg.fromJson(json),
     'access' => StreetLeg._(json, StreetLegKind.access),
     'egress' => StreetLeg._(json, StreetLegKind.egress),
     _ => StreetLeg._(json, StreetLegKind.transfer),
@@ -197,14 +213,14 @@ class StreetLeg extends JourneyLeg {
   StreetLeg._(super.json, this.kind)
     : mode = json['mode'] as String? ?? 'walking',
       from = kind == StreetLegKind.transfer
-          ? StopRef._(_map(json['from']))
+          ? StopRef.fromJson(_map(json['from']))
           : kind == StreetLegKind.egress
-          ? StopRef._(_map(json['stop']))
+          ? StopRef.fromJson(_map(json['stop']))
           : null,
       to = kind == StreetLegKind.transfer
-          ? StopRef._(_map(json['to']))
+          ? StopRef.fromJson(_map(json['to']))
           : kind == StreetLegKind.access
-          ? StopRef._(_map(json['stop']))
+          ? StopRef.fromJson(_map(json['stop']))
           : null,
       walk = json['walk'] == null ? null : WalkPath._(_map(json['walk'])),
       stopMoved = [
@@ -232,15 +248,17 @@ class StreetLeg extends JourneyLeg {
 
 /// A ride on one vehicle, perhaps across several trips without getting off.
 class TransitLeg extends JourneyLeg {
-  TransitLeg._(super.json)
+  TransitLeg.fromJson(super.json)
     : waitSeconds = (json['wait_seconds'] as num?)?.toInt() ?? 0,
       delaySeconds = (json['delay_seconds'] as num?)?.toInt(),
       realtime = json['realtime'] == true,
       route = json['route'] == null
           ? null
-          : TransitRoute._(_map(json['route'])),
+          : TransitRoute.fromJson(_map(json['route'])),
       agency = _map(json['agency'])['name'] as String?,
       headsign = _map(json['trip'])['headsign'] as String?,
+      tripId = _map(json['trip'])['trip_id'] as String?,
+      startDate = _map(json['trip'])['start_date'] as String?,
       tripState = _map(json['trip'])['realtime_state'] as String?,
       bikesAllowed = _map(json['trip'])['bikes_allowed'] as String?,
       stops = [for (final s in _list(json['stops'])) StopVisit._(_map(s))],
@@ -250,14 +268,19 @@ class TransitLeg extends JourneyLeg {
       _shape = json['shape'] as String?,
       vehicle = json['vehicle'] == null
           ? null
-          : TransitVehicle._(_map(json['vehicle'])),
-      alerts = [for (final a in _list(json['alerts'])) LegAlert._(_map(a))],
+          : TransitVehicle.fromJson(_map(json['vehicle'])),
+      alerts = [
+        for (final a in _list(json['alerts'])) LegAlert.fromJson(_map(a)),
+      ],
       departures = _departures(json);
 
   static List<RideDeparture> _departures(Map<String, Object?> json) {
-    final own = [for (final a in _list(json['alerts'])) LegAlert._(_map(a))];
+    final own = [
+      for (final a in _list(json['alerts'])) LegAlert.fromJson(_map(a)),
+    ];
     final others = [
-      for (final a in _list(json['departure_alerts'])) LegAlert._(_map(a)),
+      for (final a in _list(json['departure_alerts']))
+        LegAlert.fromJson(_map(a)),
     ];
     return [
       for (final d in _list(json['departures']))
@@ -275,6 +298,11 @@ class TransitLeg extends JourneyLeg {
   final TransitRoute? route;
   final String? agency;
   final String? headsign;
+
+  /// The trip it rides, when the plan names it, and its service day as `YYYYMMDD`:
+  /// with [tripId], which run of the trip it is.
+  final String? tripId;
+  final String? startDate;
 
   /// What real-time data did to the trip: `delayed`, `stop_skipped`, `replaced`, or
   /// `added`.
@@ -315,13 +343,16 @@ class TransitLeg extends JourneyLeg {
 
 /// A route, as riders know it.
 class TransitRoute {
-  TransitRoute._(Map<String, Object?> json)
-    : shortName = json['short_name'] as String?,
+  TransitRoute.fromJson(Map<String, Object?> json)
+    : id = json['route_id'] as String? ?? '',
+      shortName = json['short_name'] as String?,
       longName = json['long_name'] as String?,
       type = (json['route_type'] as num?)?.toInt() ?? 3,
       color = json['color'] as String?,
       textColor = json['text_color'] as String?;
 
+  /// GTFS `route_id`, unique within its feed.
+  final String id;
   final String? shortName;
   final String? longName;
 
@@ -333,7 +364,8 @@ class TransitRoute {
   final String? textColor;
 
   TransitRoute._copy(TransitRoute other, {this.color, this.textColor})
-    : shortName = other.shortName,
+    : id = other.id,
+      shortName = other.shortName,
       longName = other.longName,
       type = other.type;
 
@@ -376,8 +408,10 @@ enum VehicleKind {
 
 /// A stop, as a rider sees it.
 class StopRef {
-  StopRef._(Map<String, Object?> json)
-    : name = json['name'] as String? ?? json['stop_id'] as String? ?? '',
+  StopRef.fromJson(Map<String, Object?> json)
+    : id = json['stop_id'] as String? ?? '',
+      feed = json['feed'] as String?,
+      name = json['name'] as String? ?? json['stop_id'] as String? ?? '',
       code = json['code'] as String?,
       platform = json['platform'] as String?,
       accessibility = Accessibility.parse(json['accessibility']),
@@ -388,6 +422,9 @@ class StopRef {
             )
           : null;
 
+  /// GTFS `stop_id`, unique within its [feed].
+  final String id;
+  final String? feed;
   final String name;
   final String? code;
   final String? platform;
@@ -398,7 +435,7 @@ class StopRef {
 /// A stop on a ride, with its times.
 class StopVisit {
   StopVisit._(Map<String, Object?> json)
-    : stop = StopRef._(json),
+    : stop = StopRef.fromJson(json),
       arrival = _time(json['arrival']),
       departure = _time(json['departure']),
       scheduledArrival = _optionalTime(json['scheduled_arrival']),
@@ -432,7 +469,7 @@ class RideSegment {
   RideSegment._(Map<String, Object?> json)
     : route = json['route'] == null
           ? null
-          : TransitRoute._(_map(json['route'])),
+          : TransitRoute.fromJson(_map(json['route'])),
       headsign = json['headsign'] as String?,
       firstStop = (json['first_stop_index'] as num).toInt(),
       lastStop = (json['last_stop_index'] as num).toInt();
@@ -463,58 +500,82 @@ enum DepartureStatus {
   bool get runs => this == scheduled || this == live;
 }
 
-/// One departure of a ride's route from its boarding stop to its alighting stop.
-class RideDeparture {
-  RideDeparture._(
-    Map<String, Object?> json,
-    List<LegAlert> legAlerts,
-    List<LegAlert> departureAlerts,
-  ) : tripId = json['trip_id'] as String? ?? '',
+/// One departure of a route from a stop.
+class StopDeparture {
+  /// Reads [json], whose `alerts` index [alerts].
+  StopDeparture.fromJson(
+    Map<String, Object?> json, {
+    List<LegAlert> alerts = const [],
+  }) : this._(json, _indexed(json['alerts'], alerts));
+
+  StopDeparture._(Map<String, Object?> json, this.alerts)
+    : tripId = json['trip_id'] as String? ?? '',
+      startDate = json['start_date'] as String?,
       headsign = json['headsign'] as String?,
       status = DepartureStatus.parse(json['status']),
       departure = _time(json['departure']),
-      arrival = _time(json['arrival']),
       scheduledDeparture = _optionalTime(json['scheduled_departure']),
-      scheduledArrival = _optionalTime(json['scheduled_arrival']),
       delaySeconds = (json['delay_seconds'] as num?)?.toInt(),
       realtime = json['realtime'] == true,
       vehicleId = json['vehicle_id'] as String?,
       accessibility = Accessibility.parse(json['accessibility']),
-      bikesAllowed = json['bikes_allowed'] as String?,
-      suggested = json['suggested'] == true,
-      missed = json['missed'] == true,
-      lastOfDay = json['last_of_day'] == true,
-      alerts = [
-        for (final i in _list(json['alerts']))
-          if (i is int && i >= 0 && i < legAlerts.length) legAlerts[i],
-        for (final i in _list(json['departure_alerts']))
-          if (i is int && i >= 0 && i < departureAlerts.length)
-            departureAlerts[i],
-      ];
+      bikesAllowed = json['bikes_allowed'] as String?;
+
+  static List<LegAlert> _indexed(Object? indices, List<LegAlert> alerts) => [
+    for (final i in _list(indices))
+      if (i is int && i >= 0 && i < alerts.length) alerts[i],
+  ];
 
   final String tripId;
 
-  /// Its headsign at the boarding stop, or null when it's the ride's own.
+  /// The trip's service day, as `YYYYMMDD`: with [tripId], which run of the trip it is.
+  final String? startDate;
+
+  /// Its headsign at the stop; on a ride, null when it's the ride's own.
   final String? headsign;
   final DepartureStatus status;
 
-  /// When it leaves the boarding stop and reaches the alighting stop: predictions when
-  /// there are any, the schedule for a canceled or skipped one.
+  /// When it leaves the stop: the prediction when there is one, the schedule for a
+  /// canceled or skipped one.
   final DateTime departure;
-  final DateTime arrival;
   final DateTime? scheduledDeparture;
-  final DateTime? scheduledArrival;
 
-  /// How late (or, below zero, early) it leaves the boarding stop, when known.
+  /// How late (or, below zero, early) it leaves the stop, when known.
   final int? delaySeconds;
 
-  /// Whether either time came from real-time data.
+  /// Whether its times came from real-time data.
   final bool realtime;
   final String? vehicleId;
+
+  /// Whether its trip and stop can be used in a wheelchair.
   final Accessibility accessibility;
 
   /// `yes`, `no`, or null when the feed doesn't say.
   final String? bikesAllowed;
+
+  /// The service alerts that apply to it.
+  final List<LegAlert> alerts;
+}
+
+/// One departure of a ride's route from its boarding stop to its alighting stop.
+class RideDeparture extends StopDeparture {
+  RideDeparture._(
+    Map<String, Object?> json,
+    List<LegAlert> legAlerts,
+    List<LegAlert> departureAlerts,
+  ) : arrival = _time(json['arrival']),
+      scheduledArrival = _optionalTime(json['scheduled_arrival']),
+      suggested = json['suggested'] == true,
+      missed = json['missed'] == true,
+      lastOfDay = json['last_of_day'] == true,
+      super._(json, [
+        ...StopDeparture._indexed(json['alerts'], legAlerts),
+        ...StopDeparture._indexed(json['departure_alerts'], departureAlerts),
+      ]);
+
+  /// When it reaches the alighting stop, as [departure] leaves the boarding stop.
+  final DateTime arrival;
+  final DateTime? scheduledArrival;
 
   /// Whether it's the one the journey takes.
   final bool suggested;
@@ -524,19 +585,35 @@ class RideDeparture {
 
   /// Whether it's the route's last between these stops on its service day.
   final bool lastOfDay;
-
-  /// The service alerts that apply to it.
-  final List<LegAlert> alerts;
 }
 
-/// The vehicle running a ride, when real-time data names it.
+/// A vehicle real-time data names: the one running a ride, or one on a route.
 class TransitVehicle {
-  TransitVehicle._(Map<String, Object?> json)
-    : label = json['label'] as String? ?? json['id'] as String?,
+  TransitVehicle.fromJson(Map<String, Object?> json)
+    : id = json['id'] as String?,
+      label = json['label'] as String? ?? json['id'] as String?,
+      tripId = json['trip_id'] as String?,
+      point = json['latitude'] is num && json['longitude'] is num
+          ? DirectionsPoint(
+              lat: (json['latitude'] as num).toDouble(),
+              lng: (json['longitude'] as num).toDouble(),
+            )
+          : null,
+      bearing = (json['bearing'] as num?)?.toDouble(),
       occupancy = json['occupancy'] as String?,
       timestamp = _optionalTime(json['timestamp']);
 
+  final String? id;
   final String? label;
+
+  /// The trip it's running, when the feed says.
+  final String? tripId;
+
+  /// Where it was at [timestamp], when the feed says.
+  final DirectionsPoint? point;
+
+  /// Degrees clockwise from north.
+  final double? bearing;
 
   /// GTFS-RT's occupancy status, lowercase, such as `many_seats_available`.
   final String? occupancy;
@@ -545,7 +622,7 @@ class TransitVehicle {
 
 /// A service alert on a ride.
 class LegAlert {
-  LegAlert._(Map<String, Object?> json)
+  LegAlert.fromJson(Map<String, Object?> json)
     : effect = json['effect'] as String?,
       severity = json['severity'] as String?,
       header = _text(json['header']),

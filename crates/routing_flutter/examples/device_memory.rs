@@ -433,6 +433,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 3,
                 "en-US".into(),
                 DistanceUnits::Kilometers,
+                false,
             )
             .map(Arc::new)
             .map_err(|e| e.message)

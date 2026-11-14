@@ -55,4 +55,35 @@ pub enum PlanError<T: core::error::Error + 'static, A: core::error::Error + 'sta
     /// A time in the request is too far from the service window to be represented.
     #[error("represent a time of {0} seconds from the window's origin")]
     TimeOutOfRange(i64),
+    /// Something the request names by ID isn't in the timetable or the pinned real-time data.
+    #[error("find the {0} the request names")]
+    NotFound(Missing),
+}
+
+/// What a request named that couldn't be found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Missing {
+    /// A route, by its feed and `route_id`.
+    Route,
+    /// A stop, by its feed and `stop_id`.
+    Stop,
+    /// A trip, by its `trip_id` and `start_date`, among the stop's departures.
+    Trip,
+}
+
+impl Missing {
+    /// The name used in messages and in the JSON error's `kind`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Route => "route",
+            Self::Stop => "stop",
+            Self::Trip => "trip",
+        }
+    }
+}
+
+impl core::fmt::Display for Missing {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.name())
+    }
 }

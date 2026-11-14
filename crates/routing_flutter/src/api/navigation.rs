@@ -1258,6 +1258,7 @@ mod tests {
             0,
             "pt-PT".into(),
             DistanceUnits::Miles,
+            false,
         )
         .unwrap()
     }
@@ -1612,6 +1613,7 @@ mod tests {
             0,
             "de-AT".into(),
             DistanceUnits::Kilometers,
+            false,
         )
         .unwrap();
         let routes = austrian

@@ -78,6 +78,7 @@ void main() {
       alternates: 2,
       language: 'en-US',
       units: DistanceUnits.kilometers,
+      wheelchair: false,
     );
     final request = adapter.request(
       from: const DirectionsPoint(lat: 42.5078, lng: 1.5211),
@@ -102,6 +103,7 @@ void main() {
       alternates: 0,
       language: 'de-AT',
       units: DistanceUnits.kilometers,
+      wheelchair: false,
     );
     final request = adapter.request(
       from: const DirectionsPoint(lat: 42.5078, lng: 1.5211),
@@ -170,6 +172,7 @@ void main() {
       alternates: 0,
       language: 'en-US',
       units: DistanceUnits.kilometers,
+      wheelchair: false,
     );
     await expectLater(
       adapter.parse(

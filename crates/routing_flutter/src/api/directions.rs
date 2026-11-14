@@ -11,12 +11,16 @@ use ferrostar::models::{
 use ferrostar::routing_adapters::error::ParsingError;
 use ferrostar::routing_adapters::{RouteAdapter, RouteRequest, WellKnownRouteProvider};
 use flutter_rust_bridge::frb;
+use serde_json::json;
 use std::collections::HashMap;
 use std::time::SystemTime;
 
 /// How far off a trip's start is taken to be, in meters. Valhalla uses it to decide how sure
 /// it can be of which side of the street the start is on.
 const START_ACCURACY: f64 = 10.0;
+
+/// Valhalla's costing for going on foot, and by wheelchair.
+const PEDESTRIAN: &str = "pedestrian";
 
 /// A point on the ground, in degrees.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -220,7 +224,9 @@ impl DirectionsAdapter {
     /// An adapter for a Valhalla server's route endpoint and a costing such as `auto`,
     /// asking for up to `alternates` routes besides the best one, with instructions in
     /// `language` (a BCP-47 tag such as `pt-PT`, as [`valhalla_language`] resolves it) and
-    /// distances in `units`.
+    /// distances in `units`. With `wheelchair`, the routes are ones a wheelchair can take:
+    /// Valhalla's `pedestrian` costing of type `wheelchair`, which is the only costing it
+    /// goes with.
     #[frb(sync)]
     pub fn valhalla(
         endpoint_url: String,
@@ -228,13 +234,23 @@ impl DirectionsAdapter {
         alternates: u32,
         language: String,
         units: DistanceUnits,
+        wheelchair: bool,
     ) -> Result<DirectionsAdapter, DirectionsError> {
         let language = valhalla_language(&language);
-        let options = serde_json::json!({
+        // Ferrostar sets each of these keys at the top of the request, over its own.
+        let mut options = json!({
             "alternates": alternates,
             "language": language,
             "units": units.valhalla(),
         });
+        if wheelchair {
+            if costing != PEDESTRIAN {
+                return Err(DirectionsError::failed(format!(
+                    "a wheelchair route needs {PEDESTRIAN} costing, not {costing}"
+                )));
+            }
+            options["costing_options"] = json!({ (PEDESTRIAN): { "type": "wheelchair" } });
+        }
         let adapter =
             RouteAdapter::from_well_known_route_provider(WellKnownRouteProvider::Valhalla {
                 endpoint_url,
@@ -313,8 +329,24 @@ mod tests {
             2,
             "es-MX".into(),
             DistanceUnits::Miles,
+            false,
         )
         .unwrap()
+    }
+
+    fn walking(wheelchair: bool) -> Result<DirectionsAdapter, DirectionsError> {
+        DirectionsAdapter::valhalla(
+            "http://router/route".into(),
+            "pedestrian".into(),
+            3,
+            "en-US".into(),
+            DistanceUnits::Kilometers,
+            wheelchair,
+        )
+    }
+
+    fn body(adapter: DirectionsAdapter) -> serde_json::Value {
+        serde_json::from_slice(&adapter.request(FROM, TO).unwrap().body).unwrap()
     }
 
     const FROM: DirectionsPoint = DirectionsPoint {
@@ -359,6 +391,39 @@ mod tests {
     }
 
     #[test]
+    fn a_wheelchair_route_is_asked_for_with_pedestrian_costing_of_that_type() {
+        let body = body(walking(true).unwrap());
+        assert_eq!(body["costing"], "pedestrian");
+        assert_eq!(body["costing_options"]["pedestrian"]["type"], "wheelchair");
+        assert_eq!(body["alternates"], 3);
+        assert_eq!(body["language"], "en-US");
+        assert_eq!(body["units"], "kilometers");
+        // Ferrostar's own keys are still there.
+        assert_eq!(body["format"], "osrm");
+        assert_eq!(body["voice_instructions"], true);
+    }
+
+    #[test]
+    fn a_walking_route_has_no_costing_options() {
+        let body = body(walking(false).unwrap());
+        assert_eq!(body["costing"], "pedestrian");
+        assert!(body["costing_options"].is_null());
+    }
+
+    #[test]
+    fn a_wheelchair_is_not_a_kind_of_other_costing() {
+        let made = DirectionsAdapter::valhalla(
+            "http://router/route".into(),
+            "auto".into(),
+            3,
+            "en-US".into(),
+            DistanceUnits::Kilometers,
+            true,
+        );
+        assert_eq!(made.err().unwrap().kind, DirectionsErrorKind::Failed);
+    }
+
+    #[test]
     fn no_way_there_is_told_apart_from_failure() {
         for code in NO_ROUTE_CODES {
             let body =
@@ -400,6 +465,7 @@ mod tests {
             0,
             language.into(),
             units,
+            false,
         )
         .unwrap();
         let request = adapter.request(from, to).unwrap();

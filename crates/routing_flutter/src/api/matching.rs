@@ -289,6 +289,7 @@ mod tests {
                 0,
                 "en-US".into(),
                 DistanceUnits::Kilometers,
+                false,
             )
             .unwrap();
             let request = adapter.request(from, to).unwrap();
