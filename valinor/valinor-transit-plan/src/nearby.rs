@@ -10,8 +10,9 @@
 //!   past midnight are handled as they are there.
 //! - Departures are grouped by GTFS route, then by direction: the trip's `direction_id`, or for
 //!   a trip without one, the last stop of the trip it is (see [`DirectionKey`]).
-//! - A direction's stop is the reachable stop with its earliest catchable departure: one leaving
-//!   at or after the request's time plus the walk there, as routing counts a first boarding.
+//! - A departure is catchable when it leaves at or after the request's time plus the walk to its
+//!   stop, as routing counts a first boarding. A direction's stop is the nearest of those where
+//!   its earliest catchable trip can still be caught.
 //!
 //! Like [`crate::plan`], this has no clock: `now` is always an argument.
 

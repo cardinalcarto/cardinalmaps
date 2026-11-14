@@ -203,23 +203,24 @@ expression: "&run(&state, &request)"
             "West End"
           ],
           "stop": {
-            "accessibility": "unknown",
+            "accessibility": "accessible",
             "feed": "metro",
-            "stop_id": "E1",
-            "name": "East 1st",
-            "latitude": 47.6,
-            "longitude": -122.329,
+            "stop_id": "N1",
+            "name": "North 1st",
+            "latitude": 47.6005,
+            "longitude": -122.33,
+            "wheelchair_boarding": "yes",
             "time_zone": "America/Los_Angeles"
           },
-          "walk_seconds": 57,
+          "walk_seconds": 42,
           "departures": [
             {
               "trip_id": "R2W-0805",
               "start_date": "20260615",
               "headsign": "West End",
               "status": "scheduled",
-              "departure": 1781535900,
-              "scheduled_departure": 1781535900,
+              "departure": 1781536020,
+              "scheduled_departure": 1781536020,
               "accessibility": "unknown"
             },
             {
@@ -227,8 +228,8 @@ expression: "&run(&state, &request)"
               "start_date": "20260615",
               "headsign": "West End",
               "status": "scheduled",
-              "departure": 1781537100,
-              "scheduled_departure": 1781537100,
+              "departure": 1781537220,
+              "scheduled_departure": 1781537220,
               "accessibility": "unknown"
             }
           ]
@@ -305,22 +306,22 @@ expression: "&run(&state, &request)"
           "stop": {
             "accessibility": "accessible",
             "feed": "metro",
-            "stop_id": "N2",
-            "name": "North 2nd",
-            "latitude": 47.604,
+            "stop_id": "N1",
+            "name": "North 1st",
+            "latitude": 47.6005,
             "longitude": -122.33,
             "wheelchair_boarding": "yes",
             "time_zone": "America/Los_Angeles"
           },
-          "walk_seconds": 335,
+          "walk_seconds": 42,
           "departures": [
             {
               "trip_id": "R1S-0800",
               "start_date": "20260615",
               "headsign": "Southcenter",
               "status": "scheduled",
-              "departure": 1781535960,
-              "scheduled_departure": 1781535960,
+              "departure": 1781536140,
+              "scheduled_departure": 1781536140,
               "accessibility": "accessible",
               "alerts": [
                 0
@@ -331,8 +332,8 @@ expression: "&run(&state, &request)"
               "start_date": "20260615",
               "headsign": "Southcenter",
               "status": "scheduled",
-              "departure": 1781536560,
-              "scheduled_departure": 1781536560,
+              "departure": 1781536740,
+              "scheduled_departure": 1781536740,
               "accessibility": "accessible",
               "alerts": [
                 0

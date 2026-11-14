@@ -445,8 +445,14 @@ A nearby request has a `location`; `time` (`now` by default); `mode`, `walking` 
   then by direction: the trip's `direction_id`, or for a trip without one, its last stop
   (`terminus_stop_id`). There is no grouping by headsign. A trip no GTFS route names isn't listed.
 - A departure is catchable when it leaves at or after `time` plus the walk to its stop, as
-  routing counts a first boarding. A direction's `stop` is the reachable stop with its earliest
-  catchable departure that runs (ties go to the shorter walk), with `walk_seconds`.
+  routing counts a first boarding. A direction's `stop` is chosen in two steps: first the trip
+  of its earliest catchable departure that runs at any reachable stop, then, of the stops where
+  that same trip can still be caught, the one with the shortest walk (then the earlier departure,
+  then the lower stop number), with `walk_seconds`. A later trip from a nearer stop never beats
+  the earliest trip, and a trip caught only at a farther stop is caught there.
+  A trip is a run on its service date (`trip_id` and `start_date`), and each run of a frequency
+  trip is a trip of its own, since runs that share a `trip_id` are different vehicles.
+  A loop's two visits to one stop are one stop, at the earlier departure.
   It lists the next `max_departures` departures from that stop within the horizon, in order, which
   can begin with canceled or skipped ones; a direction with no catchable departure that runs is
   dropped, and so is a route with no directions left.
@@ -455,7 +461,7 @@ A nearby request has a `location`; `time` (`now` by default); `mode`, `walking` 
   `trip_id`, `start_date`, `headsign`, `status`, `departure`, `scheduled_departure`,
   `delay_seconds`, `realtime`, `vehicle_id`, `accessibility` (of its trip and stop), `bikes_allowed`,
   and `alerts`, indices into the response's `alerts`.
-- Routes are ordered by their soonest catchable departure, and directions by `direction_id`, then
+- Routes are ordered by their soonest catchable departure as seen from each direction's stop, and directions by `direction_id`, then
   `terminus_stop_id`, so a row's pages keep their order from one refresh to the next.
   A route has its `feed`, `route` (names, type, and colors), and `agency`.
 - `realtime` states each feed's age, as a plan's does. With no routes, `no_routes_reason` says

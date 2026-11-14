@@ -47,8 +47,6 @@ const HOME: LatLon = LatLon {
 const WALK_N1: u32 = 42;
 /// The walk to `N2`, 444.8 m.
 const WALK_N2: u32 = 335;
-/// The walk to `E1`, 75.0 m.
-const WALK_E1: u32 = 57;
 
 const STOPS: &str = "stop_id,stop_name,stop_lat,stop_lon,wheelchair_boarding\n\
 N1,North 1st,47.6005,-122.3300,1\n\
@@ -216,6 +214,62 @@ fn metro_trips() -> Vec<Trip> {
         "",
         vec![("N1", hm(10, 30), ""), ("NF", hm(10, 40), "")],
     ));
+    // Afternoon routes for the stop choice, apart from the morning's.
+    // Route 8 rides from `N1` to `N2` for longer than the walk between them takes.
+    for (id, n1) in [("R8-1335", hm(13, 35) + 40), ("R8-1344", hm(13, 44))] {
+        trips.push((
+            "R8",
+            id.to_owned(),
+            "Long Way",
+            "0",
+            "",
+            "",
+            vec![("N1", n1, ""), ("N2", n1 + 380, ""), ("NF", n1 + 900, "")],
+        ));
+    }
+    // Route 9 calls at `N3` and then `N1`, both 42 s away.
+    trips.push((
+        "R9",
+        "R9-1305".to_owned(),
+        "Twin Stops",
+        "0",
+        "",
+        "",
+        vec![
+            ("N3", hm(13, 5), ""),
+            ("N1", hm(13, 6), ""),
+            ("NF", hm(13, 15), ""),
+        ],
+    ));
+    // Route 10 loops through `N1` twice.
+    trips.push((
+        "R10",
+        "R10-1500".to_owned(),
+        "Loop",
+        "0",
+        "",
+        "",
+        vec![
+            ("N1", hm(15, 0), ""),
+            ("NF", hm(15, 10), ""),
+            ("N1", hm(15, 20), ""),
+            ("WX", hm(15, 30), ""),
+        ],
+    ));
+    // Route 11 is a frequency trip from `N1` to `N2`, seven minutes apart, every ten minutes.
+    trips.push((
+        "R11",
+        "F2".to_owned(),
+        "Frequent Long Way",
+        "0",
+        "",
+        "",
+        vec![
+            ("N1", hm(17, 0), ""),
+            ("N2", hm(17, 7), ""),
+            ("NF", hm(17, 15), ""),
+        ],
+    ));
     trips
 }
 
@@ -257,7 +311,11 @@ fn metro_source() -> InMemorySource {
              R4,MT,4,,3,,\n\
              R5,MT,5,,3,,\n\
              R6,MT,6,,3,,\n\
-             R7,MT,7,,3,,\n",
+             R7,MT,7,,3,,\n\
+             R8,MT,8,,3,,\n\
+             R9,MT,9,,3,,\n\
+             R10,MT,10,,3,,\n\
+             R11,MT,11,,3,,\n",
         )
         .with("stops.txt", STOPS)
         .with(
@@ -270,7 +328,8 @@ fn metro_source() -> InMemorySource {
         .with(
             "frequencies.txt",
             "trip_id,start_time,end_time,headway_secs,exact_times\n\
-             F1,08:00:00,10:00:00,1200,1\n",
+             F1,08:00:00,10:00:00,1200,1\n\
+             F2,17:00:00,18:00:00,600,1\n",
         )
         .with(
             "shapes.txt",
@@ -558,11 +617,12 @@ fn each_direction_uses_the_stop_with_its_earliest_catchable_departure() {
         Some("Northgate via 2nd")
     );
 
-    // South: `N2` is farther, but its 08:06 leaves before the same trip reaches `N1` at 08:09.
+    // South: the earliest trip leaves `N2` at 08:06, but the rider can still catch it at `N1`,
+    // a far shorter walk, at 08:09.
     let south = direction(r1, &DirectionKey::Id(1));
-    assert_eq!(south.stop.stop_id, "N2");
-    assert_eq!(south.walk_seconds, WALK_N2);
-    assert_eq!(rows(south)[0], ("R1S-0800", june_15(8, 6), SCHEDULED));
+    assert_eq!(south.stop.stop_id, "N1");
+    assert_eq!(south.walk_seconds, WALK_N1);
+    assert_eq!(rows(south)[0], ("R1S-0800", june_15(8, 9), SCHEDULED));
     assert_eq!(south.headsigns, vec!["Southcenter"]);
 }
 
@@ -612,12 +672,11 @@ fn trips_without_a_direction_id_are_grouped_by_their_last_stop() {
             ("R2E-0813", june_15(8, 13), SCHEDULED),
         ]
     );
-    // West: `E1` at 08:05 is sooner than the same trip at `N1` at 08:07.
+    // West: the trip leaves `E1` at 08:05, but `N1`, where it calls at 08:07, is nearer.
     let west = direction(r2, &DirectionKey::Terminus("WX".to_owned()));
-    assert_eq!(west.stop.stop_id, "E1");
-    assert_eq!(west.walk_seconds, WALK_E1);
-    assert_eq!(west.stop.accessibility, Accessibility::Unknown);
-    assert_eq!(rows(west)[0], ("R2W-0805", june_15(8, 5), SCHEDULED));
+    assert_eq!(west.stop.stop_id, "N1");
+    assert_eq!(west.walk_seconds, WALK_N1);
+    assert_eq!(rows(west)[0], ("R2W-0805", june_15(8, 7), SCHEDULED));
     // The short trip ends at `E1`, so it is a direction of its own; and a trip's last stop is
     // never a departure, so it's listed from `N1`, not from `E1`.
     let short = direction(r2, &DirectionKey::Terminus("E1".to_owned()));
@@ -658,6 +717,87 @@ fn the_horizon_bounds_departures_and_a_direction_without_any_is_dropped() {
     assert_eq!(
         rows(&route(&response, FEED, "R7").directions[0]),
         vec![("R7-1030", june_15(10, 30), SCHEDULED)]
+    );
+}
+
+#[test]
+fn the_earliest_trip_is_caught_at_the_nearest_stop_where_it_still_can_be() {
+    let state = state();
+    let long_way = |time: i64| {
+        let response = run(&state, &request(time));
+        route(&response, FEED, "R8").directions[0].clone()
+    };
+    // At `N1` in time for the 13:35:40: both stops catch it, and `N1` is nearer.
+    let near = long_way(at(13, 35, 40) - i64::from(WALK_N1));
+    assert_eq!(
+        (near.stop.stop_id.as_str(), near.walk_seconds),
+        ("N1", WALK_N1)
+    );
+    assert_eq!(rows(&near)[0], ("R8-1335", at(13, 35, 40), SCHEDULED));
+
+    // A second later it is gone from `N1`, but still catchable at `N2`, at 13:42. The later trip
+    // from the nearer `N1`, at 13:44, doesn't win over it.
+    let far = long_way(at(13, 35, 41) - i64::from(WALK_N1));
+    assert_eq!(
+        (far.stop.stop_id.as_str(), far.walk_seconds),
+        ("N2", WALK_N2)
+    );
+    assert_eq!(
+        rows(&far),
+        vec![
+            ("R8-1335", at(13, 42, 0), SCHEDULED),
+            ("R8-1344", at(13, 50, 20), SCHEDULED),
+        ]
+    );
+}
+
+#[test]
+fn equal_walks_take_the_earlier_departure() {
+    let state = state();
+    // `N3` and `N1` are both 42 s away; the trip leaves `N3` first.
+    let response = run(&state, &request(june_15(13, 0)));
+    let twins = &route(&response, FEED, "R9").directions[0];
+    assert_eq!(twins.stop.stop_id, "N3");
+    assert_eq!(rows(twins), vec![("R9-1305", june_15(13, 5), SCHEDULED)]);
+}
+
+#[test]
+fn a_loop_through_the_stop_twice_lists_both_visits_from_one_stop() {
+    let state = state();
+    let response = run(&state, &request(june_15(14, 55)));
+    let looped = &route(&response, FEED, "R10").directions[0];
+    assert_eq!(looped.stop.stop_id, "N1");
+    assert_eq!(
+        rows(looped),
+        vec![
+            ("R10-1500", june_15(15, 0), SCHEDULED),
+            ("R10-1500", june_15(15, 20), SCHEDULED),
+        ]
+    );
+    // Once the first visit is gone, the second is still the same trip at the same stop.
+    let later = run(&state, &request(june_15(15, 5)));
+    let looped = &route(&later, FEED, "R10").directions[0];
+    assert_eq!(
+        (looped.stop.stop_id.as_str(), rows(looped)),
+        ("N1", vec![("R10-1500", june_15(15, 20), SCHEDULED)])
+    );
+}
+
+#[test]
+fn each_run_of_a_frequency_trip_is_a_trip_of_its_own() {
+    let state = state();
+    // The 17:00 run leaves `N1` before the rider is there, but is caught at `N2` at 17:07.
+    // The 17:10 run shares its `trip_id` and calls at the nearer `N1`, but is a later trip.
+    let response = run(&state, &request(june_15(17, 0)));
+    let frequent = &route(&response, FEED, "R11").directions[0];
+    assert_eq!(frequent.stop.stop_id, "N2");
+    assert_eq!(
+        rows(frequent),
+        vec![
+            ("F2", june_15(17, 7), SCHEDULED),
+            ("F2", june_15(17, 17), SCHEDULED),
+            ("F2", june_15(17, 27), SCHEDULED),
+        ]
     );
 }
 
@@ -761,7 +901,7 @@ fn real_time_data_is_shown_and_only_departures_that_run_choose_the_stop() {
     assert_eq!(late.delay_seconds, Some(120));
     assert!(late.realtime);
 
-    // The skipped departure can't be caught at `N2`, so its 08:09 at `N1` is the soonest.
+    // The trip skips `N2`, so only its 08:09 at `N1` can be caught.
     let south = direction(r1, &DirectionKey::Id(1));
     assert_eq!(south.stop.stop_id, "N1");
     assert_eq!(rows(south)[0], ("R1S-0800", june_15(8, 9), SCHEDULED));
@@ -813,7 +953,7 @@ fn nothing_in_reach_says_why() {
     assert!(response.routes.is_empty());
     assert_eq!(response.no_routes_reason, Some(NoRoutesReason::NoAccess));
 
-    let quiet = run(&state, &request(june_15(14, 0)));
+    let quiet = run(&state, &request(june_15(19, 0)));
     assert!(quiet.routes.is_empty());
     assert_eq!(quiet.no_routes_reason, Some(NoRoutesReason::NoService));
     let json = serde_json::to_value(&quiet).expect("serializes");

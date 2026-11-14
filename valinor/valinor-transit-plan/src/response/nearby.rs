@@ -115,7 +115,8 @@ pub struct NearbyDirection {
     /// The distinct headsigns of `departures`, the most frequent first.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub headsigns: Vec<String>,
-    /// The reachable stop with this direction's earliest departure the rider can catch.
+    /// The nearest reachable stop where the rider can catch this direction's earliest catchable
+    /// trip.
     pub stop: StopRef,
     /// The walk to `stop`, in seconds.
     pub walk_seconds: u32,
@@ -586,19 +587,15 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         // Per route of a file: its directions, each with its soonest departure that runs.
         let mut by_route: HashMap<(usize, GtfsRoute), Vec<ListedDirection>> = HashMap::new();
         for (group, seen) in groups {
-            // Canceled and skipped departures are listed, but can't be caught.
-            let Some(first) = seen
-                .iter()
-                .filter(|s| s.candidate.found == Found::Runs)
-                .min_by_key(|s| (s.candidate.board.departure, s.walk, s.stop))
-            else {
+            let Some(chosen) = chosen_boarding(&seen) else {
                 continue;
             };
             let Some(key) = self.direction_key(group.way) else {
                 continue;
             };
-            let (stop, walk) = (first.stop, first.walk);
-            let soonest = origin + i64::from(first.candidate.board.departure.into_inner());
+            let (stop, walk) = (chosen.stop, chosen.walk);
+            // The route's order reads the trip as the rider catches it, at the chosen stop.
+            let soonest = origin + i64::from(chosen.candidate.board.departure.into_inner());
             let mut listed: Vec<&Candidate> = seen
                 .iter()
                 .filter(|s| s.stop == stop)
@@ -861,6 +858,24 @@ fn boarding_ride(stop: StopId, candidate: &Candidate) -> valinor_transit::Ride {
         alight_position: candidate.pair.alight,
         alight_time: candidate.alight.arrival,
     }
+}
+
+/// Where a direction is caught: the earliest trip the rider can catch at any reachable stop,
+/// at the nearest stop where that trip can still be caught; then the earlier departure, then
+/// the lower stop number. `None` if nothing that runs can be caught.
+///
+/// A trip is a run on its service date, so each run of a frequency trip is a trip of its own,
+/// and a loop's two visits to one stop are one stop, at its earlier departure.
+fn chosen_boarding(seen: &[Seen]) -> Option<&Seen> {
+    // Canceled and skipped departures are listed, but can't be caught.
+    let running = || seen.iter().filter(|s| s.candidate.found == Found::Runs);
+    let earliest = running()
+        .min_by_key(|s| (s.candidate.board.departure, s.walk, s.stop))?
+        .candidate
+        .key;
+    running()
+        .filter(|s| s.candidate.key == earliest)
+        .min_by_key(|s| (s.walk, s.candidate.board.departure, s.stop))
 }
 
 /// Keeps the alerts of `pool` that a listed departure still indexes, renumbering them.
