@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/settings/accessibility.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:cardinal/transit/nearby_transit.dart';
+import 'package:cardinal/transit/nearby_page.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -35,8 +39,15 @@ Map<String, Object?> _route(
 Finder _row(String id) =>
     find.byKey(ValueKey<RouteKey>((feed: _feed, routeId: id)));
 
-Finder _in(String id, Finder finder) =>
-    find.descendant(of: _row(id), matching: finder);
+/// [finder] in [id]'s row, on the page it shows: a row with pages also lays out its
+/// first, unseen, for its height.
+Finder _in(String id, Finder finder) {
+  final pages = find.descendant(of: _row(id), matching: find.byType(PageView));
+  return find.descendant(
+    of: pages.evaluate().isEmpty ? _row(id) : pages,
+    matching: finder,
+  );
+}
 
 /// The text of [id]'s following departures, as spans.
 List<TextSpan> _following(WidgetTester tester, String id) {
@@ -65,11 +76,13 @@ void main() {
   late DateTime now;
   late FakeNearbySource source;
   late SettingsStore settings;
+  late HeadsignStore headsigns;
 
   setUp(() {
     now = DateTime.fromMillisecondsSinceEpoch(fakeStart * 1000);
     source = FakeNearbySource();
     settings = SettingsStore.inMemory();
+    headsigns = HeadsignStore.inMemory();
   });
 
   Future<void> open(WidgetTester tester) async {
@@ -81,6 +94,7 @@ void main() {
         places: places,
         saved: FakeSavedStore(places),
         settings: settings,
+        headsigns: headsigns,
       ),
       nearby: source,
       clock: () => now,
@@ -128,7 +142,7 @@ void main() {
     expect(ys, orderedEquals([...ys]..sort()));
     expect(_in('62', find.text('62')), findsOneWidget);
     expect(
-      _in('62', find.text('Downtown Seattle • Sand Point')),
+      _in('62', find.text('Downtown Seattle / Sand Point')),
       findsOneWidget,
     );
     expect(_in('62', find.text('Fremont Ave N & N 34th St')), findsOneWidget);
@@ -271,5 +285,311 @@ void main() {
       findsOneWidget,
     );
     expect(source.asked, isEmpty);
+  });
+
+  group('pages', () {
+    const ballard = 'Stop A';
+    const uw = 'Stop B';
+    const HeadsignStop atBallard = (
+      feed: _feed,
+      routeId: '44',
+      stopId: ballard,
+    );
+
+    /// Route 44 to Ballard from Stop A and to UW Medical Center from Stop B.
+    Map<String, Object?> u44({
+      List<int> toBallard = const [3, 13, 23],
+      List<int> toUw = const [9],
+    }) => nearbyRoutePagesJson('44', [
+      (headsigns: ['Ballard'], minutes: toBallard, stop: ballard),
+      (headsigns: ['UW Medical Center'], minutes: toUw, stop: uw),
+    ]);
+
+    /// Whether [id]'s row shows [headsign] where a rider can see it.
+    bool shows(WidgetTester tester, String id, String headsign) {
+      final row = tester.getRect(_row(id));
+      return _in(id, find.text(headsign)).evaluate().any((e) {
+        final box = e.renderObject! as RenderBox;
+        final center = box.localToGlobal(box.size.center(Offset.zero));
+        return row.contains(center);
+      });
+    }
+
+    Future<void> swipe(WidgetTester tester, String id) async {
+      await tester.fling(_row(id), const Offset(-300, 0), 1000);
+      await tester.pumpAndSettle();
+    }
+
+    late List<String> haptics;
+    setUp(() => haptics = []);
+
+    Future<void> listenForHaptics(WidgetTester tester) async {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'HapticFeedback.vibrate') {
+            haptics.add(call.arguments as String);
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+    }
+
+    testWidgets('opens on the soonest page without a remembered one', (
+      tester,
+    ) async {
+      await open(tester);
+      await answer(tester, [
+        u44(toBallard: [12], toUw: [4]),
+      ]);
+      expect(shows(tester, '44', 'UW Medical Center'), isTrue);
+      expect(shows(tester, '44', 'Ballard'), isFalse);
+      expect(
+        find.descendant(
+          of: _row('44'),
+          matching: find.byKey(const ValueKey('dots')),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a route with one page has no dots', (tester) async {
+      await open(tester);
+      await answer(tester, [_route('40')]);
+      expect(_in('40', find.byKey(const ValueKey('dots'))), findsNothing);
+    });
+
+    testWidgets('opens on the remembered page', (tester) async {
+      await headsigns.remember(atBallard, 'Ballard', chosenAt: now);
+      await open(tester);
+      await answer(tester, [
+        u44(toBallard: [12], toUw: [4]),
+      ]);
+      expect(shows(tester, '44', 'Ballard'), isTrue);
+      expect(_next(tester, '44').data, '12');
+    });
+
+    testWidgets('a swipe shows the next page, with a light haptic, and '
+        'remembers it', (tester) async {
+      await listenForHaptics(tester);
+      await open(tester);
+      await answer(tester, [u44()]);
+      expect(shows(tester, '44', 'Ballard'), isTrue);
+      final height = tester.getSize(_row('44')).height;
+
+      await swipe(tester, '44');
+      expect(shows(tester, '44', 'UW Medical Center'), isTrue);
+      expect(shows(tester, '44', 'Ballard'), isFalse);
+      expect(haptics, ['HapticFeedbackType.lightImpact']);
+      // One departure instead of three, and the row is as tall.
+      expect(tester.getSize(_row('44')).height, height);
+      expect(
+        await headsigns.recall([
+          (feed: _feed, routeId: '44', stopId: uw),
+          atBallard,
+        ]),
+        {
+          (feed: _feed, routeId: '44', stopId: uw): RememberedHeadsign(
+            'UW Medical Center',
+            now,
+          ),
+        },
+      );
+
+      // At the last page, a swipe settles where it was: nothing changes.
+      await swipe(tester, '44');
+      expect(haptics, hasLength(1));
+    });
+
+    testWidgets("a page with nothing left that runs keeps the row's height", (
+      tester,
+    ) async {
+      await open(tester);
+      await answer(tester, [
+        nearbyRoutePagesJson('44', [
+          (headsigns: ['Ballard'], minutes: [3, 13, 23], stop: ballard),
+          (headsigns: ['UW Medical Center'], minutes: [1], stop: uw),
+        ]),
+      ]);
+      final height = tester.getSize(_row('44')).height;
+      await swipe(tester, '44');
+      await wait(tester, const Duration(minutes: 2));
+      expect(shows(tester, '44', 'UW Medical Center'), isTrue);
+      expect(tester.getSize(_row('44')).height, height);
+    });
+
+    testWidgets('a swipe does not move the row', (tester) async {
+      await open(tester);
+      await answer(tester, [
+        u44(toBallard: [3], toUw: [20]),
+        _route('62', departures: [nearbyDepartureJson('b', 6)]),
+      ]);
+      final y44 = tester.getTopLeft(_row('44')).dy;
+      final y62 = tester.getTopLeft(_row('62')).dy;
+      expect(y44, lessThan(y62));
+      await swipe(tester, '44');
+      expect(shows(tester, '44', 'UW Medical Center'), isTrue);
+      expect(tester.getTopLeft(_row('44')).dy, y44);
+      expect(tester.getTopLeft(_row('62')).dy, y62);
+
+      // Nor does the next refresh from here.
+      now = now.add(nearbyRefresh);
+      await tester.pump(nearbyRefresh);
+      await answer(tester, [
+        u44(toBallard: [3], toUw: [20]),
+        _route('62', departures: [nearbyDepartureJson('b', 6)]),
+      ]);
+      expect(tester.getTopLeft(_row('44')).dy, y44);
+      expect(shows(tester, '44', 'UW Medical Center'), isTrue);
+    });
+
+    testWidgets('rows are ordered by the page each shows', (tester) async {
+      await headsigns.remember(atBallard, 'Ballard', chosenAt: now);
+      await open(tester);
+      // 44's soonest is to UW, in 2 minutes; it shows Ballard's 12.
+      await answer(tester, [
+        u44(toBallard: [12], toUw: [2]),
+        _route('62', departures: [nearbyDepartureJson('b', 5)]),
+      ]);
+      expect(
+        tester.getTopLeft(_row('62')).dy,
+        lessThan(tester.getTopLeft(_row('44')).dy),
+      );
+    });
+
+    testWidgets('a row keeps its page across a refresh', (tester) async {
+      await open(tester);
+      await answer(tester, [u44()]);
+      await swipe(tester, '44');
+      final row = tester.element(_row('44'));
+
+      // A page now comes first, and Ballard leaves sooner than ever.
+      now = now.add(nearbyRefresh);
+      await tester.pump(nearbyRefresh);
+      await answer(tester, [
+        nearbyRoutePagesJson('44', [
+          (headsigns: ['Aurora Village'], minutes: [1], stop: ballard),
+          (headsigns: ['Ballard'], minutes: [1], stop: ballard),
+          (headsigns: ['UW Medical Center'], minutes: [9], stop: uw),
+        ]),
+      ]);
+      expect(tester.element(_row('44')), same(row));
+      expect(shows(tester, '44', 'UW Medical Center'), isTrue);
+    });
+
+    testWidgets('merged headsigns read with a slash', (tester) async {
+      await open(tester);
+      await answer(tester, [
+        nearbyRoutePagesJson('44', [
+          (
+            headsigns: ['University District', 'UW Medical Center'],
+            minutes: [4],
+            stop: uw,
+          ),
+        ]),
+      ]);
+      expect(
+        _in('44', find.text('University District / UW Medical Center')),
+        findsOneWidget,
+      );
+    });
+  });
+
+  testWidgets('shows the schedule first, then real-time data in place', (
+    tester,
+  ) async {
+    final landing = source.realtimeLanding = Completer<bool>();
+    await open(tester);
+    await answer(tester, [
+      _route('40', departures: [nearbyDepartureJson('a', 3)]),
+      _route('62', departures: [nearbyDepartureJson('b', 8)]),
+    ]);
+    expect(_next(tester, '40').data, '3');
+    expect(source.asked, hasLength(1));
+    final row40 = tester.element(_row('40'));
+    final y40 = tester.getTopLeft(_row('40')).dy;
+    final y62 = tester.getTopLeft(_row('62')).dy;
+
+    landing.complete(true);
+    await tester.pump();
+    expect(source.asked, hasLength(2));
+    // 40 is now late, and leaves after 62: it stays where it was.
+    await answer(tester, [
+      _route('62', departures: [nearbyDepartureJson('b', 8)]),
+      _route('40', departures: [nearbyDepartureJson('a', 10, status: 'live')]),
+    ]);
+    expect(tester.element(_row('40')), same(row40));
+    expect(tester.getTopLeft(_row('40')).dy, y40);
+    expect(tester.getTopLeft(_row('62')).dy, y62);
+    expect(_next(tester, '40').data, '10');
+    expect(_in('40', find.byKey(const ValueKey('live'))), findsOneWidget);
+  });
+
+  testWidgets('coming back keeps the rows and refreshes them in place', (
+    tester,
+  ) async {
+    await open(tester);
+    await answer(tester, [_route('40'), _route('62')]);
+    final row40 = tester.element(_row('40'));
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    // Nothing is asked while it's away.
+    now = now.add(const Duration(minutes: 2));
+    await tester.pump(const Duration(minutes: 2));
+    expect(source.asked, hasLength(1));
+    expect(_row('40'), findsOneWidget);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(source.asked, hasLength(2));
+    expect(find.text('Finding departures near you…'), findsNothing);
+    expect(find.text('Finding your location…'), findsNothing);
+    expect(tester.element(_row('40')), same(row40));
+
+    await answer(tester, [_route('62'), _route('40')]);
+    expect(
+      tester.getTopLeft(_row('40')).dy,
+      lessThan(tester.getTopLeft(_row('62')).dy),
+    );
+  });
+
+  testWidgets('shows the clock time past 60 minutes', (tester) async {
+    await open(tester);
+    await answer(tester, [
+      _route(
+        '40',
+        departures: [
+          nearbyDepartureJson('a', 61),
+          nearbyDepartureJson('b', 107),
+        ],
+      ),
+      _route(
+        '62',
+        departures: [
+          nearbyDepartureJson('c', 60),
+          nearbyDepartureJson('d', 90),
+        ],
+      ),
+    ]);
+    String at(int minutes) =>
+        const DefaultMaterialLocalizations().formatTimeOfDay(
+          TimeOfDay.fromDateTime(now.add(Duration(minutes: minutes))),
+        );
+    expect(_next(tester, '40').data, at(61));
+    expect(_in('40', find.text(' min')), findsNothing);
+    expect(_following(tester, '40').map((s) => s.text), [at(107)]);
+    expect(_next(tester, '62').data, '60');
+    expect(_following(tester, '62').map((s) => s.text), [at(90)]);
   });
 }

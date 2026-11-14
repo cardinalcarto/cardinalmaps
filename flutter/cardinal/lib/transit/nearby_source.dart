@@ -122,12 +122,15 @@ Map<String, Object?> routeRequest(
 /// timetables today, and perhaps a server later. Tests fake it.
 abstract class NearbyTransitSource {
   /// Gets ready to answer, if that takes a while, so the first answer doesn't wait as
-  /// long.
+  /// long. It returns at once, doing the work in the background, and fetches nothing
+  /// from the network: the app calls it as it starts.
   void prepare() {}
 
   /// The routes a rider at [location] can catch in the next [nearbyHorizon], walking at
-  /// most [nearbyWalkLimit] to a stop by [access], with the latest real-time data. Call
-  /// it again to refresh.
+  /// most [nearbyWalkLimit] to a stop by [access], with the real-time data at hand. It
+  /// never waits for real-time data being fetched: the first answer is on the schedule,
+  /// and [realtimeArrived] says when to ask again for live times. Call it again to
+  /// refresh.
   ///
   /// Throws [TransitPlanError] if it fails, [OutsideOfflineArea] or [NoOfflineArea] if
   /// it can't be asked, and [http.RequestAbortedException] if [abort] completes first.
@@ -136,6 +139,13 @@ abstract class NearbyTransitSource {
     required TransitAccess access,
     Future<void>? abort,
   });
+
+  /// Whether real-time data has arrived that the last [nearby] answer was asked without,
+  /// because it was still being fetched for the first time: completes to true once it
+  /// has, when asking again gives live times, and to false when it brought nothing. It
+  /// completes to false at once when the last answer didn't wait on such a fetch; after
+  /// the first fetch, each answer takes what has arrived since the one before.
+  Future<bool> realtimeArrived() async => false;
 
   /// One page of a route from a stop, as [query] names it, getting to the stop by
   /// [access]. Throws as [nearby] does; a route, stop, or trip that isn't there is a
@@ -159,18 +169,26 @@ class OfflineNearbySource implements NearbyTransitSource {
 
   RealtimeFeeds _realtime(OfflineArea area) => _feeds.of(area);
 
+  /// The first real-time fetch the last nearby answer was asked during, if any.
+  Future<bool>? _firstRealtime;
+
+  /// Opens the area's timetables (on the routing library's threads), so the first
+  /// answer doesn't wait for them.
   @override
   void prepare() {
     unawaited(() async {
       try {
         final area = await _area();
         if (area == null) return;
-        await Future.wait([area.transit, _realtime(area).prefetch()]);
+        await area.transit;
       } on Object catch (e) {
         debugPrint('nearby transit: $e');
       }
     }());
   }
+
+  @override
+  Future<bool> realtimeArrived() => _firstRealtime ?? Future.value(false);
 
   @override
   Future<NearbyTransit> nearby({
@@ -185,6 +203,11 @@ class OfflineNearbySource implements NearbyTransitSource {
         'nearby',
         nearbyRequest(location, access),
         covering: location,
+        realtime: (realtime) {
+          final (:feeds, :first) = realtime.arrived();
+          _firstRealtime = first;
+          return Future.value(feeds);
+        },
         query: (transit, request, feeds) =>
             transit.nearby(request: request, feeds: feeds, cancel: cancel),
       ).then(NearbyTransit.decode),
@@ -204,6 +227,7 @@ class OfflineNearbySource implements NearbyTransitSource {
       _ask(
         'route',
         routeRequest(query, access),
+        realtime: (realtime) => realtime.fresh(),
         query: (transit, request, feeds) =>
             transit.route(request: request, feeds: feeds, cancel: cancel),
       ).then(RouteDetail.decode),
@@ -211,12 +235,13 @@ class OfflineNearbySource implements NearbyTransitSource {
     );
   }
 
-  /// Asks [query] with [body] and the real-time messages that arrived since the last
-  /// question, after checking the area holds [covering], and returns the answer's body.
+  /// Asks [query] with [body] and the real-time messages [realtime] takes, after
+  /// checking the area holds [covering], and returns the answer's body.
   Future<List<int>> _ask(
     String what,
     Map<String, Object?> body, {
     LngLat? covering,
+    required Future<List<TransitFeed>> Function(RealtimeFeeds feeds) realtime,
     required Future<TransitResponse> Function(
       OfflineTransit transit,
       List<int> request,
@@ -229,7 +254,7 @@ class OfflineNearbySource implements NearbyTransitSource {
       throw const OutsideOfflineArea();
     }
     // Real-time messages are fetched while the timetables open.
-    final fetching = _realtime(area).fresh();
+    final fetching = realtime(_realtime(area));
     final opening = area.transit;
     final feeds = await fetching;
     await opening;

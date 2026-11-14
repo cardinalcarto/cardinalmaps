@@ -44,11 +44,14 @@ class Countdown {
   /// A departure at [departure] with [status], at [now], from a stop [walkSeconds]
   /// away.
   Countdown.at(
-    DateTime departure, {
+    this.departure, {
     required DateTime now,
     this.walkSeconds = 0,
     this.status = DepartureStatus.scheduled,
   }) : secondsUntil = (departure.difference(now).inMilliseconds / 1000).floor();
+
+  /// When it leaves.
+  final DateTime departure;
 
   /// Whole seconds until it leaves; below zero once it has.
   final int secondsUntil;

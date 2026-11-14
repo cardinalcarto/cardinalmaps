@@ -1,5 +1,5 @@
 /// The Nearby transit tab: the routes a rider where they are can catch, soonest first,
-/// each with its next departures counting down.
+/// each on one of its pages with its next departures counting down.
 library;
 
 import 'dart:async';
@@ -11,17 +11,22 @@ import '../directions/format.dart';
 import '../directions/route_source.dart';
 import '../directions/transit_details.dart' show RouteBadge;
 import '../directions/transit_plan.dart';
-import '../directions/transit_sheet.dart' show accessIcon, liveColor;
+import '../directions/transit_sheet.dart' show accessIcon, clock, liveColor;
 import '../map/location.dart';
 import '../routes.dart';
 import '../settings/accessibility.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
 import '../ui/adaptive.dart';
+import '../ui/haptics.dart';
 import 'countdown.dart';
 import 'nearby_rows.dart';
 import 'nearby_source.dart';
 import 'nearby_transit.dart';
+
+/// Departures further off than this many minutes show the clock time they leave at,
+/// instead of a countdown.
+const countdownMinutes = 60;
 
 /// How often the list asks again while it shows.
 ///
@@ -51,18 +56,18 @@ class NearbyTransitScope extends InheritedWidget {
       source != oldWidget.source || clock != oldWidget.clock;
 }
 
-/// A direction's departures at one moment, as a row shows them: the next that runs, and
+/// A page's departures at one moment, as a row shows them: the next that runs, and
 /// the rest after it.
 class NearbyTimes {
   NearbyTimes._(this.next, this.following);
 
-  /// [direction]'s departures at [now]. Those that have left are left out. The first
+  /// [page]'s departures at [now]. Those that have left are left out. The first
   /// that runs is [next], even if the walk can't make it any more; canceled and skipped
   /// ones are never [next], and are among [following] in their place.
-  factory NearbyTimes.of(HeadsignPage direction, DateTime now) {
+  factory NearbyTimes.of(HeadsignPage page, DateTime now) {
     final left = [
-      for (final d in direction.departures)
-        Countdown(d, now: now, walkSeconds: direction.walkSeconds),
+      for (final d in page.departures)
+        Countdown(d, now: now, walkSeconds: page.walkSeconds),
     ].where((c) => !c.departed);
     Countdown? next;
     for (final c in left) {
@@ -82,13 +87,16 @@ class NearbyTimes {
   final List<Countdown> following;
 }
 
-/// The Nearby transit tab: one row per route near where you are, in the router's order,
-/// which stays put while the list shows.
+/// The Nearby transit tab: one row per route near where you are, each on one of its
+/// pages, ordered as [NearbyRows] orders them, which stays put while the list shows.
 ///
 /// While it shows (the app is in front and no page covers it), it asks from your
 /// location when it has one, again every [nearbyRefresh], and at once when wheelchair
-/// access is turned on or off; countdowns tick each second in between. While it doesn't
-/// show, it asks nothing and forgets the rows, so the next answer sorts them afresh.
+/// access is turned on or off; countdowns tick each second in between. The first answer
+/// is on the schedule while real-time data is fetched, and is updated in place once it
+/// arrives ([NearbyTransitController]). While it doesn't show, it asks nothing, but
+/// keeps its rows: when it shows again they're still there, and the next answer updates
+/// them, re-sorting them only as any answer would.
 ///
 /// It never asks for location permission; without it, it says so.
 class NearbyTransitPage extends StatefulWidget {
@@ -168,8 +176,11 @@ class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
       _now = ValueNotifier(_clock());
       _location = DirectionsScope.of(context).location;
       _settings = StoreScope.of(context).settings;
-      _controller = NearbyTransitController(scope.source)
-        ..addListener(_changed);
+      _controller = NearbyTransitController(
+        scope.source,
+        headsigns: StoreScope.of(context).headsigns,
+        clock: _clock,
+      )..addListener(_changed);
       _appShown = switch (WidgetsBinding.instance.lifecycleState) {
         AppLifecycleState.hidden ||
         AppLifecycleState.paused ||
@@ -210,7 +221,7 @@ class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
       _start();
     } else if (!showing && _running) {
       _stop();
-      _controller!.reset();
+      _controller!.abandon();
     }
   }
 
@@ -358,6 +369,8 @@ class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
                         NearbyRow(
                           key: ValueKey(route.key),
                           route: route,
+                          shown: _controller!.rows.shown(route.key),
+                          onShown: (page) => _controller!.show(route.key, page),
                           access: access,
                           now: _now,
                         ),
@@ -415,19 +428,213 @@ class _Placeholder extends StatelessWidget {
   }
 }
 
-/// One route near you, in its first direction: its badge and where it goes, the stop and
-/// the walk there, and its next departures counting down by [now].
-class NearbyRow extends StatelessWidget {
+/// How [page]'s headsigns read: "A / B", or nothing for a page without any.
+String headsignsText(HeadsignPage page) => page.headsigns.join(' / ');
+
+/// One route near you, on one of its pages: its badge and where the page goes, the stop
+/// and the walk there, and its next departures counting down by [now].
+///
+/// With more than one page, the rider swipes between them, and dots below say which
+/// is shown. A swipe that settles on another page gives a light haptic and calls
+/// [onShown]; the list decides what's [shown]. Every page has the same lines, and the
+/// row is as tall as its first page, so it keeps its height from one page to the next.
+class NearbyRow extends StatefulWidget {
   const NearbyRow({
     super.key,
     required this.route,
+    this.shown = 0,
+    this.onShown,
     required this.access,
     required this.now,
   });
 
   final NearbyRoute route;
 
+  /// The page it shows, by index into the route's pages.
+  final int shown;
+
+  /// Called with the page a swipe settles on, when it isn't [shown].
+  final ValueChanged<int>? onShown;
+
   /// How the walk to the stop goes.
+  final TransitAccess access;
+  final ValueListenable<DateTime> now;
+
+  @override
+  State<NearbyRow> createState() => _NearbyRowState();
+}
+
+class _NearbyRowState extends State<NearbyRow> {
+  late var _pages = _controller(widget.shown);
+
+  /// Pages starting at [page]. The list says which page shows, not page storage.
+  static PageController _controller(int page) =>
+      PageController(initialPage: page, keepPage: false);
+
+  /// The page the pages rest on, or last rested on while they move.
+  late var _at = widget.shown;
+
+  /// Whether a swipe is under way or settling.
+  var _moving = false;
+
+  @override
+  void didUpdateWidget(NearbyRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The list shows another page than the one at rest, as when a refresh changed the
+    // route's pages: go there without sliding. A swipe under way settles first, and has
+    // the last word.
+    if (!_moving && widget.shown != _at) {
+      final old = _pages;
+      _pages = _controller(widget.shown);
+      _at = widget.shown;
+      // The old page view lets go of it as the new one replaces it.
+      WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+    }
+  }
+
+  @override
+  void dispose() {
+    _pages.dispose();
+    super.dispose();
+  }
+
+  bool _scrolled(ScrollNotification n) {
+    if (n.depth != 0) return false;
+    if (n is ScrollStartNotification) {
+      _moving = true;
+    } else if (n is ScrollEndNotification) {
+      _moving = false;
+      _settled();
+    }
+    return false;
+  }
+
+  void _settled() {
+    if (!_pages.hasClients) return;
+    final page = _pages.page!.round();
+    _at = page;
+    if (page == widget.shown) return;
+    Haptics.impact();
+    widget.onShown?.call(page);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pages = widget.route.pages;
+    if (pages.length < 2) return _page(pages.firstOrNull);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Stack(
+          children: [
+            // The row's height: the first page's, which every page shares.
+            Visibility(
+              visible: false,
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: _page(pages.first),
+            ),
+            Positioned.fill(
+              child: NotificationListener<ScrollNotification>(
+                onNotification: _scrolled,
+                child: PageView.builder(
+                  // A new controller starts a new page view: one that went on would
+                  // take the old one's place, not the controller's first page.
+                  key: ObjectKey(_pages),
+                  controller: _pages,
+                  itemCount: pages.length,
+                  findChildIndexCallback: (key) {
+                    final i = pages.indexWhere((p) => _key(p) == key);
+                    return i < 0 ? null : i;
+                  },
+                  itemBuilder: (context, i) =>
+                      _page(pages[i], key: _key(pages[i])),
+                ),
+              ),
+            ),
+          ],
+        ),
+        _Dots(count: pages.length, controller: _pages, shown: _at),
+      ],
+    );
+  }
+
+  /// Which page [page] is, from one answer to the next.
+  static ValueKey<String> _key(HeadsignPage page) =>
+      ValueKey(page.headsigns.join('\n'));
+
+  Widget _page(HeadsignPage? page, {Key? key}) => _NearbyPage(
+    key: key,
+    route: widget.route,
+    page: page,
+    access: widget.access,
+    now: widget.now,
+  );
+}
+
+/// Which of a row's pages is shown: a dot each, the shown one darker.
+class _Dots extends StatelessWidget {
+  const _Dots({
+    required this.count,
+    required this.controller,
+    required this.shown,
+  });
+
+  final int count;
+  final PageController controller;
+
+  /// The page shown before the pages are laid out.
+  final int shown;
+
+  static const _size = 6.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) {
+          final at = controller.hasClients && controller.position.haveDimensions
+              ? controller.page!.round()
+              : shown;
+          return Row(
+            key: const ValueKey('dots'),
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var i = 0; i < count; i++)
+                Container(
+                  width: _size,
+                  height: _size,
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: i == at ? color : color.withValues(alpha: 0.3),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// One page of a row: the route's badge and where [page] goes, its stop and the walk
+/// there, and its departures counting down by [now].
+class _NearbyPage extends StatelessWidget {
+  const _NearbyPage({
+    super.key,
+    required this.route,
+    required this.page,
+    required this.access,
+    required this.now,
+  });
+
+  final NearbyRoute route;
+  final HeadsignPage? page;
   final TransitAccess access;
   final ValueListenable<DateTime> now;
 
@@ -440,7 +647,7 @@ class NearbyRow extends StatelessWidget {
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
-    final direction = route.pages.firstOrNull;
+    final page = this.page;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Row(
@@ -455,7 +662,7 @@ class NearbyRow extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        direction?.headsigns.join(' • ') ?? '',
+                        page == null ? '' : headsignsText(page),
                         style: theme.textTheme.titleSmall,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -468,17 +675,17 @@ class NearbyRow extends StatelessWidget {
                   children: [
                     Flexible(
                       child: Text(
-                        direction?.stop.name ?? '',
+                        page?.stop.name ?? '',
                         style: muted,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (direction != null) ...[
+                    if (page != null) ...[
                       const SizedBox(width: 6),
                       Icon(accessIcon(access), size: 14, color: muted?.color),
                       Text(
-                        formatDuration(direction.walkSeconds.toDouble()),
+                        formatDuration(page.walkSeconds.toDouble()),
                         style: muted,
                       ),
                     ],
@@ -488,14 +695,13 @@ class NearbyRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          if (direction != null)
+          if (page != null)
             // Room for where it goes, however many times follow.
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: _timesWidth),
               child: ValueListenableBuilder(
                 valueListenable: now,
-                builder: (context, now, _) =>
-                    _Times(NearbyTimes.of(direction, now)),
+                builder: (context, now, _) => _Times(NearbyTimes.of(page, now)),
               ),
             ),
         ],
@@ -504,9 +710,15 @@ class NearbyRow extends StatelessWidget {
   }
 }
 
-/// Whole minutes until [c] leaves, or "Now" in its last minute.
-String countdownText(Countdown c) =>
-    c.minutesUntil < 1 ? 'Now' : '${c.minutesUntil} min';
+/// Whether [c] shows the clock time it leaves at, rather than a countdown.
+bool _showsClock(Countdown c) => c.minutesUntil > countdownMinutes;
+
+/// Whole minutes until [c] leaves, or "Now" in its last minute; or the time it leaves
+/// at, in the locale's format, when that's more than [countdownMinutes] off.
+String countdownText(BuildContext context, Countdown c) {
+  if (_showsClock(c)) return clock(context, c.departure);
+  return c.minutesUntil < 1 ? 'Now' : '${c.minutesUntil} min';
+}
 
 /// The color of a departure the walk can't make any more.
 Color _dimmed(ThemeData theme) =>
@@ -537,7 +749,7 @@ class _Times extends StatelessWidget {
             children: [
               for (final (i, c) in times.following.indexed) ...[
                 if (i > 0) const TextSpan(text: ' · '),
-                ..._following(theme, c),
+                ..._following(context, theme, c),
               ],
             ],
           ),
@@ -554,29 +766,33 @@ class _Times extends StatelessWidget {
     );
   }
 
-  List<InlineSpan> _following(ThemeData theme, Countdown c) =>
-      switch (c.state) {
-        CountdownState.canceled || CountdownState.skipped => [
-          TextSpan(
-            text: countdownText(c),
-            style: const TextStyle(decoration: TextDecoration.lineThrough),
-          ),
-          TextSpan(
-            text: c.state == CountdownState.canceled ? ' Canceled' : ' Skipped',
-          ),
-        ],
-        CountdownState.unreachable => [
-          TextSpan(
-            text: countdownText(c),
-            style: TextStyle(color: _dimmed(theme)),
-          ),
-        ],
-        CountdownState.upcoming ||
-        CountdownState.departed => [TextSpan(text: countdownText(c))],
-      };
+  List<InlineSpan> _following(
+    BuildContext context,
+    ThemeData theme,
+    Countdown c,
+  ) => switch (c.state) {
+    CountdownState.canceled || CountdownState.skipped => [
+      TextSpan(
+        text: countdownText(context, c),
+        style: const TextStyle(decoration: TextDecoration.lineThrough),
+      ),
+      TextSpan(
+        text: c.state == CountdownState.canceled ? ' Canceled' : ' Skipped',
+      ),
+    ],
+    CountdownState.unreachable => [
+      TextSpan(
+        text: countdownText(context, c),
+        style: TextStyle(color: _dimmed(theme)),
+      ),
+    ],
+    CountdownState.upcoming ||
+    CountdownState.departed => [TextSpan(text: countdownText(context, c))],
+  };
 }
 
-/// The next departure's countdown, large, with the live mark when it's real-time.
+/// The next departure's countdown, large, with the live mark when it's real-time; or
+/// the time it leaves at, when that's more than [countdownMinutes] off.
 class _Next extends StatelessWidget {
   const _Next(Countdown this.countdown);
   const _Next.empty() : countdown = null;
@@ -590,7 +806,12 @@ class _Next extends StatelessWidget {
     final dimmed = c?.state == CountdownState.unreachable;
     final color = dimmed ? _dimmed(theme) : theme.colorScheme.onSurface;
     final minutes = c?.minutesUntil ?? 0;
-    final number = minutes < 1 ? 'Now' : '$minutes';
+    final counts = c == null || !_showsClock(c);
+    final number = !counts
+        ? clock(context, c.departure)
+        : minutes < 1
+        ? 'Now'
+        : '$minutes';
     return Row(
       key: const ValueKey('next'),
       mainAxisSize: MainAxisSize.min,
@@ -623,7 +844,7 @@ class _Next extends StatelessWidget {
             ),
           ),
         ),
-        if (minutes >= 1)
+        if (counts && minutes >= 1)
           Text(
             ' min',
             style: theme.textTheme.labelMedium?.copyWith(color: color),

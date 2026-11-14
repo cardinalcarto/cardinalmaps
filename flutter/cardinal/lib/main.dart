@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -33,6 +34,7 @@ void main() {
   final offline = OfflineAreas.open();
   // Directions and nearby transit share each area's real-time messages.
   final realtime = AreaRealtimeFeeds();
+  final nearby = OfflineNearbySource(offline.area, realtime);
   runApp(
     StoreScope(
       store: store,
@@ -63,7 +65,7 @@ void main() {
                 return freeBytes(path: await offlineFolder());
               },
               child: NearbyTransitScope(
-                source: OfflineNearbySource(offline.area, realtime),
+                source: nearby,
                 child: MainApp(router: appRouter(map)),
               ),
             ),
@@ -72,6 +74,10 @@ void main() {
       ),
     ),
   );
+  // Nearby transit's timetables open once the first frame is out, so the launch doesn't
+  // wait for them, and the tab's first answer doesn't either. They open on the routing
+  // library's threads.
+  SchedulerBinding.instance.addPostFrameCallback((_) => nearby.prepare());
 }
 
 class MainApp extends StatelessWidget {

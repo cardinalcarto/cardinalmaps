@@ -42,8 +42,18 @@ class FakeNearbySource implements NearbyTransitSource {
   final routesAsked = <RouteQuestion>[];
   var prepared = 0;
 
+  /// Real-time data on its way, for the next question to go without: the test completes
+  /// it to say whether it brought anything.
+  Completer<bool>? realtimeLanding;
+
+  /// What the last question went without.
+  Completer<bool>? _landing;
+
   @override
   void prepare() => prepared++;
+
+  @override
+  Future<bool> realtimeArrived() => _landing?.future ?? Future.value(false);
 
   @override
   Future<NearbyTransit> nearby({
@@ -53,6 +63,8 @@ class FakeNearbySource implements NearbyTransitSource {
   }) {
     final question = NearbyQuestion(location, access, abort);
     asked.add(question);
+    _landing = realtimeLanding;
+    realtimeLanding = null;
     if (immediately case final now?) question.answer.complete(now);
     return _abortable(question.answer.future, abort);
   }
@@ -149,6 +161,46 @@ Map<String, Object?> nearbyRouteJson(
         for (final m in minutes) nearbyDepartureJson('$routeId-$m', m),
       ],
     },
+  ],
+};
+
+/// One page of [nearbyRoutePagesJson]: [headsigns] from [stop], leaving [minutes] after
+/// [fakeStart].
+typedef FakePage = ({List<String> headsigns, List<int> minutes, String stop});
+
+/// A nearby route's JSON with [pages], in the order given.
+Map<String, Object?> nearbyRoutePagesJson(
+  String routeId,
+  List<FakePage> pages, {
+  String feed = 'us-wa-Metro-Transit',
+  int walkSeconds = 240,
+}) => {
+  'feed': feed,
+  'route': {'route_id': routeId, 'short_name': routeId, 'route_type': 3},
+  'agency': {'name': 'Metro Transit'},
+  'pages': [
+    for (final page in pages)
+      {
+        'headsigns': page.headsigns,
+        'stop': {
+          'accessibility': 'unknown',
+          'feed': feed,
+          'stop_id': page.stop,
+          'name': page.stop,
+          'latitude': 47.65,
+          'longitude': -122.35,
+        },
+        'walk_seconds': walkSeconds,
+        'soonest_departure': fakeStart + page.minutes.first * 60,
+        'departures': [
+          for (final m in page.minutes)
+            nearbyDepartureJson(
+              '$routeId-${page.headsigns.firstOrNull}-$m',
+              m,
+              headsign: page.headsigns.firstOrNull,
+            ),
+        ],
+      },
   ],
 };
 

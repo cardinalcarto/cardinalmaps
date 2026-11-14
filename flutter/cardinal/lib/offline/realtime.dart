@@ -61,7 +61,12 @@ class RealtimeFeeds {
 
   /// Messages fetched and not yet handed to a plan.
   var _arrived = <TransitFeed>[];
-  Future<void>? _inFlight;
+
+  /// The fetch under way, completing to how many messages it fetched.
+  Future<int>? _inFlight;
+
+  /// The first fetch, until it has finished.
+  Future<int>? _first;
 
   /// Whether a fetch has finished, so plans no longer wait for one.
   var _firstDone = false;
@@ -75,6 +80,26 @@ class RealtimeFeeds {
   Future<List<TransitFeed>> fresh() async {
     final fetch = prefetch();
     if (!_firstDone) await fetch;
+    return _take();
+  }
+
+  /// The messages that arrived since the last call, as [fresh] gives them, but never
+  /// waiting, not even for the first fetch: for an answer on the schedule first.
+  ///
+  /// With them comes the first fetch while it's under way, which completes to whether it
+  /// fetched any messages, so the plan can be asked again with them; null once it has
+  /// finished. After the first fetch, what's fetched goes to the next plan, as for
+  /// [fresh].
+  ({List<TransitFeed> feeds, Future<bool>? first}) arrived() {
+    // Its failure is the plan's: messages that can't be fetched are left out.
+    prefetch().ignore();
+    final first = _firstDone
+        ? null
+        : _first?.then((fetched) => fetched > 0, onError: (Object _) => false);
+    return (feeds: _take(), first: first);
+  }
+
+  List<TransitFeed> _take() {
     final arrived = _arrived;
     _arrived = [];
     return arrived;
@@ -82,12 +107,16 @@ class RealtimeFeeds {
 
   /// Starts fetching the messages older than [maxAge], if that isn't under way, for the
   /// next plan to take with [fresh]. Completes when the fetch does.
-  Future<void> prefetch() => _inFlight ??= _fetch().whenComplete(() {
-    _inFlight = null;
-    _firstDone = true;
-  });
+  Future<void> prefetch() {
+    final fetch = _inFlight ??= _fetch().whenComplete(() {
+      _inFlight = null;
+      _firstDone = true;
+    });
+    if (!_firstDone) _first ??= fetch;
+    return fetch;
+  }
 
-  Future<void> _fetch() async {
+  Future<int> _fetch() async {
     final sources = await _sources();
     final now = DateTime.now();
     final due = [
@@ -95,7 +124,7 @@ class RealtimeFeeds {
         if (now.difference(_fetchedAt[source.url] ?? DateTime(0)) >= maxAge)
           source,
     ];
-    if (due.isEmpty) return;
+    if (due.isEmpty) return 0;
     final watch = Stopwatch()..start();
     final fetched = await Future.wait(due.map(_fetchOne));
     final feeds = fetched.nonNulls.toList();
@@ -104,6 +133,7 @@ class RealtimeFeeds {
       'in ${watch.elapsedMilliseconds} ms',
     );
     _arrived.addAll(feeds);
+    return feeds.length;
   }
 
   Future<TransitFeed?> _fetchOne(RealtimeSource source) async {

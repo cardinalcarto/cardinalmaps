@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cardinal/offline/offline_area.dart';
 import 'package:cardinal/offline/realtime.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -103,6 +105,34 @@ void main() {
     await feeds.prefetch();
     expect(await feeds.fresh(), hasLength(1));
     expect(await feeds.fresh(), isEmpty);
+  });
+
+  test(
+    'arrived never waits, and gives the first fetch while it is under way',
+    () async {
+      final reply = Completer<http.Response>();
+      final realtime = RealtimeFeeds(
+        () => Future.value([source('https://a.test/alerts.pb')]),
+        client: MockClient((request) => reply.future),
+      );
+      final (:feeds, :first) = realtime.arrived();
+      expect(feeds, isEmpty);
+      expect(first, isNotNull);
+      reply.complete(http.Response.bytes([1], 200));
+      expect(await first, isTrue);
+      final after = realtime.arrived();
+      expect(after.feeds, hasLength(1));
+      expect(after.first, isNull);
+    },
+  );
+
+  test('a first fetch that brings nothing says so', () async {
+    final feeds = RealtimeFeeds(
+      () => Future.value([source('https://a.test/alerts.pb')]),
+      client: MockClient((request) async => throw http.ClientException('no')),
+    );
+    expect(await feeds.arrived().first, isFalse);
+    expect(feeds.arrived().feeds, isEmpty);
   });
 
   test('an area has one set of feeds, and a new area new ones', () {
