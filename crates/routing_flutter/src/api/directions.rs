@@ -72,6 +72,21 @@ impl From<RouteStep> for DirectionsStep {
 #[derive(Clone, Debug)]
 pub struct NavigableRoute {
     pub(crate) route: Route,
+    /// The locale its instructions are in, as [`valhalla_language`] resolved the one asked
+    /// for: what the announcements are spoken in.
+    pub(crate) language: &'static str,
+}
+
+impl NavigableRoute {
+    /// The locale the route's banners and announcements are in, a BCP-47 tag such as
+    /// `pt-PT`: the nearest Valhalla has to the language asked for, which may not be it, so
+    /// the voice that speaks them is chosen from this rather than from the device's.
+    ///
+    /// `#[frb(sync)]`: it's a field.
+    #[frb(sync)]
+    pub fn language(&self) -> String {
+        self.language.to_owned()
+    }
 }
 
 /// A way to get there.
@@ -93,15 +108,16 @@ pub struct DirectionsRoute {
     pub navigable: NavigableRoute,
 }
 
-impl From<Route> for DirectionsRoute {
-    fn from(route: Route) -> Self {
+impl DirectionsRoute {
+    /// `route`, its instructions in `language`.
+    fn new(route: Route, language: &'static str) -> Self {
         Self {
             geometry: route.geometry.iter().copied().map(Into::into).collect(),
             distance: route.distance,
             // Ferrostar's routes have no total of their own.
             duration: route.steps.iter().map(|step| step.duration).sum(),
             steps: route.steps.iter().cloned().map(Into::into).collect(),
-            navigable: NavigableRoute { route },
+            navigable: NavigableRoute { route, language },
         }
     }
 }
@@ -196,6 +212,8 @@ fn valhalla_language(tag: &str) -> &'static str {
 #[frb(opaque)]
 pub struct DirectionsAdapter {
     adapter: RouteAdapter,
+    /// The locale asked for, which the routes it reads are in.
+    language: &'static str,
 }
 
 impl DirectionsAdapter {
@@ -211,9 +229,10 @@ impl DirectionsAdapter {
         language: String,
         units: DistanceUnits,
     ) -> Result<DirectionsAdapter, DirectionsError> {
+        let language = valhalla_language(&language);
         let options = serde_json::json!({
             "alternates": alternates,
-            "language": valhalla_language(&language),
+            "language": language,
             "units": units.valhalla(),
         });
         let adapter =
@@ -223,7 +242,7 @@ impl DirectionsAdapter {
                 options_json: Some(options.to_string()),
             })
             .map_err(DirectionsError::failed)?;
-        Ok(Self { adapter })
+        Ok(Self { adapter, language })
     }
 
     /// The request for routes from `from` to `to`.
@@ -275,7 +294,10 @@ impl DirectionsAdapter {
     /// went wrong.
     pub fn parse(&self, body: Vec<u8>) -> Result<Vec<DirectionsRoute>, DirectionsError> {
         let routes = self.adapter.parse_response(body)?;
-        Ok(routes.into_iter().map(Into::into).collect())
+        Ok(routes
+            .into_iter()
+            .map(|route| DirectionsRoute::new(route, self.language))
+            .collect())
     }
 }
 

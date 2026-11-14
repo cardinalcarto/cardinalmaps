@@ -4,6 +4,11 @@
 <dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Cardinal shows where you are on the map, and moves the map to you.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>audio</string>
+	</array>
 	<key>FLTEnableFlutterGPU</key>
 	<true/>
 	<key>CADisableMinimumFrameDurationOnPhone</key>

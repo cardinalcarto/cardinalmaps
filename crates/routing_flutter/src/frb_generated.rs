@@ -44,7 +44,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1384939492;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 419641506;
 
 // Section: executor
 
@@ -722,6 +722,54 @@ fn wire__crate__api__navigation__LocationSimulation_new_impl(
                     api_bias,
                     api_bias_meters,
                 )?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__directions__NavigableRoute_language_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "NavigableRoute_language",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NavigableRoute>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>(crate::api::directions::NavigableRoute::language(
+                    &*api_that_guard,
+                ))?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -3176,65 +3224,65 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        16 => wire__crate__api__navigation__NavigationSession_advance_impl(
+        17 => wire__crate__api__navigation__NavigationSession_advance_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__navigation__NavigationSession_replace_route_impl(
+        20 => wire__crate__api__navigation__NavigationSession_replace_route_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        21 => wire__crate__api__navigation__NavigationSession_start_impl(
+        22 => wire__crate__api__navigation__NavigationSession_start_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        22 => wire__crate__api__navigation__NavigationSession_update_location_impl(
+        23 => wire__crate__api__navigation__NavigationSession_update_location_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        23 => wire__crate__api__router__OfflineRouter_open_impl(port, ptr, rust_vec_len, data_len),
-        24 => wire__crate__api__router__OfflineRouter_refresh_tiles_impl(
+        24 => wire__crate__api__router__OfflineRouter_open_impl(port, ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__router__OfflineRouter_refresh_tiles_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        25 => wire__crate__api__router__OfflineRouter_route_impl(port, ptr, rust_vec_len, data_len),
-        26 => {
+        26 => wire__crate__api__router__OfflineRouter_route_impl(port, ptr, rust_vec_len, data_len),
+        27 => {
             wire__crate__api__transit__OfflineTransit_open_impl(port, ptr, rust_vec_len, data_len)
         }
-        27 => {
+        28 => {
             wire__crate__api__transit__OfflineTransit_plan_impl(port, ptr, rust_vec_len, data_len)
         }
-        28 => wire__crate__api__transit__OfflineTransit_refresh_tiles_impl(
+        29 => wire__crate__api__transit__OfflineTransit_refresh_tiles_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        29 => wire__crate__api__transit__OfflineTransit_vehicle_impl(
+        30 => wire__crate__api__transit__OfflineTransit_vehicle_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        31 => {
+        32 => {
             wire__crate__api__transit__TransitCancel_default_impl(port, ptr, rust_vec_len, data_len)
         }
-        36 => {
+        37 => {
             wire__crate__api__offline__check_transfer_tile_impl(port, ptr, rust_vec_len, data_len)
         }
-        37 => wire__crate__api__storage__free_bytes_impl(port, ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__offline__sha256_file_impl(port, ptr, rust_vec_len, data_len),
-        39 => {
+        38 => wire__crate__api__storage__free_bytes_impl(port, ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__offline__sha256_file_impl(port, ptr, rust_vec_len, data_len),
+        40 => {
             wire__crate__api__offline__unpack_transfer_range_impl(port, ptr, rust_vec_len, data_len)
         }
         _ => unreachable!(),
@@ -3286,25 +3334,28 @@ fn pde_ffi_dispatcher_sync_impl(
         14 => {
             wire__crate__api__navigation__LocationSimulation_new_impl(ptr, rust_vec_len, data_len)
         }
-        15 => wire__crate__api__directions__NavigableRoute_steps_impl(ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__navigation__NavigationSession_current_impl(
+        15 => {
+            wire__crate__api__directions__NavigableRoute_language_impl(ptr, rust_vec_len, data_len)
+        }
+        16 => wire__crate__api__directions__NavigableRoute_steps_impl(ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__navigation__NavigationSession_current_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        18 => {
+        19 => {
             wire__crate__api__navigation__NavigationSession_mode_impl(ptr, rust_vec_len, data_len)
         }
-        20 => wire__crate__api__navigation__NavigationSession_reroute_request_impl(
+        21 => wire__crate__api__navigation__NavigationSession_reroute_request_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        30 => wire__crate__api__transit__TransitCancel_cancel_impl(ptr, rust_vec_len, data_len),
-        32 => wire__crate__api__transit__TransitCancel_new_impl(ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__offline__archive_first_fetch_impl(ptr, rust_vec_len, data_len),
-        34 => wire__crate__api__offline__archive_gap_bytes_impl(ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__offline__archive_max_range_bytes_impl(ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__transit__TransitCancel_cancel_impl(ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__transit__TransitCancel_new_impl(ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__offline__archive_first_fetch_impl(ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__offline__archive_gap_bytes_impl(ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__offline__archive_max_range_bytes_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

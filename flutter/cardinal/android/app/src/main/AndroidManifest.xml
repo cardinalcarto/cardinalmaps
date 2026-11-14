@@ -4,6 +4,12 @@
     <!-- The my location button and the dot that shows where you are. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <!-- Navigation keeps taking fixes with the screen off, through geolocator's location
+         foreground service, whose wake lock keeps the CPU up to take them. It always starts
+         in the foreground, so it needs no ACCESS_BACKGROUND_LOCATION. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <application
         android:label="cardinal"
         android:name="${applicationName}"
@@ -53,6 +59,11 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Navigation's announcements, spoken by the device's speech engine (flutter_tts),
+             which Android 11 and later only let the app find when it says so. -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE"/>
         </intent>
     </queries>
 </manifest>

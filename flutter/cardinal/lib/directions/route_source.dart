@@ -66,6 +66,24 @@ abstract class RouteSource {
     required LngLat to,
     Future<void>? abort,
   });
+
+  /// A new route for a trip under way, traveling by [mode], from [from] (where you are,
+  /// off the old route) to [to] (where the trip ends).
+  ///
+  /// [request] makes what to ask the router, given the adapter for [mode]: the navigation
+  /// session knows the stops not yet passed and which way you're heading, so it writes the
+  /// request rather than this. The answer is read with the same adapter, so the new route's
+  /// instructions are in the same language and units as the old one's.
+  ///
+  /// Throws as [routes] does: a [DirectionsError] if there's no route, and
+  /// [OutsideOfflineArea] or [NoOfflineArea] if one can't be looked for.
+  Future<DirectionsRoute> reroute({
+    required TravelMode mode,
+    required LngLat from,
+    required LngLat to,
+    required Future<DirectionsRequest> Function(DirectionsAdapter adapter)
+    request,
+  });
 }
 
 /// Where transit plans come from, so tests can fake it.
@@ -134,7 +152,8 @@ class OfflineRouteSource implements RouteSource {
   /// Told the line of each route found, so the tiles it passes through count as used
   /// (`OfflineDownloads.touchRoute`).
   final void Function(List<DirectionsPoint> shape)? used;
-  final _adapters = <(TravelMode, String, DistanceUnits), DirectionsAdapter>{};
+  final _adapters =
+      <(TravelMode, int, String, DistanceUnits), DirectionsAdapter>{};
 
   /// How many routes to ask for besides the best.
   static const _alternates = 3;
@@ -157,7 +176,47 @@ class OfflineRouteSource implements RouteSource {
   ) async {
     final area = await _need(_area);
     await _checkCovers(area, from, to);
+    final adapter = await _adapter(mode, _alternates);
+    final made = adapter.request(from: _point(from), to: _point(to));
+    final routes = await _route(
+      area,
+      adapter,
+      made,
+      'street route ${mode.name}',
+    );
+    if (routes.isNotEmpty) used?.call(routes.first.geometry);
+    return routes;
+  }
 
+  @override
+  Future<DirectionsRoute> reroute({
+    required TravelMode mode,
+    required LngLat from,
+    required LngLat to,
+    required Future<DirectionsRequest> Function(DirectionsAdapter adapter)
+    request,
+  }) async {
+    final area = await _need(_area);
+    await _checkCovers(area, from, to);
+    // Only the best: there's no time to choose while under way, and alternates take the
+    // router longer.
+    final adapter = await _adapter(mode, 0);
+    final made = await request(adapter);
+    final routes = await _route(area, adapter, made, 'reroute ${mode.name}');
+    if (routes.isEmpty) {
+      throw const DirectionsError(
+        kind: DirectionsErrorKind.failed,
+        message: 'the router answered with no routes',
+      );
+    }
+    used?.call(routes.first.geometry);
+    return routes.first;
+  }
+
+  /// The adapter for [mode] asking for [alternates] routes besides the best, with
+  /// instructions in the device's language and distances in the app's units, as they are
+  /// now.
+  Future<DirectionsAdapter> _adapter(TravelMode mode, int alternates) async {
     // The binding's dispatcher, as in [UnitSystem.onDevice], so tests can set the locale.
     final locale = WidgetsBinding.instance.platformDispatcher.locale;
     final language = locale.toLanguageTag();
@@ -168,28 +227,39 @@ class OfflineRouteSource implements RouteSource {
 
     // Ferrostar's adapter is in the routing library too, made before the router opens.
     await initRouting();
-    final adapter = _adapters[(mode, language, units)] ??=
-        DirectionsAdapter.valhalla(
-          // Ferrostar wants an endpoint to make the request for; nothing is sent to it.
-          endpointUrl: 'offline:route',
-          costing: mode.costing!,
-          alternates: _alternates,
-          // The routing library finds the nearest language Valhalla has.
-          language: language,
-          units: units,
-        );
-    final made = adapter.request(from: _point(from), to: _point(to));
+    return _adapters[(
+      mode,
+      alternates,
+      language,
+      units,
+    )] ??= DirectionsAdapter.valhalla(
+      // Ferrostar wants an endpoint to make the request for; nothing is sent to it.
+      endpointUrl: 'offline:route',
+      costing: mode.costing!,
+      alternates: alternates,
+      // The routing library finds the nearest language Valhalla has.
+      language: language,
+      units: units,
+    );
+  }
+
+  /// The routes the offline router answers [made] with, read by [adapter], timed in the
+  /// log as [what].
+  Future<List<DirectionsRoute>> _route(
+    OfflineArea area,
+    DirectionsAdapter adapter,
+    DirectionsRequest made,
+    String what,
+  ) async {
     final watch = Stopwatch()..start();
     final response = await area.useRouter(
       (router) => router.route(body: made.body),
     );
     debugPrint(
-      'cardinal-timing: street route ${mode.name} '
+      'cardinal-timing: $what '
       '${watch.elapsedMilliseconds} ms (${response.status})',
     );
-    final routes = await adapter.parse(body: response.body);
-    if (routes.isNotEmpty) used?.call(routes.first.geometry);
-    return routes;
+    return adapter.parse(body: response.body);
   }
 }
 

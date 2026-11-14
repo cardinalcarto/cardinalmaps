@@ -1264,6 +1264,30 @@ mod tests {
     }
 
     #[test]
+    fn a_route_is_spoken_in_the_language_its_adapter_resolved() {
+        // The captures' adapter asks for pt-PT, which Valhalla has.
+        assert_eq!(capture("ferrostar_auto", "auto").language(), "pt-PT");
+        // Valhalla has no de-AT, so the request asks for de-DE, and the route says so.
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+            "../../valinor/valinor-tyr/fixtures/captures/andorra/ferrostar_auto/osrm/response.json",
+        );
+        let response: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let austrian = DirectionsAdapter::valhalla(
+            "http://router/route".into(),
+            "auto".into(),
+            0,
+            "de-AT".into(),
+            DistanceUnits::Kilometers,
+        )
+        .unwrap();
+        let routes = austrian
+            .parse(serde_json::to_vec(&response["body"]).unwrap())
+            .unwrap();
+        assert_eq!(routes[0].navigable.language(), "de-DE");
+    }
+
+    #[test]
     fn banners_carry_maneuvers_and_roundabout_exits() {
         let route = capture("ferrostar_roundabout", "auto");
         let banners: Vec<_> = route

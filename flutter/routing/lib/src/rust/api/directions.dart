@@ -8,8 +8,8 @@ import 'navigation.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `failed`, `request_through`, `valhalla_language`, `valhalla`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`
+// These functions are ignored because they are not marked as `pub`: `failed`, `new`, `request_through`, `valhalla_language`, `valhalla`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DirectionsAdapter>>
 abstract class DirectionsAdapter implements RustOpaqueInterface {
@@ -47,6 +47,13 @@ abstract class DirectionsAdapter implements RustOpaqueInterface {
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NavigableRoute>>
 abstract class NavigableRoute implements RustOpaqueInterface {
+  /// The locale the route's banners and announcements are in, a BCP-47 tag such as
+  /// `pt-PT`: the nearest Valhalla has to the language asked for, which may not be it, so
+  /// the voice that speaks them is chosen from this rather than from the device's.
+  ///
+  /// `#[frb(sync)]`: it's a field.
+  String language();
+
   /// The route's steps, with their banners, announcements and lines.
   ///
   /// `#[frb(sync)]`: the route is never changed, so nothing waits on it, and Dart asks for
