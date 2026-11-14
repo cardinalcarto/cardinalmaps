@@ -13,6 +13,7 @@ import 'package:cardinal/navigation/maneuver_banner.dart';
 import 'package:cardinal/navigation/navigation_camera.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/road_name.dart';
+import 'package:cardinal/navigation/step_list.dart';
 import 'package:cardinal/navigation/trip_progress.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/settings/accessibility.dart';
@@ -805,6 +806,151 @@ void main() {
         expect(pill.top - disk, closeTo(8, 1e-6));
         // Lifted off where it'd sit with nothing under it.
         expect(padding.bottom, greaterThan(expected(tester).bottom));
+      });
+    });
+
+    group('the step list', () {
+      final stepped = fakeRoute(
+        [
+          [0.5, 2],
+          [1, 4],
+        ],
+        navigationSteps: [
+          fakeManeuverStep('Turn left onto Pike Street', distance: 400),
+          fakeManeuverStep('Turn right onto 4th Avenue', distance: 120),
+          fakeManeuverStep('Your destination is on the right', distance: 30),
+          fakeNavStep(null),
+        ],
+      );
+      final rerouted = fakeRoute(
+        [
+          [0.6, 2.5],
+          [1, 4],
+        ],
+        navigationSteps: [
+          fakeManeuverStep('Turn right onto Union Street', distance: 80),
+          fakeManeuverStep('Turn left onto 3rd Avenue', distance: 300),
+          fakeManeuverStep('Your destination is on the left', distance: 20),
+          fakeNavStep(null),
+        ],
+      );
+
+      /// Navigation's answer to a fix: on step [index] of [route].
+      NavUpdate onStep(int index, {DirectionsRoute? route}) => fakeUpdate(
+        snapped: fakeFix(2.5, 0.6, course: 20, speed: 5),
+        visual: (route ?? stepped).navigable
+            .steps()[index]
+            .visualInstructions
+            .first,
+        toManeuver: 250,
+        stepIndex: index,
+      );
+
+      Future<void> fixOn(WidgetTester tester, int index) async {
+        final update = onStep(index);
+        if (sessions.sessions.isEmpty) {
+          sessions.start = update;
+        } else {
+          sessions.last.next = update;
+        }
+        navigationLocation.send(fakeFix(2.5, 0.6));
+        await tester.pumpAndSettle();
+      }
+
+      Finder listed(String text) =>
+          find.descendant(of: find.byType(StepList), matching: find.text(text));
+
+      Future<void> openList(WidgetTester tester) async {
+        await tester.tap(find.bySemanticsLabel('Show upcoming maneuvers'));
+        await tester.pumpAndSettle();
+        expect(find.byType(StepList), findsOneWidget);
+      }
+
+      testWidgets('opens over the controls, which stay where they were', (
+        tester,
+      ) async {
+        routes = FakeRoutes(immediately: [stepped, other]);
+        navigateInTestTime();
+        await start(tester);
+        await fixOn(tester, 0);
+        final closed = tester.getRect(find.byType(ManeuverBanner));
+        final camera = tester.getRect(find.byTooltip('Route overview'));
+        final mute = tester.getRect(find.byTooltip('Mute'));
+        // Under the closed banner, handle and all.
+        expect(camera.top, closed.bottom + 16);
+        await openList(tester);
+        expect(listed('Turn right onto 4th Avenue'), findsOneWidget);
+        expect(listed('Your destination is on the right'), findsOneWidget);
+        // Down to the bottom inset, over the buttons and trip progress, which haven't
+        // moved.
+        final open = tester.getRect(find.byType(ManeuverBanner));
+        expect(open.top, closed.top);
+        expect(open.bottom, appScreen.height - appNavigationBar);
+        expect(tester.getRect(find.byTooltip('Mute')), mute);
+        expect(open.contains(mute.center), isTrue);
+        expect(
+          open.contains(tester.getCenter(find.byType(TripProgressPill))),
+          isTrue,
+        );
+        // A tap there is the list's.
+        await tester.tapAt(mute.center);
+        await tester.pump();
+        expect(navigation.muted, isFalse);
+        // The trip carries on under it, followed.
+        expect(map.following.value, isTrue);
+        expect(navigation.state, NavigationState.onRoute);
+        // And a tap on the current step closes it.
+        await tester.tap(find.text('Turn left onto Pike Street'));
+        await tester.pumpAndSettle();
+        expect(find.byType(StepList), findsNothing);
+        expect(tester.getRect(find.byType(ManeuverBanner)), closed);
+      });
+
+      testWidgets('keeps up with each step, and with a new route', (
+        tester,
+      ) async {
+        routes = FakeRoutes(immediately: [stepped, other]);
+        navigateInTestTime();
+        await start(tester);
+        await fixOn(tester, 0);
+        await openList(tester);
+        await fixOn(tester, 1);
+        expect(find.text('Turn right onto 4th Avenue'), findsOneWidget);
+        expect(listed('Turn right onto 4th Avenue'), findsNothing);
+        expect(listed('Your destination is on the right'), findsOneWidget);
+
+        await fix(tester, deviation: NavDeviation.offRoute);
+        await tester.pump(offRouteHold);
+        expect(navigation.state, NavigationState.rerouting);
+        sessions.last.next = onStep(0, route: rerouted);
+        navigationRoutes.rerouted.single.answer.complete(rerouted);
+        await tester.pumpAndSettle();
+        expect(navigation.state, NavigationState.onRoute);
+        // Still open, now with the new route's steps.
+        expect(find.text('Turn right onto Union Street'), findsOneWidget);
+        expect(listed('Turn left onto 3rd Avenue'), findsOneWidget);
+        expect(listed('Your destination is on the left'), findsOneWidget);
+        expect(find.text('Your destination is on the right'), findsNothing);
+        // Until the time between new routes is up.
+        await tester.pump(minRerouteInterval);
+      });
+
+      testWidgets('in landscape, stays in the start half', (tester) async {
+        routes = FakeRoutes(immediately: [stepped, other]);
+        navigateInTestTime();
+        await start(tester);
+        tester.view.physicalSize = appScreen.flipped * 2;
+        await tester.pumpAndSettle();
+        await fixOn(tester, 0);
+        await openList(tester);
+        final open = tester.getRect(find.byType(ManeuverBanner));
+        const width = 800.0, height = 400.0;
+        expect(open.left, 16);
+        expect(open.right, 16 + (width - 32) / 2);
+        expect(open.bottom, height - appNavigationBar);
+        // The buttons, in the end half, are clear of it.
+        expect(open.overlaps(tester.getRect(find.byTooltip('Mute'))), isFalse);
+        expect(listed('Turn right onto 4th Avenue'), findsOneWidget);
       });
     });
 

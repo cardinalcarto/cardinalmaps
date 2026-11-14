@@ -6,8 +6,8 @@
 /// one map, in its style, and going back to directions finds them as they were.
 ///
 /// The layout follows Ferrostar's in each orientation (see `NavigationView`); for now
-/// it holds the maneuver banner, the camera and mute buttons, the road-name pill, and
-/// the trip-progress pill with End.
+/// it holds the maneuver banner, which opens into the trip's steps, the camera and mute
+/// buttons, the road-name pill, and the trip-progress pill with End.
 library;
 
 import 'dart:async';
@@ -31,6 +31,7 @@ import 'navigation_controller.dart';
 import 'navigation_map.dart';
 import 'navigation_scope.dart';
 import 'road_name.dart';
+import 'step_list.dart';
 import 'trip_progress.dart';
 
 /// The navigation screen's page in the sheet: it hides the sheet and shows the
@@ -152,6 +153,15 @@ class NavigationLayer extends StatelessWidget {
 /// shows it. There are no zoom buttons, which Ferrostar has: the camera zooms with
 /// your speed, which they'd fight.
 ///
+/// The maneuver banner opens into the list of the trip's steps after the next one
+/// ([ManeuverBanner], [StepList]). Open, it reaches down to the bottom inset, over the
+/// buttons, the road name and trip progress, as iOS's does in both orientations (spec
+/// §1.4 and §4), on every platform: the controls are laid out under the closed banner,
+/// and stay there under the open one, rather than being pushed down as Android pushes
+/// them. In landscape it stays in the start half. The trip carries on under it, the
+/// camera following and the list keeping up with each step and each new route; it
+/// stays open until closed, across new routes and turns of the screen.
+///
 /// Content keeps at least 16 px from each edge, counting the system's bars, as iOS's
 /// overlay does (spec §1.3).
 class NavigationView extends StatefulWidget {
@@ -233,9 +243,14 @@ class _NavigationViewState extends State<NavigationView> {
       EdgeInsets.only(top: MediaQuery.paddingOf(context).top) +
       _sheetCovers(context);
 
-  /// The banner, trip progress and the map buttons, measured for the overview to keep
-  /// clear of.
-  final _bannerKey = GlobalKey();
+  /// Whether the banner's list of steps is open.
+  final _stepsExpanded = ValueNotifier(false);
+
+  /// How tall the banner is closed, which the buttons are laid out under in portrait,
+  /// and the overview kept clear of; 0 without a banner.
+  final _bannerHeight = ValueNotifier(0.0);
+
+  /// Trip progress and the map buttons, measured for the overview to keep clear of.
   final _progressKey = GlobalKey();
   final _buttonsKey = GlobalKey();
 
@@ -245,12 +260,12 @@ class _NavigationViewState extends State<NavigationView> {
   );
 
   /// What the screen draws over the map, edge by edge, as it's laid out now: in
-  /// portrait the top down to the banner's bottom and the bottom up to trip progress's
-  /// top, the full width, and in landscape the start half, where both are. In either,
-  /// the end side in to the far side of the map buttons, so the route isn't fitted
-  /// under them: in portrait they hang under the banner, and in landscape they're at
-  /// the top of the end half the route is fitted in. The road-name pill isn't counted:
-  /// it's hidden in the overview.
+  /// portrait the top down to the closed banner's bottom and the bottom up to trip
+  /// progress's top, the full width, and in landscape the start half, where both are.
+  /// In either, the end side in to the far side of the map buttons, so the route
+  /// isn't fitted under them: in portrait they hang under the banner, and in landscape
+  /// they're at the top of the end half the route is fitted in. The road-name pill
+  /// isn't counted: it's hidden in the overview.
   EdgeInsets _covered() {
     final layout = _Layout.of(context);
     final direction = Directionality.of(context);
@@ -272,7 +287,7 @@ class _NavigationViewState extends State<NavigationView> {
         end: end,
       ).resolve(direction);
     }
-    final bannerBottom = rect(_bannerKey)?.bottom ?? layout.top;
+    final bannerBottom = layout.top + _bannerHeight.value;
     final progressTop =
         rect(_progressKey)?.top ?? layout.size.height - layout.bottom;
     return EdgeInsetsDirectional.only(
@@ -291,6 +306,8 @@ class _NavigationViewState extends State<NavigationView> {
     _watchUnits?.cancel();
     _sheet?.removeListener(_viewChanged);
     _map?.dispose();
+    _stepsExpanded.dispose();
+    _bannerHeight.dispose();
     super.dispose();
   }
 
@@ -331,41 +348,37 @@ class _NavigationViewState extends State<NavigationView> {
         onEnd: () => endNavigation(context),
       ),
     );
+    final banner = ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final update = controller.update;
+        return ManeuverBanner(
+          instruction: update?.visualInstruction,
+          distance: update?.progress?.distanceToNextManeuver,
+          units: _units.onDevice,
+          upcoming: update == null
+              ? const []
+              : upcomingSteps(controller.steps, update.stepIndex),
+          expanded: _stepsExpanded,
+          collapsedHeight: _bannerHeight,
+        );
+      },
+    );
     return Stack(
       children: [
-        PositionedDirectional(
-          start: start,
-          end: startHalfEnd,
-          top: top,
-          child: ListenableBuilder(
-            listenable: controller,
-            builder: (context, _) {
-              final update = controller.update;
-              final instruction = update?.visualInstruction;
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ManeuverBanner(
-                    key: _bannerKey,
-                    instruction: instruction,
-                    distance: update?.progress?.distanceToNextManeuver,
-                    units: _units.onDevice,
-                  ),
-                  if (!landscape) ...[
-                    if (instruction != null) const SizedBox(height: _gap),
-                    Align(
-                      alignment: AlignmentDirectional.centerEnd,
-                      child: buttons,
-                    ),
-                  ],
-                ],
-              );
-            },
-          ),
-        ),
         if (landscape)
-          PositionedDirectional(end: end, top: top, child: buttons),
+          PositionedDirectional(end: end, top: top, child: buttons)
+        else
+          // Under the closed banner, which covers them open.
+          ValueListenableBuilder(
+            valueListenable: _bannerHeight,
+            builder: (context, height, child) => PositionedDirectional(
+              end: end,
+              top: top + (height > 0 ? height + _gap : 0),
+              child: child!,
+            ),
+            child: buttons,
+          ),
         if (landscape)
           // Under the chevron, in the end half, clear of the start half by the gap
           // between the halves.
@@ -390,6 +403,14 @@ class _NavigationViewState extends State<NavigationView> {
               progress,
             ],
           ),
+        ),
+        // Over everything else, which it covers as it opens, down to the bottom inset.
+        PositionedDirectional(
+          start: start,
+          end: startHalfEnd,
+          top: top,
+          bottom: bottom,
+          child: Align(alignment: Alignment.topCenter, child: banner),
         ),
       ],
     );

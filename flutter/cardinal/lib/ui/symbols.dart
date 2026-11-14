@@ -63,6 +63,11 @@ class AppSymbols {
       _pick(CupertinoIcons.speaker_2_fill, Icons.volume_up);
   IconData get muted =>
       _pick(CupertinoIcons.speaker_slash_fill, Icons.volume_off);
+
+  /// Folds the navigation banner's list of steps back up: Ferrostar's `chevron.up` on
+  /// iOS and `keyboard_arrow_up_24px` on Android.
+  IconData get collapse =>
+      _pick(CupertinoIcons.chevron_up, Icons.keyboard_arrow_up);
   IconData get layers =>
       _pick(CupertinoIcons.square_stack_3d_up, Icons.layers_outlined);
 }
