@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:routing/routing.dart';
 
 import '../directions/route_source.dart';
+import '../l10n/lookup.dart';
 import '../store/store.dart';
 import 'navigation_location.dart';
 import 'speech.dart';
@@ -416,6 +417,11 @@ class NavigationController extends ChangeNotifier {
     // Whatever is being said, or waiting to be, is about the route you just left: cut it
     // off rather than let it run on while you're heading somewhere else.
     unawaited(_speaker.stop());
+    // Said once as you leave, not on each try for a new route, so a reroute that keeps
+    // failing doesn't keep repeating it. Only in the route's own language: with no
+    // translation for it, staying quiet beats another language in this voice.
+    final rerouting = localizationsFor(_language!)?.rerouting;
+    if (rerouting != null) unawaited(_speaker.speak(rerouting));
     _hold?.cancel();
     _hold = Timer(offRouteHold, _holdEnded);
   }

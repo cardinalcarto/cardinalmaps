@@ -1,0 +1,7 @@
+{
+  "@@locale": "en",
+  "rerouting": "Rerouting",
+  "@rerouting": {
+    "description": "Spoken by turn-by-turn navigation, once, when you leave the route and a new one is about to be found."
+  }
+}

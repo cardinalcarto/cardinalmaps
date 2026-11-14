@@ -9,6 +9,7 @@ import 'package:sparkle/sparkle.dart';
 import 'config.dart';
 import 'directions/route_source.dart';
 import 'geocoder/geocoder.dart';
+import 'l10n/app_localizations.dart';
 import 'map/location.dart';
 import 'map/map.dart';
 import 'map/map_drawing.dart';
@@ -81,6 +82,9 @@ class MainApp extends StatelessWidget {
       theme: appTheme(Brightness.light),
       darkTheme: appTheme(Brightness.dark),
       routerConfig: router,
+      // English only for now; other languages come as reviewed translations do.
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
     );
   }
 }

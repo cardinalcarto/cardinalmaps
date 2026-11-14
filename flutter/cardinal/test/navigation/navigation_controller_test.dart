@@ -13,7 +13,11 @@ import '../fakes/fake_routes.dart';
 
 /// A controller over fakes, and the fakes, for one test.
 class Harness {
-  Harness() {
+  Harness({String language = 'pt-PT'})
+    : route = fakeRoute([
+        [1.52, 42.50],
+        [1.53, 42.51],
+      ], language: language) {
     controller = NavigationController(
       routes: routes,
       location: location,
@@ -30,10 +34,8 @@ class Harness {
   final sessions = FakeSessions();
   late final NavigationController controller;
 
-  final route = fakeRoute([
-    [1.52, 42.50],
-    [1.53, 42.51],
-  ], language: 'pt-PT');
+  /// The route started with, its announcements in the harness's language.
+  final DirectionsRoute route;
 
   NavigationState get state => controller.state;
   FakeTripSession get session => sessions.last;
@@ -72,9 +74,12 @@ class Harness {
   }
 }
 
-void fakeAsync(void Function(FakeAsync async, Harness h) body) {
+void fakeAsync(
+  void Function(FakeAsync async, Harness h) body, {
+  String language = 'pt-PT',
+}) {
   FakeAsync().run((async) {
-    final h = Harness();
+    final h = Harness(language: language);
     body(async, h);
     // Leaves nothing running between tests.
     unawaited(h.controller.end());
@@ -504,6 +509,53 @@ void main() {
         h.fix(async);
         expect(h.speaker.stopped, 1);
       });
+    });
+
+    test(
+      'says "Rerouting" once each time you leave, right after the cut-off',
+      () {
+        fakeAsync((async, h) {
+          h.sessions.start = fakeUpdate(spoken: fakeSpoken('a', 'Turn left'));
+          h.onRoute(async);
+          h.session.next = fakeUpdate(deviation: NavDeviation.offRoute);
+          h.fix(async);
+          expect(h.speaker.log, ['Turn left', '(stop)', 'Rerouting']);
+
+          // Not again while off, rerouting, or trying again after a failed reroute.
+          h.fix(async);
+          async.elapse(offRouteHold);
+          h.routes.rerouted.single.answer.completeError(const NoOfflineArea());
+          async.flushMicrotasks();
+          h.fix(async);
+          async.elapse(rerouteBackoff);
+          expect(h.routes.rerouted, hasLength(2));
+          h.fix(async);
+          expect(h.speaker.log, ['Turn left', '(stop)', 'Rerouting']);
+
+          // Back on the line and off it again is a new departure, so it's said again.
+          h.session.next = fakeUpdate();
+          h.routes.rerouted.last.answer.completeError(const NoOfflineArea());
+          async.flushMicrotasks();
+          h.fix(async);
+          expect(h.state, NavigationState.onRoute);
+          h.session.next = fakeUpdate(deviation: NavDeviation.offRoute);
+          h.fix(async);
+          expect(h.speaker.log, [
+            'Turn left',
+            '(stop)',
+            'Rerouting',
+            '(stop)',
+            'Rerouting',
+          ]);
+        }, language: 'en-GB');
+      },
+    );
+
+    test('says "Rerouting" only in a language the app has it in', () {
+      fakeAsync((async, h) {
+        h.offRoute(async);
+        expect(h.speaker.log, ['(stop)']);
+      }, language: 'de-DE');
     });
 
     test("the old route's announcements aren't said off it, or late", () {

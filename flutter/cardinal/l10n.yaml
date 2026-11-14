@@ -1,0 +1,7 @@
+# Flutter's gen-l10n: one arb file per language in lib/l10n, English the template.
+# Languages are added only as reviewed translations arrive, never machine-translated.
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+nullable-getter: false
