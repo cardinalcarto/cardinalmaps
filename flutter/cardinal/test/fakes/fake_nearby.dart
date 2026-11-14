@@ -88,6 +88,11 @@ Map<String, Object?> snapshotNearbyJson() => _snapshot('nearby_response');
 Map<String, Object?> snapshotRouteDetailJson() =>
     _snapshot('route_detail_response');
 
+/// The router's nearby answer with a shared page from valinor's own test: route 44's
+/// "UW Medical Center" and "University District", whose 11:50 goes on as route 43.
+Map<String, Object?> snapshotSharedPageJson() =>
+    _snapshot('nearby_shared_page');
+
 Map<String, Object?> _snapshot(String name) {
   final snap = File(
     '../../valinor/valinor-transit-plan/src/snapshots/'
@@ -114,7 +119,7 @@ Map<String, Object?> nearbyDepartureJson(
   'accessibility': 'unknown',
 };
 
-/// A nearby route's JSON, in one direction from [stop], leaving [minutes] after
+/// A nearby route's JSON, on one page from [stop], leaving [minutes] after
 /// [fakeStart].
 Map<String, Object?> nearbyRouteJson(
   String routeId, {
@@ -126,10 +131,10 @@ Map<String, Object?> nearbyRouteJson(
   'feed': feed,
   'route': {'route_id': routeId, 'short_name': routeId, 'route_type': 3},
   'agency': {'name': 'Metro Transit'},
-  'directions': [
+  'pages': [
     {
-      'direction_id': 0,
       'headsigns': ['Downtown Seattle'],
+      'direction_id': 0,
       'stop': {
         'accessibility': 'unknown',
         'feed': feed,
@@ -139,6 +144,7 @@ Map<String, Object?> nearbyRouteJson(
         'longitude': -122.35,
       },
       'walk_seconds': walkSeconds,
+      'soonest_departure': fakeStart + minutes.first * 60,
       'departures': [
         for (final m in minutes) nearbyDepartureJson('$routeId-$m', m),
       ],

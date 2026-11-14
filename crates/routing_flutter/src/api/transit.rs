@@ -605,13 +605,14 @@ mod tests {
             "the same bytes as the server's /transit/nearby"
         );
         let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
-        let direction = &body["routes"][0]["directions"][0];
-        assert_eq!(direction["terminus_stop_id"], "B");
-        assert_eq!(direction["departures"][0]["trip_id"], "T1");
+        let page = &body["routes"][0]["pages"][0];
+        assert_eq!(page["departures"][0]["trip_id"], "T1");
 
         let route = format!(
-            r#"{{"feed":"bus","route_id":"L1","terminus_stop_id":"B","stop_id":"A","walk_seconds":{}}}"#,
-            direction["walk_seconds"]
+            r#"{{"feed":"bus","route_id":"L1","headsigns":{},"stop_id":"A","walk_seconds":{}}}"#,
+            page.get("headsigns")
+                .unwrap_or(&serde_json::Value::Array(Vec::new())),
+            page["walk_seconds"]
         );
         let answer = transit.route_at(route.as_bytes(), Vec::new(), now, &|| false);
         assert_eq!(answer.status, 200);

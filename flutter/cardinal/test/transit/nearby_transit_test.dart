@@ -27,8 +27,8 @@ void main() {
     expect(r4.key, (feed: 'metro', routeId: 'R4'));
     expect(r4.route.name, '4');
     expect(r4.agency, 'Metro');
-    final up = r4.directions.single;
-    expect(up.direction, const DirectionRef.id(0));
+    final up = r4.pages.single;
+    expect(up.directionId, 0);
     expect(up.headsigns, ['No Steps']);
     expect(
       (up.stop.feed, up.stop.id, up.stop.name),
@@ -37,29 +37,32 @@ void main() {
     expect(up.stop.accessibility, Accessibility.accessible);
     expect(up.stop.point!.lat, closeTo(47.6005, 1e-9));
     expect(up.walkSeconds, 42);
+    expect(up.soonestDeparture.millisecondsSinceEpoch, 1781535690 * 1000);
     final first = up.departures.single;
     expect((first.tripId, first.startDate), ('R4-0801', '20260615'));
     expect(first.status, DepartureStatus.scheduled);
     expect(first.departure.millisecondsSinceEpoch, 1781535690 * 1000);
     expect(first.accessibility, Accessibility.inaccessible);
     expect(first.alerts, isEmpty);
+    expect(first.continuesAs, isNull);
 
-    // Directions without a direction_id go by their last stop; a canceled departure
-    // can come first.
+    // A page can have several headsigns, and pages without a direction_id go by
+    // headsign; a canceled departure can come first.
     final r2 = nearby.routes[2];
-    expect(r2.directions.map((d) => d.direction), [
-      const DirectionRef.terminus('E1'),
-      const DirectionRef.terminus('EX'),
-      const DirectionRef.terminus('WX'),
+    expect(r2.pages.map((p) => p.directionId), [null, null]);
+    expect(r2.pages.map((p) => p.headsigns), [
+      ['East End', 'East 1st'],
+      ['West End'],
     ]);
-    expect(r2.directions[1].departures.map((d) => d.status), [
-      DepartureStatus.canceled,
-      DepartureStatus.scheduled,
+    expect(r2.pages.first.departures.map((d) => (d.headsign, d.status)), [
+      ('East End', DepartureStatus.canceled),
+      ('East End', DepartureStatus.scheduled),
+      ('East 1st', DepartureStatus.scheduled),
     ]);
 
     // A live departure, with the answer's alert it indexes.
     final r1 = nearby.routes.last;
-    final live = r1.directions.first.departures.first;
+    final live = r1.pages.first.departures.first;
     expect(live.status, DepartureStatus.live);
     expect(live.realtime, isTrue);
     expect(live.delaySeconds, 120);
@@ -69,7 +72,22 @@ void main() {
     );
     expect(live.alerts.single.header, 'Stop relocated');
     expect(live.alerts.single.effect, 'detour');
-    expect(r1.directions.first.headsigns, ['Northgate', 'Northgate via 2nd']);
+    expect(r1.pages.first.headsigns, ['Northgate', 'Northgate via 2nd']);
+  });
+
+  test('reads a departure whose vehicle goes on as another route', () {
+    final nearby = NearbyTransit.fromJson(snapshotSharedPageJson());
+    final r44 = nearby.routes.first;
+    final page = r44.pages.first;
+    expect(page.headsigns, ['UW Medical Center', 'University District']);
+    final through = page.departures[1];
+    expect(through.headsign, 'University District');
+    final next = through.continuesAs!;
+    expect(
+      (next.routeId, next.shortName, next.headsign),
+      ('L43', '43', 'Capitol Hill'),
+    );
+    expect(page.departures.first.continuesAs, isNull);
   });
 
   test('reads why a nearby answer has no routes', () {
@@ -87,7 +105,6 @@ void main() {
       ('metro', 'R1', 'FDB71A'),
     );
     expect(detail.agency, 'Metro');
-    expect(detail.direction, const DirectionRef.id(0));
     expect((detail.stop.id, detail.walkSeconds), ('N1', 42));
     expect(detail.headsigns, ['Northgate', 'Northgate via 2nd']);
     // The canceled one is beside the two that run.
@@ -139,11 +156,11 @@ void main() {
   test('asks for a route detail by what the nearby answer gave', () {
     final nearby = NearbyTransit.fromJson(snapshotNearbyJson());
     final r2 = nearby.routes[2];
-    final east = r2.directions[1];
+    final east = r2.pages.first;
     expect(routeRequest(RouteDetailQuery.of(r2, east), TransitAccess.walking), {
       'feed': 'metro',
       'route_id': 'R2',
-      'terminus_stop_id': 'EX',
+      'headsigns': ['East End', 'East 1st'],
       'stop_id': 'N1',
       'mode': 'walking',
       'walk_seconds': 42,
@@ -151,7 +168,7 @@ void main() {
       'max_departures': 6,
     });
     final r1 = nearby.routes.last;
-    final north = r1.directions.first;
+    final north = r1.pages.first;
     expect(
       routeRequest(
         RouteDetailQuery.of(r1, north, departure: north.departures[1]),
@@ -160,7 +177,7 @@ void main() {
       {
         'feed': 'metro',
         'route_id': 'R1',
-        'direction_id': 0,
+        'headsigns': ['Northgate', 'Northgate via 2nd'],
         'stop_id': 'N1',
         'mode': 'wheelchair',
         'walk_seconds': 42,

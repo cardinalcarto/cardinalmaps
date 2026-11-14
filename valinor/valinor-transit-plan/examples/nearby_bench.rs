@@ -6,7 +6,7 @@
 //! ```
 //!
 //! For each place, period, and travel mode, it prints the median and slowest of `--repeat` warm
-//! queries after one cold one, how many routes and directions were listed, and the response's
+//! queries after one cold one, how many routes and pages were listed, and the response's
 //! size, then the median time of each stage. `--rt DIR` ingests a King County Metro capture
 //! (`tripupdates.pb`, `vehiclepositions.pb`, and `alerts.pb`) and queries at its time.
 
@@ -177,17 +177,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 let slowest = totals.iter().copied().fold(0.0, f64::max);
-                let directions: usize = cold.routes.iter().map(|r| r.directions.len()).sum();
+                let pages: usize = cold.routes.iter().map(|r| r.pages.len()).sum();
                 let stops: std::collections::BTreeSet<&str> = cold
                     .routes
                     .iter()
-                    .flat_map(|r| &r.directions)
-                    .map(|d| d.stop.stop_id.as_str())
+                    .flat_map(|r| &r.pages)
+                    .map(|p| p.stop.stop_id.as_str())
                     .collect();
                 let bytes = serde_json::to_vec(&cold)?.len();
                 println!(
                     "{period:>8} {mode:>10?}: cold {cold_ms:7.1} ms, warm median {:7.1} ms, \
-                     max {slowest:7.1} ms; {} routes, {directions} directions from {} stops, \
+                     max {slowest:7.1} ms; {} routes, {pages} pages from {} stops, \
                      {bytes} bytes",
                     median(totals),
                     cold.routes.len(),

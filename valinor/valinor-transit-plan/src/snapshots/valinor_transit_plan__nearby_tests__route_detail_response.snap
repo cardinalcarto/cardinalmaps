@@ -55,7 +55,6 @@ expression: "&detail(&state, &request)"
     "name": "Metro",
     "url": "https://m.test"
   },
-  "direction_id": 0,
   "headsigns": [
     "Northgate",
     "Northgate via 2nd"

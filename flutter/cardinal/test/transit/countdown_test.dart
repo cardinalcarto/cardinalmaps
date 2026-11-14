@@ -45,7 +45,7 @@ void main() {
     final direction = NearbyTransit.fromJson(snapshotNearbyJson())
         .routes
         .first
-        .directions
+        .pages
         .single;
     final countdown = Countdown(
       direction.departures.single,
@@ -103,7 +103,7 @@ void main() {
     test("reads a departure's own status", () {
       final canceled = NearbyTransit.fromJson(snapshotNearbyJson())
           .routes[2]
-          .directions[1]
+          .pages[0]
           .departures
           .first;
       expect(

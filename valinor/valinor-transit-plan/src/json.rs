@@ -7,8 +7,8 @@ use valinor_walk::WalkError;
 
 use crate::error::{PlanError, StateError};
 use crate::nearby::{
-    DEFAULT_HORIZON_SECONDS, DEFAULT_NEARBY_DEPARTURES, DirectionKey, NearbyRequest,
-    RouteDetailRequest, TripChoice,
+    DEFAULT_HORIZON_SECONDS, DEFAULT_NEARBY_DEPARTURES, NearbyRequest, RouteDetailRequest,
+    TripChoice,
 };
 use crate::plan::{DepartureRange, TransitOptions, TransitRequest, TravelMode};
 use crate::response::language_supported;
@@ -166,7 +166,7 @@ pub struct NearbyRequestBody {
     /// How far ahead departures are listed, in seconds; two hours when absent.
     #[serde(default)]
     pub horizon_seconds: Option<u32>,
-    /// How many departures that run each direction lists (canceled and skipped ones among
+    /// How many departures that run each page lists (canceled and skipped ones among
     /// them don't count), at most ten; three when absent.
     #[serde(default)]
     pub max_departures: Option<u8>,
@@ -183,12 +183,8 @@ pub struct RouteRequestBody {
     pub feed: String,
     /// `route_id`.
     pub route_id: String,
-    /// The direction's `direction_id`; give this or `terminus_stop_id`, as the direction did.
-    #[serde(default)]
-    pub direction_id: Option<u32>,
-    /// The direction's `terminus_stop_id`, for trips without a `direction_id`.
-    #[serde(default)]
-    pub terminus_stop_id: Option<String>,
+    /// The page's `headsigns`, as the nearby page gave them; empty for a page without any.
+    pub headsigns: Vec<String>,
     /// The stop's `stop_id`, in the route's feed.
     pub stop_id: String,
     /// When the rider sets off, in POSIX seconds; `now` when absent.
@@ -235,17 +231,6 @@ fn parse_nearby(body: &[u8], now: i64) -> Result<NearbyRequest, JsonResponse> {
 
 fn parse_route(body: &[u8], now: i64) -> Result<RouteDetailRequest, JsonResponse> {
     let parsed: RouteRequestBody = parse_json(body)?;
-    let direction = match (parsed.direction_id, parsed.terminus_stop_id) {
-        (Some(id), None) => DirectionKey::Id(id),
-        (None, Some(stop)) => DirectionKey::Terminus(stop),
-        _ => {
-            return Err(error_body(
-                400,
-                "invalid_request",
-                "give exactly one of direction_id and terminus_stop_id",
-            ));
-        }
-    };
     let trip = match (parsed.trip_id, parsed.start_date) {
         (Some(trip_id), start_date) => Some(TripChoice {
             trip_id,
@@ -263,7 +248,7 @@ fn parse_route(body: &[u8], now: i64) -> Result<RouteDetailRequest, JsonResponse
     Ok(RouteDetailRequest {
         feed: parsed.feed,
         route_id: parsed.route_id,
-        direction,
+        headsigns: parsed.headsigns,
         stop_id: parsed.stop_id,
         time: parsed.time.unwrap_or(now),
         now,

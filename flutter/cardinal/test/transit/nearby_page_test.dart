@@ -18,7 +18,7 @@ const _here = Fix(lng: -122.35, lat: 47.65, accuracy: 5);
 
 const _feed = 'us-wa-Metro-Transit';
 
-/// A route's JSON with [departures] (from [nearbyDepartureJson]) in one direction.
+/// A route's JSON with [departures] (from [nearbyDepartureJson]) on one page.
 Map<String, Object?> _route(
   String id, {
   List<Map<String, Object?>>? departures,
@@ -26,9 +26,9 @@ Map<String, Object?> _route(
   int walkSeconds = 0,
 }) {
   final json = nearbyRouteJson(id, walkSeconds: walkSeconds);
-  final direction = (json['directions']! as List).single as Map<String, Object?>
+  final page = (json['pages']! as List).single as Map<String, Object?>
     ..['headsigns'] = headsigns;
-  if (departures != null) direction['departures'] = departures;
+  if (departures != null) page['departures'] = departures;
   return json;
 }
 

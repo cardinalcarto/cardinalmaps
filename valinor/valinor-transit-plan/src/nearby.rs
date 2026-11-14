@@ -1,5 +1,6 @@
-//! Nearby departures: which routes a rider can catch from where they are, in each direction,
-//! and when; and one of those routes in detail, from the stop a nearby row uses.
+//! Nearby departures: which routes a rider can catch from where they are, under which
+//! headsigns, and when; and one of those routes in detail, from the stop a nearby row's page
+//! uses.
 //!
 //! See `docs/transit.md` ("Nearby departures"). In outline:
 //!
@@ -8,10 +9,11 @@
 //! - Departures are found as a ride's departure range finds them, from the same pinned
 //!   snapshot, so canceled and skipped departures, frequency runs, and service days that run
 //!   past midnight are handled as they are there.
-//! - Departures are grouped by GTFS route, then by direction: the trip's `direction_id`, or for
-//!   a trip without one, the last stop of the trip it is (see [`DirectionKey`]).
+//! - Departures are grouped by GTFS route, then into pages by the headsign a rider reads at the
+//!   stop. Two headsigns of a route share a page when, from the page's stop, every pair of
+//!   their trips calls at the same stops until one of them ends.
 //! - A departure is catchable when it leaves at or after the request's time plus the walk to its
-//!   stop, as routing counts a first boarding. A direction's stop is the nearest of those where
+//!   stop, as routing counts a first boarding. A page's stop is the nearest of those where
 //!   its earliest catchable trip can still be caught.
 //!
 //! Like [`crate::plan`], this has no clock: `now` is always an argument.
@@ -40,21 +42,8 @@ pub const DEFAULT_NEARBY_WALK_SECONDS: u32 = 1800;
 /// How far ahead departures are looked for by default, in seconds.
 pub const DEFAULT_HORIZON_SECONDS: u32 = 2 * 3600;
 
-/// How many departures each direction lists by default.
+/// How many departures each page lists by default.
 pub const DEFAULT_NEARBY_DEPARTURES: u8 = 3;
-
-/// Which way a route's trips go from a stop.
-///
-/// A trip's `direction_id` when it has one. A trip without one is grouped by the last stop of
-/// the GTFS trip it is (an original trip's own on a stay-seated combined trip), by `stop_id`,
-/// so a short-turning trip without a `direction_id` is a direction of its own.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum DirectionKey {
-    /// GTFS `direction_id`.
-    Id(u32),
-    /// The `stop_id` of the trip's last stop, in the route's feed.
-    Terminus(String),
-}
 
 /// A nearby-departures question.
 #[derive(Debug, Clone, Copy)]
@@ -71,7 +60,7 @@ pub struct NearbyRequest {
     pub max_walk_seconds: u32,
     /// How far after `time` departures are listed, in seconds; at most a day.
     pub horizon_seconds: u32,
-    /// How many departures that run each direction lists; 1 to [`MAX_RANGE_DEPARTURES`].
+    /// How many departures that run each page lists; 1 to [`MAX_RANGE_DEPARTURES`].
     /// Canceled and skipped ones among them are listed too, and don't count.
     pub max_departures: u8,
     /// How many routes to list, soonest first; all when `None`.
@@ -103,15 +92,16 @@ pub struct TripChoice {
     pub start_date: Option<String>,
 }
 
-/// One route and direction from one stop, by the identifiers a nearby response gave.
+/// One page of a route from one stop, by the identifiers a nearby response gave.
 #[derive(Debug, Clone)]
 pub struct RouteDetailRequest {
     /// The route's feed.
     pub feed: String,
     /// `route_id`.
     pub route_id: String,
-    /// Which way, as the nearby direction said.
-    pub direction: DirectionKey,
+    /// The page, by its `headsigns`: the departures listed are those whose headsign at the stop
+    /// is one of these, or for a page without headsigns, those without one.
+    pub headsigns: Vec<String>,
     /// The stop, by its `stop_id` in the route's feed.
     pub stop_id: String,
     /// When the rider sets off, in POSIX seconds.
@@ -188,6 +178,18 @@ pub(crate) fn validated_route<T: Error + 'static, A: Error + 'static>(
     check_mode(request.mode)?;
     if request.walk_seconds > MAX_DEPARTURE_WINDOW_SECONDS {
         return Err(PlanError::InvalidRequest("walk_seconds is more than a day"));
+    }
+    // A response never names an empty headsign, and a page names each of its own once.
+    if request.headsigns.iter().any(String::is_empty) {
+        return Err(PlanError::InvalidRequest("a headsign is never empty"));
+    }
+    if request
+        .headsigns
+        .iter()
+        .enumerate()
+        .any(|(i, headsign)| request.headsigns[..i].contains(headsign))
+    {
+        return Err(PlanError::InvalidRequest("headsigns names one twice"));
     }
     check_horizon(
         request.time,

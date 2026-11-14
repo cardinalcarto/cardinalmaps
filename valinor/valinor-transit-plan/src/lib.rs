@@ -10,8 +10,8 @@
 //!   so a server and a phone use it identically.
 //! - [`plan`] answers a [`TransitRequest`] over one pinned snapshot, using an
 //!   [`AccessEgressSearch`] for stop tables and a [`valinor_transit::TransferSearch`] for walks.
-//! - [`nearby()`] answers which routes a rider can catch near a place, in each direction,
-//!   and [`route_detail()`] one of them from one stop, over a pinned snapshot alike.
+//! - [`nearby()`] answers which routes a rider can catch near a place, a page per headsign,
+//!   and [`route_detail()`] one page of them from one stop, over a pinned snapshot alike.
 //! - [`PlanResponse`] is the rider-facing JSON answer, with its own endpoint's schema
 //!   rather than Valhalla's.
 //! - [`CompiledLookup`] is the bridge that lets the GTFS-RT overlay builder see compiled GTFS.
@@ -55,9 +55,8 @@ pub use json::{
 };
 pub use lookup::CompiledLookup;
 pub use nearby::{
-    DEFAULT_HORIZON_SECONDS, DEFAULT_NEARBY_DEPARTURES, DEFAULT_NEARBY_WALK_SECONDS, DirectionKey,
-    NearbyRequest, RouteDetailRequest, TripChoice, nearby, nearby_pinned, route_detail,
-    route_detail_pinned,
+    DEFAULT_HORIZON_SECONDS, DEFAULT_NEARBY_DEPARTURES, DEFAULT_NEARBY_WALK_SECONDS, NearbyRequest,
+    RouteDetailRequest, TripChoice, nearby, nearby_pinned, route_detail, route_detail_pinned,
 };
 pub use plan::{
     AccessEgressRequest, AccessEgressSearch, AccessEgressTables, AccessRequest, DepartureRange,

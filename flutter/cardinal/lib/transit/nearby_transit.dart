@@ -64,9 +64,8 @@ class NearbyRoute {
     : feed = json['feed'] as String? ?? '',
       route = TransitRoute.fromJson(_map(json['route'])),
       agency = _map(json['agency'])['name'] as String?,
-      directions = [
-        for (final d in _list(json['directions']))
-          NearbyDirection._(_map(d), alerts),
+      pages = [
+        for (final p in _list(json['pages'])) HeadsignPage._(_map(p), alerts),
       ];
 
   final String feed;
@@ -75,76 +74,80 @@ class NearbyRoute {
   /// The agency's name, when the feed gives one.
   final String? agency;
 
-  /// Each direction with a departure the rider can catch, in an order that stays the
-  /// same from one answer to the next.
-  final List<NearbyDirection> directions;
+  /// Each page with a departure the rider can catch, one a row shows at a time, in an
+  /// order that stays the same from one answer to the next.
+  final List<HeadsignPage> pages;
 
   RouteKey get key => (feed: feed, routeId: route.id);
 }
 
-/// Which way a route goes: its GTFS `direction_id`, or for trips without one, the
-/// `stop_id` of their last stop. Exactly one is set.
-class DirectionRef {
-  const DirectionRef.id(int this.directionId) : terminusStopId = null;
-  const DirectionRef.terminus(String this.terminusStopId) : directionId = null;
-
-  DirectionRef._(Map<String, Object?> json)
-    : directionId = (json['direction_id'] as num?)?.toInt(),
-      terminusStopId = json['direction_id'] == null
-          ? json['terminus_stop_id'] as String?
-          : null;
-
-  final int? directionId;
-  final String? terminusStopId;
-
-  /// The request fields that name it.
-  Map<String, Object?> toJson() => {
-    if (directionId != null) 'direction_id': directionId,
-    if (terminusStopId != null) 'terminus_stop_id': terminusStopId,
-  };
-
-  @override
-  bool operator ==(Object other) =>
-      other is DirectionRef &&
-      other.directionId == directionId &&
-      other.terminusStopId == terminusStopId;
-
-  @override
-  int get hashCode => Object.hash(directionId, terminusStopId);
-}
-
-/// One direction of a nearby route, from the stop where the rider catches it soonest.
-class NearbyDirection {
-  NearbyDirection._(Map<String, Object?> json, List<LegAlert> alerts)
-    : direction = DirectionRef._(json),
-      headsigns = [
-        for (final h in _list(json['headsigns']))
-          if (h is String) h,
-      ],
+/// One page of a nearby route: its departures under one headsign, or under several
+/// whose trips go the same way from [stop], from the stop where the rider catches them
+/// soonest.
+class HeadsignPage {
+  HeadsignPage._(Map<String, Object?> json, List<LegAlert> alerts)
+    : headsigns = _strings(json['headsigns']),
+      directionId = (json['direction_id'] as num?)?.toInt(),
       stop = StopRef.fromJson(_map(json['stop'])),
       walkSeconds = (json['walk_seconds'] as num?)?.toInt() ?? 0,
+      soonestDeparture = _time(json['soonest_departure']),
       departures = [
         for (final d in _list(json['departures']))
-          StopDeparture.fromJson(_map(d), alerts: alerts),
+          NearbyDeparture.fromJson(_map(d), alerts: alerts),
       ];
 
-  final DirectionRef direction;
-
-  /// The distinct headsigns of [departures], the most frequent first.
+  /// The page's headsigns, the most frequent first, shown as "A / B"; empty for the
+  /// departures that have none. A route's detail asks for the page by these.
   final List<String> headsigns;
 
-  /// The nearest stop where the rider can catch this direction's earliest trip.
+  /// The GTFS `direction_id` of the page's trips when they share one. It orders the
+  /// pages, and says nothing else.
+  final int? directionId;
+
+  /// The nearest stop where the rider can catch this page's earliest trip.
   final StopRef stop;
 
   /// The walk to [stop].
   final int walkSeconds;
 
+  /// When this page's earliest trip the rider can catch leaves [stop].
+  final DateTime soonestDeparture;
+
   /// The next departures from [stop] the rider can be there for, by departure. The first
   /// may be canceled or skipped.
-  final List<StopDeparture> departures;
+  final List<NearbyDeparture> departures;
 }
 
-/// One route and direction from one stop, for a row's detail.
+/// One departure from a nearby stop.
+class NearbyDeparture extends StopDeparture {
+  NearbyDeparture.fromJson(super.json, {super.alerts})
+    : continuesAs = json['continues_as'] == null
+          ? null
+          : ContinuesAs._(_map(json['continues_as'])),
+      super.fromJson();
+
+  /// The route its vehicle goes on as after this trip, with riders staying on.
+  final ContinuesAs? continuesAs;
+}
+
+/// The trip a vehicle runs next as another route: "continues as 43".
+class ContinuesAs {
+  ContinuesAs._(Map<String, Object?> json)
+    : routeId = json['route_id'] as String? ?? '',
+      shortName = json['short_name'] as String?,
+      headsign = json['headsign'] as String?;
+
+  /// The next trip's `route_id`, in the departure's feed.
+  final String routeId;
+
+  /// That route's short name, when the feed gives one.
+  final String? shortName;
+
+  /// The next trip's headsign.
+  final String? headsign;
+}
+
+/// One page of a route from one stop, for a row's detail.
 class RouteDetail {
   RouteDetail.fromJson(Map<String, Object?> json) : this._(json, _alerts(json));
 
@@ -154,16 +157,12 @@ class RouteDetail {
       feed = json['feed'] as String? ?? '',
       route = TransitRoute.fromJson(_map(json['route'])),
       agency = _map(json['agency'])['name'] as String?,
-      direction = DirectionRef._(json),
-      headsigns = [
-        for (final h in _list(json['headsigns']))
-          if (h is String) h,
-      ],
+      headsigns = _strings(json['headsigns']),
       stop = StopRef.fromJson(_map(json['stop'])),
       walkSeconds = (json['walk_seconds'] as num?)?.toInt() ?? 0,
       departures = [
         for (final d in _list(json['departures']))
-          StopDeparture.fromJson(_map(d), alerts: alerts),
+          NearbyDeparture.fromJson(_map(d), alerts: alerts),
       ],
       ride = json['ride'] == null
           ? null
@@ -181,22 +180,23 @@ class RouteDetail {
   final String feed;
   final TransitRoute route;
   final String? agency;
-  final DirectionRef direction;
 
-  /// The distinct headsigns of [departures], the most frequent first.
+  /// The page's headsigns, as they were asked for.
   final List<String> headsigns;
   final StopRef stop;
   final int walkSeconds;
 
-  /// The next departures from [stop] in this direction the rider can be there for.
-  final List<StopDeparture> departures;
+  /// The next departures from [stop] under the page's headsigns the rider can be there
+  /// for.
+  final List<NearbyDeparture> departures;
 
   /// The chosen trip, or else the first departure that runs, from [stop] to the end of
   /// its trip, with every stop's times, its shape, vehicle, and alerts. Null when nothing
   /// runs in the horizon.
   final TransitLeg? ride;
 
-  /// Vehicles real-time data has on this route's trips in this direction.
+  /// Vehicles real-time data has on this route's trips that leave [stop] under one of
+  /// the page's headsigns.
   final List<TransitVehicle> vehicles;
 }
 
@@ -211,3 +211,8 @@ Map<String, Object?> _map(Object? value) =>
     value is Map<String, Object?> ? value : const {};
 
 List<Object?> _list(Object? value) => value is List<Object?> ? value : const [];
+
+List<String> _strings(Object? value) => [
+  for (final s in _list(value))
+    if (s is String) s,
+];

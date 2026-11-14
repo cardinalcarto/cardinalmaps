@@ -45,12 +45,12 @@ expression: "&run(&state, &request)"
         "name": "Metro",
         "url": "https://m.test"
       },
-      "directions": [
+      "pages": [
         {
-          "direction_id": 0,
           "headsigns": [
             "No Steps"
           ],
+          "direction_id": 0,
           "stop": {
             "accessibility": "accessible",
             "feed": "metro",
@@ -62,6 +62,7 @@ expression: "&run(&state, &request)"
             "time_zone": "America/Los_Angeles"
           },
           "walk_seconds": 42,
+          "soonest_departure": 1781535690,
           "departures": [
             {
               "trip_id": "R4-0801",
@@ -88,12 +89,12 @@ expression: "&run(&state, &request)"
         "name": "Metro",
         "url": "https://m.test"
       },
-      "directions": [
+      "pages": [
         {
-          "direction_id": 0,
           "headsigns": [
             "Up the Steps"
           ],
+          "direction_id": 0,
           "stop": {
             "accessibility": "inaccessible",
             "feed": "metro",
@@ -105,6 +106,7 @@ expression: "&run(&state, &request)"
             "time_zone": "America/Los_Angeles"
           },
           "walk_seconds": 42,
+          "soonest_departure": 1781535720,
           "departures": [
             {
               "trip_id": "R5-0802",
@@ -131,10 +133,10 @@ expression: "&run(&state, &request)"
         "name": "Metro",
         "url": "https://m.test"
       },
-      "directions": [
+      "pages": [
         {
-          "terminus_stop_id": "E1",
           "headsigns": [
+            "East End",
             "East 1st"
           ],
           "stop": {
@@ -148,34 +150,7 @@ expression: "&run(&state, &request)"
             "time_zone": "America/Los_Angeles"
           },
           "walk_seconds": 42,
-          "departures": [
-            {
-              "trip_id": "R2S-0820",
-              "start_date": "20260615",
-              "headsign": "East 1st",
-              "status": "scheduled",
-              "departure": 1781536800,
-              "scheduled_departure": 1781536800,
-              "accessibility": "unknown"
-            }
-          ]
-        },
-        {
-          "terminus_stop_id": "EX",
-          "headsigns": [
-            "East End"
-          ],
-          "stop": {
-            "accessibility": "accessible",
-            "feed": "metro",
-            "stop_id": "N1",
-            "name": "North 1st",
-            "latitude": 47.6005,
-            "longitude": -122.33,
-            "wheelchair_boarding": "yes",
-            "time_zone": "America/Los_Angeles"
-          },
-          "walk_seconds": 42,
+          "soonest_departure": 1781536380,
           "departures": [
             {
               "trip_id": "R2E-0803",
@@ -194,11 +169,19 @@ expression: "&run(&state, &request)"
               "departure": 1781536380,
               "scheduled_departure": 1781536380,
               "accessibility": "unknown"
+            },
+            {
+              "trip_id": "R2S-0820",
+              "start_date": "20260615",
+              "headsign": "East 1st",
+              "status": "scheduled",
+              "departure": 1781536800,
+              "scheduled_departure": 1781536800,
+              "accessibility": "unknown"
             }
           ]
         },
         {
-          "terminus_stop_id": "WX",
           "headsigns": [
             "West End"
           ],
@@ -213,6 +196,7 @@ expression: "&run(&state, &request)"
             "time_zone": "America/Los_Angeles"
           },
           "walk_seconds": 42,
+          "soonest_departure": 1781536020,
           "departures": [
             {
               "trip_id": "R2W-0805",
@@ -251,13 +235,13 @@ expression: "&run(&state, &request)"
         "name": "Metro",
         "url": "https://m.test"
       },
-      "directions": [
+      "pages": [
         {
-          "direction_id": 0,
           "headsigns": [
             "Northgate",
             "Northgate via 2nd"
           ],
+          "direction_id": 0,
           "stop": {
             "accessibility": "accessible",
             "feed": "metro",
@@ -269,6 +253,7 @@ expression: "&run(&state, &request)"
             "time_zone": "America/Los_Angeles"
           },
           "walk_seconds": 42,
+          "soonest_departure": 1781536350,
           "departures": [
             {
               "trip_id": "R1N-0810",
@@ -299,10 +284,10 @@ expression: "&run(&state, &request)"
           ]
         },
         {
-          "direction_id": 1,
           "headsigns": [
             "Southcenter"
           ],
+          "direction_id": 1,
           "stop": {
             "accessibility": "accessible",
             "feed": "metro",
@@ -314,6 +299,7 @@ expression: "&run(&state, &request)"
             "time_zone": "America/Los_Angeles"
           },
           "walk_seconds": 42,
+          "soonest_departure": 1781536140,
           "departures": [
             {
               "trip_id": "R1S-0800",

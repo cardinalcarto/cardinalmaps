@@ -59,7 +59,7 @@ class NearbyTimes {
   /// [direction]'s departures at [now]. Those that have left are left out. The first
   /// that runs is [next], even if the walk can't make it any more; canceled and skipped
   /// ones are never [next], and are among [following] in their place.
-  factory NearbyTimes.of(NearbyDirection direction, DateTime now) {
+  factory NearbyTimes.of(HeadsignPage direction, DateTime now) {
     final left = [
       for (final d in direction.departures)
         Countdown(d, now: now, walkSeconds: direction.walkSeconds),
@@ -440,7 +440,7 @@ class NearbyRow extends StatelessWidget {
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
-    final direction = route.directions.firstOrNull;
+    final direction = route.pages.firstOrNull;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Row(

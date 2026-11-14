@@ -36,7 +36,7 @@ const resortMeters = 100.0;
 /// 3. Shown, apply by the same access from less than [resortMeters] from the sort
 ///    origin: **freeze**. The order stays, and rows are matched by [NearbyRoute.key]
 ///    (feed and `route_id`):
-///    a. a row the answer has is replaced in place by the answer's, with its directions,
+///    a. a row the answer has is replaced in place by the answer's, with its pages,
 ///       stops, and departures;
 ///    b. a row the answer doesn't have is removed;
 ///    c. the answer's routes that aren't rows yet are appended at the end, in the

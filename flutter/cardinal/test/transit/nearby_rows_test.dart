@@ -72,9 +72,9 @@ void main() {
         );
         expect(ids(rows), ['40', '62']);
         final [forty, sixtyTwo] = rows.routes;
-        expect(forty.directions.single.departures.single.tripId, '40-6');
-        expect(sixtyTwo.directions.single.stop.name, 'N 36th St');
-        expect(sixtyTwo.directions.single.departures.single.tripId, '62-1');
+        expect(forty.pages.single.departures.single.tripId, '40-6');
+        expect(sixtyTwo.pages.single.stop.name, 'N 36th St');
+        expect(sixtyTwo.pages.single.departures.single.tripId, '62-1');
         expect(rows.sortedAt, here);
       },
     );
@@ -136,10 +136,7 @@ void main() {
         access: walk,
       );
       expect(rows.routes.single.feed, 'b');
-      expect(
-        rows.routes.single.directions.single.departures.single.tripId,
-        '1-2',
-      );
+      expect(rows.routes.single.pages.single.departures.single.tripId, '1-2');
     });
 
     test('3. small moves add up from the last sort, not the last answer', () {

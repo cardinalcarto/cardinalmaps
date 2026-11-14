@@ -22,8 +22,8 @@ const nearbyWalkLimit = Duration(minutes: 30);
 /// How far ahead nearby departures are listed.
 const nearbyHorizon = Duration(hours: 2);
 
-/// How many departures that run a nearby row lists in each direction. Canceled and
-/// skipped ones among them are listed too, and don't count.
+/// How many departures that run a nearby row lists on each page. Canceled and skipped
+/// ones among them are listed too, and don't count.
 const nearbyRowDepartures = 3;
 
 /// How many departures that run a route's detail lists, counted as for a row.
@@ -40,32 +40,34 @@ class RouteDetailQuery {
   const RouteDetailQuery({
     required this.feed,
     required this.routeId,
-    required this.direction,
+    required this.headsigns,
     required this.stopId,
     required this.walkSeconds,
     this.tripId,
     this.startDate,
   });
 
-  /// [direction] of [route] from its stop, showing [departure]'s trip if it's given, and
+  /// [page] of [route] from its stop, showing [departure]'s trip if it's given, and
   /// otherwise the first that runs.
   factory RouteDetailQuery.of(
     NearbyRoute route,
-    NearbyDirection direction, {
+    HeadsignPage page, {
     StopDeparture? departure,
   }) => RouteDetailQuery(
     feed: route.feed,
     routeId: route.route.id,
-    direction: direction.direction,
-    stopId: direction.stop.id,
-    walkSeconds: direction.walkSeconds,
+    headsigns: page.headsigns,
+    stopId: page.stop.id,
+    walkSeconds: page.walkSeconds,
     tripId: departure?.tripId,
     startDate: departure?.startDate,
   );
 
   final String feed;
   final String routeId;
-  final DirectionRef direction;
+
+  /// The page, by its headsigns; empty for the departures that have none.
+  final List<String> headsigns;
   final String stopId;
 
   /// The walk to the stop: departures the rider can't be there for aren't listed.
@@ -104,7 +106,7 @@ Map<String, Object?> routeRequest(
   return {
     'feed': query.feed,
     'route_id': query.routeId,
-    ...query.direction.toJson(),
+    'headsigns': query.headsigns,
     'stop_id': query.stopId,
     'mode': access.mode,
     'walk_seconds': query.walkSeconds,
@@ -135,7 +137,7 @@ abstract class NearbyTransitSource {
     Future<void>? abort,
   });
 
-  /// One direction of a route from a stop, as [query] names it, getting to the stop by
+  /// One page of a route from a stop, as [query] names it, getting to the stop by
   /// [access]. Throws as [nearby] does; a route, stop, or trip that isn't there is a
   /// [TransitPlanError] of kind `unknown_route`, `unknown_stop`, or `unknown_trip`.
   Future<RouteDetail> route({
