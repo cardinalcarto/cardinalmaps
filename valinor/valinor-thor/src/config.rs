@@ -7,6 +7,8 @@
 //! - `thor.{bidirectional_astar,unidirectional_astar}.hierarchy_limits` and
 //!   `service_limits.hierarchy_limits`: the default and largest hierarchy limits.
 //! - `service_limits.max_timedep_distance`: the longest time-dependent route.
+//! - `meili`: the map matcher's parameters, for `trace_route` and `trace_attributes`
+//!   (see [`MeiliConfig`]).
 //!
 //! [`ThorConfig::default`] is mainline's defaults (as `valhalla_build_config` writes them);
 //! [`ThorConfig::from_valhalla_json`] reads a config file, keeping defaults for missing keys
@@ -15,6 +17,7 @@
 use serde_json::Value;
 use thiserror::Error;
 use valhalla_proto::HierarchyLimits;
+use valinor_meili::MeiliConfig;
 use valinor_sif::UNLIMITED_TRANSITIONS;
 
 use crate::search::{MAX_RESERVED_LABELS_BIDIRECTIONAL, MAX_RESERVED_LABELS_UNIDIRECTIONAL};
@@ -25,6 +28,9 @@ pub enum ConfigError {
     /// The JSON doesn't parse.
     #[error("parse the config: {0}")]
     Json(#[from] serde_json::Error),
+    /// The `meili` section is invalid.
+    #[error("{0}")]
+    Meili(#[from] valinor_meili::ConfigError),
     /// A value has the wrong type.
     #[error("read {0}: it has the wrong type")]
     WrongType(String),
@@ -101,6 +107,9 @@ pub struct ThorConfig {
     pub hierarchy_limits_unidirectional: HierarchyLimitsConfig,
     /// How much search storage workspaces keep between requests.
     pub retention: Retention,
+    /// The map matcher's parameters (the `meili` section; mainline's built-in defaults
+    /// without one).
+    pub meili: MeiliConfig,
 }
 
 impl Default for ThorConfig {
@@ -128,6 +137,7 @@ impl Default for ThorConfig {
             hierarchy_limits_bidirectional: limits(DEFAULT_EXPANSION_WITHIN_DIST_BIDIR),
             hierarchy_limits_unidirectional: limits(DEFAULT_EXPANSION_WITHIN_DIST),
             retention: Retention::default(),
+            meili: MeiliConfig::default(),
         }
     }
 }
@@ -345,6 +355,10 @@ impl ThorConfig {
                     &["thor", "max_reserved_labels_count_astar"],
                     as_f64(MAX_RESERVED_LABELS_UNIDIRECTIONAL),
                 )?),
+            },
+            meili: match value.get("meili") {
+                Some(meili) => MeiliConfig::from_meili_json(meili)?,
+                None => MeiliConfig::default(),
             },
         })
     }

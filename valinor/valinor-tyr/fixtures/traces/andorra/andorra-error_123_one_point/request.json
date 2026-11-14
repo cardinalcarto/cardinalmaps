@@ -1,0 +1,13 @@
+{
+  "action": "trace_route",
+  "request": {
+    "costing": "auto",
+    "shape_match": "map_snap",
+    "shape": [
+      {
+        "lat": 42.527716,
+        "lon": 1.608988
+      }
+    ]
+  }
+}

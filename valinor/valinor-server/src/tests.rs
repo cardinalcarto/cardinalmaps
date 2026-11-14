@@ -357,3 +357,43 @@ fn an_empty_transit_feeds_variable_is_no_subset() {
         cli.transit_feeds
     );
 }
+
+/// A trace from mainline's captures (`valinor-tyr/fixtures/traces`), as a request body.
+fn trace(case: &str) -> Value {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../valinor-tyr/fixtures/traces/andorra")
+        .join(case)
+        .join("request.json");
+    let recorded: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    recorded["request"].clone()
+}
+
+#[tokio::test]
+async fn serves_map_matching() {
+    let state = state(2, Duration::from_secs(30));
+    let mut body = trace("andorra-0000-clean");
+    body["format"] = "osrm".into();
+    let body = body.to_string();
+
+    let (status, headers, response) = send(&state, request("POST", "/trace_route", &body)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["access-control-allow-origin"], "*");
+    let response: Value = serde_json::from_slice(&response).unwrap();
+    assert_eq!(response["code"], "Ok");
+    assert!(!response["matchings"].as_array().unwrap().is_empty());
+    assert!(response["tracepoints"].is_array());
+
+    let (status, _, response) = send(
+        &state,
+        request(
+            "POST",
+            "/trace_attributes",
+            &trace("andorra-0000-clean").to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let response: Value = serde_json::from_slice(&response).unwrap();
+    assert!(!response["edges"].as_array().unwrap().is_empty());
+    assert!(response["matched_points"].is_array());
+}

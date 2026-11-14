@@ -1,0 +1,1 @@
+{"status":400,"body":{"error_code":172,"error":"Exceeded breakage distance for all pairs: 0 meters","status_code":400,"status":"Bad Request"}}

@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 valhalla-graphtile = { workspace = true }
 valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
+valinor-meili = { workspace = true }
 valinor-sif = { workspace = true }
 
 [dev-dependencies]

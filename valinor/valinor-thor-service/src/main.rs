@@ -16,6 +16,7 @@ use valhalla_microservice::{Interrupt, Stage, ValhallaMicroserviceBuilder, Worke
 use valhalla_proto::Api;
 use valhalla_proto::options::Action;
 use valhalla_response::ErrorCode;
+use valinor_meili::Workspace as MeiliWorkspace;
 use valinor_thor::{Thor, ThorConfig, Workspace};
 
 #[derive(Parser)]
@@ -94,6 +95,7 @@ where
     let worker = Arc::new(Worker {
         thor,
         workspace: Mutex::new(Workspace::default()),
+        match_workspace: Mutex::new(MeiliWorkspace::new()),
     });
     let builder = ValhallaMicroserviceBuilder::new(
         Stage::Thor,
@@ -127,13 +129,14 @@ where
     }
 }
 
-/// Thor and its search storage.
+/// Thor, its search storage, and its map matching storage.
 ///
-/// The service runs one job at a time, so the workspace's lock is never contended;
-/// it only makes the worker function shareable.
+/// The service runs one job at a time, so the workspaces' locks are never contended;
+/// they only make the worker function shareable.
 struct Worker<P> {
     thor: Thor<P>,
     workspace: Mutex<Workspace>,
+    match_workspace: Mutex<MeiliWorkspace>,
 }
 
 impl<P: GraphTileProvider> Worker<P> {
@@ -145,6 +148,9 @@ impl<P: GraphTileProvider> Worker<P> {
         let action = api.options.as_ref().map_or(0, |o| o.action);
         match Action::try_from(action) {
             Ok(Action::Route) => {}
+            Ok(Action::TraceRoute | Action::TraceAttributes) => {
+                return self.trace(api, action == Action::TraceRoute as i32, interrupt);
+            }
             // Mainline's Thor passes status requests on to Odin
             // (or fails with 402 while shutting down, which this worker doesn't do).
             Ok(Action::Status) => return WorkerResult::forward(api),
@@ -154,8 +160,6 @@ impl<P: GraphTileProvider> Worker<P> {
                 Action::OptimizedRoute
                 | Action::SourcesToTargets
                 | Action::Isochrone
-                | Action::TraceRoute
-                | Action::TraceAttributes
                 | Action::Expansion
                 | Action::Centroid,
             ) => return WorkerResult::error(&ErrorCode::NotImplemented.into(), &mut api),
@@ -178,6 +182,39 @@ impl<P: GraphTileProvider> Worker<P> {
         match result {
             Ok(()) => WorkerResult::forward(api),
             // An interrupted request sends nothing.
+            Err(_) if interrupt.is_interrupted() => match interrupt.check() {
+                Err(interrupted) => interrupted.into(),
+                Ok(()) => WorkerResult::error(&ErrorCode::ThorUnknown.into(), &mut api),
+            },
+            Err(e) => WorkerResult::error(&e, &mut api),
+        }
+    }
+}
+
+impl<P: GraphTileProvider> Worker<P> {
+    /// Map matching: `trace_route` goes on to Odin with its trip,
+    /// and Thor answers `trace_attributes` itself, as mainline's does.
+    fn trace(&self, mut api: Api, is_route: bool, interrupt: &Interrupt) -> WorkerResult {
+        let mut workspace = self
+            .match_workspace
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let now = jiff_now();
+        let interrupted = || interrupt.is_interrupted();
+        let result = if is_route {
+            self.thor
+                .trace_route_interruptible(&mut workspace, &mut api, now, &interrupted)
+                .map(|()| None)
+        } else {
+            self.thor
+                .trace_attributes_interruptible(&mut workspace, &mut api, now, &interrupted)
+                .map(Some)
+        };
+        match result {
+            Ok(None) => WorkerResult::forward(api),
+            Ok(Some(response)) => {
+                WorkerResult::body(http::StatusCode::OK, response.content_type, response.body)
+            }
             Err(_) if interrupt.is_interrupted() => match interrupt.check() {
                 Err(interrupted) => interrupted.into(),
                 Ok(()) => WorkerResult::error(&ErrorCode::ThorUnknown.into(), &mut api),
@@ -211,6 +248,7 @@ mod tests {
         Worker {
             thor: Thor::new(ThorConfig::default(), provider),
             workspace: Mutex::new(Workspace::default()),
+            match_workspace: Mutex::new(MeiliWorkspace::new()),
         }
     }
 
@@ -252,6 +290,41 @@ mod tests {
             worker.handle(request(Action::Status), &Interrupt::never()),
             WorkerResult::Forward(_)
         ));
+    }
+
+    /// A captured Loki→Thor message of the Thor trace fixtures.
+    fn trace(case: &str) -> Api {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../valinor-thor/fixtures/traces/andorra")
+            .join(case)
+            .join("loki-thor.bin");
+        let bytes = std::fs::read(path).expect("fixture");
+        <Api as valhalla_proto::prost::Message>::decode(bytes.as_slice()).expect("an Api")
+    }
+
+    #[test]
+    fn matches_traces() {
+        let worker = worker();
+        // trace_route goes on to Odin with its trip.
+        let WorkerResult::Forward(api) =
+            worker.handle(trace("andorra-0000-clean"), &Interrupt::never())
+        else {
+            panic!("expected a trip for Odin");
+        };
+        assert!(api.trip.is_some_and(|t| !t.routes.is_empty()));
+        // Thor answers trace_attributes itself.
+        let (status, body) =
+            response(worker.handle(trace("andorra-0033-clean"), &Interrupt::never()));
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["edges"].as_array().is_some_and(|e| !e.is_empty()));
+        assert!(body["matched_points"].is_array());
+        // And its errors.
+        let (status, body) = response(worker.handle(
+            trace("andorra-error_edge_walk_off_route_trace_route"),
+            &Interrupt::never(),
+        ));
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error_code"], json!(443));
     }
 
     #[test]

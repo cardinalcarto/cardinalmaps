@@ -200,6 +200,7 @@ mod tests {
             path_distance: distance,
             restriction_index: u8::MAX,
             start_node_is_recovered: false,
+            is_disconnected: false,
         }
     }
 

@@ -36,12 +36,12 @@ use crate::geo::{AStarHeuristic, PointLL};
 use crate::graph;
 use crate::label::{INVALID_LABEL, NewLabel, ThorLabel};
 use crate::path::PathEdge;
-use crate::queue::BucketQueue;
 use crate::search::{
     BUCKET_COUNT, INITIAL_LABELS, SearchContext, UNIT_SIZE, add_double, candidate_id, candidates,
     clear_labels, find_percent_along, first_candidate_point, time_context,
 };
 use crate::time::location_time_info;
+use valhalla_graphtile::double_bucket_queue::BucketQueue;
 
 /// Mainline's factor on the bee-line time for the reverse tree's start time
 /// (`kReverseTTHeuristicFactor`).
@@ -1410,6 +1410,7 @@ impl BidirectionalAStar {
                         path_distance,
                         restriction_index: e.restriction_idx,
                         start_node_is_recovered: recovered_inner.contains(&e.edge_id),
+                        is_disconnected: false,
                     });
                 },
             );

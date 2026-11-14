@@ -9,7 +9,7 @@ use valhalla_graphtile::graph_tile::DirectedEdge;
 use valhalla_graphtile::{GraphId, RoadClass, RoadUse};
 use valinor_sif::{Cost, InternalTurn, Label, TravelMode};
 
-use crate::queue::SortCost;
+use valhalla_graphtile::double_bucket_queue::SortCost;
 
 /// Bits of [`ThorLabel::flags`].
 mod flag {

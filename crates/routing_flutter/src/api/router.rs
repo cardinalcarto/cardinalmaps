@@ -1,7 +1,8 @@
 //! What Dart calls (`valinor/docs/flutter-api.md`): open the device's offline regions as one
-//! router, and route Ferrostar's request bodies with it.
+//! router, route Ferrostar's request bodies with it, and map match traces
+//! (`trace_route` and `trace_attributes`, as the server serves them).
 //!
-//! Neither function is `#[frb(sync)]`: flutter_rust_bridge runs them on its worker pool,
+//! No function here is `#[frb(sync)]`: flutter_rust_bridge runs them on its worker pool,
 //! off the UI isolate's thread, and concurrent calls are fine.
 
 use core::num::NonZeroUsize;
@@ -38,6 +39,16 @@ const RETAINED_LABELS: usize = 0;
 /// more than 50 nodes connect to it, so neither mainline nor valinor finds a bicycle route to or
 /// from the park; at 100 it lands on Nagle Place, as a car's does.
 const MIN_REACHABILITY: u32 = valinor_walk::DEFAULT_MIN_REACHABILITY;
+
+/// How many bins' candidate grids a map matching workspace keeps before it drops them all
+/// (`meili.grid.cache_size`). A bin is a 25th of a level-2 tile, about 5 km across.
+///
+/// Mainline's default (100,240) suits a server; on a device it would let the grids of every
+/// bin a navigation session passes through pile up. Over Seattle's tiles a bin's grid averages
+/// 116 KB (half are under 58 KB; the densest downtown bin is 2.1 MB), so 16 bins hold about
+/// 2 MB typically and at most about 34 MB, and cover the few kilometers a trace being matched
+/// during navigation spans. Dropping them costs only rebuilding the next trace's bins.
+const GRID_CACHE_BINS: usize = 16;
 
 /// The router over the device's offline regions. Opaque to Dart.
 #[frb(opaque)]
@@ -151,8 +162,29 @@ impl OfflineRouter {
     /// Answers a Valhalla `route` request body, as Ferrostar's request generator makes it,
     /// with what the server would have sent. Routing errors are responses, not exceptions.
     pub fn route(&self, body: Vec<u8>) -> RouterResponse {
-        let response = self.router.route(&body);
-        RouterResponse {
+        self.router.route(&body).into()
+    }
+
+    /// Answers a Valhalla `trace_route` request body (a trace to map match into a route,
+    /// such as the device's recent positions; `"format": "osrm"` for Ferrostar's parser)
+    /// with what the server's `/trace_route` would have sent.
+    /// Matching errors are responses, not exceptions.
+    pub fn trace_route(&self, body: Vec<u8>) -> RouterResponse {
+        self.router.trace_route(&body).into()
+    }
+
+    /// Answers a Valhalla `trace_attributes` request body (a trace to map match, answered with
+    /// the matched edges, their attributes, and where each point matched)
+    /// with what the server's `/trace_attributes` would have sent.
+    /// Matching errors are responses, not exceptions.
+    pub fn trace_attributes(&self, body: Vec<u8>) -> RouterResponse {
+        self.router.trace_attributes(&body).into()
+    }
+}
+
+impl From<valinor_router::HttpResponse> for RouterResponse {
+    fn from(response: valinor_router::HttpResponse) -> Self {
+        Self {
             status: response.status.as_u16(),
             body: response.body,
         }
@@ -167,16 +199,18 @@ fn device_config() -> RouterConfig {
     // capped below the default.
     loki.service_limits.max_reachability =
         loki.service_limits.max_reachability.max(MIN_REACHABILITY);
+    let mut thor = ThorConfig {
+        retention: Retention {
+            bidirectional_labels: RETAINED_LABELS,
+            unidirectional_labels: RETAINED_LABELS,
+        },
+        ..ThorConfig::default()
+    };
+    thor.meili.candidate_search.cache_size = GRID_CACHE_BINS;
     RouterConfig {
         loki,
         workspaces: WORKSPACES,
-        thor: ThorConfig {
-            retention: Retention {
-                bidirectional_labels: RETAINED_LABELS,
-                unidirectional_labels: RETAINED_LABELS,
-            },
-            ..ThorConfig::default()
-        },
+        thor,
         ..RouterConfig::default()
     }
 }
@@ -241,6 +275,51 @@ mod tests {
                 .unwrap()
                 .contains(r#""code":"#)
         );
+    }
+
+    /// A trace from mainline's captures (`valinor-tyr/fixtures/traces`), as a request body.
+    fn trace(case: &str) -> serde_json::Value {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../valinor/valinor-tyr/fixtures/traces/andorra")
+            .join(case)
+            .join("request.json");
+        let recorded: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        recorded["request"].clone()
+    }
+
+    #[test]
+    fn caps_the_map_matching_grid_cache() {
+        let thor = device_config().thor;
+        assert_eq!(thor.meili.candidate_search.cache_size, GRID_CACHE_BINS);
+    }
+
+    #[test]
+    fn map_matches_traces() {
+        let router = OfflineRouter::open(vec![tiles()], None).ok().unwrap();
+        let mut body = trace("andorra-0000-clean");
+        body["format"] = "osrm".into();
+        let response = router.trace_route(serde_json::to_vec(&body).unwrap());
+        let text = String::from_utf8(response.body).unwrap();
+        assert_eq!(response.status, 200, "{text}");
+        let osrm: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(osrm["code"], "Ok");
+        assert!(!osrm["matchings"].as_array().unwrap().is_empty());
+
+        let response =
+            router.trace_attributes(serde_json::to_vec(&trace("andorra-0000-clean")).unwrap());
+        let text = String::from_utf8(response.body).unwrap();
+        assert_eq!(response.status, 200, "{text}");
+        let attributes: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(!attributes["edges"].as_array().unwrap().is_empty());
+
+        // Errors are OSRM-format bodies, as for routes: a trace far from any road.
+        let response = router.trace_route(
+            br#"{"format": "osrm", "costing": "auto", "shape_match": "map_snap", "shape": [{"lat": 10.0, "lon": 10.0}, {"lat": 10.001, "lon": 10.001}]}"#.to_vec(),
+        );
+        assert_eq!(response.status, 400);
+        let error: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert!(error["code"].is_string(), "{error}");
     }
 
     #[test]

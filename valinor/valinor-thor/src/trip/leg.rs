@@ -30,7 +30,6 @@ use valhalla_proto::{BoundingBox, LatLng, LevelChange, Location, Options, Summar
 use valinor_sif::datetime::time_zone_name;
 use valinor_sif::{AnyCosting, Costing, PedestrianType, TimeInfo, TravelMode, recost_forward};
 
-use super::attributes::{Attribute, AttributesController, Category};
 use super::edge::{TripEdgeInput, add_intersecting_edges, add_trip_edge, set_elevation, tags};
 use super::shape::{
     bounding_box, encode_polyline, heading_along_polyline, heading_at_end_of_polyline, trim_shape,
@@ -41,6 +40,7 @@ use crate::graph;
 use crate::path::{EdgeTrim, Leg};
 use crate::search::point_of;
 use crate::time::{graph_id, location_time_info};
+use valinor_tyr::{Attribute, AttributesController, Category};
 
 /// Mainline's "no level" (`kMaxLevel`).
 const MAX_LEVEL: f32 = f32::MAX;
@@ -291,23 +291,30 @@ fn set_shape_attributes(
     }
 }
 
-/// A shape attribute, rounded by mainline's `+ 0.5`, as a `uint32`.
+/// A shape attribute, rounded by mainline's `+ 0.5`, as a `uint32`,
+/// converted as mainline's `static_cast<uint32_t>` is on x86-64:
+/// truncated to a 64-bit integer, whose low 32 bits are kept.
 ///
-/// An infinite time is 0: it comes from a part of an edge with no length,
-/// where the leg starts or ends at a node (the speed over it is 0),
-/// and mainline's conversion of infinity to an integer gives 0 on x86-64.
-/// Clients see these times (Ferrostar's annotations sum them), so the 0 is kept.
+/// - An infinite time is 0: it comes from a part of an edge with no length,
+///   where the leg starts or ends at a node (the speed over it is 0),
+///   and the conversion of infinity (or NaN) gives the 64-bit integer `0x8000000000000000`.
+///   Clients see these times (Ferrostar's annotations sum them), so the 0 is kept.
+/// - A negative value wraps around: map matching restarts the elapsed time at each break
+///   point, so in a `trace_attributes` leg an edge after one can take negative time,
+///   and mainline then reports times and speeds near 2^32.
 #[inline]
 fn attribute_u32(value: f64) -> u32 {
-    if !value.is_finite() {
+    /// 2^63, where the conversion to a 64-bit integer overflows.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if !value.is_finite() || value >= TWO_POW_63 || value < -TWO_POW_63 {
         return 0;
     }
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "mainline converts the rounded double to a uint32"
+        reason = "mainline's conversion: truncation to 64 bits, then the low 32 bits"
     )]
-    let converted = value as u32;
+    let converted = (value as i64) as u32;
     converted
 }
 
@@ -421,6 +428,14 @@ pub(crate) fn build_leg<P: GraphTileProvider>(
         let is_last = edge_index + 1 == path.len();
         let prev = edge_index.checked_sub(1).and_then(|i| path.get(i));
 
+        // A map matched edge after a discontinuity starts at its own start node
+        // (when its opposing edge's tile is there), not at the end of the previous edge.
+        if path_edge.is_disconnected
+            && let Some(start) = graph::start_node(provider, &edge_tile, edge_id)?
+        {
+            startnode = start;
+        }
+
         has_toll |= edge.toll();
         has_ferry |= matches!(edge.road_use(), Ok(RoadUse::Ferry));
         has_highway |= edge.classification() == RoadClass::Motorway;
@@ -475,7 +490,7 @@ pub(crate) fn build_leg<P: GraphTileProvider>(
         }
         // Bike share and transit nodes need costings and tiles Valinor doesn't route with.
 
-        let include_first_point = is_first;
+        let include_first_point = is_first || path_edge.is_disconnected;
         let begin_index = if include_first_point {
             shape.len()
         } else {
@@ -905,4 +920,29 @@ fn accumulate_recostings<P: GraphTileProvider>(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mainline's `static_cast<uint32_t>` of a double, as x86-64 builds of it convert
+    /// (seen in mainline's `trace_attributes` speeds after break points: -2 dm/s is 4294967294).
+    #[test]
+    fn converts_attributes_as_mainline_on_x86_64() {
+        assert_eq!(attribute_u32(12.7), 12);
+        assert_eq!(attribute_u32(4_294_967_295.9), u32::MAX);
+        // Past 2^32, the low 32 bits.
+        assert_eq!(attribute_u32(4_294_967_297.5), 1);
+        // Negative values wrap around.
+        assert_eq!(attribute_u32(-2.5), 4_294_967_294);
+        assert_eq!(attribute_u32(-0.4), 0);
+        // Infinity, NaN, and values past 64 bits are the "integer indefinite" value,
+        // whose low 32 bits are 0.
+        assert_eq!(attribute_u32(f64::INFINITY), 0);
+        assert_eq!(attribute_u32(f64::NEG_INFINITY), 0);
+        assert_eq!(attribute_u32(f64::NAN), 0);
+        assert_eq!(attribute_u32(1e19), 0);
+        assert_eq!(attribute_u32(-1e19), 0);
+    }
 }

@@ -1,0 +1,13 @@
+{
+  "action": "trace_route",
+  "request": {
+    "costing": "bicycle",
+    "encoded_polyline": "qtq_pAiqjwAiE~N}HpVcCdPeFdX}ClRaIrQoEzUwDxSuFvPaGlVeEbXmEbPyD`WwF|MmG`UoC~\\aFpKwExR",
+    "shape_match": "walk_or_snap",
+    "trace_options": {
+      "search_radius": 50
+    },
+    "format": "json",
+    "language": "es-ES"
+  }
+}

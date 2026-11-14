@@ -35,14 +35,15 @@
 
 use crate::config::LokiConfig;
 use crate::connectivity::ConnectivityMap;
-use crate::geo::PointLL;
-use crate::graph::{Graph, GraphError, edge as get_edge, shape};
+use crate::graph::GraphError;
 use crate::polygon::{PolygonError, edges_in_rings};
 use crate::search::{MAX_LEVEL, SearchError, lat_lng, point_of, search};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Instant;
 use valhalla_graphtile::GraphId;
+use valhalla_graphtile::graph_reader::{GraphReadError, GraphReader, edge as get_edge, shape};
 use valhalla_graphtile::graph_tile::GraphTile;
+use valhalla_graphtile::midgard::PointLL;
 use valhalla_graphtile::tile_provider::GraphTileProvider;
 use valhalla_proto::avoid_edge::{HasId, HasPercentAlong};
 use valhalla_proto::costing::{HasOptions, Type as CostingType};
@@ -511,7 +512,7 @@ impl<P: GraphTileProvider> Loki<P> {
             }
         };
 
-        let graph = Graph::new(&self.provider);
+        let graph = GraphReader::new(&self.provider);
         if !options.exclude_polygons.is_empty() {
             let limits = &self.config.service_limits;
             let edges = edges_in_rings(
@@ -653,7 +654,7 @@ impl<P: GraphTileProvider> Loki<P> {
             let mut arc_distance = 0.0_f32;
             let mut exceeded = false;
             for pair in options.locations.windows(2) {
-                arc_distance = crate::geo::narrow(
+                arc_distance = valhalla_graphtile::midgard::narrow(
                     f64::from(arc_distance) + to_ll(&pair[0]).distance(to_ll(&pair[1])),
                 );
                 if arc_distance > max {
@@ -1075,7 +1076,7 @@ impl<P: GraphTileProvider> Loki<P> {
 
     /// The side of an edge a point is on, as `locations_from_shape` decides it.
     fn side_from(&self, graph_id: u64, ll: PointLL) -> Result<SideOfStreet, GraphError> {
-        let graph = Graph::new(&self.provider);
+        let graph = GraphReader::new(&self.provider);
         let Some(tile) = GraphId::try_from_id(graph_id)
             .ok()
             .map(|id| graph.tile(id).map(|t| t.map(|t| (id, t))))
@@ -1120,7 +1121,7 @@ pub(crate) fn reads_past_end<P: GraphTileProvider>(
     graph_id: u64,
     ll: PointLL,
 ) -> bool {
-    let graph = Graph::new(provider);
+    let graph = GraphReader::new(provider);
     let Ok(id) = GraphId::try_from_id(graph_id) else {
         return false;
     };
@@ -1132,7 +1133,7 @@ pub(crate) fn reads_past_end<P: GraphTileProvider>(
     };
     let Ok(points) = tile
         .get_edge_info(edge)
-        .map_err(GraphError::from)
+        .map_err(GraphReadError::from)
         .and_then(|i| shape(&i))
     else {
         return false;
@@ -1150,6 +1151,13 @@ enum LocationsError {
     Graph(#[from] GraphError),
     #[error("{}", .0.message())]
     Valhalla(ValhallaError),
+}
+
+impl From<GraphReadError> for LocationsError {
+    #[inline]
+    fn from(e: GraphReadError) -> Self {
+        Self::Graph(e.into())
+    }
 }
 
 /// Whether a location has no candidates at all.
@@ -1181,7 +1189,7 @@ fn check_distance(
         for j in i + 1..locations.len() {
             let distance = to_ll(&locations[i]).distance(to_ll(&locations[j]));
             if i + 1 == j {
-                total = crate::geo::narrow(f64::from(total) + distance);
+                total = valhalla_graphtile::midgard::narrow(f64::from(total) + distance);
             }
             if (!all_pairs && total > max_distance)
                 || (all_pairs && distance > f64::from(max_distance))
@@ -1206,7 +1214,8 @@ fn check_trace_distance(
     let mut can_be_matched = false;
     let mut crow_distance = 0.0_f32;
     for pair in shape.windows(2) {
-        let point_to_point = crate::geo::narrow(to_ll(&pair[0]).distance(to_ll(&pair[1])));
+        let point_to_point =
+            valhalla_graphtile::midgard::narrow(to_ll(&pair[0]).distance(to_ll(&pair[1])));
         crow_distance += point_to_point;
         if point_to_point <= breakage {
             can_be_matched = true;

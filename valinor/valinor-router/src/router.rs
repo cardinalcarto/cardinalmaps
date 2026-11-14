@@ -13,6 +13,7 @@ use valhalla_proto::Api;
 use valhalla_proto::options::Action;
 use valhalla_response::{ERROR_CONTENT_TYPE, ErrorCode, ValhallaError};
 use valinor_loki::{ConnectivityMap, HttpOutcome, Loki, handle_request};
+use valinor_meili::Workspace as MeiliWorkspace;
 use valinor_thor::Thor;
 use valinor_tyr::front::HttpRequest;
 use valinor_tyr::tyr::{self, GPX_CONTENT_DISPOSITION, GPX_CONTENT_TYPE, Response};
@@ -81,12 +82,14 @@ self_cell!(
 ///
 /// It is [`Send`] and [`Sync`]: one router serves every thread.
 /// Each request runs on its caller's thread; Loki, Odin, and Tyr hold nothing per request,
-/// and path searches take a workspace from a bounded pool
+/// and path searches and map matches take a workspace from a bounded pool
 /// (see [`RouterConfig::workspaces`]).
 pub struct Router {
     chain: Chain,
     odin: Odin,
     workspaces: WorkspacePool,
+    /// Map matching's workspaces, as many as path search's.
+    match_workspaces: WorkspacePool<MeiliWorkspace>,
 }
 
 impl Router {
@@ -127,6 +130,7 @@ impl Router {
             chain,
             odin: config.odin,
             workspaces: WorkspacePool::new(config.workspaces.get(), retention),
+            match_workspaces: WorkspacePool::new(config.workspaces.get(), ()),
         })
     }
 
@@ -166,9 +170,27 @@ impl Router {
     /// Answers a `route` request body (Valhalla JSON, as Ferrostar's request generator makes it),
     /// as `POST /route` would.
     pub fn route(&self, body: &[u8]) -> HttpResponse {
+        self.post(b"/route", body)
+    }
+
+    /// Answers a `trace_route` request body (Valhalla JSON: a trace to map match into a route),
+    /// as `POST /trace_route` would.
+    pub fn trace_route(&self, body: &[u8]) -> HttpResponse {
+        self.post(b"/trace_route", body)
+    }
+
+    /// Answers a `trace_attributes` request body (Valhalla JSON: a trace to map match,
+    /// answered with the matched edges' and points' attributes),
+    /// as `POST /trace_attributes` would.
+    pub fn trace_attributes(&self, body: &[u8]) -> HttpResponse {
+        self.post(b"/trace_attributes", body)
+    }
+
+    /// Answers a Valhalla JSON body as a `POST` to `target` would.
+    fn post(&self, target: &[u8], body: &[u8]) -> HttpResponse {
         self.handle(&HttpRequest {
             method: &Method::POST,
-            target: b"/route",
+            target,
             content_type: Some(b"application/json"),
             body,
         })
@@ -189,8 +211,8 @@ impl Router {
 
     /// [`Router::handle`], giving up when `interrupt` returns true.
     ///
-    /// Path search checks it every 5000 iterations and trip building before each leg,
-    /// as mainline checks its interrupt;
+    /// Path search checks it every 5000 iterations, map matching before and after its
+    /// candidate search, and trip building before each leg, as mainline checks its interrupt;
     /// location search and narration (which take milliseconds) don't.
     ///
     /// # Errors
@@ -237,6 +259,54 @@ impl Router {
                     Err(error) => HttpResponse::error(&error, api),
                 })
             }
+            Ok(Action::TraceRoute) => {
+                let result = {
+                    let mut workspace = self.match_workspaces.take();
+                    self.chain
+                        .borrow_dependent()
+                        .thor
+                        .trace_route_interruptible(
+                            workspace.get(),
+                            api,
+                            jiff::Timestamp::now(),
+                            interrupt,
+                        )
+                };
+                if let Err(error) = result {
+                    if interrupt() {
+                        return Err(Interrupted);
+                    }
+                    return Ok(HttpResponse::error(&error, api));
+                }
+                let response = self
+                    .odin
+                    .narrate(api)
+                    .and_then(|()| tyr::serialize_directions(api));
+                Ok(match response {
+                    Ok(response) => HttpResponse::ok(response),
+                    Err(error) => HttpResponse::error(&error, api),
+                })
+            }
+            // Thor answers trace_attributes itself, as mainline's does.
+            Ok(Action::TraceAttributes) => {
+                let result = {
+                    let mut workspace = self.match_workspaces.take();
+                    self.chain
+                        .borrow_dependent()
+                        .thor
+                        .trace_attributes_interruptible(
+                            workspace.get(),
+                            api,
+                            jiff::Timestamp::now(),
+                            interrupt,
+                        )
+                };
+                match result {
+                    Ok(response) => Ok(HttpResponse::ok(response)),
+                    Err(_) if interrupt() => Err(Interrupted),
+                    Err(error) => Ok(HttpResponse::error(&error, api)),
+                }
+            }
             // Thor passes status on to Odin, which serializes it.
             Ok(Action::Status) => Ok(match tyr::serialize_status(api) {
                 Ok(response) => HttpResponse::ok(response),
@@ -248,8 +318,6 @@ impl Router {
                 Action::OptimizedRoute
                 | Action::SourcesToTargets
                 | Action::Isochrone
-                | Action::TraceRoute
-                | Action::TraceAttributes
                 | Action::Expansion
                 | Action::Centroid,
             ) => Ok(HttpResponse::error(&ErrorCode::NotImplemented.into(), api)),

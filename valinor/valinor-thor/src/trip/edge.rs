@@ -24,10 +24,10 @@ use valhalla_proto::trip_leg::{self, edge as trip_edge};
 use valhalla_proto::{Pronunciation, StreetName, TaggedValue, TripSign, TripSignElement, TurnLane};
 use valinor_sif::{AnyCosting, Costing, TimeInfo, TravelMode};
 
-use super::attributes::{Attribute, AttributesController};
 use crate::error::ThorError;
 use crate::graph;
 use crate::path::PathEdge;
+use valinor_tyr::{Attribute, AttributesController};
 
 /// The speed conversion (`kMetersPerSectoKPH`, a double).
 const METERS_PER_SEC_TO_KPH: f64 = 3600.0 / 1000.0;

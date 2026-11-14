@@ -1,7 +1,7 @@
 //! Valhalla's whole server in one process: the stage chain for the server and the app.
 //!
 //! [`Router`] chains the stages described in `docs/routing.md`,
-//! front → Loki → Thor (path search, then trip building) → Odin → Tyr,
+//! front → Loki → Thor (path search or map matching, then trip building) → Odin → Tyr,
 //! by calling each stage function directly, with no ZeroMQ and no async runtime,
 //! and answers each request with what mainline's whole server would send:
 //! the body, its status and content type, and mainline's errors in the request's format.
@@ -21,8 +21,9 @@
 //! A [`Router`] is [`Send`] and [`Sync`], and each request runs on the caller's thread,
 //! so the caller decides how many run at once (a blocking pool on the server,
 //! `flutter_rust_bridge`'s worker pool on the device).
-//! Tiles are shared through one bounded cache, and path searches take a workspace from a
-//! bounded pool ([`RouterConfig::workspaces`]): requests beyond it wait for a workspace.
+//! Tiles are shared through one bounded cache, and path searches and map matches each take a
+//! workspace from a bounded pool ([`RouterConfig::workspaces`] of each):
+//! requests beyond it wait for a workspace.
 
 extern crate alloc;
 
@@ -33,6 +34,8 @@ pub mod tiles;
 
 #[cfg(test)]
 mod capture_tests;
+#[cfg(test)]
+mod trace_tests;
 
 pub use config::{ConfigError, RouterConfig};
 pub use http::{Method, StatusCode};

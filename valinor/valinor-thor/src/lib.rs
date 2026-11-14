@@ -1,4 +1,5 @@
-//! Valhalla-compatible path search and trip building: mainline's Thor, for `route` requests.
+//! Valhalla-compatible path search, map matching, and trip building: mainline's Thor,
+//! for `route`, `trace_route`, and `trace_attributes` requests.
 //!
 //! See `docs/routing.md` for where this sits in the stage chain:
 //! Loki correlates each location to candidate edges, Thor finds the best paths between them,
@@ -16,16 +17,21 @@
 //! - [`Thor::build_trip`] is mainline's trip building (`TripLegBuilder`):
 //!   it turns the [`Paths`] into the request's `trip`, a `TripLeg` per leg,
 //!   with the shape, the attributes of each edge and node the request asks for
-//!   (mainline's `AttributesController`), and the locations' shape indexes.
+//!   (mainline's `AttributesController`, from `valinor-tyr`), and the locations' shape indexes.
+//! - [`Thor::trace_route`] and [`Thor::trace_attributes`] are mainline's map matching actions:
+//!   an edge walk along a route's own shape (`edge_walk`), Meili's map matching (`map_snap`),
+//!   or the walk with map matching when it fails (`walk_or_snap`), then trip building.
+//!   `trace_route` leaves the trip for Odin (a route per discontinuity),
+//!   and `trace_attributes` answers with Tyr's serializer, as mainline's Thor does.
 //! - A [`Workspace`] holds the searches' storage, kept between requests so that searches
-//!   don't allocate as they go.
+//!   don't allocate as they go; map matching takes a [`valinor_meili::Workspace`].
 //!
 //! Results are equivalent to mainline 3.9.1's within the tolerances in `docs/routing.md`;
 //! what decides which of nearly equal paths wins (the queue's order within buckets,
 //! single precision arithmetic, hierarchy limits, and the searches' thresholds)
 //! follows mainline exactly.
 //!
-//! Not here (yet): `optimized_route`, map matching, isochrones, matrices,
+//! Not here (yet): `optimized_route`, isochrones, matrices,
 //! expansion, multimodal and transit routing, live traffic, and landmarks.
 
 #![expect(
@@ -43,18 +49,24 @@ mod error;
 mod geo;
 mod graph;
 mod label;
+mod map_matcher;
 mod path;
-mod queue;
 mod route;
+mod route_matcher;
 mod search;
 mod time;
+mod trace;
 mod trip;
 mod unidirectional;
 
 #[cfg(test)]
 mod bench_tests;
 #[cfg(test)]
+mod edge_walk_tests;
+#[cfg(test)]
 mod oracle_tests;
+#[cfg(test)]
+mod trace_oracle_tests;
 #[cfg(test)]
 mod trip_oracle_tests;
 

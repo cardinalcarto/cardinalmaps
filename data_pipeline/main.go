@@ -917,6 +917,15 @@ var routingElevationScript string
 
 // Rewrites the build's valhalla.json into the one served with the tarball:
 // tile_extract is the tarball next to it, and the build's inputs are gone.
+//
+// meili.grid.cache_size bounds map matching's candidate grids: each of the
+// server's workers keeps the grids of up to that many bins (a 25th of a
+// level-2 tile), and drops them all past it. Mainline's default, 100,240, lets
+// a long-running server keep a grid for every bin it has matched in. Over
+// Seattle's tiles a bin's grid averages 116 KB, so 200 bins hold about 25 MB
+// per worker: about 100 MB for the 4 workers k8s/cardinal/routing runs.
+// A request's own bins are added before the next request drops them, and
+// downtown bins are larger (up to 2.1 MB), so it can briefly be more.
 const routingConfigScript = `
 import json, sys
 with open(sys.argv[1]) as f:
@@ -926,6 +935,7 @@ mjolnir["tile_extract"] = "tiles.tar"
 for key in ("tile_dir", "traffic_extract", "admin", "timezone", "landmarks", "default_speeds_config"):
     mjolnir[key] = ""
 config["additional_data"]["elevation"] = ""
+config.setdefault("meili", {}).setdefault("grid", {})["cache_size"] = 200
 with open(sys.argv[2], "w") as f:
     json.dump(config, f, indent=2)
     f.write("\n")

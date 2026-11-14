@@ -43,6 +43,12 @@ impl OfflineRouter {
     /// A Valhalla `route` request body, as Ferrostar's generator makes it.
     /// Not `#[frb(sync)]`: flutter_rust_bridge runs it on its worker pool.
     pub fn route(&self, body: Vec<u8>) -> RouterResponse;
+
+    /// A Valhalla `trace_route` or `trace_attributes` request body (map matching a trace,
+    /// such as the device's recent positions during navigation), as the server's
+    /// `/trace_route` and `/trace_attributes` answer them.
+    pub fn trace_route(&self, body: Vec<u8>) -> RouterResponse;
+    pub fn trace_attributes(&self, body: Vec<u8>) -> RouterResponse;
 }
 
 pub struct RouterResponse {
@@ -57,10 +63,16 @@ pub struct RouterResponse {
 - **Errors.** Routing errors are response bodies, not Dart exceptions,
   exactly as they are over HTTP, so Ferrostar's parser handles them the same way.
   Only `open` returns a `Result` (missing files, mixed builds, unreadable tiles).
-- **Just `route`.** Ferrostar uses nothing else.
-  `valinor-router` will serve every action, because the server needs them,
-  so `locate`, `trace_route`, or `status` can be exposed later
-  when a feature needs one, as a `request(action, body)` variant.
+- **`route`, and map matching.** Ferrostar's routing and rerouting use only `route`.
+  `trace_route` and `trace_attributes` are there for map matching during navigation
+  (snapping recent positions to the roads they were on, for a better reroute);
+  they take the same bodies the server's `/trace_route` and `/trace_attributes` do.
+  `valinor-router` serves every action, so `locate` or `status` can be added the same way
+  when a feature needs one.
+- **Map matching's memory.** Each map matching workspace keeps the candidate grids of the bins
+  (a 25th of a level-2 tile, about 5 km across) it has matched in; on the device it drops
+  them all past 16 bins (`meili.grid.cache_size`; mainline's server default is 100,240),
+  about 2 MB typically over Seattle's tiles, since a navigation trace spans only a few.
 - **Snapping like transit.** On the device, a location's edge must reach 250 nodes in and out
   (Loki's default is 50), the bound transit uses for its stops and plan endpoints,
   so street and transit directions start and end in the same places.

@@ -11,6 +11,7 @@ rust-version.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+http = { workspace = true }
 jiff = { workspace = true }
 tokio = { workspace = true, features = ["signal"] }
 tracing = { workspace = true }
@@ -19,11 +20,11 @@ valhalla-graphtile = { workspace = true }
 valhalla-microservice = { workspace = true }
 valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
+valinor-meili = { workspace = true }
 valinor-thor = { workspace = true }
 
 [dev-dependencies]
 base64 = { workspace = true }
-http = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

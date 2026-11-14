@@ -122,7 +122,7 @@ fn lng(ll: Option<&LatLng>) -> f64 {
     }
 }
 
-fn units_name(units: i32) -> &'static str {
+pub(super) fn units_name(units: i32) -> &'static str {
     match Units::try_from(units) {
         Ok(Units::Kilometers) => "kilometers",
         Ok(Units::Miles) => "miles",

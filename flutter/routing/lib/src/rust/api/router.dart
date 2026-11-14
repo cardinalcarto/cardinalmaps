@@ -8,7 +8,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `device_config`, `street_build`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineRouter>>
 abstract class OfflineRouter implements RustOpaqueInterface {
@@ -41,6 +41,18 @@ abstract class OfflineRouter implements RustOpaqueInterface {
   /// Answers a Valhalla `route` request body, as Ferrostar's request generator makes it,
   /// with what the server would have sent. Routing errors are responses, not exceptions.
   Future<RouterResponse> route({required List<int> body});
+
+  /// Answers a Valhalla `trace_attributes` request body (a trace to map match, answered with
+  /// the matched edges, their attributes, and where each point matched)
+  /// with what the server's `/trace_attributes` would have sent.
+  /// Matching errors are responses, not exceptions.
+  Future<RouterResponse> traceAttributes({required List<int> body});
+
+  /// Answers a Valhalla `trace_route` request body (a trace to map match into a route,
+  /// such as the device's recent positions; `"format": "osrm"` for Ferrostar's parser)
+  /// with what the server's `/trace_route` would have sent.
+  /// Matching errors are responses, not exceptions.
+  Future<RouterResponse> traceRoute({required List<int> body});
 }
 
 /// Why the regions couldn't be opened.

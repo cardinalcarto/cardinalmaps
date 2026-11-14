@@ -5,7 +5,9 @@
 /// [DirectionsAdapter.request] makes the body for the server's `/route`. Give that body to
 /// [OfflineRouter.route] instead and the response's bytes are what the server would have
 /// sent (see `valinor/docs/flutter-api.md`). Either way, [DirectionsAdapter.parse] reads
-/// them.
+/// them. [OfflineRouter.traceRoute] and [OfflineRouter.traceAttributes] map match traces
+/// (such as recent positions during navigation) with the server's `/trace_route` and
+/// `/trace_attributes` bodies.
 library;
 
 import 'src/rust/frb_generated.dart';

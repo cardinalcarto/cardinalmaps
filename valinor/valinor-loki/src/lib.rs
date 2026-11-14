@@ -36,7 +36,6 @@ extern crate alloc;
 
 mod config;
 mod connectivity;
-mod geo;
 mod graph;
 mod http;
 mod polygon;

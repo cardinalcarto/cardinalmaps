@@ -44,7 +44,10 @@ pub(crate) fn write_rapidjson_double(out: &mut String, value: f64, max_decimal_p
         out.push('-');
     }
     let (digits, k) = shortest_digits(value.abs());
-    prettify(out, &digits, k, i64::from(max_decimal_places));
+    // rapidjson always keeps the first decimal digit as it is (its "reserve one zero"
+    // returns past it without zeroing it), so a limit of 0 writes what a limit of 1 does:
+    // 1.5 is `1.5`, not `1.0`.
+    prettify(out, &digits, k, i64::from(max_decimal_places.max(1)));
 }
 
 /// The shortest round-tripping decimal digits of a positive finite value,
@@ -278,6 +281,13 @@ mod tests {
         assert_eq!(rapidjson(f64::from(2.207_f32), 3), "2.207");
         assert_eq!(rapidjson(f64::from(42.507_59_f32), 6), "42.507591");
         assert_eq!(rapidjson(1e30, 3), "1e30");
+        // A limit of 0 keeps the first decimal digit, as rapidjson's `Prettify` does.
+        assert_eq!(rapidjson(1.5, 0), "1.5");
+        assert_eq!(rapidjson(1.25, 0), "1.2");
+        assert_eq!(rapidjson(0.5, 0), "0.5");
+        assert_eq!(rapidjson(0.05, 0), "0.0");
+        assert_eq!(rapidjson(2.0, 0), "2.0");
+        assert_eq!(rapidjson(1.25, 1), "1.2");
 
         assert_eq!(rapidjson(f64::NAN, 3), "null");
         assert_eq!(rapidjson(f64::INFINITY, 3), "null");

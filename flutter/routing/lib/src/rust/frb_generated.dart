@@ -72,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 419641506;
+  int get rustContentHash => -579997330;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -207,6 +207,16 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<RouterResponse> crateApiRouterOfflineRouterRoute({
+    required OfflineRouter that,
+    required List<int> body,
+  });
+
+  Future<RouterResponse> crateApiRouterOfflineRouterTraceAttributes({
+    required OfflineRouter that,
+    required List<int> body,
+  });
+
+  Future<RouterResponse> crateApiRouterOfflineRouterTraceRoute({
     required OfflineRouter that,
     required List<int> body,
   });
@@ -1253,6 +1263,82 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<RouterResponse> crateApiRouterOfflineRouterTraceAttributes({
+    required OfflineRouter that,
+    required List<int> body,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
+            that,
+            serializer,
+          );
+          sse_encode_list_prim_u_8_loose(body, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 27,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_router_response,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiRouterOfflineRouterTraceAttributesConstMeta,
+        argValues: [that, body],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRouterOfflineRouterTraceAttributesConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineRouter_trace_attributes",
+        argNames: ["that", "body"],
+      );
+
+  @override
+  Future<RouterResponse> crateApiRouterOfflineRouterTraceRoute({
+    required OfflineRouter that,
+    required List<int> body,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
+            that,
+            serializer,
+          );
+          sse_encode_list_prim_u_8_loose(body, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 28,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_router_response,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiRouterOfflineRouterTraceRouteConstMeta,
+        argValues: [that, body],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRouterOfflineRouterTraceRouteConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineRouter_trace_route",
+        argNames: ["that", "body"],
+      );
+
+  @override
   Future<OfflineTransit> crateApiTransitOfflineTransitOpen({
     required String build,
     List<String>? feeds,
@@ -1270,7 +1356,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 29,
             port: port_,
           );
         },
@@ -1316,7 +1402,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 28,
+            funcId: 30,
             port: port_,
           );
         },
@@ -1352,7 +1438,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 29,
+            funcId: 31,
             port: port_,
           );
         },
@@ -1392,7 +1478,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 30,
+            funcId: 32,
             port: port_,
           );
         },
@@ -1423,7 +1509,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1451,7 +1537,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 32,
+            funcId: 34,
             port: port_,
           );
         },
@@ -1476,7 +1562,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -1499,7 +1585,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -1521,7 +1607,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 37)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -1543,7 +1629,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -1579,7 +1665,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 37,
+            funcId: 39,
             port: port_,
           );
         },
@@ -1610,7 +1696,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 38,
+            funcId: 40,
             port: port_,
           );
         },
@@ -1638,7 +1724,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 39,
+            funcId: 41,
             port: port_,
           );
         },
@@ -1674,7 +1760,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 40,
+            funcId: 42,
             port: port_,
           );
         },
@@ -5811,6 +5897,24 @@ class OfflineRouterImpl extends RustOpaque implements OfflineRouter {
       .instance
       .api
       .crateApiRouterOfflineRouterRoute(that: this, body: body);
+
+  /// Answers a Valhalla `trace_attributes` request body (a trace to map match, answered with
+  /// the matched edges, their attributes, and where each point matched)
+  /// with what the server's `/trace_attributes` would have sent.
+  /// Matching errors are responses, not exceptions.
+  Future<RouterResponse> traceAttributes({required List<int> body}) => RustLib
+      .instance
+      .api
+      .crateApiRouterOfflineRouterTraceAttributes(that: this, body: body);
+
+  /// Answers a Valhalla `trace_route` request body (a trace to map match into a route,
+  /// such as the device's recent positions; `"format": "osrm"` for Ferrostar's parser)
+  /// with what the server's `/trace_route` would have sent.
+  /// Matching errors are responses, not exceptions.
+  Future<RouterResponse> traceRoute({required List<int> body}) => RustLib
+      .instance
+      .api
+      .crateApiRouterOfflineRouterTraceRoute(that: this, body: body);
 }
 
 @sealed

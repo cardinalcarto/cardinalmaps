@@ -1,0 +1,1 @@
+{"status":400,"body":{"error_code":114,"error":"Insufficiently specified required parameter 'shape' or 'encoded_polyline'","status_code":400,"status":"Bad Request"}}

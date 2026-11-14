@@ -40,7 +40,7 @@ const MILES: [&str; 3] = [
 const NOW: [&str; 1] = ["auto_current_and_invariant"];
 
 /// Sends a captured request as `capture.py` sent it.
-fn send(router: &Router, dir: &Path) -> HttpResponse {
+pub(crate) fn send(router: &Router, dir: &Path) -> HttpResponse {
     let recorded: Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("request.json")).unwrap()).unwrap();
     let Some(http) = recorded.get("http") else {
@@ -68,7 +68,7 @@ fn send(router: &Router, dir: &Path) -> HttpResponse {
     })
 }
 
-fn without_statistics(mut api: Api) -> Api {
+pub(crate) fn without_statistics(mut api: Api) -> Api {
     if let Some(info) = api.info.as_mut() {
         info.statistics.clear();
     }
@@ -76,7 +76,7 @@ fn without_statistics(mut api: Api) -> Api {
 }
 
 /// Removes every `voiceInstructions` member, anywhere in the document.
-fn without_voice(value: &mut Value) {
+pub(crate) fn without_voice(value: &mut Value) {
     match value {
         Value::Object(map) => {
             map.remove("voiceInstructions");

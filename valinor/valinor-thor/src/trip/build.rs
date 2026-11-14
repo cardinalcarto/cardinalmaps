@@ -4,15 +4,15 @@
 
 use jiff::Timestamp;
 use valhalla_graphtile::tile_provider::GraphTileProvider;
-use valhalla_proto::{Api, Trip, TripRoute};
+use valhalla_proto::{Api, Options, Trip, TripRoute};
 use valhalla_response::ValhallaError;
 use valinor_sif::AnyCosting;
 
-use super::attributes::AttributesController;
 use super::leg::{LegContext, build_leg};
 use crate::error::ThorError;
 use crate::path::Paths;
 use crate::route::Thor;
+use valinor_tyr::AttributesController;
 
 impl<P: GraphTileProvider> Thor<P> {
     /// Builds the request's `trip` from the paths [`Thor::route`] found
@@ -44,22 +44,27 @@ impl<P: GraphTileProvider> Thor<P> {
         now: Timestamp,
         interrupt: &dyn Fn() -> bool,
     ) -> Result<(), ValhallaError> {
-        let trip = self.trip(api, paths, now, interrupt)?;
-        api.trip = Some(trip);
-        Ok(())
-    }
-
-    fn trip(
-        &self,
-        api: &Api,
-        paths: &Paths,
-        now: Timestamp,
-        interrupt: &dyn Fn() -> bool,
-    ) -> Result<Trip, ThorError> {
         let options = api
             .options
             .as_ref()
             .ok_or(ThorError::Options("the request has no options".to_owned()))?;
+        // Routes (and `trace_route`) use a non-strict filter.
+        let controller = AttributesController::new(options, false);
+        let trip = self.trip(options, paths, &controller, now, interrupt)?;
+        api.trip = Some(trip);
+        Ok(())
+    }
+
+    /// The trip of `paths`, with the attributes `controller` allows
+    /// (map matching passes `trace_attributes`'s strict one).
+    pub(crate) fn trip(
+        &self,
+        options: &Options,
+        paths: &Paths,
+        controller: &AttributesController,
+        now: Timestamp,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<Trip, ThorError> {
         let proto = options
             .costings
             .get(&options.costing_type)
@@ -71,11 +76,10 @@ impl<P: GraphTileProvider> Thor<P> {
         // Trip building only asks the costing for edge speeds and travel types,
         // which path search's adjustments (passes and hierarchy limits) don't change.
         let costing = AnyCosting::new(&proto).map_err(|e| ThorError::Options(e.to_string()))?;
-        let controller = AttributesController::new(options);
         let ctx = LegContext {
             provider: self.provider(),
             options,
-            controller: &controller,
+            controller,
             costing: &costing,
             now,
         };

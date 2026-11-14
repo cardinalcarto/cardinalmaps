@@ -32,12 +32,12 @@ use crate::geo::{AStarHeuristic, PointLL};
 use crate::graph;
 use crate::label::{INVALID_LABEL, NewLabel, ThorLabel};
 use crate::path::PathEdge;
-use crate::queue::BucketQueue;
 use crate::search::{
     BUCKET_COUNT, INITIAL_LABELS, SearchContext, UNIT_SIZE, add_double, candidate_id, candidates,
     clear_labels, first_candidate_point, time_context,
 };
 use crate::time::location_time_info;
+use valhalla_graphtile::double_bucket_queue::BucketQueue;
 
 /// Iterations allowed without getting closer to the destination
 /// (`kMaxIterationsWithoutConvergence`).
@@ -855,6 +855,7 @@ impl<const FORWARD: bool> UnidirectionalAStar<FORWARD> {
                     path_distance,
                     restriction_index: label.restriction_idx,
                     start_node_is_recovered: false,
+                    is_disconnected: false,
                 });
                 if label.is_ferry() {
                     self.has_ferry = true;
@@ -887,6 +888,7 @@ impl<const FORWARD: bool> UnidirectionalAStar<FORWARD> {
                     path_distance,
                     restriction_index: label.restriction_idx,
                     start_node_is_recovered: false,
+                    is_disconnected: false,
                 });
                 if label.is_ferry() {
                     self.has_ferry = true;

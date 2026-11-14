@@ -7,10 +7,10 @@
 //! (mainline's tile and bin sizes are `float`s, so `index * size` is a float product)
 //! before they are added to the double precision bounds.
 
-use crate::geo::{Aabb, PointLL};
 use alloc::collections::BinaryHeap;
 use core::cmp::Ordering;
 use std::collections::HashSet;
+use valhalla_graphtile::midgard::{Aabb, PointLL};
 
 /// Bins per side of a tile (`kBinsDim`).
 pub(crate) const BINS_DIM: i32 = 5;

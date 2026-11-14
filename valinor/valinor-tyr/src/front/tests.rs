@@ -1325,3 +1325,117 @@ fn json_requests() {
         Err(ErrorCode::JsonParseFailed.into())
     );
 }
+
+/// The map matching corpus's Andorra fixtures (`tools/oracle/copy-trace-fixtures.sh`):
+/// every case's request and response here, and the Loki→Thor message of the cases that
+/// reached Thor in `valinor-thor`'s fixtures (as `valinor-router` reads this crate's).
+const TRACE_FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/traces/andorra");
+const TRACE_THOR_FIXTURES: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../valinor-thor/fixtures/traces/andorra"
+);
+
+/// Errors that Loki's trace action raises after the front (`init_trace` and `trace`):
+/// no shape (114), too few or too many points (123, 153), no costing (124), multimodal (140),
+/// too long (154), too many exclude locations (157), trace options out of bounds (158),
+/// and points farther apart than the breakage distance (172).
+const LOKI_TRACE_ERRORS: [u64; 9] = [114, 123, 124, 140, 153, 154, 157, 158, 172];
+
+/// A trace fixture's request, sent to the front as mainline's server would.
+fn trace_request(dir: &std::path::Path) -> (Api, Result<(), ValhallaError>) {
+    let text = std::fs::read_to_string(dir.join("request.json")).expect("request.json");
+    let case: Value = serde_json::from_str(&text).expect("valid JSON");
+    if let Some(http) = case.get("http") {
+        let body = match (http["body"].as_str(), http["body_file"].as_str()) {
+            (Some(body), _) => body.as_bytes().to_vec(),
+            (None, Some(file)) => std::fs::read(dir.join(file)).expect("the request body"),
+            (None, None) => Vec::new(),
+        };
+        let method = Method::from_bytes(http["method"].as_str().expect("a method").as_bytes())
+            .expect("valid method");
+        return request(
+            &method,
+            http["target"].as_str().expect("a target"),
+            http["content_type"].as_str(),
+            &body,
+        );
+    }
+    let action = case["action"].as_str().expect("an action");
+    let body = serde_json::to_string(&case["request"]).expect("serializable");
+    post(action, &body)
+}
+
+/// A trace fixture's error: its code and message, from the JSON body or the PBF `info`.
+fn trace_error(dir: &std::path::Path) -> Option<(u64, String)> {
+    if let Ok(bytes) = std::fs::read(dir.join("response.bin")) {
+        let api = Api::decode(bytes.as_slice()).expect("a valid Api");
+        let error = api.info.unwrap_or_default().errors.into_iter().next()?;
+        return Some((error.code, error.description));
+    }
+    let text = std::fs::read_to_string(dir.join("response.json")).expect("response.json");
+    let response: Value = serde_json::from_str(&text).expect("valid JSON");
+    let body = &response["body"];
+    let code = body["error_code"].as_u64()?;
+    Some((code, body["error"].as_str().unwrap_or_default().to_owned()))
+}
+
+/// Every map matching request (`trace_route` and `trace_attributes`, with every trace option,
+/// shape format, timestamps and durations, filters, and alternates) parses into the options
+/// mainline sent Thor, apart from what Loki adds (the locations it takes from the shape,
+/// and its cap on alternates), or fails as mainline's front did.
+#[test]
+fn trace_requests_match_mainline() {
+    let mut dirs: Vec<std::path::PathBuf> = std::fs::read_dir(TRACE_FIXTURES)
+        .expect("the trace fixtures")
+        .map(|entry| entry.expect("a directory entry").path())
+        .collect();
+    dirs.sort();
+    let (mut reached_thor, mut front_errors) = (0, 0);
+    for dir in &dirs {
+        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned());
+        let name = name.unwrap_or_default();
+        let (api, result) = trace_request(dir);
+        let loki_thor = std::path::Path::new(TRACE_THOR_FIXTURES)
+            .join(&name)
+            .join("loki-thor.bin");
+        if let Ok(bytes) = std::fs::read(&loki_thor) {
+            result.unwrap_or_else(|e| panic!("{name}: {e}"));
+            let front = api.options.expect("options");
+            let mut reference = Api::decode(bytes.as_slice())
+                .expect("a valid Api")
+                .options
+                .expect("options");
+            // Loki replaces the locations with the shape's first and last points.
+            reference.locations.clone_from(&front.locations);
+            if let (
+                Some(HasAlternates::Alternates(reference)),
+                Some(HasAlternates::Alternates(front)),
+            ) = (reference.has_alternates.as_mut(), front.has_alternates)
+                && *reference < front
+            {
+                *reference = front;
+            }
+            assert_eq!(front, reference, "{name}");
+            reached_thor += 1;
+            continue;
+        }
+        match (trace_error(dir), result) {
+            (Some((code, message)), Err(error)) => {
+                assert_eq!(u64::from(error.code().code()), code, "{name}");
+                assert_eq!(error.message(), message, "{name}");
+                front_errors += 1;
+            }
+            (Some((code, _)), Ok(())) => assert!(
+                LOKI_TRACE_ERRORS.contains(&code) || code >= 400,
+                "{name}: the front accepted a request mainline refused with {code}"
+            ),
+            (None, Err(error)) => panic!("{name}: mainline succeeded, the front failed: {error}"),
+            (None, Ok(())) => {}
+        }
+    }
+    assert!(
+        reached_thor >= 40,
+        "only {reached_thor} trace requests reached Thor"
+    );
+    assert!(front_errors >= 8, "only {front_errors} front errors");
+}

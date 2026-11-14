@@ -137,4 +137,13 @@ class _FakeRouter implements OfflineRouter {
     routes.add(done);
     return done.future;
   }
+
+  // These tests only route.
+  @override
+  Future<RouterResponse> traceAttributes({required List<int> body}) =>
+      throw UnimplementedError();
+
+  @override
+  Future<RouterResponse> traceRoute({required List<int> body}) =>
+      throw UnimplementedError();
 }

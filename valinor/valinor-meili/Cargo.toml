@@ -1,0 +1,23 @@
+[package]
+name = "valinor-meili"
+description = "Valhalla-compatible map matching (mainline's Meili): candidate search, emission and transition costs, and Viterbi and top-k search over GPS traces."
+version = "0.1.0"
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+valhalla-graphtile = { workspace = true }
+valhalla-proto = { workspace = true }
+valinor-sif = { workspace = true }
+
+[dev-dependencies]
+valinor-tyr = { workspace = true }
+
+[lints]
+workspace = true

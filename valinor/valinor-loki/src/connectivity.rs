@@ -10,11 +10,11 @@
 //! Only the local level matters here: Loki colors locations on it unless the route uses transit,
 //! which Valinor doesn't route.
 
-use crate::geo::Aabb;
 use crate::search::point_of;
 use crate::tiles::{bottom_neighbor, left_neighbor, right_neighbor, tile_list, top_neighbor};
 use std::collections::{HashMap, HashSet, VecDeque};
 use valhalla_graphtile::GraphId;
+use valhalla_graphtile::midgard::Aabb;
 use valhalla_proto::Location;
 
 /// Local tiles that mainline treats as unconnected although they are neighbors:
@@ -127,8 +127,8 @@ impl ConnectivityMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo::PointLL;
     use crate::search::lat_lng;
+    use valhalla_graphtile::midgard::PointLL;
     use valhalla_proto::{Correlation, PathEdge};
 
     fn located(lng: f64, lat: f64) -> Location {
