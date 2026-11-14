@@ -1,11 +1,14 @@
 import 'package:cardinal/map/map.dart';
 import 'package:cardinal/offline/download_page.dart';
 import 'package:cardinal/offline/downloads/database.dart';
+import 'package:cardinal/offline/downloads/geometry.dart';
+import 'package:cardinal/offline/drawing/area_layer.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../fakes/fake_app.dart';
 import '../fakes/fake_downloads.dart';
+import '../fakes/fake_map.dart';
 
 /// This year's March 4: dated without a year.
 final _march = DateTime(DateTime.now().year, 3, 4, 9, 30);
@@ -89,6 +92,98 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('136 MB · Mar 4'), findsNWidgets(2));
     expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
+  testWidgets(
+    'tapping an area shows its bounds on the map, until tapped again',
+    (tester) async {
+      final home = GeoPolygon(const [
+        GeoPoint(47.60, -122.36),
+        GeoPoint(47.60, -122.30),
+        GeoPoint(47.66, -122.33),
+      ]);
+      final trip = GeoPolygon(const [
+        GeoPoint(45.50, -122.70),
+        GeoPoint(45.50, -122.60),
+        GeoPoint(45.55, -122.65),
+      ]);
+      final downloads = FakeOfflineDownloads()
+        ..emit([
+          fakeRegion(1, name: 'Home', polygon: home),
+          fakeRegion(2, name: 'Trip', polygon: trip),
+        ]);
+      final map = FakeMap();
+      await pumpFakeApp(
+        tester,
+        location: '/offline',
+        downloads: Future.value(downloads),
+        map: map,
+      );
+      List<Object?> shown() =>
+          (map.geoJson[areaSource] as Map?)?['features'] as List? ?? const [];
+      expect(shown(), isEmpty);
+
+      await tester.tap(find.text('Home'));
+      await tester.pump();
+      expect(shown(), hasLength(1));
+      expect(map.subject, isTrue);
+      expect(map.subjectBounds, (
+        west: -122.36,
+        south: 47.60,
+        east: -122.30,
+        north: 47.66,
+      ));
+
+      // Another area takes its place.
+      await tester.tap(find.text('Trip'));
+      await tester.pump();
+      expect(map.subjectBounds!.north, 45.55);
+
+      // Tapped again, it goes, and the camera stays where it is.
+      await tester.tap(find.text('Trip'));
+      await tester.pump();
+      expect(shown(), isEmpty);
+      expect(map.subject, isFalse);
+
+      // Drawing a new area uses the same layer: a shown one goes first.
+      await tester.tap(find.text('Home'));
+      await tester.pump();
+      await tester.tap(find.text('Download an area'));
+      await tester.pumpAndSettle();
+      expect(find.byType(DownloadAreaPage), findsOneWidget);
+      expect(shown(), isEmpty);
+    },
+  );
+
+  testWidgets('a shown area goes from the map when it is deleted', (
+    tester,
+  ) async {
+    final downloads = FakeOfflineDownloads()
+      ..emit([
+        fakeRegion(
+          1,
+          name: 'Home',
+          polygon: GeoPolygon(const [
+            GeoPoint(47.60, -122.36),
+            GeoPoint(47.60, -122.30),
+            GeoPoint(47.66, -122.33),
+          ]),
+        ),
+      ]);
+    final map = FakeMap();
+    await pumpFakeApp(
+      tester,
+      location: '/offline',
+      downloads: Future.value(downloads),
+      map: map,
+    );
+    await tester.tap(find.text('Home'));
+    await tester.pump();
+    expect(map.subject, isTrue);
+    downloads.emit(const []);
+    await tester.pumpAndSettle();
+    expect((map.geoJson[areaSource] as Map)['features'], isEmpty);
+    expect(map.subject, isFalse);
   });
 
   testWidgets('an area is deleted from its menu, once confirmed', (

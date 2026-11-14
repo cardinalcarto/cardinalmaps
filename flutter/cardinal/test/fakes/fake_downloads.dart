@@ -172,11 +172,12 @@ RegionProgress fakeRegion(
   int bytesDone = 0,
   int bytesTotal = 136 * 1000 * 1000,
   DateTime? createdAt,
+  GeoPolygon? polygon,
 }) => RegionProgress(
   id: id,
   kind: kind,
   name: name,
-  polygon: null,
+  polygon: polygon,
   state: state,
   error: null,
   createdAt: createdAt ?? DateTime(2026, 11, 12, 21, 41),

@@ -4,12 +4,15 @@ import 'package:cupertino_ui/cupertino_ui.dart'
     show CupertinoActivityIndicator, CupertinoIcons;
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:sparkle/sparkle.dart';
 
+import '../map/map.dart';
 import '../sheet/sheet.dart';
 import '../ui/adaptive.dart';
 import '../ui/symbols.dart';
 import 'downloads/database.dart';
 import 'downloads/engine.dart';
+import 'drawing/area_layer.dart';
 import 'format.dart';
 import 'offline_scope.dart';
 
@@ -27,7 +30,8 @@ const downloadAreaLocation = '/offline/download';
 ///
 /// Each area is downloading (with its progress), finishing, ready, failed (with Retry),
 /// or being deleted. Deleting one asks first: from its menu on Android, by swiping it
-/// on iOS.
+/// on iOS. Tapping one shows its bounds on the map, framed above the sheet, until it's
+/// tapped again, Download an area is tapped, it's deleted, or the tab is left.
 class OfflinePage extends StatefulWidget {
   const OfflinePage({super.key});
 
@@ -48,9 +52,21 @@ class _OfflinePageState extends State<OfflinePage> {
   /// Areas swiped away on iOS, gone from the list before downloads say so.
   final _dismissed = <int>{};
 
+  late SparkleMapController _map;
+
+  /// The area whose bounds the map shows.
+  int? _shown;
+
+  /// Space kept around a shown area, in logical pixels, as around a place.
+  static const _margin = 48.0;
+
+  /// How close the map zooms in on a small area.
+  static const _maxZoom = 16.0;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _map = MapScope.of(context);
     if (_opening) return;
     _opening = true;
     unawaited(_open(OfflineScope.of(context).downloads));
@@ -72,16 +88,58 @@ class _OfflinePageState extends State<OfflinePage> {
             if (r.kind == RegionKind.explicit && !_dismissed.contains(r.id)) r,
         ];
       });
+      if (_shown case final shown? when !_areas!.any((a) => a.id == shown)) {
+        _hide();
+      }
     });
   }
 
   @override
   void dispose() {
     _watch?.cancel();
+    _clearMap();
     super.dispose();
   }
 
-  void _download() => unawaited(context.push<void>(downloadAreaLocation));
+  /// Shows [area]'s bounds on the map, or stops if they're shown.
+  void _toggle(RegionProgress area) {
+    final polygon = area.polygon;
+    if (polygon == null) return;
+    if (_shown == area.id) {
+      _hide();
+      return;
+    }
+    setState(() => _shown = area.id);
+    showArea(_map, polygon);
+    final b = polygon.bounds;
+    _map.setSubject(
+      west: b.west,
+      south: b.south,
+      east: b.east,
+      north: b.north,
+      maxZoom: _maxZoom,
+      margin: _margin,
+    );
+  }
+
+  void _hide() {
+    if (_shown == null) return;
+    _clearMap();
+    setState(() => _shown = null);
+  }
+
+  /// Takes the shown area off the map, and lets the camera go of it where it is.
+  void _clearMap() {
+    if (_shown == null) return;
+    showArea(_map, null);
+    _map.clearSubject();
+  }
+
+  void _download() {
+    // Drawing uses the same layer.
+    _hide();
+    unawaited(context.push<void>(downloadAreaLocation));
+  }
 
   /// Asks whether to delete [area], and deletes it if so; true if it's going.
   Future<bool> _delete(RegionProgress area) async {
@@ -96,6 +154,7 @@ class _OfflinePageState extends State<OfflinePage> {
       ],
     );
     if (delete != true || !mounted) return false;
+    if (_shown == area.id) _hide();
     setState(() {
       _dismissed.add(area.id);
       _areas = _areas?.where((a) => a.id != area.id).toList();
@@ -144,6 +203,8 @@ class _OfflinePageState extends State<OfflinePage> {
                               key: ValueKey(area.id),
                               area: area,
                               name: _name(area),
+                              shown: _shown == area.id,
+                              onTap: () => _toggle(area),
                               onRetry: () =>
                                   unawaited(_downloads!.retry(area.id)),
                               onDelete: () => _delete(area),
@@ -265,12 +326,20 @@ class _AreaRow extends StatelessWidget {
     super.key,
     required this.area,
     required this.name,
+    required this.shown,
+    required this.onTap,
     required this.onRetry,
     required this.onDelete,
   });
 
   final RegionProgress area;
   final String name;
+
+  /// Whether the map shows its bounds.
+  final bool shown;
+
+  /// Shows its bounds, or stops.
+  final VoidCallback onTap;
   final VoidCallback onRetry;
 
   /// Asks, then deletes; true if it's going.
@@ -370,14 +439,17 @@ class _AreaRow extends StatelessWidget {
                   Icons.error_outline,
                   CupertinoIcons.exclamationmark_circle,
                 )
+              : shown
+              ? _icon(context, Icons.map, CupertinoIcons.map_fill)
               : _icon(context, Icons.map_outlined, CupertinoIcons.map),
           color: failed
               ? colors.error
-              : (cupertino ? colors.primary : colors.onSurfaceVariant),
+              : (cupertino || shown ? colors.primary : colors.onSurfaceVariant),
         ),
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: subtitle,
         trailing: trailing,
+        onTap: deleting ? null : onTap,
       ),
     );
     if (!cupertino || deleting) return row;
