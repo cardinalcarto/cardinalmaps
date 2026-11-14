@@ -1,9 +1,12 @@
 #version 460 core
-// The navigation puck: a chevron, an arrowhead pointing up the square (toward -y), over a
-// round disk centered on it, each filled and outlined and antialiased by its distance
-// from its edge. The disk hides the route line just behind the chevron, where the
-// traveled part, drawn only up to the last fix, lags it. The square is turned to the
-// bearing, which turns the chevron; the disk, being round, looks the same either way.
+// The navigation puck: a chevron, an arrowhead lying flat on the ground pointing along
+// the bearing (toward -y in its frame), over a disk that faces the screen, a circle
+// centered on it however the map is tilted. Each is filled and outlined and antialiased
+// by its distance from its edge, measured where it lies: the chevron's on the ground, the
+// disk's on screen, so `fwidth` puts both edges about a pixel wide on screen. The disk
+// hides the route line just behind the chevron, where the traveled part, drawn only up to
+// the last fix, lags it; flat, a tilt would squash it along the very direction of travel
+// it has to cover.
 //
 // `extra[0]`: the chevron's fill, premultiplied.
 // `extra[1]`: the chevron's outline, premultiplied.
@@ -15,7 +18,8 @@
 
 #include <common.glsl>
 
-in vec2 v_local;
+in vec2 v_screen;
+in vec3 v_ground;
 
 out vec4 frag_color;
 
@@ -48,7 +52,7 @@ float chevron(vec2 p, float s) {
 }
 
 // A shape `d` from its edge (negative inside), filled and outlined `width` in from that
-// edge, its edges about a pixel wide on screen however the square is tilted.
+// edge, its edges about a pixel wide on screen however it's tilted.
 vec4 shade(float d, vec4 fill_color, vec4 outline_color, float width) {
   float aa = max(fwidth(d), 1e-4);
   float shape = clamp(0.5 - d / aa, 0.0, 1.0);
@@ -57,10 +61,17 @@ vec4 shade(float d, vec4 fill_color, vec4 outline_color, float width) {
 }
 
 void main() {
-  vec4 arrow = shade(chevron(v_local, draw.extra[2].y), draw.extra[0], draw.extra[1],
-                     draw.extra[2].z);
+  // The point of the ground drawn here. The rectangle can reach above the horizon on a
+  // steep tilt, where no ground is drawn (z <= 0), and so no chevron.
+  vec2 ground = v_ground.xy / max(v_ground.z, 1e-6);
+  float d = chevron(ground, draw.extra[2].y);
+  vec4 arrow = shade(d, draw.extra[0], draw.extra[1], draw.extra[2].z);
+  // Toward the horizon the ground stretches fast, so `fwidth` there would smear a
+  // fragment far off the chevron into a faint edge; nothing a chevron's length away is
+  // part of it.
+  arrow *= float(v_ground.z > 0.0 && d < draw.extra[2].y);
   // Computed for every fragment even without a disk, as `fwidth` needs its neighbors.
-  vec4 disk = shade(length(v_local) - draw.extra[2].w, draw.extra[3], draw.extra[4],
+  vec4 disk = shade(length(v_screen) - draw.extra[2].w, draw.extra[3], draw.extra[4],
                     draw.extra[5].x);
   // A radius of 0 would still leave a speck at the middle.
   disk *= step(1e-4, draw.extra[2].w);

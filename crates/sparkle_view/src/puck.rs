@@ -15,7 +15,7 @@ pub struct Pose {
     pub bearing: f64,
 }
 
-/// How the puck looks: a chevron on a round disk. The app picks the colors and sizes;
+/// How the puck looks: a chevron lying on the map, over a round disk facing the screen. The app picks the colors and sizes;
 /// these are neutral placeholders, big so the puck reads at a glance while driving.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PuckStyle {
@@ -29,17 +29,19 @@ pub struct PuckStyle {
     /// is: like other navigation pucks it keeps its size at any distance, though a tilt
     /// still foreshortens it, as it lies flat on the map.
     pub size: f32,
-    /// The disk under the chevron, centered on it and lying flat on the map like it.
-    /// A route drawn as an "ahead" line with the traveled part over it, up to the last
+    /// The disk under the chevron, centered on it on screen and facing the screen, so
+    /// it's a circle however the map is tilted. A route drawn as an "ahead" line with the traveled part over it, up to the last
     /// fix, ends that part up to a second's travel behind the gliding chevron; an opaque
     /// disk hides that stretch, so the line never shows the wrong color just behind it.
-    /// It's opaque by default for that reason; a radius of 0 draws none.
+    /// That stretch runs along the direction of travel, which a tilt foreshortens most,
+    /// so a disk lying flat would cover only about half of it at pitch 60. It's opaque
+    /// by default for that reason; a radius of 0 draws none.
     pub disk_fill: [f32; 4],
     pub disk_outline: [f32; 4],
     /// Logical pixels, inside the disk's edge.
     pub disk_outline_width: f32,
-    /// In logical pixels on screen, kept at any distance like [`Self::size`], and
-    /// foreshortened by a tilt the same way. The bearing turns only the chevron.
+    /// In logical pixels on screen, at any distance and any tilt. The bearing turns
+    /// only the chevron.
     pub disk_radius: f32,
     /// The style layer it's drawn under; `None` (or a layer the style no longer has) is
     /// over every layer. Over everything by default, because "under the labels" would
