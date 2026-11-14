@@ -221,8 +221,10 @@ impl Grid {
 
     #[inline]
     fn key(&self, col: i32, row: i32) -> u32 {
-        // Only valid squares are visited, so this is in range.
-        u32::try_from(col + row * self.traversal.ncols).unwrap_or(u32::MAX)
+        // Only valid squares are visited, and the config limits the grid's size,
+        // so this is in range.
+        u32::try_from(i64::from(col) + i64::from(row) * i64::from(self.traversal.ncols))
+            .unwrap_or(u32::MAX)
     }
 
     /// Adds an edge's segment to every cell it crosses (`AddLineSegment`).

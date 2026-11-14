@@ -93,7 +93,7 @@ impl Label {
         }
     }
 
-    /// Mainline's checked constructor.
+    /// A label with an edge (mainline's constructor, whose checks are in [`Label::check`]).
     #[expect(clippy::too_many_arguments, reason = "mainline's constructor")]
     fn new(
         node_id: Option<GraphId>,
@@ -108,17 +108,8 @@ impl Label {
         edge: &DirectedEdge,
         mode: TravelMode,
         restriction_idx: u8,
-    ) -> Result<Self, MeiliError> {
-        if !(0.0 <= source && source <= target && target <= 1.0) {
-            return Err(MeiliError::Logic("invalid label source or target"));
-        }
-        if cost.cost < 0.0 {
-            return Err(MeiliError::Logic("invalid label cost"));
-        }
-        if turn_cost < 0.0 {
-            return Err(MeiliError::Logic("invalid label turn cost"));
-        }
-        Ok(Self {
+    ) -> Self {
+        Self {
             node_id,
             dest,
             edge_id: Some(edge_id),
@@ -143,7 +134,22 @@ impl Label {
                     destonly: false,
                 },
             )),
-        })
+        }
+    }
+
+    /// Mainline's constructor checks, which it runs only for a label it stores
+    /// (a new one, or one that improves on the stored one).
+    fn check(&self) -> Result<(), MeiliError> {
+        if !(0.0 <= self.source && self.source <= self.target && self.target <= 1.0) {
+            return Err(MeiliError::Logic("invalid label source or target"));
+        }
+        if self.cost.cost < 0.0 {
+            return Err(MeiliError::Logic("invalid label cost"));
+        }
+        if self.turn_cost < 0.0 {
+            return Err(MeiliError::Logic("invalid label turn cost"));
+        }
+        Ok(())
     }
 
     /// A copy that starts a search (`InitAsOrigin`): costs and the covered part are zeroed,
@@ -346,6 +352,7 @@ impl LabelSet {
                 .ok_or(MeiliError::Logic("invalid destination"))?
         };
         let Some(status) = found else {
+            label.check()?;
             let idx = label_index(labels)?;
             labels.push(label);
             self.queue.add(idx, label.sortcost);
@@ -364,6 +371,7 @@ impl LabelSet {
             .get_mut(status.label_idx as usize)
             .ok_or(MeiliError::Logic("a status points past the labels"))?;
         if !status.permanent && label.sortcost < existing.sortcost {
+            label.check()?;
             self.queue
                 .decrease(status.label_idx, existing.sortcost, label.sortcost);
             *existing = label;
@@ -734,7 +742,16 @@ fn expand<P: GraphTileProvider>(
                 .ok_or(MeiliError::Logic("expect angles to be within [0, 360)"))?;
             turn_cost += search.turn_cost_table[degree];
         }
-        let secs = edge_secs(search.costing, de, edge_id, &tile)?;
+        // Mainline asks for the edge's time only where it uses it.
+        let mut cached_secs = None;
+        let mut secs = || -> Result<f32, MeiliError> {
+            if let Some(secs) = cached_secs {
+                return Ok(secs);
+            }
+            let secs = edge_secs(search.costing, de, edge_id, &tile)?;
+            cached_secs = Some(secs);
+            Ok(secs)
+        };
         let length = de.length();
         if let Some(found) = dests.by_edge.get(&edge_id) {
             for &dest in found {
@@ -746,7 +763,7 @@ fn expand<P: GraphTileProvider>(
                     // `float + uint32 * double` and `float + float * double`, stored in floats.
                     let cost = Cost {
                         cost: narrow(f64::from(label.cost.cost) + f64::from(length) * pa),
-                        secs: narrow(f64::from(label.cost.secs) + f64::from(secs) * pa),
+                        secs: narrow(f64::from(label.cost.secs) + f64::from(secs()?) * pa),
                     };
                     if within_limits(search, cost) {
                         let next = Label::new(
@@ -762,7 +779,7 @@ fn expand<P: GraphTileProvider>(
                             de,
                             mode,
                             restriction_idx,
-                        )?;
+                        );
                         set.put(labels, next)?;
                     }
                 }
@@ -781,7 +798,7 @@ fn expand<P: GraphTileProvider>(
             )]
             let cost = Cost {
                 cost: label.cost.cost + length as f32,
-                secs: label.cost.secs + secs,
+                secs: label.cost.secs + secs()?,
             };
             if within_limits(search, cost) {
                 let end_ll = node_ll(&end_tile, node(&end_tile, end_node)?);
@@ -799,7 +816,7 @@ fn expand<P: GraphTileProvider>(
                     de,
                     mode,
                     restriction_idx,
-                )?;
+                );
                 set.put(labels, next)?;
             }
         }
@@ -880,7 +897,7 @@ fn expand_origin<P: GraphTileProvider>(
                                 de,
                                 mode,
                                 restriction_idx,
-                            )?;
+                            );
                             set.put(labels, next)?;
                         }
                     }
@@ -912,7 +929,7 @@ fn expand_origin<P: GraphTileProvider>(
                 de,
                 mode,
                 restriction_idx,
-            )?;
+            );
             set.put(labels, next)?;
         }
     }

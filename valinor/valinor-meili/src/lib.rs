@@ -47,8 +47,8 @@ mod oracle_tests;
 
 pub use candidate_search::{Candidate, CandidateEdge, CandidateGrids};
 pub use config::{
-    CandidateSearchConfig, ConfigError, EmissionCostConfig, MeiliConfig, RoutingConfig,
-    TransitionCostConfig,
+    CandidateSearchConfig, ConfigError, EmissionCostConfig, MAX_GRID_SIZE, MeiliConfig,
+    RoutingConfig, TransitionCostConfig,
 };
 pub use error::MeiliError;
 pub use map_matcher::{MapMatcher, MapMatcherFactory, Workspace};

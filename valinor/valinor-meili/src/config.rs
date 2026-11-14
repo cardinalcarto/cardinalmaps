@@ -17,6 +17,10 @@ use valhalla_proto::options::{
     HasTurnPenaltyFactor,
 };
 
+/// The most cells per side of a tile in the candidate grid, whose cells are numbered with
+/// 32-bit integers (as in mainline).
+pub const MAX_GRID_SIZE: usize = 46_000;
+
 /// A failure to read the `meili` config.
 ///
 /// Mainline throws these from `meili::Config` when the matcher factory is built,
@@ -46,11 +50,15 @@ pub enum ConfigError {
         /// Its value.
         value: f32,
     },
-    /// `meili.grid.size` is 0.
+    /// `meili.grid.size` is 0, or so large that a tile's cells can't be numbered
+    /// (more than [`MAX_GRID_SIZE`]).
     ///
-    /// Mainline accepts it and then fails every match, reading outside a grid of no cells.
-    #[error("read meili.grid.size: expected at least one cell per tile")]
-    EmptyGrid,
+    /// Mainline accepts these: with 0, every match fails, reading outside a grid of no cells;
+    /// beyond the limit, its cell indexes overflow (undefined behavior).
+    #[error(
+        "read meili.grid.size: expected 1 to {MAX_GRID_SIZE} cells per side of a tile, got {0}"
+    )]
+    GridSize(usize),
 }
 
 /// Candidate search parameters (mainline's `Config::CandidateSearch`).
@@ -257,8 +265,8 @@ impl MeiliConfig {
         positive("max_search_radius", cs.max_search_radius_meters)?;
         cs.cache_size = raw.grid.cache_size.unwrap_or(cs.cache_size);
         cs.grid_size = raw.grid.size.unwrap_or(cs.grid_size);
-        if cs.grid_size == 0 {
-            return Err(ConfigError::EmptyGrid);
+        if cs.grid_size == 0 || cs.grid_size > MAX_GRID_SIZE {
+            return Err(ConfigError::GridSize(cs.grid_size));
         }
 
         let tc = &mut config.transition_cost;
@@ -406,10 +414,15 @@ mod tests {
             let err = MeiliConfig::from_valhalla_json(&json).unwrap_err();
             assert!(err.to_string().contains(key), "{key}: {err}");
         }
-        assert!(matches!(
-            MeiliConfig::from_valhalla_json(r#"{"meili": {"grid": {"size": 0}}}"#),
-            Err(ConfigError::EmptyGrid)
-        ));
+        for size in [0, MAX_GRID_SIZE + 1] {
+            let json = json!({"meili": {"grid": {"size": size}}}).to_string();
+            assert!(matches!(
+                MeiliConfig::from_valhalla_json(&json),
+                Err(ConfigError::GridSize(s)) if s == size
+            ));
+        }
+        let json = json!({"meili": {"grid": {"size": MAX_GRID_SIZE}}}).to_string();
+        assert!(MeiliConfig::from_valhalla_json(&json).is_ok());
         // Zero is allowed where mainline asks for nonnegative values.
         let json = json!({"meili": {"default": {"search_radius": 0, "gps_accuracy": 0,
             "turn_penalty_factor": 0}}})
