@@ -190,7 +190,7 @@ class OfflineTransitSource implements TransitSource {
 
   RealtimeFeeds _realtime(OfflineArea area) {
     if (_feeds case (final made, final feeds) when made == area) return feeds;
-    final feeds = RealtimeFeeds(area.realtimeSources, client: client);
+    final feeds = RealtimeFeeds(() => area.realtimeSources, client: client);
     _feeds = (area, feeds);
     return feeds;
   }

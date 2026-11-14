@@ -148,6 +148,7 @@ class OfflineArea implements OfflineListener {
     required bool feedsChanged,
     bool filesRemoved = false,
   }) async {
+    if (feedsChanged || filesRemoved) _realtime = null;
     if (_router case final opened?) {
       final router = await _settled(opened.value);
       if (router == null || filesRemoved) {
@@ -176,14 +177,17 @@ class OfflineArea implements OfflineListener {
     }
   }
 
-  /// The GTFS-RT messages of the area's feeds, as `realtime.json` lists them.
+  /// The GTFS-RT messages of the area's feeds, as `realtime.json` lists them. It lists
+  /// every feed of the release; the area's are those whose timetables it holds.
   Future<List<RealtimeSource>> get realtimeSources => _realtime ??= () async {
     final file = File('$transitBuild/realtime.json');
     if (!await file.exists()) return const <RealtimeSource>[];
     final json = jsonDecode(await file.readAsString()) as Map<String, Object?>;
+    final feeds = (await _feeds()).toSet();
     return [
       for (final feed in json['feeds'] as List<Object?>? ?? const [])
-        if (feed case {'id': final String id, 'url': final String url})
+        if (feed case {'id': final String id, 'url': final String url}
+            when feeds.contains(id))
           RealtimeSource(feed: id, url: Uri.parse(url)),
     ];
   }();

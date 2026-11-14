@@ -80,6 +80,40 @@ void main() {
       expect(await area.covers(45.5, -122.6), isFalse);
     },
   );
+
+  test('real-time messages are of the feeds the area holds', () async {
+    final root = await Directory.systemTemp.createTemp('offline_area_test');
+    addTearDown(() => root.delete(recursive: true));
+    final build = '${root.path}/transit/t';
+    Future<void> write(String path, String text) async =>
+        (await File('$build/$path').create(recursive: true))
+            .writeAsString(text);
+    await write(
+      'transfers/manifest.json',
+      '{"feeds": [{"id": "metro"}, {"id": "sound"}, {"id": "rennes"}]}',
+    );
+    await write('timetables/metro.timetable', '');
+    await write(
+      'realtime.json',
+      '{"feeds": ['
+          '{"id": "metro", "url": "https://metro.test/trips.pb"},'
+          '{"id": "rennes", "url": "https://rennes.test/trips.pb"}]}',
+    );
+    final area = OfflineArea(
+      routing: '${root.path}/routing/r',
+      transitBuild: build,
+    );
+    expect((await area.realtimeSources).map((s) => s.feed), ['metro']);
+
+    // Another download brings Rennes' timetable.
+    await write('timetables/rennes.timetable', '');
+    expect((await area.realtimeSources).map((s) => s.feed), ['metro']);
+    await area.offlineChanged(feedsChanged: true);
+    expect((await area.realtimeSources).map((s) => s.feed), [
+      'metro',
+      'rennes',
+    ]);
+  });
 }
 
 /// A router whose routes finish when told to.

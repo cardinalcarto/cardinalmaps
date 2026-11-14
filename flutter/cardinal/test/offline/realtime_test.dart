@@ -48,7 +48,7 @@ void main() {
   test('fetches each message, then only once it is old', () async {
     var fetches = 0;
     final feeds = RealtimeFeeds(
-      Future.value([
+      () => Future.value([
         source('https://a.test/alerts.pb'),
         source('https://a.test/tripupdates.pb'),
       ]),
@@ -71,7 +71,7 @@ void main() {
     () async {
       var up = false;
       final feeds = RealtimeFeeds(
-        Future.value([source('https://a.test/alerts.pb')]),
+        () => Future.value([source('https://a.test/alerts.pb')]),
         client: MockClient((request) async {
           if (!up) throw http.ClientException('no network');
           return http.Response.bytes([1], 200);
@@ -88,7 +88,7 @@ void main() {
 
   test('calls during the first fetch all wait for it', () async {
     final feeds = RealtimeFeeds(
-      Future.value([source('https://a.test/alerts.pb')]),
+      () => Future.value([source('https://a.test/alerts.pb')]),
       client: MockClient((request) async => http.Response.bytes([1], 200)),
     );
     final (a, b) = await (feeds.fresh(), feeds.fresh()).wait;
@@ -97,7 +97,7 @@ void main() {
 
   test('a prefetch leaves what it fetched for the next plan', () async {
     final feeds = RealtimeFeeds(
-      Future.value([source('https://a.test/alerts.pb')]),
+      () => Future.value([source('https://a.test/alerts.pb')]),
       client: MockClient((request) async => http.Response.bytes([1], 200)),
     );
     await feeds.prefetch();

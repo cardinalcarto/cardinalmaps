@@ -23,7 +23,9 @@ class RealtimeFeeds {
     this.timeout = const Duration(seconds: 6),
   }) : _client = client ?? http.Client();
 
-  final Future<List<RealtimeSource>> _sources;
+  /// The messages to fetch, asked for on each fetch: an area's feeds change as it's
+  /// downloaded to.
+  final Future<List<RealtimeSource>> Function() _sources;
   final http.Client _client;
 
   /// How old a message may be before it's fetched again.
@@ -63,7 +65,7 @@ class RealtimeFeeds {
   });
 
   Future<void> _fetch() async {
-    final sources = await _sources;
+    final sources = await _sources();
     final now = DateTime.now();
     final due = [
       for (final source in sources)
