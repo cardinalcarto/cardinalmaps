@@ -475,6 +475,9 @@ class _Placeholder extends StatelessWidget {
   }
 }
 
+/// The space above and below a nearby row's lines.
+const nearbyRowPadding = 11.0;
+
 /// How [page]'s headsigns read: "A / B", or nothing for a page without any.
 String headsignsText(HeadsignPage page) => page.headsigns.join(' / ');
 
@@ -726,6 +729,9 @@ class _NearbyPage extends StatelessWidget {
   /// The most the departures take of the row's width.
   static const _timesWidth = 160.0;
 
+  /// The space above and below a detail header's lines.
+  static const _headerPadding = 8.0;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -733,8 +739,9 @@ class _NearbyPage extends StatelessWidget {
       color: theme.colorScheme.onSurfaceVariant,
     );
     final page = this.page;
+    final vertical = showsTimes ? nearbyRowPadding : _headerPadding;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      padding: EdgeInsets.fromLTRB(12, vertical, 12, vertical),
       child: Row(
         children: [
           Expanded(

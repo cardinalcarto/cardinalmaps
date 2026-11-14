@@ -361,6 +361,28 @@ void main() {
       );
     });
 
+    testWidgets("a row's lines have room above and below them", (tester) async {
+      await open(tester);
+      await answer(tester, [_route('40')]);
+      final row = tester.getRect(_row('40'));
+      // The outermost row of the badge, stop, and times.
+      final lines = tester.getRect(
+        find
+            .ancestor(
+              of: find.text('Fremont Ave N & N 34th St'),
+              matching: find.descendant(
+                of: _row('40'),
+                matching: find.byType(Row),
+              ),
+            )
+            .last,
+      );
+      // 3 px more each way than a detail's header.
+      expect(nearbyRowPadding, 11);
+      expect(lines.top - row.top, closeTo(11, 0.5));
+      expect(row.bottom - lines.bottom, closeTo(11, 0.5));
+    });
+
     testWidgets('a route with one page has no dots', (tester) async {
       await open(tester);
       await answer(tester, [_route('40')]);
@@ -444,6 +466,11 @@ void main() {
             centerOf(tester, _in('44', find.text(ballard))),
         'the countdown': (tester) =>
             centerOf(tester, _in('44', find.byKey(const ValueKey('next')))),
+        // The space above the lines, at the row's start.
+        'the padding above the lines': (tester) => Offset(
+          tester.getRect(_row('44')).left + 4,
+          tester.getRect(_row('44')).top + nearbyRowPadding / 2,
+        ),
         // Between the headsign line and the stop line, at the row's start.
         'the gap between lines': (tester) {
           final headsign = tester.getRect(_in('44', find.text('Ballard')));
