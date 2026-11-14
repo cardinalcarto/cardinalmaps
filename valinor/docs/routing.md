@@ -376,7 +376,9 @@ and Odin's (narration and Tyr), as the staged chain does, and answers with what 
 the status, content type, GPX disposition, and body, with errors in the request's format.
 Actions Valinor doesn't have yet (`optimized_route`, matrices, isochrones, expansion,
 and centroids) are error 107, as in the Thor worker.
-`Router::route` is `POST /route` with a body, the one function the app calls.
+`Router::route` is `POST /route` with a body, and `Router::trace_route` and
+`Router::trace_attributes` are `POST /trace_route` and `POST /trace_attributes`:
+the functions the app calls.
 
 - **Tile sets.** `Router::open` takes one or more `build_extract` tarballs or tile directories
   as one tile set: the first set that has a tile supplies it, and a tile no set has is

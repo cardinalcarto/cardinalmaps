@@ -214,3 +214,32 @@ fn matches_mainline_on_trace_attributes_fixtures() {
     assert!(tally.differences.is_empty(), "{:?}", tally.differences);
     assert_eq!(tally.matched + tally.meili.len() + tally.miles.len(), 68);
 }
+
+/// [`Router::trace_route`] and [`Router::trace_attributes`] (what the app calls) answer
+/// each JSON body exactly as `POST /trace_route` and `POST /trace_attributes` do.
+#[test]
+fn trace_methods_answer_as_their_paths() {
+    let router = router();
+    let mut checked = [0_usize; 2];
+    for dir in case_dirs(&fixtures("traces/andorra")) {
+        let recorded: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("request.json")).unwrap())
+                .unwrap();
+        // Requests sent some other way (GET, PBF bodies, raw bytes) aren't what the app sends.
+        // PBF responses carry timing statistics, which differ between runs.
+        if recorded.get("http").is_some() || recorded["request"]["format"] == "pbf" {
+            continue;
+        }
+        let body = serde_json::to_vec(&recorded["request"]).unwrap();
+        let (response, i) = match recorded["action"].as_str().unwrap() {
+            "trace_route" => (router.trace_route(&body), 0),
+            "trace_attributes" => (router.trace_attributes(&body), 1),
+            _ => continue,
+        };
+        let by_path = send(&router, &dir);
+        assert_eq!(response.status, by_path.status, "{}", dir.display());
+        assert_eq!(response.body, by_path.body, "{}", dir.display());
+        checked[i] += 1;
+    }
+    assert!(checked.iter().all(|&n| n > 10), "checked {checked:?}");
+}

@@ -170,9 +170,27 @@ impl Router {
     /// Answers a `route` request body (Valhalla JSON, as Ferrostar's request generator makes it),
     /// as `POST /route` would.
     pub fn route(&self, body: &[u8]) -> HttpResponse {
+        self.post(b"/route", body)
+    }
+
+    /// Answers a `trace_route` request body (Valhalla JSON: a trace to map match into a route),
+    /// as `POST /trace_route` would.
+    pub fn trace_route(&self, body: &[u8]) -> HttpResponse {
+        self.post(b"/trace_route", body)
+    }
+
+    /// Answers a `trace_attributes` request body (Valhalla JSON: a trace to map match,
+    /// answered with the matched edges' and points' attributes),
+    /// as `POST /trace_attributes` would.
+    pub fn trace_attributes(&self, body: &[u8]) -> HttpResponse {
+        self.post(b"/trace_attributes", body)
+    }
+
+    /// Answers a Valhalla JSON body as a `POST` to `target` would.
+    fn post(&self, target: &[u8], body: &[u8]) -> HttpResponse {
         self.handle(&HttpRequest {
             method: &Method::POST,
-            target: b"/route",
+            target,
             content_type: Some(b"application/json"),
             body,
         })
