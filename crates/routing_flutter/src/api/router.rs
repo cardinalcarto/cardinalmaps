@@ -218,6 +218,9 @@ fn device_config() -> RouterConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::directions::{DirectionsAdapter, DirectionsPoint};
+    use ferrostar::models::RouteStep;
+    use ferrostar::routing_adapters::{RouteAdapter, WellKnownRouteProvider};
     use std::path::PathBuf;
 
     #[test]
@@ -245,6 +248,152 @@ mod tests {
             let body = String::from_utf8(response.body).unwrap();
             assert_eq!(response.status, 200, "{body}");
             assert!(body.contains(r#""code":"Ok""#), "{body}");
+        }
+    }
+
+    /// A Seattle route by `auto`, asked for as the app asks ([`DirectionsAdapter::request`]),
+    /// answered offline, and read by Ferrostar's parser, whose steps carry the leg's
+    /// `annotation` as one JSON object per stretch between two of the step's points.
+    fn seattle_steps(from: DirectionsPoint, to: DirectionsPoint) -> Vec<RouteStep> {
+        let tiles = std::env::var("CARDINAL_SEATTLE_TILES").expect("CARDINAL_SEATTLE_TILES");
+        let router = OfflineRouter::open(vec![tiles], None).ok().unwrap();
+        let endpoint = "http://router/route";
+        let request = DirectionsAdapter::valhalla(endpoint.into(), "auto".into(), 2, false)
+            .unwrap()
+            .request(from, to)
+            .unwrap();
+        // Ferrostar's request already asks for the shape attributes that become the
+        // annotation, speed limits among them; the app adds nothing for them.
+        let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+        assert!(
+            body["filters"]["attributes"]
+                .as_array()
+                .unwrap()
+                .contains(&"shape_attributes.speed_limit".into()),
+            "{body}"
+        );
+        let response = router.route(request.body);
+        assert_eq!(
+            response.status,
+            200,
+            "{}",
+            String::from_utf8_lossy(&response.body)
+        );
+        // Ferrostar's parser doesn't depend on the request's options.
+        let parser =
+            RouteAdapter::from_well_known_route_provider(WellKnownRouteProvider::Valhalla {
+                endpoint_url: endpoint.into(),
+                profile: "auto".into(),
+                options_json: None,
+            })
+            .unwrap();
+        let mut routes = parser.parse_response(response.body).unwrap();
+        assert!(!routes.is_empty());
+        let steps = routes.swap_remove(0).steps;
+        let (arrival, on_the_way) = steps.split_last().unwrap();
+        // The arrival step is one point twice, so it has no stretches to annotate.
+        assert_eq!(arrival.annotations, None);
+        for step in on_the_way {
+            let annotations = step.annotations.as_ref().unwrap();
+            assert_eq!(
+                annotations.len(),
+                step.geometry.len() - 1,
+                "{}",
+                step.instruction
+            );
+            // What navigation hands the UI as `TripState::Navigating.annotation_json` at the
+            // step's first point.
+            assert_eq!(
+                step.get_annotation_at_current_index(0).as_ref(),
+                annotations.first()
+            );
+        }
+        steps
+    }
+
+    /// The speed limit (`maxspeed`) of each stretch of `step`:
+    /// `{"speed": 50, "unit": "km/h"}`, `{"none": true}`, or `{"unknown": true}`.
+    fn speed_limits(step: &RouteStep) -> Vec<serde_json::Value> {
+        step.annotations
+            .iter()
+            .flatten()
+            .map(|annotation| {
+                let annotation: serde_json::Value = serde_json::from_str(annotation).unwrap();
+                annotation["maxspeed"].clone()
+            })
+            .collect()
+    }
+
+    /// A limit in miles per hour. Annotations are always in km/h, as mainline's are,
+    /// and Valhalla keeps a `maxspeed=60 mph` tag as 97 km/h.
+    fn mph(limit: &serde_json::Value) -> Option<f64> {
+        assert_eq!(limit["unit"], "km/h", "{limit}");
+        limit["speed"].as_f64().map(|kph| (kph / 1.609_344).round())
+    }
+
+    /// Speed limits reach Ferrostar's steps: 60 mph on I-5 through Seattle, as OSM has it.
+    #[test]
+    #[ignore = "needs CARDINAL_SEATTLE_TILES"]
+    fn i5_has_its_speed_limit() {
+        let northgate = DirectionsPoint {
+            lat: 47.7066,
+            lng: -122.3255,
+        };
+        let downtown = DirectionsPoint {
+            lat: 47.6062,
+            lng: -122.3321,
+        };
+        let steps = seattle_steps(northgate, downtown);
+        let longest = steps
+            .iter()
+            .max_by(|a, b| a.distance.total_cmp(&b.distance))
+            .unwrap();
+        assert!(
+            longest.instruction.contains("I 5"),
+            "{}",
+            longest.instruction
+        );
+        let limits = speed_limits(longest);
+        let at_60 = limits
+            .iter()
+            .filter(|limit| mph(limit) == Some(60.0))
+            .count();
+        // The rest are the 30 mph exit ramp at the step's end.
+        assert!(
+            at_60 * 10 >= limits.len() * 9,
+            "{at_60} of {}: {limits:?}",
+            limits.len()
+        );
+    }
+
+    /// Speed limits reach Ferrostar's steps in a neighborhood: Seattle's 20 mph on
+    /// residential streets and 25 mph on arterials, as OSM has them in Wallingford.
+    #[test]
+    #[ignore = "needs CARDINAL_SEATTLE_TILES"]
+    fn wallingford_has_its_speed_limits() {
+        let woodlawn = DirectionsPoint {
+            lat: 47.6585,
+            lng: -122.3390,
+        };
+        let eastern = DirectionsPoint {
+            lat: 47.6630,
+            lng: -122.3290,
+        };
+        let steps = seattle_steps(woodlawn, eastern);
+        for (street, limit) in [
+            ("Woodlawn Avenue North", 20.0),
+            ("North 45th Street", 25.0),
+            ("Eastern Avenue North", 20.0),
+        ] {
+            let limits: Vec<_> = steps
+                .iter()
+                .filter(|step| step.road_name.as_deref() == Some(street))
+                .flat_map(speed_limits)
+                .collect();
+            assert!(!limits.is_empty(), "the route doesn't take {street}");
+            for found in &limits {
+                assert_eq!(mph(found), Some(limit), "{street}: {limits:?}");
+            }
         }
     }
 
