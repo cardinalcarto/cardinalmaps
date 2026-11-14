@@ -206,14 +206,15 @@ class FakeSessions {
 /// A matcher that answers [answer] (no match, by default), and records what it's asked.
 class FakeRoadMatcher implements RoadMatcher {
   MatchedPosition? answer;
-  final asked = <(NavigationMode, List<NavLocation>)>[];
+  final asked = <(NavigationMode, List<NavLocation>, {bool wheelchair})>[];
 
   @override
   Future<MatchedPosition?> match(
     NavigationMode mode,
-    List<NavLocation> fixes,
-  ) async {
-    asked.add((mode, fixes));
+    List<NavLocation> fixes, {
+    required bool wheelchair,
+  }) async {
+    asked.add((mode, fixes, wheelchair: wheelchair));
     return answer;
   }
 }

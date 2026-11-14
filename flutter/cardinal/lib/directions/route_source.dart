@@ -89,8 +89,9 @@ abstract class RouteSource {
     Future<void>? abort,
   });
 
-  /// A new route for a trip under way, traveling by [mode], from [from] (where you are,
-  /// off the old route) to [to] (where the trip ends).
+  /// A new route for a trip under way, traveling by [mode] (by wheelchair if [mode] is
+  /// walking and [wheelchair] is set, as the trip's first route was), from [from] (where
+  /// you are, off the old route) to [to] (where the trip ends).
   ///
   /// [request] makes what to ask the router, given the adapter for [mode]: the navigation
   /// session knows the stops not yet passed and which way you're heading, so it writes the
@@ -101,6 +102,7 @@ abstract class RouteSource {
   /// [OutsideOfflineArea] or [NoOfflineArea] if one can't be looked for.
   Future<DirectionsRoute> reroute({
     required TravelMode mode,
+    required bool wheelchair,
     required LngLat from,
     required LngLat to,
     required Future<DirectionsRequest> Function(DirectionsAdapter adapter)
@@ -222,6 +224,7 @@ class OfflineRouteSource implements RouteSource {
   @override
   Future<DirectionsRoute> reroute({
     required TravelMode mode,
+    required bool wheelchair,
     required LngLat from,
     required LngLat to,
     required Future<DirectionsRequest> Function(DirectionsAdapter adapter)
@@ -231,7 +234,11 @@ class OfflineRouteSource implements RouteSource {
     await _checkCovers(area, from, to);
     // Only the best: there's no time to choose while under way, and alternates take the
     // router longer.
-    final adapter = await _adapter(mode, 0, false);
+    final adapter = await _adapter(
+      mode,
+      0,
+      mode.byWheelchair(wheelchair: wheelchair),
+    );
     final made = await request(adapter);
     final routes = await _route(area, adapter, made, 'reroute ${mode.name}');
     if (routes.isEmpty) {

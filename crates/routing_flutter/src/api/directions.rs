@@ -20,7 +20,7 @@ use std::time::SystemTime;
 const START_ACCURACY: f64 = 10.0;
 
 /// Valhalla's costing for going on foot, and by wheelchair.
-const PEDESTRIAN: &str = "pedestrian";
+pub(crate) const PEDESTRIAN: &str = "pedestrian";
 
 /// A point on the ground, in degrees.
 #[derive(Clone, Copy, Debug, PartialEq)]

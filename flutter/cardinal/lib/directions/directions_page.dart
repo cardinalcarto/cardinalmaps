@@ -282,8 +282,11 @@ class _DirectionsPageState extends State<DirectionsPage> {
     final directions = _directions!;
     final route = directions.selectedRoute;
     if (route == null) return;
-    NavigationScope.of(context).controller
-        .start(route: route, mode: directions.mode);
+    NavigationScope.of(context).controller.start(
+      route: route,
+      mode: directions.mode,
+      wheelchair: directions.wheelchair,
+    );
     unawaited(context.push(navigationLocation(widget.to)));
   }
 

@@ -1992,7 +1992,7 @@ mod tests {
             if window.len() > 30 {
                 window.remove(0);
             }
-            let position = router.match_position(NavigationMode::Driving, window.clone());
+            let position = router.match_position(NavigationMode::Driving, false, window.clone());
             let update = session.update_location(next, position);
             matched += usize::from(update.matched);
             assert_ne!(

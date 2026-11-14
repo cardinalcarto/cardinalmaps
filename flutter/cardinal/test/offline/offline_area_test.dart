@@ -150,6 +150,7 @@ class _FakeRouter implements OfflineRouter {
   @override
   Future<MatchedPosition?> matchPosition({
     required NavigationMode mode,
+    required bool wheelchair,
     required List<NavLocation> fixes,
   }) => throw UnimplementedError();
 }

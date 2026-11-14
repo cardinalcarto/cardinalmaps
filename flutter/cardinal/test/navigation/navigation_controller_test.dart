@@ -47,8 +47,12 @@ class Harness {
   NavigationState get state => controller.state;
   FakeTripSession get session => sessions.last;
 
-  void start(FakeAsync async, {TravelMode mode = TravelMode.driving}) {
-    controller.start(route: route, mode: mode);
+  void start(
+    FakeAsync async, {
+    TravelMode mode = TravelMode.driving,
+    bool wheelchair = false,
+  }) {
+    controller.start(route: route, mode: mode, wheelchair: wheelchair);
     async.flushMicrotasks();
   }
 
@@ -221,6 +225,49 @@ void main() {
         expect(question.from, const LngLat(1.50, 42.49));
         expect(question.to, const LngLat(1.53, 42.51));
         expect(h.session.rerouteFrom.single, from);
+      });
+    });
+
+    test(
+      'a trip walked by wheelchair asks for its new route by wheelchair',
+      () {
+        fakeAsync((async, h) {
+          h.start(async, mode: TravelMode.walking, wheelchair: true);
+          expect(h.controller.wheelchair, isTrue);
+          h.fix(async);
+          h.session.next = fakeUpdate(deviation: NavDeviation.offRoute);
+          h.fix(async);
+          async.elapse(offRouteHold);
+          final question = h.routes.rerouted.single;
+          expect(question.mode, TravelMode.walking);
+          expect(question.wheelchair, isTrue);
+        });
+      },
+    );
+
+    test('a trip walked on foot asks for its new route on foot', () {
+      fakeAsync((async, h) {
+        h.start(async, mode: TravelMode.walking);
+        expect(h.controller.wheelchair, isFalse);
+        h.fix(async);
+        h.session.next = fakeUpdate(deviation: NavDeviation.offRoute);
+        h.fix(async);
+        async.elapse(offRouteHold);
+        final question = h.routes.rerouted.single;
+        expect(question.mode, TravelMode.walking);
+        expect(question.wheelchair, isFalse);
+      });
+    });
+
+    test('wheelchair means nothing to a trip that is not walked', () {
+      fakeAsync((async, h) {
+        h.start(async, wheelchair: true);
+        expect(h.controller.wheelchair, isFalse);
+        h.fix(async);
+        h.session.next = fakeUpdate(deviation: NavDeviation.offRoute);
+        h.fix(async);
+        async.elapse(offRouteHold);
+        expect(h.routes.rerouted.single.wheelchair, isFalse);
       });
     });
 
@@ -767,6 +814,25 @@ void main() {
       heading: 90,
     );
 
+    test('matches a trip walked by wheelchair by wheelchair', () {
+      fakeAsync((async, h) {
+        h.start(async, mode: TravelMode.walking, wheelchair: true);
+        h.fix(async, at(0));
+        h.fix(async, at(1));
+        final (mode, _, :wheelchair) = h.matcher.asked.last;
+        expect(mode, NavigationMode.walking);
+        expect(wheelchair, isTrue);
+        // And not the next trip, on foot.
+        unawaited(h.controller.end());
+        async.flushMicrotasks();
+        expect(h.controller.wheelchair, isFalse);
+        h.start(async, mode: TravelMode.walking);
+        h.fix(async, at(0));
+        h.fix(async, at(1));
+        expect(h.matcher.asked.last.wheelchair, isFalse);
+      });
+    });
+
     test('matches each fix with the window before it, for the session', () {
       fakeAsync((async, h) {
         h.start(async, mode: TravelMode.walking);
@@ -778,8 +844,9 @@ void main() {
         h.matcher.answer = road;
         h.fix(async, at(1));
         h.fix(async, at(2));
-        final (mode, fixes) = h.matcher.asked.last;
+        final (mode, fixes, :wheelchair) = h.matcher.asked.last;
         expect(mode, NavigationMode.walking);
+        expect(wheelchair, isFalse);
         // The fix it started from too.
         expect(fixes, [at(0), at(1), at(2)]);
         expect(h.session.fixes.last, at(2));
@@ -855,13 +922,21 @@ void main() {
   test("transit can't be navigated, and a second start is refused", () {
     fakeAsync((async, h) {
       expect(
-        () => h.controller.start(route: h.route, mode: TravelMode.transit),
+        () => h.controller.start(
+          route: h.route,
+          mode: TravelMode.transit,
+          wheelchair: false,
+        ),
         throwsArgumentError,
       );
       expect(h.state, NavigationState.idle);
       h.start(async);
       expect(
-        () => h.controller.start(route: h.route, mode: TravelMode.driving),
+        () => h.controller.start(
+          route: h.route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        ),
         throwsStateError,
       );
     });

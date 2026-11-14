@@ -391,11 +391,30 @@ void main() {
       expect(navigation.state, NavigationState.acquiring);
       expect(navigation.route, same(best));
       expect(navigation.mode, TravelMode.driving);
+      expect(navigation.wheelchair, isFalse);
       expect(find.byTooltip('End'), findsOneWidget);
       expect(find.text('Start Navigation'), findsNothing);
       // The trip's own drawing takes the place of the directions'.
       expect(lines(), isEmpty);
       expect(features(navigationSource), hasLength(1));
+    });
+
+    testWidgets('a trip walked by wheelchair is navigated by wheelchair', (
+      tester,
+    ) async {
+      await store.settings.set(lastTravelMode, TravelMode.walking);
+      await store.settings.set(wheelchairByDefault, true);
+      await start(tester);
+      expect(routes.asked.last.wheelchair, isTrue);
+      expect(navigation.mode, TravelMode.walking);
+      expect(navigation.wheelchair, isTrue);
+    });
+
+    testWidgets('a trip walked on foot is not', (tester) async {
+      await store.settings.set(lastTravelMode, TravelMode.walking);
+      await start(tester);
+      expect(navigation.mode, TravelMode.walking);
+      expect(navigation.wheelchair, isFalse);
     });
 
     /// Makes the controller again in the test's own fake time: its work runs in the

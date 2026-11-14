@@ -18,9 +18,10 @@ class RouteQuestion {
 
 /// A new route [FakeRoutes] was asked for, waiting to be answered.
 class RerouteQuestion {
-  RerouteQuestion(this.mode, this.from, this.to, this.request);
+  RerouteQuestion(this.mode, this.wheelchair, this.from, this.to, this.request);
 
   final TravelMode mode;
+  final bool wheelchair;
   final LngLat from;
   final LngLat to;
 
@@ -40,13 +41,14 @@ class FakeRoutes implements RouteSource {
   @override
   Future<DirectionsRoute> reroute({
     required TravelMode mode,
+    required bool wheelchair,
     required LngLat from,
     required LngLat to,
     required Future<DirectionsRequest> Function(DirectionsAdapter adapter)
     request,
   }) async {
     final made = await request(FakeDirectionsAdapter());
-    final question = RerouteQuestion(mode, from, to, made);
+    final question = RerouteQuestion(mode, wheelchair, from, to, made);
     rerouted.add(question);
     return question.answer.future;
   }

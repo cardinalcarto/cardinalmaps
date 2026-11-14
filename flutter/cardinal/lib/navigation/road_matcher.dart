@@ -28,9 +28,13 @@ const matchGap = Duration(seconds: 10);
 /// Matches recent fixes to the roads, so tests can fake it.
 abstract class RoadMatcher {
   /// Where on the roads the last of [fixes] (oldest first) was, matched together with
-  /// those before it, for a trip traveling by [mode]; null if it couldn't be matched.
-  /// Never throws.
-  Future<MatchedPosition?> match(NavigationMode mode, List<NavLocation> fixes);
+  /// those before it, for a trip traveling by [mode], by wheelchair if [mode] is walking
+  /// and [wheelchair] is set; null if it couldn't be matched. Never throws.
+  Future<MatchedPosition?> match(
+    NavigationMode mode,
+    List<NavLocation> fixes, {
+    required bool wheelchair,
+  });
 }
 
 /// [RoadMatcher] over the offline area's streets, with the area's router.
@@ -42,13 +46,18 @@ class OfflineRoadMatcher implements RoadMatcher {
   @override
   Future<MatchedPosition?> match(
     NavigationMode mode,
-    List<NavLocation> fixes,
-  ) async {
+    List<NavLocation> fixes, {
+    required bool wheelchair,
+  }) async {
     try {
       final area = await _area();
       if (area == null) return null;
       return await area.useRouter(
-        (router) => router.matchPosition(mode: mode, fixes: fixes),
+        (router) => router.matchPosition(
+          mode: mode,
+          wheelchair: wheelchair,
+          fixes: fixes,
+        ),
       );
     } on Object catch (e) {
       debugPrint('navigation: match: $e');

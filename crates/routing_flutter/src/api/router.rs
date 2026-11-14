@@ -184,14 +184,16 @@ impl OfflineRouter {
     }
 
     /// Where on the roads the last of `fixes` (the recent fixes, oldest first) was, matched
-    /// together with those before it, for a trip traveling by `mode`; none if it couldn't be
-    /// matched, or the match failed.
+    /// together with those before it, for a trip traveling by `mode` (by wheelchair if `mode`
+    /// is walking and `wheelchair` is set); none if it couldn't be matched, or the match
+    /// failed.
     ///
     /// It builds the `trace_attributes` request and reads the answer
     /// ([`matching::match_body`], [`matching::parse_match`]), so a fix takes one call.
     pub fn match_position(
         &self,
         mode: NavigationMode,
+        wheelchair: bool,
         fixes: Vec<NavLocation>,
     ) -> Option<MatchedPosition> {
         if fixes.is_empty() {
@@ -199,7 +201,7 @@ impl OfflineRouter {
         }
         let response = self
             .router
-            .trace_attributes(&matching::match_body(mode, &fixes));
+            .trace_attributes(&matching::match_body(mode, wheelchair, &fixes));
         matching::parse_match(response.status.as_u16(), &response.body)
     }
 }

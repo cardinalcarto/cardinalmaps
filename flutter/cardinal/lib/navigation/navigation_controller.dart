@@ -184,6 +184,11 @@ class NavigationController extends ChangeNotifier {
   /// How the trip travels; null when idle.
   TravelMode? get mode => _mode;
   TravelMode? _mode;
+
+  /// Whether the trip is walking by wheelchair, as its route was found: its new routes
+  /// and its matches to the roads are by wheelchair too. False when idle.
+  bool get wheelchair => _wheelchair;
+  bool _wheelchair = false;
   NavigationMode? _navigationMode;
 
   /// The route being followed: the one started with, or the latest new one. Null when
@@ -289,12 +294,17 @@ class NavigationController extends ChangeNotifier {
   /// The last of the session calls made so far, which the next waits for.
   Future<void> _calls = Future.value();
 
-  /// Starts navigating [route], traveling by [mode], which can't be transit. Fixes start
-  /// coming, the screen stays on, and the route's announcements are spoken as they're
-  /// due.
+  /// Starts navigating [route], traveling by [mode], which can't be transit, and by
+  /// wheelchair if [mode] is walking and [wheelchair] is set, as [route] was found. Fixes
+  /// start coming, the screen stays on, and the route's announcements are spoken as
+  /// they're due.
   ///
   /// Only from idle: [end] the trip under way first.
-  void start({required DirectionsRoute route, required TravelMode mode}) {
+  void start({
+    required DirectionsRoute route,
+    required TravelMode mode,
+    required bool wheelchair,
+  }) {
     if (_state != NavigationState.idle) {
       throw StateError('a trip is under way ($_state)');
     }
@@ -304,6 +314,7 @@ class NavigationController extends ChangeNotifier {
     }
     _trip++;
     _mode = mode;
+    _wheelchair = mode.byWheelchair(wheelchair: wheelchair);
     _navigationMode = navigation;
     _route = route;
     _steps = route.navigable.steps();
@@ -416,7 +427,11 @@ class NavigationController extends ChangeNotifier {
           NavigationState.rerouting:
         final session = _session!;
         // [fix] is the newest to come, so the window ends with it.
-        final matched = await _matcher.match(_navigationMode!, _window.fixes);
+        final matched = await _matcher.match(
+          _navigationMode!,
+          _window.fixes,
+          wheelchair: _wheelchair,
+        );
         if (trip != _trip) return;
         final update = await _call(() => session.updateLocation(fix, matched));
         if (trip != _trip) return;
@@ -535,6 +550,7 @@ class NavigationController extends ChangeNotifier {
     try {
       final route = await _routes.reroute(
         mode: _mode!,
+        wheelchair: _wheelchair,
         from: LngLat(from.lng, from.lat),
         to: _destination!,
         request: (adapter) =>
@@ -592,6 +608,7 @@ class NavigationController extends ChangeNotifier {
     final fixes = _fixes;
     _fixes = null;
     _mode = null;
+    _wheelchair = false;
     _navigationMode = null;
     _route = null;
     _steps = const [];

@@ -339,7 +339,7 @@ Future<void> _navigate(
   DirectionsRoute route,
 ) async {
   NavigationScope.of(context).controller
-      .start(route: route, mode: TravelMode.driving);
+      .start(route: route, mode: TravelMode.driving, wheelchair: false);
   unawaited(GoRouter.of(context).push(navigationLocation(destinationId)));
   await _settle(tester, const Duration(seconds: 2));
 }

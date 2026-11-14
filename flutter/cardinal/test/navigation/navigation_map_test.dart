@@ -112,7 +112,11 @@ void main() {
     test('draws the route ahead, then you along it', () {
       fakeAsync((async) {
         make();
-        controller.start(route: route, mode: TravelMode.driving);
+        controller.start(
+          route: route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        );
         drawn.start();
         expect(coordinates(map, 'ahead'), hasLength(4));
         expect(coordinates(map, 'traveled'), isEmpty);
@@ -142,7 +146,11 @@ void main() {
     test('follows at the zoom for your speed', () {
       fakeAsync((async) {
         make();
-        controller.start(route: route, mode: TravelMode.driving);
+        controller.start(
+          route: route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        );
         drawn.start();
         final camera = followCamera(NavigationMode.driving);
         fix(async, at(0.5, 0, speed: camera.referenceSpeed / 2));
@@ -164,7 +172,11 @@ void main() {
     test('has nothing to recenter on before it follows', () {
       fakeAsync((async) {
         make();
-        controller.start(route: route, mode: TravelMode.driving);
+        controller.start(
+          route: route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        );
         drawn.start();
         expect(drawn.cameraMode.value, isNull);
         drawn.recenter();
@@ -177,7 +189,11 @@ void main() {
     test('offers to recenter once moved off you, and follows again', () {
       fakeAsync((async) {
         make();
-        controller.start(route: route, mode: TravelMode.driving);
+        controller.start(
+          route: route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        );
         drawn.start();
         final camera = followCamera(NavigationMode.driving);
         fix(async, at(0.5, 0, speed: camera.referenceSpeed * 2));
@@ -200,7 +216,11 @@ void main() {
     test('overview shows the rest of the trip, flat and north up', () {
       fakeAsync((async) {
         make();
-        controller.start(route: route, mode: TravelMode.driving);
+        controller.start(
+          route: route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        );
         drawn.start();
         fix(async, at(1.5, 1));
         const clear = EdgeInsets.only(top: 150, bottom: 90);
@@ -248,7 +268,11 @@ void main() {
           location: location,
         );
         drawn = NavigationMap(map: map, controller: controller);
-        controller.start(route: route, mode: TravelMode.driving);
+        controller.start(
+          route: route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        );
         drawn.start();
         fix(async, at(0.5, 0));
         const clear = EdgeInsets.only(top: 150);
@@ -289,7 +313,11 @@ void main() {
           location: location,
         );
         drawn = NavigationMap(map: map, controller: controller);
-        controller.start(route: route, mode: TravelMode.driving);
+        controller.start(
+          route: route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        );
         drawn.start();
         fix(async, at(0.5, 0));
         drawn.overview(EdgeInsets.zero);
@@ -313,7 +341,11 @@ void main() {
     test('puts the chevron where navigation put you off the route', () {
       fakeAsync((async) {
         make();
-        controller.start(route: route, mode: TravelMode.driving);
+        controller.start(
+          route: route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        );
         drawn.start();
         fix(async, at(0.5, 0));
         expect(map.pucks.last.lng, 0.5);
@@ -377,7 +409,11 @@ void main() {
           location: location,
         );
         drawn = NavigationMap(map: map, controller: controller);
-        controller.start(route: route, mode: TravelMode.driving);
+        controller.start(
+          route: route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        );
         drawn.start();
         fix(async, at(0.5, 0));
         fix(async, fakeUpdate(deviation: NavDeviation.offRoute));
@@ -400,7 +436,11 @@ void main() {
     test('takes the trip off the map when it stops', () {
       fakeAsync((async) {
         make();
-        controller.start(route: route, mode: TravelMode.driving);
+        controller.start(
+          route: route,
+          mode: TravelMode.driving,
+          wheelchair: false,
+        );
         drawn.start();
         fix(async, at(0.5, 0));
         drawn.dispose();

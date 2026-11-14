@@ -389,6 +389,7 @@ void main() {
         [1.53, 42.51],
       ]),
       mode: TravelMode.driving,
+      wheelchair: false,
     );
     final hide = screen.show();
     await tester.pump();

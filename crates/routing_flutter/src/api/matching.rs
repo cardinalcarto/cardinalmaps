@@ -13,6 +13,7 @@
 //! [`NavigationSession::update_location`]: super::navigation::NavigationSession::update_location
 //! [`OfflineRouter::match_position`]: super::router::OfflineRouter::match_position
 
+use super::directions::PEDESTRIAN;
 use super::navigation::{NavLocation, NavigationMode};
 use serde_json::{Value, json};
 
@@ -45,7 +46,7 @@ impl NavigationMode {
         match self {
             NavigationMode::Driving => "auto",
             NavigationMode::Cycling => "bicycle",
-            NavigationMode::Walking => "pedestrian",
+            NavigationMode::Walking => PEDESTRIAN,
         }
     }
 }
@@ -60,13 +61,16 @@ const ATTRIBUTES: [&str; 4] = [
 ];
 
 /// The `trace_attributes` request body matching `fixes` (oldest first, the fix to place
-/// last), traveling by `mode`.
+/// last), traveling by `mode`, and by wheelchair if `mode` is walking and `wheelchair` is
+/// set: the same `pedestrian` costing of type `wheelchair` as the trip's routes, so the
+/// match keeps to the ways they take. `wheelchair` means nothing for other modes, as in
+/// the app's `TravelMode.byWheelchair`.
 ///
 /// `map_snap`, since fixes are a noisy trace of positions, not a route's own shape for
 /// `edge_walk`. Each fix carries its time and its own accuracy, so a poor fix weighs less
 /// in the match than a good one; the search radius stays the router's default (50 m),
 /// past which a fix is too far from any road to be placed on one anyway.
-pub(crate) fn match_body(mode: NavigationMode, fixes: &[NavLocation]) -> Vec<u8> {
+pub(crate) fn match_body(mode: NavigationMode, wheelchair: bool, fixes: &[NavLocation]) -> Vec<u8> {
     let shape: Vec<Value> = fixes
         .iter()
         .map(|fix| {
@@ -80,13 +84,16 @@ pub(crate) fn match_body(mode: NavigationMode, fixes: &[NavLocation]) -> Vec<u8>
             })
         })
         .collect();
-    serde_json::to_vec(&json!({
+    let mut body = json!({
         "costing": mode.costing(),
         "shape_match": "map_snap",
         "shape": shape,
         "filters": {"attributes": ATTRIBUTES, "action": "include"},
-    }))
-    .unwrap_or_default()
+    });
+    if wheelchair && mode == NavigationMode::Walking {
+        body["costing_options"] = json!({ (PEDESTRIAN): { "type": "wheelchair" } });
+    }
+    serde_json::to_vec(&body).unwrap_or_default()
 }
 
 /// The last fix's match in a `trace_attributes` answer, or none if it has none: an error
@@ -147,6 +154,7 @@ mod tests {
     fn the_body_has_each_fix_with_its_time_and_accuracy() {
         let body: Value = serde_json::from_slice(&match_body(
             NavigationMode::Cycling,
+            false,
             &[
                 fix(47.6, -122.3, 4.2, 1_000_500),
                 fix(47.61, -122.3, 0.0, 1_001_500),
@@ -165,6 +173,46 @@ mod tests {
         assert_eq!(body["filters"]["action"], "include");
         assert_eq!(NavigationMode::Driving.costing(), "auto");
         assert_eq!(NavigationMode::Walking.costing(), "pedestrian");
+    }
+
+    #[test]
+    fn a_wheelchair_trip_is_matched_with_its_routes_costing_options() {
+        let fixes = [fix(47.6, -122.3, 4.0, 1_000_000)];
+        let body: Value =
+            serde_json::from_slice(&match_body(NavigationMode::Walking, true, &fixes)).unwrap();
+        assert_eq!(body["costing"], "pedestrian");
+        assert_eq!(body["costing_options"]["pedestrian"]["type"], "wheelchair");
+        // The same as the route's request asks for.
+        let adapter = crate::api::directions::DirectionsAdapter::valhalla(
+            "http://router/route".into(),
+            "pedestrian".into(),
+            0,
+            "en-US".into(),
+            crate::api::directions::DistanceUnits::Kilometers,
+            true,
+        )
+        .unwrap();
+        let point = crate::api::directions::DirectionsPoint {
+            lat: 47.6,
+            lng: -122.3,
+        };
+        let route: Value =
+            serde_json::from_slice(&adapter.request(point, point).unwrap().body).unwrap();
+        assert_eq!(body["costing_options"], route["costing_options"]);
+    }
+
+    #[test]
+    fn only_a_wheelchair_walking_trip_has_costing_options() {
+        let fixes = [fix(47.6, -122.3, 4.0, 1_000_000)];
+        for (mode, wheelchair) in [
+            (NavigationMode::Walking, false),
+            (NavigationMode::Driving, true),
+            (NavigationMode::Cycling, true),
+        ] {
+            let body: Value =
+                serde_json::from_slice(&match_body(mode, wheelchair, &fixes)).unwrap();
+            assert!(body["costing_options"].is_null(), "{mode:?} {wheelchair}");
+        }
     }
 
     #[test]
@@ -385,7 +433,7 @@ mod tests {
                 for end in (30..fixes.len()).step_by(7) {
                     let window = &fixes[end - 30..end];
                     let mut body: Value =
-                        serde_json::from_slice(&match_body(mode, window)).unwrap();
+                        serde_json::from_slice(&match_body(mode, false, window)).unwrap();
                     body["filters"]["attributes"]
                         .as_array_mut()
                         .unwrap()
@@ -486,14 +534,14 @@ mod tests {
                         .step_by((fixes.len() / 300).max(1))
                         .collect();
                     for &end in ends.iter().take(3) {
-                        router.match_position(mode, fixes[end - window..end].to_vec());
+                        router.match_position(mode, false, fixes[end - window..end].to_vec());
                     }
                     let mut times = Vec::new();
                     let mut unmatched = 0;
                     for &end in &ends {
                         let window = fixes[end - window..end].to_vec();
                         let started = Instant::now();
-                        let matched = router.match_position(mode, window);
+                        let matched = router.match_position(mode, false, window);
                         times.push(started.elapsed().as_secs_f64() * 1000.0);
                         unmatched += usize::from(matched.is_none());
                     }

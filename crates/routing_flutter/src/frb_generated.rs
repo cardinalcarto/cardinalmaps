@@ -1282,6 +1282,7 @@ fn wire__crate__api__router__OfflineRouter_match_position_impl(
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineRouter>,
             >>::sse_decode(&mut deserializer);
             let api_mode = <crate::api::navigation::NavigationMode>::sse_decode(&mut deserializer);
+            let api_wheelchair = <bool>::sse_decode(&mut deserializer);
             let api_fixes =
                 <Vec<crate::api::navigation::NavLocation>>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -1305,6 +1306,7 @@ fn wire__crate__api__router__OfflineRouter_match_position_impl(
                         Ok::<_, ()>(crate::api::router::OfflineRouter::match_position(
                             &*api_that_guard,
                             api_mode,
+                            api_wheelchair,
                             api_fixes,
                         ))?;
                     std::result::Result::Ok(output_ok)

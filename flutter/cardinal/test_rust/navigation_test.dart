@@ -53,9 +53,14 @@ class RouterRoadMatcher implements RoadMatcher {
   @override
   Future<MatchedPosition?> match(
     NavigationMode mode,
-    List<NavLocation> fixes,
-  ) async {
-    final position = await router.matchPosition(mode: mode, fixes: fixes);
+    List<NavLocation> fixes, {
+    required bool wheelchair,
+  }) async {
+    final position = await router.matchPosition(
+      mode: mode,
+      wheelchair: wheelchair,
+      fixes: fixes,
+    );
     if (position != null) matched++;
     return position;
   }
@@ -122,7 +127,7 @@ void main() {
       }
     });
 
-    controller.start(route: route, mode: TravelMode.driving);
+    controller.start(route: route, mode: TravelMode.driving, wheelchair: false);
     final watch = Stopwatch()..start();
     while (controller.state != NavigationState.arrived &&
         watch.elapsed < const Duration(seconds: 8)) {

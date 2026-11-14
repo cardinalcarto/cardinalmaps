@@ -206,6 +206,7 @@ abstract class RustLibApi extends BaseApi {
   Future<MatchedPosition?> crateApiRouterOfflineRouterMatchPosition({
     required OfflineRouter that,
     required NavigationMode mode,
+    required bool wheelchair,
     required List<NavLocation> fixes,
   });
 
@@ -1230,6 +1231,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<MatchedPosition?> crateApiRouterOfflineRouterMatchPosition({
     required OfflineRouter that,
     required NavigationMode mode,
+    required bool wheelchair,
     required List<NavLocation> fixes,
   }) {
     return handler.executeNormal(
@@ -1241,6 +1243,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_navigation_mode(mode, serializer);
+          sse_encode_bool(wheelchair, serializer);
           sse_encode_list_nav_location(fixes, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
@@ -1254,7 +1257,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: null,
         ),
         constMeta: kCrateApiRouterOfflineRouterMatchPositionConstMeta,
-        argValues: [that, mode, fixes],
+        argValues: [that, mode, wheelchair, fixes],
         apiImpl: this,
       ),
     );
@@ -1263,7 +1266,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiRouterOfflineRouterMatchPositionConstMeta =>
       const TaskConstMeta(
         debugName: "OfflineRouter_match_position",
-        argNames: ["that", "mode", "fixes"],
+        argNames: ["that", "mode", "wheelchair", "fixes"],
       );
 
   @override
@@ -6258,17 +6261,20 @@ class OfflineRouterImpl extends RustOpaque implements OfflineRouter {
   );
 
   /// Where on the roads the last of `fixes` (the recent fixes, oldest first) was, matched
-  /// together with those before it, for a trip traveling by `mode`; none if it couldn't be
-  /// matched, or the match failed.
+  /// together with those before it, for a trip traveling by `mode` (by wheelchair if `mode`
+  /// is walking and `wheelchair` is set); none if it couldn't be matched, or the match
+  /// failed.
   ///
   /// It builds the `trace_attributes` request and reads the answer
   /// ([`matching::match_body`], [`matching::parse_match`]), so a fix takes one call.
   Future<MatchedPosition?> matchPosition({
     required NavigationMode mode,
+    required bool wheelchair,
     required List<NavLocation> fixes,
   }) => RustLib.instance.api.crateApiRouterOfflineRouterMatchPosition(
     that: this,
     mode: mode,
+    wheelchair: wheelchair,
     fixes: fixes,
   );
 
