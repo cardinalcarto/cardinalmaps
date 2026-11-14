@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/settings/accessibility.dart';
+import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:cardinal/transit/nearby_transit.dart';
 import 'package:cardinal/transit/nearby_page.dart';
@@ -591,5 +592,104 @@ void main() {
     expect(_following(tester, '40').map((s) => s.text), [at(107)]);
     expect(_next(tester, '62').data, '60');
     expect(_following(tester, '62').map((s) => s.text), [at(90)]);
+  });
+
+  group('sheet', () {
+    /// 30% of [appScreen]'s height: the lower anchor.
+    const lower = 240.0;
+
+    SheetController sheet(WidgetTester tester) =>
+        SheetScaffold.controllerOf(tester.element(find.text('Nearby transit')));
+
+    List<double> anchors(WidgetTester tester) => [
+      for (final a in sheet(tester).anchors) a.extent,
+    ];
+
+    /// Drags the sheet by [dy] from its header, and lets it settle.
+    Future<void> drag(WidgetTester tester, double dy) async {
+      await tester.drag(find.text('Nearby transit'), Offset(0, dy));
+      await tester.pumpAndSettle();
+    }
+
+    List<Map<String, Object?>> routes(int n) => [
+      for (var i = 0; i < n; i++) _route('${100 + i}'),
+    ];
+
+    testWidgets('a long list opens at 30% and goes up to the full screen', (
+      tester,
+    ) async {
+      await open(tester);
+      await answer(tester, routes(20));
+      expect(anchors(tester), [lower, appScreen.height]);
+      expect(sheet(tester).extent, lower);
+
+      await drag(tester, -600);
+      expect(sheet(tester).extent, appScreen.height);
+    });
+
+    testWidgets('never rests below 30%', (tester) async {
+      await open(tester);
+      await answer(tester, routes(20));
+      await drag(tester, 200);
+      expect(sheet(tester).extent, lower);
+    });
+
+    testWidgets('with one row, tops out where the content ends', (
+      tester,
+    ) async {
+      await open(tester);
+      await answer(tester, routes(1));
+      final [low, high] = anchors(tester);
+      // One row ends just above 30%.
+      expect(low, lower);
+      expect(high, greaterThan(lower));
+      expect(high, lessThan(lower + 20));
+      expect(sheet(tester).extent, lower);
+
+      await drag(tester, -600);
+      expect(sheet(tester).extent, high);
+    });
+
+    testWidgets(
+      'with only a message, the content ends below 30%, which is the top',
+      (tester) async {
+        await open(tester);
+        expect(find.text('Finding departures near you…'), findsOneWidget);
+        // The library can't take the lower of 30% and the content's end: the end
+        // becomes the lower anchor, and 30%, past the content, the upper.
+        final [end, top] = anchors(tester);
+        expect(end, lessThan(lower));
+        expect(top, lower);
+        expect(sheet(tester).extent, lower);
+
+        await drag(tester, -600);
+        expect(sheet(tester).extent, lower);
+        await drag(tester, 200);
+        expect(sheet(tester).extent, end);
+      },
+    );
+
+    testWidgets('rows arriving at 30% leave the sheet there', (tester) async {
+      await open(tester);
+      final extents = <double>[];
+      final controller = sheet(tester);
+      void heard() => extents.add(controller.extent);
+      controller.addListener(heard);
+      addTearDown(() => controller.removeListener(heard));
+
+      Future<void> refresh() async {
+        now = now.add(nearbyRefresh);
+        await tester.pump(nearbyRefresh);
+      }
+
+      await answer(tester, routes(1));
+      await refresh();
+      await answer(tester, routes(20));
+      await refresh();
+      await answer(tester, routes(2));
+      expect(source.asked, hasLength(3));
+      expect(controller.extent, lower);
+      expect(extents.where((e) => e != lower), isEmpty);
+    });
   });
 }

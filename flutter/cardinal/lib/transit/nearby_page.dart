@@ -122,7 +122,18 @@ enum _Note {
 }
 
 class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
-  static const _header = #nearbyTransitHeader;
+  /// All of the page's content, whose end the sheet never goes past.
+  static const _content = #nearbyTransitContent;
+
+  /// Where the sheet opens and the lowest it rests: 30% of the screen.
+  ///
+  /// Content shorter than that ends below it, and then the end of the content is the
+  /// lower anchor and this the upper one: the sheet can't say "whichever is lower".
+  static const _lower = SheetAnchor.fraction(0.3);
+
+  /// The highest the sheet goes: the end of the content, or the full screen if that
+  /// comes first.
+  static const _upper = SheetAnchor.section(_content);
 
   NearbyTransitController? _controller;
   late LocationSource _location;
@@ -348,35 +359,44 @@ class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
     final access = _controller!.rows.sortedBy ?? TransitAccess.walking;
     return SheetContent(
       showsBottomBar: true,
-      anchors: const [
-        SheetAnchor.section(_header),
-        SheetAnchor.fraction(0.5),
-        SheetAnchor.full(),
-      ],
-      initialAnchor: 1,
+      anchors: const [_lower, _upper],
       slivers: [
-        const SliverToBoxAdapter(
-          child: SheetSection(id: _header, child: _Header()),
-        ),
         SliverToBoxAdapter(
-          child: routes.isEmpty
-              ? _Placeholder(_note)
-              : Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: AppListSection(
-                    children: [
-                      for (final route in routes)
-                        NearbyRow(
-                          key: ValueKey(route.key),
-                          route: route,
-                          shown: _controller!.rows.shown(route.key),
-                          onShown: (page) => _controller!.show(route.key, page),
-                          access: access,
-                          now: _now,
-                        ),
-                    ],
-                  ),
-                ),
+          child: SheetSection(
+            id: _content,
+            // The sheet follows as rows come and go, rather than jumping.
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _Header(),
+                  if (routes.isEmpty)
+                    _Placeholder(_note)
+                  else
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: AppListSection(
+                        children: [
+                          for (final route in routes)
+                            NearbyRow(
+                              key: ValueKey(route.key),
+                              route: route,
+                              shown: _controller!.rows.shown(route.key),
+                              onShown: (page) =>
+                                  _controller!.show(route.key, page),
+                              access: access,
+                              now: _now,
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
         ),
       ],
     );
