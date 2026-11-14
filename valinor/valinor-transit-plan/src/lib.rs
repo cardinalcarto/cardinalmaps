@@ -38,6 +38,8 @@ mod multi_feed_regressions;
 #[cfg(test)]
 mod multi_feed_tests;
 #[cfg(test)]
+mod nearby_seated_tests;
+#[cfg(test)]
 mod nearby_tests;
 #[cfg(test)]
 mod review_tests;

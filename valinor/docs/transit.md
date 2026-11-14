@@ -529,8 +529,9 @@ empty for a page without any), and `stop_id`; with `time`, `mode`, `walk_seconds
 It answers with the route, `headsigns` as asked, `departures` from the stop of the route's
 trips whose headsign there is one of them (or that have none, for an empty list) from `time` plus
 `walk_seconds` (`max_departures` counting only those that run, as for nearby), `ride`, a plan's
-transit leg on the chosen trip (or the first that runs) from the stop to the end of its trip, with
-every stop's times, its shape as polyline6, vehicle, and alerts; `shape_to_stop`, the same trip
+transit leg on the chosen trip (or the first that runs) from the stop to where its vehicle stops
+carrying riders, with every stop's times, its shape as polyline6, vehicle, and alerts;
+`shape_to_stop`, the same trip
 before the stop, where the rider can't board it yet: its shape from the first stop of its GTFS trip
 to the stop, as polyline6, ending where the ride's begins (straight from stop to stop where the
 trip has no shape there, or runs on a pattern real-time data gave it; left out without a `ride`,
@@ -541,6 +542,22 @@ and isn't listed. A route, stop, or trip that isn't there is a 404 (`unknown_rou
 `unknown_stop`, or `unknown_trip`); headsigns with nothing in the horizon are an answer with no
 departures and no `ride`. A request without `headsigns`, with an empty headsign, or naming one
 twice is a 400.
+
+Where the vehicle goes on as further trips of a stay-seated combined trip (see "Stay-seated
+transfers"), the `ride` goes on with it, as a plan's ride does: one ride in `segments`, each
+original trip with its `trip_id`, route, headsign, and the range of the ride's `stops` it covers,
+the joins one stop, every stop with its own trip's times and real-time data, and the shape across
+them all. A 44 to the University District that continues as the 43 to Capitol Hill so shows, before
+the rider boards, that it gets them to Capitol Hill. The ride goes on from the boarded trip through
+each next trip that still lets riders on or off somewhere, so it ends where `continues_as` would
+stop: at the end of the last trip before one that is canceled, replaced, or removed by a
+`NO_SERVICE` alert. The compiler's chain cap and rules (`block_id`, and `transfer_type` 4 and 5)
+made the chain, so every trip on it is one a rider can stay on for; a later trip of the same route
+is part of the ride as well. The ride's `route`, `trip`, and `departures` stay the row's, whatever
+routes the later segments are, and `shape_to_stop` is still only the boarded trip's own.
+On Seattle's build, the 44 from N 46th St & Phinney Ave N at 09:49 on a Tuesday rides 9 stops to
+U District Station as the 44 and 27 more as the 43, to Boren Ave & E Yesler Way: its detail grows
+from 9.0 KB of JSON to 23.3 KB, the ride from 5.1 KB to 19.4 KB.
 
 Measured with `nearby_bench` on Seattle's seven feeds (the 2026-11-12 planet build) on a desktop,
 warm, a 30-minute walk takes 4 to 35 ms, nearly all of it the access table:

@@ -24,6 +24,7 @@ use valinor_gtfs_rt::{FeedKind, proto};
 
 use crate::error::{Missing, PlanError};
 use crate::nearby::{NearbyRequest, RouteDetailRequest, TripChoice, nearby};
+use crate::nearby_seated_tests::segments;
 use crate::plan::TravelMode;
 use crate::response::{
     Accessibility, ContinuesAs, DepartureStatus, NearbyPage, NearbyResponse, NearbyRoute,
@@ -1886,30 +1887,83 @@ fn a_trip_whose_vehicle_goes_on_as_another_route_says_so() {
             .is_none()
     );
 
-    // A route detail's ride is the trip boarded, to its own end.
-    let detail = detail(
-        &state,
-        &RouteDetailRequest {
-            trip: Some(TripChoice {
-                trip_id: "L44-1150".to_owned(),
-                start_date: None,
-            }),
-            ..lines_detail("L44", &["University District"], "P1", june_15(11, 30))
-        },
-    );
-    let ride = detail.ride.as_ref().expect("a ride");
-    let stops: Vec<&str> = ride.stops.iter().map(|s| s.stop.stop_id.as_str()).collect();
-    assert_eq!(stops, vec!["P1", "P2", "PZ"]);
-    assert_eq!(
-        detail.departures[0].continues_as.as_ref(),
-        Some(&forty_three)
-    );
-
     // When the next trip is canceled, the vehicle doesn't go on.
     canceled_in(LINES, &state, &["L43-1203"]);
     let response = run(&state, &request(june_15(11, 30)));
     let east = page(route(&response, LINES, "L44"), "University District");
     assert!(east.departures.iter().all(|d| d.continues_as.is_none()));
+}
+
+#[test]
+fn a_route_detail_rides_on_as_the_route_its_vehicle_continues_as() {
+    let state = state();
+    let forty_three = ContinuesAs {
+        route_id: "L43".to_owned(),
+        short_name: Some("43".to_owned()),
+        headsign: Some("Capitol Hill".to_owned()),
+    };
+    // A route detail's ride goes on with the vehicle, as route 43, to its end.
+    let university_district = RouteDetailRequest {
+        trip: Some(TripChoice {
+            trip_id: "L44-1150".to_owned(),
+            start_date: None,
+        }),
+        ..lines_detail("L44", &["University District"], "P1", june_15(11, 30))
+    };
+    let detail_44 = detail(&state, &university_district);
+    let ride = detail_44.ride.as_ref().expect("a ride");
+    let stops: Vec<&str> = ride.stops.iter().map(|s| s.stop.stop_id.as_str()).collect();
+    assert_eq!(stops, vec!["P1", "P2", "PZ", "PV"]);
+    assert_eq!(
+        segments(ride),
+        vec![
+            ("L44-1150", Some("L44"), Some("University District"), 0, 2),
+            ("L43-1203", Some("L43"), Some("Capitol Hill"), 2, 3),
+        ]
+    );
+    // `PZ` arrives as the 44 and leaves as the 43, three minutes later.
+    assert_eq!(
+        (ride.stops[2].arrival, ride.stops[2].departure),
+        (june_15(12, 0), june_15(12, 3))
+    );
+    assert_eq!(ride.arrival, june_15(12, 20));
+    assert_eq!(
+        detail_44.departures[0].continues_as.as_ref(),
+        Some(&forty_three)
+    );
+
+    // The row is route 44's, whatever the vehicle goes on as: its ride is the 44's trip,
+    // and its departures are the 44's.
+    assert_eq!(detail_44.route.route_id, "L44");
+    assert_eq!(ride.trip.trip_id, "L44-1150");
+    assert_eq!(
+        ride.route.as_ref().map(|r| r.route_id.as_str()),
+        Some("L44")
+    );
+    assert!(
+        detail_44
+            .departures
+            .iter()
+            .all(|d| d.trip_id.starts_with("L44-")),
+        "{:?}",
+        detail_44.departures
+    );
+    // From where route 43's trip begins, its own row rides it alone.
+    let detail_43 = detail(
+        &state,
+        &lines_detail("L43", &["Capitol Hill"], "PZ", june_15(11, 30)),
+    );
+    let ride_43 = detail_43.ride.as_ref().expect("a ride");
+    assert_eq!(ride_43.stops.len(), 2);
+    assert!(ride_43.segments.is_empty());
+
+    // When the next trip is canceled, the ride ends with the 44.
+    canceled_in(LINES, &state, &["L43-1203"]);
+    let detail_44 = detail(&state, &university_district);
+    let ride = detail_44.ride.as_ref().expect("a ride");
+    let stops: Vec<&str> = ride.stops.iter().map(|s| s.stop.stop_id.as_str()).collect();
+    assert_eq!(stops, vec!["P1", "P2", "PZ"]);
+    assert!(ride.segments.is_empty());
 }
 
 #[test]

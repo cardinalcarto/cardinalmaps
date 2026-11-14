@@ -178,8 +178,11 @@ pub struct RouteDetailResponse {
     pub walk_seconds: u32,
     /// The next departures from the stop under the page's headsigns the rider can be there for.
     pub departures: Vec<StopDeparture>,
-    /// The trip asked for, or else the first departure that runs: from the stop to the end
-    /// of its trip, with every stop's times, its shape, vehicle, and alerts, as a plan's ride.
+    /// The trip asked for, or else the first departure that runs: from the stop to where its
+    /// vehicle stops carrying riders, with every stop's times, its shape, vehicle, and alerts,
+    /// as a plan's ride. That is the end of its GTFS trip, or, where the vehicle goes on as
+    /// further trips of a stay-seated chain, the end of the last of them that still carries
+    /// riders, the ride then in `segments` as a plan's stay-seated ride is.
     ///
     /// Absent when nothing runs in the horizon.
     pub ride: Option<TransitLeg>,
@@ -815,18 +818,7 @@ impl RideDescriber<'_> {
             .iter()
             .position(|s| s.first_position <= board && board <= s.last_position)?;
         let (boarded, next) = (segments.get(index)?, segments.get(index + 1)?);
-        if next.route == boarded.route {
-            return None;
-        }
-        // A canceled or replaced stretch, or one a `NO_SERVICE` alert removed, lets no one on
-        // or off: the vehicle doesn't go on as that trip.
-        let snapshot = &self.snapshot.snapshot;
-        let in_service = (next.first_position..=next.last_position).any(|position| {
-            snapshot
-                .lane_event(candidate.lane, candidate.row, position)
-                .is_some_and(|event| event.rules.pickup || event.rules.drop_off)
-        });
-        if !in_service {
+        if next.route == boarded.route || !self.carries_riders(candidate, next) {
             return None;
         }
         let route = part.compiled().route(next.route)?;
@@ -841,6 +833,60 @@ impl RideDescriber<'_> {
             short_name: route.short_name.map(str::to_owned),
             headsign,
         })
+    }
+
+    /// Whether a departure's vehicle carries riders on `segment`, an original trip of its
+    /// stay-seated combined trip: whether it lets anyone on or off there.
+    ///
+    /// A canceled or replaced stretch, or one a `NO_SERVICE` alert removed, lets no one on or
+    /// off, so the vehicle doesn't go on as that trip.
+    fn carries_riders(
+        &self,
+        candidate: &Candidate,
+        segment: &valinor_gtfs::TripSegmentInfo<'_>,
+    ) -> bool {
+        let snapshot = &self.snapshot.snapshot;
+        (segment.first_position..=segment.last_position).any(|position| {
+            snapshot
+                .lane_event(candidate.lane, candidate.row, position)
+                .is_some_and(|event| event.rules.pickup || event.rules.drop_off)
+        })
+    }
+
+    /// Where a departure's vehicle stops carrying riders, as a position of its pattern:
+    /// the end of its GTFS trip, or on a stay-seated combined trip, the end of the last of the
+    /// original trips from the boarded one on that carries riders, each in turn.
+    ///
+    /// The compiler's chain cap and rules (`block_id`, and `transfer_type` 4 and 5) made the
+    /// combined trip, so every original trip on it is one a rider can stay on for.
+    fn chain_end(&self, candidate: &Candidate, boarded: &Boarded) -> usize {
+        let Some((part, local)) = self.set().trip_part(candidate.key.trip) else {
+            return boarded.end;
+        };
+        let segments = part.compiled().trip_segments(local);
+        let board = candidate.pair.board;
+        let Some(index) = segments
+            .iter()
+            .position(|s| s.first_position <= board && board <= s.last_position)
+        else {
+            return boarded.end;
+        };
+        // The boarded trip carries riders, since the departure boards it.
+        let last = segments
+            .iter()
+            .skip(index + 1)
+            .take_while(|segment| self.carries_riders(candidate, segment))
+            .last()
+            .or_else(|| segments.get(index))
+            .map_or(boarded.end, |segment| segment.last_position as usize);
+        // A moved trip keeps its stretches' positions, on a pattern that holds them all;
+        // should it not, the ride ends with the pattern.
+        let pattern_end = self
+            .snapshot
+            .snapshot
+            .route_stops(candidate.pair.route)
+            .map_or(boarded.end, |stops| stops.len().saturating_sub(1));
+        last.min(pattern_end)
     }
 
     /// Every departure from the reachable stops in the horizon, by GTFS route of its file.
@@ -1165,16 +1211,15 @@ impl RideDescriber<'_> {
         (points.len() >= 2).then(|| encode_polyline6(&points))
     }
 
-    /// A departure ridden from `stop` to the last stop of its GTFS trip.
+    /// A departure ridden from `stop` to where its vehicle stops carrying riders: the last stop
+    /// of its GTFS trip, or of the last trip of its stay-seated chain that does (see
+    /// [`Self::chain_end`]), so a ride on a combined trip is one ride in segments, as a plan's.
     fn ride_to_end(&self, stop: StopId, candidate: &Candidate) -> Option<valinor_transit::Ride> {
         let pair = candidate.pair;
         let boarded = self.boarded_at(candidate.key, pair)?;
-        let end = u32::try_from(boarded.end).ok()?;
-        let alight_stop = *self
-            .snapshot
-            .snapshot
-            .route_stops(pair.route)?
-            .get(boarded.end)?;
+        let last = self.chain_end(candidate, &boarded);
+        let end = u32::try_from(last).ok()?;
+        let alight_stop = *self.snapshot.snapshot.route_stops(pair.route)?.get(last)?;
         let alight = self
             .snapshot
             .snapshot
