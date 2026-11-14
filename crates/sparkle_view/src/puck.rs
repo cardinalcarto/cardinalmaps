@@ -56,12 +56,12 @@ impl Default for PuckStyle {
             fill: [0.2, 0.2, 0.2, 1.0],
             outline: [1.0; 4],
             outline_width: 2.0,
-            size: 48.0,
+            size: 56.0,
             disk_fill: [1.0; 4],
             disk_outline: [0.6, 0.6, 0.6, 1.0],
             disk_outline_width: 2.0,
-            // The chevron's tails are about 31 px from its middle at 48 px long, so
-            // this leaves a white ring of about 9 px round them.
+            // The chevron's tails are about 36 px from its middle at 56 px long, so
+            // the chevron fills most of the disk, inside a ring of about 4 px.
             disk_radius: 40.0,
             before_layer: None,
         }

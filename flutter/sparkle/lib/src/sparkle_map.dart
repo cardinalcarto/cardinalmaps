@@ -97,7 +97,7 @@ class PuckStyle {
     this.fill = const Color(0xFF333333),
     this.outline = const Color(0xFFFFFFFF),
     this.outlineWidth = 2,
-    this.size = 48,
+    this.size = 56,
     this.diskFill = const Color(0xFFFFFFFF),
     this.diskOutline = const Color(0xFF999999),
     this.diskOutlineWidth = 2,
