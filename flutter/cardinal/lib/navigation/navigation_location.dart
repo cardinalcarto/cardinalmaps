@@ -228,3 +228,20 @@ class SimulatedLocationSource implements NavigationLocationSource {
     timestampMs: now().millisecondsSinceEpoch,
   );
 }
+
+/// [NavigationLocationSource] that simulates each trip along the route it starts with,
+/// for driving navigation on a desktop or an emulator without moving (see
+/// `simulateNavigation` in `config.dart`). [route] is the trip's route when its fixes
+/// are listened to: the controller's, as it starts.
+///
+/// A new route doesn't change where the fixes go: they keep following the route the trip
+/// started with, as a driver who ignores the new route would.
+class SimulatedTripLocation implements NavigationLocationSource {
+  SimulatedTripLocation(this.route);
+
+  final NavigableRoute Function() route;
+
+  @override
+  Stream<NavLocation> fixes(NavigationMode mode) =>
+      SimulatedLocationSource(route()).fixes(mode);
+}

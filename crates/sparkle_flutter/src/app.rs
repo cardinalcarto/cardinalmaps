@@ -116,6 +116,10 @@ struct Subject {
     max_zoom: f64,
     /// Logical pixels kept clear around them.
     margin: f64,
+    /// The bearing and pitch to show them at, or `None` for the camera's own: it turns
+    /// and tilts there on its way, and fits them as they'll be seen once there.
+    bearing: Option<f64>,
+    pitch: Option<f64>,
 }
 
 pub struct MapView {
@@ -617,6 +621,11 @@ impl MapView {
     /// where it is and the zoom and tilt as they are. Stops following the puck.
     pub fn turn_north(&mut self) {
         self.follow = None;
+        // The turn takes over the bearing, so the subject is fitted at whatever the
+        // bearing is from now on rather than at one it no longer heads for.
+        if let Some(subject) = &mut self.subject {
+            subject.bearing = None;
+        }
         self.motion
             .turn_north(&self.camera, self.padding, Instant::now());
     }
@@ -751,17 +760,30 @@ impl MapView {
 
     /// Fly to `[west, south, east, north]` and keep it in view as the padding changes,
     /// zoomed in no closer than `max_zoom`, with `margin` logical pixels clear around it,
-    /// until input moves the map or [`MapView::clear_subject`].
-    pub fn set_subject(&mut self, bounds: [f64; 4], max_zoom: f64, margin: f64) {
+    /// until input moves the map or [`MapView::clear_subject`]. With a `bearing` or
+    /// `pitch`, the flight turns (the short way) and tilts there as it goes, and the
+    /// bounds are fitted as they'll be seen at the end, so a tilted, turned map comes
+    /// back flat and north up in one motion, say; without, it keeps the camera's.
+    pub fn set_subject(
+        &mut self,
+        bounds: [f64; 4],
+        max_zoom: f64,
+        margin: f64,
+        bearing: Option<f64>,
+        pitch: Option<f64>,
+    ) {
         self.follow = None;
         let subject = Subject {
             bounds,
             max_zoom,
             margin,
+            bearing,
+            pitch,
         };
         self.subject = Some(subject);
         let (center, zoom) = self.subject_view(subject);
-        self.motion.fly(&self.camera, center, zoom, Instant::now());
+        self.motion
+            .fly_turning(&self.camera, center, zoom, bearing, pitch, Instant::now());
     }
 
     /// Stop keeping the subject in view, leaving the camera where it is.
@@ -776,8 +798,19 @@ impl MapView {
     }
 
     /// The camera's center and zoom for showing `subject` with the current padding, at
-    /// the camera's bearing and pitch.
+    /// its bearing and pitch where it has them and the camera's otherwise.
     fn subject_view(&self, subject: Subject) -> ([f64; 2], f64) {
+        // Fitted as seen from where the camera ends up: a tilt squashes the bounds and a
+        // turn swaps their width and height, so fitting from the camera as it is now
+        // would land too close or too far.
+        let mut camera = self.camera.clone();
+        if let Some(bearing) = subject.bearing {
+            camera.set_bearing(bearing);
+        }
+        if let Some(pitch) = subject.pitch {
+            camera.set_pitch(pitch);
+        }
+        let camera = &camera;
         let m = subject.margin;
         let p = self.padding;
         let fit = Padding {
@@ -786,8 +819,7 @@ impl MapView {
             bottom: p.bottom + m,
             left: p.left + m,
         };
-        let zoom = self
-            .camera
+        let zoom = camera
             .fit_bounds(subject.bounds, fit)
             .zoom
             .min(subject.max_zoom);
@@ -801,8 +833,7 @@ impl MapView {
             bottom: m,
             left: m,
         };
-        let open = self
-            .camera
+        let open = camera
             .fit_bounds(subject.bounds, all)
             .zoom
             .min(subject.max_zoom);
@@ -812,8 +843,8 @@ impl MapView {
             zoom
         };
         // The margin is the same all round, so the middle of `fit` is the padding's.
-        let framing = self.camera.frame_bounds(subject.bounds, fit, zoom);
-        (self.camera.center_showing(&framing, fit), zoom)
+        let framing = camera.frame_bounds(subject.bounds, fit, zoom);
+        (camera.center_showing(&framing, fit), zoom)
     }
 
     /// Fly to show `lng, lat` at `zoom` in the middle of the view less the padding,
@@ -1063,7 +1094,13 @@ mod tests {
         let mut v = view();
         v.set_padding(sheet(300.0));
         // A point: shown at the most zoom allowed.
-        v.set_subject([-122.3493, 47.6205, -122.3493, 47.6205], 14.0, 48.0);
+        v.set_subject(
+            [-122.3493, 47.6205, -122.3493, 47.6205],
+            14.0,
+            48.0,
+            None,
+            None,
+        );
         settle(&mut v);
         let [lng, lat, zoom, ..] = v.camera();
         assert!((lng + 122.3493).abs() < 1e-6 && (lat - 47.6205).abs() < 1e-6);
@@ -1075,7 +1112,7 @@ mod tests {
         assert!((lng + 122.3493).abs() < 1e-6 && (lat - 47.6205).abs() < 1e-6);
 
         // Bounds too big for zoom 14 in what's left zoom out to fit it, less the margin.
-        v.set_subject([-122.44, 47.50, -122.24, 47.73], 14.0, 48.0);
+        v.set_subject([-122.44, 47.50, -122.24, 47.73], 14.0, 48.0, None, None);
         settle(&mut v);
         let zoom = v.camera()[2];
         assert!(zoom < 12.0, "{zoom}");
@@ -1087,7 +1124,13 @@ mod tests {
     fn a_subject_steers_its_flight_as_the_padding_changes() {
         let mut v = view();
         v.set_padding(sheet(500.0));
-        v.set_subject([-122.3493, 47.6205, -122.3493, 47.6205], 14.0, 48.0);
+        v.set_subject(
+            [-122.3493, 47.6205, -122.3493, 47.6205],
+            14.0,
+            48.0,
+            None,
+            None,
+        );
         v.frame(Stream::default());
         // The sheet settles lower while the camera is on its way.
         v.set_padding(sheet(120.0));
@@ -1101,7 +1144,7 @@ mod tests {
     fn a_subject_zooms_out_only_so_far_however_little_shows() {
         let mut v = view();
         let seattle = [-122.44, 47.50, -122.24, 47.73];
-        v.set_subject(seattle, 14.0, 48.0);
+        v.set_subject(seattle, 14.0, 48.0, None, None);
         settle(&mut v);
         let open = v.camera()[2];
         let mut last = open;
@@ -1122,6 +1165,108 @@ mod tests {
             last < open - 0.8 * SUBJECT_ZOOM_GIVE,
             "most of the way by a full sheet: {last}"
         );
+    }
+
+    /// The box `[west, south, east, north]` is drawn in as `v` shows it, in logical
+    /// pixels: `[left, top, right, bottom]`.
+    fn drawn(v: &MapView, [w, s, e, n]: [f64; 4]) -> [f64; 4] {
+        let corners = [[w, s], [e, s], [e, n], [w, n]];
+        let points = corners.map(|[lng, lat]| v.camera.world_to_screen(world(lng, lat)).unwrap());
+        let ratio = v.camera.pixel_ratio;
+        let lo = |i: usize| points.iter().map(|p| p[i]).fold(f64::INFINITY, f64::min) / ratio;
+        let hi = |i: usize| {
+            points
+                .iter()
+                .map(|p| p[i])
+                .fold(f64::NEG_INFINITY, f64::max)
+                / ratio
+        };
+        [lo(0), lo(1), hi(0), hi(1)]
+    }
+
+    /// Whether `v` shows `bounds` as a subject with `margin` does from a flat, north up
+    /// camera under a sheet `bottom` high: at the same center and zoom, and so drawn in
+    /// the middle of the view less the sheet, fitted to it as subjects are fitted.
+    fn fitted(v: &MapView, bounds: [f64; 4], bottom: f64, margin: f64) -> bool {
+        let mut flat = view();
+        flat.set_padding(sheet(bottom));
+        flat.set_subject(bounds, 18.0, margin, None, None);
+        settle(&mut flat);
+        let [left, top, right, low] = drawn(v, bounds);
+        let middle = [(left + right) / 2.0, (top + low) / 2.0];
+        let room = [400.0, (600.0 - bottom) / 2.0];
+        let near = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-9;
+        (middle[0] - room[0]).hypot(middle[1] - room[1]) < 0.5
+            && near(v.camera.center, flat.camera.center)
+            && (v.camera.zoom - flat.camera.zoom).abs() < 1e-9
+    }
+
+    const ROUTE: [f64; 4] = [-122.40, 47.58, -122.30, 47.66];
+
+    #[test]
+    fn a_subject_at_a_bearing_and_pitch_lands_there_fitted() {
+        let mut v = view();
+        v.set_padding(sheet(250.0));
+        v.camera.set_bearing(-120.0);
+        v.camera.set_pitch(45.0);
+        v.set_subject(ROUTE, 18.0, 48.0, Some(0.0), Some(0.0));
+        v.frame(Stream::default());
+        // On its way it's partly turned and tilted, not snapped flat.
+        let [.., bearing, pitch] = v.camera();
+        assert!(bearing > -120.0 && pitch > 0.0, "{bearing} {pitch}");
+        settle(&mut v);
+        let [.., bearing, pitch] = v.camera();
+        assert_eq!((bearing, pitch), (0.0, 0.0));
+        assert!(fitted(&v, ROUTE, 250.0, 48.0), "{:?}", drawn(&v, ROUTE));
+        assert!(v.has_subject());
+    }
+
+    #[test]
+    fn a_subject_keeps_its_bearing_and_pitch_as_the_padding_changes() {
+        let mut v = view();
+        v.set_padding(sheet(450.0));
+        v.camera.set_bearing(80.0);
+        v.camera.set_pitch(50.0);
+        v.set_subject(ROUTE, 18.0, 48.0, Some(0.0), Some(0.0));
+        v.frame(Stream::default());
+        // The sheet settles lower mid-flight.
+        v.set_padding(sheet(200.0));
+        settle(&mut v);
+        let [.., bearing, pitch] = v.camera();
+        assert_eq!((bearing, pitch), (0.0, 0.0));
+        assert!(fitted(&v, ROUTE, 200.0, 48.0), "{:?}", drawn(&v, ROUTE));
+        // And once landed, as it moves again.
+        v.set_padding(sheet(300.0));
+        let [.., bearing, pitch] = v.camera();
+        assert_eq!((bearing, pitch), (0.0, 0.0));
+        assert!(fitted(&v, ROUTE, 300.0, 48.0), "{:?}", drawn(&v, ROUTE));
+    }
+
+    #[test]
+    fn a_subject_without_a_bearing_or_pitch_keeps_the_cameras() {
+        let mut v = view();
+        v.set_padding(sheet(250.0));
+        v.camera.set_bearing(-120.0);
+        v.camera.set_pitch(45.0);
+        // Where the camera would go fitted at its own bearing and pitch, as before.
+        let expected = v.subject_view(Subject {
+            bounds: ROUTE,
+            max_zoom: 18.0,
+            margin: 48.0,
+            bearing: None,
+            pitch: None,
+        });
+        v.set_subject(ROUTE, 18.0, 48.0, None, None);
+        settle(&mut v);
+        let [.., bearing, pitch] = v.camera();
+        assert!((bearing + 120.0).abs() < 1e-9 && (pitch - 45.0).abs() < 1e-9);
+        assert_eq!((v.camera.center, v.camera.zoom), expected);
+        // Fitted as drawn at that tilt: in the middle of the view less the sheet, and
+        // within the margin.
+        let [left, top, right, low] = drawn(&v, ROUTE);
+        assert!(((left + right) / 2.0 - 400.0).abs() < 0.5, "{left} {right}");
+        assert!(((top + low) / 2.0 - 175.0).abs() < 0.5, "{top} {low}");
+        assert!(left >= 47.5 && right <= 752.5, "{left} {right}");
     }
 
     fn world(lng: f64, lat: f64) -> [f64; 2] {
@@ -1239,7 +1384,7 @@ mod tests {
         v.fly_to(-122.3, 47.6, 12.0);
         assert!(!v.is_following());
         follow(&mut v);
-        v.set_subject([-122.35, 47.6, -122.3, 47.62], 16.0, 0.0);
+        v.set_subject([-122.35, 47.6, -122.3, 47.62], 16.0, 0.0, None, None);
         assert!(!v.is_following());
         follow(&mut v);
         v.camera.set_bearing(20.0);
@@ -1397,7 +1542,13 @@ mod tests {
     #[test]
     fn touching_the_map_lets_go_of_the_subject() {
         let mut v = view();
-        v.set_subject([-122.3493, 47.6205, -122.3493, 47.6205], 14.0, 48.0);
+        v.set_subject(
+            [-122.3493, 47.6205, -122.3493, 47.6205],
+            14.0,
+            48.0,
+            None,
+            None,
+        );
         settle(&mut v);
         v.pointer_down([400.0, 300.0], Button::Primary, false);
         v.pointer_up([400.0, 300.0], Button::Primary, false);
@@ -1515,7 +1666,13 @@ mod tests {
             let mut v = view();
             v.camera.set_pitch(pitch);
             v.set_padding(lopsided());
-            v.set_subject([-122.3493, 47.6205, -122.3493, 47.6205], 14.0, 48.0);
+            v.set_subject(
+                [-122.3493, 47.6205, -122.3493, 47.6205],
+                14.0,
+                48.0,
+                None,
+                None,
+            );
             settle(&mut v);
             assert!(shows(&v, -122.3493, 47.6205), "{pitch}");
             // The sheet moves: still there.
@@ -1529,7 +1686,7 @@ mod tests {
             // quite fit it: padding zooms out less than it would take, see
             // SUBJECT_ZOOM_GIVE, and the camera's tests check the fit itself.)
             v.set_padding(lopsided());
-            v.set_subject([-122.36, 47.60, -122.30, 47.63], 18.0, 0.0);
+            v.set_subject([-122.36, 47.60, -122.30, 47.63], 18.0, 0.0, None, None);
             settle(&mut v);
             let corners = [
                 [-122.36, 47.63],

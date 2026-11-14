@@ -21,6 +21,8 @@ import '../map/location.dart';
 import '../map/map.dart';
 import '../map/route_layer.dart';
 import '../map/selection.dart';
+import '../navigation/navigation_scope.dart';
+import '../routes.dart';
 import '../saved/saved_feedback.dart';
 import '../saved/saved_names.dart';
 import '../search/place_search.dart';
@@ -131,10 +133,20 @@ class _DirectionsPageState extends State<DirectionsPage> {
 
   bool _dark = false;
 
+  /// Whether the navigation screen shows over this page, and has the map: while it does,
+  /// this page draws nothing on it, and draws the trip again when it closes.
+  NavigationScreen? _navigation;
+  bool get _navigating => _navigation?.shown ?? false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _map = MapScope.of(context);
+    final navigation = NavigationScope.of(context).screen;
+    if (navigation != _navigation) {
+      _navigation?.removeListener(_navigationChanged);
+      _navigation = navigation..addListener(_navigationChanged);
+    }
     final dark = Theme.of(context).brightness == Brightness.dark;
     final sheet = SheetScaffold.controllerOf(context);
     if (sheet != _sheet) {
@@ -205,6 +217,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
     _clock?.cancel();
     _map.cameraMoved.removeListener(_viewChanged);
     _sheet?.removeListener(_viewChanged);
+    _navigation?.removeListener(_navigationChanged);
     _map
       ..setGeoJson(routeSource, empty)
       ..setGeoJson(routeCalloutSource, empty)
@@ -216,11 +229,47 @@ class _DirectionsPageState extends State<DirectionsPage> {
     super.dispose();
   }
 
+  /// The navigation screen opened over this page, or closed: take the trip off the map
+  /// for it, or draw it again and show all of it. Navigation leaves the map tilted and
+  /// turned to the road ahead, so the routes come back flat and north up, as they were
+  /// first shown, in the same flight that fits them.
+  void _navigationChanged() {
+    if (!mounted) return;
+    if (_navigating) {
+      _calloutTimer?.cancel();
+      _callouts = const [];
+      _map
+        ..setGeoJson(routeSource, empty)
+        ..setGeoJson(routeCalloutSource, empty)
+        ..setGeoJson(transitSource, empty);
+    } else {
+      _drawRoutes();
+      _showAll(flat: true);
+      _placeCallouts();
+    }
+  }
+
+  /// Starts navigating the selected route, and opens the navigation screen over this
+  /// page.
+  void _startNavigation() {
+    final directions = _directions!;
+    final route = directions.selectedRoute;
+    if (route == null) return;
+    NavigationScope.of(context).controller
+        .start(route: route, mode: directions.mode);
+    unawaited(context.push(navigationLocation(widget.to)));
+  }
+
   /// The trip changed: redraw it, and if the routes are new, show them all and place
   /// their callouts.
   void _changed() {
     if (!mounted) return;
     final directions = _directions!;
+    if (_navigating) {
+      // Drawn as it is when navigation closes.
+      setState(() {});
+      return;
+    }
     if (!identical(directions.routes, _shownRoutes)) {
       _shownRoutes = directions.routes;
       _placer = _shownRoutes.isEmpty ? null : CalloutPlacer(_shownRoutes);
@@ -292,10 +341,14 @@ class _DirectionsPageState extends State<DirectionsPage> {
     _fit(points);
   }
 
-  /// Makes all of the routes the map's subject, kept in view as the sheet moves.
-  void _showAll() => _fit(_shownRoutes.expand((route) => route.geometry));
+  /// Makes all of the routes the map's subject, kept in view as the sheet moves. With
+  /// [flat], the map also turns north up and untilts on the way; otherwise it keeps
+  /// whatever tilt and turn the user gave it.
+  void _showAll({bool flat = false}) =>
+      _fit(_shownRoutes.expand((route) => route.geometry), flat: flat);
 
-  void _fit(Iterable<DirectionsPoint> points) {
+  /// Makes [points] the map's subject: see [_showAll] for [flat].
+  void _fit(Iterable<DirectionsPoint> points, {bool flat = false}) {
     if (points.isEmpty) return;
     var west = double.infinity, south = double.infinity;
     var east = -double.infinity, north = -double.infinity;
@@ -312,12 +365,15 @@ class _DirectionsPageState extends State<DirectionsPage> {
       north: north,
       maxZoom: _maxZoom,
       margin: _margin,
+      bearing: flat ? 0 : null,
+      pitch: flat ? 0 : null,
     );
   }
 
   /// The map or the sheet moved: once they're still, the callouts follow.
   void _viewChanged() {
     _calloutTimer?.cancel();
+    if (_navigating) return;
     _calloutTimer = Timer(_calloutDelay, _placeCallouts);
   }
 
@@ -635,8 +691,16 @@ class _DirectionsPageState extends State<DirectionsPage> {
                   child: route == null
                       ? _Message(_messageFor(directions))
                       : cupertino
-                      ? _CupertinoSummary(route: route, units: units)
-                      : _Summary(route: route, units: units),
+                      ? _CupertinoSummary(
+                          route: route,
+                          units: units,
+                          onStart: _startNavigation,
+                        )
+                      : _Summary(
+                          route: route,
+                          units: units,
+                          onStart: _startNavigation,
+                        ),
                 ),
             ],
           ),
@@ -906,12 +970,17 @@ class _ModeChip extends StatelessWidget {
   }
 }
 
-/// A route's distance and travel time, with the button that will start navigation.
+/// A route's distance and travel time, with the button that starts navigation.
 class _Summary extends StatelessWidget {
-  const _Summary({required this.route, required this.units});
+  const _Summary({
+    required this.route,
+    required this.units,
+    required this.onStart,
+  });
 
   final DirectionsRoute route;
   final UnitSystem units;
+  final VoidCallback onStart;
 
   @override
   Widget build(BuildContext context) => Card.filled(
@@ -925,7 +994,10 @@ class _Summary extends StatelessWidget {
           const SizedBox(height: 4),
           _SummaryRow('Duration', formatDuration(route.duration)),
           const SizedBox(height: 8),
-          const FilledButton(onPressed: null, child: Text('Start Navigation')),
+          FilledButton(
+            onPressed: onStart,
+            child: const Text('Start Navigation'),
+          ),
         ],
       ),
     ),
@@ -1321,13 +1393,18 @@ class _CupertinoModes extends StatelessWidget {
       );
 }
 
-/// iOS's route summary: the time large, the distance under it, and Go, as Apple shows a
-/// route. Go waits for navigation.
+/// iOS's route summary: the time large, the distance under it, and Go, which starts
+/// navigation, as Apple shows a route.
 class _CupertinoSummary extends StatelessWidget {
-  const _CupertinoSummary({required this.route, required this.units});
+  const _CupertinoSummary({
+    required this.route,
+    required this.units,
+    required this.onStart,
+  });
 
   final DirectionsRoute route;
   final UnitSystem units;
+  final VoidCallback onStart;
 
   @override
   Widget build(BuildContext context) {
@@ -1360,21 +1437,17 @@ class _CupertinoSummary extends StatelessWidget {
                 ],
               ),
             ),
+            // Read out as what it does; "Go" alone says little.
             Semantics(
               button: true,
-              enabled: false,
               label: 'Start Navigation',
+              onTap: onStart,
               excludeSemantics: true,
               child: CupertinoButton.filled(
                 color: const Color(0xFF34C759),
-                // Until there's navigation: there, but plainly not to be tapped.
-                disabledColor: theme.colorScheme.surfaceContainerHigh,
                 sizeStyle: CupertinoButtonSize.large,
-                onPressed: null,
-                child: Text(
-                  'Go',
-                  style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-                ),
+                onPressed: onStart,
+                child: const Text('Go'),
               ),
             ),
           ],

@@ -190,7 +190,12 @@ abstract class SparkleMap implements RustOpaqueInterface {
   /// Fly to the bounds (`west > east` crosses the antimeridian), zoomed in no closer
   /// than `max_zoom`, with `margin` logical pixels clear around them, and keep them in
   /// view as the padding changes until input moves the map or [`Self::clear_subject`].
-  /// Point-like bounds show at `max_zoom`. Draw a frame after.
+  /// Point-like bounds show at `max_zoom`.
+  ///
+  /// With a `bearing` or `pitch`, the camera turns (the short way) and tilts there on
+  /// the same flight, and the bounds are fitted as seen from there: to come back flat
+  /// and north up from a tilted, turned view in one motion, say. `None` keeps the
+  /// camera's own. Draw a frame after.
   void setSubject({
     required double west,
     required double south,
@@ -198,6 +203,8 @@ abstract class SparkleMap implements RustOpaqueInterface {
     required double north,
     required double maxZoom,
     required double margin,
+    double? bearing,
+    double? pitch,
   });
 
   /// Show or hide the puck (hidden until shown, or set by `--puck`). Returns whether

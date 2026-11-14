@@ -22,12 +22,20 @@ class FakeMap extends SparkleMapController {
     required double north,
     required double maxZoom,
     double margin = 0,
+    double? bearing,
+    double? pitch,
   }) {
     subject = true;
     subjectsSet++;
     subjectMaxZoom = maxZoom;
+    subjectBearing = bearing;
+    subjectPitch = pitch;
     subjectBounds = (west: west, south: south, east: east, north: north);
   }
+
+  /// The bearing and pitch the last subject was set to show at, null for the camera's.
+  double? subjectBearing;
+  double? subjectPitch;
 
   /// The bounds of the last subject set.
   ({double west, double south, double east, double north})? subjectBounds;
@@ -77,4 +85,47 @@ class FakeMap extends SparkleMapController {
     required double lat,
     required double zoom,
   }) => flownTo = (lng: lng, lat: lat, zoom: zoom);
+
+  /// Where [setPuck] put the puck, in order, with how long each glide took.
+  final pucks =
+      <({double lng, double lat, double bearing, Duration duration})>[];
+  bool puckVisible = false;
+  PuckStyle? puckStyle;
+
+  @override
+  void setPuck({
+    required double lng,
+    required double lat,
+    required double bearing,
+    Duration duration = Duration.zero,
+  }) => pucks.add((lng: lng, lat: lat, bearing: bearing, duration: duration));
+
+  @override
+  void setPuckVisible(bool visible) => puckVisible = visible;
+
+  @override
+  void setPuckStyle(PuckStyle style) => puckStyle = style;
+
+  /// What [follow] was told, in order.
+  final follows = <({double zoom, double pitch, EdgeInsets padding})>[];
+
+  @override
+  void follow({
+    required double zoom,
+    double pitch = 0,
+    double? bearing,
+    EdgeInsets padding = EdgeInsets.zero,
+    Duration duration = const Duration(milliseconds: 600),
+  }) {
+    follows.add((zoom: zoom, pitch: pitch, padding: padding));
+    _following.value = true;
+  }
+
+  @override
+  void stopFollowing() => _following.value = false;
+
+  /// Tests set it false to stand for the map being moved by hand.
+  @override
+  ValueNotifier<bool> get following => _following;
+  final _following = ValueNotifier(false);
 }

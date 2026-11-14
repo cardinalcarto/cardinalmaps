@@ -1,3 +1,4 @@
+import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoButton;
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/directions/transit_timeline.dart';
@@ -5,6 +6,7 @@ import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/map/route_layer.dart';
 import 'package:cardinal/map/selection.dart';
+import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
@@ -18,6 +20,7 @@ import 'package:routing/routing.dart';
 import '../fakes/fake_app.dart';
 import '../fakes/fake_location.dart';
 import '../fakes/fake_map.dart';
+import '../fakes/fake_navigation.dart';
 import '../fakes/fake_routes.dart';
 import '../fakes/fake_transit.dart';
 
@@ -65,6 +68,7 @@ void main() {
   late FakeTransit transit;
   late FakeMap map;
   late MapOverlays overlays;
+  late NavigationController navigation;
 
   setUp(() async {
     store = fakeStore();
@@ -73,15 +77,19 @@ void main() {
     transit = FakeTransit(immediately: fakePlan(journeys: 2));
     map = FakeMap()..hasGround = true;
     overlays = MapOverlays();
+    navigation = fakeNavigationController();
   });
 
   Future<GoRouter> open(
     WidgetTester tester, {
     FakeLocation? location,
     bool settle = true,
+    TargetPlatform? platform,
   }) async {
     final router = await pumpFakeApp(
       tester,
+      platform: platform,
+      navigation: navigation,
       store: store,
       routes: routes,
       transit: transit,
@@ -275,12 +283,86 @@ void main() {
     expect(routes.asked.last.mode, TravelMode.walking);
   });
 
-  testWidgets('starting navigation is shown but does nothing', (tester) async {
-    await open(tester);
-    final start = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Start Navigation'),
-    );
-    expect(start.onPressed, isNull);
+  group('navigation', () {
+    List<Map<String, Object?>> lines() =>
+        features(routeSource)
+            .where((f) => (f['properties']! as Map)['role'] == 'line')
+            .toList();
+
+    Future<void> start(WidgetTester tester, {TargetPlatform? platform}) async {
+      final router = await open(tester, platform: platform);
+      await tester.tap(
+        find.text(platform == TargetPlatform.iOS ? 'Go' : 'Start Navigation'),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        router.state.uri.toString(),
+        '${directionsLocation(destination.id)}/navigate',
+      );
+    }
+
+    testWidgets('Start Navigation starts the trip and opens its screen', (
+      tester,
+    ) async {
+      await start(tester);
+      expect(navigation.state, NavigationState.acquiring);
+      expect(navigation.route, same(best));
+      expect(navigation.mode, TravelMode.driving);
+      expect(find.widgetWithText(FilledButton, 'End'), findsOneWidget);
+      expect(find.text('Start Navigation'), findsNothing);
+      // The trip's own drawing takes the place of the directions'.
+      expect(lines(), isEmpty);
+      expect(features(navigationSource), hasLength(1));
+    });
+
+    testWidgets('Go starts it on iOS, with Cupertino controls', (tester) async {
+      await start(tester, platform: TargetPlatform.iOS);
+      expect(navigation.state, NavigationState.acquiring);
+      expect(find.widgetWithText(CupertinoButton, 'End'), findsOneWidget);
+    });
+
+    testWidgets('End goes back to directions, with the trip over', (
+      tester,
+    ) async {
+      await start(tester);
+      await tester.tap(find.text('End'));
+      await tester.pumpAndSettle();
+      expect(navigation.state, NavigationState.idle);
+      expect(find.text('Start Navigation'), findsOneWidget);
+      expect(find.text('End'), findsNothing);
+      expect(lines(), hasLength(2));
+      expect(features(navigationSource), isEmpty);
+      expect(map.subject, isTrue);
+    });
+
+    testWidgets('ending it fits the routes again, flat and north up', (
+      tester,
+    ) async {
+      await start(tester);
+      // Directions' own fits keep whatever tilt and turn the map has.
+      expect(map.subjectBearing, isNull);
+      expect(map.subjectPitch, isNull);
+      final before = map.subjectsSet;
+      await tester.tap(find.text('End'));
+      await tester.pumpAndSettle();
+      expect(map.subjectsSet, greaterThan(before));
+      expect(map.subjectBearing, 0);
+      expect(map.subjectPitch, 0);
+      final bounds = map.subjectBounds!;
+      for (final p in [...best.geometry, ...other.geometry]) {
+        expect(p.lng, inInclusiveRange(bounds.west, bounds.east));
+        expect(p.lat, inInclusiveRange(bounds.south, bounds.north));
+      }
+    });
+
+    testWidgets('back ends the trip too', (tester) async {
+      await start(tester);
+      final back = tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await back;
+      expect(navigation.state, NavigationState.idle);
+      expect(find.text('Start Navigation'), findsOneWidget);
+    });
   });
 
   testWidgets(

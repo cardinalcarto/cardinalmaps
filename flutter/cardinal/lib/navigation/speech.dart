@@ -123,3 +123,20 @@ class PlatformScreenWake implements ScreenWake {
     }
   }
 }
+
+/// [Speaker] that writes each announcement to the log as `cardinal-speech: <text>`, for
+/// the Linux desktop, which `flutter_tts` has no speech engine for: a trip there is for
+/// development, and the log shows what would have been said, and when.
+class LogSpeaker implements Speaker {
+  const LogSpeaker();
+
+  @override
+  Future<void> prepare(String language) async =>
+      debugPrint('cardinal-speech: (voice for $language)');
+
+  @override
+  Future<void> speak(String text) async => debugPrint('cardinal-speech: $text');
+
+  @override
+  Future<void> stop() async {}
+}

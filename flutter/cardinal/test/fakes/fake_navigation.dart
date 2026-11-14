@@ -1,21 +1,28 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/navigation_location.dart';
 import 'package:cardinal/navigation/speech.dart';
 import 'package:cardinal/navigation/trip_session.dart';
 import 'package:routing/routing.dart';
+
+import 'fake_routes.dart';
 
 /// A fix at [lat], [lng], as accurate as [accuracy] says.
 NavLocation fakeFix(
   double lat,
   double lng, {
   double accuracy = 5,
+  double? course,
+  double? speed,
   int timestampMs = 1763000000000,
 }) => NavLocation(
   lat: lat,
   lng: lng,
   horizontalAccuracy: accuracy,
+  course: course,
+  speed: speed,
   timestampMs: timestampMs,
 );
 
@@ -25,12 +32,15 @@ NavUpdate fakeUpdate({
   NavDeviation deviation = NavDeviation.onRoute,
   NavSpokenInstruction? spoken,
   NavLocation? location,
+  NavLocation? snapped,
   int stepIndex = 0,
+  int geometryIndex = 0,
 }) => NavUpdate(
   status: status,
   location: location,
+  snappedLocation: snapped,
   stepIndex: stepIndex,
-  geometryIndex: 0,
+  geometryIndex: geometryIndex,
   deviation: deviation,
   deviationMeters: deviation == NavDeviation.offRoute ? 100 : 0,
   spokenInstruction: spoken,
@@ -194,3 +204,16 @@ class FakeScreenWake implements ScreenWake {
   @override
   Future<void> release() async => on = false;
 }
+
+/// A controller over fakes: its own, or those given.
+NavigationController fakeNavigationController({
+  FakeRoutes? routes,
+  FakeNavigationLocation? location,
+  FakeSessions? sessions,
+}) => NavigationController(
+  routes: routes ?? FakeRoutes(),
+  location: location ?? FakeNavigationLocation(),
+  speaker: FakeSpeaker(),
+  screen: FakeScreenWake(),
+  startSession: (sessions ?? FakeSessions()).call,
+);

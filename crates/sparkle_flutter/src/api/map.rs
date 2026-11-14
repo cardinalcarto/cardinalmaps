@@ -493,8 +493,14 @@ impl SparkleMap {
     /// Fly to the bounds (`west > east` crosses the antimeridian), zoomed in no closer
     /// than `max_zoom`, with `margin` logical pixels clear around them, and keep them in
     /// view as the padding changes until input moves the map or [`Self::clear_subject`].
-    /// Point-like bounds show at `max_zoom`. Draw a frame after.
+    /// Point-like bounds show at `max_zoom`.
+    ///
+    /// With a `bearing` or `pitch`, the camera turns (the short way) and tilts there on
+    /// the same flight, and the bounds are fitted as seen from there: to come back flat
+    /// and north up from a tilted, turned view in one motion, say. `None` keeps the
+    /// camera's own. Draw a frame after.
     #[frb(sync)]
+    #[allow(clippy::too_many_arguments)]
     pub fn set_subject(
         &self,
         west: f64,
@@ -503,9 +509,11 @@ impl SparkleMap {
         north: f64,
         max_zoom: f64,
         margin: f64,
+        bearing: Option<f64>,
+        pitch: Option<f64>,
     ) {
         self.view()
-            .set_subject([west, south, east, north], max_zoom, margin);
+            .set_subject([west, south, east, north], max_zoom, margin, bearing, pitch);
     }
 
     /// Stop keeping the subject in view, leaving the camera where it is.

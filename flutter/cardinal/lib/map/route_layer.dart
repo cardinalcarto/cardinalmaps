@@ -21,6 +21,10 @@ const routeCalloutSource = 'route-callouts';
 /// leaves vehicles at.
 const transitSource = 'transit';
 
+/// The style's GeoJSON source for the route being navigated: the whole line ahead, and
+/// the part traveled drawn over it.
+const navigationSource = 'navigation';
+
 /// The property of a callout saying which route it's for.
 const routeIndexProperty = 'route';
 
@@ -69,6 +73,7 @@ void addRouteLayers(Map<String, Object?> style) {
   sources[routeSource] = {'type': 'geojson', 'data': empty};
   sources[routeCalloutSource] = {'type': 'geojson', 'data': empty};
   sources[transitSource] = {'type': 'geojson', 'data': empty};
+  sources[navigationSource] = {'type': 'geojson', 'data': empty};
   final layers = style['layers'] as List<Object?>;
   final firstSymbol = layers.indexWhere((l) => (l as Map)['type'] == 'symbol');
   layers.insertAll(firstSymbol < 0 ? layers.length : firstSymbol, [
@@ -77,6 +82,7 @@ void addRouteLayers(Map<String, Object?> style) {
     _line('route-selected-casing', _selectedCasing, 9, selected: true),
     _line('route-selected', _selectedColor, 6, selected: true),
     ..._transitLayers,
+    ..._navigationLayers,
   ]);
   layers.addAll([
     {
@@ -207,6 +213,71 @@ Map<String, Object?> calloutsGeoJson(
           'coordinates': [callout.lng, callout.lat],
         },
       },
+  ],
+};
+
+/// The route being navigated: the line ahead in the selected route's colors, and the
+/// part traveled over it in the alternate routes' grayer ones. Placeholders, until the
+/// navigation screen's colors are designed.
+final _navigationLayers = <Map<String, Object?>>[
+  for (final (role, casing, color) in [
+    ('ahead', _selectedCasing, _selectedColor),
+    ('traveled', _alternateCasing, _alternateColor),
+  ]) ...[
+    {
+      'id': 'navigation-$role-casing',
+      'type': 'line',
+      'source': navigationSource,
+      'filter': _roleFilter(role),
+      'layout': {'line-cap': 'round', 'line-join': 'round'},
+      'paint': {'line-color': casing, 'line-width': 9},
+    },
+    {
+      'id': 'navigation-$role',
+      'type': 'line',
+      'source': navigationSource,
+      'filter': _roleFilter(role),
+      'layout': {'line-cap': 'round', 'line-join': 'round'},
+      'paint': {'line-color': color, 'line-width': 6},
+    },
+  ],
+];
+
+/// The part of [line] traveled so far: its points up to [geometryIndex], the point at or
+/// before where you are, then [at], where you are on it.
+///
+/// The navigation session gives [geometryIndex] and [at] with each fix. The traveled
+/// line ends at [at] rather than at the chevron, which glides a fix behind; the
+/// chevron's disk covers the gap.
+List<DirectionsPoint> traveledLine(
+  List<DirectionsPoint> line,
+  int geometryIndex,
+  DirectionsPoint at,
+) {
+  if (line.isEmpty) return const [];
+  final last = geometryIndex.clamp(0, line.length - 1);
+  return [...line.take(last + 1), at];
+}
+
+/// [line], the route being navigated, ahead, with [traveled] over it, as GeoJSON.
+Map<String, Object?> navigationGeoJson(
+  List<DirectionsPoint> line,
+  List<DirectionsPoint> traveled,
+) => {
+  'type': 'FeatureCollection',
+  'features': [
+    for (final (role, points) in [('ahead', line), ('traveled', traveled)])
+      if (points.length >= 2)
+        {
+          'type': 'Feature',
+          'properties': {'role': role},
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              for (final p in points) [p.lng, p.lat],
+            ],
+          },
+        },
   ],
 };
 

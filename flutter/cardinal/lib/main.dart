@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -14,6 +16,10 @@ import 'map/location.dart';
 import 'map/map.dart';
 import 'map/map_drawing.dart';
 import 'map/overlays.dart';
+import 'navigation/navigation_controller.dart';
+import 'navigation/navigation_location.dart';
+import 'navigation/navigation_scope.dart';
+import 'navigation/speech.dart';
 import 'offline/downloads/geometry.dart';
 import 'offline/offline_area.dart';
 import 'offline/offline_scope.dart';
@@ -29,23 +35,34 @@ void main() {
   unawaited(store.prune());
   final map = SparkleMapController();
   final offline = OfflineAreas.open();
+  final routes = OfflineRouteSource(
+    offline.area,
+    settings: store.settings,
+    used: (shape) => unawaited(
+      offline.downloads.then(
+        (d) => d?.touchRoute([for (final p in shape) GeoPoint(p.lat, p.lng)]),
+      ),
+    ),
+  );
+  late final NavigationController navigation;
+  navigation = NavigationController(
+    routes: routes,
+    location: simulateNavigation
+        ? SimulatedTripLocation(() => navigation.route!.navigable)
+        : const GeolocatorNavigationSource(),
+    // flutter_tts has no Linux engine.
+    speaker: defaultTargetPlatform == TargetPlatform.linux
+        ? const LogSpeaker()
+        : PlatformSpeaker(),
+    screen: const PlatformScreenWake(),
+  );
   runApp(
     StoreScope(
       store: store,
       child: GeocoderScope(
         geocoder: Geocoder(Uri.parse(geocoderUrl)),
         child: DirectionsScope(
-          routes: OfflineRouteSource(
-            offline.area,
-            settings: store.settings,
-            used: (shape) => unawaited(
-              offline.downloads.then(
-                (d) => d?.touchRoute([
-                  for (final p in shape) GeoPoint(p.lat, p.lng),
-                ]),
-              ),
-            ),
-          ),
+          routes: routes,
           transit: OfflineTransitSource(offline.area),
           location: const GeolocatorSource(),
           child: MapScope(
@@ -59,7 +76,11 @@ void main() {
                 await initRouting();
                 return freeBytes(path: await offlineFolder());
               },
-              child: MainApp(router: appRouter(map)),
+              child: NavigationScope(
+                controller: navigation,
+                screen: NavigationScreen(),
+                child: MainApp(router: appRouter(map)),
+              ),
             ),
           ),
         ),

@@ -7,6 +7,9 @@ import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/map.dart';
 import 'package:cardinal/map/map_drawing.dart';
 import 'package:cardinal/map/overlays.dart';
+import 'package:cardinal/navigation/navigation_controller.dart';
+import 'package:cardinal/navigation/navigation_page.dart';
+import 'package:cardinal/navigation/navigation_scope.dart';
 import 'package:cardinal/offline/downloads/engine.dart';
 import 'package:cardinal/offline/offline_scope.dart';
 import 'package:cardinal/routes.dart';
@@ -21,6 +24,7 @@ import 'package:http/testing.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'fake_map.dart';
+import 'fake_navigation.dart';
 import 'fake_location.dart';
 import 'fake_place_store.dart';
 import 'fake_routes.dart';
@@ -52,6 +56,7 @@ Future<GoRouter> pumpFakeApp(
   Future<OfflineDownloads?>? downloads,
   Future<int> Function()? freeBytes,
   TargetPlatform? platform,
+  NavigationController? navigation,
 }) async {
   tester.view
     ..physicalSize = appScreen * 2
@@ -68,7 +73,9 @@ Future<GoRouter> pumpFakeApp(
           resizeToAvoidBottomInset: false,
           body: SheetScaffold(
             body: const SizedBox.expand(),
-            floating: const MapDrawingLayer(child: SizedBox.shrink()),
+            floating: const NavigationLayer(
+              child: MapDrawingLayer(child: SizedBox.shrink()),
+            ),
             bottomBar: const AppNavigationBar(),
             bottomBarHeight: appBarHeight,
             backdrop: sheetGlassOf(context),
@@ -102,12 +109,16 @@ Future<GoRouter> pumpFakeApp(
               // A build without downloads, unless the test gives some.
               downloads: downloads ?? Future.value(),
               freeBytes: freeBytes ?? () async => 64 * 1000 * 1000 * 1000,
-              child: MaterialApp.router(
-                // The app's theme for [platform], or the test's default theme.
-                theme: platform == null
-                    ? null
-                    : appTheme(Brightness.light, platform: platform),
-                routerConfig: router,
+              child: NavigationScope(
+                controller: navigation ?? fakeNavigationController(),
+                screen: NavigationScreen(),
+                child: MaterialApp.router(
+                  // The app's theme for [platform], or the test's default theme.
+                  theme: platform == null
+                      ? null
+                      : appTheme(Brightness.light, platform: platform),
+                  routerConfig: router,
+                ),
               ),
             ),
           ),

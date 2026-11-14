@@ -277,6 +277,8 @@ abstract class RustLibApi extends BaseApi {
     required double north,
     required double maxZoom,
     required double margin,
+    double? bearing,
+    double? pitch,
   });
 
   bool crateApiMapSparkleMapShowPuck({
@@ -1566,6 +1568,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required double north,
     required double maxZoom,
     required double margin,
+    double? bearing,
+    double? pitch,
   }) {
     return handler.executeSync(
       SyncTask(
@@ -1581,6 +1585,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(north, serializer);
           sse_encode_f_64(maxZoom, serializer);
           sse_encode_f_64(margin, serializer);
+          sse_encode_opt_box_autoadd_f_64(bearing, serializer);
+          sse_encode_opt_box_autoadd_f_64(pitch, serializer);
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
         },
         codec: SseCodec(
@@ -1588,7 +1594,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: null,
         ),
         constMeta: kCrateApiMapSparkleMapSetSubjectConstMeta,
-        argValues: [that, west, south, east, north, maxZoom, margin],
+        argValues: [
+          that,
+          west,
+          south,
+          east,
+          north,
+          maxZoom,
+          margin,
+          bearing,
+          pitch,
+        ],
         apiImpl: this,
       ),
     );
@@ -1605,6 +1621,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "north",
           "maxZoom",
           "margin",
+          "bearing",
+          "pitch",
         ],
       );
 
@@ -4057,7 +4075,12 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
   /// Fly to the bounds (`west > east` crosses the antimeridian), zoomed in no closer
   /// than `max_zoom`, with `margin` logical pixels clear around them, and keep them in
   /// view as the padding changes until input moves the map or [`Self::clear_subject`].
-  /// Point-like bounds show at `max_zoom`. Draw a frame after.
+  /// Point-like bounds show at `max_zoom`.
+  ///
+  /// With a `bearing` or `pitch`, the camera turns (the short way) and tilts there on
+  /// the same flight, and the bounds are fitted as seen from there: to come back flat
+  /// and north up from a tilted, turned view in one motion, say. `None` keeps the
+  /// camera's own. Draw a frame after.
   void setSubject({
     required double west,
     required double south,
@@ -4065,6 +4088,8 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
     required double north,
     required double maxZoom,
     required double margin,
+    double? bearing,
+    double? pitch,
   }) => RustLib.instance.api.crateApiMapSparkleMapSetSubject(
     that: this,
     west: west,
@@ -4073,6 +4098,8 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
     north: north,
     maxZoom: maxZoom,
     margin: margin,
+    bearing: bearing,
+    pitch: pitch,
   );
 
   /// Show or hide the puck (hidden until shown, or set by `--puck`). Returns whether

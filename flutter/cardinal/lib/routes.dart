@@ -9,6 +9,7 @@ import 'map/buttons.dart';
 import 'map/map.dart';
 import 'map/map_drawing.dart';
 import 'map/overlays.dart';
+import 'navigation/navigation_page.dart';
 import 'offline/download_page.dart';
 import 'offline/offline_page.dart';
 import 'place/place_page.dart';
@@ -33,6 +34,9 @@ String placeLocation(String id) => '/place/${Uri.encodeComponent(id)}';
 
 /// The location of the screen with directions to the place with [id].
 String directionsLocation(String id) => '${placeLocation(id)}/directions';
+
+/// The location of the navigation screen, over directions to the place with [id].
+String navigationLocation(String id) => '${directionsLocation(id)}/navigate';
 
 /// Shows the place with [id], tapped on the map. It takes the place of a place card
 /// already open, so that going back leaves the map's places all at once.
@@ -65,7 +69,9 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
         resizeToAvoidBottomInset: false,
         body: SheetScaffold(
           body: CardinalMap(controller: map),
-          floating: const MapDrawingLayer(child: MapButtons()),
+          floating: const NavigationLayer(
+            child: MapDrawingLayer(child: MapButtons()),
+          ),
           bottomBar: const AppNavigationBar(),
           backdrop: sheetGlassOf(context),
           sheet: child,
@@ -97,6 +103,15 @@ List<RouteBase> sheetRoutes() => [
                 child: DirectionsPage(to: state.pathParameters['id']!),
               ),
             ),
+            routes: [
+              GoRoute(
+                path: 'navigate',
+                pageBuilder: (context, state) => _page(
+                  state,
+                  const HidesMapOverlays(child: NavigationPage()),
+                ),
+              ),
+            ],
           ),
         ],
       ),

@@ -165,6 +165,12 @@ struct Flight {
     /// The path's length, in the units of [`Flight::at`].
     length: f64,
     path: Path,
+    /// The bearing it starts from and how far it turns (the short way), for a flight
+    /// that turns as it goes; `None` leaves the bearing to whatever else moves it.
+    turn: Option<(f64, f64)>,
+    /// The pitch it starts from and the one it ends at, for a flight that tilts as it
+    /// goes; `None` leaves the pitch alone.
+    tilt: Option<(f64, f64)>,
 }
 
 enum Path {
@@ -175,23 +181,48 @@ enum Path {
 }
 
 impl Flight {
-    fn new(camera: &Camera, to: [f64; 2], zoom: f64, now: Instant) -> Self {
+    /// A flight from where `camera` is to `to` at `zoom`, turning to `bearing` and
+    /// tilting to `pitch` on the way where they're given.
+    fn new(
+        camera: &Camera,
+        to: [f64; 2],
+        zoom: f64,
+        bearing: Option<f64>,
+        pitch: Option<f64>,
+        now: Instant,
+    ) -> Self {
         let view = camera.logical_size();
         let (to, length, path) = Self::path(camera.center, camera.zoom, view, to, zoom);
+        let turn = bearing.map(|b| {
+            let by = (b - camera.bearing + 180.0).rem_euclid(360.0) - 180.0;
+            (camera.bearing, by)
+        });
+        let tilt = pitch.map(|p| (camera.pitch, p.clamp(0.0, MAX_PITCH)));
+        // A flight that barely moves still takes long enough to turn and tilt without a
+        // lurch: as long as turning north up would for the turn, and likewise for
+        // tilting by a share of the furthest tilt.
+        let turning = turn.map_or(0.0, |(_, by)| TURN_TIME * (1.0 + by.abs() / 180.0));
+        let tilting = tilt.map_or(0.0, |(from, to)| {
+            TURN_TIME * (1.0 + (to - from).abs() / MAX_PITCH)
+        });
+        let duration = (length / FLY_SPEED).max(turning).max(tilting);
         Self {
             start: now,
-            duration: (length / FLY_SPEED).clamp(FLY_MIN_TIME, FLY_MAX_TIME),
+            duration: duration.clamp(FLY_MIN_TIME, FLY_MAX_TIME),
             from: camera.center,
             from_zoom: camera.zoom,
             view,
             to,
             length,
             path,
+            turn,
+            tilt,
         }
     }
 
-    /// Head for `to` at `zoom` instead, keeping where and when the flight started and
-    /// how long it takes, so a small change bends the rest of the path without a jump.
+    /// Head for `to` at `zoom` instead, keeping where and when the flight started, how
+    /// long it takes and any bearing and pitch it's turning to, so a small change bends
+    /// the rest of the path without a jump.
     fn retarget(&mut self, to: [f64; 2], zoom: f64) {
         (self.to, self.length, self.path) =
             Self::path(self.from, self.from_zoom, self.view, to, zoom);
@@ -250,9 +281,19 @@ impl Flight {
     /// Move `camera` to where the flight is at `now`. Returns whether it has further to go.
     fn step(&self, camera: &mut Camera, now: Instant) -> bool {
         let t = ((now - self.start).as_secs_f64() / self.duration).min(1.0);
-        let (center, zoom) = self.at(ease(t) * self.length);
+        let k = ease(t);
+        let (center, zoom) = self.at(k * self.length);
         camera.center = [center[0].rem_euclid(1.0), center[1].clamp(0.0, 1.0)];
         camera.zoom = zoom.clamp(0.0, MAX_ZOOM);
+        // Along the same curve as the path, so the turn and tilt land with it. The center
+        // was worked out for the end's bearing and pitch, so the view comes out right
+        // only once they're there too.
+        if let Some((from, by)) = self.turn {
+            camera.set_bearing(from + by * k);
+        }
+        if let Some((from, to)) = self.tilt {
+            camera.set_pitch(from + (to - from) * k);
+        }
         t < 1.0
     }
 }
@@ -341,8 +382,12 @@ impl Motion {
             self.turn = None;
             return;
         }
-        // An ease would turn the bearing too.
+        // An ease would turn the bearing too, as would a flight turning as it goes: that
+        // one flies on but leaves the bearing to the turn.
         self.ease = None;
+        if let Some(flight) = &mut self.flight {
+            flight.turn = None;
+        }
         self.wake(now);
         // The camera keeps its bearing within ±180°, so heading for 0 is the short way.
         self.turn = Some(Turn {
@@ -413,15 +458,37 @@ impl Motion {
         self.last = None;
     }
 
-    /// Fly to `center` (world coordinates) at `zoom`, ending anything else in progress.
+    /// Fly to `center` (world coordinates) at `zoom`, ending anything else in progress
+    /// but a turn north up.
     pub fn fly(&mut self, camera: &Camera, center: [f64; 2], zoom: f64, now: Instant) {
+        self.fly_turning(camera, center, zoom, None, None, now);
+    }
+
+    /// Fly to `center` (world coordinates) at `zoom` as [`Motion::fly`] does, turning to
+    /// `bearing` (the short way) and tilting to `pitch` (within [`MAX_PITCH`]) on the way
+    /// where they're given, all in one motion. `center` should be where the camera's
+    /// center goes at that bearing and pitch. A flight that turns ends any turn north up,
+    /// which would fight it for the bearing.
+    pub fn fly_turning(
+        &mut self,
+        camera: &Camera,
+        center: [f64; 2],
+        zoom: f64,
+        bearing: Option<f64>,
+        pitch: Option<f64>,
+        now: Instant,
+    ) {
+        if bearing.is_some() {
+            self.turn = None;
+        }
         self.zoom = 0.0;
         self.velocity = [0.0; 2];
         self.zoom_velocity = 0.0;
         self.samples.clear();
         self.zoom_samples.clear();
         self.ease = None;
-        self.flight = Some(Flight::new(camera, center, zoom.clamp(0.0, MAX_ZOOM), now));
+        let zoom = zoom.clamp(0.0, MAX_ZOOM);
+        self.flight = Some(Flight::new(camera, center, zoom, bearing, pitch, now));
         self.last = Some(now);
     }
 
@@ -440,8 +507,9 @@ impl Motion {
         self.flight.is_some()
     }
 
-    /// Have the flight under way head for `center` (world coordinates) at `zoom` instead.
-    /// Returns false if there's none.
+    /// Have the flight under way head for `center` (world coordinates) at `zoom` instead,
+    /// still turning and tilting to any bearing and pitch it was. Returns false if
+    /// there's none.
     pub fn retarget(&mut self, center: [f64; 2], zoom: f64) -> bool {
         let Some(flight) = &mut self.flight else {
             return false;
@@ -786,6 +854,98 @@ mod tests {
         m.step(&mut c, t + Duration::from_millis(16));
         m.grab([400.0, 300.0], t + Duration::from_millis(20));
         assert!(!m.active());
+    }
+
+    #[test]
+    fn a_turning_flight_lands_flat_and_north_up_the_short_way() {
+        let mut c = camera();
+        c.set_bearing(-150.0);
+        c.set_pitch(45.0);
+        let mut m = Motion::default();
+        let t = Instant::now();
+        let to = crate::camera::lng_lat_to_world(-122.3, 47.62);
+        m.fly_turning(&c, to, 13.0, Some(0.0), Some(0.0), t);
+        let mut now = t;
+        let mut bearings = Vec::new();
+        while m.step(&mut c, {
+            now += Duration::from_millis(16);
+            now
+        }) {
+            bearings.push(c.bearing);
+        }
+        // From -150° to 0° the short way never passes ±180°.
+        assert!(
+            bearings.iter().all(|b| (-150.0..=0.0).contains(b)),
+            "{bearings:?}"
+        );
+        assert_eq!((c.bearing, c.pitch), (0.0, 0.0));
+        assert!((c.zoom - 13.0).abs() < 1e-9);
+        assert!((c.center[0] - to[0]).abs() < 1e-12 && (c.center[1] - to[1]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_turning_flight_in_place_takes_time_to_turn() {
+        let mut c = camera();
+        c.set_bearing(170.0);
+        let center = c.center;
+        let mut m = Motion::default();
+        let t = Instant::now();
+        m.fly_turning(&c, center, c.zoom, Some(0.0), None, t);
+        let frames = settle(&mut m, &mut c, t);
+        // Turning north up takes about twice TURN_TIME for nearly a half turn.
+        assert!(frames as f64 * 0.016 > 1.8 * TURN_TIME, "{frames}");
+        assert_eq!(c.bearing, 0.0);
+    }
+
+    #[test]
+    fn a_retargeted_flight_keeps_turning_and_tilting() {
+        let mut c = camera();
+        c.set_bearing(90.0);
+        c.set_pitch(60.0);
+        let mut m = Motion::default();
+        let t = Instant::now();
+        let to = crate::camera::lng_lat_to_world(-122.35, 47.62);
+        m.fly_turning(&c, to, 14.0, Some(0.0), Some(0.0), t);
+        let mut now = t;
+        for _ in 0..10 {
+            now += Duration::from_millis(16);
+            m.step(&mut c, now);
+        }
+        let before = (c.bearing, c.pitch);
+        assert!(m.retarget([to[0], to[1] + 1e-6], 14.0));
+        m.step(&mut c, now);
+        // The same moment on the new path: the turn and tilt go on from where they were.
+        assert!((c.bearing - before.0).abs() < 1e-9 && (c.pitch - before.1).abs() < 1e-9);
+        settle(&mut m, &mut c, now);
+        assert_eq!((c.bearing, c.pitch), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_flight_without_targets_leaves_the_bearing_and_pitch() {
+        let mut c = camera();
+        c.set_bearing(30.0);
+        c.set_pitch(40.0);
+        let mut m = Motion::default();
+        let t = Instant::now();
+        m.fly(&c, crate::camera::lng_lat_to_world(-122.2, 47.7), 15.0, t);
+        settle(&mut m, &mut c, t);
+        assert_eq!((c.bearing, c.pitch), (30.0, 40.0));
+    }
+
+    #[test]
+    fn turning_north_takes_the_bearing_from_a_turning_flight() {
+        let mut c = camera();
+        c.set_bearing(60.0);
+        c.set_pitch(30.0);
+        let mut m = Motion::default();
+        let t = Instant::now();
+        let to = crate::camera::lng_lat_to_world(-122.3, 47.62);
+        m.fly_turning(&c, to, 13.0, Some(120.0), Some(0.0), t);
+        m.step(&mut c, t + Duration::from_millis(16));
+        m.turn_north(&c, Padding::default(), t + Duration::from_millis(16));
+        settle(&mut m, &mut c, t + Duration::from_millis(16));
+        assert!(c.bearing.abs() < 1e-9, "{}", c.bearing);
+        assert_eq!(c.pitch, 0.0);
     }
 
     /// Pinch at `levels_per_frame` every 16 ms for `frames` frames from `t`, returning when

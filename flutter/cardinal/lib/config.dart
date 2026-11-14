@@ -51,3 +51,10 @@ const darkTopoStyle = 'cardinal-topo-dark.json';
 /// Where the map opens on the first launch, as `lng,lat,zoom`; the whole planet if empty.
 /// After that it opens where it was (see `map/viewport.dart`).
 const initialView = String.fromEnvironment('CARDINAL_VIEW');
+
+/// For development, whether navigation follows a simulated trip along the route rather
+/// than the device's location (see `SimulatedTripLocation`), so it can be driven on a
+/// desktop or at a desk. Off unless built with
+/// `--dart-define=CARDINAL_SIMULATE_NAVIGATION=true`; it's read in any build mode,
+/// since the desktop is run in profile mode to see the map as it draws on a phone.
+const simulateNavigation = bool.fromEnvironment('CARDINAL_SIMULATE_NAVIGATION');

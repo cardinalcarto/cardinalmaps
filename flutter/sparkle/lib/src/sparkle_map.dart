@@ -260,6 +260,11 @@ class SparkleMapController {
   /// [clearSubject]. Point-like bounds show at [maxZoom]. However little the padding
   /// leaves, the camera zooms out only so far from how they'd show with none
   /// (`SUBJECT_ZOOM_GIVE` levels at most, in `crates/sparkle_flutter/src/app.rs`).
+  ///
+  /// With a [bearing] or [pitch], the camera turns (the short way) and tilts there on
+  /// the same flight, and the bounds are fitted as they'll be seen once there, so a
+  /// tilted, turned map can come back flat and north up in one motion. Null keeps the
+  /// camera's own. Moving the sheet on the way still steers toward them.
   void setSubject({
     required double west,
     required double south,
@@ -267,8 +272,10 @@ class SparkleMapController {
     required double north,
     required double maxZoom,
     double margin = 0,
+    double? bearing,
+    double? pitch,
   }) {
-    _subject = (west, south, east, north, maxZoom, margin);
+    _subject = (west, south, east, north, maxZoom, margin, bearing, pitch);
     _flight = null;
     _following.value = false;
     final map = _map;
@@ -280,6 +287,8 @@ class SparkleMapController {
       north: north,
       maxZoom: maxZoom,
       margin: margin,
+      bearing: bearing,
+      pitch: pitch,
     );
     _state!._requestFrame();
   }
@@ -422,7 +431,7 @@ class SparkleMapController {
   bool get hasSubject => _map?.hasSubject() ?? _subject != null;
 
   /// The subject set before the map was.
-  (double, double, double, double, double, double)? _subject;
+  (double, double, double, double, double, double, double?, double?)? _subject;
 
   /// Where [flyTo] asked to go before the map was made.
   (double, double, double)? _flight;
@@ -505,7 +514,16 @@ class SparkleMapController {
   void _attached(rust.SparkleMap map) {
     map.setPadding(padding: _mapPadding(_padding));
     if (_subject
-        case (final w, final s, final e, final n, final zoom, final margin)?) {
+        case (
+              final w,
+              final s,
+              final e,
+              final n,
+              final zoom,
+              final margin,
+              final bearing,
+              final pitch,
+            )?) {
       map.setSubject(
         west: w,
         south: s,
@@ -513,6 +531,8 @@ class SparkleMapController {
         north: n,
         maxZoom: zoom,
         margin: margin,
+        bearing: bearing,
+        pitch: pitch,
       );
     }
     if (_flight case (final lng, final lat, final zoom)?) {
