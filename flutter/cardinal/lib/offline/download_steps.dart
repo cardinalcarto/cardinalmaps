@@ -621,8 +621,8 @@ class AgencyLine extends StatelessWidget {
 }
 
 /// The total to download and the free space, or, if it doesn't fit, that there isn't
-/// enough space, as page 1 says it. Its numbers run to new values as feeds are
-/// chosen.
+/// enough space, as page 1 says it. The total runs to its new value as feeds are
+/// chosen; going from one line to the other, they cross-fade at their new values.
 class _Total extends StatelessWidget {
   const _Total({required this.total, required this.free, required this.fits});
 
@@ -645,35 +645,44 @@ class _Total extends StatelessWidget {
       fontFeatures: const [FontFeature.tabularFigures()],
     );
     final free = this.free;
-    return TweenAnimationBuilder<double>(
-      tween: Tween(end: total.toDouble()),
+    return AnimatedSwitcher(
       duration: _duration,
-      curve: Curves.easeOutCubic,
-      builder: (context, value, _) {
-        final size = formatBytes(value.round());
-        if (fits) {
-          return Text.rich(
-            TextSpan(
-              children: [
-                const TextSpan(text: 'Total '),
-                TextSpan(text: size, style: strong),
-                if (free != null) ...[
-                  const TextSpan(text: ' · '),
-                  TextSpan(text: formatBytes(free), style: strong),
-                  const TextSpan(text: ' free'),
+      layoutBuilder: (current, previous) => Stack(
+        alignment: AlignmentDirectional.topStart,
+        children: [...previous, ?current],
+      ),
+      // Each line starts at the total it's shown with, and runs on from there.
+      child: TweenAnimationBuilder<double>(
+        key: ValueKey(fits),
+        tween: Tween(end: total.toDouble()),
+        duration: _duration,
+        curve: Curves.easeOutCubic,
+        builder: (context, value, _) {
+          final size = formatBytes(value.round());
+          if (fits) {
+            return Text.rich(
+              TextSpan(
+                children: [
+                  const TextSpan(text: 'Total '),
+                  TextSpan(text: size, style: strong),
+                  if (free != null) ...[
+                    const TextSpan(text: ' · '),
+                    TextSpan(text: formatBytes(free), style: strong),
+                    const TextSpan(text: ' free'),
+                  ],
                 ],
-              ],
-            ),
+              ),
+              style: body,
+            );
+          }
+          return _NotEnoughSpace(
+            size: size,
+            free: free ?? 0,
             style: body,
+            strong: strong,
           );
-        }
-        return _NotEnoughSpace(
-          size: size,
-          free: free ?? 0,
-          style: body,
-          strong: strong,
-        );
-      },
+        },
+      ),
     );
   }
 }

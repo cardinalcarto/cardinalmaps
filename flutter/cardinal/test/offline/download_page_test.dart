@@ -527,6 +527,16 @@ void main() {
       'Total ${_mbText('136')} · ${_mbText('250')} free',
     );
     await tester.tap(find.text('Metro-Transit'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    // The warning fades in at the new total, rather than running to it.
+    expect(
+      find.textContaining(
+        'Not enough space: this area needs ${_mbText('163')}',
+        findRichText: true,
+      ),
+      findsOneWidget,
+    );
     await tester.pumpAndSettle();
     expect(
       _totalLine(tester),
