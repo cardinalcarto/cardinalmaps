@@ -3,6 +3,7 @@ import 'package:cardinal/map/layers.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/saved/saved_dialogs.dart';
+import 'package:cardinal/settings/accessibility.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:cardinal/ui/theme.dart';
@@ -139,12 +140,17 @@ void main() {
   });
 
   group('directions on iOS', () {
-    Future<FakeRoutes> open(WidgetTester tester) async {
+    Future<FakeRoutes> open(
+      WidgetTester tester, {
+      bool wheelchair = false,
+    }) async {
       final routes = FakeRoutes(immediately: [_route]);
+      final store = await _store();
+      await store.settings.set(wheelchairByDefault, wheelchair);
       await pumpFakeApp(
         tester,
         platform: _ios,
-        store: await _store(),
+        store: store,
         routes: routes,
         locationSource: FakeLocation(
           now: const Fix(lng: 0.5, lat: 2, accuracy: 3),
@@ -171,6 +177,17 @@ void main() {
       await tester.tap(find.bySemanticsLabel('Walking'));
       await tester.pumpAndSettle();
       expect(routes.asked.last.mode, TravelMode.walking);
+    });
+
+    testWidgets('iOS walking is Wheelchair when that is the default', (
+      tester,
+    ) async {
+      final routes = await open(tester, wheelchair: true);
+      expect(find.bySemanticsLabel('Walking'), findsNothing);
+      await tester.tap(find.bySemanticsLabel('Wheelchair'));
+      await tester.pumpAndSettle();
+      expect(routes.asked.last.mode, TravelMode.walking);
+      expect(routes.asked.last.wheelchair, isTrue);
     });
 
     testWidgets('chooses an end with an iOS search field and Cancel', (
