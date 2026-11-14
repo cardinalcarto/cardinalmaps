@@ -66,15 +66,25 @@ pub struct FrameOutput {
     pub following: bool,
 }
 
-/// How the navigation puck, a chevron, looks: see [`SparkleMap::set_puck_style`].
+/// How the navigation puck, a chevron on a disk, looks: see
+/// [`SparkleMap::set_puck_style`].
 pub struct PuckStyleInput {
-    /// `0xAARRGGBB`, as Dart's `Color.toARGB32`.
+    /// The chevron's fill, `0xAARRGGBB` as Dart's `Color.toARGB32`, as are the other
+    /// colors.
     pub fill: u32,
     pub outline: u32,
     /// In logical pixels, inside the chevron's edge; 0 for none.
     pub outline_width: f64,
     /// The chevron's length from tip to tail, in logical pixels.
     pub size: f64,
+    /// The disk under the chevron, which hides the route line just behind it (see
+    /// `sparkle_view::puck::PuckStyle::disk_fill` for why).
+    pub disk_fill: u32,
+    pub disk_outline: u32,
+    /// In logical pixels, inside the disk's edge; 0 for none.
+    pub disk_outline_width: f64,
+    /// In logical pixels on screen, like `size`; 0 for no disk.
+    pub disk_radius: f64,
     /// The id of the style layer it's drawn under; `None` for over every layer (see
     /// `sparkle_view::puck::PuckStyle::before_layer` for why that's the default).
     pub before_layer: Option<String>,
@@ -91,6 +101,10 @@ impl From<PuckStyleInput> for PuckStyle {
             outline: rgba(p.outline),
             outline_width: p.outline_width.max(0.0) as f32,
             size: p.size.max(0.0) as f32,
+            disk_fill: rgba(p.disk_fill),
+            disk_outline: rgba(p.disk_outline),
+            disk_outline_width: p.disk_outline_width.max(0.0) as f32,
+            disk_radius: p.disk_radius.max(0.0) as f32,
             before_layer: p.before_layer,
         }
     }

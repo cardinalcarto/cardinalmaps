@@ -2505,14 +2505,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PuckStyleInput dco_decode_puck_style_input(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
     return PuckStyleInput(
       fill: dco_decode_u_32(arr[0]),
       outline: dco_decode_u_32(arr[1]),
       outlineWidth: dco_decode_f_64(arr[2]),
       size: dco_decode_f_64(arr[3]),
-      beforeLayer: dco_decode_opt_String(arr[4]),
+      diskFill: dco_decode_u_32(arr[4]),
+      diskOutline: dco_decode_u_32(arr[5]),
+      diskOutlineWidth: dco_decode_f_64(arr[6]),
+      diskRadius: dco_decode_f_64(arr[7]),
+      beforeLayer: dco_decode_opt_String(arr[8]),
     );
   }
 
@@ -3102,12 +3106,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_outline = sse_decode_u_32(deserializer);
     var var_outlineWidth = sse_decode_f_64(deserializer);
     var var_size = sse_decode_f_64(deserializer);
+    var var_diskFill = sse_decode_u_32(deserializer);
+    var var_diskOutline = sse_decode_u_32(deserializer);
+    var var_diskOutlineWidth = sse_decode_f_64(deserializer);
+    var var_diskRadius = sse_decode_f_64(deserializer);
     var var_beforeLayer = sse_decode_opt_String(deserializer);
     return PuckStyleInput(
       fill: var_fill,
       outline: var_outline,
       outlineWidth: var_outlineWidth,
       size: var_size,
+      diskFill: var_diskFill,
+      diskOutline: var_diskOutline,
+      diskOutlineWidth: var_diskOutlineWidth,
+      diskRadius: var_diskRadius,
       beforeLayer: var_beforeLayer,
     );
   }
@@ -3661,6 +3673,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.outline, serializer);
     sse_encode_f_64(self.outlineWidth, serializer);
     sse_encode_f_64(self.size, serializer);
+    sse_encode_u_32(self.diskFill, serializer);
+    sse_encode_u_32(self.diskOutline, serializer);
+    sse_encode_f_64(self.diskOutlineWidth, serializer);
+    sse_encode_f_64(self.diskRadius, serializer);
     sse_encode_opt_String(self.beforeLayer, serializer);
   }
 

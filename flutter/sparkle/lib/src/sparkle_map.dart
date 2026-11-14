@@ -88,18 +88,24 @@ class _QuickZoom {
 }
 
 /// How the navigation puck looks (see [SparkleMapController.setPuckStyle]): a chevron
-/// lying flat on the map, pointing along its bearing. The defaults are neutral; the app
-/// picks its own.
+/// pointing along its bearing, on a round disk, both lying flat on the map. The
+/// defaults are neutral placeholders, big so the puck reads at a glance while driving;
+/// the app picks its own.
 @immutable
 class PuckStyle {
   const PuckStyle({
     this.fill = const Color(0xFF333333),
     this.outline = const Color(0xFFFFFFFF),
     this.outlineWidth = 2,
-    this.size = 28,
+    this.size = 48,
+    this.diskFill = const Color(0xFFFFFFFF),
+    this.diskOutline = const Color(0xFF999999),
+    this.diskOutlineWidth = 2,
+    this.diskRadius = 40,
     this.beforeLayer,
   });
 
+  /// The chevron's fill.
   final Color fill;
 
   /// Drawn [outlineWidth] logical pixels in from the chevron's edge; 0 for none.
@@ -110,6 +116,20 @@ class PuckStyle {
   /// size wherever it is, as navigation pucks do; a tilted map still foreshortens it,
   /// since it lies flat.
   final double size;
+
+  /// The disk under the chevron, centered on it. A route drawn as one line with the
+  /// traveled part over it, up to the last fix, ends that part up to a second's travel
+  /// behind the gliding chevron; an opaque disk hides that stretch, so the line never
+  /// shows the wrong color just behind the chevron. Keep it opaque for that.
+  final Color diskFill;
+
+  /// Drawn [diskOutlineWidth] logical pixels in from the disk's edge; 0 for none.
+  final Color diskOutline;
+  final double diskOutlineWidth;
+
+  /// In logical pixels on screen, kept at any distance like [size] and foreshortened
+  /// by a tilt the same way; 0 for no disk. The bearing turns only the chevron.
+  final double diskRadius;
 
   /// The id of the style layer it's drawn under; by default it's over every layer.
   /// Under the labels would also be under the 3D buildings of styles (such as
@@ -123,6 +143,10 @@ class PuckStyle {
     outline: outline.toARGB32(),
     outlineWidth: outlineWidth,
     size: size,
+    diskFill: diskFill.toARGB32(),
+    diskOutline: diskOutline.toARGB32(),
+    diskOutlineWidth: diskOutlineWidth,
+    diskRadius: diskRadius,
     beforeLayer: beforeLayer,
   );
 }

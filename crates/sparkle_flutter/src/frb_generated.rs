@@ -2958,12 +2958,20 @@ impl SseDecode for crate::api::map::PuckStyleInput {
         let mut var_outline = <u32>::sse_decode(deserializer);
         let mut var_outlineWidth = <f64>::sse_decode(deserializer);
         let mut var_size = <f64>::sse_decode(deserializer);
+        let mut var_diskFill = <u32>::sse_decode(deserializer);
+        let mut var_diskOutline = <u32>::sse_decode(deserializer);
+        let mut var_diskOutlineWidth = <f64>::sse_decode(deserializer);
+        let mut var_diskRadius = <f64>::sse_decode(deserializer);
         let mut var_beforeLayer = <Option<String>>::sse_decode(deserializer);
         return crate::api::map::PuckStyleInput {
             fill: var_fill,
             outline: var_outline,
             outline_width: var_outlineWidth,
             size: var_size,
+            disk_fill: var_diskFill,
+            disk_outline: var_diskOutline,
+            disk_outline_width: var_diskOutlineWidth,
+            disk_radius: var_diskRadius,
             before_layer: var_beforeLayer,
         };
     }
@@ -3437,6 +3445,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::map::PuckStyleInput {
             self.outline.into_into_dart().into_dart(),
             self.outline_width.into_into_dart().into_dart(),
             self.size.into_into_dart().into_dart(),
+            self.disk_fill.into_into_dart().into_dart(),
+            self.disk_outline.into_into_dart().into_dart(),
+            self.disk_outline_width.into_into_dart().into_dart(),
+            self.disk_radius.into_into_dart().into_dart(),
             self.before_layer.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -3882,6 +3894,10 @@ impl SseEncode for crate::api::map::PuckStyleInput {
         <u32>::sse_encode(self.outline, serializer);
         <f64>::sse_encode(self.outline_width, serializer);
         <f64>::sse_encode(self.size, serializer);
+        <u32>::sse_encode(self.disk_fill, serializer);
+        <u32>::sse_encode(self.disk_outline, serializer);
+        <f64>::sse_encode(self.disk_outline_width, serializer);
+        <f64>::sse_encode(self.disk_radius, serializer);
         <Option<String>>::sse_encode(self.before_layer, serializer);
     }
 }

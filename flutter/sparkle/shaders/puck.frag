@@ -1,11 +1,17 @@
 #version 460 core
-// The navigation puck's chevron: an arrowhead pointing up the square (toward -y), filled
-// and outlined, antialiased by its distance from the edge.
+// The navigation puck: a chevron, an arrowhead pointing up the square (toward -y), over a
+// round disk centered on it, each filled and outlined and antialiased by its distance
+// from its edge. The disk hides the route line just behind the chevron, where the
+// traveled part, drawn only up to the last fix, lags it. The square is turned to the
+// bearing, which turns the chevron; the disk, being round, looks the same either way.
 //
-// `extra[0]`: the fill, premultiplied.
-// `extra[1]`: the outline, premultiplied.
-// `extra[2]`: y the chevron's length, z the outline's width inside its edge, both in
-//     logical pixels.
+// `extra[0]`: the chevron's fill, premultiplied.
+// `extra[1]`: the chevron's outline, premultiplied.
+// `extra[2]`: y the chevron's length, z its outline's width inside its edge, w the disk's
+//     radius (0 for none), all in logical pixels.
+// `extra[3]`: the disk's fill, premultiplied.
+// `extra[4]`: the disk's outline, premultiplied.
+// `extra[5]`: x the disk's outline's width inside its edge, in logical pixels.
 
 #include <common.glsl>
 
@@ -41,11 +47,23 @@ float chevron(vec2 p, float s) {
   return (inside ? -1.0 : 1.0) * sqrt(d);
 }
 
-void main() {
-  float d = chevron(v_local, draw.extra[2].y);
-  // About a pixel on screen, however the square is tilted.
+// A shape `d` from its edge (negative inside), filled and outlined `width` in from that
+// edge, its edges about a pixel wide on screen however the square is tilted.
+vec4 shade(float d, vec4 fill_color, vec4 outline_color, float width) {
   float aa = max(fwidth(d), 1e-4);
   float shape = clamp(0.5 - d / aa, 0.0, 1.0);
-  float fill = clamp(0.5 - (d + draw.extra[2].z) / aa, 0.0, 1.0);
-  frag_color = mix(draw.extra[1], draw.extra[0], fill) * shape;
+  float fill = clamp(0.5 - (d + width) / aa, 0.0, 1.0);
+  return mix(outline_color, fill_color, fill) * shape;
+}
+
+void main() {
+  vec4 arrow = shade(chevron(v_local, draw.extra[2].y), draw.extra[0], draw.extra[1],
+                     draw.extra[2].z);
+  // Computed for every fragment even without a disk, as `fwidth` needs its neighbors.
+  vec4 disk = shade(length(v_local) - draw.extra[2].w, draw.extra[3], draw.extra[4],
+                    draw.extra[5].x);
+  // A radius of 0 would still leave a speck at the middle.
+  disk *= step(1e-4, draw.extra[2].w);
+  // The chevron over the disk, both premultiplied.
+  frag_color = arrow + disk * (1.0 - arrow.a);
 }

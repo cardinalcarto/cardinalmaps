@@ -519,9 +519,11 @@ class MapPadding {
           left == other.left;
 }
 
-/// How the navigation puck, a chevron, looks: see [`SparkleMap::set_puck_style`].
+/// How the navigation puck, a chevron on a disk, looks: see
+/// [`SparkleMap::set_puck_style`].
 class PuckStyleInput {
-  /// `0xAARRGGBB`, as Dart's `Color.toARGB32`.
+  /// The chevron's fill, `0xAARRGGBB` as Dart's `Color.toARGB32`, as are the other
+  /// colors.
   final int fill;
   final int outline;
 
@@ -530,6 +532,17 @@ class PuckStyleInput {
 
   /// The chevron's length from tip to tail, in logical pixels.
   final double size;
+
+  /// The disk under the chevron, which hides the route line just behind it (see
+  /// `sparkle_view::puck::PuckStyle::disk_fill` for why).
+  final int diskFill;
+  final int diskOutline;
+
+  /// In logical pixels, inside the disk's edge; 0 for none.
+  final double diskOutlineWidth;
+
+  /// In logical pixels on screen, like `size`; 0 for no disk.
+  final double diskRadius;
 
   /// The id of the style layer it's drawn under; `None` for over every layer (see
   /// `sparkle_view::puck::PuckStyle::before_layer` for why that's the default).
@@ -540,6 +553,10 @@ class PuckStyleInput {
     required this.outline,
     required this.outlineWidth,
     required this.size,
+    required this.diskFill,
+    required this.diskOutline,
+    required this.diskOutlineWidth,
+    required this.diskRadius,
     this.beforeLayer,
   });
 
@@ -549,6 +566,10 @@ class PuckStyleInput {
       outline.hashCode ^
       outlineWidth.hashCode ^
       size.hashCode ^
+      diskFill.hashCode ^
+      diskOutline.hashCode ^
+      diskOutlineWidth.hashCode ^
+      diskRadius.hashCode ^
       beforeLayer.hashCode;
 
   @override
@@ -560,6 +581,10 @@ class PuckStyleInput {
           outline == other.outline &&
           outlineWidth == other.outlineWidth &&
           size == other.size &&
+          diskFill == other.diskFill &&
+          diskOutline == other.diskOutline &&
+          diskOutlineWidth == other.diskOutlineWidth &&
+          diskRadius == other.diskRadius &&
           beforeLayer == other.beforeLayer;
 }
 

@@ -15,10 +15,12 @@ pub struct Pose {
     pub bearing: f64,
 }
 
-/// How the puck looks. The app picks the colors and size; these are a neutral default.
+/// How the puck looks: a chevron on a round disk. The app picks the colors and sizes;
+/// these are neutral placeholders, big so the puck reads at a glance while driving.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PuckStyle {
-    /// Straight (not premultiplied) RGBA, `0..1`.
+    /// The chevron's fill, straight (not premultiplied) RGBA, `0..1`, as are the other
+    /// colors.
     pub fill: [f32; 4],
     pub outline: [f32; 4],
     /// Logical pixels, inside the chevron's edge.
@@ -27,6 +29,18 @@ pub struct PuckStyle {
     /// is: like other navigation pucks it keeps its size at any distance, though a tilt
     /// still foreshortens it, as it lies flat on the map.
     pub size: f32,
+    /// The disk under the chevron, centered on it and lying flat on the map like it.
+    /// A route drawn as an "ahead" line with the traveled part over it, up to the last
+    /// fix, ends that part up to a second's travel behind the gliding chevron; an opaque
+    /// disk hides that stretch, so the line never shows the wrong color just behind it.
+    /// It's opaque by default for that reason; a radius of 0 draws none.
+    pub disk_fill: [f32; 4],
+    pub disk_outline: [f32; 4],
+    /// Logical pixels, inside the disk's edge.
+    pub disk_outline_width: f32,
+    /// In logical pixels on screen, kept at any distance like [`Self::size`], and
+    /// foreshortened by a tilt the same way. The bearing turns only the chevron.
+    pub disk_radius: f32,
     /// The style layer it's drawn under; `None` (or a layer the style no longer has) is
     /// over every layer. Over everything by default, because "under the labels" would
     /// put it under more than labels: styles such as Headway draw 3D buildings after
@@ -42,7 +56,13 @@ impl Default for PuckStyle {
             fill: [0.2, 0.2, 0.2, 1.0],
             outline: [1.0; 4],
             outline_width: 2.0,
-            size: 28.0,
+            size: 48.0,
+            disk_fill: [1.0; 4],
+            disk_outline: [0.6, 0.6, 0.6, 1.0],
+            disk_outline_width: 2.0,
+            // The chevron's tails are about 31 px from its middle at 48 px long, so
+            // this leaves a white ring of about 9 px round them.
+            disk_radius: 40.0,
             before_layer: None,
         }
     }

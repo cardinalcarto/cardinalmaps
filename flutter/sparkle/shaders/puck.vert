@@ -1,8 +1,8 @@
 #version 460 core
 // The navigation puck: a square on the ground around it, which `puck.frag` cuts the
-// chevron out of. `matrix` places the unit square, already turned to the puck's bearing,
-// in clip space (see `crates/sparkle_flutter/src/render/puck.rs`), so it lies flat on the
-// map and tilts with it.
+// chevron and its disk out of. `matrix` places the unit square, already turned to the
+// puck's bearing, in clip space (see `crates/sparkle_flutter/src/render/puck.rs`), so it
+// lies flat on the map and tilts with it.
 //
 // `extra[2].x`: half the square's side, in logical pixels.
 
