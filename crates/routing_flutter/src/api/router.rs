@@ -242,7 +242,7 @@ fn device_config() -> RouterConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::directions::{DirectionsAdapter, DirectionsPoint};
+    use crate::api::directions::{DirectionsAdapter, DirectionsPoint, DistanceUnits};
     use ferrostar::models::RouteStep;
     use ferrostar::routing_adapters::{RouteAdapter, WellKnownRouteProvider};
     use std::path::PathBuf;
@@ -282,10 +282,17 @@ mod tests {
         let tiles = std::env::var("CARDINAL_SEATTLE_TILES").expect("CARDINAL_SEATTLE_TILES");
         let router = OfflineRouter::open(vec![tiles], None).ok().unwrap();
         let endpoint = "http://router/route";
-        let request = DirectionsAdapter::valhalla(endpoint.into(), "auto".into(), 2, false)
-            .unwrap()
-            .request(from, to)
-            .unwrap();
+        let request = DirectionsAdapter::valhalla(
+            endpoint.into(),
+            "auto".into(),
+            2,
+            "en-US".into(),
+            DistanceUnits::Miles,
+            false,
+        )
+        .unwrap()
+        .request(from, to)
+        .unwrap();
         // Ferrostar's request already asks for the shape attributes that become the
         // annotation, speed limits among them; the app adds nothing for them.
         let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
