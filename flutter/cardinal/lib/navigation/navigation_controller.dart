@@ -123,6 +123,11 @@ const maxRerouteBackoff = Duration(seconds: 60);
 /// While rerouting, fixes still go to the old route, so the banner and progress keep
 /// up; the new route replaces it when it comes.
 ///
+/// Leaving the route cuts off whatever is being said. Off the route and while rerouting,
+/// the old route's announcements aren't spoken, and aren't spoken late either; speaking
+/// picks up with the new route, or with the old one's next announcement once you're back
+/// on it.
+///
 /// There's no state for having lost your location: [lastFixAt] says how stale it is,
 /// and when fixes stop because location was turned off, permission was taken away or the
 /// service failed, [locationProblem] says why, until a fix comes again ([resumeLocation]
@@ -203,7 +208,8 @@ class NavigationController extends ChangeNotifier {
   /// The end of the original route, which every new route goes to.
   LngLat? _destination;
 
-  /// The utterances said on this trip, by ID, so each is said once.
+  /// The utterances said, or passed over off the route, on this trip, by ID, so each is
+  /// said at most once.
   final _spoken = <String>{};
 
   /// What [offRouteHold] or the backoff after a failure is timed with.
@@ -360,7 +366,6 @@ class NavigationController extends ChangeNotifier {
 
   void _apply(NavUpdate update) {
     _update = update;
-    _speak(update.spokenInstruction);
     switch (_state) {
       case NavigationState.onRoute:
         if (update.status == TripStatus.complete) {
@@ -380,16 +385,37 @@ class NavigationController extends ChangeNotifier {
         // Rerouting waits for its answer whatever the old route says.
         break;
     }
+    // After the state moves, so the update that takes you off the route is held to the
+    // off-route rule, and the one that brings you back on is spoken.
+    _speak(update.spokenInstruction);
     notifyListeners();
   }
 
+  /// Says [spoken] if it hasn't been said on this trip, and only while on the route or
+  /// arriving.
+  ///
+  /// Off the route, and while rerouting, the old route's announcements are about turns
+  /// you're no longer heading for, so they're dropped rather than said. They're marked as
+  /// said all the same, so one that came due while you were off isn't said late if you
+  /// come back onto the line: by then it's about a point you may already be past.
   void _speak(NavSpokenInstruction? spoken) {
     if (spoken == null || !_spoken.add(spoken.utteranceId)) return;
-    unawaited(_speaker.speak(spoken.text));
+    switch (_state) {
+      case NavigationState.onRoute || NavigationState.arrived:
+        unawaited(_speaker.speak(spoken.text));
+      case NavigationState.offRoute ||
+          NavigationState.rerouting ||
+          NavigationState.acquiring ||
+          NavigationState.idle:
+        break;
+    }
   }
 
   void _leave() {
     _state = NavigationState.offRoute;
+    // Whatever is being said, or waiting to be, is about the route you just left: cut it
+    // off rather than let it run on while you're heading somewhere else.
+    unawaited(_speaker.stop());
     _hold?.cancel();
     _hold = Timer(offRouteHold, _holdEnded);
   }

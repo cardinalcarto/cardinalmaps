@@ -483,6 +483,93 @@ void main() {
         expect(h.speaker.said, ['Head north', 'Turn left', 'Head south']);
       });
     });
+
+    test('leaving the route cuts off what is being said, once', () {
+      fakeAsync((async, h) {
+        h.sessions.start = fakeUpdate(spoken: fakeSpoken('a', 'Turn left'));
+        h.onRoute(async);
+        expect(h.speaker.log, ['Turn left']);
+        h.session.next = fakeUpdate(deviation: NavDeviation.offRoute);
+        h.fix(async);
+        expect(h.speaker.log, ['Turn left', '(stop)']);
+
+        // Staying off, rerouting, and a failed reroute that goes back to off route don't
+        // cut anything off again: only the move off the route does.
+        h.fix(async);
+        async.elapse(offRouteHold);
+        expect(h.state, NavigationState.rerouting);
+        h.routes.rerouted.single.answer.completeError(const NoOfflineArea());
+        async.flushMicrotasks();
+        expect(h.state, NavigationState.offRoute);
+        h.fix(async);
+        expect(h.speaker.stopped, 1);
+      });
+    });
+
+    test("the old route's announcements aren't said off it, or late", () {
+      fakeAsync((async, h) {
+        h.offRoute(async);
+        h.session.next = fakeUpdate(
+          deviation: NavDeviation.offRoute,
+          spoken: fakeSpoken('a', 'Turn left'),
+        );
+        h.fix(async);
+        async.elapse(offRouteHold);
+        expect(h.state, NavigationState.rerouting);
+        h.session.next = fakeUpdate(
+          deviation: NavDeviation.offRoute,
+          spoken: fakeSpoken('b', 'Turn right'),
+        );
+        h.fix(async);
+        expect(h.state, NavigationState.rerouting);
+
+        // No route came; back on the line, the ones that came due while off stay unsaid.
+        h.routes.rerouted.single.answer.completeError(const NoOfflineArea());
+        async.flushMicrotasks();
+        h.session.next = fakeUpdate(spoken: fakeSpoken('b', 'Turn right'));
+        h.fix(async);
+        expect(h.state, NavigationState.onRoute);
+        h.session.next = fakeUpdate(spoken: fakeSpoken('a', 'Turn left'));
+        h.fix(async);
+        expect(h.speaker.said, isEmpty);
+      });
+    });
+
+    test('speaking picks up back on the line', () {
+      fakeAsync((async, h) {
+        h.offRoute(async);
+        h.session.next = fakeUpdate(spoken: fakeSpoken('a', 'Turn left'));
+        h.fix(async);
+        expect(h.state, NavigationState.onRoute);
+        expect(h.speaker.said, ['Turn left']);
+      });
+    });
+
+    test('speaking picks up with the new route', () {
+      fakeAsync((async, h) {
+        h.rerouting(async);
+        h.session.next = fakeUpdate(spoken: fakeSpoken('n', 'Head south'));
+        h.routes.rerouted.single.answer.complete(newRoute());
+        async.flushMicrotasks();
+        expect(h.state, NavigationState.onRoute);
+        h.session.next = fakeUpdate(spoken: fakeSpoken('m', 'Turn right'));
+        h.fix(async);
+        expect(h.speaker.said, ['Head south', 'Turn right']);
+      });
+    });
+
+    test('an arrival that comes with getting back on the line is said', () {
+      fakeAsync((async, h) {
+        h.offRoute(async);
+        h.session.next = fakeUpdate(
+          status: TripStatus.complete,
+          spoken: fakeSpoken('z', 'You have arrived'),
+        );
+        h.fix(async);
+        expect(h.state, NavigationState.arrived);
+        expect(h.speaker.said, ['You have arrived']);
+      });
+    });
   });
 
   test("transit can't be navigated, and a second start is refused", () {

@@ -165,14 +165,23 @@ class FakeSpeaker implements Speaker {
   final said = <String>[];
   int stopped = 0;
 
+  /// What's said and each stop, in order, so tests can tell what a stop cut off.
+  final log = <String>[];
+
   @override
   Future<void> prepare(String language) async => languages.add(language);
 
   @override
-  Future<void> speak(String text) async => said.add(text);
+  Future<void> speak(String text) async {
+    said.add(text);
+    log.add(text);
+  }
 
   @override
-  Future<void> stop() async => stopped++;
+  Future<void> stop() async {
+    stopped++;
+    log.add('(stop)');
+  }
 }
 
 /// Whether the screen would be kept on.
