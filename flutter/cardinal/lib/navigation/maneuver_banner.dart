@@ -55,6 +55,15 @@ import 'step_list.dart';
 /// Nothing shows without an [instruction], as in Ferrostar: before the trip has one,
 /// and between routes.
 ///
+/// ## Status
+///
+/// While there's a [status], it shows in the banner's card instead of the maneuver,
+/// with no handle: the navigation screen's status card or its arrival
+/// (`NavigationStatusContent`, `ArrivalContent`). The list doesn't show under it, but
+/// [expanded] keeps what it was, so the banner comes back as it was once the status
+/// goes, as it does across a new route. [collapsedHeight] is the status card's height
+/// meanwhile.
+///
 /// Material on Android and the desktop takes its type from Ferrostar Android's
 /// (`InstructionRowTheme.kt`); Cupertino takes iOS's, and its card's corners and
 /// shadow. Both are tighter than Ferrostar's 16 around each row.
@@ -67,9 +76,14 @@ class ManeuverBanner extends StatefulWidget {
     this.upcoming = const [],
     this.expanded,
     this.collapsedHeight,
+    this.status,
   });
 
   final NavVisualInstruction? instruction;
+
+  /// What shows in the banner's card instead of the maneuver and its list, while set
+  /// (see the class's description).
+  final Widget? status;
 
   /// How far the maneuver is, in meters; null leaves the distance out.
   final double? distance;
@@ -113,12 +127,12 @@ class ManeuverBanner extends StatefulWidget {
   static const handleReach = 20.0;
 
   /// Between the icon column and the text.
-  static const _gap = 12.0;
+  static const gap = 12.0;
 
   /// Around each row's content: Ferrostar has 16 at the sides and above and below,
   /// and 8 more between the rows.
   static const sides = 12.0;
-  static const _ends = 10.0;
+  static const ends = 10.0;
   static const _between = 6.0;
 
   /// The primary row's distance style and instruction style, which the step list's
@@ -251,6 +265,15 @@ class _ManeuverBannerState extends State<ManeuverBanner>
     _report();
   }
 
+  /// How tall [ManeuverBanner.status]'s card is, as last laid out.
+  double _statusHeight = 0;
+
+  void _statusLaidOut(double height) {
+    if (height == _statusHeight) return;
+    _statusHeight = height;
+    _report();
+  }
+
   /// Tells [ManeuverBanner.collapsedHeight] how tall the banner is closed, once the
   /// frame's laid out.
   void _report() {
@@ -258,7 +281,9 @@ class _ManeuverBannerState extends State<ManeuverBanner>
     if (notifier == null) return;
     SchedulerBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      notifier.value = widget.instruction == null
+      notifier.value = widget.status != null
+          ? _statusHeight
+          : widget.instruction == null
           ? 0
           : _rowsHeight +
                 (_listed.isEmpty ? 0 : ManeuverBanner.collapsedHandleHeight);
@@ -273,6 +298,12 @@ class _ManeuverBannerState extends State<ManeuverBanner>
   @override
   Widget build(BuildContext context) {
     _report();
+    final status = widget.status;
+    if (status != null) {
+      return _Card(
+        child: _ReportHeight(onHeight: _statusLaidOut, child: status),
+      );
+    }
     final instruction = widget.instruction;
     if (instruction == null) return const SizedBox.shrink();
     final colors = Theme.of(context).colorScheme;
@@ -292,11 +323,11 @@ class _ManeuverBannerState extends State<ManeuverBanner>
         band: band,
         // The handle's strip takes some of the bottom row's padding.
         bottom: hasList
-            ? ManeuverBanner._ends -
+            ? ManeuverBanner.ends -
                   (ManeuverBanner.collapsedHandleHeight -
                       _Handle.collapsedTop -
                       _Handle.collapsedBelow)
-            : ManeuverBanner._ends,
+            : ManeuverBanner.ends,
       ),
     );
     if (!hasList) return _Card(child: rows);
@@ -447,7 +478,7 @@ class _BannerRows extends StatelessWidget {
         Padding(
           padding: EdgeInsets.fromLTRB(
             sides,
-            ManeuverBanner._ends,
+            ManeuverBanner.ends,
             sides,
             secondary == null ? bottom : ManeuverBanner._between,
           ),
@@ -590,7 +621,7 @@ class ManeuverRow extends StatelessWidget {
                   color: Theme.of(context).colorScheme.onSurface,
                 ),
         ),
-        const SizedBox(width: ManeuverBanner._gap),
+        const SizedBox(width: ManeuverBanner.gap),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

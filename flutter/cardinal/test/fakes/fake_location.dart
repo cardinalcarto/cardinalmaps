@@ -43,9 +43,14 @@ class FakeLocation implements LocationSource {
   @override
   Future<Fix?> current() async => now;
 
-  @override
-  Future<void> openAppSettings() async {}
+  /// How many times the app's settings, and the device's location settings, were
+  /// opened.
+  int appSettingsOpened = 0;
+  int locationSettingsOpened = 0;
 
   @override
-  Future<void> openLocationSettings() async {}
+  Future<void> openAppSettings() async => appSettingsOpened++;
+
+  @override
+  Future<void> openLocationSettings() async => locationSettingsOpened++;
 }

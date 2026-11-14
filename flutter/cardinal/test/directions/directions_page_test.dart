@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoButton;
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show CupertinoActivityIndicator, CupertinoButton;
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/directions/transit_timeline.dart';
@@ -10,8 +12,11 @@ import 'package:cardinal/map/route_layer.dart';
 import 'package:cardinal/map/selection.dart';
 import 'package:cardinal/map/map_control.dart';
 import 'package:cardinal/navigation/maneuver_banner.dart';
+import 'package:cardinal/navigation/maneuver_icon.dart';
 import 'package:cardinal/navigation/navigation_camera.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
+import 'package:cardinal/navigation/navigation_location.dart';
+import 'package:cardinal/navigation/navigation_status.dart';
 import 'package:cardinal/navigation/road_name.dart';
 import 'package:cardinal/navigation/step_list.dart';
 import 'package:cardinal/navigation/trip_progress.dart';
@@ -373,8 +378,12 @@ void main() {
             .where((f) => (f['properties']! as Map)['role'] == 'line')
             .toList();
 
-    Future<void> start(WidgetTester tester, {TargetPlatform? platform}) async {
-      final router = await open(tester, platform: platform);
+    Future<void> start(
+      WidgetTester tester, {
+      TargetPlatform? platform,
+      FakeLocation? location,
+    }) async {
+      final router = await open(tester, platform: platform, location: location);
       await tester.tap(
         find.text(platform == TargetPlatform.iOS ? 'Go' : 'Start Navigation'),
       );
@@ -718,7 +727,9 @@ void main() {
           ]),
         );
         await tester.pumpAndSettle();
-        expect(map.subjectsSet, fitted + 1);
+        // Fitted again for the new route, and as the status cards came and went in
+        // the banner's place, each of them a height of its own.
+        expect(map.subjectsSet, greaterThan(fitted));
         expect(map.subjectBounds, (west: 0, south: 0, east: 3, north: 5));
         expect(find.byTooltip('Recenter'), findsOneWidget);
         // Until the time between new routes is up.
@@ -1088,6 +1099,428 @@ void main() {
         expect(p.lng, inInclusiveRange(bounds.west, bounds.east));
         expect(p.lat, inInclusiveRange(bounds.south, bounds.north));
       }
+    });
+
+    group('the status card', () {
+      Finder banner(String text) => find.descendant(
+        of: find.byType(ManeuverBanner),
+        matching: find.text(text),
+      );
+      const turn = 'Turn left onto Pike Street';
+      final turnVisual = fakeVisual(
+        fakeContent(
+          turn,
+          type: ManeuverType.turn,
+          modifier: ManeuverModifier.left,
+        ),
+      );
+      final stepped = fakeRoute(
+        [
+          [0.5, 2],
+          [1, 4],
+        ],
+        navigationSteps: [
+          fakeManeuverStep(turn, distance: 400),
+          fakeManeuverStep('Turn right onto 4th Avenue', distance: 120),
+          fakeNavStep(null),
+        ],
+      );
+
+      testWidgets('says it waits for GPS, in the banner\'s place', (
+        tester,
+      ) async {
+        navigateInTestTime();
+        await start(tester);
+        expect(navigation.state, NavigationState.acquiring);
+        expect(banner('Waiting for GPS…'), findsOneWidget);
+        // The buttons are laid out under it, as under the banner.
+        final card = tester.getRect(find.byType(ManeuverBanner));
+        expect(card.height, greaterThan(0));
+        expect(
+          tester.getRect(find.byTooltip('Mute')).top,
+          greaterThan(card.bottom),
+        );
+        // A fix too poor to start from leaves it.
+        navigationLocation.send(fakeFix(2.5, 0.6, accuracy: 500));
+        await tester.pumpAndSettle();
+        expect(banner('Waiting for GPS…'), findsOneWidget);
+        await fix(tester, visual: turnVisual);
+        expect(banner('Waiting for GPS…'), findsNothing);
+        expect(banner(turn), findsOneWidget);
+      });
+
+      testWidgets(
+        'off the route, then finding a new route, then the maneuver',
+        (tester) async {
+          routes = FakeRoutes(immediately: [stepped, other]);
+          navigateInTestTime();
+          await start(tester);
+          await fix(tester, visual: turnVisual);
+          expect(
+            find.bySemanticsLabel('Show upcoming maneuvers'),
+            findsOneWidget,
+          );
+
+          await fix(
+            tester,
+            visual: turnVisual,
+            deviation: NavDeviation.offRoute,
+          );
+          expect(navigation.state, NavigationState.offRoute);
+          expect(banner('Off route'), findsOneWidget);
+          expect(banner(turn), findsNothing);
+          // No handle, nor list, under a status card.
+          expect(
+            find.bySemanticsLabel('Show upcoming maneuvers'),
+            findsNothing,
+          );
+          expect(find.byType(StepList), findsNothing);
+
+          await tester.pump(offRouteHold);
+          expect(navigation.state, NavigationState.rerouting);
+          expect(banner('Finding a new route…'), findsOneWidget);
+          expect(banner('Off route'), findsNothing);
+          expect(
+            find.descendant(
+              of: find.byType(ManeuverBanner),
+              matching: find.byType(CircularProgressIndicator),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.bySemanticsLabel('Show upcoming maneuvers'),
+            findsNothing,
+          );
+
+          sessions.last.next = fakeUpdate(
+            snapped: fakeFix(2.5, 0.6, course: 20, speed: 5),
+            visual: turnVisual,
+            toManeuver: 250,
+          );
+          navigationRoutes.rerouted.single.answer.complete(stepped);
+          await tester.pumpAndSettle();
+          expect(navigation.state, NavigationState.onRoute);
+          expect(banner('Finding a new route…'), findsNothing);
+          expect(banner(turn), findsOneWidget);
+          expect(
+            find.bySemanticsLabel('Show upcoming maneuvers'),
+            findsOneWidget,
+          );
+          await tester.pump(minRerouteInterval);
+        },
+      );
+
+      testWidgets('says why a new route failed, and that it keeps trying', (
+        tester,
+      ) async {
+        navigateInTestTime();
+        await start(tester);
+        await fix(tester, visual: turnVisual);
+        await fix(tester, visual: turnVisual, deviation: NavDeviation.offRoute);
+        await tester.pump(offRouteHold);
+        navigationRoutes.rerouted.single.answer.completeError(
+          const DirectionsError(
+            kind: DirectionsErrorKind.noRoute,
+            message: 'no route',
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(navigation.rerouteFailure, RerouteFailure.noRoute);
+        expect(banner('No route from here'), findsOneWidget);
+        expect(banner('Will keep trying'), findsOneWidget);
+        expect(banner('Off route'), findsNothing);
+
+        // Trying again, finding a new route comes first.
+        await tester.pump(rerouteBackoff);
+        expect(navigation.state, NavigationState.rerouting);
+        expect(navigation.rerouteFailure, RerouteFailure.noRoute);
+        expect(banner('Finding a new route…'), findsOneWidget);
+        expect(banner('No route from here'), findsNothing);
+
+        navigationRoutes.rerouted.last.answer.completeError(
+          const OutsideOfflineArea(),
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(banner('Outside the offline area'), findsOneWidget);
+        expect(banner('Will keep trying'), findsOneWidget);
+
+        // Back on the route, the maneuver again.
+        await fix(tester, visual: turnVisual);
+        expect(navigation.state, NavigationState.onRoute);
+        expect(banner(turn), findsOneWidget);
+        expect(banner('Outside the offline area'), findsNothing);
+        await tester.pump(minRerouteInterval);
+      });
+
+      testWidgets(
+        'location turned off comes first, and opens location settings',
+        (tester) async {
+          final location = FakeLocation(now: here);
+          navigateInTestTime();
+          await start(tester, location: location);
+          await fix(tester, visual: turnVisual);
+          await fix(
+            tester,
+            visual: turnVisual,
+            deviation: NavDeviation.offRoute,
+          );
+          await tester.pump(offRouteHold);
+          expect(navigation.state, NavigationState.rerouting);
+
+          navigationLocation.fail(
+            const NavigationLocationError(LocationProblem.off),
+          );
+          await tester.pump();
+          expect(banner('Location is off'), findsOneWidget);
+          expect(banner('Turn it on to keep navigating'), findsOneWidget);
+          expect(banner('Finding a new route…'), findsNothing);
+          await tester.tap(banner('Open settings'));
+          await tester.pump();
+          expect(location.locationSettingsOpened, 1);
+          expect(location.appSettingsOpened, 0);
+
+          // Until a fix comes again.
+          navigationLocation.send(fakeFix(2.5, 0.6));
+          await tester.pump();
+          await tester.pump();
+          expect(banner('Location is off'), findsNothing);
+          expect(banner('Finding a new route…'), findsOneWidget);
+          sessions.last.next = fakeUpdate(
+            snapped: fakeFix(2.5, 0.6, course: 20, speed: 5),
+            visual: turnVisual,
+            toManeuver: 250,
+          );
+          navigationRoutes.rerouted.single.answer.complete(stepped);
+          await tester.pumpAndSettle();
+          expect(banner(turn), findsOneWidget);
+          await tester.pump(minRerouteInterval);
+        },
+      );
+
+      testWidgets('location not allowed opens the app\'s settings', (
+        tester,
+      ) async {
+        final location = FakeLocation(now: here);
+        navigateInTestTime();
+        await start(tester, location: location);
+        // Before the first fix too.
+        navigationLocation.fail(
+          const NavigationLocationError(LocationProblem.denied),
+        );
+        await tester.pumpAndSettle();
+        expect(banner('Waiting for GPS…'), findsNothing);
+        expect(banner('Location is turned off for Cardinal'), findsOneWidget);
+        await tester.tap(banner('Open settings'));
+        await tester.pump();
+        expect(location.appSettingsOpened, 1);
+        expect(location.locationSettingsOpened, 0);
+      });
+
+      testWidgets('location that failed tries again, listening again', (
+        tester,
+      ) async {
+        navigateInTestTime();
+        await start(tester);
+        await fix(tester, visual: turnVisual);
+        unawaited(navigationLocation.close());
+        await tester.pumpAndSettle();
+        expect(banner('Your location stopped updating'), findsOneWidget);
+        expect(banner('Open settings'), findsNothing);
+        final listened = navigationLocation.modes.length;
+        await tester.tap(banner('Try again'));
+        await tester.pumpAndSettle();
+        expect(navigationLocation.modes, hasLength(listened + 1));
+        expect(navigationLocation.listening, isTrue);
+        // It stays until a fix comes.
+        expect(banner('Your location stopped updating'), findsOneWidget);
+        await fix(tester, visual: turnVisual);
+        expect(banner('Your location stopped updating'), findsNothing);
+        expect(banner(turn), findsOneWidget);
+      });
+
+      testWidgets('is Cupertino on iOS', (tester) async {
+        navigateInTestTime();
+        await start(tester, platform: TargetPlatform.iOS);
+        await fix(tester, visual: turnVisual);
+        await fix(tester, visual: turnVisual, deviation: NavDeviation.offRoute);
+        await tester.pump(offRouteHold);
+        expect(
+          find.descendant(
+            of: find.byType(ManeuverBanner),
+            matching: find.byType(CupertinoActivityIndicator),
+          ),
+          findsOneWidget,
+        );
+        sessions.last.next = fakeUpdate(
+          snapped: fakeFix(2.5, 0.6, course: 20, speed: 5),
+          visual: turnVisual,
+          toManeuver: 250,
+        );
+        navigationRoutes.rerouted.single.answer.complete(stepped);
+        await tester.pumpAndSettle();
+        await tester.pump(minRerouteInterval);
+        unawaited(navigationLocation.close());
+        await tester.pumpAndSettle();
+        expect(
+          find.descendant(
+            of: find.byType(ManeuverBanner),
+            matching: find.byType(CupertinoButton),
+          ),
+          findsOneWidget,
+        );
+      });
+    });
+
+    group('GPS signal lost', () {
+      testWidgets('shows once no fix has come for a while, and goes with one', (
+        tester,
+      ) async {
+        navigateInTestTime();
+        await start(tester);
+        // Not while waiting for the first: the card says so.
+        await tester.pump(staleFixAge * 2);
+        expect(find.text('GPS signal lost'), findsNothing);
+        await fix(tester);
+        // About then: settling the fix took some time of its own.
+        await tester.pump(staleFixAge - const Duration(seconds: 1));
+        expect(find.text('GPS signal lost'), findsNothing);
+        await tester.pump(const Duration(seconds: 1));
+        expect(find.text('GPS signal lost'), findsOneWidget);
+        // Under the map buttons, at the end side, clear of the chevron's half.
+        final chip = tester.getRect(find.text('GPS signal lost'));
+        final mute = tester.getRect(find.byTooltip('Mute'));
+        expect(chip.top, greaterThan(mute.bottom));
+        expect(chip.bottom, lessThan(appScreen.height / 2));
+        // A fix, however poor, and it's gone, until the next wait.
+        navigationLocation.send(
+          fakeFix(2.5, 0.6, accuracy: 500, timestampMs: 1763000009000),
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('GPS signal lost'), findsNothing);
+        await tester.pump(staleFixAge);
+        expect(find.text('GPS signal lost'), findsOneWidget);
+      });
+
+      testWidgets('gives way to a location problem\'s card', (tester) async {
+        navigateInTestTime();
+        await start(tester);
+        await fix(tester);
+        await tester.pump(staleFixAge);
+        expect(find.text('GPS signal lost'), findsOneWidget);
+        navigationLocation.fail(
+          const NavigationLocationError(LocationProblem.off),
+        );
+        await tester.pump();
+        expect(find.text('GPS signal lost'), findsNothing);
+        expect(find.text('Location is off'), findsOneWidget);
+      });
+    });
+
+    group('arrival', () {
+      Future<void> arrive(WidgetTester tester) async {
+        sessions.last.next = fakeUpdate(
+          status: TripStatus.complete,
+          snapped: fakeFix(4, 1, course: 20),
+        );
+        navigationLocation.send(fakeFix(4, 1));
+        await tester.pumpAndSettle();
+        expect(navigation.state, NavigationState.arrived);
+      }
+
+      testWidgets('says you\'ve arrived, and where', (tester) async {
+        final arriving = fakeRoute(
+          [
+            [0.5, 2],
+            [1, 4],
+          ],
+          navigationSteps: [
+            fakeManeuverStep('Turn left onto Pike Street'),
+            fakeManeuverStep(
+              'Your destination is on the right',
+              type: ManeuverType.arrive,
+              modifier: ManeuverModifier.right,
+            ),
+            fakeNavStep(null),
+          ],
+        );
+        routes = FakeRoutes(immediately: [arriving, other]);
+        navigateInTestTime();
+        await start(tester);
+        expect(navigation.destinationName, 'Chu Minh');
+        await fix(tester, visual: fakeVisual(fakeContent('Turn left')));
+        await arrive(tester);
+        final inBanner = find.byType(ManeuverBanner);
+        expect(
+          find.descendant(of: inBanner, matching: find.text('You\'ve arrived')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: inBanner, matching: find.text('Chu Minh')),
+          findsOneWidget,
+        );
+        // The route's own arrival icon, on the right.
+        final icon = tester.widget<Icon>(
+          find.descendant(of: inBanner, matching: find.byType(Icon)),
+        );
+        expect(
+          icon.icon,
+          maneuverIcon(ManeuverType.arrive, ManeuverModifier.right),
+        );
+        expect(find.bySemanticsLabel('Show upcoming maneuvers'), findsNothing);
+        // Trip progress keeps End; the road name goes.
+        expect(find.byTooltip('End'), findsOneWidget);
+        expect(find.byType(RoadNamePill), findsOneWidget);
+        expect(
+          tester.widget<RoadNamePill>(find.byType(RoadNamePill)).name,
+          isNull,
+        );
+        // However long it's left there, the GPS is no news.
+        await tester.pump(staleFixAge * 2);
+        expect(find.text('GPS signal lost'), findsNothing);
+      });
+
+      testWidgets(
+        'stops following and eases to the destination, then recenters',
+        (tester) async {
+          navigateInTestTime();
+          await start(tester);
+          await fix(tester);
+          expect(map.following.value, isTrue);
+          await arrive(tester);
+          expect(map.following.value, isFalse);
+          // The route's end, at the zoom it was last followed at, flat and north up.
+          expect(map.subjectBounds, (west: 1, south: 4, east: 1, north: 4));
+          expect(map.subjectMaxZoom, map.follows.last.zoom);
+          expect(map.subjectBearing, 0);
+          expect(map.subjectPitch, 0);
+          // Clear of the arrival card, as the overview is of the banner, and of trip
+          // progress, less what the map's own padding covers.
+          final card = tester.getRect(find.byType(ManeuverBanner));
+          final progress = tester.getRect(find.byType(TripProgressPill));
+          final sheet = SheetScaffold.viewOf(
+            tester.element(find.byType(TripProgressPill)),
+          ).obscured;
+          expect(map.subjectClear!.top, card.bottom - sheet.top);
+          expect(
+            map.subjectClear!.bottom,
+            math.max(0, appScreen.height - progress.top - sheet.bottom),
+          );
+          expect(find.byTooltip('Recenter'), findsOneWidget);
+
+          await tester.tap(find.byTooltip('Recenter'));
+          await tester.pump();
+          expect(map.following.value, isTrue);
+          expect(navigation.state, NavigationState.arrived);
+          expect(find.byTooltip('Route overview'), findsOneWidget);
+          // The overview, from there, shows the destination again.
+          await tester.tap(find.byTooltip('Route overview'));
+          await tester.pump();
+          expect(map.subjectBounds, (west: 1, south: 4, east: 1, north: 4));
+        },
+      );
     });
 
     testWidgets('back ends the trip too', (tester) async {

@@ -26,6 +26,9 @@ import 'navigation_controller.dart';
 /// ([FollowCamera.zoomAt]). [overview] shows the rest of the trip instead, and moving
 /// the map by hand stops it following too; either way it stays where it was put until
 /// [recenter]. [cameraMode] says which it's doing.
+///
+/// Once the trip has arrived, [overview] shows the destination instead (see there),
+/// which the navigation screen asks for as it arrives.
 class NavigationMap {
   NavigationMap({
     required this.map,
@@ -87,6 +90,13 @@ class NavigationMap {
   /// What [overview] was last told to keep the trip clear of.
   EdgeInsets _overviewClear = EdgeInsets.zero;
 
+  /// Whether [overview] last showed the destination, at the trip's arrival, rather
+  /// than the rest of the trip.
+  bool _overviewArrived = false;
+
+  /// The zoom the destination is shown at once arrived: the camera's as it arrived.
+  double? _arrivalZoom;
+
   void _followingChanged() {
     if (map.following.value) _overview = false;
     _cameraMode.value = _zoom == null
@@ -119,18 +129,49 @@ class NavigationMap {
   ///
   /// Told again what to keep clear while in overview, it fits the trip again only if
   /// that changed, so the screen can tell it on every move of what covers the map.
+  ///
+  /// Once the trip has arrived, it shows the destination instead: the route's end in
+  /// the middle of what [clear] leaves, at the zoom the camera had as it arrived, flat
+  /// and north up as the overview is. With nothing left to travel there's no rest of
+  /// the trip to fit, and the zoom you were following at keeps the streets around it
+  /// as they were, rather than jumping in or out.
   void overview(EdgeInsets clear) {
     if (_zoom == null) return;
+    final arrived = controller.state == NavigationState.arrived;
     if (_overview &&
         clear == _overviewClear &&
+        arrived == _overviewArrived &&
         map.hasSubject &&
         !map.following.value) {
       return;
     }
     _overview = true;
     _overviewClear = clear;
-    _fitRest();
+    _overviewArrived = arrived;
+    if (arrived) {
+      _fitDestination();
+    } else {
+      _fitRest();
+    }
     _followingChanged();
+  }
+
+  /// Makes the destination the map's subject, as [overview] shows it once arrived.
+  void _fitDestination() {
+    final end = _route?.geometry.lastOrNull;
+    if (end == null) return;
+    final zoom = _arrivalZoom ??= map.camera?.zoom ?? _zoom!;
+    map.setSubject(
+      west: end.lng,
+      south: end.lat,
+      east: end.lng,
+      north: end.lat,
+      maxZoom: zoom,
+      margin: overviewMargin,
+      clear: _overviewClear,
+      bearing: 0,
+      pitch: 0,
+    );
   }
 
   /// Makes the rest of the trip the map's subject, as [overview] shows it.
@@ -175,6 +216,7 @@ class NavigationMap {
     final newUpdate = !identical(update, _update);
     _route = route;
     _update = update;
+    if (controller.state != NavigationState.arrived) _arrivalZoom = null;
     if (route == null) return;
     if (newRoute) {
       // The traveled part is of the old route's line until the next update.

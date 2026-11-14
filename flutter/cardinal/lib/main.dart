@@ -32,6 +32,10 @@ import 'transit/nearby_page.dart';
 import 'transit/nearby_source.dart';
 import 'ui/theme.dart';
 
+/// The simulated trip navigation follows, with `CARDINAL_SIMULATE_NAVIGATION`, for
+/// development tools to steer (see [SimulatedTripLocation]); null otherwise.
+SimulatedTripLocation? simulatedTrip;
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   // Draw under the system bars; the sheet keeps its content clear of them.
@@ -53,7 +57,9 @@ void main() {
   navigation = NavigationController(
     routes: routes,
     location: simulateNavigation
-        ? SimulatedTripLocation(() => navigation.route!.navigable)
+        ? simulatedTrip = SimulatedTripLocation(
+            () => navigation.route!.navigable,
+          )
         : const GeolocatorNavigationSource(),
     // flutter_tts has no Linux engine.
     speaker: defaultTargetPlatform == TargetPlatform.linux

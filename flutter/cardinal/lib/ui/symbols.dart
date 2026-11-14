@@ -68,6 +68,20 @@ class AppSymbols {
   /// iOS and `keyboard_arrow_up_24px` on Android.
   IconData get collapse =>
       _pick(CupertinoIcons.chevron_up, Icons.keyboard_arrow_up);
+
+  /// The navigation screen's status cards (see `NavigationStatus`): location turned
+  /// off or not allowed, location failing, waiting for a first fix, a fix gone stale,
+  /// off the route, and a new route that couldn't be found.
+  IconData get locationOff =>
+      _pick(CupertinoIcons.location_slash, Icons.location_off);
+  IconData get locationFailed =>
+      _pick(CupertinoIcons.location_slash_fill, Icons.location_disabled);
+  IconData get waitingForGps =>
+      _pick(CupertinoIcons.location, Icons.location_searching);
+  IconData get gpsLost => _pick(CupertinoIcons.location_slash, Icons.gps_off);
+  IconData get offRoute => _pick(CupertinoIcons.arrow_branch, Icons.alt_route);
+  IconData get warning =>
+      _pick(CupertinoIcons.exclamationmark_triangle, Icons.warning_amber);
   IconData get layers =>
       _pick(CupertinoIcons.square_stack_3d_up, Icons.layers_outlined);
 }
