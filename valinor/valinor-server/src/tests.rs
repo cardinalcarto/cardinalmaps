@@ -254,11 +254,59 @@ async fn plans_transit_on_its_own_path() {
     assert_eq!(status, StatusCode::OK);
 }
 
+/// 2030-06-03 08:55 in Andorra, five minutes before the fixture's daily trip leaves `A`.
+const BEFORE_THE_TRIP: i64 = 1_906_700_100;
+
+#[tokio::test]
+async fn finds_nearby_departures_and_a_routes_detail_on_their_own_paths() {
+    let state = transit_state(None);
+    let nearby = format!(
+        r#"{{"location":{{"lat":42.5078,"lon":1.5205}},"time":{BEFORE_THE_TRIP},"max_walk_seconds":600}}"#
+    );
+    let (status, headers, body) = send(&state, request("POST", "/transit/nearby", &nearby)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["content-type"], "application/json;charset=utf-8");
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    let direction = &body["routes"][0]["directions"][0];
+    assert_eq!(body["routes"][0]["route"]["route_id"], "L1");
+    // The trip has no `direction_id`, so its direction is its last stop.
+    assert_eq!(direction["terminus_stop_id"], "B");
+    assert_eq!(direction["stop"]["stop_id"], "A");
+    assert_eq!(direction["departures"][0]["trip_id"], "T1");
+    assert_eq!(body["realtime"]["level"], "schedule");
+
+    // The detail takes the identifiers the row gave.
+    let route = format!(
+        r#"{{"feed":"bus","route_id":"L1","terminus_stop_id":"B","stop_id":"A","time":{BEFORE_THE_TRIP},"walk_seconds":{}}}"#,
+        direction["walk_seconds"]
+    );
+    let (status, _, body) = send(&state, request("POST", "/transit/route", &route)).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["departures"][0]["trip_id"], "T1");
+    assert_eq!(body["ride"]["stops"][1]["stop_id"], "B");
+
+    // What isn't there is a 404 in transit's own error format, and a bad body a 400.
+    let unknown = format!(
+        r#"{{"feed":"bus","route_id":"L9","direction_id":0,"stop_id":"A","time":{BEFORE_THE_TRIP}}}"#
+    );
+    let (status, _, body) = send(&state, request("POST", "/transit/route", &unknown)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["kind"], "unknown_route");
+    let (status, _, body) = send(&state, request("POST", "/transit/nearby", "{}")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["kind"], "invalid_request");
+}
+
 #[tokio::test]
 async fn transit_paths_are_unknown_when_it_is_not_configured() {
     let state = state(1, Duration::from_secs(30));
-    let (status, ..) = send(&state, request("POST", "/transit/plan", PLAN)).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    for path in ["/transit/plan", "/transit/nearby", "/transit/route"] {
+        let (status, ..) = send(&state, request("POST", path, PLAN)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
 }
 
 #[tokio::test]
