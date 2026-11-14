@@ -46,6 +46,14 @@
   "@navigationUnmute": {
     "description": "The navigation screen's button that lets spoken directions be heard again, as its tooltip and spoken label, shown while they're silenced."
   },
+  "navigationShowSteps": "Show upcoming maneuvers",
+  "@navigationShowSteps": {
+    "description": "The handle along the bottom of the navigation screen's maneuver banner, as its spoken label while closed: opens the banner into the list of the trip's maneuvers after the next one."
+  },
+  "navigationHideSteps": "Hide upcoming maneuvers",
+  "@navigationHideSteps": {
+    "description": "The handle at the bottom of the navigation screen's list of upcoming maneuvers, as its spoken label while the list is open: closes the list back into the maneuver banner."
+  },
   "navigationEnd": "End",
   "@navigationEnd": {
     "description": "The button at the end of the trip-progress bar that ends turn-by-turn navigation and goes back to directions, as its tooltip and spoken label."

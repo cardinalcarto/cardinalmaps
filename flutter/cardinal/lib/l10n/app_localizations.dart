@@ -148,6 +148,18 @@ abstract class AppLocalizations {
   /// **'Unmute'**
   String get navigationUnmute;
 
+  /// The handle along the bottom of the navigation screen's maneuver banner, as its spoken label while closed: opens the banner into the list of the trip's maneuvers after the next one.
+  ///
+  /// In en, this message translates to:
+  /// **'Show upcoming maneuvers'**
+  String get navigationShowSteps;
+
+  /// The handle at the bottom of the navigation screen's list of upcoming maneuvers, as its spoken label while the list is open: closes the list back into the maneuver banner.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide upcoming maneuvers'**
+  String get navigationHideSteps;
+
   /// The button at the end of the trip-progress bar that ends turn-by-turn navigation and goes back to directions, as its tooltip and spoken label.
   ///
   /// In en, this message translates to:

@@ -77,6 +77,28 @@ NavStep fakeNavStep(String? roadName) => NavStep(
   geometryStart: 0,
 );
 
+/// A step [distance] long whose banner, for the maneuver at its end, says [text], for
+/// a maneuver of [type] and [modifier].
+NavStep fakeManeuverStep(
+  String text, {
+  double distance = 100,
+  ManeuverType? type,
+  ManeuverModifier? modifier,
+  String? roadName,
+}) => NavStep(
+  roadName: roadName,
+  instruction: text,
+  distance: distance,
+  duration: distance / 10,
+  exits: const [],
+  visualInstructions: [
+    fakeVisual(fakeContent(text, type: type, modifier: modifier)),
+  ],
+  spokenInstructions: const [],
+  geometry: const [],
+  geometryStart: 0,
+);
+
 /// A banner line saying [text], for a maneuver of [type] and [modifier].
 NavInstructionContent fakeContent(
   String text, {

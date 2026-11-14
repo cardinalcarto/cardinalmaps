@@ -43,6 +43,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get navigationUnmute => 'Unmute';
 
   @override
+  String get navigationShowSteps => 'Show upcoming maneuvers';
+
+  @override
+  String get navigationHideSteps => 'Hide upcoming maneuvers';
+
+  @override
   String get navigationEnd => 'End';
 
   @override

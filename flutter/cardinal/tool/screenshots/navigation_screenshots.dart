@@ -39,6 +39,17 @@
 // 4. `4-portrait-muted.png`: 1, muted.
 // 5. `5-portrait-dark.png`: 1 in the dark theme.
 //
+// `steps`, for the maneuver banner's list of steps, on the long drive once it's 300 m
+// along with steps ahead:
+//
+// 1. `1-portrait-collapsed.png`: the banner closed, with its handle.
+// 2. `2-portrait-expanded.png`: the banner open into the list.
+// 3. `3-landscape-expanded.png`: 2 in landscape.
+// 4. `4-portrait-expanded-dark.png`: 2 in the dark theme.
+//
+// The list is opened and closed through the banner's own `expanded` notifier, as a tap
+// on its handle sets it, rather than by tapping.
+//
 // The overview and Recenter are pressed by calling the buttons' own callbacks, as a tap
 // would, rather than by tapping.
 //
@@ -59,6 +70,7 @@ import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/main.dart' as app;
 import 'package:cardinal/map/map.dart';
 import 'package:cardinal/map/map_control.dart';
+import 'package:cardinal/navigation/maneuver_banner.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/navigation_page.dart';
 import 'package:cardinal/navigation/navigation_scope.dart';
@@ -86,7 +98,7 @@ const outDir = String.fromEnvironment('CARDINAL_SCREENSHOTS_DIR');
 const bucketDir = String.fromEnvironment('CARDINAL_SCREENSHOTS_BUCKET');
 const releasesUrl = String.fromEnvironment('CARDINAL_RELEASES_URL');
 
-/// Which screenshots to take: `banner`, `progress` or `buttons` (see above).
+/// Which screenshots to take: `banner`, `progress`, `buttons` or `steps` (see above).
 const shotSet = String.fromEnvironment(
   'CARDINAL_SCREENSHOTS_SET',
   defaultValue: 'banner',
@@ -122,9 +134,9 @@ void main() {
           'needs CARDINAL_SCREENSHOTS_DIR and CARDINAL_SIMULATE_NAVIGATION=true',
         );
       }
-      if (!const {'banner', 'progress', 'buttons'}.contains(shotSet)) {
+      if (!const {'banner', 'progress', 'buttons', 'steps'}.contains(shotSet)) {
         fail(
-          'CARDINAL_SCREENSHOTS_SET is banner, progress or buttons, '
+          'CARDINAL_SCREENSHOTS_SET is banner, progress, buttons or steps, '
           'not $shotSet',
         );
       }
@@ -170,6 +182,12 @@ void main() {
         if (shotSet == 'progress') {
           await _navigate(tester, context, route);
           await _progress(tester, binding, controller);
+          await _end(tester, context);
+          return;
+        }
+        if (shotSet == 'steps') {
+          await _navigate(tester, context, route);
+          await _steps(tester, binding, controller);
           await _end(tester, context);
           return;
         }
@@ -313,6 +331,50 @@ Future<void> _buttons(
   await _shoot(tester, '2-portrait-overview', controller);
   _press(tester, 'Recenter');
   await _settle(tester, const Duration(seconds: 2));
+}
+
+/// On the long drive, once it's [into] meters along with steps ahead to list: the
+/// banner closed with its handle, then open into the list in portrait, landscape and
+/// the dark theme.
+Future<void> _steps(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding,
+  NavigationController controller, {
+  double into = 300,
+}) async {
+  double? first;
+  final along = await _waitFor(tester, controller, (update) {
+    final left = update.progress?.distanceRemaining;
+    if (left == null) return false;
+    first ??= left;
+    return update.visualInstruction != null &&
+        left < first! - into &&
+        update.stepIndex + 2 < controller.steps.length;
+  }, within: const Duration(minutes: 8));
+  if (along == null) {
+    debugPrint('nav-shots: the drive never got $into m along with steps ahead');
+    return;
+  }
+  final expanded = tester
+      .widget<ManeuverBanner>(find.byType(ManeuverBanner))
+      .expanded!;
+  await _shoot(tester, '1-portrait-collapsed', controller);
+  expanded.value = true;
+  await _settle(tester, const Duration(seconds: 1));
+  await _shoot(tester, '2-portrait-expanded', controller);
+
+  _setView(tester, landscape: true);
+  await _settle(tester, const Duration(seconds: 2));
+  await _shoot(tester, '3-landscape-expanded', controller);
+  _setView(tester, landscape: false);
+  await _settle(tester, const Duration(seconds: 2));
+
+  _brightness(binding, Brightness.dark);
+  await _settle(tester, const Duration(seconds: 2));
+  await _shoot(tester, '4-portrait-expanded-dark', controller);
+  _brightness(binding, Brightness.light);
+  expanded.value = false;
+  await _settle(tester, const Duration(seconds: 1));
 }
 
 /// Presses the navigation screen's map button labeled [tooltip] by calling its own
