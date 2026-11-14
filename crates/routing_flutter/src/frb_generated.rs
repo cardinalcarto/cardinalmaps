@@ -512,12 +512,14 @@ fn wire__crate__api__directions__DirectionsAdapter_valhalla_impl(
             let api_endpoint_url = <String>::sse_decode(&mut deserializer);
             let api_costing = <String>::sse_decode(&mut deserializer);
             let api_alternates = <u32>::sse_decode(&mut deserializer);
+            let api_wheelchair = <bool>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, crate::api::directions::DirectionsError>((move || {
                 let output_ok = crate::api::directions::DirectionsAdapter::valhalla(
                     api_endpoint_url,
                     api_costing,
                     api_alternates,
+                    api_wheelchair,
                 )?;
                 std::result::Result::Ok(output_ok)
             })())
@@ -1413,6 +1415,13 @@ impl SseDecode for crate::api::offline::ArchiveTile {
     }
 }
 
+impl SseDecode for bool {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_u8().unwrap() != 0
+    }
+}
+
 impl SseDecode for crate::api::directions::DirectionsError {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1942,13 +1951,6 @@ impl SseDecode for usize {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_u64::<NativeEndian>().unwrap() as _
-    }
-}
-
-impl SseDecode for bool {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        deserializer.cursor.read_u8().unwrap() != 0
     }
 }
 
@@ -2766,6 +2768,13 @@ impl SseEncode for crate::api::offline::ArchiveTile {
     }
 }
 
+impl SseEncode for bool {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_u8(self as _).unwrap();
+    }
+}
+
 impl SseEncode for crate::api::directions::DirectionsError {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3188,13 +3197,6 @@ impl SseEncode for usize {
             .cursor
             .write_u64::<NativeEndian>(self as _)
             .unwrap();
-    }
-}
-
-impl SseEncode for bool {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        serializer.cursor.write_u8(self as _).unwrap();
     }
 }
 
