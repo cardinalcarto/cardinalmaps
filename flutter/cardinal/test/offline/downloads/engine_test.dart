@@ -120,6 +120,8 @@ void main() {
       expect(plan.feeds.map((f) => f.id), [metro]);
       final feed = plan.feeds.single;
       expect(feed.index, 2140);
+      // Its three stops are in one zoom 12 cell, which is in the polygon.
+      expect(feed.cellsInside, 1);
       expect(feed.files.map((f) => f.installPath), [
         'transit/$transitDate/timetables/$metro.timetable',
         'transit/$transitDate/transfers/snaps/walking/2140.bin',

@@ -77,6 +77,7 @@ class CandidateFeed {
     required this.lastServiceDate,
     required this.files,
     required this.transferTiles,
+    required this.cellsInside,
   });
 
   final String id;
@@ -96,6 +97,14 @@ class CandidateFeed {
   /// mode's archive directory.
   final Map<String, List<(int, int, int)>> transferTiles;
 
+  /// How many of the zoom 12 cells its stops are in intersect the polygon: how much
+  /// of it is there.
+  final int cellsInside;
+
+  /// Its own files' size: its timetable and its stops' snaps for every mode, without
+  /// the transfer tiles it may share with other feeds.
+  int get fileBytes => files.fold(0, (sum, f) => sum + (f.bytes ?? 0));
+
   /// The transfer tiles' size.
   int get transferBytes => transferTiles.values.fold(
     0,
@@ -103,8 +112,7 @@ class CandidateFeed {
   );
 
   /// What the feed costs alone: its files and its transfer tiles.
-  int get bytes =>
-      files.fold(0, (sum, f) => sum + (f.bytes ?? 0)) + transferBytes;
+  int get bytes => fileBytes + transferBytes;
 
   int get fileCount =>
       files.length +
@@ -403,7 +411,8 @@ class Planner {
     GeoPolygon polygon, {
     Map<String, String> etags = const {},
   }) async {
-    final ids = <String>{};
+    // By feed, its stop cells that intersect the polygon.
+    final inside = <String, int>{};
     for (final (x, y) in SlippyTiles.covering(6, polygon)) {
       final Object? shard;
       try {
@@ -417,16 +426,25 @@ class Planner {
       for (final feed in document['feeds']! as List<Object?>) {
         final f = feed! as Map<String, Object?>;
         final cells = (f['cells']! as List<Object?>).cast<List<Object?>>();
-        if (cells.any(
-          (c) => polygon.intersects(
-            SlippyTiles.bounds(cellZoom, c[0]! as int, c[1]! as int),
-          ),
-        )) {
-          ids.add(f['id']! as String);
+        final count = cells
+            .where(
+              (c) => polygon.intersects(
+                SlippyTiles.bounds(cellZoom, c[0]! as int, c[1]! as int),
+              ),
+            )
+            .length;
+        if (count > 0) {
+          inside.update(
+            f['id']! as String,
+            (n) => n + count,
+            ifAbsent: () => count,
+          );
         }
       }
     }
-    final entries = await Future.wait(ids.map((id) => _entry(release, id)));
+    final entries = await Future.wait(
+      inside.keys.map((id) => _entry(release, id)),
+    );
     // Each mode's archive gives the zoom its tiles are at; the feeds' tiles inside the
     // polygon at that zoom are sized by its directory.
     final modes = {
@@ -460,7 +478,7 @@ class Planner {
     }
     final feeds = [
       for (final (summary, entry) in entries)
-        _feed(release, summary, entry, polygon, sizes, zooms),
+        _feed(release, summary, entry, polygon, sizes, zooms, inside),
     ];
     return (feeds..sort((a, b) => a.index.compareTo(b.index)), archives);
   }
@@ -549,6 +567,7 @@ class Planner {
     GeoPolygon polygon,
     Map<(String, int, int), int> sizes,
     Map<String, int> zooms,
+    Map<String, int> inside,
   ) {
     final id = summary['id']! as String;
     PlannedFile file(Map<String, Object?> ref) => PlannedFile(
@@ -600,6 +619,7 @@ class Planner {
         ),
       ],
       transferTiles: tiles,
+      cellsInside: inside[id]!,
     );
   }
 

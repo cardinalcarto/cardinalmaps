@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:cardinal/offline/downloads/database.dart';
 import 'package:cardinal/offline/downloads/engine.dart';
 import 'package:cardinal/offline/downloads/geometry.dart';
+import 'package:cardinal/offline/downloads/native.dart';
 import 'package:cardinal/offline/downloads/plan.dart';
 
 /// Offline downloads without a database, a bucket or files, for widget tests: regions
@@ -67,13 +68,47 @@ class FakeOfflineDownloads implements OfflineDownloads {
   );
 }
 
+/// A transit feed to choose, of [bytes] of its own files, with transfer tiles
+/// ([transfers], by mode) it may share with other feeds, and [cellsInside] stop cells
+/// in the area.
+CandidateFeed fakeFeed(
+  String id, {
+  int index = 0,
+  String? displayName,
+  List<String>? agencies,
+  int bytes = 0,
+  Map<String, List<(int, int, int)>> transfers = const {},
+  int cellsInside = 1,
+}) => CandidateFeed(
+  id: id,
+  index: index,
+  displayName: displayName ?? id,
+  agencies: agencies ?? [id],
+  firstServiceDate: null,
+  lastServiceDate: null,
+  files: [
+    PlannedFile(
+      kind: ReleaseKind.transit,
+      release: '2026-11-11',
+      path: 'timetables/$id.timetable',
+      installPath: 'transit/2026-11-11/timetables/$id.timetable',
+      bytes: bytes,
+    ),
+  ],
+  transferTiles: transfers,
+  cellsInside: cellsInside,
+);
+
 /// A plan for [polygon] of [routingBytes] of routing tiles and [mapBytes] of map
-/// ranges, with [feeds] to choose from (by ID).
+/// ranges, with [feeds] to choose from (by ID; of no size), or [candidates], whose
+/// shared files are [transitSharedBytes].
 OfflinePlan fakeAreaPlan(
   GeoPolygon polygon, {
   int routingBytes = 90 * 1000 * 1000,
   int mapBytes = 46 * 1000 * 1000,
   List<String> feeds = const [],
+  List<CandidateFeed>? candidates,
+  int transitSharedBytes = 0,
 }) => OfflinePlan(
   polygon: polygon,
   releases: const PlanReleases(
@@ -93,20 +128,28 @@ OfflinePlan fakeAreaPlan(
       bytes: routingBytes,
     ),
   ],
-  transitShared: const [],
-  feeds: [
-    for (final (i, id) in feeds.indexed)
-      CandidateFeed(
-        id: id,
-        index: i,
-        displayName: id,
-        agencies: [id],
-        firstServiceDate: null,
-        lastServiceDate: null,
-        files: const [],
-        transferTiles: const {},
-      ),
+  transitShared: [
+    PlannedFile(
+      kind: ReleaseKind.transit,
+      release: '2026-11-11',
+      path: 'manifest.json',
+      installPath: 'transit/2026-11-11/manifest.json',
+      bytes: transitSharedBytes,
+    ),
   ],
+  feeds:
+      candidates ??
+      [for (final (i, id) in feeds.indexed) fakeFeed(id, index: i)],
+  transferArchives: {
+    for (final mode in ['walking', 'cycling', 'wheelchair'])
+      mode: TransferArchive(
+        path: 'transit/2026-11-11/transfers/$mode.pmtiles',
+        mode: mode,
+        etag: 'etag',
+        zoom: 14,
+        planning: _NoPlanning(),
+      ),
+  },
   map: (
     coveringTiles: 1,
     archiveTiles: 1,
@@ -143,3 +186,11 @@ RegionProgress fakeRegion(
   filesTotal: 0,
   failed: 0,
 );
+
+/// A transfer archive's planning that's never asked anything: the fake plan's tiles
+/// are sized already.
+class _NoPlanning implements ArchivePlanning {
+  @override
+  Object? noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('_NoPlanning: ${invocation.memberName}');
+}
