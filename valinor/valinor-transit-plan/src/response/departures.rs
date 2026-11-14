@@ -29,9 +29,8 @@ use valinor_transit::{
     StopRules, Time, TripId, TripKey,
 };
 
-use crate::plan::AccessEgressSearch;
 use crate::response::build::{
-    Builder, gtfs_route_of, leg_accessibility, stop_headsign, trip_accessibility,
+    RideDescriber, gtfs_route_of, leg_accessibility, stop_headsign, trip_accessibility,
     trip_bikes_allowed, trip_headsign,
 };
 use crate::response::{Accessibility, AlertResponse, DepartureStatus, RideDeparture, TransitLeg};
@@ -123,7 +122,7 @@ pub(super) struct Described {
     pub(super) alerts: Vec<AlertResponse>,
 }
 
-impl<A: AccessEgressSearch> Builder<'_, A> {
+impl RideDescriber<'_> {
     /// The departures of a ride's route between its stops, and the alerts on them that aren't
     /// the leg's own.
     ///
@@ -135,8 +134,8 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         leg: &TransitLeg,
     ) -> (Vec<RideDeparture>, Vec<AlertResponse>) {
         let snapshot: &Snapshot = &self.snapshot.snapshot;
-        let filter = self.request.mode.route_filter();
-        let range = self.request.options.departures;
+        let filter = self.mode.route_filter();
+        let range = self.departures;
         let mut routes = RiddenRoutes::new();
         self.ridden_routes(
             ride.trip,

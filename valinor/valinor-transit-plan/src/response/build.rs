@@ -18,7 +18,8 @@ use valinor_transit::{
 };
 
 use crate::plan::{
-    AccessEgressRequest, AccessEgressSearch, DirectSearch, PlanStage, TransitRequest, TravelMode,
+    AccessEgressRequest, AccessEgressSearch, DepartureRange, DirectSearch, PlanStage,
+    TransitRequest, TravelMode,
 };
 use crate::response::alerts::{LegSelectorContext, LegStop, ServiceRun, leg_alerts};
 use crate::response::departures::DepartureCache;
@@ -40,7 +41,7 @@ pub(crate) fn build_response<A: AccessEgressSearch>(
     access_egress: &mut A,
 ) -> Result<PlanResponse, A::Error> {
     let found = profile.entries.len();
-    let mut builder = Builder::new(snapshot, request, access_egress);
+    let mut builder = JourneyBuilder::new(snapshot, request, access_egress);
     let mut journeys = Vec::new();
     for entry in profile.entries {
         // A journey no faster than going there directly only adds a wait.
@@ -198,16 +199,33 @@ fn new_stop_name(stop: &valinor_gtfs_rt::NewStop) -> Option<String> {
         .map(|translation| translation.text.clone())
 }
 
-/// One request's context for building a response.
-pub(super) struct Builder<'a, A: AccessEgressSearch> {
+/// Describes rides from one pinned snapshot: their trips, stops, shapes, vehicles, alerts,
+/// departures, and accessibility.
+///
+/// It knows nothing of where a rider starts or ends, or of walks: a plan's
+/// [`JourneyBuilder`] holds those and uses one of these for its rides, and nearby departures
+/// and a route's detail, which have no walks to draw, use one on its own.
+pub(super) struct RideDescriber<'a> {
     pub(super) snapshot: &'a TransitSnapshot,
-    pub(super) request: &'a TransitRequest,
+    /// The travel mode, whose rules a ride's departures are read with.
+    pub(super) mode: TravelMode,
+    /// Which other departures a ride lists; see [`Self::ride_departures`].
+    pub(super) departures: DepartureRange,
+    /// What rides have already worked out about their departures.
+    pub(super) departure_cache: RefCell<DepartureCache>,
+}
+
+/// Builds a plan's journeys: its access, transfer, and egress walks, drawn by an
+/// [`AccessEgressSearch`], around rides a [`RideDescriber`] describes.
+///
+/// Only this reads the request's origin and destination.
+pub(super) struct JourneyBuilder<'a, A: AccessEgressSearch> {
+    rides: RideDescriber<'a>,
+    request: &'a TransitRequest,
     access_egress: &'a mut A,
     /// Expanded once per stop: many journeys of a window share their access and egress.
     access_paths: HashMap<StopId, Option<WalkPath>>,
     egress_paths: HashMap<StopId, Option<WalkPath>>,
-    /// What the journeys' rides have already worked out about their departures.
-    pub(super) departure_cache: RefCell<DepartureCache>,
 }
 
 /// What a ride's trip is, resolved once from the timetable and real-time data.
@@ -249,36 +267,27 @@ pub(super) struct VisitTimes {
 /// The vehicle running a ride: what the overlay stored, and the trip update's descriptor.
 type ChosenVehicle<'a> = (Option<&'a VehicleDetails>, Option<&'a VehicleRef>);
 
-impl<'a, A: AccessEgressSearch> Builder<'a, A> {
-    /// A builder for one request's responses, drawing walks with `access_egress`.
-    pub(super) fn new(
+impl<'a, A: AccessEgressSearch> JourneyBuilder<'a, A> {
+    /// A builder for one request's journeys, drawing walks with `access_egress`.
+    fn new(
         snapshot: &'a TransitSnapshot,
         request: &'a TransitRequest,
         access_egress: &'a mut A,
     ) -> Self {
         Self {
-            snapshot,
+            rides: RideDescriber::new(snapshot, request.mode, request.options.departures),
             request,
             access_egress,
             access_paths: HashMap::new(),
             egress_paths: HashMap::new(),
-            departure_cache: RefCell::new(DepartureCache::default()),
         }
-    }
-
-    pub(super) fn set(&self) -> &'a TimetableSet {
-        &self.snapshot.data.set
-    }
-
-    pub(super) fn origin(&self) -> i64 {
-        self.snapshot.window.origin_unix
     }
 
     fn access_path(&mut self, stop: StopId) -> Result<Option<WalkPath>, A::Error> {
         if let Some(path) = self.access_paths.get(&stop) {
             return Ok(path.clone());
         }
-        let snapshot = self.snapshot;
+        let snapshot = self.rides.snapshot;
         let request = AccessEgressRequest {
             origin: self.request.origin,
             destination: self.request.destination,
@@ -295,7 +304,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         if let Some(path) = self.egress_paths.get(&stop) {
             return Ok(path.clone());
         }
-        let snapshot = self.snapshot;
+        let snapshot = self.rides.snapshot;
         let request = AccessEgressRequest {
             origin: self.request.origin,
             destination: self.request.destination,
@@ -323,7 +332,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         reason = "one linear assembly of a journey's legs"
     )]
     fn journey(&mut self, entry: ProfileEntry<A::Walk>) -> Result<Journey, A::Error> {
-        let origin = self.origin();
+        let origin = self.rides.origin();
         let departure = origin + i64::from(entry.departure.into_inner());
         let arrival = origin + i64::from(entry.arrival.into_inner());
         let mode = self.request.mode.name();
@@ -349,7 +358,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
-                        stop: self.stop_ref(stop),
+                        stop: self.rides.stop_ref(stop),
                         walk,
                         stop_moved: Vec::new(),
                     }));
@@ -363,14 +372,16 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                     if let Some((alighted_at, stop)) = alighted.take() {
                         // Two rides in a row change at one stop.
                         debug_assert_eq!(stop, ride.board_stop, "a change without a walk");
-                        let change = self.snapshot.snapshot.min_change(stop).unwrap_or(0);
+                        let change = self.rides.snapshot.snapshot.min_change(stop).unwrap_or(0);
                         ready = alighted_at + i64::from(change);
                     }
                     self.access_egress.enter_stage(PlanStage::TransitLeg);
-                    let mut leg = self.transit_leg(&ride, wait);
+                    let mut leg = self.rides.transit_leg(&ride, wait, &|stage| {
+                        self.access_egress.enter_stage(stage);
+                    });
                     if !self.request.options.departures.is_empty() {
                         self.access_egress.enter_stage(PlanStage::Departures);
-                        let (departures, alerts) = self.ride_departures(&ride, ready, &leg);
+                        let (departures, alerts) = self.rides.ride_departures(&ride, ready, &leg);
                         leg.departures = departures;
                         leg.departure_alerts = alerts;
                     }
@@ -397,7 +408,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                         .map_or_else(|| i64::from(duration.into_inner()), i64::from);
                     transfers += duration;
                     let path = {
-                        let snapshot = self.snapshot;
+                        let snapshot = self.rides.snapshot;
                         let request = AccessEgressRequest {
                             origin: self.request.origin,
                             destination: self.request.destination,
@@ -414,8 +425,8 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
-                        from: self.stop_ref(from),
-                        to: self.stop_ref(to),
+                        from: self.rides.stop_ref(from),
+                        to: self.rides.stop_ref(to),
                         walk: path,
                         stop_moved: Vec::new(),
                     })));
@@ -431,7 +442,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                         duration_seconds: duration,
                         departure: clock,
                         arrival: clock + duration,
-                        stop: self.stop_ref(stop),
+                        stop: self.rides.stop_ref(stop),
                         walk,
                         stop_moved: Vec::new(),
                     }));
@@ -454,6 +465,31 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
             wait_seconds: waiting,
             legs,
         })
+    }
+}
+
+impl<'a> RideDescriber<'a> {
+    /// A describer of rides from `snapshot`, reading departures with `mode`'s rules and
+    /// listing a ride's others by `departures`.
+    pub(super) fn new(
+        snapshot: &'a TransitSnapshot,
+        mode: TravelMode,
+        departures: DepartureRange,
+    ) -> Self {
+        Self {
+            snapshot,
+            mode,
+            departures,
+            departure_cache: RefCell::new(DepartureCache::default()),
+        }
+    }
+
+    pub(super) fn set(&self) -> &'a TimetableSet {
+        &self.snapshot.data.set
+    }
+
+    pub(super) fn origin(&self) -> i64 {
+        self.snapshot.window.origin_unix
     }
 
     pub(super) fn stop_ref(&self, stop: StopId) -> StopRef {
@@ -590,7 +626,13 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         }
     }
 
-    pub(super) fn transit_leg(&self, ride: &Ride, wait: i64) -> TransitLeg {
+    /// A ride's leg, telling `stage` when its shape is encoded and done.
+    pub(super) fn transit_leg(
+        &self,
+        ride: &Ride,
+        wait: i64,
+        stage: &impl Fn(PlanStage),
+    ) -> TransitLeg {
         let view = self.ride_view(ride);
         let events = self
             .snapshot
@@ -652,9 +694,9 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
                 )
             })
             .map(|points| {
-                self.access_egress.enter_stage(PlanStage::TransitShape);
+                stage(PlanStage::TransitShape);
                 let shape = encode_polyline6(&points);
-                self.access_egress.enter_stage(PlanStage::TransitLeg);
+                stage(PlanStage::TransitLeg);
                 shape
             });
         let segments = Self::ride_segments(view.part, &view.trip_segments, ride, &stop_indices);

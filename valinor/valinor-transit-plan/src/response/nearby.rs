@@ -11,23 +11,19 @@
 //! and the rows in the horizon, and the trip each row runs to find its route and direction.
 //! Only the listed departures are described.
 
-use core::convert::Infallible;
 use std::collections::HashMap;
 
 use serde::Serialize;
 use serde_with::skip_serializing_none;
 use valinor_gtfs::{GtfsRoute, TimetablePart};
 use valinor_gtfs_rt::ScopedId;
-use valinor_transit::{RouteFilter, RouteId, Snapshot, StopId, StopTable, TripKey};
+use valinor_transit::{RouteFilter, RouteId, Snapshot, StopId, TripKey};
 
 use crate::error::Missing;
 use crate::nearby::{DirectionKey, NearbyRequest, RouteDetailRequest};
-use crate::plan::{
-    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, DepartureRange, DirectSearch,
-    TransitOptions, TransitRequest,
-};
+use crate::plan::DepartureRange;
 use crate::response::build::{
-    Builder, agency_response, gtfs_route_of, realtime_status, route_response,
+    RideDescriber, agency_response, gtfs_route_of, realtime_status, route_response,
 };
 use crate::response::departures::{Candidate, DepartureSearch, Found, Pair, Serving};
 use crate::response::vehicle::vehicle_from;
@@ -227,47 +223,6 @@ fn window(time: i64, horizon_seconds: u32) -> Window {
     }
 }
 
-/// The access search a nearby builder holds: the walks were found before it, and none is drawn.
-struct NoWalks;
-
-impl AccessEgressSearch for NoWalks {
-    type Error = Infallible;
-    type Walk = ();
-
-    fn tables(
-        &mut self,
-        request: &AccessEgressRequest<'_>,
-        _interrupt: &dyn Fn() -> bool,
-    ) -> Result<AccessEgressTables, Infallible> {
-        let stops = request.snapshot.snapshot().stop_count();
-        Ok(AccessEgressTables {
-            access: StopTable::new(stops),
-            egress: StopTable::new(stops),
-            direct: DirectSearch::NotSearched,
-        })
-    }
-}
-
-/// The plan request a builder reads, for a query at one place: its mode and time.
-///
-/// A builder reads a request's mode for the rules it reads and its departure range only when
-/// it lists a ride's departures, which nothing here does.
-fn builder_request(
-    location: valinor_gtfs::LatLon,
-    time: i64,
-    now: i64,
-    mode: crate::plan::TravelMode,
-) -> TransitRequest {
-    TransitRequest {
-        options: TransitOptions {
-            departures: DepartureRange::NONE,
-            ..TransitOptions::default()
-        },
-        mode,
-        ..TransitRequest::new(location, location, time, now)
-    }
-}
-
 /// Builds a nearby response from the reachable stops and their walks, in seconds.
 ///
 /// `None` if `interrupt` asked to stop.
@@ -277,10 +232,9 @@ pub(crate) fn build_nearby(
     reachable: &[(StopId, u32)],
     interrupt: &dyn Fn() -> bool,
 ) -> Option<NearbyResponse> {
-    let plan_request = builder_request(request.location, request.time, request.now, request.mode);
-    let mut walks = NoWalks;
-    let builder = Builder::new(snapshot, &plan_request, &mut walks);
-    let (routes, alerts) = builder.nearby_routes(request, reachable, interrupt)?;
+    // Nearby departures list no ride's other departures.
+    let rides = RideDescriber::new(snapshot, request.mode, DepartureRange::NONE);
+    let (routes, alerts) = rides.nearby_routes(request, reachable, interrupt)?;
     Some(NearbyResponse {
         generated_at: request.now,
         window: window(request.time, request.horizon_seconds),
@@ -296,12 +250,7 @@ pub(crate) fn build_route_detail(
     snapshot: &TransitSnapshot,
     request: &RouteDetailRequest,
 ) -> Result<RouteDetailResponse, RouteLookupError> {
-    // There is no place: the stop is the rider's, and the walk to it is given.
-    let location = valinor_gtfs::LatLon { lat: 0.0, lon: 0.0 };
-    let plan_request = builder_request(location, request.time, request.now, request.mode);
-    let mut walks = NoWalks;
-    let builder = Builder::new(snapshot, &plan_request, &mut walks);
-    builder.route_detail(request)
+    RideDescriber::new(snapshot, request.mode, DepartureRange::NONE).route_detail(request)
 }
 
 /// Which way a trip goes from a stop, as grouping keys it.
@@ -388,7 +337,7 @@ struct Boarded {
     end: usize,
 }
 
-impl<A: AccessEgressSearch> Builder<'_, A> {
+impl RideDescriber<'_> {
     /// The GTFS trip a run is on `pattern`, at the original trip `segment` picks on a combined
     /// stay-seated trip.
     ///
@@ -491,7 +440,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         if ready > end {
             return Vec::new();
         }
-        let filter = self.request.mode.route_filter();
+        let filter = self.mode.route_filter();
         let pairs = boardings(&self.snapshot.snapshot, filter, stop);
         if pairs.is_empty() {
             return Vec::new();
@@ -718,7 +667,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         let ride = chosen.and_then(|candidate| {
             let ride = self.ride_to_end(stop, candidate)?;
             let board = self.origin() + i64::from(candidate.board.departure.into_inner());
-            Some(self.transit_leg(&ride, board - ready))
+            Some(self.transit_leg(&ride, board - ready, &|_| {}))
         });
 
         let stop_ref = self.stop_ref(stop);
