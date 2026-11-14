@@ -328,8 +328,8 @@ Future<void> _writeStyle(MapLayers layers) async {
 
 /// Arguments for sparkle (as `sparkle_harness` takes them): the style for [layers] and
 /// the bundled sprites, copied out to files, [tiles]' TileJSON, and the [view] to open.
-/// With a basemap, the downloaded tiles are read before the tile server's
-/// (`--local-tiles`).
+/// With a basemap, the downloaded tiles are read before the tile server's, once the
+/// first download creates the file (`--local-tiles`).
 Future<List<String>> _mapArgs(
   MapLayers layers,
   MapViewport view,

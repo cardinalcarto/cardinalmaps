@@ -342,12 +342,11 @@ class OfflineDownloads {
     return (await pinned())[ReleaseKind.map]!.date;
   });
 
-  /// The basemap, if a map release is pinned and it exists.
+  /// The pinned map release's basemap, if a map release is pinned, whether or not
+  /// it exists yet: the map reads it once the first download creates it.
   Future<String?> basemap() async {
     final map = (await pinned())[ReleaseKind.map];
-    if (map == null) return null;
-    final path = basemapPath(map.date);
-    return File(path).existsSync() ? path : null;
+    return map == null ? null : basemapPath(map.date);
   }
 
   // Planning.

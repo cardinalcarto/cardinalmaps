@@ -851,6 +851,17 @@ void main() {
   );
 
   test(
+    'the basemap is named once the map release is pinned, before it exists',
+    () async {
+      expect(await engine.basemap(), isNull);
+      await engine.mapRelease();
+      final basemap = engine.basemapPath(mapDate);
+      expect(File(basemap).existsSync(), isFalse);
+      expect(await engine.basemap(), basemap);
+    },
+  );
+
+  test(
     'without latest.json and nothing pinned, there is no map release',
     () async {
       await File('${release.root}/releases/latest.json').delete();
