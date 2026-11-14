@@ -4932,6 +4932,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "valinor-meili"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "valhalla-graphtile",
+ "valhalla-proto",
+ "valinor-sif",
+]
+
+[[package]]
 name = "valinor-router"
 version = "0.1.0"
 dependencies = [
@@ -4947,6 +4959,7 @@ dependencies = [
  "valhalla-proto",
  "valhalla-response",
  "valinor-loki",
+ "valinor-meili",
  "valinor-thor",
  "valinor-tyr",
 ]
@@ -4974,7 +4987,9 @@ dependencies = [
  "valhalla-graphtile",
  "valhalla-proto",
  "valhalla-response",
+ "valinor-meili",
  "valinor-sif",
+ "valinor-tyr",
 ]
 
 [[package]]
@@ -5025,6 +5040,7 @@ dependencies = [
  "valhalla-graphtile",
  "valhalla-proto",
  "valhalla-response",
+ "valinor-meili",
  "valinor-sif",
 ]
 
