@@ -340,3 +340,70 @@ fn a_local_mbtiles_is_read_before_the_server_once_it_exists() {
     drop(loader);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn without_the_tilejson_a_tile_server_reads_only_its_local_mbtiles() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../sparkle/tests/fixtures/raster/raster.mbtiles");
+    let source = sparkle_view::mbtiles::MbTiles::open(&fixture).unwrap();
+    // A port nothing listens on: offline, with nothing cached.
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let url = format!("http://127.0.0.1:{port}/tiles.json");
+    let dir = scratch("tilejson-fallback");
+    let style_path = dir.join("style.json");
+    let style = json!({
+        "version": 8,
+        "sources": {"r": {"type": "raster", "tileSize": 256}},
+        "layers": [{"id": "r", "type": "raster", "source": "r"}]
+    });
+    std::fs::write(&style_path, style.to_string()).unwrap();
+    let local = dir.join("offline.mbtiles");
+    let args = sparkle_view::args::parse(
+        [
+            "--style",
+            style_path.to_str().unwrap(),
+            "--cache",
+            dir.join("cache").to_str().unwrap(),
+            "--tiles",
+            &format!("r={url}"),
+            "--local-tiles",
+            &format!("r={}", local.display()),
+        ]
+        .map(String::from),
+    )
+    .unwrap();
+    let style = Arc::new(sparkle_view::setup::load_style(args.style.as_deref(), &args).unwrap());
+
+    // No local file either: nothing to describe the source with.
+    assert!(sparkle_view::setup::sources(&args, &style).is_err());
+
+    let conn = create_mbtiles(&local);
+    let id = TileId::new(11, 328, 714);
+    copy_tile(&conn, &source, id);
+    let (configs, _, _) = sparkle_view::setup::sources(&args, &style).unwrap();
+    assert!(configs[0].server.is_none());
+    assert_eq!(configs[0].path, local);
+    let (tx, rx) = mpsc::channel();
+    let loader = TileLoader::spawn(
+        LoaderConfig {
+            style,
+            sources: configs,
+            images: None,
+            fonts: None,
+        },
+        move |m| drop(tx.send(m)),
+    )
+    .unwrap();
+    loader.set_wanted([((0, id), Tier::Visible)]);
+    loader.request((0, id), id.z);
+    match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
+        TileMessage::Loaded(_, tile, ..) => assert_eq!(tile.id, id),
+        _ => panic!("{id:?} didn't load"),
+    }
+    drop(loader);
+    let _ = std::fs::remove_dir_all(&dir);
+}

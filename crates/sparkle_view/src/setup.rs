@@ -132,7 +132,8 @@ pub fn sources(
             map_sources.push(map_source);
             continue;
         }
-        let (metadata, server) = match url {
+        let local_index = local.iter().position(|(l, _)| *l == id);
+        let (metadata, server, path) = match url {
             Some(url) => {
                 let (agent, cache) = match &http {
                     Some(http) => http,
@@ -151,11 +152,23 @@ pub fn sources(
                     Some(Source::Raster(_) | Source::RasterDem(_)) => TileFormat::Image,
                     _ => TileFormat::Mvt,
                 };
-                let (server, metadata) =
-                    TileServer::open(url, agent.clone(), cache.clone(), format)?;
-                (metadata, Some(Arc::new(server)))
+                match TileServer::open(url, agent.clone(), cache.clone(), format) {
+                    Ok((server, metadata)) => (metadata, Some(Arc::new(server)), path.clone()),
+                    // Offline with the TileJSON neither reachable nor cached (the cache
+                    // may have been cleared): the local tiles, if they exist, describe
+                    // the source well enough to draw them. The server is tried again
+                    // next run.
+                    Err(err) => match local_index.filter(|&i| local[i].1.exists()) {
+                        Some(i) => {
+                            let (_, local) = local.swap_remove(i);
+                            log::warn!("{err:#}; reading only {}", local.display());
+                            (MbTiles::open(&local)?.metadata()?, None, local)
+                        }
+                        None => return Err(err),
+                    },
+                }
             }
-            None => (MbTiles::open(path)?.metadata()?, None),
+            None => (MbTiles::open(path)?.metadata()?, None, path.clone()),
         };
         // The style can narrow what the tileset has.
         let tiles = style_source.and_then(Source::tiles);
@@ -186,6 +199,7 @@ pub fn sources(
             tile_size: style_source.map_or(512, |s| s.tile_size()),
             bounds,
         });
+        // Taken already if the server's TileJSON couldn't be had.
         let local = match local.iter().position(|(l, _)| *l == id) {
             Some(i) if server.is_some() => {
                 let (_, local) = local.swap_remove(i);
@@ -196,7 +210,7 @@ pub fn sources(
         };
         configs.push(SourceConfig {
             id,
-            path: path.clone(),
+            path,
             format: metadata.format,
             image_tile: None,
             geojson: None,
