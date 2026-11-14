@@ -204,7 +204,6 @@ void main() {
       name.controller!.text,
       matches(RegExp(r'^[A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d\d [AP]M$')),
     );
-    expect(find.text("You'll choose transit next."), findsOneWidget);
     expect(_enabled(tester, 'Next'), isTrue);
     expect(find.text('Redraw'), findsOneWidget);
     expect(drawing.frozen, isTrue);
@@ -365,7 +364,6 @@ void main() {
     await startDrawing(tester);
     await _lasso(tester);
     await tester.pumpAndSettle();
-    expect(find.text("You'll choose transit next."), findsNothing);
     expect(find.text('Next'), findsNothing);
 
     await tester.enterText(find.byType(TextField), 'Seattle');

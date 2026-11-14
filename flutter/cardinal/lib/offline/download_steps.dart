@@ -260,15 +260,6 @@ class SizeStep extends StatelessWidget {
             ),
           const SizedBox(height: 16),
           _NameField(controller: name),
-          if (hasTransit) ...[
-            const SizedBox(height: 12),
-            Text(
-              "You'll choose transit next.",
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: colors.onSurfaceVariant,
-              ),
-            ),
-          ],
           const SizedBox(height: 20),
           _Buttons(
             start: AppButton(
