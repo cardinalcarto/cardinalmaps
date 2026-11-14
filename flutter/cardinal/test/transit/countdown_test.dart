@@ -1,3 +1,4 @@
+import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/transit/countdown.dart';
 import 'package:cardinal/transit/nearby_transit.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -54,5 +55,61 @@ void main() {
     expect(countdown.secondsUntil, 675);
     expect(countdown.minutesUntil, 11);
     expect(countdown.secondsToSpare, 633);
+  });
+
+  group('state', () {
+    CountdownState stateAt(int now, {DepartureStatus? status}) => Countdown.at(
+      departure,
+      now: at(now),
+      walkSeconds: 240,
+      status: status ?? DepartureStatus.scheduled,
+    ).state;
+
+    test('upcoming while the walk can make it, live or scheduled', () {
+      expect(stateAt(0), CountdownState.upcoming);
+      expect(
+        stateAt(60, status: DepartureStatus.live),
+        CountdownState.upcoming,
+      );
+    });
+
+    test('unreachable once the walk can\'t make it, until it leaves', () {
+      expect(stateAt(61), CountdownState.unreachable);
+      expect(stateAt(300), CountdownState.unreachable);
+    });
+
+    test('departed once it has left', () {
+      expect(stateAt(301), CountdownState.departed);
+    });
+
+    test(
+      "canceled or skipped until it would have left, however far the walk",
+      () {
+        expect(
+          stateAt(0, status: DepartureStatus.canceled),
+          CountdownState.canceled,
+        );
+        expect(
+          stateAt(200, status: DepartureStatus.skipped),
+          CountdownState.skipped,
+        );
+        expect(
+          stateAt(301, status: DepartureStatus.canceled),
+          CountdownState.departed,
+        );
+      },
+    );
+
+    test("reads a departure's own status", () {
+      final canceled = NearbyTransit.fromJson(snapshotNearbyJson())
+          .routes[2]
+          .directions[1]
+          .departures
+          .first;
+      expect(
+        Countdown(canceled, now: canceled.departure).state,
+        CountdownState.canceled,
+      );
+    });
   });
 }
