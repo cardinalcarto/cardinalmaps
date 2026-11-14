@@ -5,7 +5,7 @@
 //! vertices with no textures, over a few hundred pixels.
 
 use bytemuck::Zeroable;
-use sparkle_view::camera::{Mat4, mul};
+use sparkle_view::camera::{Camera, Mat4, mul, transform};
 use sparkle_view::puck::{Pose, PuckStyle};
 
 use super::Gpu;
@@ -47,7 +47,7 @@ impl PuckRenderer {
 
     /// Draw `puck` into `pass`.
     pub fn draw(&self, gpu: &Gpu, pass: &mut Pass<'_>, view: &View, puck: &PuckDraw<'_>) {
-        let Some(matrix) = square(view, puck) else {
+        let Some(matrix) = square(&view.camera, puck) else {
             return;
         };
         let style = puck.style;
@@ -68,15 +68,30 @@ impl PuckRenderer {
 
 /// The unit square to clip space: centered on the puck, its side the chevron's length
 /// plus [`MARGIN`] on each side, turned to its bearing, on the ground (or the globe) at
-/// its height. `None` on the far side of the globe.
-fn square(view: &View, puck: &PuckDraw<'_>) -> Option<[[f32; 4]; 4]> {
-    let camera = &view.camera;
+/// its height. `None` behind the camera or on the far side of the globe.
+///
+/// The square is scaled with its distance from the camera so that it's drawn the same
+/// size on screen however far off it is, as navigation pucks are: tilted, it still lies
+/// flat and is foreshortened, but a puck low on a pitched view under a sheet doesn't
+/// shrink toward the horizon with the map.
+fn square(camera: &Camera, puck: &PuckDraw<'_>) -> Option<[[f32; 4]; 4]> {
     let half = f64::from(puck.style.size) / 2.0 + MARGIN;
     let mut world = puck.pose.world;
     // The copy of the world the view is on.
     world[0] += (camera.center[0] - world[0]).round();
     let (sin, cos) = puck.pose.bearing.to_radians().sin_cos();
-    let per_pixel = 1.0 / camera.world_size();
+    // A logical pixel of the ground is drawn a logical pixel across at the camera's
+    // distance from the center, and smaller in proportion further off: so at the
+    // puck's distance (clip w), that many times bigger on the ground.
+    let middle = camera.position(world, puck.height);
+    let distance = transform(
+        &camera.view_matrix(),
+        [middle[0], middle[1], middle[2], 1.0],
+    )[3];
+    if distance <= 0.0 {
+        return None;
+    }
+    let per_pixel = distance / camera.camera_to_center() / camera.world_size();
     // Logical pixels from the puck (x right, y back from its tip) to a point of the
     // ground in the view's frame: turned clockwise by the bearing, as `y` points south.
     let corner = |x: f64, y: f64| {
@@ -98,4 +113,76 @@ fn square(view: &View, puck: &PuckDraw<'_>) -> Option<[[f32; 4]; 4]> {
         [origin[0], origin[1], origin[2], 1.0],
     ];
     Some(mul(&camera.view_matrix(), &place).map(|c| c.map(|v| v as f32)))
+}
+
+#[cfg(test)]
+mod tests {
+    use sparkle_view::camera::lng_lat_to_world;
+
+    use super::*;
+
+    /// Where the point `x, y` of the unit square is drawn, in logical pixels.
+    fn drawn(camera: &Camera, matrix: &[[f32; 4]; 4], x: f64, y: f64) -> [f64; 2] {
+        let m = matrix.map(|c| c.map(f64::from));
+        let clip = transform(&m, [x, y, 0.0, 1.0]);
+        let [w, h] = camera.logical_size();
+        [
+            (clip[0] / clip[3] + 1.0) / 2.0 * w,
+            (1.0 - clip[1] / clip[3]) / 2.0 * h,
+        ]
+    }
+
+    #[test]
+    fn the_chevron_is_the_same_size_on_screen_near_and_far() {
+        let mut camera = Camera::new([800.0, 600.0], 1.0);
+        camera.look_at(-122.33, 47.6, 16.0);
+        camera.set_pitch(60.0);
+        let style = PuckStyle::default();
+        let side = f64::from(style.size) + 2.0 * MARGIN;
+        let width_at = |camera: &Camera, screen: [f64; 2]| {
+            let pose = Pose {
+                world: camera.screen_to_world(screen).unwrap(),
+                bearing: 0.0,
+            };
+            let draw = PuckDraw {
+                pose,
+                style: &style,
+                before: 0,
+                height: 0.0,
+            };
+            let m = square(camera, &draw).unwrap();
+            // Across its middle, which faces the camera square on with no bearing.
+            let (l, r) = (drawn(camera, &m, 0.0, 0.5), drawn(camera, &m, 1.0, 0.5));
+            (l[0] - r[0]).hypot(l[1] - r[1])
+        };
+        for screen in [
+            [400.0, 300.0],
+            [400.0, 560.0],
+            [400.0, 60.0],
+            [100.0, 450.0],
+        ] {
+            let width = width_at(&camera, screen);
+            assert!((width - side).abs() < 0.05, "{screen:?}: {width}");
+        }
+        // Looking straight down it's as long as it's wide; tilted, it's foreshortened.
+        let length = |camera: &Camera| {
+            let pose = Pose {
+                world: lng_lat_to_world(-122.33, 47.6),
+                bearing: 0.0,
+            };
+            let draw = PuckDraw {
+                pose,
+                style: &style,
+                before: 0,
+                height: 0.0,
+            };
+            let m = square(camera, &draw).unwrap();
+            let (t, b) = (drawn(camera, &m, 0.5, 0.0), drawn(camera, &m, 0.5, 1.0));
+            (t[0] - b[0]).hypot(t[1] - b[1])
+        };
+        let tilted = length(&camera);
+        assert!(tilted < 0.6 * side && tilted > 0.4 * side, "{tilted}");
+        camera.set_pitch(0.0);
+        assert!((length(&camera) - side).abs() < 1e-3);
+    }
 }

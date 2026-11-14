@@ -106,8 +106,9 @@ class PuckStyle {
   final Color outline;
   final double outlineWidth;
 
-  /// The chevron's length from tip to tail, in logical pixels on the ground under the
-  /// middle of the map: a tilted map draws it smaller further off, as it does the map.
+  /// The chevron's length from tip to tail, in logical pixels on screen. It keeps that
+  /// size wherever it is, as navigation pucks do; a tilted map still foreshortens it,
+  /// since it lies flat.
   final double size;
 
   /// The id of the style layer it's drawn under; by default it's over every layer.
@@ -340,8 +341,10 @@ class SparkleMapController {
   /// with the puck's if null. It eases in from where the camera is over [duration];
   /// following again changes the settings the same way.
   ///
-  /// Moving the map by hand, [flyTo], [easeTo], [setSubject], [turnNorth] and
-  /// [stopFollowing] end it, which [following] tells. Throws if the puck hasn't been
+  /// Moving the map by hand (panning, zooming, rotating or tilting it, but not tapping
+  /// it, so a tap on a place or label while following leaves the camera on the puck),
+  /// [flyTo], [easeTo], [setSubject], [turnNorth] and [stopFollowing] end it, which
+  /// [following] tells. Throws if the puck hasn't been
   /// put anywhere. Does nothing until the map [isReady].
   void follow({
     required double zoom,

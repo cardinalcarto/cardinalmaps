@@ -15,7 +15,7 @@ use sparkle::video::VideoFrames;
 
 use crate::args::Args;
 use crate::cache::DiskCache;
-use crate::camera::Camera;
+use crate::camera::{Camera, Padding};
 use crate::loader::SourceConfig;
 use crate::map::{MapSource, MapState, TileUploader};
 use crate::mbtiles::{MbTiles, Metadata, TileFormat};
@@ -353,7 +353,8 @@ pub fn initial_camera(
     } else if let Some((lng, lat, zoom)) = metadata.and_then(|m| m.center) {
         camera.look_at(lng, lat, zoom);
     } else if let Some(bounds) = metadata.and_then(|m| m.bounds) {
-        camera.fit_bounds(bounds);
+        let framing = camera.fit_bounds(bounds, Padding::default());
+        camera.show(&framing, Padding::default());
     }
 }
 

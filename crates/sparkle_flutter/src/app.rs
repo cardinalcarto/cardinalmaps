@@ -34,6 +34,9 @@ use crate::render::{GpuTile, Renderer};
 /// over several frames instead of stalling one.
 const UPLOAD_BUDGET: usize = 2 << 20;
 
+/// How far, in physical pixels, a press can move and still be a click.
+const CLICK_SLOP: f64 = 4.0;
+
 /// How far from a label a click still lands on it, in logical pixels, on top of what
 /// the label covers: icons are smaller than a finger.
 const LABEL_TOUCH_TOLERANCE: f32 = 12.0;
@@ -147,6 +150,9 @@ pub struct MapView {
     drag: Option<Drag>,
     /// Where the primary button went down, to tell clicks from drags.
     press: Option<[f64; 2]>,
+    /// Where the last button went down, any button: a drag from there that goes no
+    /// further than a click could leaves the camera following.
+    grabbed: [f64; 2],
     /// The labels the last click landed on, until they're taken.
     clicked: Vec<ClickedFeature>,
     /// The sprite images tiles are laid out against.
@@ -232,6 +238,7 @@ impl MapView {
             cursor: [0.0; 2],
             drag: None,
             press: None,
+            grabbed: [0.0; 2],
             clicked: Vec::new(),
             images,
             hovered: None,
@@ -250,7 +257,7 @@ impl MapView {
 
     /// The window is now `size` physical pixels, `pixel_ratio` of them per logical one.
     pub fn resize(&mut self, size: [u32; 2], pixel_ratio: f64) {
-        let middle = self.camera.padded_center(self.padding);
+        let middle = self.camera.framing(self.padding).target;
         self.renderer.resize(size);
         self.camera.viewport = size.map(f64::from);
         if self.args.pixel_ratio.is_none() {
@@ -474,9 +481,22 @@ impl MapView {
     }
 
     /// The pointer moved to `position`. Returns whether a frame should be drawn.
+    ///
+    /// A drag ends following the puck once it has moved further than a click could, and
+    /// not before: a press is a tap until then, and tapping a label or a place while
+    /// navigating mustn't take the camera off the puck. The drag then starts from where
+    /// the press went down, so the map doesn't lag behind the finger.
     pub fn pointer_move(&mut self, position: [f64; 2]) -> bool {
         let p = self.physical(position);
-        let from = std::mem::replace(&mut self.cursor, p);
+        let mut from = std::mem::replace(&mut self.cursor, p);
+        if self.drag.is_some() && self.follow.is_some() {
+            let down = self.grabbed;
+            if (down[0] - p[0]).hypot(down[1] - p[1]) < CLICK_SLOP {
+                return false;
+            }
+            self.let_go();
+            from = down;
+        }
         let camera = &mut self.camera;
         match self.drag {
             Some(Drag::Pan) => {
@@ -496,9 +516,13 @@ impl MapView {
     /// A button went down at `position`; `rotate` turns a primary drag into rotating (as
     /// with ctrl held). Returns whether it stopped the camera moving, in which case it's
     /// part of panning and can't be a click, and a frame should be drawn.
+    ///
+    /// It lets go of the subject, as any touch of the map does, but goes on following
+    /// the puck until the press drags (see [`Self::pointer_move`]): it may be a tap.
     pub fn pointer_down(&mut self, position: [f64; 2], button: Button, rotate: bool) -> bool {
-        self.let_go();
+        self.subject = None;
         self.cursor = self.physical(position);
+        self.grabbed = self.cursor;
         if button == Button::Primary {
             self.press = Some(self.cursor);
         }
@@ -525,7 +549,7 @@ impl MapView {
         if button == Button::Primary
             && let Some(p) = self.press.take()
             && click
-            && (p[0] - self.cursor[0]).hypot(p[1] - self.cursor[1]) < 4.0
+            && (p[0] - self.cursor[0]).hypot(p[1] - self.cursor[1]) < CLICK_SLOP
         {
             self.drag = None;
             return self.mark(true);
@@ -648,6 +672,7 @@ impl MapView {
     }
 
     /// Input moved the map: stop keeping the subject in view, and following the puck.
+    /// Taps and clicks don't come here, so they leave the camera following.
     fn let_go(&mut self) {
         self.subject = None;
         self.follow = None;
@@ -678,7 +703,7 @@ impl MapView {
     /// The camera: the longitude and latitude in the middle of the view less the
     /// padding, zoom, bearing and pitch.
     pub fn camera(&self) -> [f64; 5] {
-        let [lng, lat] = to_lng_lat(self.camera.padded_center(self.padding));
+        let [lng, lat] = to_lng_lat(self.camera.framing(self.padding).target);
         let c = &self.camera;
         [lng, lat, c.zoom, c.bearing, c.pitch]
     }
@@ -698,7 +723,7 @@ impl MapView {
         if padding == self.padding {
             return false;
         }
-        let middle = self.camera.padded_center(self.padding);
+        let middle = self.camera.framing(self.padding).target;
         self.padding = padding;
         self.motion.repad(padding);
         self.follow_padding(middle);
@@ -719,9 +744,8 @@ impl MapView {
                 self.camera.zoom = zoom;
             }
         } else if !self.motion.flying() && !self.motion.easing() {
-            self.camera.center = self
-                .camera
-                .center_for(middle, self.camera.zoom, self.padding);
+            let framing = self.camera.aimed_at(middle);
+            self.camera.show(&framing, self.padding);
         }
     }
 
@@ -751,7 +775,8 @@ impl MapView {
         self.subject.is_some()
     }
 
-    /// The camera's center and zoom for showing `subject` with the current padding.
+    /// The camera's center and zoom for showing `subject` with the current padding, at
+    /// the camera's bearing and pitch.
     fn subject_view(&self, subject: Subject) -> ([f64; 2], f64) {
         let m = subject.margin;
         let p = self.padding;
@@ -761,8 +786,11 @@ impl MapView {
             bottom: p.bottom + m,
             left: p.left + m,
         };
-        let (middle, zoom) = self.camera.camera_for_bounds(subject.bounds, fit);
-        let zoom = zoom.min(subject.max_zoom);
+        let zoom = self
+            .camera
+            .fit_bounds(subject.bounds, fit)
+            .zoom
+            .min(subject.max_zoom);
         // However little of the view the padding leaves (none, under a full screen
         // sheet), don't zoom out more than SUBJECT_ZOOM_GIVE below how it shows with no
         // padding: past that it isn't worth seeing all of. Easing towards the limit, as a
@@ -775,23 +803,28 @@ impl MapView {
         };
         let open = self
             .camera
-            .camera_for_bounds(subject.bounds, all)
-            .1
+            .fit_bounds(subject.bounds, all)
+            .zoom
             .min(subject.max_zoom);
         let zoom = if zoom < open {
             open - SUBJECT_ZOOM_GIVE * ((open - zoom) / SUBJECT_ZOOM_GIVE).tanh()
         } else {
             zoom
         };
-        (self.camera.center_for(middle, zoom, self.padding), zoom)
+        // The margin is the same all round, so the middle of `fit` is the padding's.
+        let framing = self.camera.frame_bounds(subject.bounds, fit, zoom);
+        (self.camera.center_showing(&framing, fit), zoom)
     }
 
     /// Fly to show `lng, lat` at `zoom` in the middle of the view less the padding,
     /// dropping any subject and following.
     pub fn fly_to(&mut self, lng: f64, lat: f64, zoom: f64) {
         self.let_go();
-        let target = lng_lat_to_world(lng, lat);
-        let center = self.camera.center_for(target, zoom, self.padding);
+        let framing = Framing {
+            zoom,
+            ..self.camera.aimed_at(lng_lat_to_world(lng, lat))
+        };
+        let center = self.camera.center_showing(&framing, self.padding);
         self.motion.fly(&self.camera, center, zoom, Instant::now());
     }
 
@@ -1179,8 +1212,14 @@ mod tests {
         };
         follow(&mut v);
         v.pointer_down([400.0, 300.0], Button::Primary, false);
-        v.pointer_up([400.0, 300.0], Button::Primary, false);
+        v.pointer_move([400.0, 340.0]);
+        v.pointer_up([400.0, 340.0], Button::Primary, false);
         assert!(!v.is_following() && !v.frame(Stream::default()).following);
+        follow(&mut v);
+        v.pointer_down([400.0, 300.0], Button::Secondary, false);
+        v.pointer_move([460.0, 300.0]);
+        assert!(!v.is_following(), "rotating with the mouse");
+        v.pointer_up([460.0, 300.0], Button::Secondary, false);
         follow(&mut v);
         v.scroll([400.0, 300.0], 50.0);
         assert!(!v.is_following());
@@ -1189,6 +1228,22 @@ mod tests {
         assert!(!v.is_following());
         follow(&mut v);
         v.tilt(10.0);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.double_tap_zoom([400.0, 300.0]);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.quick_zoom([400.0, 300.0], 20.0);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.fly_to(-122.3, 47.6, 12.0);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.set_subject([-122.35, 47.6, -122.3, 47.62], 16.0, 0.0);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.camera.set_bearing(20.0);
+        v.turn_north();
         assert!(!v.is_following());
         follow(&mut v);
         v.ease_to(-122.3, 47.6, 12.0, None, None, 0.3, Curve::Ease);
@@ -1353,5 +1408,166 @@ mod tests {
             close(v.camera(), before),
             "the middle stays, not the subject"
         );
+    }
+
+    #[test]
+    fn taps_and_clicks_keep_following_and_a_pan_ends_it() {
+        let mut v = view();
+        v.set_puck(-122.33, 47.6, 30.0, 0.0);
+        v.follow(16.0, 60.0, None, Padding::default(), 0.0).unwrap();
+        v.frame(Stream::default());
+        let placed = v.camera();
+        // A touch tap: down, up (touch says it's not a click yet), then the click once it
+        // can't be a double tap.
+        v.pointer_down([300.0, 200.0], Button::Primary, false);
+        v.pointer_up([300.0, 200.0], Button::Primary, false);
+        assert!(!v.click([300.0, 200.0]), "nothing to select there");
+        assert!(v.frame(Stream::default()).following);
+        // A mouse click that wobbles a little.
+        v.pointer_down([300.0, 200.0], Button::Primary, false);
+        assert!(!v.pointer_move([302.0, 201.0]), "no drag yet");
+        v.pointer_up([302.0, 201.0], Button::Primary, true);
+        // A right click.
+        v.pointer_down([300.0, 200.0], Button::Secondary, false);
+        v.pointer_up([300.0, 200.0], Button::Secondary, true);
+        assert!(v.frame(Stream::default()).following);
+        assert!(close(v.camera(), placed), "the camera never moved");
+
+        // A pan: once past a click's reach it lets go, dragging from where it went
+        // down, so the ground under the finger then is under it now.
+        v.pointer_down([300.0, 200.0], Button::Primary, false);
+        let grabbed = v.camera.screen_to_world([300.0, 200.0]).unwrap();
+        v.pointer_move([302.0, 202.0]);
+        assert!(v.is_following());
+        v.pointer_move([330.0, 260.0]);
+        assert!(!v.is_following());
+        let under = v.camera.screen_to_world([330.0, 260.0]).unwrap();
+        assert!(near(under, grabbed), "{under:?} {grabbed:?}");
+        v.pointer_up([330.0, 260.0], Button::Primary, false);
+        assert!(!v.frame(Stream::default()).following);
+    }
+
+    /// A sheet, a little more on the left than the right, and some room at the top: the
+    /// middle of what it leaves of the 800 by 600 view is at (455, 195).
+    fn lopsided() -> Padding {
+        Padding {
+            top: 40.0,
+            right: 10.0,
+            bottom: 250.0,
+            left: 120.0,
+        }
+    }
+
+    const MIDDLE: [f64; 2] = [455.0, 195.0];
+
+    fn shows(v: &MapView, lng: f64, lat: f64) -> bool {
+        let shown = v.camera.screen_to_world(MIDDLE).unwrap();
+        (shown[0] - world(lng, lat)[0]).hypot(shown[1] - world(lng, lat)[1]) < 1e-9
+    }
+
+    #[test]
+    fn tilted_or_not_the_camera_is_the_ground_in_the_middle_of_the_padding() {
+        for pitch in [0.0, 60.0] {
+            let mut v = view();
+            v.camera.set_bearing(-25.0);
+            v.camera.set_pitch(pitch);
+            let before = v.camera();
+            assert!(v.set_padding(lopsided()));
+            assert!(
+                close(v.camera(), before),
+                "{pitch}: {:?} {before:?}",
+                v.camera()
+            );
+            let [lng, lat, ..] = before;
+            assert!(shows(&v, lng, lat), "{pitch}");
+            // Easing to where the camera is leaves it there, as does showing it again.
+            let center = v.camera.center;
+            v.ease_to(lng, lat, before[2], None, None, 0.2, Curve::Ease);
+            settle(&mut v);
+            assert!(
+                close(v.camera(), before),
+                "{pitch}: {:?} {before:?}",
+                v.camera()
+            );
+            assert!(near(v.camera.center, center), "{pitch}");
+        }
+    }
+
+    #[test]
+    fn tilted_or_not_a_flight_lands_in_the_middle_of_the_padding() {
+        for pitch in [0.0, 60.0] {
+            let mut v = view();
+            v.camera.set_bearing(40.0);
+            v.camera.set_pitch(pitch);
+            v.set_padding(lopsided());
+            v.fly_to(-122.30, 47.65, 15.0);
+            settle(&mut v);
+            assert!(shows(&v, -122.30, 47.65), "{pitch}");
+            let [lng, lat, zoom, bearing, p] = v.camera();
+            assert!((lng + 122.30).abs() < 1e-6 && (lat - 47.65).abs() < 1e-6);
+            assert_eq!((zoom, bearing, p), (15.0, 40.0, pitch));
+        }
+    }
+
+    #[test]
+    fn tilted_or_not_a_subject_shows_in_the_middle_of_the_padding() {
+        for pitch in [0.0, 60.0] {
+            let mut v = view();
+            v.camera.set_pitch(pitch);
+            v.set_padding(lopsided());
+            v.set_subject([-122.3493, 47.6205, -122.3493, 47.6205], 14.0, 48.0);
+            settle(&mut v);
+            assert!(shows(&v, -122.3493, 47.6205), "{pitch}");
+            // The sheet moves: still there.
+            v.set_padding(Padding {
+                bottom: 100.0,
+                ..lopsided()
+            });
+            let shown = v.camera.screen_to_world([455.0, 270.0]).unwrap();
+            assert!(near(shown, world(-122.3493, 47.6205)), "{pitch}");
+            // Bounds are drawn in the middle of what the padding leaves. (They don't
+            // quite fit it: padding zooms out less than it would take, see
+            // SUBJECT_ZOOM_GIVE, and the camera's tests check the fit itself.)
+            v.set_padding(lopsided());
+            v.set_subject([-122.36, 47.60, -122.30, 47.63], 18.0, 0.0);
+            settle(&mut v);
+            let corners = [
+                [-122.36, 47.63],
+                [-122.30, 47.63],
+                [-122.30, 47.60],
+                [-122.36, 47.60],
+            ]
+            .map(|[lng, lat]| v.camera.world_to_screen(world(lng, lat)).unwrap());
+            let (xs, ys) = (corners.map(|c| c[0]), corners.map(|c| c[1]));
+            let min = |a: [f64; 4]| a.into_iter().fold(f64::INFINITY, f64::min);
+            let max = |a: [f64; 4]| a.into_iter().fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                ((min(xs) + max(xs)) / 2.0 - MIDDLE[0]).abs() < 1e-3,
+                "{pitch}"
+            );
+            assert!(
+                ((min(ys) + max(ys)) / 2.0 - MIDDLE[1]).abs() < 1e-3,
+                "{pitch}"
+            );
+        }
+    }
+
+    #[test]
+    fn tilted_or_not_turning_north_keeps_the_middle_of_the_padding() {
+        for pitch in [0.0, 60.0] {
+            let mut v = view();
+            v.camera.set_bearing(-130.0);
+            v.camera.set_pitch(pitch);
+            v.set_padding(lopsided());
+            let [lng, lat, zoom, ..] = v.camera();
+            v.turn_north();
+            v.frame(Stream::default());
+            settle(&mut v);
+            assert!(shows(&v, lng, lat), "{pitch}");
+            assert_eq!(
+                (v.camera.zoom, v.camera.bearing, v.camera.pitch),
+                (zoom, 0.0, pitch)
+            );
+        }
     }
 }

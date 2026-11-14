@@ -139,9 +139,11 @@ impl Turn {
     /// Turn `camera` to where it is at `now`. Returns whether it has further to go.
     fn step(&self, camera: &mut Camera, now: Instant) -> bool {
         let t = ((now - self.start).as_secs_f64() / self.duration).min(1.0);
-        let middle = camera.padded_center(self.padding);
-        camera.set_bearing(self.from * (1.0 - ease(t)));
-        camera.center = camera.center_for(middle, camera.zoom, self.padding);
+        let framing = Framing {
+            bearing: self.from * (1.0 - ease(t)),
+            ..camera.framing(self.padding)
+        };
+        camera.show(&framing, self.padding);
         t < 1.0
     }
 }
@@ -872,28 +874,34 @@ mod tests {
 
     #[test]
     fn turning_north_changes_only_the_bearing() {
-        let mut c = camera();
-        c.set_bearing(-150.0);
-        c.set_pitch(30.0);
-        let padding = Padding {
-            top: 50.0,
-            right: 0.0,
-            bottom: 300.0,
-            left: 0.0,
-        };
-        let middle = c.padded_center(padding);
-        let mut m = Motion::default();
-        let t = Instant::now();
-        m.turn_north(&c, padding, t);
-        m.step(&mut c, t + Duration::from_millis(100));
-        // Partway, it's turning the short way, straight back toward 0.
-        assert!(c.bearing > -150.0 && c.bearing < 0.0, "{}", c.bearing);
-        let frames = settle(&mut m, &mut c, t + Duration::from_millis(100));
-        assert!(frames < 40, "{frames} frames");
-        assert_eq!(c.bearing, 0.0);
-        assert_eq!((c.zoom, c.pitch), (12.0, 30.0));
-        let after = c.padded_center(padding);
-        assert!((after[0] - middle[0]).abs() < 1e-12 && (after[1] - middle[1]).abs() < 1e-12);
+        for pitch in [0.0, 60.0] {
+            let mut c = camera();
+            c.set_bearing(-150.0);
+            c.set_pitch(pitch);
+            let padding = Padding {
+                top: 50.0,
+                right: 20.0,
+                bottom: 300.0,
+                left: 130.0,
+            };
+            let middle = c.framing(padding).target;
+            let mut m = Motion::default();
+            let t = Instant::now();
+            m.turn_north(&c, padding, t);
+            m.step(&mut c, t + Duration::from_millis(100));
+            // Partway, it's turning the short way, straight back toward 0, around the
+            // middle of the padding.
+            assert!(c.bearing > -150.0 && c.bearing < 0.0, "{}", c.bearing);
+            let partway = c.framing(padding).target;
+            assert!((partway[0] - middle[0]).abs() < 1e-12, "{pitch}");
+            assert!((partway[1] - middle[1]).abs() < 1e-12, "{pitch}");
+            let frames = settle(&mut m, &mut c, t + Duration::from_millis(100));
+            assert!(frames < 40, "{frames} frames");
+            assert_eq!(c.bearing, 0.0);
+            assert_eq!((c.zoom, c.pitch), (12.0, pitch));
+            let after = c.framing(padding).target;
+            assert!((after[0] - middle[0]).abs() < 1e-12 && (after[1] - middle[1]).abs() < 1e-12);
+        }
     }
 
     #[test]

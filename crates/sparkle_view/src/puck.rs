@@ -23,8 +23,9 @@ pub struct PuckStyle {
     pub outline: [f32; 4],
     /// Logical pixels, inside the chevron's edge.
     pub outline_width: f32,
-    /// The chevron's length from tip to tail, in logical pixels at the ground under the
-    /// middle of the view; tilted views draw it smaller further off, as the map.
+    /// The chevron's length from tip to tail, in logical pixels on screen, wherever it
+    /// is: like other navigation pucks it keeps its size at any distance, though a tilt
+    /// still foreshortens it, as it lies flat on the map.
     pub size: f32,
     /// The style layer it's drawn under; `None` (or a layer the style no longer has) is
     /// over every layer. Over everything by default, because "under the labels" would
