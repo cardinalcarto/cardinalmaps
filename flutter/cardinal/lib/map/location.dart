@@ -5,6 +5,7 @@ library;
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:geolocator/geolocator.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
@@ -152,9 +153,22 @@ class GeolocatorSource implements LocationSource {
   Future<LocationPermission> requestPermission() =>
       Geolocator.requestPermission();
 
+  /// On Android, the platform's location manager rather than Google Play services'
+  /// fused provider, which asks you to turn on Google's Location Accuracy before it gives
+  /// a position. The location manager uses what's on: GPS, and the platform's own fused
+  /// provider where there is one.
+  static LocationSettings _settings({int distanceFilter = 0}) => _android
+      ? AndroidSettings(
+          distanceFilter: distanceFilter,
+          forceLocationManager: true,
+        )
+      : LocationSettings(distanceFilter: distanceFilter);
+
+  static bool get _android => defaultTargetPlatform == TargetPlatform.android;
+
   @override
   Stream<Fix> positions() => Geolocator.getPositionStream(
-    locationSettings: const LocationSettings(distanceFilter: 2),
+    locationSettings: _settings(distanceFilter: 2),
   ).map(_fix);
 
   /// How old a position can be and still count as where you are now.
@@ -168,7 +182,9 @@ class GeolocatorSource implements LocationSource {
       return _fix(last);
     }
     try {
-      return _fix(await Geolocator.getCurrentPosition());
+      return _fix(
+        await Geolocator.getCurrentPosition(locationSettings: _settings()),
+      );
     } on Object {
       return last == null ? null : _fix(last);
     }
@@ -176,7 +192,9 @@ class GeolocatorSource implements LocationSource {
 
   static Future<Position?> _lastKnown() async {
     try {
-      return await Geolocator.getLastKnownPosition();
+      return await Geolocator.getLastKnownPosition(
+        forceAndroidLocationManager: _android,
+      );
     } on Object {
       return null;
     }
