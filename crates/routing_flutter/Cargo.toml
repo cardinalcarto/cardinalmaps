@@ -10,6 +10,7 @@ crate-type = ["cdylib", "staticlib", "lib"]
 [dependencies]
 ferrostar = { version = "0.59.0", default-features = false, features = ["std"] }
 flutter_rust_bridge = "=2.13.0"
+illuvatar = { path = "../../valinor/illuvatar" }
 libc = "0.2"
 offline_map = { version = "0.1.0", path = "../offline_map", default-features = false }
 serde_json = "1"

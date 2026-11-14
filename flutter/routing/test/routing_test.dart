@@ -76,6 +76,8 @@ void main() {
       endpointUrl: 'http://unused/route',
       costing: 'auto',
       alternates: 2,
+      language: 'en-US',
+      units: DistanceUnits.kilometers,
     );
     final request = adapter.request(
       from: const DirectionsPoint(lat: 42.5078, lng: 1.5211),
@@ -90,6 +92,45 @@ void main() {
     expect(best.duration, greaterThan(0));
     expect(best.geometry.length, greaterThan(2));
     expect(best.steps.first.instruction, isNotEmpty);
+  });
+
+  test('navigation follows the route the directions show', () async {
+    final router = await OfflineRouter.open(tileSets: [tiles]);
+    final adapter = DirectionsAdapter.valhalla(
+      endpointUrl: 'http://unused/route',
+      costing: 'auto',
+      alternates: 0,
+      language: 'de-AT',
+      units: DistanceUnits.kilometers,
+    );
+    final request = adapter.request(
+      from: const DirectionsPoint(lat: 42.5078, lng: 1.5211),
+      to: const DirectionsPoint(lat: 42.5355, lng: 1.583),
+    );
+    final response = await router.route(body: request.body);
+    final route = (await adapter.parse(body: response.body)).first;
+    final steps = route.navigable.steps();
+    expect(steps.length, route.steps.length);
+    expect(steps.first.spokenInstructions, isNotEmpty);
+
+    final simulation = LocationSimulation(
+      route: route.navigable,
+      resampleDistance: 10,
+      bias: SimulationBias.none,
+      biasMeters: 0,
+    );
+    final session = await NavigationSession.start(
+      route: route.navigable,
+      mode: NavigationMode.driving,
+      location: simulation.current(),
+    );
+    expect(session.current().status, TripStatus.navigating);
+    var update = session.current();
+    while (!simulation.isFinished()) {
+      update = await session.updateLocation(location: simulation.advance());
+    }
+    expect(update.status, TripStatus.complete);
+    expect(update.stepIndex, steps.length);
   });
 
   test('routes concurrently', () async {
@@ -127,6 +168,8 @@ void main() {
       endpointUrl: 'http://unused/route',
       costing: 'auto',
       alternates: 0,
+      language: 'en-US',
+      units: DistanceUnits.kilometers,
     );
     await expectLater(
       adapter.parse(

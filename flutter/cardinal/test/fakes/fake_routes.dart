@@ -37,6 +37,18 @@ class FakeRoutes implements RouteSource {
   }
 }
 
+/// A [NavigableRoute] without the routing library, for routes that are only shown.
+class FakeNavigableRoute implements NavigableRoute {
+  @override
+  List<NavStep> steps() => const [];
+
+  @override
+  void dispose() {}
+
+  @override
+  bool get isDisposed => false;
+}
+
 /// A route along [points], given as `[lng, lat]`.
 DirectionsRoute fakeRoute(
   List<List<double>> points, {
@@ -48,4 +60,5 @@ DirectionsRoute fakeRoute(
   distance: distance,
   duration: duration,
   steps: steps,
+  navigable: FakeNavigableRoute(),
 );

@@ -64,8 +64,23 @@ impl From<RouteStep> for DirectionsStep {
     }
 }
 
+/// A route as Ferrostar parsed it, whole: what navigation follows. Opaque to Dart.
+///
+/// [`DirectionsRoute`] summarizes it for the directions sheet; navigation starts from this,
+/// so it follows exactly the route the sheet showed.
+#[frb(opaque)]
+#[derive(Clone, Debug)]
+pub struct NavigableRoute {
+    pub(crate) route: Route,
+}
+
 /// A way to get there.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Not `PartialEq`: Ferrostar's [`Route`] isn't, and Dart compares routes by identity.
+/// `non_opaque`, since flutter_rust_bridge would otherwise make it opaque for its opaque
+/// field, and Dart reads the rest of it as plain data.
+#[frb(non_opaque)]
+#[derive(Clone, Debug)]
 pub struct DirectionsRoute {
     /// The line it follows.
     pub geometry: Vec<DirectionsPoint>,
@@ -74,16 +89,19 @@ pub struct DirectionsRoute {
     /// How long it takes, in seconds.
     pub duration: f64,
     pub steps: Vec<DirectionsStep>,
+    /// The whole route, to navigate.
+    pub navigable: NavigableRoute,
 }
 
 impl From<Route> for DirectionsRoute {
     fn from(route: Route) -> Self {
         Self {
-            geometry: route.geometry.into_iter().map(Into::into).collect(),
+            geometry: route.geometry.iter().copied().map(Into::into).collect(),
             distance: route.distance,
             // Ferrostar's routes have no total of their own.
             duration: route.steps.iter().map(|step| step.duration).sum(),
-            steps: route.steps.into_iter().map(Into::into).collect(),
+            steps: route.steps.iter().cloned().map(Into::into).collect(),
+            navigable: NavigableRoute { route },
         }
     }
 }
@@ -115,7 +133,7 @@ pub struct DirectionsError {
 }
 
 impl DirectionsError {
-    fn failed(error: impl ToString) -> Self {
+    pub(crate) fn failed(error: impl ToString) -> Self {
         Self {
             kind: DirectionsErrorKind::Failed,
             message: error.to_string(),
@@ -144,6 +162,36 @@ impl From<ParsingError> for DirectionsError {
     }
 }
 
+/// The units a route's instructions give distances in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DistanceUnits {
+    Kilometers,
+    Miles,
+}
+
+impl DistanceUnits {
+    /// Valhalla's name for them.
+    fn valhalla(self) -> &'static str {
+        match self {
+            DistanceUnits::Kilometers => "kilometers",
+            DistanceUnits::Miles => "miles",
+        }
+    }
+}
+
+/// The language Valhalla has instructions in that's nearest `tag` (a BCP-47 tag such as
+/// `es-MX`): the tag's own locale if it has one, else its language's (`es-ES`), else `en-US`.
+///
+/// Valhalla matches a request's language exactly against its locales and their aliases,
+/// and answers any other in `en-US` without saying so, so `es-MX` as it stands would get
+/// English. The locales are Ilúvatar's, which are the router's own.
+fn valhalla_language(tag: &str) -> &'static str {
+    let language = tag.split(['-', '_']).next().unwrap_or(tag);
+    illuvatar::locale_tag(tag)
+        .or_else(|| illuvatar::locale_tag(language))
+        .unwrap_or("en-US")
+}
+
 /// Ferrostar's adapter for one way of traveling. Opaque to Dart.
 #[frb(opaque)]
 pub struct DirectionsAdapter {
@@ -152,18 +200,27 @@ pub struct DirectionsAdapter {
 
 impl DirectionsAdapter {
     /// An adapter for a Valhalla server's route endpoint and a costing such as `auto`,
-    /// asking for up to `alternates` routes besides the best one.
+    /// asking for up to `alternates` routes besides the best one, with instructions in
+    /// `language` (a BCP-47 tag such as `pt-PT`, as [`valhalla_language`] resolves it) and
+    /// distances in `units`.
     #[frb(sync)]
     pub fn valhalla(
         endpoint_url: String,
         costing: String,
         alternates: u32,
+        language: String,
+        units: DistanceUnits,
     ) -> Result<DirectionsAdapter, DirectionsError> {
+        let options = serde_json::json!({
+            "alternates": alternates,
+            "language": valhalla_language(&language),
+            "units": units.valhalla(),
+        });
         let adapter =
             RouteAdapter::from_well_known_route_provider(WellKnownRouteProvider::Valhalla {
                 endpoint_url,
                 profile: costing,
-                options_json: Some(format!(r#"{{"alternates":{alternates}}}"#)),
+                options_json: Some(options.to_string()),
             })
             .map_err(DirectionsError::failed)?;
         Ok(Self { adapter })
@@ -188,9 +245,18 @@ impl DirectionsAdapter {
             kind: WaypointKind::Break,
             properties: None,
         };
+        self.request_through(start, vec![end])
+    }
+
+    /// The request for a route from `start` through `waypoints`, the last its end.
+    pub(crate) fn request_through(
+        &self,
+        start: UserLocation,
+        waypoints: Vec<Waypoint>,
+    ) -> Result<DirectionsRequest, DirectionsError> {
         let request = self
             .adapter
-            .generate_request(start, vec![end])
+            .generate_request(start, waypoints)
             .map_err(DirectionsError::failed)?;
         match request {
             RouteRequest::HttpPost { url, headers, body } => {
@@ -218,7 +284,14 @@ mod tests {
     use super::*;
 
     fn adapter() -> DirectionsAdapter {
-        DirectionsAdapter::valhalla("http://router/route".into(), "bicycle".into(), 2).unwrap()
+        DirectionsAdapter::valhalla(
+            "http://router/route".into(),
+            "bicycle".into(),
+            2,
+            "es-MX".into(),
+            DistanceUnits::Miles,
+        )
+        .unwrap()
     }
 
     const FROM: DirectionsPoint = DirectionsPoint {
@@ -239,9 +312,27 @@ mod tests {
         assert_eq!(body["format"], "osrm");
         assert_eq!(body["costing"], "bicycle");
         assert_eq!(body["alternates"], 2);
+        assert_eq!(body["language"], "es-ES");
+        assert_eq!(body["units"], "miles");
         assert_eq!(body["locations"][0]["lat"], 10.5);
         assert_eq!(body["locations"][1]["lon"], 21.5);
         assert_eq!(body["locations"][1]["type"], "break");
+    }
+
+    #[test]
+    fn a_language_falls_back_to_its_nearest_locale() {
+        for (tag, expected) in [
+            ("es-MX", "es-ES"),
+            ("de-AT", "de-DE"),
+            ("pt-BR", "pt-BR"),
+            ("pt", "pt-PT"),
+            ("en-GB", "en-GB"),
+            ("en-CA", "en-US"),
+            ("zh-CN", "en-US"),
+            ("", "en-US"),
+        ] {
+            assert_eq!(valhalla_language(tag), expected, "{tag}");
+        }
     }
 
     #[test]

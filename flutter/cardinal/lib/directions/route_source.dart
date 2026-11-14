@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' show PlatformDispatcher;
 
 import 'package:http/http.dart' as http;
 import 'package:material_ui/material_ui.dart';
@@ -9,6 +10,7 @@ import '../map/location.dart';
 import '../offline/offline_area.dart';
 import '../offline/realtime.dart';
 import '../store/store.dart';
+import '../units.dart';
 import 'transit_plan.dart';
 
 /// A way of traveling, in the order the sheet's chips show them.
@@ -120,15 +122,20 @@ Future<void> _checkCovers(OfflineArea area, LngLat from, LngLat to) async {
 
 /// [RouteSource] on the device, over the offline area's streets: Ferrostar makes the
 /// request and reads the answer, as it would from a server.
+///
+/// Instructions are in the device's language, with distances in the app's [unitSystem].
 class OfflineRouteSource implements RouteSource {
-  OfflineRouteSource(this._area, {this.used});
+  OfflineRouteSource(this._area, {required this.settings, this.used});
 
   final OfflineAreaSource _area;
+
+  /// Where the app's [unitSystem] is kept.
+  final SettingsStore settings;
 
   /// Told the line of each route found, so the tiles it passes through count as used
   /// (`OfflineDownloads.touchRoute`).
   final void Function(List<DirectionsPoint> shape)? used;
-  final _adapters = <TravelMode, DirectionsAdapter>{};
+  final _adapters = <(TravelMode, String, DistanceUnits), DirectionsAdapter>{};
 
   /// How many routes to ask for besides the best.
   static const _alternates = 3;
@@ -152,14 +159,25 @@ class OfflineRouteSource implements RouteSource {
     final area = await _need(_area);
     await _checkCovers(area, from, to);
 
+    final locale = PlatformDispatcher.instance.locale;
+    final language = locale.toLanguageTag();
+    final units = switch ((await settings.get(unitSystem)).resolve(locale)) {
+      UnitSystem.imperial => DistanceUnits.miles,
+      _ => DistanceUnits.kilometers,
+    };
+
     // Ferrostar's adapter is in the routing library too, made before the router opens.
     await initRouting();
-    final adapter = _adapters[mode] ??= DirectionsAdapter.valhalla(
-      // Ferrostar wants an endpoint to make the request for; nothing is sent to it.
-      endpointUrl: 'offline:route',
-      costing: mode.costing!,
-      alternates: _alternates,
-    );
+    final adapter = _adapters[(mode, language, units)] ??=
+        DirectionsAdapter.valhalla(
+          // Ferrostar wants an endpoint to make the request for; nothing is sent to it.
+          endpointUrl: 'offline:route',
+          costing: mode.costing!,
+          alternates: _alternates,
+          // The routing library finds the nearest language Valhalla has.
+          language: language,
+          units: units,
+        );
     final made = adapter.request(from: _point(from), to: _point(to));
     final watch = Stopwatch()..start();
     final response = await area.useRouter(

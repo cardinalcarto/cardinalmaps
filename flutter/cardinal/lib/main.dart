@@ -36,6 +36,7 @@ void main() {
         child: DirectionsScope(
           routes: OfflineRouteSource(
             offline.area,
+            settings: store.settings,
             used: (shape) => unawaited(
               offline.downloads.then(
                 (d) => d?.touchRoute([

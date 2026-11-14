@@ -7,6 +7,7 @@
 // ignore_for_file: argument_type_not_assignable
 
 import 'api/directions.dart';
+import 'api/navigation.dart';
 import 'api/offline.dart';
 import 'api/router.dart';
 import 'api/storage.dart';
@@ -36,6 +37,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter;
 
   CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_LocationSimulationPtr => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_NavigableRoutePtr => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_NavigationSessionPtr => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession;
+
+  CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_OfflineRouterPtr => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter;
 
@@ -56,6 +69,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   DirectionsAdapter
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    dynamic raw,
+  );
+
+  @protected
+  LocationSimulation
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    dynamic raw,
+  );
+
+  @protected
+  NavigableRoute
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    dynamic raw,
+  );
+
+  @protected
+  NavigationSession
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
     dynamic raw,
   );
 
@@ -84,6 +115,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  LocationSimulation
+  dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    dynamic raw,
+  );
+
+  @protected
+  NavigationSession
+  dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    dynamic raw,
+  );
+
+  @protected
   ArchivePlanner
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     dynamic raw,
@@ -92,6 +135,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   DirectionsAdapter
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    dynamic raw,
+  );
+
+  @protected
+  LocationSimulation
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    dynamic raw,
+  );
+
+  @protected
+  NavigableRoute
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    dynamic raw,
+  );
+
+  @protected
+  NavigationSession
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
     dynamic raw,
   );
 
@@ -129,6 +190,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  LocationSimulation
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    dynamic raw,
+  );
+
+  @protected
+  NavigableRoute
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    dynamic raw,
+  );
+
+  @protected
+  NavigationSession
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    dynamic raw,
+  );
+
+  @protected
   OfflineRouter
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     dynamic raw,
@@ -162,7 +241,46 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ArchiveTile dco_decode_archive_tile(dynamic raw);
 
   @protected
+  bool dco_decode_bool(dynamic raw);
+
+  @protected
   DirectionsPoint dco_decode_box_autoadd_directions_point(dynamic raw);
+
+  @protected
+  double dco_decode_box_autoadd_f_64(dynamic raw);
+
+  @protected
+  ManeuverModifier dco_decode_box_autoadd_maneuver_modifier(dynamic raw);
+
+  @protected
+  ManeuverType dco_decode_box_autoadd_maneuver_type(dynamic raw);
+
+  @protected
+  NavDrivingSide dco_decode_box_autoadd_nav_driving_side(dynamic raw);
+
+  @protected
+  NavInstructionContent dco_decode_box_autoadd_nav_instruction_content(
+    dynamic raw,
+  );
+
+  @protected
+  NavLocation dco_decode_box_autoadd_nav_location(dynamic raw);
+
+  @protected
+  NavProgress dco_decode_box_autoadd_nav_progress(dynamic raw);
+
+  @protected
+  NavSpokenInstruction dco_decode_box_autoadd_nav_spoken_instruction(
+    dynamic raw,
+  );
+
+  @protected
+  NavVisualInstruction dco_decode_box_autoadd_nav_visual_instruction(
+    dynamic raw,
+  );
+
+  @protected
+  int dco_decode_box_autoadd_u_16(dynamic raw);
 
   @protected
   int dco_decode_box_autoadd_u_32(dynamic raw);
@@ -184,6 +302,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DirectionsStep dco_decode_directions_step(dynamic raw);
+
+  @protected
+  DistanceUnits dco_decode_distance_units(dynamic raw);
 
   @protected
   double dco_decode_f_64(dynamic raw);
@@ -228,6 +349,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<FoundTile> dco_decode_list_found_tile(dynamic raw);
 
   @protected
+  List<NavLane> dco_decode_list_nav_lane(dynamic raw);
+
+  @protected
+  List<NavSpokenInstruction> dco_decode_list_nav_spoken_instruction(
+    dynamic raw,
+  );
+
+  @protected
+  List<NavStep> dco_decode_list_nav_step(dynamic raw);
+
+  @protected
+  List<NavVisualInstruction> dco_decode_list_nav_visual_instruction(
+    dynamic raw,
+  );
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
@@ -246,10 +383,88 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TransitFeed> dco_decode_list_transit_feed(dynamic raw);
 
   @protected
+  ManeuverModifier dco_decode_maneuver_modifier(dynamic raw);
+
+  @protected
+  ManeuverType dco_decode_maneuver_type(dynamic raw);
+
+  @protected
+  NavDeviation dco_decode_nav_deviation(dynamic raw);
+
+  @protected
+  NavDrivingSide dco_decode_nav_driving_side(dynamic raw);
+
+  @protected
+  NavInstructionContent dco_decode_nav_instruction_content(dynamic raw);
+
+  @protected
+  NavLane dco_decode_nav_lane(dynamic raw);
+
+  @protected
+  NavLocation dco_decode_nav_location(dynamic raw);
+
+  @protected
+  NavProgress dco_decode_nav_progress(dynamic raw);
+
+  @protected
+  NavSpokenInstruction dco_decode_nav_spoken_instruction(dynamic raw);
+
+  @protected
+  NavStep dco_decode_nav_step(dynamic raw);
+
+  @protected
+  NavUpdate dco_decode_nav_update(dynamic raw);
+
+  @protected
+  NavVisualInstruction dco_decode_nav_visual_instruction(dynamic raw);
+
+  @protected
+  NavigationMode dco_decode_navigation_mode(dynamic raw);
+
+  @protected
   OpenError dco_decode_open_error(dynamic raw);
 
   @protected
   OpenErrorKind dco_decode_open_error_kind(dynamic raw);
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
+
+  @protected
+  ManeuverModifier? dco_decode_opt_box_autoadd_maneuver_modifier(dynamic raw);
+
+  @protected
+  ManeuverType? dco_decode_opt_box_autoadd_maneuver_type(dynamic raw);
+
+  @protected
+  NavDrivingSide? dco_decode_opt_box_autoadd_nav_driving_side(dynamic raw);
+
+  @protected
+  NavInstructionContent? dco_decode_opt_box_autoadd_nav_instruction_content(
+    dynamic raw,
+  );
+
+  @protected
+  NavLocation? dco_decode_opt_box_autoadd_nav_location(dynamic raw);
+
+  @protected
+  NavProgress? dco_decode_opt_box_autoadd_nav_progress(dynamic raw);
+
+  @protected
+  NavSpokenInstruction? dco_decode_opt_box_autoadd_nav_spoken_instruction(
+    dynamic raw,
+  );
+
+  @protected
+  NavVisualInstruction? dco_decode_opt_box_autoadd_nav_visual_instruction(
+    dynamic raw,
+  );
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_16(dynamic raw);
 
   @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
@@ -276,6 +491,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RouterResponse dco_decode_router_response(dynamic raw);
 
   @protected
+  SimulationBias dco_decode_simulation_bias(dynamic raw);
+
+  @protected
+  SimulationError dco_decode_simulation_error(dynamic raw);
+
+  @protected
   TileCheckError dco_decode_tile_check_error(dynamic raw);
 
   @protected
@@ -289,6 +510,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TransitResponse dco_decode_transit_response(dynamic raw);
+
+  @protected
+  TripStatus dco_decode_trip_status(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
@@ -318,6 +542,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  LocationSimulation
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavigableRoute
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavigationSession
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   OfflineRouter
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     SseDeserializer deserializer,
@@ -342,6 +584,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  LocationSimulation
+  sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavigationSession
+  sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ArchivePlanner
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     SseDeserializer deserializer,
@@ -350,6 +604,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   DirectionsAdapter
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  LocationSimulation
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavigableRoute
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavigationSession
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
     SseDeserializer deserializer,
   );
 
@@ -389,6 +661,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  LocationSimulation
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavigableRoute
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavigationSession
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   OfflineRouter
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     SseDeserializer deserializer,
@@ -422,9 +712,54 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ArchiveTile sse_decode_archive_tile(SseDeserializer deserializer);
 
   @protected
+  bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
   DirectionsPoint sse_decode_box_autoadd_directions_point(
     SseDeserializer deserializer,
   );
+
+  @protected
+  double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
+  ManeuverModifier sse_decode_box_autoadd_maneuver_modifier(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ManeuverType sse_decode_box_autoadd_maneuver_type(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavDrivingSide sse_decode_box_autoadd_nav_driving_side(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavInstructionContent sse_decode_box_autoadd_nav_instruction_content(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavLocation sse_decode_box_autoadd_nav_location(SseDeserializer deserializer);
+
+  @protected
+  NavProgress sse_decode_box_autoadd_nav_progress(SseDeserializer deserializer);
+
+  @protected
+  NavSpokenInstruction sse_decode_box_autoadd_nav_spoken_instruction(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavVisualInstruction sse_decode_box_autoadd_nav_visual_instruction(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  int sse_decode_box_autoadd_u_16(SseDeserializer deserializer);
 
   @protected
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
@@ -448,6 +783,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DirectionsStep sse_decode_directions_step(SseDeserializer deserializer);
+
+  @protected
+  DistanceUnits sse_decode_distance_units(SseDeserializer deserializer);
 
   @protected
   double sse_decode_f_64(SseDeserializer deserializer);
@@ -502,6 +840,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<FoundTile> sse_decode_list_found_tile(SseDeserializer deserializer);
 
   @protected
+  List<NavLane> sse_decode_list_nav_lane(SseDeserializer deserializer);
+
+  @protected
+  List<NavSpokenInstruction> sse_decode_list_nav_spoken_instruction(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<NavStep> sse_decode_list_nav_step(SseDeserializer deserializer);
+
+  @protected
+  List<NavVisualInstruction> sse_decode_list_nav_visual_instruction(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
@@ -524,10 +878,104 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TransitFeed> sse_decode_list_transit_feed(SseDeserializer deserializer);
 
   @protected
+  ManeuverModifier sse_decode_maneuver_modifier(SseDeserializer deserializer);
+
+  @protected
+  ManeuverType sse_decode_maneuver_type(SseDeserializer deserializer);
+
+  @protected
+  NavDeviation sse_decode_nav_deviation(SseDeserializer deserializer);
+
+  @protected
+  NavDrivingSide sse_decode_nav_driving_side(SseDeserializer deserializer);
+
+  @protected
+  NavInstructionContent sse_decode_nav_instruction_content(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavLane sse_decode_nav_lane(SseDeserializer deserializer);
+
+  @protected
+  NavLocation sse_decode_nav_location(SseDeserializer deserializer);
+
+  @protected
+  NavProgress sse_decode_nav_progress(SseDeserializer deserializer);
+
+  @protected
+  NavSpokenInstruction sse_decode_nav_spoken_instruction(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavStep sse_decode_nav_step(SseDeserializer deserializer);
+
+  @protected
+  NavUpdate sse_decode_nav_update(SseDeserializer deserializer);
+
+  @protected
+  NavVisualInstruction sse_decode_nav_visual_instruction(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavigationMode sse_decode_navigation_mode(SseDeserializer deserializer);
+
+  @protected
   OpenError sse_decode_open_error(SseDeserializer deserializer);
 
   @protected
   OpenErrorKind sse_decode_open_error_kind(SseDeserializer deserializer);
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
+  ManeuverModifier? sse_decode_opt_box_autoadd_maneuver_modifier(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ManeuverType? sse_decode_opt_box_autoadd_maneuver_type(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavDrivingSide? sse_decode_opt_box_autoadd_nav_driving_side(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavInstructionContent? sse_decode_opt_box_autoadd_nav_instruction_content(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavLocation? sse_decode_opt_box_autoadd_nav_location(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavProgress? sse_decode_opt_box_autoadd_nav_progress(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavSpokenInstruction? sse_decode_opt_box_autoadd_nav_spoken_instruction(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NavVisualInstruction? sse_decode_opt_box_autoadd_nav_visual_instruction(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_16(SseDeserializer deserializer);
 
   @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
@@ -558,6 +1006,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RouterResponse sse_decode_router_response(SseDeserializer deserializer);
 
   @protected
+  SimulationBias sse_decode_simulation_bias(SseDeserializer deserializer);
+
+  @protected
+  SimulationError sse_decode_simulation_error(SseDeserializer deserializer);
+
+  @protected
   TileCheckError sse_decode_tile_check_error(SseDeserializer deserializer);
 
   @protected
@@ -571,6 +1025,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TransitResponse sse_decode_transit_response(SseDeserializer deserializer);
+
+  @protected
+  TripStatus sse_decode_trip_status(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
@@ -588,9 +1045,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt sse_decode_usize(SseDeserializer deserializer);
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer);
-
-  @protected
   void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     ArchivePlanner self,
@@ -601,6 +1055,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     DirectionsAdapter self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    LocationSimulation self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    NavigableRoute self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    NavigationSession self,
     SseSerializer serializer,
   );
 
@@ -634,6 +1109,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    LocationSimulation self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    NavigationSession self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     ArchivePlanner self,
     SseSerializer serializer,
@@ -643,6 +1132,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
     DirectionsAdapter self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    LocationSimulation self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    NavigableRoute self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    NavigationSession self,
     SseSerializer serializer,
   );
 
@@ -689,6 +1199,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    LocationSimulation self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    NavigableRoute self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    NavigationSession self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     OfflineRouter self,
     SseSerializer serializer,
@@ -724,10 +1255,67 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_archive_tile(ArchiveTile self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_directions_point(
     DirectionsPoint self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_maneuver_modifier(
+    ManeuverModifier self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_maneuver_type(
+    ManeuverType self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_nav_driving_side(
+    NavDrivingSide self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_nav_instruction_content(
+    NavInstructionContent self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_nav_location(
+    NavLocation self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_nav_progress(
+    NavProgress self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_nav_spoken_instruction(
+    NavSpokenInstruction self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_nav_visual_instruction(
+    NavVisualInstruction self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_u_16(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
@@ -767,6 +1355,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     DirectionsStep self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_distance_units(DistanceUnits self, SseSerializer serializer);
 
   @protected
   void sse_encode_f_64(double self, SseSerializer serializer);
@@ -835,6 +1426,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_nav_lane(List<NavLane> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_nav_spoken_instruction(
+    List<NavSpokenInstruction> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_nav_step(List<NavStep> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_nav_visual_instruction(
+    List<NavVisualInstruction> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
@@ -868,10 +1477,124 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_maneuver_modifier(
+    ManeuverModifier self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_maneuver_type(ManeuverType self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_nav_deviation(NavDeviation self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_nav_driving_side(
+    NavDrivingSide self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_nav_instruction_content(
+    NavInstructionContent self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_nav_lane(NavLane self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_nav_location(NavLocation self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_nav_progress(NavProgress self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_nav_spoken_instruction(
+    NavSpokenInstruction self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_nav_step(NavStep self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_nav_update(NavUpdate self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_nav_visual_instruction(
+    NavVisualInstruction self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_navigation_mode(
+    NavigationMode self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_open_error(OpenError self, SseSerializer serializer);
 
   @protected
   void sse_encode_open_error_kind(OpenErrorKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_maneuver_modifier(
+    ManeuverModifier? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_maneuver_type(
+    ManeuverType? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_driving_side(
+    NavDrivingSide? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_instruction_content(
+    NavInstructionContent? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_location(
+    NavLocation? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_progress(
+    NavProgress? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_spoken_instruction(
+    NavSpokenInstruction? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_visual_instruction(
+    NavVisualInstruction? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_16(int? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
@@ -910,6 +1633,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_simulation_bias(
+    SimulationBias self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_simulation_error(
+    SimulationError self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_tile_check_error(
     TileCheckError self,
     SseSerializer serializer,
@@ -937,6 +1672,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_trip_status(TripStatus self, SseSerializer serializer);
+
+  @protected
   void sse_encode_u_16(int self, SseSerializer serializer);
 
   @protected
@@ -950,9 +1688,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer);
 }
 
 // Section: wire_class
@@ -989,6 +1724,54 @@ class RustLibWire implements BaseWire {
     int ptr,
   ) => wasmModule
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+        ptr,
+      );
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+        ptr,
+      );
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+        ptr,
+      );
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+        ptr,
+      );
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+        ptr,
+      );
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+        ptr,
+      );
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
         ptr,
       );
 
@@ -1064,6 +1847,36 @@ extension type RustLibWasmModule._(JSObject _) implements JSObject {
 
   external void
   rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+    int ptr,
+  );
+
+  external void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    int ptr,
+  );
+
+  external void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    int ptr,
+  );
+
+  external void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    int ptr,
+  );
+
+  external void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    int ptr,
+  );
+
+  external void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    int ptr,
+  );
+
+  external void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
     int ptr,
   );
 

@@ -45,7 +45,7 @@ mod verbal_text_formatter;
 
 pub use error::OdinError;
 pub use markup_formatter::{DEFAULT_PHONEME_FORMAT, MarkupFormatter};
-pub use narrative::{is_supported_language, verbal_alert_approach_instruction};
+pub use narrative::{is_supported_language, locale_tag, verbal_alert_approach_instruction};
 use valhalla_proto::Api;
 use valhalla_response::ValhallaError;
 

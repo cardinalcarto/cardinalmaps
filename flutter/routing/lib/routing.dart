@@ -1,5 +1,6 @@
 /// Routing for the app: Ferrostar's request generator and parser ([DirectionsAdapter]),
-/// and Valinor's Valhalla-compatible router, in process, for offline use.
+/// Ferrostar's navigation along a route ([NavigationSession]), and Valinor's
+/// Valhalla-compatible router, in process, for offline use.
 ///
 /// [DirectionsAdapter.request] makes the body for the server's `/route`. Give that body to
 /// [OfflineRouter.route] instead and the response's bytes are what the server would have
@@ -17,7 +18,29 @@ export 'src/rust/api/directions.dart'
         DirectionsPoint,
         DirectionsRequest,
         DirectionsRoute,
-        DirectionsStep;
+        DirectionsStep,
+        DistanceUnits,
+        NavigableRoute;
+export 'src/rust/api/navigation.dart'
+    show
+        LocationSimulation,
+        ManeuverModifier,
+        ManeuverType,
+        NavDeviation,
+        NavDrivingSide,
+        NavInstructionContent,
+        NavLane,
+        NavLocation,
+        NavProgress,
+        NavSpokenInstruction,
+        NavStep,
+        NavUpdate,
+        NavVisualInstruction,
+        NavigationMode,
+        NavigationSession,
+        SimulationBias,
+        SimulationError,
+        TripStatus;
 export 'src/rust/api/offline.dart'
     show
         ArchiveChunk,

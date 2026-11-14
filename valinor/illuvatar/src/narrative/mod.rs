@@ -11,4 +11,4 @@ mod number;
 
 pub(crate) use builder::NarrativeBuilder;
 pub use builder::verbal_alert_approach_instruction;
-pub use dictionary::is_supported_language;
+pub use dictionary::{is_supported_language, locale_tag};

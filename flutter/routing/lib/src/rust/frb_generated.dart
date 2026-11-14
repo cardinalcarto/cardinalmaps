@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/directions.dart';
+import 'api/navigation.dart';
 import 'api/offline.dart';
 import 'api/router.dart';
 import 'api/storage.dart';
@@ -71,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -1330973004;
+  int get rustContentHash => 1384939492;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -130,6 +131,66 @@ abstract class RustLibApi extends BaseApi {
     required String endpointUrl,
     required String costing,
     required int alternates,
+    required String language,
+    required DistanceUnits units,
+  });
+
+  NavLocation crateApiNavigationLocationSimulationAdvance({
+    required LocationSimulation that,
+  });
+
+  NavLocation crateApiNavigationLocationSimulationCurrent({
+    required LocationSimulation that,
+  });
+
+  bool crateApiNavigationLocationSimulationIsFinished({
+    required LocationSimulation that,
+  });
+
+  LocationSimulation crateApiNavigationLocationSimulationNew({
+    required NavigableRoute route,
+    double? resampleDistance,
+    required SimulationBias bias,
+    required double biasMeters,
+  });
+
+  List<NavStep> crateApiDirectionsNavigableRouteSteps({
+    required NavigableRoute that,
+  });
+
+  Future<NavUpdate> crateApiNavigationNavigationSessionAdvance({
+    required NavigationSession that,
+  });
+
+  NavUpdate crateApiNavigationNavigationSessionCurrent({
+    required NavigationSession that,
+  });
+
+  NavigationMode crateApiNavigationNavigationSessionMode({
+    required NavigationSession that,
+  });
+
+  Future<NavUpdate> crateApiNavigationNavigationSessionReplaceRoute({
+    required NavigationSession that,
+    required NavigableRoute route,
+    required NavLocation location,
+  });
+
+  DirectionsRequest crateApiNavigationNavigationSessionRerouteRequest({
+    required NavigationSession that,
+    required DirectionsAdapter adapter,
+    required NavLocation location,
+  });
+
+  Future<NavigationSession> crateApiNavigationNavigationSessionStart({
+    required NavigableRoute route,
+    required NavigationMode mode,
+    required NavLocation location,
+  });
+
+  Future<NavUpdate> crateApiNavigationNavigationSessionUpdateLocation({
+    required NavigationSession that,
+    required NavLocation location,
   });
 
   Future<OfflineRouter> crateApiRouterOfflineRouterOpen({
@@ -218,6 +279,33 @@ abstract class RustLibApi extends BaseApi {
 
   CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_DirectionsAdapterPtr;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_LocationSimulation;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_LocationSimulation;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_LocationSimulationPtr;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_NavigableRoute;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_NavigableRoute;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_NavigableRoutePtr;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_NavigationSession;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_NavigationSession;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_NavigationSessionPtr;
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_OfflineRouter;
@@ -565,6 +653,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String endpointUrl,
     required String costing,
     required int alternates,
+    required String language,
+    required DistanceUnits units,
   }) {
     return handler.executeSync(
       SyncTask(
@@ -573,6 +663,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(endpointUrl, serializer);
           sse_encode_String(costing, serializer);
           sse_encode_u_32(alternates, serializer);
+          sse_encode_String(language, serializer);
+          sse_encode_distance_units(units, serializer);
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
         },
         codec: SseCodec(
@@ -581,7 +673,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_directions_error,
         ),
         constMeta: kCrateApiDirectionsDirectionsAdapterValhallaConstMeta,
-        argValues: [endpointUrl, costing, alternates],
+        argValues: [endpointUrl, costing, alternates, language, units],
         apiImpl: this,
       ),
     );
@@ -590,7 +682,429 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiDirectionsDirectionsAdapterValhallaConstMeta =>
       const TaskConstMeta(
         debugName: "DirectionsAdapter_valhalla",
-        argNames: ["endpointUrl", "costing", "alternates"],
+        argNames: ["endpointUrl", "costing", "alternates", "language", "units"],
+      );
+
+  @override
+  NavLocation crateApiNavigationLocationSimulationAdvance({
+    required LocationSimulation that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_nav_location,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiNavigationLocationSimulationAdvanceConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNavigationLocationSimulationAdvanceConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocationSimulation_advance",
+        argNames: ["that"],
+      );
+
+  @override
+  NavLocation crateApiNavigationLocationSimulationCurrent({
+    required LocationSimulation that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_nav_location,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiNavigationLocationSimulationCurrentConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNavigationLocationSimulationCurrentConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocationSimulation_current",
+        argNames: ["that"],
+      );
+
+  @override
+  bool crateApiNavigationLocationSimulationIsFinished({
+    required LocationSimulation that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiNavigationLocationSimulationIsFinishedConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNavigationLocationSimulationIsFinishedConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocationSimulation_is_finished",
+        argNames: ["that"],
+      );
+
+  @override
+  LocationSimulation crateApiNavigationLocationSimulationNew({
+    required NavigableRoute route,
+    double? resampleDistance,
+    required SimulationBias bias,
+    required double biasMeters,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+            route,
+            serializer,
+          );
+          sse_encode_opt_box_autoadd_f_64(resampleDistance, serializer);
+          sse_encode_simulation_bias(bias, serializer);
+          sse_encode_f_64(biasMeters, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation,
+          decodeErrorData: sse_decode_simulation_error,
+        ),
+        constMeta: kCrateApiNavigationLocationSimulationNewConstMeta,
+        argValues: [route, resampleDistance, bias, biasMeters],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNavigationLocationSimulationNewConstMeta =>
+      const TaskConstMeta(
+        debugName: "LocationSimulation_new",
+        argNames: ["route", "resampleDistance", "bias", "biasMeters"],
+      );
+
+  @override
+  List<NavStep> crateApiDirectionsNavigableRouteSteps({
+    required NavigableRoute that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_nav_step,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiDirectionsNavigableRouteStepsConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiDirectionsNavigableRouteStepsConstMeta =>
+      const TaskConstMeta(
+        debugName: "NavigableRoute_steps",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<NavUpdate> crateApiNavigationNavigationSessionAdvance({
+    required NavigationSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 16,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_nav_update,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiNavigationNavigationSessionAdvanceConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNavigationNavigationSessionAdvanceConstMeta =>
+      const TaskConstMeta(
+        debugName: "NavigationSession_advance",
+        argNames: ["that"],
+      );
+
+  @override
+  NavUpdate crateApiNavigationNavigationSessionCurrent({
+    required NavigationSession that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_nav_update,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiNavigationNavigationSessionCurrentConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNavigationNavigationSessionCurrentConstMeta =>
+      const TaskConstMeta(
+        debugName: "NavigationSession_current",
+        argNames: ["that"],
+      );
+
+  @override
+  NavigationMode crateApiNavigationNavigationSessionMode({
+    required NavigationSession that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_navigation_mode,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiNavigationNavigationSessionModeConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNavigationNavigationSessionModeConstMeta =>
+      const TaskConstMeta(
+        debugName: "NavigationSession_mode",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<NavUpdate> crateApiNavigationNavigationSessionReplaceRoute({
+    required NavigationSession that,
+    required NavigableRoute route,
+    required NavLocation location,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+            that,
+            serializer,
+          );
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+            route,
+            serializer,
+          );
+          sse_encode_box_autoadd_nav_location(location, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 19,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_nav_update,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiNavigationNavigationSessionReplaceRouteConstMeta,
+        argValues: [that, route, location],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNavigationNavigationSessionReplaceRouteConstMeta =>
+      const TaskConstMeta(
+        debugName: "NavigationSession_replace_route",
+        argNames: ["that", "route", "location"],
+      );
+
+  @override
+  DirectionsRequest crateApiNavigationNavigationSessionRerouteRequest({
+    required NavigationSession that,
+    required DirectionsAdapter adapter,
+    required NavLocation location,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+            that,
+            serializer,
+          );
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter(
+            adapter,
+            serializer,
+          );
+          sse_encode_box_autoadd_nav_location(location, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_directions_request,
+          decodeErrorData: sse_decode_directions_error,
+        ),
+        constMeta: kCrateApiNavigationNavigationSessionRerouteRequestConstMeta,
+        argValues: [that, adapter, location],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiNavigationNavigationSessionRerouteRequestConstMeta =>
+      const TaskConstMeta(
+        debugName: "NavigationSession_reroute_request",
+        argNames: ["that", "adapter", "location"],
+      );
+
+  @override
+  Future<NavigationSession> crateApiNavigationNavigationSessionStart({
+    required NavigableRoute route,
+    required NavigationMode mode,
+    required NavLocation location,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+            route,
+            serializer,
+          );
+          sse_encode_navigation_mode(mode, serializer);
+          sse_encode_box_autoadd_nav_location(location, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 21,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiNavigationNavigationSessionStartConstMeta,
+        argValues: [route, mode, location],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNavigationNavigationSessionStartConstMeta =>
+      const TaskConstMeta(
+        debugName: "NavigationSession_start",
+        argNames: ["route", "mode", "location"],
+      );
+
+  @override
+  Future<NavUpdate> crateApiNavigationNavigationSessionUpdateLocation({
+    required NavigationSession that,
+    required NavLocation location,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+            that,
+            serializer,
+          );
+          sse_encode_box_autoadd_nav_location(location, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 22,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_nav_update,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiNavigationNavigationSessionUpdateLocationConstMeta,
+        argValues: [that, location],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiNavigationNavigationSessionUpdateLocationConstMeta =>
+      const TaskConstMeta(
+        debugName: "NavigationSession_update_location",
+        argNames: ["that", "location"],
       );
 
   @override
@@ -607,7 +1121,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 23,
             port: port_,
           );
         },
@@ -644,7 +1158,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 24,
             port: port_,
           );
         },
@@ -682,7 +1196,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 25,
             port: port_,
           );
         },
@@ -721,7 +1235,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 26,
             port: port_,
           );
         },
@@ -767,7 +1281,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 27,
             port: port_,
           );
         },
@@ -803,7 +1317,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 28,
             port: port_,
           );
         },
@@ -843,7 +1357,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 29,
             port: port_,
           );
         },
@@ -874,7 +1388,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -902,7 +1416,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 19,
+            funcId: 31,
             port: port_,
           );
         },
@@ -927,7 +1441,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -950,7 +1464,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -972,7 +1486,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -994,7 +1508,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -1030,7 +1544,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 36,
             port: port_,
           );
         },
@@ -1061,7 +1575,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 37,
             port: port_,
           );
         },
@@ -1089,7 +1603,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 38,
             port: port_,
           );
         },
@@ -1125,7 +1639,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 39,
             port: port_,
           );
         },
@@ -1161,6 +1675,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RustArcDecrementStrongCountFnType
   get rust_arc_decrement_strong_count_DirectionsAdapter => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirectionsAdapter;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_LocationSimulation => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_LocationSimulation => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_NavigableRoute => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_NavigableRoute => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_NavigationSession => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_NavigationSession => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession;
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_OfflineRouter => wire
@@ -1205,6 +1743,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocationSimulation
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return LocationSimulationImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  NavigableRoute
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NavigableRouteImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  NavigationSession
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NavigationSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   OfflineRouter
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     dynamic raw,
@@ -1241,6 +1806,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocationSimulation
+  dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return LocationSimulationImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  NavigationSession
+  dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NavigationSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   ArchivePlanner
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     dynamic raw,
@@ -1256,6 +1839,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return DirectionsAdapterImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  LocationSimulation
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return LocationSimulationImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  NavigableRoute
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NavigableRouteImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  NavigationSession
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NavigationSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1310,6 +1920,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return DirectionsAdapterImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  LocationSimulation
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return LocationSimulationImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  NavigableRoute
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NavigableRouteImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  NavigationSession
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NavigationSessionImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1393,9 +2030,81 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool dco_decode_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
   DirectionsPoint dco_decode_box_autoadd_directions_point(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_directions_point(raw);
+  }
+
+  @protected
+  double dco_decode_box_autoadd_f_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
+  }
+
+  @protected
+  ManeuverModifier dco_decode_box_autoadd_maneuver_modifier(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_maneuver_modifier(raw);
+  }
+
+  @protected
+  ManeuverType dco_decode_box_autoadd_maneuver_type(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_maneuver_type(raw);
+  }
+
+  @protected
+  NavDrivingSide dco_decode_box_autoadd_nav_driving_side(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_nav_driving_side(raw);
+  }
+
+  @protected
+  NavInstructionContent dco_decode_box_autoadd_nav_instruction_content(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_nav_instruction_content(raw);
+  }
+
+  @protected
+  NavLocation dco_decode_box_autoadd_nav_location(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_nav_location(raw);
+  }
+
+  @protected
+  NavProgress dco_decode_box_autoadd_nav_progress(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_nav_progress(raw);
+  }
+
+  @protected
+  NavSpokenInstruction dco_decode_box_autoadd_nav_spoken_instruction(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_nav_spoken_instruction(raw);
+  }
+
+  @protected
+  NavVisualInstruction dco_decode_box_autoadd_nav_visual_instruction(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_nav_visual_instruction(raw);
+  }
+
+  @protected
+  int dco_decode_box_autoadd_u_16(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
   }
 
   @protected
@@ -1451,13 +2160,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DirectionsRoute dco_decode_directions_route(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return DirectionsRoute(
       geometry: dco_decode_list_directions_point(arr[0]),
       distance: dco_decode_f_64(arr[1]),
       duration: dco_decode_f_64(arr[2]),
       steps: dco_decode_list_directions_step(arr[3]),
+      navigable:
+          dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+            arr[4],
+          ),
     );
   }
 
@@ -1472,6 +2185,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       distance: dco_decode_f_64(arr[1]),
       duration: dco_decode_f_64(arr[2]),
     );
+  }
+
+  @protected
+  DistanceUnits dco_decode_distance_units(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DistanceUnits.values[raw as int];
   }
 
   @protected
@@ -1574,6 +2293,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<NavLane> dco_decode_list_nav_lane(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_nav_lane).toList();
+  }
+
+  @protected
+  List<NavSpokenInstruction> dco_decode_list_nav_spoken_instruction(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_nav_spoken_instruction)
+        .toList();
+  }
+
+  @protected
+  List<NavStep> dco_decode_list_nav_step(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_nav_step).toList();
+  }
+
+  @protected
+  List<NavVisualInstruction> dco_decode_list_nav_visual_instruction(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_nav_visual_instruction)
+        .toList();
+  }
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as List<int>;
@@ -1610,6 +2361,170 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ManeuverModifier dco_decode_maneuver_modifier(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ManeuverModifier.values[raw as int];
+  }
+
+  @protected
+  ManeuverType dco_decode_maneuver_type(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ManeuverType.values[raw as int];
+  }
+
+  @protected
+  NavDeviation dco_decode_nav_deviation(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NavDeviation.values[raw as int];
+  }
+
+  @protected
+  NavDrivingSide dco_decode_nav_driving_side(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NavDrivingSide.values[raw as int];
+  }
+
+  @protected
+  NavInstructionContent dco_decode_nav_instruction_content(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return NavInstructionContent(
+      text: dco_decode_String(arr[0]),
+      maneuverType: dco_decode_opt_box_autoadd_maneuver_type(arr[1]),
+      maneuverModifier: dco_decode_opt_box_autoadd_maneuver_modifier(arr[2]),
+      roundaboutExitDegrees: dco_decode_opt_box_autoadd_u_16(arr[3]),
+      lanes: dco_decode_list_nav_lane(arr[4]),
+      exitNumbers: dco_decode_list_String(arr[5]),
+    );
+  }
+
+  @protected
+  NavLane dco_decode_nav_lane(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return NavLane(
+      active: dco_decode_bool(arr[0]),
+      directions: dco_decode_list_String(arr[1]),
+      activeDirection: dco_decode_opt_String(arr[2]),
+    );
+  }
+
+  @protected
+  NavLocation dco_decode_nav_location(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    return NavLocation(
+      lat: dco_decode_f_64(arr[0]),
+      lng: dco_decode_f_64(arr[1]),
+      horizontalAccuracy: dco_decode_f_64(arr[2]),
+      course: dco_decode_opt_box_autoadd_f_64(arr[3]),
+      courseAccuracy: dco_decode_opt_box_autoadd_f_64(arr[4]),
+      speed: dco_decode_opt_box_autoadd_f_64(arr[5]),
+      speedAccuracy: dco_decode_opt_box_autoadd_f_64(arr[6]),
+      timestampMs: dco_decode_i_64(arr[7]),
+    );
+  }
+
+  @protected
+  NavProgress dco_decode_nav_progress(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return NavProgress(
+      distanceToNextManeuver: dco_decode_f_64(arr[0]),
+      durationToNextManeuver: dco_decode_f_64(arr[1]),
+      distanceRemaining: dco_decode_f_64(arr[2]),
+      durationRemaining: dco_decode_f_64(arr[3]),
+    );
+  }
+
+  @protected
+  NavSpokenInstruction dco_decode_nav_spoken_instruction(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return NavSpokenInstruction(
+      text: dco_decode_String(arr[0]),
+      ssml: dco_decode_opt_String(arr[1]),
+      utteranceId: dco_decode_String(arr[2]),
+      triggerDistanceBeforeManeuver: dco_decode_f_64(arr[3]),
+    );
+  }
+
+  @protected
+  NavStep dco_decode_nav_step(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
+    return NavStep(
+      roadName: dco_decode_opt_String(arr[0]),
+      instruction: dco_decode_String(arr[1]),
+      distance: dco_decode_f_64(arr[2]),
+      duration: dco_decode_f_64(arr[3]),
+      exits: dco_decode_list_String(arr[4]),
+      visualInstructions: dco_decode_list_nav_visual_instruction(arr[5]),
+      spokenInstructions: dco_decode_list_nav_spoken_instruction(arr[6]),
+      geometry: dco_decode_list_directions_point(arr[7]),
+      geometryStart: dco_decode_u_32(arr[8]),
+      drivingSide: dco_decode_opt_box_autoadd_nav_driving_side(arr[9]),
+      roundaboutExitNumber: dco_decode_opt_box_autoadd_u_32(arr[10]),
+    );
+  }
+
+  @protected
+  NavUpdate dco_decode_nav_update(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    return NavUpdate(
+      status: dco_decode_trip_status(arr[0]),
+      location: dco_decode_opt_box_autoadd_nav_location(arr[1]),
+      snappedLocation: dco_decode_opt_box_autoadd_nav_location(arr[2]),
+      stepIndex: dco_decode_u_32(arr[3]),
+      geometryIndex: dco_decode_u_32(arr[4]),
+      deviation: dco_decode_nav_deviation(arr[5]),
+      deviationMeters: dco_decode_f_64(arr[6]),
+      visualInstruction: dco_decode_opt_box_autoadd_nav_visual_instruction(
+        arr[7],
+      ),
+      spokenInstruction: dco_decode_opt_box_autoadd_nav_spoken_instruction(
+        arr[8],
+      ),
+      progress: dco_decode_opt_box_autoadd_nav_progress(arr[9]),
+    );
+  }
+
+  @protected
+  NavVisualInstruction dco_decode_nav_visual_instruction(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return NavVisualInstruction(
+      primary: dco_decode_nav_instruction_content(arr[0]),
+      secondary: dco_decode_opt_box_autoadd_nav_instruction_content(arr[1]),
+      sub: dco_decode_opt_box_autoadd_nav_instruction_content(arr[2]),
+      triggerDistanceBeforeManeuver: dco_decode_f_64(arr[3]),
+    );
+  }
+
+  @protected
+  NavigationMode dco_decode_navigation_mode(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NavigationMode.values[raw as int];
+  }
+
+  @protected
   OpenError dco_decode_open_error(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -1625,6 +2540,84 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   OpenErrorKind dco_decode_open_error_kind(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return OpenErrorKind.values[raw as int];
+  }
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  double? dco_decode_opt_box_autoadd_f_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_f_64(raw);
+  }
+
+  @protected
+  ManeuverModifier? dco_decode_opt_box_autoadd_maneuver_modifier(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_maneuver_modifier(raw);
+  }
+
+  @protected
+  ManeuverType? dco_decode_opt_box_autoadd_maneuver_type(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_maneuver_type(raw);
+  }
+
+  @protected
+  NavDrivingSide? dco_decode_opt_box_autoadd_nav_driving_side(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_nav_driving_side(raw);
+  }
+
+  @protected
+  NavInstructionContent? dco_decode_opt_box_autoadd_nav_instruction_content(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_nav_instruction_content(raw);
+  }
+
+  @protected
+  NavLocation? dco_decode_opt_box_autoadd_nav_location(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_nav_location(raw);
+  }
+
+  @protected
+  NavProgress? dco_decode_opt_box_autoadd_nav_progress(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_nav_progress(raw);
+  }
+
+  @protected
+  NavSpokenInstruction? dco_decode_opt_box_autoadd_nav_spoken_instruction(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_nav_spoken_instruction(raw);
+  }
+
+  @protected
+  NavVisualInstruction? dco_decode_opt_box_autoadd_nav_visual_instruction(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_nav_visual_instruction(raw);
+  }
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_16(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_u_16(raw);
   }
 
   @protected
@@ -1708,6 +2701,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SimulationBias dco_decode_simulation_bias(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return SimulationBias.values[raw as int];
+  }
+
+  @protected
+  SimulationError dco_decode_simulation_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 1)
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+    return SimulationError(message: dco_decode_String(arr[0]));
+  }
+
+  @protected
   TileCheckError dco_decode_tile_check_error(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -1755,6 +2763,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       body: dco_decode_list_prim_u_8_strict(arr[1]),
       ignoredFeeds: dco_decode_list_String(arr[2]),
     );
+  }
+
+  @protected
+  TripStatus dco_decode_trip_status(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TripStatus.values[raw as int];
   }
 
   @protected
@@ -1812,6 +2826,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocationSimulation
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return LocationSimulationImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  NavigableRoute
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return NavigableRouteImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  NavigationSession
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return NavigationSessionImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   OfflineRouter
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     SseDeserializer deserializer,
@@ -1860,6 +2910,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocationSimulation
+  sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return LocationSimulationImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  NavigationSession
+  sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return NavigationSessionImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   ArchivePlanner
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     SseDeserializer deserializer,
@@ -1878,6 +2952,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return DirectionsAdapterImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  LocationSimulation
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return LocationSimulationImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  NavigableRoute
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return NavigableRouteImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  NavigationSession
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return NavigationSessionImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -1947,6 +3057,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return DirectionsAdapterImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  LocationSimulation
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return LocationSimulationImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  NavigableRoute
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return NavigableRouteImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  NavigationSession
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return NavigationSessionImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -2033,11 +3179,93 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool sse_decode_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
   DirectionsPoint sse_decode_box_autoadd_directions_point(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_directions_point(deserializer));
+  }
+
+  @protected
+  double sse_decode_box_autoadd_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_f_64(deserializer));
+  }
+
+  @protected
+  ManeuverModifier sse_decode_box_autoadd_maneuver_modifier(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_maneuver_modifier(deserializer));
+  }
+
+  @protected
+  ManeuverType sse_decode_box_autoadd_maneuver_type(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_maneuver_type(deserializer));
+  }
+
+  @protected
+  NavDrivingSide sse_decode_box_autoadd_nav_driving_side(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_nav_driving_side(deserializer));
+  }
+
+  @protected
+  NavInstructionContent sse_decode_box_autoadd_nav_instruction_content(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_nav_instruction_content(deserializer));
+  }
+
+  @protected
+  NavLocation sse_decode_box_autoadd_nav_location(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_nav_location(deserializer));
+  }
+
+  @protected
+  NavProgress sse_decode_box_autoadd_nav_progress(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_nav_progress(deserializer));
+  }
+
+  @protected
+  NavSpokenInstruction sse_decode_box_autoadd_nav_spoken_instruction(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_nav_spoken_instruction(deserializer));
+  }
+
+  @protected
+  NavVisualInstruction sse_decode_box_autoadd_nav_visual_instruction(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_nav_visual_instruction(deserializer));
+  }
+
+  @protected
+  int sse_decode_box_autoadd_u_16(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_16(deserializer));
   }
 
   @protected
@@ -2093,11 +3321,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_distance = sse_decode_f_64(deserializer);
     var var_duration = sse_decode_f_64(deserializer);
     var var_steps = sse_decode_list_directions_step(deserializer);
+    var var_navigable =
+        sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+          deserializer,
+        );
     return DirectionsRoute(
       geometry: var_geometry,
       distance: var_distance,
       duration: var_duration,
       steps: var_steps,
+      navigable: var_navigable,
     );
   }
 
@@ -2112,6 +3345,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       distance: var_distance,
       duration: var_duration,
     );
+  }
+
+  @protected
+  DistanceUnits sse_decode_distance_units(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return DistanceUnits.values[inner];
   }
 
   @protected
@@ -2270,6 +3510,58 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<NavLane> sse_decode_list_nav_lane(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <NavLane>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_nav_lane(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<NavSpokenInstruction> sse_decode_list_nav_spoken_instruction(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <NavSpokenInstruction>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_nav_spoken_instruction(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<NavStep> sse_decode_list_nav_step(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <NavStep>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_nav_step(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<NavVisualInstruction> sse_decode_list_nav_visual_instruction(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <NavVisualInstruction>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_nav_visual_instruction(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -2336,6 +3628,225 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ManeuverModifier sse_decode_maneuver_modifier(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return ManeuverModifier.values[inner];
+  }
+
+  @protected
+  ManeuverType sse_decode_maneuver_type(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return ManeuverType.values[inner];
+  }
+
+  @protected
+  NavDeviation sse_decode_nav_deviation(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return NavDeviation.values[inner];
+  }
+
+  @protected
+  NavDrivingSide sse_decode_nav_driving_side(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return NavDrivingSide.values[inner];
+  }
+
+  @protected
+  NavInstructionContent sse_decode_nav_instruction_content(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_text = sse_decode_String(deserializer);
+    var var_maneuverType = sse_decode_opt_box_autoadd_maneuver_type(
+      deserializer,
+    );
+    var var_maneuverModifier = sse_decode_opt_box_autoadd_maneuver_modifier(
+      deserializer,
+    );
+    var var_roundaboutExitDegrees = sse_decode_opt_box_autoadd_u_16(
+      deserializer,
+    );
+    var var_lanes = sse_decode_list_nav_lane(deserializer);
+    var var_exitNumbers = sse_decode_list_String(deserializer);
+    return NavInstructionContent(
+      text: var_text,
+      maneuverType: var_maneuverType,
+      maneuverModifier: var_maneuverModifier,
+      roundaboutExitDegrees: var_roundaboutExitDegrees,
+      lanes: var_lanes,
+      exitNumbers: var_exitNumbers,
+    );
+  }
+
+  @protected
+  NavLane sse_decode_nav_lane(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_active = sse_decode_bool(deserializer);
+    var var_directions = sse_decode_list_String(deserializer);
+    var var_activeDirection = sse_decode_opt_String(deserializer);
+    return NavLane(
+      active: var_active,
+      directions: var_directions,
+      activeDirection: var_activeDirection,
+    );
+  }
+
+  @protected
+  NavLocation sse_decode_nav_location(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_lat = sse_decode_f_64(deserializer);
+    var var_lng = sse_decode_f_64(deserializer);
+    var var_horizontalAccuracy = sse_decode_f_64(deserializer);
+    var var_course = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_courseAccuracy = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_speed = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_speedAccuracy = sse_decode_opt_box_autoadd_f_64(deserializer);
+    var var_timestampMs = sse_decode_i_64(deserializer);
+    return NavLocation(
+      lat: var_lat,
+      lng: var_lng,
+      horizontalAccuracy: var_horizontalAccuracy,
+      course: var_course,
+      courseAccuracy: var_courseAccuracy,
+      speed: var_speed,
+      speedAccuracy: var_speedAccuracy,
+      timestampMs: var_timestampMs,
+    );
+  }
+
+  @protected
+  NavProgress sse_decode_nav_progress(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_distanceToNextManeuver = sse_decode_f_64(deserializer);
+    var var_durationToNextManeuver = sse_decode_f_64(deserializer);
+    var var_distanceRemaining = sse_decode_f_64(deserializer);
+    var var_durationRemaining = sse_decode_f_64(deserializer);
+    return NavProgress(
+      distanceToNextManeuver: var_distanceToNextManeuver,
+      durationToNextManeuver: var_durationToNextManeuver,
+      distanceRemaining: var_distanceRemaining,
+      durationRemaining: var_durationRemaining,
+    );
+  }
+
+  @protected
+  NavSpokenInstruction sse_decode_nav_spoken_instruction(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_text = sse_decode_String(deserializer);
+    var var_ssml = sse_decode_opt_String(deserializer);
+    var var_utteranceId = sse_decode_String(deserializer);
+    var var_triggerDistanceBeforeManeuver = sse_decode_f_64(deserializer);
+    return NavSpokenInstruction(
+      text: var_text,
+      ssml: var_ssml,
+      utteranceId: var_utteranceId,
+      triggerDistanceBeforeManeuver: var_triggerDistanceBeforeManeuver,
+    );
+  }
+
+  @protected
+  NavStep sse_decode_nav_step(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_roadName = sse_decode_opt_String(deserializer);
+    var var_instruction = sse_decode_String(deserializer);
+    var var_distance = sse_decode_f_64(deserializer);
+    var var_duration = sse_decode_f_64(deserializer);
+    var var_exits = sse_decode_list_String(deserializer);
+    var var_visualInstructions = sse_decode_list_nav_visual_instruction(
+      deserializer,
+    );
+    var var_spokenInstructions = sse_decode_list_nav_spoken_instruction(
+      deserializer,
+    );
+    var var_geometry = sse_decode_list_directions_point(deserializer);
+    var var_geometryStart = sse_decode_u_32(deserializer);
+    var var_drivingSide = sse_decode_opt_box_autoadd_nav_driving_side(
+      deserializer,
+    );
+    var var_roundaboutExitNumber = sse_decode_opt_box_autoadd_u_32(
+      deserializer,
+    );
+    return NavStep(
+      roadName: var_roadName,
+      instruction: var_instruction,
+      distance: var_distance,
+      duration: var_duration,
+      exits: var_exits,
+      visualInstructions: var_visualInstructions,
+      spokenInstructions: var_spokenInstructions,
+      geometry: var_geometry,
+      geometryStart: var_geometryStart,
+      drivingSide: var_drivingSide,
+      roundaboutExitNumber: var_roundaboutExitNumber,
+    );
+  }
+
+  @protected
+  NavUpdate sse_decode_nav_update(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_status = sse_decode_trip_status(deserializer);
+    var var_location = sse_decode_opt_box_autoadd_nav_location(deserializer);
+    var var_snappedLocation = sse_decode_opt_box_autoadd_nav_location(
+      deserializer,
+    );
+    var var_stepIndex = sse_decode_u_32(deserializer);
+    var var_geometryIndex = sse_decode_u_32(deserializer);
+    var var_deviation = sse_decode_nav_deviation(deserializer);
+    var var_deviationMeters = sse_decode_f_64(deserializer);
+    var var_visualInstruction =
+        sse_decode_opt_box_autoadd_nav_visual_instruction(deserializer);
+    var var_spokenInstruction =
+        sse_decode_opt_box_autoadd_nav_spoken_instruction(deserializer);
+    var var_progress = sse_decode_opt_box_autoadd_nav_progress(deserializer);
+    return NavUpdate(
+      status: var_status,
+      location: var_location,
+      snappedLocation: var_snappedLocation,
+      stepIndex: var_stepIndex,
+      geometryIndex: var_geometryIndex,
+      deviation: var_deviation,
+      deviationMeters: var_deviationMeters,
+      visualInstruction: var_visualInstruction,
+      spokenInstruction: var_spokenInstruction,
+      progress: var_progress,
+    );
+  }
+
+  @protected
+  NavVisualInstruction sse_decode_nav_visual_instruction(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_primary = sse_decode_nav_instruction_content(deserializer);
+    var var_secondary = sse_decode_opt_box_autoadd_nav_instruction_content(
+      deserializer,
+    );
+    var var_sub = sse_decode_opt_box_autoadd_nav_instruction_content(
+      deserializer,
+    );
+    var var_triggerDistanceBeforeManeuver = sse_decode_f_64(deserializer);
+    return NavVisualInstruction(
+      primary: var_primary,
+      secondary: var_secondary,
+      sub: var_sub,
+      triggerDistanceBeforeManeuver: var_triggerDistanceBeforeManeuver,
+    );
+  }
+
+  @protected
+  NavigationMode sse_decode_navigation_mode(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return NavigationMode.values[inner];
+  }
+
+  @protected
   OpenError sse_decode_open_error(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_kind = sse_decode_open_error_kind(deserializer);
@@ -2348,6 +3859,143 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return OpenErrorKind.values[inner];
+  }
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_f_64(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  ManeuverModifier? sse_decode_opt_box_autoadd_maneuver_modifier(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_maneuver_modifier(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  ManeuverType? sse_decode_opt_box_autoadd_maneuver_type(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_maneuver_type(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  NavDrivingSide? sse_decode_opt_box_autoadd_nav_driving_side(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_nav_driving_side(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  NavInstructionContent? sse_decode_opt_box_autoadd_nav_instruction_content(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_nav_instruction_content(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  NavLocation? sse_decode_opt_box_autoadd_nav_location(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_nav_location(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  NavProgress? sse_decode_opt_box_autoadd_nav_progress(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_nav_progress(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  NavSpokenInstruction? sse_decode_opt_box_autoadd_nav_spoken_instruction(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_nav_spoken_instruction(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  NavVisualInstruction? sse_decode_opt_box_autoadd_nav_visual_instruction(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_nav_visual_instruction(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_16(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_u_16(deserializer));
+    } else {
+      return null;
+    }
   }
 
   @protected
@@ -2447,6 +4095,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SimulationBias sse_decode_simulation_bias(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return SimulationBias.values[inner];
+  }
+
+  @protected
+  SimulationError sse_decode_simulation_error(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_message = sse_decode_String(deserializer);
+    return SimulationError(message: var_message);
+  }
+
+  @protected
   TileCheckError sse_decode_tile_check_error(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_message = sse_decode_String(deserializer);
@@ -2490,6 +4152,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TripStatus sse_decode_trip_status(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return TripStatus.values[inner];
+  }
+
+  @protected
   int sse_decode_u_16(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint16();
@@ -2519,12 +4188,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getUint8() != 0;
-  }
-
-  @protected
   void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     ArchivePlanner self,
@@ -2546,6 +4209,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as DirectionsAdapterImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    LocationSimulation self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as LocationSimulationImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    NavigableRoute self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as NavigableRouteImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    NavigationSession self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as NavigationSessionImpl).frbInternalSseEncode(move: true),
       serializer,
     );
   }
@@ -2604,6 +4306,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    LocationSimulation self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as LocationSimulationImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    NavigationSession self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as NavigationSessionImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     ArchivePlanner self,
     SseSerializer serializer,
@@ -2624,6 +4352,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as DirectionsAdapterImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    LocationSimulation self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as LocationSimulationImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    NavigableRoute self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as NavigableRouteImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    NavigationSession self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as NavigationSessionImpl).frbInternalSseEncode(move: false),
       serializer,
     );
   }
@@ -2707,6 +4474,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationSimulation(
+    LocationSimulation self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as LocationSimulationImpl).frbInternalSseEncode(move: null),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+    NavigableRoute self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as NavigableRouteImpl).frbInternalSseEncode(move: null),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+    NavigationSession self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as NavigationSessionImpl).frbInternalSseEncode(move: null),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
     OfflineRouter self,
     SseSerializer serializer,
@@ -2780,12 +4586,102 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
   void sse_encode_box_autoadd_directions_point(
     DirectionsPoint self,
     SseSerializer serializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_directions_point(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_64(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_maneuver_modifier(
+    ManeuverModifier self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_maneuver_modifier(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_maneuver_type(
+    ManeuverType self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_maneuver_type(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_nav_driving_side(
+    NavDrivingSide self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_nav_driving_side(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_nav_instruction_content(
+    NavInstructionContent self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_nav_instruction_content(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_nav_location(
+    NavLocation self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_nav_location(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_nav_progress(
+    NavProgress self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_nav_progress(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_nav_spoken_instruction(
+    NavSpokenInstruction self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_nav_spoken_instruction(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_nav_visual_instruction(
+    NavVisualInstruction self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_nav_visual_instruction(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_u_16(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_16(self, serializer);
   }
 
   @protected
@@ -2844,6 +4740,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_f_64(self.distance, serializer);
     sse_encode_f_64(self.duration, serializer);
     sse_encode_list_directions_step(self.steps, serializer);
+    sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
+      self.navigable,
+      serializer,
+    );
   }
 
   @protected
@@ -2855,6 +4755,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.instruction, serializer);
     sse_encode_f_64(self.distance, serializer);
     sse_encode_f_64(self.duration, serializer);
+  }
+
+  @protected
+  void sse_encode_distance_units(DistanceUnits self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -2994,6 +4900,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_nav_lane(List<NavLane> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_nav_lane(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_nav_spoken_instruction(
+    List<NavSpokenInstruction> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_nav_spoken_instruction(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_nav_step(List<NavStep> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_nav_step(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_nav_visual_instruction(
+    List<NavVisualInstruction> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_nav_visual_instruction(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_prim_u_8_loose(
     List<int> self,
     SseSerializer serializer,
@@ -3064,6 +5012,156 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_maneuver_modifier(
+    ManeuverModifier self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_maneuver_type(ManeuverType self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_nav_deviation(NavDeviation self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_nav_driving_side(
+    NavDrivingSide self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_nav_instruction_content(
+    NavInstructionContent self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.text, serializer);
+    sse_encode_opt_box_autoadd_maneuver_type(self.maneuverType, serializer);
+    sse_encode_opt_box_autoadd_maneuver_modifier(
+      self.maneuverModifier,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_u_16(self.roundaboutExitDegrees, serializer);
+    sse_encode_list_nav_lane(self.lanes, serializer);
+    sse_encode_list_String(self.exitNumbers, serializer);
+  }
+
+  @protected
+  void sse_encode_nav_lane(NavLane self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.active, serializer);
+    sse_encode_list_String(self.directions, serializer);
+    sse_encode_opt_String(self.activeDirection, serializer);
+  }
+
+  @protected
+  void sse_encode_nav_location(NavLocation self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_64(self.lat, serializer);
+    sse_encode_f_64(self.lng, serializer);
+    sse_encode_f_64(self.horizontalAccuracy, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.course, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.courseAccuracy, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.speed, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.speedAccuracy, serializer);
+    sse_encode_i_64(self.timestampMs, serializer);
+  }
+
+  @protected
+  void sse_encode_nav_progress(NavProgress self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_64(self.distanceToNextManeuver, serializer);
+    sse_encode_f_64(self.durationToNextManeuver, serializer);
+    sse_encode_f_64(self.distanceRemaining, serializer);
+    sse_encode_f_64(self.durationRemaining, serializer);
+  }
+
+  @protected
+  void sse_encode_nav_spoken_instruction(
+    NavSpokenInstruction self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.text, serializer);
+    sse_encode_opt_String(self.ssml, serializer);
+    sse_encode_String(self.utteranceId, serializer);
+    sse_encode_f_64(self.triggerDistanceBeforeManeuver, serializer);
+  }
+
+  @protected
+  void sse_encode_nav_step(NavStep self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_String(self.roadName, serializer);
+    sse_encode_String(self.instruction, serializer);
+    sse_encode_f_64(self.distance, serializer);
+    sse_encode_f_64(self.duration, serializer);
+    sse_encode_list_String(self.exits, serializer);
+    sse_encode_list_nav_visual_instruction(self.visualInstructions, serializer);
+    sse_encode_list_nav_spoken_instruction(self.spokenInstructions, serializer);
+    sse_encode_list_directions_point(self.geometry, serializer);
+    sse_encode_u_32(self.geometryStart, serializer);
+    sse_encode_opt_box_autoadd_nav_driving_side(self.drivingSide, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.roundaboutExitNumber, serializer);
+  }
+
+  @protected
+  void sse_encode_nav_update(NavUpdate self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_trip_status(self.status, serializer);
+    sse_encode_opt_box_autoadd_nav_location(self.location, serializer);
+    sse_encode_opt_box_autoadd_nav_location(self.snappedLocation, serializer);
+    sse_encode_u_32(self.stepIndex, serializer);
+    sse_encode_u_32(self.geometryIndex, serializer);
+    sse_encode_nav_deviation(self.deviation, serializer);
+    sse_encode_f_64(self.deviationMeters, serializer);
+    sse_encode_opt_box_autoadd_nav_visual_instruction(
+      self.visualInstruction,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_nav_spoken_instruction(
+      self.spokenInstruction,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_nav_progress(self.progress, serializer);
+  }
+
+  @protected
+  void sse_encode_nav_visual_instruction(
+    NavVisualInstruction self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_nav_instruction_content(self.primary, serializer);
+    sse_encode_opt_box_autoadd_nav_instruction_content(
+      self.secondary,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_nav_instruction_content(self.sub, serializer);
+    sse_encode_f_64(self.triggerDistanceBeforeManeuver, serializer);
+  }
+
+  @protected
+  void sse_encode_navigation_mode(
+    NavigationMode self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_open_error(OpenError self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_open_error_kind(self.kind, serializer);
@@ -3077,6 +5175,140 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_f_64(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_maneuver_modifier(
+    ManeuverModifier? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_maneuver_modifier(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_maneuver_type(
+    ManeuverType? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_maneuver_type(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_driving_side(
+    NavDrivingSide? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_nav_driving_side(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_instruction_content(
+    NavInstructionContent? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_nav_instruction_content(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_location(
+    NavLocation? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_nav_location(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_progress(
+    NavProgress? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_nav_progress(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_spoken_instruction(
+    NavSpokenInstruction? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_nav_spoken_instruction(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_nav_visual_instruction(
+    NavVisualInstruction? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_nav_visual_instruction(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_16(int? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_16(self, serializer);
+    }
   }
 
   @protected
@@ -3166,6 +5398,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_simulation_bias(
+    SimulationBias self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_simulation_error(
+    SimulationError self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.message, serializer);
+  }
+
+  @protected
   void sse_encode_tile_check_error(
     TileCheckError self,
     SseSerializer serializer,
@@ -3212,6 +5462,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_trip_status(TripStatus self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_u_16(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint16(self);
@@ -3238,12 +5494,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_usize(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putBigUint64(self);
-  }
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putUint8(self ? 1 : 0);
   }
 }
 
@@ -3349,6 +5599,141 @@ class DirectionsAdapterImpl extends RustOpaque implements DirectionsAdapter {
     from: from,
     to: to,
   );
+}
+
+@sealed
+class LocationSimulationImpl extends RustOpaque implements LocationSimulation {
+  // Not to be used by end users
+  LocationSimulationImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  LocationSimulationImpl.frbInternalSseDecode(
+    BigInt ptr,
+    int externalSizeOnNative,
+  ) : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_LocationSimulation,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_LocationSimulation,
+    rustArcDecrementStrongCountPtr: RustLib
+        .instance
+        .api
+        .rust_arc_decrement_strong_count_LocationSimulationPtr,
+  );
+
+  /// The next fix along the route, or the last one again once [`Self::is_finished`].
+  NavLocation advance() => RustLib.instance.api
+      .crateApiNavigationLocationSimulationAdvance(that: this);
+
+  /// The fix the simulation is at: at first, the start of the route.
+  NavLocation current() => RustLib.instance.api
+      .crateApiNavigationLocationSimulationCurrent(that: this);
+
+  /// Whether the simulation has reached the end of the route.
+  bool isFinished() => RustLib.instance.api
+      .crateApiNavigationLocationSimulationIsFinished(that: this);
+}
+
+@sealed
+class NavigableRouteImpl extends RustOpaque implements NavigableRoute {
+  // Not to be used by end users
+  NavigableRouteImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  NavigableRouteImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_NavigableRoute,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_NavigableRoute,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_NavigableRoutePtr,
+  );
+
+  /// The route's steps, with their banners, announcements and lines.
+  ///
+  /// `#[frb(sync)]`: the route is never changed, so nothing waits on it, and Dart asks for
+  /// its steps once per route.
+  List<NavStep> steps() =>
+      RustLib.instance.api.crateApiDirectionsNavigableRouteSteps(that: this);
+}
+
+@sealed
+class NavigationSessionImpl extends RustOpaque implements NavigationSession {
+  // Not to be used by end users
+  NavigationSessionImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  NavigationSessionImpl.frbInternalSseDecode(
+    BigInt ptr,
+    int externalSizeOnNative,
+  ) : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_NavigationSession,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_NavigationSession,
+    rustArcDecrementStrongCountPtr: RustLib
+        .instance
+        .api
+        .rust_arc_decrement_strong_count_NavigationSessionPtr,
+  );
+
+  /// Skips to the next step, or finishes the trip from the last, whatever the fixes say:
+  /// for when they can't be trusted, as in a tunnel.
+  Future<NavUpdate> advance() => RustLib.instance.api
+      .crateApiNavigationNavigationSessionAdvance(that: this);
+
+  /// Where navigation stands now: after [`Self::start`], where it starts.
+  ///
+  /// `#[frb(sync)]`: it only reads the state, which is quick.
+  NavUpdate current() => RustLib.instance.api
+      .crateApiNavigationNavigationSessionCurrent(that: this);
+
+  /// How the session is traveling.
+  NavigationMode mode() =>
+      RustLib.instance.api.crateApiNavigationNavigationSessionMode(that: this);
+
+  /// Navigates `route` instead, from `location`, traveling the same way: for a new route
+  /// after leaving the old one.
+  Future<NavUpdate> replaceRoute({
+    required NavigableRoute route,
+    required NavLocation location,
+  }) => RustLib.instance.api.crateApiNavigationNavigationSessionReplaceRoute(
+    that: this,
+    route: route,
+    location: location,
+  );
+
+  /// The request for a new route from `location` through the stops not yet passed, for
+  /// when the session is off the route. The location's course, if it has one, goes in as
+  /// the start's heading, so the new route doesn't begin with a U-turn.
+  ///
+  /// Errs once the trip is over, when there's nowhere left to go.
+  DirectionsRequest rerouteRequest({
+    required DirectionsAdapter adapter,
+    required NavLocation location,
+  }) => RustLib.instance.api.crateApiNavigationNavigationSessionRerouteRequest(
+    that: this,
+    adapter: adapter,
+    location: location,
+  );
+
+  /// Moves navigation on to `location`: advances the step when its maneuver is done,
+  /// finishes the trip on arrival, and says how far off the route the fix is.
+  Future<NavUpdate> updateLocation({required NavLocation location}) =>
+      RustLib.instance.api.crateApiNavigationNavigationSessionUpdateLocation(
+        that: this,
+        location: location,
+      );
 }
 
 @sealed

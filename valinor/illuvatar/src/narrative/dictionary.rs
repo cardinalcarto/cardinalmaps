@@ -199,6 +199,13 @@ pub fn is_supported_language(language: &str) -> bool {
     locale_index(language).is_some()
 }
 
+/// The tag of the locale a language tag (or alias) names, as `pt` names `pt-PT`.
+///
+/// Exact, as [`is_supported_language`] is.
+pub fn locale_tag(language: &str) -> Option<&'static str> {
+    locale_index(language).map(|index| LOCALES[index].tag)
+}
+
 fn locale_index(language: &str) -> Option<usize> {
     LOCALES
         .iter()

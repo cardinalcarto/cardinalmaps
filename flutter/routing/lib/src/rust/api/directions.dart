@@ -4,11 +4,12 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'navigation.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `failed`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`
+// These functions are ignored because they are not marked as `pub`: `failed`, `request_through`, `valhalla_language`, `valhalla`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DirectionsAdapter>>
 abstract class DirectionsAdapter implements RustOpaqueInterface {
@@ -26,16 +27,31 @@ abstract class DirectionsAdapter implements RustOpaqueInterface {
   });
 
   /// An adapter for a Valhalla server's route endpoint and a costing such as `auto`,
-  /// asking for up to `alternates` routes besides the best one.
+  /// asking for up to `alternates` routes besides the best one, with instructions in
+  /// `language` (a BCP-47 tag such as `pt-PT`, as [`valhalla_language`] resolves it) and
+  /// distances in `units`.
   static DirectionsAdapter valhalla({
     required String endpointUrl,
     required String costing,
     required int alternates,
+    required String language,
+    required DistanceUnits units,
   }) => RustLib.instance.api.crateApiDirectionsDirectionsAdapterValhalla(
     endpointUrl: endpointUrl,
     costing: costing,
     alternates: alternates,
+    language: language,
+    units: units,
   );
+}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NavigableRoute>>
+abstract class NavigableRoute implements RustOpaqueInterface {
+  /// The route's steps, with their banners, announcements and lines.
+  ///
+  /// `#[frb(sync)]`: the route is never changed, so nothing waits on it, and Dart asks for
+  /// its steps once per route.
+  List<NavStep> steps();
 }
 
 /// Why there are no routes.
@@ -114,6 +130,10 @@ class DirectionsRequest {
 }
 
 /// A way to get there.
+///
+/// Not `PartialEq`: Ferrostar's [`Route`] isn't, and Dart compares routes by identity.
+/// `non_opaque`, since flutter_rust_bridge would otherwise make it opaque for its opaque
+/// field, and Dart reads the rest of it as plain data.
 class DirectionsRoute {
   /// The line it follows.
   final List<DirectionsPoint> geometry;
@@ -125,11 +145,15 @@ class DirectionsRoute {
   final double duration;
   final List<DirectionsStep> steps;
 
+  /// The whole route, to navigate.
+  final NavigableRoute navigable;
+
   const DirectionsRoute({
     required this.geometry,
     required this.distance,
     required this.duration,
     required this.steps,
+    required this.navigable,
   });
 
   @override
@@ -137,7 +161,8 @@ class DirectionsRoute {
       geometry.hashCode ^
       distance.hashCode ^
       duration.hashCode ^
-      steps.hashCode;
+      steps.hashCode ^
+      navigable.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -147,7 +172,8 @@ class DirectionsRoute {
           geometry == other.geometry &&
           distance == other.distance &&
           duration == other.duration &&
-          steps == other.steps;
+          steps == other.steps &&
+          navigable == other.navigable;
 }
 
 /// One maneuver and the stretch of road after it.
@@ -180,3 +206,6 @@ class DirectionsStep {
           distance == other.distance &&
           duration == other.duration;
 }
+
+/// The units a route's instructions give distances in.
+enum DistanceUnits { kilometers, miles }

@@ -52,7 +52,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use routing_flutter::api::directions::{DirectionsAdapter, DirectionsPoint};
+use routing_flutter::api::directions::{DirectionsAdapter, DirectionsPoint, DistanceUnits};
 use routing_flutter::api::router::OfflineRouter;
 use routing_flutter::api::transit::{OfflineTransit, TransitFeed, TransitFeedKind};
 
@@ -426,9 +426,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let adapters: Vec<Arc<DirectionsAdapter>> = COSTINGS
         .iter()
         .map(|costing| {
-            DirectionsAdapter::valhalla("offline:route".into(), (*costing).into(), 3)
-                .map(Arc::new)
-                .map_err(|e| e.message)
+            // Valhalla's defaults, so the answers are as before.
+            DirectionsAdapter::valhalla(
+                "offline:route".into(),
+                (*costing).into(),
+                3,
+                "en-US".into(),
+                DistanceUnits::Kilometers,
+            )
+            .map(Arc::new)
+            .map_err(|e| e.message)
         })
         .collect::<Result<_, _>>()?;
 
