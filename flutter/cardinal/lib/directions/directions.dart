@@ -50,11 +50,14 @@ enum RouteProblem {
 /// |---|---|---|
 /// | either end missing | both are set | loading |
 /// | anywhere | an end, the mode, or a recalculation changes the question | loading |
+/// | walking | walking by wheelchair is turned on or off | loading |
 /// | loading | routes arrive | showing routes, the best selected |
 /// | loading | there are none, or asking failed | a [RouteProblem], no routes |
 /// | anywhere | an end is cleared | no routes, no problem, nothing loading |
 /// | showing routes | a route is selected | that route selected, with no request |
 /// | showing journeys | a journey is selected | that journey selected, with no request |
+///
+/// Walking is by wheelchair while [wheelchair] is set.
 ///
 /// Transit answers with a [TransitPlan] rather than routes, and how you get to and from
 /// stops ([transitAccess]) is part of its question. A plan with no journeys isn't a
@@ -87,6 +90,10 @@ class Directions extends ChangeNotifier {
 
   TravelMode get mode => _mode;
   TravelMode _mode;
+
+  /// Whether walking is by wheelchair.
+  bool get wheelchair => _wheelchair;
+  bool _wheelchair = false;
 
   /// How transit gets to and from stops.
   TransitAccess get transitAccess => _transitAccess;
@@ -168,6 +175,17 @@ class Directions extends ChangeNotifier {
     _mode = mode;
     if (mode == TravelMode.transit) _transit.prepare();
     _ask();
+  }
+
+  /// Turns walking by wheelchair on or off, asking again if that's how you're traveling.
+  void setWheelchair(bool wheelchair) {
+    if (wheelchair == _wheelchair) return;
+    _wheelchair = wheelchair;
+    if (_mode == TravelMode.walking) {
+      _ask();
+    } else {
+      notifyListeners();
+    }
   }
 
   /// Changes how transit gets to and from stops.
@@ -307,6 +325,7 @@ class Directions extends ChangeNotifier {
       } else {
         routes = await _source.routes(
           mode: _mode,
+          wheelchair: _wheelchair,
           from: from.point,
           to: to.point,
           abort: abort,

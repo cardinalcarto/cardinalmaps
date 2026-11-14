@@ -28,6 +28,17 @@ enum TravelMode {
   final IconData icon;
 
   bool get available => true;
+
+  /// Whether it's walking by wheelchair, when walking is by [wheelchair].
+  bool byWheelchair({required bool wheelchair}) =>
+      wheelchair && this == walking;
+
+  /// What its chip says: Wheelchair for walking by [wheelchair].
+  String labelFor({required bool wheelchair}) =>
+      byWheelchair(wheelchair: wheelchair) ? 'Wheelchair' : label;
+
+  IconData iconFor({required bool wheelchair}) =>
+      byWheelchair(wheelchair: wheelchair) ? Icons.accessible : icon;
 }
 
 /// The way of traveling last chosen, which directions start with.
@@ -37,12 +48,21 @@ final lastTravelMode = Setting.choice(
   TravelMode.driving,
 );
 
-/// How transit directions last got to and from stops.
-final lastTransitAccess = Setting.choice(
+/// How transit directions last got to and from stops, or null if that's never been
+/// chosen.
+final lastTransitAccess = Setting.optionalChoice(
   'directions.transitAccess',
   TransitAccess.values,
-  TransitAccess.walking,
 );
+
+/// How transit gets to and from stops: as [remembered], or if nothing is, by
+/// [wheelchair] or else on foot.
+TransitAccess transitAccess(
+  TransitAccess? remembered, {
+  required bool wheelchair,
+}) =>
+    remembered ??
+    (wheelchair ? TransitAccess.wheelchair : TransitAccess.walking);
 
 /// The trip has an end the offline area's streets don't reach.
 class OutsideOfflineArea implements Exception {
@@ -56,11 +76,13 @@ class NoOfflineArea implements Exception {
 
 /// Where routes come from, behind what the app needs of it, so tests can fake it.
 abstract class RouteSource {
-  /// The routes [from] to [to], the best first. Throws a [DirectionsError] if there are
-  /// none, [OutsideOfflineArea] or [NoOfflineArea] if they can't be looked for, and
+  /// The routes [from] to [to], the best first, by wheelchair if [mode] is walking and
+  /// [wheelchair] is set. Throws a [DirectionsError] if there are none,
+  /// [OutsideOfflineArea] or [NoOfflineArea] if they can't be looked for, and
   /// [http.RequestAbortedException] if [abort] completes first.
   Future<List<DirectionsRoute>> routes({
     required TravelMode mode,
+    required bool wheelchair,
     required LngLat from,
     required LngLat to,
     Future<void>? abort,
@@ -128,7 +150,9 @@ class OfflineRouteSource implements RouteSource {
   /// Told the line of each route found, so the tiles it passes through count as used
   /// (`OfflineDownloads.touchRoute`).
   final void Function(List<DirectionsPoint> shape)? used;
-  final _adapters = <TravelMode, DirectionsAdapter>{};
+
+  /// Ferrostar's adapters, by mode and whether it's by wheelchair.
+  final _adapters = <(TravelMode, bool), DirectionsAdapter>{};
 
   /// How many routes to ask for besides the best.
   static const _alternates = 3;
@@ -139,13 +163,18 @@ class OfflineRouteSource implements RouteSource {
   @override
   Future<List<DirectionsRoute>> routes({
     required TravelMode mode,
+    required bool wheelchair,
     required LngLat from,
     required LngLat to,
     Future<void>? abort,
-  }) => _abortable(_routes(mode, from, to), abort);
+  }) => _abortable(
+    _routes(mode, mode.byWheelchair(wheelchair: wheelchair), from, to),
+    abort,
+  );
 
   Future<List<DirectionsRoute>> _routes(
     TravelMode mode,
+    bool wheelchair,
     LngLat from,
     LngLat to,
   ) async {
@@ -154,12 +183,14 @@ class OfflineRouteSource implements RouteSource {
 
     // Ferrostar's adapter is in the routing library too, made before the router opens.
     await initRouting();
-    final adapter = _adapters[mode] ??= DirectionsAdapter.valhalla(
-      // Ferrostar wants an endpoint to make the request for; nothing is sent to it.
-      endpointUrl: 'offline:route',
-      costing: mode.costing!,
-      alternates: _alternates,
-    );
+    final adapter = _adapters[(mode, wheelchair)] ??=
+        DirectionsAdapter.valhalla(
+          // Ferrostar wants an endpoint to make the request for; nothing is sent to it.
+          endpointUrl: 'offline:route',
+          costing: mode.costing!,
+          alternates: _alternates,
+          wheelchair: wheelchair,
+        );
     final made = adapter.request(from: _point(from), to: _point(to));
     final watch = Stopwatch()..start();
     final response = await area.useRouter(

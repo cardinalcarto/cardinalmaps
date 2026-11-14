@@ -32,6 +32,18 @@ class Setting<T> {
         values.firstWhere((v) => v.name == json, orElse: () => defaultValue),
   );
 
+  /// One of [values], stored by name, or null until one is set: for when not having
+  /// chosen yet means something a default value can't say.
+  static Setting<E?> optionalChoice<E extends Enum>(
+    String key,
+    List<E> values,
+  ) => Setting(
+    key,
+    null,
+    encode: (value) => value?.name,
+    decode: (json) => values.where((v) => v.name == json).firstOrNull,
+  );
+
   /// On or off.
   static Setting<bool> flag(String key, bool defaultValue) => Setting(
     key,

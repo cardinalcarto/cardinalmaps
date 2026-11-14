@@ -11,12 +11,16 @@ use ferrostar::models::{
 use ferrostar::routing_adapters::error::ParsingError;
 use ferrostar::routing_adapters::{RouteAdapter, RouteRequest, WellKnownRouteProvider};
 use flutter_rust_bridge::frb;
+use serde_json::json;
 use std::collections::HashMap;
 use std::time::SystemTime;
 
 /// How far off a trip's start is taken to be, in meters. Valhalla uses it to decide how sure
 /// it can be of which side of the street the start is on.
 const START_ACCURACY: f64 = 10.0;
+
+/// Valhalla's costing for going on foot, and by wheelchair.
+const PEDESTRIAN: &str = "pedestrian";
 
 /// A point on the ground, in degrees.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -152,18 +156,31 @@ pub struct DirectionsAdapter {
 
 impl DirectionsAdapter {
     /// An adapter for a Valhalla server's route endpoint and a costing such as `auto`,
-    /// asking for up to `alternates` routes besides the best one.
+    /// asking for up to `alternates` routes besides the best one. With `wheelchair`, the
+    /// routes are ones a wheelchair can take: Valhalla's `pedestrian` costing of type
+    /// `wheelchair`, which is the only costing it goes with.
     #[frb(sync)]
     pub fn valhalla(
         endpoint_url: String,
         costing: String,
         alternates: u32,
+        wheelchair: bool,
     ) -> Result<DirectionsAdapter, DirectionsError> {
+        // Ferrostar sets each of these keys at the top of the request, over its own.
+        let mut options = json!({ "alternates": alternates });
+        if wheelchair {
+            if costing != PEDESTRIAN {
+                return Err(DirectionsError::failed(format!(
+                    "a wheelchair route needs {PEDESTRIAN} costing, not {costing}"
+                )));
+            }
+            options["costing_options"] = json!({ (PEDESTRIAN): { "type": "wheelchair" } });
+        }
         let adapter =
             RouteAdapter::from_well_known_route_provider(WellKnownRouteProvider::Valhalla {
                 endpoint_url,
                 profile: costing,
-                options_json: Some(format!(r#"{{"alternates":{alternates}}}"#)),
+                options_json: Some(options.to_string()),
             })
             .map_err(DirectionsError::failed)?;
         Ok(Self { adapter })
@@ -218,7 +235,12 @@ mod tests {
     use super::*;
 
     fn adapter() -> DirectionsAdapter {
-        DirectionsAdapter::valhalla("http://router/route".into(), "bicycle".into(), 2).unwrap()
+        DirectionsAdapter::valhalla("http://router/route".into(), "bicycle".into(), 2, false)
+            .unwrap()
+    }
+
+    fn body(adapter: DirectionsAdapter) -> serde_json::Value {
+        serde_json::from_slice(&adapter.request(FROM, TO).unwrap().body).unwrap()
     }
 
     const FROM: DirectionsPoint = DirectionsPoint {
@@ -242,6 +264,41 @@ mod tests {
         assert_eq!(body["locations"][0]["lat"], 10.5);
         assert_eq!(body["locations"][1]["lon"], 21.5);
         assert_eq!(body["locations"][1]["type"], "break");
+    }
+
+    #[test]
+    fn a_wheelchair_route_is_asked_for_with_pedestrian_costing_of_that_type() {
+        let adapter =
+            DirectionsAdapter::valhalla("http://router/route".into(), "pedestrian".into(), 3, true)
+                .unwrap();
+        let body = body(adapter);
+        assert_eq!(body["costing"], "pedestrian");
+        assert_eq!(body["costing_options"]["pedestrian"]["type"], "wheelchair");
+        assert_eq!(body["alternates"], 3);
+        // Ferrostar's own keys are still there.
+        assert_eq!(body["format"], "osrm");
+        assert_eq!(body["voice_instructions"], true);
+    }
+
+    #[test]
+    fn a_walking_route_has_no_costing_options() {
+        let adapter = DirectionsAdapter::valhalla(
+            "http://router/route".into(),
+            "pedestrian".into(),
+            3,
+            false,
+        )
+        .unwrap();
+        let body = body(adapter);
+        assert_eq!(body["costing"], "pedestrian");
+        assert!(body["costing_options"].is_null());
+    }
+
+    #[test]
+    fn a_wheelchair_is_not_a_kind_of_other_costing() {
+        let made =
+            DirectionsAdapter::valhalla("http://router/route".into(), "auto".into(), 3, true);
+        assert_eq!(made.err().unwrap().kind, DirectionsErrorKind::Failed);
     }
 
     #[test]

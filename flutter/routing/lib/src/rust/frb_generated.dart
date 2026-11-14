@@ -130,6 +130,7 @@ abstract class RustLibApi extends BaseApi {
     required String endpointUrl,
     required String costing,
     required int alternates,
+    required bool wheelchair,
   });
 
   Future<OfflineRouter> crateApiRouterOfflineRouterOpen({
@@ -579,6 +580,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String endpointUrl,
     required String costing,
     required int alternates,
+    required bool wheelchair,
   }) {
     return handler.executeSync(
       SyncTask(
@@ -587,6 +589,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(endpointUrl, serializer);
           sse_encode_String(costing, serializer);
           sse_encode_u_32(alternates, serializer);
+          sse_encode_bool(wheelchair, serializer);
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
         },
         codec: SseCodec(
@@ -595,7 +598,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_directions_error,
         ),
         constMeta: kCrateApiDirectionsDirectionsAdapterValhallaConstMeta,
-        argValues: [endpointUrl, costing, alternates],
+        argValues: [endpointUrl, costing, alternates, wheelchair],
         apiImpl: this,
       ),
     );
@@ -604,7 +607,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiDirectionsDirectionsAdapterValhallaConstMeta =>
       const TaskConstMeta(
         debugName: "DirectionsAdapter_valhalla",
-        argNames: ["endpointUrl", "costing", "alternates"],
+        argNames: ["endpointUrl", "costing", "alternates", "wheelchair"],
       );
 
   @override
@@ -1497,6 +1500,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool dco_decode_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
   DirectionsPoint dco_decode_box_autoadd_directions_point(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_directions_point(raw);
@@ -2137,6 +2146,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool sse_decode_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
   DirectionsPoint sse_decode_box_autoadd_directions_point(
     SseDeserializer deserializer,
   ) {
@@ -2623,12 +2638,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getUint8() != 0;
-  }
-
-  @protected
   void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     ArchivePlanner self,
@@ -2881,6 +2890,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_8(self.z, serializer);
     sse_encode_u_32(self.x, serializer);
     sse_encode_u_32(self.y, serializer);
+  }
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint8(self ? 1 : 0);
   }
 
   @protected
@@ -3342,12 +3357,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_usize(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putBigUint64(self);
-  }
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putUint8(self ? 1 : 0);
   }
 }
 
