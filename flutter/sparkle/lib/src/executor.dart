@@ -105,6 +105,7 @@ class _Bindings {
   /// from earlier draws, and binding them fails on GLES.
   int slotCount = 0;
   (gpu.BufferView, gpu.IndexType)? indexBuffer;
+
   /// The `Draw` block's offset and length in the frame's uniforms.
   (int, int)? uniforms;
   final Map<String, (gpu.Texture, gpu.SamplerOptions)> textures = {};
@@ -152,7 +153,10 @@ class GpuExecutor {
 
   /// Taken in turn by frames, as Flutter GPU's host buffers are: by the time a frame
   /// takes one again, the GPU is done with the frame that used it before.
-  final List<_UniformBuffer> _uniformBuffers = List.generate(4, (_) => _UniformBuffer());
+  final List<_UniformBuffer> _uniformBuffers = List.generate(
+    4,
+    (_) => _UniformBuffer(),
+  );
   int _frame = 0;
   late _UniformBuffer _uniformBuffer;
 
@@ -357,7 +361,8 @@ class GpuExecutor {
           pass = _beginPass(commandBuffer, screen);
           bindings.reset();
           _lineScissor = false; // PERF-TEMP
-          if (_experiment == 'scissor') { // PERF-TEMP
+          if (_experiment == 'scissor') {
+            // PERF-TEMP
             pass.setScissor(gpu.Scissor(x: 0, y: 0, width: 8, height: 8));
           }
         case _Op.endPass:
@@ -435,35 +440,56 @@ class GpuExecutor {
           final instances = _next();
           _bind(pass!, bindings);
           draws++; // PERF-TEMP
-          if (_experiment == 'nodraw' || (_skip.isNotEmpty && bindings.program!.name.startsWith(_skip))) continue; // PERF-TEMP
+          if (_experiment == 'nodraw' ||
+              (_skip.isNotEmpty && bindings.program!.name.startsWith(_skip)))
+            continue; // PERF-TEMP
           pass.draw(count, instanceCount: instances);
         case _Op.drawIndexed:
           final count = _next();
           final instances = _next();
           _bind(pass!, bindings);
           draws++; // PERF-TEMP
-          if (_experiment == 'nodraw' || (_skip.isNotEmpty && bindings.program!.name.startsWith(_skip))) continue; // PERF-TEMP
+          if (_experiment == 'nodraw' ||
+              (_skip.isNotEmpty && bindings.program!.name.startsWith(_skip)))
+            continue; // PERF-TEMP
           final isLine = bindings.program!.name.startsWith('Line'); // PERF-TEMP
           if (isLine) lineIndices += count * instances; // PERF-TEMP
-          if (_experiment == 'linescissor' && isLine != _lineScissor) { // PERF-TEMP
+          if (_experiment == 'linescissor' && isLine != _lineScissor) {
+            // PERF-TEMP
             _lineScissor = isLine;
-            pass.setScissor(isLine
-                ? gpu.Scissor(x: 0, y: 0, width: 8, height: 8)
-                : gpu.Scissor(x: 0, y: 0, width: screen.width, height: screen.height));
+            pass.setScissor(
+              isLine
+                  ? gpu.Scissor(x: 0, y: 0, width: 8, height: 8)
+                  : gpu.Scissor(
+                      x: 0,
+                      y: 0,
+                      width: screen.width,
+                      height: screen.height,
+                    ),
+            );
           }
-          if (_experiment == 'split' && count >= 6) { // PERF-TEMP
+          if (_experiment == 'split' && count >= 6) {
+            // PERF-TEMP
             // The same triangles in two draws, each with its own bindings.
             final half = count ~/ 6 * 3;
             final (view, type) = bindings.indexBuffer!;
             final size = type == gpu.IndexType.int32 ? 4 : 2;
             pass.bindIndexBuffer(
-              gpu.BufferView(view.buffer, offsetInBytes: view.offsetInBytes, lengthInBytes: half * size),
+              gpu.BufferView(
+                view.buffer,
+                offsetInBytes: view.offsetInBytes,
+                lengthInBytes: half * size,
+              ),
               type,
             );
             pass.drawIndexed(half, instanceCount: instances);
             _bind(pass, bindings);
             pass.bindIndexBuffer(
-              gpu.BufferView(view.buffer, offsetInBytes: view.offsetInBytes + half * size, lengthInBytes: view.lengthInBytes - half * size),
+              gpu.BufferView(
+                view.buffer,
+                offsetInBytes: view.offsetInBytes + half * size,
+                lengthInBytes: view.lengthInBytes - half * size,
+              ),
               type,
             );
             pass.drawIndexed(count - half, instanceCount: instances);
@@ -489,7 +515,10 @@ class GpuExecutor {
       while (capacity < uniforms.length) {
         capacity *= 2;
       }
-      u.buffer = context.createDeviceBuffer(gpu.StorageMode.hostVisible, capacity);
+      u.buffer = context.createDeviceBuffer(
+        gpu.StorageMode.hostVisible,
+        capacity,
+      );
       u.capacity = capacity;
     }
     u.buffer!.overwrite(ByteData.sublistView(uniforms));

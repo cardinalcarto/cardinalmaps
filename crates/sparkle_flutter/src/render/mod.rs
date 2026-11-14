@@ -12,12 +12,16 @@
 //! consecutive flat layers so that 3D layers between them keep their place in the style's
 //! order.
 //!
+//! The navigation puck ([`puck`]) is drawn over the layers, or among them under the one
+//! its style names.
+//!
 //! The per-type drawing lives in [`layers`]; this module owns the targets, the frame, and
 //! the masks.
 
 pub mod indices;
 pub mod layers;
 pub mod paint;
+pub mod puck;
 pub mod terrain;
 pub mod view;
 
@@ -36,6 +40,7 @@ use sparkle_view::camera::{Camera, Placement};
 use sparkle_view::map::{Terrain, TileUploader};
 
 use self::layers::{DrawContext, LayerDraw, LayerRenderer, PrepareContext, TileDraw};
+use self::puck::{PuckDraw, PuckRenderer};
 use self::terrain::{DRAPE_POOL, TerrainRenderer};
 use self::view::View;
 use crate::gpu::{
@@ -135,6 +140,7 @@ pub struct Renderer {
     by_type: HashMap<&'static str, usize>,
     mask: Pipeline,
     terrain: TerrainRenderer,
+    puck: PuckRenderer,
     /// Whether frames follow each other on screen, so transitions animate; a screenshot
     /// wants their end state at once.
     pub animate: bool,
@@ -171,6 +177,7 @@ impl Renderer {
             .map(|(i, l)| (l.layer_type(), i))
             .collect();
         let terrain = TerrainRenderer::new(&gpu);
+        let puck = PuckRenderer::new(&gpu);
         let mut renderer = Self {
             msaa: None,
             depth_stencil: gpu.screen(),
@@ -180,6 +187,7 @@ impl Renderer {
             layers,
             by_type,
             mask,
+            puck,
             animate: true,
         };
         renderer.resize(size);
@@ -390,13 +398,15 @@ impl Renderer {
         true
     }
 
-    /// Record a whole frame. The commands are then taken with [`crate::gpu::Gpu::take`].
+    /// Record a whole frame, with the navigation puck if there is one. The commands are
+    /// then taken with [`crate::gpu::Gpu::take`].
     pub fn render(
         &mut self,
         style: &Style,
         camera: &Camera,
         sources: &[SourceTiles<'_>],
         terrain: Option<Terrain<'_>>,
+        puck: Option<&PuckDraw<'_>>,
     ) {
         let view = View::scene(
             camera,
@@ -430,6 +440,14 @@ impl Renderer {
             None
         };
         let draws = self.layer_draws(style, &view, sources, tiles, &|_| true);
+        // The puck goes before the first draw of a layer at or above the one it's under.
+        let puck = puck.map(|draw| Overlay {
+            at: draws
+                .iter()
+                .position(|(_, _, d)| d.index >= draw.before)
+                .unwrap_or(draws.len()),
+            draw,
+        });
 
         let animate = self.animate;
         let ground = drape_tiles.as_deref().map(|placements| terrain::Ground {
@@ -485,6 +503,7 @@ impl Renderer {
                     sources,
                     &draws,
                     &all,
+                    puck.as_ref().map(|o| (&self.puck, o)),
                 );
             }
             Some(drape_tiles) => {
@@ -498,6 +517,9 @@ impl Renderer {
                     );
                     self.terrain.draw_sky(&self.gpu, &mut pass, &view);
                 }
+                // Draped layers are drawn with the terrain, which would cover a puck drawn
+                // before them, so one that goes among them is drawn right after.
+                let mut puck = puck;
                 for segment in segments(&draws) {
                     match segment {
                         Segment::Stack(stack) => {
@@ -519,8 +541,21 @@ impl Renderer {
                                         .draw_tile(&self.gpu, &mut pass, &view, tiles, tile, slot);
                                 }
                             }
+                            let last = stack.last().copied().unwrap_or(0);
+                            if let Some(overlay) = puck.take_if(|o| o.at <= last + 1) {
+                                let mut pass = main_pass(
+                                    &self.gpu,
+                                    self.msaa.as_ref(),
+                                    &self.depth_stencil,
+                                    false,
+                                    false,
+                                );
+                                self.puck.draw(&self.gpu, &mut pass, &view, overlay.draw);
+                            }
                         }
                         Segment::Layers(run) => {
+                            let last = run.last().copied().unwrap_or(0);
+                            let here = puck.take_if(|o| o.at <= last);
                             let mut pass = main_pass(
                                 &self.gpu,
                                 self.msaa.as_ref(),
@@ -538,9 +573,21 @@ impl Renderer {
                                 sources,
                                 &draws,
                                 &run,
+                                here.as_ref().map(|o| (&self.puck, o)),
                             );
                         }
                     }
+                }
+                // Over every layer.
+                if let Some(overlay) = puck {
+                    let mut pass = main_pass(
+                        &self.gpu,
+                        self.msaa.as_ref(),
+                        &self.depth_stencil,
+                        false,
+                        false,
+                    );
+                    self.puck.draw(&self.gpu, &mut pass, &view, overlay.draw);
                 }
             }
         }
@@ -598,6 +645,7 @@ impl Renderer {
             &local,
             &local_draws,
             &all,
+            None,
         );
     }
 
@@ -775,7 +823,15 @@ fn main_pass<'g>(
     })
 }
 
-/// Draw `which` of `draws` in order, each source's tile masks before its first layer.
+/// What is drawn among the layers but isn't one: the navigation puck, before draw `at`
+/// of the frame's layer draws (after all of them for their count).
+struct Overlay<'a> {
+    at: usize,
+    draw: &'a PuckDraw<'a>,
+}
+
+/// Draw `which` of `draws` in order, each source's tile masks before its first layer,
+/// and `overlay` (if any) in its place among them, or after them all if it comes later.
 /// With `terrain`, masks follow the terrain and the globe.
 #[allow(clippy::too_many_arguments)]
 fn draw_layers(
@@ -788,10 +844,20 @@ fn draw_layers(
     sources: &[SourceTiles<'_>],
     draws: &Draws<'_>,
     which: &[usize],
+    overlay: Option<(&PuckRenderer, &Overlay<'_>)>,
 ) {
     let mut masked: Option<usize> = None;
-    // Runs of draws by the same renderer from the same source, which it draws together.
-    for run in which.chunk_by(|&a, &b| draws[a].0 == draws[b].0 && draws[a].1 == draws[b].1) {
+    let mut overlay = overlay;
+    let at = overlay.map(|(_, o)| o.at);
+    // Runs of draws by the same renderer from the same source, which it draws together,
+    // split where the overlay goes. It doesn't touch the stencil, so the masks of the
+    // source drawn before it still hold after it.
+    for run in which
+        .chunk_by(|&a, &b| draws[a].0 == draws[b].0 && draws[a].1 == draws[b].1 && Some(b) != at)
+    {
+        if let Some((puck, o)) = overlay.take_if(|(_, o)| run[0] >= o.at) {
+            puck.draw(gpu, pass, view, o.draw);
+        }
         let (r, source, _) = &draws[run[0]];
         if let Some(source) = *source
             && masked != Some(source)
@@ -810,6 +876,9 @@ fn draw_layers(
         let group: Vec<&LayerDraw<'_>> = run.iter().map(|&i| &draws[i].2).collect();
         let mut cx = DrawContext { gpu, pass, view };
         layers[*r].draw_group(&mut cx, &group);
+    }
+    if let Some((puck, o)) = overlay {
+        puck.draw(gpu, pass, view, o.draw);
     }
 }
 

@@ -16,21 +16,26 @@ use sparkle::sprite::{ImageAtlas, SpriteImage};
 use sparkle::style::StyleDiff;
 use sparkle::transition::Transitions;
 use sparkle_view::args::Args;
-use sparkle_view::camera::{Camera, Padding, Placement, lng_lat_to_world};
+use sparkle_view::camera::{Camera, Framing, Padding, Placement, lng_lat_to_world};
 use sparkle_view::loader::{LoaderConfig, TileLoader, TileMessage};
 use sparkle_view::map::MapState;
-use sparkle_view::motion::Motion;
+use sparkle_view::motion::{Curve, Motion};
+use sparkle_view::puck::{Pose, Puck, PuckStyle};
 use sparkle_view::setup::{
     Marked, initial_camera, initial_feature_state, load_style, mark_feature, sources, sprites,
 };
 
 use crate::gpu::{GpuInfo, Stream};
+use crate::render::puck::PuckDraw;
 use crate::render::{GpuTile, Renderer};
 
 /// Bytes of new buffer and texture contents (mostly tiles) a frame takes in at most:
 /// tiles that arrive beyond it wait for the next frames, so that a burst of them is spread
 /// over several frames instead of stalling one.
 const UPLOAD_BUDGET: usize = 2 << 20;
+
+/// How far, in physical pixels, a press can move and still be a click.
+const CLICK_SLOP: f64 = 4.0;
 
 /// How far from a label a click still lands on it, in logical pixels, on top of what
 /// the label covers: icons are smaller than a finger.
@@ -79,6 +84,23 @@ pub struct Frame {
     pub zoom: f64,
     pub bearing: f64,
     pub pitch: f64,
+    /// The camera is following the puck: see [`MapView::follow`].
+    pub following: bool,
+}
+
+/// The camera following the puck: see [`MapView::follow`].
+#[derive(Clone, Copy)]
+struct Follow {
+    zoom: f64,
+    pitch: f64,
+    /// Fixed, or `None` to turn with the puck's course.
+    bearing: Option<f64>,
+    /// Kept clear on top of the view's padding, to put the puck elsewhere than the
+    /// middle of what that leaves.
+    padding: Padding,
+    /// Easing in from where the camera was, toward the moving puck: the framing it
+    /// started from, when, and for how many seconds.
+    entry: Option<(Framing, Instant, f64)>,
 }
 
 /// The most a subject zooms out for padding that leaves little of the view, in zoom
@@ -117,11 +139,20 @@ pub struct MapView {
     padding: Padding,
     /// What the camera keeps in view, until input moves the map.
     subject: Option<Subject>,
+    /// Where the navigation puck is, once it has been put anywhere.
+    puck: Option<Puck>,
+    puck_shown: bool,
+    puck_style: PuckStyle,
+    /// The camera follows the puck, until input moves the map.
+    follow: Option<Follow>,
     /// The pointer, in physical pixels.
     cursor: [f64; 2],
     drag: Option<Drag>,
     /// Where the primary button went down, to tell clicks from drags.
     press: Option<[f64; 2]>,
+    /// Where the last button went down, any button: a drag from there that goes no
+    /// further than a click could leaves the camera following.
+    grabbed: [f64; 2],
     /// The labels the last click landed on, until they're taken.
     clicked: Vec<ClickedFeature>,
     /// The sprite images tiles are laid out against.
@@ -179,6 +210,13 @@ impl MapView {
         let mut camera = Camera::new(size.map(f64::from), pixel_ratio);
         initial_camera(&mut camera, &args, &style, metadata.as_ref());
         initial_feature_state(&mut map, &mut renderer, &args);
+        let puck = args.puck.map(|[lng, lat, bearing]| {
+            let pose = Pose {
+                world: lng_lat_to_world(lng, lat),
+                bearing,
+            };
+            Puck::new(pose, Instant::now())
+        });
         Ok(Self {
             style_mtime: args.style.as_deref().and_then(modified),
             shown: (*style).clone(),
@@ -193,9 +231,14 @@ impl MapView {
             motion: Motion::default(),
             padding: Padding::default(),
             subject: None,
+            puck_shown: puck.is_some(),
+            puck,
+            puck_style: PuckStyle::default(),
+            follow: None,
             cursor: [0.0; 2],
             drag: None,
             press: None,
+            grabbed: [0.0; 2],
             clicked: Vec::new(),
             images,
             hovered: None,
@@ -214,7 +257,7 @@ impl MapView {
 
     /// The window is now `size` physical pixels, `pixel_ratio` of them per logical one.
     pub fn resize(&mut self, size: [u32; 2], pixel_ratio: f64) {
-        let middle = self.camera.padded_center(self.padding);
+        let middle = self.camera.framing(self.padding).target;
         self.renderer.resize(size);
         self.camera.viewport = size.map(f64::from);
         if self.args.pixel_ratio.is_none() {
@@ -239,7 +282,11 @@ impl MapView {
             self.map.receive(&mut self.renderer, message);
         }
         let now = self.now();
-        let moving = self.motion.step(&mut self.camera, Instant::now());
+        // One moment for the camera and the puck, so a camera following the puck shows it
+        // where it is drawn.
+        let instant = Instant::now();
+        let moving = self.motion.step(&mut self.camera, instant);
+        let following = self.place_following(instant);
         self.map.update_camera(&mut self.camera);
         let transitioning =
             self.transitions
@@ -247,19 +294,67 @@ impl MapView {
         let end = self.motion.end(&self.camera);
         let frame = self.map.frame(&self.camera, end.as_ref());
         let draws = self.map.draws(&frame);
-        self.renderer
-            .render(&self.shown, &self.camera, &draws, self.map.terrain());
+        let puck = self.puck.as_ref().filter(|_| self.puck_shown).map(|puck| {
+            puck_draw(
+                puck,
+                &self.puck_style,
+                &self.shown,
+                &self.map,
+                &self.camera,
+                instant,
+            )
+        });
+        self.renderer.render(
+            &self.shown,
+            &self.camera,
+            &draws,
+            self.map.terrain(),
+            puck.as_ref(),
+        );
+        let gliding = self.puck_shown && self.puck.as_ref().is_some_and(|p| p.moving(instant));
         Frame {
             stream: self.renderer.gpu().take(recycled),
             // Tiles left waiting are taken in by the next frames.
-            animating: moving || transitioning || self.renderer.animating() || backlog,
+            animating: moving
+                || following
+                || gliding
+                || transitioning
+                || self.renderer.animating()
+                || backlog,
             complete: frame.complete,
             tiles_drawn: frame.tiles_drawn(),
             loading: frame.loading,
             zoom: self.camera.zoom,
             bearing: self.camera.bearing,
             pitch: self.camera.pitch,
+            following: self.follow.is_some(),
         }
+    }
+
+    /// While following the puck, put the camera where that has it at `now`. Returns
+    /// whether it moves on from there: the puck is gliding, or the camera easing in.
+    fn place_following(&mut self, now: Instant) -> bool {
+        let (Some(follow), Some(puck)) = (&mut self.follow, &self.puck) else {
+            return false;
+        };
+        let pose = puck.at(now);
+        let target = Framing {
+            target: pose.world,
+            zoom: follow.zoom,
+            bearing: follow.bearing.unwrap_or(pose.bearing),
+            pitch: follow.pitch,
+        };
+        let mut framing = target;
+        if let Some((from, start, duration)) = follow.entry {
+            let t = now.saturating_duration_since(start).as_secs_f64() / duration;
+            if t < 1.0 {
+                framing = from.toward(&target, Curve::Ease.at(t));
+            } else {
+                follow.entry = None;
+            }
+        }
+        self.camera.show(&framing, self.padding + follow.padding);
+        follow.entry.is_some() || puck.moving(now)
     }
 
     /// Reload the `--style` file if it changed, transitioning to it. Returns whether it
@@ -386,9 +481,22 @@ impl MapView {
     }
 
     /// The pointer moved to `position`. Returns whether a frame should be drawn.
+    ///
+    /// A drag ends following the puck once it has moved further than a click could, and
+    /// not before: a press is a tap until then, and tapping a label or a place while
+    /// navigating mustn't take the camera off the puck. The drag then starts from where
+    /// the press went down, so the map doesn't lag behind the finger.
     pub fn pointer_move(&mut self, position: [f64; 2]) -> bool {
         let p = self.physical(position);
-        let from = std::mem::replace(&mut self.cursor, p);
+        let mut from = std::mem::replace(&mut self.cursor, p);
+        if self.drag.is_some() && self.follow.is_some() {
+            let down = self.grabbed;
+            if (down[0] - p[0]).hypot(down[1] - p[1]) < CLICK_SLOP {
+                return false;
+            }
+            self.let_go();
+            from = down;
+        }
         let camera = &mut self.camera;
         match self.drag {
             Some(Drag::Pan) => {
@@ -408,9 +516,13 @@ impl MapView {
     /// A button went down at `position`; `rotate` turns a primary drag into rotating (as
     /// with ctrl held). Returns whether it stopped the camera moving, in which case it's
     /// part of panning and can't be a click, and a frame should be drawn.
+    ///
+    /// It lets go of the subject, as any touch of the map does, but goes on following
+    /// the puck until the press drags (see [`Self::pointer_move`]): it may be a tap.
     pub fn pointer_down(&mut self, position: [f64; 2], button: Button, rotate: bool) -> bool {
         self.subject = None;
         self.cursor = self.physical(position);
+        self.grabbed = self.cursor;
         if button == Button::Primary {
             self.press = Some(self.cursor);
         }
@@ -437,7 +549,7 @@ impl MapView {
         if button == Button::Primary
             && let Some(p) = self.press.take()
             && click
-            && (p[0] - self.cursor[0]).hypot(p[1] - self.cursor[1]) < 4.0
+            && (p[0] - self.cursor[0]).hypot(p[1] - self.cursor[1]) < CLICK_SLOP
         {
             self.drag = None;
             return self.mark(true);
@@ -459,7 +571,7 @@ impl MapView {
     /// A mouse wheel turned by `delta` logical pixels at `position`: notches glide, as in
     /// the harness.
     pub fn scroll(&mut self, position: [f64; 2], delta: f64) {
-        self.subject = None;
+        self.let_go();
         self.cursor = self.physical(position);
         // Flutter reports a notch as about 50 logical pixels; half a zoom level per notch.
         let levels = -delta / 100.0;
@@ -470,7 +582,7 @@ impl MapView {
     /// A touchpad or pinch gesture started at `position`: stop anything moving, so it
     /// zooms from where things are.
     pub fn pan_zoom_start(&mut self, position: [f64; 2]) {
-        self.subject = None;
+        self.let_go();
         self.cursor = self.physical(position);
         self.motion.grab(self.cursor, Instant::now());
     }
@@ -478,7 +590,7 @@ impl MapView {
     /// A touchpad or pinch gesture at `position` moved by `pan` logical pixels, scaled by
     /// `scale` and turned clockwise by `rotation` degrees since its last update.
     pub fn pan_zoom(&mut self, position: [f64; 2], pan: [f64; 2], scale: f64, rotation: f64) {
-        self.subject = None;
+        self.let_go();
         let p = self.physical(position);
         let ratio = self.camera.pixel_ratio;
         let to = [p[0] + pan[0] * ratio, p[1] + pan[1] * ratio];
@@ -502,22 +614,23 @@ impl MapView {
     }
 
     /// Turn the map back to north up, keeping the middle of the view less the padding
-    /// where it is and the zoom and tilt as they are.
+    /// where it is and the zoom and tilt as they are. Stops following the puck.
     pub fn turn_north(&mut self) {
+        self.follow = None;
         self.motion
             .turn_north(&self.camera, self.padding, Instant::now());
     }
 
     /// Two fingers dragged up or down together by `dy` logical pixels: up tilts further.
     pub fn tilt(&mut self, dy: f64) {
-        self.subject = None;
+        self.let_go();
         let camera = &mut self.camera;
         camera.set_pitch(camera.pitch - dy * 0.5);
     }
 
     /// A double tap at `position`: glide in a level around it.
     pub fn double_tap_zoom(&mut self, position: [f64; 2]) {
-        self.subject = None;
+        self.let_go();
         self.cursor = self.physical(position);
         self.motion
             .zoom(&self.camera, 1.0, self.cursor, Instant::now());
@@ -526,7 +639,7 @@ impl MapView {
     /// A finger held down after a double tap at `position` dragged by `dy` logical pixels:
     /// down zooms in, up zooms out.
     pub fn quick_zoom(&mut self, position: [f64; 2], dy: f64) {
-        self.subject = None;
+        self.let_go();
         self.cursor = self.physical(position);
         self.camera.zoom_around(dy / 100.0, self.cursor);
     }
@@ -554,8 +667,15 @@ impl MapView {
             "ArrowDown" => camera.pan(0.0, -step),
             _ => return false,
         }
-        self.subject = None;
+        self.let_go();
         true
+    }
+
+    /// Input moved the map: stop keeping the subject in view, and following the puck.
+    /// Taps and clicks don't come here, so they leave the camera following.
+    fn let_go(&mut self) {
+        self.subject = None;
+        self.follow = None;
     }
 
     /// Add `added` to the sprite images, by name; a name it has already keeps its image.
@@ -583,7 +703,7 @@ impl MapView {
     /// The camera: the longitude and latitude in the middle of the view less the
     /// padding, zoom, bearing and pitch.
     pub fn camera(&self) -> [f64; 5] {
-        let [lng, lat] = to_lng_lat(self.camera.padded_center(self.padding));
+        let [lng, lat] = to_lng_lat(self.camera.framing(self.padding).target);
         let c = &self.camera;
         [lng, lat, c.zoom, c.bearing, c.pitch]
     }
@@ -603,7 +723,7 @@ impl MapView {
         if padding == self.padding {
             return false;
         }
-        let middle = self.camera.padded_center(self.padding);
+        let middle = self.camera.framing(self.padding).target;
         self.padding = padding;
         self.motion.repad(padding);
         self.follow_padding(middle);
@@ -613,16 +733,19 @@ impl MapView {
     /// After the padding or the viewport changed: keep the subject in view, or else
     /// `middle` (world coordinates) in the middle of the view less the padding.
     fn follow_padding(&mut self, middle: [f64; 2]) {
+        if self.follow.is_some() {
+            // The next frame puts the puck where the new padding has it.
+            return;
+        }
         if let Some(subject) = self.subject {
             let (center, zoom) = self.subject_view(subject);
             if !self.motion.retarget(center, zoom) {
                 self.camera.center = center;
                 self.camera.zoom = zoom;
             }
-        } else if !self.motion.flying() {
-            self.camera.center = self
-                .camera
-                .center_for(middle, self.camera.zoom, self.padding);
+        } else if !self.motion.flying() && !self.motion.easing() {
+            let framing = self.camera.aimed_at(middle);
+            self.camera.show(&framing, self.padding);
         }
     }
 
@@ -630,6 +753,7 @@ impl MapView {
     /// zoomed in no closer than `max_zoom`, with `margin` logical pixels clear around it,
     /// until input moves the map or [`MapView::clear_subject`].
     pub fn set_subject(&mut self, bounds: [f64; 4], max_zoom: f64, margin: f64) {
+        self.follow = None;
         let subject = Subject {
             bounds,
             max_zoom,
@@ -651,7 +775,8 @@ impl MapView {
         self.subject.is_some()
     }
 
-    /// The camera's center and zoom for showing `subject` with the current padding.
+    /// The camera's center and zoom for showing `subject` with the current padding, at
+    /// the camera's bearing and pitch.
     fn subject_view(&self, subject: Subject) -> ([f64; 2], f64) {
         let m = subject.margin;
         let p = self.padding;
@@ -661,8 +786,11 @@ impl MapView {
             bottom: p.bottom + m,
             left: p.left + m,
         };
-        let (middle, zoom) = self.camera.camera_for_bounds(subject.bounds, fit);
-        let zoom = zoom.min(subject.max_zoom);
+        let zoom = self
+            .camera
+            .fit_bounds(subject.bounds, fit)
+            .zoom
+            .min(subject.max_zoom);
         // However little of the view the padding leaves (none, under a full screen
         // sheet), don't zoom out more than SUBJECT_ZOOM_GIVE below how it shows with no
         // padding: past that it isn't worth seeing all of. Easing towards the limit, as a
@@ -675,24 +803,140 @@ impl MapView {
         };
         let open = self
             .camera
-            .camera_for_bounds(subject.bounds, all)
-            .1
+            .fit_bounds(subject.bounds, all)
+            .zoom
             .min(subject.max_zoom);
         let zoom = if zoom < open {
             open - SUBJECT_ZOOM_GIVE * ((open - zoom) / SUBJECT_ZOOM_GIVE).tanh()
         } else {
             zoom
         };
-        (self.camera.center_for(middle, zoom, self.padding), zoom)
+        // The margin is the same all round, so the middle of `fit` is the padding's.
+        let framing = self.camera.frame_bounds(subject.bounds, fit, zoom);
+        (self.camera.center_showing(&framing, fit), zoom)
     }
 
     /// Fly to show `lng, lat` at `zoom` in the middle of the view less the padding,
-    /// dropping any subject.
+    /// dropping any subject and following.
     pub fn fly_to(&mut self, lng: f64, lat: f64, zoom: f64) {
-        self.subject = None;
-        let target = lng_lat_to_world(lng, lat);
-        let center = self.camera.center_for(target, zoom, self.padding);
+        self.let_go();
+        let framing = Framing {
+            zoom,
+            ..self.camera.aimed_at(lng_lat_to_world(lng, lat))
+        };
+        let center = self.camera.center_showing(&framing, self.padding);
         self.motion.fly(&self.camera, center, zoom, Instant::now());
+    }
+
+    /// Ease to show `lng, lat` in the middle of the view less the padding (at any
+    /// pitch), at `zoom`, `bearing` and `pitch` (as they are for `None`), over
+    /// `duration` seconds along `curve`, dropping any subject and following. The bearing
+    /// turns the short way, and the pitch stops at the camera's limit. Input that moves
+    /// the map stops it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn ease_to(
+        &mut self,
+        lng: f64,
+        lat: f64,
+        zoom: f64,
+        bearing: Option<f64>,
+        pitch: Option<f64>,
+        duration: f64,
+        curve: Curve,
+    ) {
+        self.let_go();
+        let to = Framing {
+            target: lng_lat_to_world(lng, lat),
+            zoom,
+            bearing: bearing.unwrap_or(self.camera.bearing),
+            pitch: pitch.unwrap_or(self.camera.pitch),
+        };
+        self.motion.ease_to(
+            &self.camera,
+            to,
+            duration,
+            curve,
+            self.padding,
+            Instant::now(),
+        );
+    }
+
+    /// Put the navigation puck at `lng, lat`, pointing `bearing` degrees clockwise from
+    /// north: gliding there from where it's shown over `duration` seconds (at once for
+    /// none, or the first time), linearly, and turning the short way. A new pose before
+    /// the glide ends bends it from where it got to. Draw frames after.
+    pub fn set_puck(&mut self, lng: f64, lat: f64, bearing: f64, duration: f64) {
+        let now = Instant::now();
+        let pose = Pose {
+            world: lng_lat_to_world(lng, lat),
+            bearing,
+        };
+        match &mut self.puck {
+            Some(puck) => puck.glide_to(pose, duration, now),
+            None => self.puck = Some(Puck::new(pose, now)),
+        }
+    }
+
+    /// Show or hide the puck. A hidden puck still glides, and the camera can follow it.
+    /// Returns whether a frame should be drawn.
+    pub fn show_puck(&mut self, shown: bool) -> bool {
+        let changed = shown != self.puck_shown;
+        self.puck_shown = shown;
+        changed && self.puck.is_some()
+    }
+
+    /// Draw the puck as `style` has it from now on. Fails if it names a layer to go
+    /// under that the style doesn't have.
+    pub fn set_puck_style(&mut self, style: PuckStyle) -> Result<()> {
+        if let Some(id) = &style.before_layer
+            && !self.shown.layers.iter().any(|l| l.id == *id)
+        {
+            bail!("the style has no layer {id:?} to draw the puck under");
+        }
+        self.puck_style = style;
+        Ok(())
+    }
+
+    /// Follow the puck: keep it in the middle of the view less the padding and
+    /// `padding` on top (logical pixels, to put it lower on screen, say), moving with
+    /// it frame by frame, at `zoom` and `pitch`, with `bearing` fixed or (`None`)
+    /// turning with the puck's course. It eases in from where the camera is over
+    /// `duration` seconds; calling this again while following changes the zoom, pitch,
+    /// bearing or padding the same way. Input that moves the map, or another camera
+    /// move, stops it. Fails if the puck hasn't been put anywhere yet.
+    pub fn follow(
+        &mut self,
+        zoom: f64,
+        pitch: f64,
+        bearing: Option<f64>,
+        padding: Padding,
+        duration: f64,
+    ) -> Result<()> {
+        if self.puck.is_none() {
+            bail!("there's no puck to follow: set where it is first");
+        }
+        self.subject = None;
+        self.motion.stop();
+        let from = self.camera.framing(self.padding + padding);
+        self.follow = Some(Follow {
+            zoom,
+            pitch,
+            bearing,
+            padding,
+            entry: (duration > 0.0).then(|| (from, Instant::now(), duration)),
+        });
+        Ok(())
+    }
+
+    /// Stop following the puck, leaving the camera where it is.
+    pub fn stop_following(&mut self) {
+        self.follow = None;
+    }
+
+    /// Whether the camera is following the puck: [`MapView::follow`] started it, and
+    /// neither input, another camera move nor [`MapView::stop_following`] has ended it.
+    pub fn is_following(&self) -> bool {
+        self.follow.is_some()
     }
 
     /// With `--hover x,y`: hover that point (physical pixels) as the pointer would.
@@ -702,6 +946,34 @@ impl MapView {
         };
         self.cursor = point;
         self.mark(false)
+    }
+}
+
+/// `puck` as drawn at `now` in `style` (as shown) over `map`, as `style` has it look.
+fn puck_draw<'a>(
+    puck: &Puck,
+    look: &'a PuckStyle,
+    style: &Style,
+    map: &MapState<GpuTile>,
+    camera: &Camera,
+    now: Instant,
+) -> PuckDraw<'a> {
+    let pose = puck.at(now);
+    let layers = &style.layers;
+    let before = look
+        .before_layer
+        .as_deref()
+        .and_then(|id| layers.iter().position(|l| l.id == id))
+        .unwrap_or(layers.len());
+    let height = map.terrain().map_or(0.0, |t| {
+        let meters = t.tiles.elevation_at(pose.world).unwrap_or(0.0);
+        f64::from(meters) * t.exaggeration * camera.pixels_per_meter()
+    });
+    PuckDraw {
+        pose,
+        style: look,
+        before,
+        height,
     }
 }
 
@@ -852,6 +1124,276 @@ mod tests {
         );
     }
 
+    fn world(lng: f64, lat: f64) -> [f64; 2] {
+        lng_lat_to_world(lng, lat)
+    }
+
+    fn near(a: [f64; 2], b: [f64; 2]) -> bool {
+        (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-9
+    }
+
+    #[test]
+    fn following_holds_the_puck_still_on_screen_as_it_glides() {
+        let mut v = view();
+        v.set_padding(sheet(200.0));
+        v.set_puck(-122.33, 47.6, 0.0, 0.0);
+        // Room above it: the middle of what's left is at y = 200 + 200 / 2.
+        let ahead = Padding {
+            top: 200.0,
+            ..Padding::default()
+        };
+        v.follow(16.0, 60.0, None, ahead, 0.0).unwrap();
+        v.set_puck(-122.32, 47.61, 45.0, 1.0);
+        // Just after the glide started.
+        let t = Instant::now();
+        for ms in [0, 100, 350, 700, 1000, 1500] {
+            let now = t + Duration::from_millis(ms);
+            let moving = v.place_following(now);
+            assert_eq!(moving, ms < 1000, "{ms}");
+            let pose = v.puck.as_ref().unwrap().at(now);
+            let shown = v.camera.screen_to_world([400.0, 300.0]).unwrap();
+            assert!(near(shown, pose.world), "{ms}: {shown:?} {:?}", pose.world);
+            // Turning with the course.
+            assert!((v.camera.bearing - pose.bearing).abs() < 1e-9);
+            assert_eq!((v.camera.zoom, v.camera.pitch), (16.0, 60.0));
+        }
+        // At rest, nothing more to draw.
+        settle(&mut v);
+        assert!(v.is_following());
+    }
+
+    #[test]
+    fn following_eases_in_and_keeps_a_fixed_bearing() {
+        let mut v = view();
+        v.set_puck(-122.30, 47.62, 120.0, 0.0);
+        let before = v.camera();
+        v.follow(15.0, 45.0, Some(0.0), Padding::default(), 0.5)
+            .unwrap();
+        let t = v.follow.unwrap().entry.unwrap().1;
+        // At first, where the camera was.
+        v.place_following(t);
+        assert!(close(v.camera(), before), "{:?} {before:?}", v.camera());
+        assert!(v.place_following(t + Duration::from_millis(250)));
+        let partway = v.camera();
+        assert!(partway[2] > 12.0 && partway[2] < 15.0, "{partway:?}");
+        assert!(!v.place_following(t + Duration::from_millis(500)));
+        let shown = v.camera.screen_to_world([400.0, 300.0]).unwrap();
+        assert!(near(shown, world(-122.30, 47.62)));
+        assert_eq!(
+            (v.camera.zoom, v.camera.bearing, v.camera.pitch),
+            (15.0, 0.0, 45.0)
+        );
+    }
+
+    #[test]
+    fn following_moves_with_the_sheet() {
+        let mut v = view();
+        v.set_puck(-122.33, 47.6, 0.0, 0.0);
+        v.follow(16.0, 50.0, Some(0.0), Padding::default(), 0.0)
+            .unwrap();
+        v.frame(Stream::default());
+        assert!(v.set_padding(sheet(300.0)));
+        v.frame(Stream::default());
+        let shown = v.camera.screen_to_world([400.0, 150.0]).unwrap();
+        assert!(near(shown, world(-122.33, 47.6)), "{shown:?}");
+    }
+
+    #[test]
+    fn input_and_other_camera_moves_end_following() {
+        let mut v = view();
+        assert!(
+            v.follow(16.0, 0.0, None, Padding::default(), 0.0).is_err(),
+            "no puck yet"
+        );
+        v.set_puck(-122.33, 47.6, 0.0, 0.0);
+        let follow = |v: &mut MapView| {
+            v.follow(16.0, 0.0, None, Padding::default(), 0.3).unwrap();
+            assert!(v.frame(Stream::default()).following);
+        };
+        follow(&mut v);
+        v.pointer_down([400.0, 300.0], Button::Primary, false);
+        v.pointer_move([400.0, 340.0]);
+        v.pointer_up([400.0, 340.0], Button::Primary, false);
+        assert!(!v.is_following() && !v.frame(Stream::default()).following);
+        follow(&mut v);
+        v.pointer_down([400.0, 300.0], Button::Secondary, false);
+        v.pointer_move([460.0, 300.0]);
+        assert!(!v.is_following(), "rotating with the mouse");
+        v.pointer_up([460.0, 300.0], Button::Secondary, false);
+        follow(&mut v);
+        v.scroll([400.0, 300.0], 50.0);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.pan_zoom_start([400.0, 300.0]);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.tilt(10.0);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.double_tap_zoom([400.0, 300.0]);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.quick_zoom([400.0, 300.0], 20.0);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.fly_to(-122.3, 47.6, 12.0);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.set_subject([-122.35, 47.6, -122.3, 47.62], 16.0, 0.0);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.camera.set_bearing(20.0);
+        v.turn_north();
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.ease_to(-122.3, 47.6, 12.0, None, None, 0.3, Curve::Ease);
+        assert!(!v.is_following());
+        follow(&mut v);
+        v.stop_following();
+        assert!(!v.is_following());
+    }
+
+    #[test]
+    fn an_ease_lands_its_target_in_the_middle_of_the_padding() {
+        let mut v = view();
+        v.set_padding(sheet(300.0));
+        v.ease_to(
+            -122.35,
+            47.62,
+            15.0,
+            Some(200.0),
+            Some(70.0),
+            0.2,
+            Curve::EaseOut,
+        );
+        assert!(v.frame(Stream::default()).animating);
+        settle(&mut v);
+        let shown = v.camera.screen_to_world([400.0, 150.0]).unwrap();
+        assert!(near(shown, world(-122.35, 47.62)), "{shown:?}");
+        assert_eq!(
+            (v.camera.zoom, v.camera.bearing, v.camera.pitch),
+            (15.0, -160.0, 70.0)
+        );
+    }
+
+    #[test]
+    fn a_shown_puck_draws_frames_only_while_it_glides() {
+        let mut v = view();
+        v.set_puck(-122.33, 47.6, 0.0, 0.0);
+        assert!(!v.frame(Stream::default()).animating, "hidden and still");
+        assert!(v.show_puck(true));
+        v.set_puck(-122.32, 47.6, 90.0, 0.2);
+        assert!(v.frame(Stream::default()).animating);
+        settle(&mut v);
+        assert!(v.set_puck_style(PuckStyle::default()).is_ok());
+        let missing = PuckStyle {
+            before_layer: Some("nope".into()),
+            ..PuckStyle::default()
+        };
+        assert!(v.set_puck_style(missing).is_err());
+    }
+
+    /// What replacing a route's GeoJSON costs: `cargo test --release -p sparkle_flutter
+    /// geojson_swap_cost -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn geojson_swap_cost() {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("sparkle-swap-cost-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let style = dir.join("style.json");
+        let line = |id: &str, width: f64| {
+            serde_json::json!({"id": id, "type": "line", "source": "route",
+                "layout": {"line-cap": "round", "line-join": "round"},
+                "paint": {"line-color": "#1a73e8", "line-width": width}})
+        };
+        let style_json = serde_json::json!({"version": 8,
+            "sources": {"route": {"type": "geojson",
+                "data": {"type": "FeatureCollection", "features": []}}},
+            "layers": [line("casing", 9.0), line("route", 6.0)]});
+        std::fs::write(&style, style_json.to_string()).unwrap();
+        let args = [
+            "--style",
+            style.to_str().unwrap(),
+            "--view",
+            "-122.33,47.6,15",
+        ]
+        .map(String::from)
+        .to_vec();
+        let info = GpuInfo {
+            uniform_alignment: 256,
+            sample_count: 1,
+            half_float: false,
+        };
+        let mut v =
+            MapView::new(args, info, [1080, 2400], 2.75, Arc::new(Mutex::new(None))).unwrap();
+        // A winding route of 4000 points across about 20 km, split where the puck is
+        // into the part travelled and the part ahead, as navigation updates it.
+        let points: Vec<[f64; 2]> = (0..4000)
+            .map(|i| {
+                let t = f64::from(i) / 4000.0;
+                [
+                    -122.42 + 0.2 * t,
+                    47.55 + 0.1 * t + 0.004 * (t * 300.0).sin(),
+                ]
+            })
+            .collect();
+        let route = |split: usize| {
+            let feature = |coords: &[[f64; 2]], part: &str| {
+                serde_json::json!({"type": "Feature", "properties": {"part": part},
+                    "geometry": {"type": "LineString", "coordinates": coords}})
+            };
+            serde_json::json!({"type": "FeatureCollection", "features": [
+                feature(&points[..=split], "travelled"), feature(&points[split..], "ahead")]})
+            .to_string()
+        };
+        let swap = |v: &mut MapView, split: usize| {
+            let text = route(split);
+            let start = Instant::now();
+            v.set_geojson("route", &text).unwrap();
+            let set = start.elapsed();
+            let mut frames = 0;
+            let mut frame_time = Duration::ZERO;
+            while v.map.swapping("route") {
+                let f = Instant::now();
+                v.frame(Stream::default());
+                frame_time += f.elapsed();
+                frames += 1;
+                if v.map.swapping("route") {
+                    std::thread::sleep(Duration::from_micros(200));
+                }
+                assert!(frames < 100_000);
+            }
+            (set, start.elapsed(), frames, frame_time, text.len())
+        };
+        // Warm up: the first data and the first tiles.
+        swap(&mut v, 1000);
+        settle(&mut v);
+        let runs: Vec<_> = (0..20).map(|i| swap(&mut v, 1000 + i * 10)).collect();
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        let mut sets: Vec<f64> = runs.iter().map(|r| ms(r.0)).collect();
+        let mut swaps: Vec<f64> = runs.iter().map(|r| ms(r.1)).collect();
+        sets.sort_by(f64::total_cmp);
+        swaps.sort_by(f64::total_cmp);
+        let frames: usize = runs.iter().map(|r| r.2).sum();
+        let frame_time: f64 = runs.iter().map(|r| ms(r.3)).sum();
+        println!(
+            "{} bytes of GeoJSON, {} tiles drawn: set_geojson (parse + index) median {:.2} ms, \
+             max {:.2}; until swapped in median {:.2} ms, max {:.2}; {:.2} ms per frame \
+             over {} frames",
+            runs[0].4,
+            v.frame(Stream::default()).tiles_drawn,
+            sets[sets.len() / 2],
+            sets[sets.len() - 1],
+            swaps[swaps.len() / 2],
+            swaps[swaps.len() - 1],
+            frame_time / frames as f64,
+            frames,
+        );
+    }
+
     #[test]
     fn touching_the_map_lets_go_of_the_subject() {
         let mut v = view();
@@ -866,5 +1408,166 @@ mod tests {
             close(v.camera(), before),
             "the middle stays, not the subject"
         );
+    }
+
+    #[test]
+    fn taps_and_clicks_keep_following_and_a_pan_ends_it() {
+        let mut v = view();
+        v.set_puck(-122.33, 47.6, 30.0, 0.0);
+        v.follow(16.0, 60.0, None, Padding::default(), 0.0).unwrap();
+        v.frame(Stream::default());
+        let placed = v.camera();
+        // A touch tap: down, up (touch says it's not a click yet), then the click once it
+        // can't be a double tap.
+        v.pointer_down([300.0, 200.0], Button::Primary, false);
+        v.pointer_up([300.0, 200.0], Button::Primary, false);
+        assert!(!v.click([300.0, 200.0]), "nothing to select there");
+        assert!(v.frame(Stream::default()).following);
+        // A mouse click that wobbles a little.
+        v.pointer_down([300.0, 200.0], Button::Primary, false);
+        assert!(!v.pointer_move([302.0, 201.0]), "no drag yet");
+        v.pointer_up([302.0, 201.0], Button::Primary, true);
+        // A right click.
+        v.pointer_down([300.0, 200.0], Button::Secondary, false);
+        v.pointer_up([300.0, 200.0], Button::Secondary, true);
+        assert!(v.frame(Stream::default()).following);
+        assert!(close(v.camera(), placed), "the camera never moved");
+
+        // A pan: once past a click's reach it lets go, dragging from where it went
+        // down, so the ground under the finger then is under it now.
+        v.pointer_down([300.0, 200.0], Button::Primary, false);
+        let grabbed = v.camera.screen_to_world([300.0, 200.0]).unwrap();
+        v.pointer_move([302.0, 202.0]);
+        assert!(v.is_following());
+        v.pointer_move([330.0, 260.0]);
+        assert!(!v.is_following());
+        let under = v.camera.screen_to_world([330.0, 260.0]).unwrap();
+        assert!(near(under, grabbed), "{under:?} {grabbed:?}");
+        v.pointer_up([330.0, 260.0], Button::Primary, false);
+        assert!(!v.frame(Stream::default()).following);
+    }
+
+    /// A sheet, a little more on the left than the right, and some room at the top: the
+    /// middle of what it leaves of the 800 by 600 view is at (455, 195).
+    fn lopsided() -> Padding {
+        Padding {
+            top: 40.0,
+            right: 10.0,
+            bottom: 250.0,
+            left: 120.0,
+        }
+    }
+
+    const MIDDLE: [f64; 2] = [455.0, 195.0];
+
+    fn shows(v: &MapView, lng: f64, lat: f64) -> bool {
+        let shown = v.camera.screen_to_world(MIDDLE).unwrap();
+        (shown[0] - world(lng, lat)[0]).hypot(shown[1] - world(lng, lat)[1]) < 1e-9
+    }
+
+    #[test]
+    fn tilted_or_not_the_camera_is_the_ground_in_the_middle_of_the_padding() {
+        for pitch in [0.0, 60.0] {
+            let mut v = view();
+            v.camera.set_bearing(-25.0);
+            v.camera.set_pitch(pitch);
+            let before = v.camera();
+            assert!(v.set_padding(lopsided()));
+            assert!(
+                close(v.camera(), before),
+                "{pitch}: {:?} {before:?}",
+                v.camera()
+            );
+            let [lng, lat, ..] = before;
+            assert!(shows(&v, lng, lat), "{pitch}");
+            // Easing to where the camera is leaves it there, as does showing it again.
+            let center = v.camera.center;
+            v.ease_to(lng, lat, before[2], None, None, 0.2, Curve::Ease);
+            settle(&mut v);
+            assert!(
+                close(v.camera(), before),
+                "{pitch}: {:?} {before:?}",
+                v.camera()
+            );
+            assert!(near(v.camera.center, center), "{pitch}");
+        }
+    }
+
+    #[test]
+    fn tilted_or_not_a_flight_lands_in_the_middle_of_the_padding() {
+        for pitch in [0.0, 60.0] {
+            let mut v = view();
+            v.camera.set_bearing(40.0);
+            v.camera.set_pitch(pitch);
+            v.set_padding(lopsided());
+            v.fly_to(-122.30, 47.65, 15.0);
+            settle(&mut v);
+            assert!(shows(&v, -122.30, 47.65), "{pitch}");
+            let [lng, lat, zoom, bearing, p] = v.camera();
+            assert!((lng + 122.30).abs() < 1e-6 && (lat - 47.65).abs() < 1e-6);
+            assert_eq!((zoom, bearing, p), (15.0, 40.0, pitch));
+        }
+    }
+
+    #[test]
+    fn tilted_or_not_a_subject_shows_in_the_middle_of_the_padding() {
+        for pitch in [0.0, 60.0] {
+            let mut v = view();
+            v.camera.set_pitch(pitch);
+            v.set_padding(lopsided());
+            v.set_subject([-122.3493, 47.6205, -122.3493, 47.6205], 14.0, 48.0);
+            settle(&mut v);
+            assert!(shows(&v, -122.3493, 47.6205), "{pitch}");
+            // The sheet moves: still there.
+            v.set_padding(Padding {
+                bottom: 100.0,
+                ..lopsided()
+            });
+            let shown = v.camera.screen_to_world([455.0, 270.0]).unwrap();
+            assert!(near(shown, world(-122.3493, 47.6205)), "{pitch}");
+            // Bounds are drawn in the middle of what the padding leaves. (They don't
+            // quite fit it: padding zooms out less than it would take, see
+            // SUBJECT_ZOOM_GIVE, and the camera's tests check the fit itself.)
+            v.set_padding(lopsided());
+            v.set_subject([-122.36, 47.60, -122.30, 47.63], 18.0, 0.0);
+            settle(&mut v);
+            let corners = [
+                [-122.36, 47.63],
+                [-122.30, 47.63],
+                [-122.30, 47.60],
+                [-122.36, 47.60],
+            ]
+            .map(|[lng, lat]| v.camera.world_to_screen(world(lng, lat)).unwrap());
+            let (xs, ys) = (corners.map(|c| c[0]), corners.map(|c| c[1]));
+            let min = |a: [f64; 4]| a.into_iter().fold(f64::INFINITY, f64::min);
+            let max = |a: [f64; 4]| a.into_iter().fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                ((min(xs) + max(xs)) / 2.0 - MIDDLE[0]).abs() < 1e-3,
+                "{pitch}"
+            );
+            assert!(
+                ((min(ys) + max(ys)) / 2.0 - MIDDLE[1]).abs() < 1e-3,
+                "{pitch}"
+            );
+        }
+    }
+
+    #[test]
+    fn tilted_or_not_turning_north_keeps_the_middle_of_the_padding() {
+        for pitch in [0.0, 60.0] {
+            let mut v = view();
+            v.camera.set_bearing(-130.0);
+            v.camera.set_pitch(pitch);
+            v.set_padding(lopsided());
+            let [lng, lat, zoom, ..] = v.camera();
+            v.turn_north();
+            v.frame(Stream::default());
+            settle(&mut v);
+            assert!(shows(&v, lng, lat), "{pitch}");
+            assert_eq!(
+                (v.camera.zoom, v.camera.bearing, v.camera.pitch),
+                (zoom, 0.0, pitch)
+            );
+        }
     }
 }

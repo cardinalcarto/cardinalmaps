@@ -3,7 +3,8 @@
 //! view, after the tiles it covers: ancestors to stand in, the tiles where a motion under
 //! way comes to rest, and a ring just past the view's edges. Also what the map changes at
 //! runtime: the style (tiles are processed again or repainted as the change requires),
-//! the data of GeoJSON sources, feature state, and queries of what is under a point.
+//! the data of GeoJSON sources (swapped in whole once cut, so they never blink), feature
+//! state, and queries of what is under a point.
 //!
 //! The map keeps whatever a renderer made of each tile, through [`TileUploader`], so the
 //! same logic serves every frontend.
@@ -142,7 +143,11 @@ pub struct MapState<T> {
     /// transitions run.
     pub style: Arc<Style>,
     sources: Vec<MapSource>,
+    /// Per source, the tiles drawn.
     caches: Vec<HashMap<TileId, CacheEntry<T>>>,
+    /// Per source, tiles of GeoJSON data newer than the drawn tiles have, while some of
+    /// those covering the view are still being cut: see [`MapState::set_geojson`].
+    pending: Vec<Option<HashMap<TileId, CacheEntry<T>>>>,
     /// Bytes loaded tiles may take, across sources, before the least recently drawn are
     /// dropped (so that panning back to them is instant until then).
     memory_budget: usize,
@@ -184,6 +189,7 @@ impl<T> MapState<T> {
     ) -> Self {
         let mut map = Self {
             caches: sources.iter().map(|_| HashMap::new()).collect(),
+            pending: sources.iter().map(|_| None).collect(),
             memory_budget,
             min_generation: vec![0; sources.len()],
             style,
@@ -311,7 +317,9 @@ impl<T> MapState<T> {
                     .filter(|&(_, id)| source.bounds.is_none_or(|b| intersects(id, b)))
                     .map(|(tier, id)| (tier, s, id, zoom_for(id))),
             );
-            let cache = &mut self.caches[s];
+            // Tiles are loaded into the new data's tiles while it's cut, and drawn from the
+            // old ones until it's all in.
+            let cache = filling(&mut self.pending, &mut self.caches, s);
             for p in &covering {
                 let id = p.id();
                 let zoom = zoom_for(id);
@@ -333,10 +341,19 @@ impl<T> MapState<T> {
                     Some(_) => {}
                 }
             }
+            if let Some(pending) = &self.pending[s]
+                && covering
+                    .iter()
+                    .all(|p| settled(pending, p.id(), zoom_for(p.id())))
+            {
+                self.caches[s] = self.pending[s].take().expect("just matched");
+            }
+            let cache = &mut self.caches[s];
             let chosen = choose(cache, &covering, source.max_zoom);
-            complete &= covering
-                .iter()
-                .all(|p| settled(cache, p.id(), zoom_for(p.id())));
+            complete &= self.pending[s].is_none()
+                && covering
+                    .iter()
+                    .all(|p| settled(cache, p.id(), zoom_for(p.id())));
             let used: HashSet<TileId> = chosen.iter().map(|(_, p)| p.id()).collect();
             for id in &used {
                 if let Some(CacheEntry::Ready { last_used, .. }) = cache.get_mut(id) {
@@ -362,9 +379,10 @@ impl<T> MapState<T> {
         let candidates: Vec<SourceTile> = ahead.iter().map(|&(_, s, id, _)| (s, id)).collect();
         for i in select(&self.caches, &candidates, allowance, MAX_PREDICTED) {
             let (tier, s, id, zoom) = ahead[i];
-            if !self.caches[s].contains_key(&id) {
+            let cache = filling(&mut self.pending, &mut self.caches, s);
+            if let std::collections::hash_map::Entry::Vacant(entry) = cache.entry(id) {
                 self.loader.request((s, id), zoom);
-                self.caches[s].insert(id, CacheEntry::Loading);
+                entry.insert(CacheEntry::Loading);
             }
             wanted.push(((s, id), tier));
         }
@@ -383,6 +401,7 @@ impl<T> MapState<T> {
         let loading = self
             .caches
             .iter()
+            .chain(self.pending.iter().flatten())
             .flat_map(|c| c.values())
             .filter(|e| matches!(e, CacheEntry::Loading))
             .count();
@@ -448,7 +467,7 @@ impl<T> MapState<T> {
                 let gpu = renderer.upload(&self.style, tile, &self.states);
                 let bytes = renderer.tile_bytes(&gpu)
                     + features.as_ref().map_or(0, FeatureIndex::heap_bytes);
-                self.caches[s].insert(
+                filling(&mut self.pending, &mut self.caches, s).insert(
                     id,
                     CacheEntry::Ready {
                         tile: gpu,
@@ -461,16 +480,25 @@ impl<T> MapState<T> {
                     },
                 );
             }
-            TileMessage::Empty((s, id)) => {
-                self.caches[s].insert(id, CacheEntry::Empty);
-            }
-            TileMessage::Cancelled((s, id)) => {
-                match self.caches[s].get_mut(&id) {
-                    Some(CacheEntry::Loading) => {
+            TileMessage::Empty((s, id), generation) => {
+                if generation.is_some_and(|g| g < self.min_generation[s]) {
+                    // Empty for data or a style replaced since, as above.
+                    if let Some(CacheEntry::Loading) = self.caches[s].get(&id) {
                         self.caches[s].remove(&id);
                     }
-                    Some(CacheEntry::Ready { requested, .. }) => *requested = false,
-                    _ => {}
+                    return false;
+                }
+                filling(&mut self.pending, &mut self.caches, s).insert(id, CacheEntry::Empty);
+            }
+            TileMessage::Cancelled((s, id)) => {
+                for cache in std::iter::once(&mut self.caches[s]).chain(&mut self.pending[s]) {
+                    match cache.get_mut(&id) {
+                        Some(CacheEntry::Loading) => {
+                            cache.remove(&id);
+                        }
+                        Some(CacheEntry::Ready { requested, .. }) => *requested = false,
+                        _ => {}
+                    }
                 }
                 return false;
             }
@@ -497,6 +525,7 @@ impl<T> MapState<T> {
             // style, so a new terrain source means loading everything again.
             for (s, cache) in self.caches.iter_mut().enumerate() {
                 cache.clear();
+                self.pending[s] = None;
                 self.min_generation[s] = generation;
             }
             self.terrain = TerrainTiles::new();
@@ -515,7 +544,8 @@ impl<T> MapState<T> {
             let Some(s) = self.sources.iter().position(|m| m.id == source) else {
                 continue;
             };
-            for entry in self.caches[s].values_mut() {
+            let pending = self.pending[s].iter_mut().flat_map(|p| p.values_mut());
+            for entry in self.caches[s].values_mut().chain(pending) {
                 if let CacheEntry::Ready { tile, .. } = entry
                     && !renderer.rebuild_paint(tile, &self.style, index, &self.states)
                 {
@@ -537,9 +567,15 @@ impl<T> MapState<T> {
     }
 
     /// Replace the data of the style's GeoJSON source `id` with `data`, a GeoJSON object.
-    /// Its tiles are cut again. Unlike after a style change, the old ones aren't drawn
-    /// meanwhile, even standing in for others: what they show is gone, and the new ones
-    /// are cut from memory, so they don't keep the source blank for long.
+    ///
+    /// Its tiles are cut again, and the old ones are drawn until the new ones covering
+    /// the view are all in, then dropped for them in the same frame: the source never
+    /// blinks out, as when data changes about once a second (a route, the location dot).
+    /// The swap is of the whole source at once, not tile by tile, so old and new never
+    /// show side by side: a line crossing tiles would be broken where they meet, and a
+    /// point near an edge shown twice or not at all. That waits for the slowest tile
+    /// in view, but they're cut from memory, in milliseconds. Data set again before
+    /// the swap replaces the data on its way in, still drawing the old tiles.
     pub fn set_geojson(&mut self, id: &str, data: &serde_json::Value) -> Result<()> {
         let Some(Source::GeoJson(source)) = self.style.source(id) else {
             bail!("the style has no GeoJSON source {id:?}");
@@ -554,23 +590,33 @@ impl<T> MapState<T> {
         self.sources[s].max_zoom = index.max_zoom();
         let generation = self.loader.set_geojson(s, Arc::new(index));
         self.min_generation[s] = generation;
-        self.caches[s].clear();
+        self.pending[s] = Some(HashMap::new());
         Ok(())
+    }
+
+    /// Whether a GeoJSON source's new data is still being cut, its old tiles drawn
+    /// meanwhile.
+    pub fn swapping(&self, id: &str) -> bool {
+        self.sources
+            .iter()
+            .position(|m| m.id == id)
+            .is_some_and(|s| self.pending[s].is_some())
     }
 
     /// Have the tiles of source `s` processed again, as of `generation`: loaded ones are
     /// drawn until then.
     fn reprocess(&mut self, s: usize, generation: u64) {
         self.min_generation[s] = generation;
-        let cache = &mut self.caches[s];
-        cache.retain(|_, e| matches!(e, CacheEntry::Ready { .. }));
-        for entry in cache.values_mut() {
-            if let CacheEntry::Ready {
-                stale, requested, ..
-            } = entry
-            {
-                *stale = true;
-                *requested = false;
+        for cache in std::iter::once(&mut self.caches[s]).chain(&mut self.pending[s]) {
+            cache.retain(|_, e| matches!(e, CacheEntry::Ready { .. }));
+            for entry in cache.values_mut() {
+                if let CacheEntry::Ready {
+                    stale, requested, ..
+                } = entry
+                {
+                    *stale = true;
+                    *requested = false;
+                }
             }
         }
     }
@@ -616,7 +662,8 @@ impl<T> MapState<T> {
             return false;
         };
         let mut changed = false;
-        for entry in self.caches[s].values_mut() {
+        let pending = self.pending[s].iter_mut().flat_map(|p| p.values_mut());
+        for entry in self.caches[s].values_mut().chain(pending) {
             if let CacheEntry::Ready { tile, .. } = entry {
                 changed |= renderer.update_feature_state(
                     tile,
@@ -717,6 +764,19 @@ fn intersects(tile: TileId, [w, s, e, n]: [f64; 4]) -> bool {
     let size = 1.0 / f64::from(1u32 << tile.z);
     let (x, y) = (f64::from(tile.x) * size, f64::from(tile.y) * size);
     x < east && x + size > west && y < south && y + size > north
+}
+
+/// The tiles of source `s` that tiles loaded now go into: those of new GeoJSON data on
+/// its way in, if there is some, else those drawn.
+fn filling<'a, T>(
+    pending: &'a mut [Option<HashMap<TileId, CacheEntry<T>>>],
+    caches: &'a mut [HashMap<TileId, CacheEntry<T>>],
+    s: usize,
+) -> &'a mut HashMap<TileId, CacheEntry<T>> {
+    match &mut pending[s] {
+        Some(pending) => pending,
+        None => &mut caches[s],
+    }
 }
 
 fn ready<T>(cache: &HashMap<TileId, CacheEntry<T>>, id: TileId) -> bool {
@@ -955,6 +1015,129 @@ fn evict<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Stamps each tile with the data it was cut from, as the test sets it.
+    struct Stamper {
+        data: u32,
+    }
+
+    impl TileUploader for Stamper {
+        type Tile = u32;
+
+        fn upload(&mut self, _: &Style, _: ProcessedTile, _: &FeatureStates) -> u32 {
+            self.data
+        }
+
+        fn tile_bytes(&self, _: &u32) -> usize {
+            1
+        }
+
+        fn style_changed(&mut self) {}
+
+        fn rebuild_paint(&mut self, _: &mut u32, _: &Style, _: usize, _: &FeatureStates) -> bool {
+            true
+        }
+
+        fn update_feature_state(
+            &mut self,
+            _: &mut u32,
+            _: &Style,
+            _: &FeatureStates,
+            _: Option<&str>,
+            _: Option<&[u64]>,
+        ) -> bool {
+            false
+        }
+    }
+
+    /// A line along the parallel at `lat`, across most of the world.
+    fn line(lat: f64) -> serde_json::Value {
+        let coordinates: Vec<[f64; 2]> = (-170..=170)
+            .step_by(5)
+            .map(|lng| [f64::from(lng), lat])
+            .collect();
+        serde_json::json!({"type": "LineString", "coordinates": coordinates})
+    }
+
+    #[test]
+    fn new_geojson_is_swapped_in_whole_once_cut_never_blanking() {
+        let dir = std::env::temp_dir().join(format!("sparkle-swap-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("style.json");
+        let style = serde_json::json!({"version": 8,
+            "sources": {"route": {"type": "geojson", "data": line(10.0)}},
+            "layers": [{"id": "route", "type": "line", "source": "route"}]});
+        std::fs::write(&path, style.to_string()).unwrap();
+        let args =
+            crate::args::parse(["--style".into(), path.to_string_lossy().into_owned()]).unwrap();
+        let style = Arc::new(crate::setup::load_style(args.style.as_deref(), &args).unwrap());
+        let (configs, sources, _) = crate::setup::sources(&args, &style).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let loader = TileLoader::spawn(
+            crate::loader::LoaderConfig {
+                style: style.clone(),
+                sources: configs,
+                images: None,
+                fonts: None,
+            },
+            move |m| drop(tx.send(m)),
+        )
+        .unwrap();
+        let mut map = MapState::new(style, sources, loader, 64 << 20);
+        let mut stamper = Stamper { data: 1 };
+        // Zoom 3 over the line: a few tiles cover it.
+        let mut camera = Camera::new([1600.0, 1200.0], 1.0);
+        camera.look_at(0.0, 10.0, 3.0);
+        let stamps = |map: &mut MapState<u32>| {
+            let frame = map.frame(&camera, None);
+            let draws = map.draws(&frame);
+            let stamps: Vec<u32> = draws
+                .iter()
+                .flat_map(|s| s.tiles.iter().map(|t| *t.tile))
+                .collect();
+            (stamps, frame.complete)
+        };
+        let wait = std::time::Duration::from_secs(10);
+        loop {
+            let (_, complete) = stamps(&mut map);
+            if complete {
+                break;
+            }
+            map.receive(&mut stamper, rx.recv_timeout(wait).unwrap());
+        }
+        let (before, _) = stamps(&mut map);
+        assert!(
+            before.len() > 1 && before.iter().all(|&d| d == 1),
+            "{before:?}"
+        );
+
+        stamper.data = 2;
+        map.set_geojson("route", &line(20.0)).unwrap();
+        assert!(map.swapping("route"));
+        let mut frames = 0;
+        loop {
+            let (now, complete) = stamps(&mut map);
+            assert!(!now.is_empty(), "blank while cutting");
+            assert!(
+                now.iter().all(|&d| d == now[0]),
+                "old and new mixed: {now:?}"
+            );
+            if complete {
+                assert!(now.iter().all(|&d| d == 2) && !map.swapping("route"));
+                break;
+            }
+            assert!(
+                now.iter().all(|&d| d == 1),
+                "swapped before it was all in: {now:?}"
+            );
+            frames += 1;
+            map.receive(&mut stamper, rx.recv_timeout(wait).unwrap());
+        }
+        assert!(
+            frames > 1,
+            "the old tiles were drawn while the new ones were cut"
+        );
+    }
 
     fn at(z: u8, x: i64, y: u32) -> Placement {
         Placement { z, x, y }

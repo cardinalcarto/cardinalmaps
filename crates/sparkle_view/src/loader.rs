@@ -84,8 +84,11 @@ pub enum TileMessage {
     /// slot it takes until it's dropped.
     Loaded(usize, ProcessedTile, u64, Slot),
     /// The tileset has no such tile, or it could not be read; either way there's nothing to
-    /// draw. A tile server that can't be reached is tried again instead.
-    Empty(SourceTile),
+    /// draw. A tile server that can't be reached is tried again instead. With the
+    /// generation it was processed with, when that matters: a GeoJSON source's tile is
+    /// empty only for the data it was cut from, but a tile server's missing tile is
+    /// missing whatever the style.
+    Empty(SourceTile, Option<u64>),
     /// Dropped from the queue because it was no longer wanted by the time a worker got to it.
     Cancelled(SourceTile),
 }
@@ -291,7 +294,9 @@ impl TileLoader {
                             Ok(Loaded::Tile(tile)) => {
                                 TileMessage::Loaded(source, tile, current.generation, slot)
                             }
-                            Ok(Loaded::Empty) => TileMessage::Empty(request),
+                            Ok(Loaded::Empty) => {
+                                TileMessage::Empty(request, Some(current.generation))
+                            }
                             // Processed once it arrives.
                             Ok(Loaded::Fetching) => continue,
                             Err(err) => {
@@ -302,7 +307,7 @@ impl TileLoader {
                                     id.x,
                                     id.y
                                 );
-                                TileMessage::Empty(request)
+                                TileMessage::Empty(request, Some(current.generation))
                             }
                         };
                         deliver(message);
@@ -440,7 +445,7 @@ fn fetcher(
     Fetcher::spawn(wanted, move |job, fetched| {
         let job = match fetched {
             Some(Fetched::Tile(data)) => Job::Process(job.tile, job.zoom, data, job.refresh),
-            Some(Fetched::Empty) => return deliver(TileMessage::Empty(job.tile)),
+            Some(Fetched::Empty) => return deliver(TileMessage::Empty(job.tile, None)),
             Some(Fetched::Unchanged) => return,
             None if job.refresh => return,
             None => return deliver(TileMessage::Cancelled(job.tile)),

@@ -70,7 +70,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 442197493;
+  int get rustContentHash => -1338854403;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -125,6 +125,17 @@ abstract class RustLibApi extends BaseApi {
     required double y,
   });
 
+  void crateApiMapSparkleMapEaseTo({
+    required SparkleMap that,
+    required double lng,
+    required double lat,
+    required double zoom,
+    double? bearing,
+    double? pitch,
+    required double duration,
+    required EaseCurve curve,
+  });
+
   void crateApiMapSparkleMapFlyTo({
     required SparkleMap that,
     required double lng,
@@ -132,11 +143,22 @@ abstract class RustLibApi extends BaseApi {
     required double zoom,
   });
 
+  void crateApiMapSparkleMapFollow({
+    required SparkleMap that,
+    required double zoom,
+    required double pitch,
+    double? bearing,
+    required MapPadding padding,
+    required double duration,
+  });
+
   FrameOutput crateApiMapSparkleMapFrame({required SparkleMap that});
 
   bool crateApiMapSparkleMapHasSubject({required SparkleMap that});
 
   bool crateApiMapSparkleMapHoverArgument({required SparkleMap that});
+
+  bool crateApiMapSparkleMapIsFollowing({required SparkleMap that});
 
   bool crateApiMapSparkleMapKey({
     required SparkleMap that,
@@ -234,6 +256,19 @@ abstract class RustLibApi extends BaseApi {
     required MapPadding padding,
   });
 
+  void crateApiMapSparkleMapSetPuck({
+    required SparkleMap that,
+    required double lng,
+    required double lat,
+    required double bearing,
+    required double duration,
+  });
+
+  void crateApiMapSparkleMapSetPuckStyle({
+    required SparkleMap that,
+    required PuckStyleInput style,
+  });
+
   void crateApiMapSparkleMapSetSubject({
     required SparkleMap that,
     required double west,
@@ -243,6 +278,13 @@ abstract class RustLibApi extends BaseApi {
     required double maxZoom,
     required double margin,
   });
+
+  bool crateApiMapSparkleMapShowPuck({
+    required SparkleMap that,
+    required bool shown,
+  });
+
+  void crateApiMapSparkleMapStopFollowing({required SparkleMap that});
 
   List<ClickedFeature> crateApiMapSparkleMapTakeClicked({
     required SparkleMap that,
@@ -633,6 +675,60 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  void crateApiMapSparkleMapEaseTo({
+    required SparkleMap that,
+    required double lng,
+    required double lat,
+    required double zoom,
+    double? bearing,
+    double? pitch,
+    required double duration,
+    required EaseCurve curve,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+            that,
+            serializer,
+          );
+          sse_encode_f_64(lng, serializer);
+          sse_encode_f_64(lat, serializer);
+          sse_encode_f_64(zoom, serializer);
+          sse_encode_opt_box_autoadd_f_64(bearing, serializer);
+          sse_encode_opt_box_autoadd_f_64(pitch, serializer);
+          sse_encode_f_64(duration, serializer);
+          sse_encode_ease_curve(curve, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiMapSparkleMapEaseToConstMeta,
+        argValues: [that, lng, lat, zoom, bearing, pitch, duration, curve],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMapSparkleMapEaseToConstMeta =>
+      const TaskConstMeta(
+        debugName: "SparkleMap_ease_to",
+        argNames: [
+          "that",
+          "lng",
+          "lat",
+          "zoom",
+          "bearing",
+          "pitch",
+          "duration",
+          "curve",
+        ],
+      );
+
+  @override
   void crateApiMapSparkleMapFlyTo({
     required SparkleMap that,
     required double lng,
@@ -650,7 +746,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(lng, serializer);
           sse_encode_f_64(lat, serializer);
           sse_encode_f_64(zoom, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -669,6 +765,47 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
+  void crateApiMapSparkleMapFollow({
+    required SparkleMap that,
+    required double zoom,
+    required double pitch,
+    double? bearing,
+    required MapPadding padding,
+    required double duration,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+            that,
+            serializer,
+          );
+          sse_encode_f_64(zoom, serializer);
+          sse_encode_f_64(pitch, serializer);
+          sse_encode_opt_box_autoadd_f_64(bearing, serializer);
+          sse_encode_box_autoadd_map_padding(padding, serializer);
+          sse_encode_f_64(duration, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiMapSparkleMapFollowConstMeta,
+        argValues: [that, zoom, pitch, bearing, padding, duration],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMapSparkleMapFollowConstMeta =>
+      const TaskConstMeta(
+        debugName: "SparkleMap_follow",
+        argNames: ["that", "zoom", "pitch", "bearing", "padding", "duration"],
+      );
+
+  @override
   FrameOutput crateApiMapSparkleMapFrame({required SparkleMap that}) {
     return handler.executeSync(
       SyncTask(
@@ -678,7 +815,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_frame_output,
@@ -704,7 +841,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -733,7 +870,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -753,6 +890,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  bool crateApiMapSparkleMapIsFollowing({required SparkleMap that}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiMapSparkleMapIsFollowingConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMapSparkleMapIsFollowingConstMeta =>
+      const TaskConstMeta(
+        debugName: "SparkleMap_is_following",
+        argNames: ["that"],
+      );
+
+  @override
   bool crateApiMapSparkleMapKey({
     required SparkleMap that,
     required String key,
@@ -768,7 +934,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_String(key, serializer);
           sse_encode_bool(shift, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -806,7 +972,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 18,
             port: port_,
           );
         },
@@ -851,7 +1017,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(dy, serializer);
           sse_encode_f_64(scale, serializer);
           sse_encode_f_64(rotation, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -880,7 +1046,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -915,7 +1081,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -954,7 +1120,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(y, serializer);
           sse_encode_u_32(button, serializer);
           sse_encode_bool(rotate, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -989,7 +1155,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -1028,7 +1194,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(y, serializer);
           sse_encode_u_32(button, serializer);
           sse_encode_bool(click, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -1057,7 +1223,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -1094,7 +1260,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
           sse_encode_f_64(dy, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1131,7 +1297,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_32(width, serializer);
           sse_encode_u_32(height, serializer);
           sse_encode_f_64(pixelRatio, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1166,7 +1332,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_box_autoadd_lng_lat,
@@ -1195,7 +1361,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_String,
@@ -1232,7 +1398,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(x, serializer);
           sse_encode_f_64(y, serializer);
           sse_encode_f_64(delta, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1267,7 +1433,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_String(source, serializer);
           sse_encode_String(geojson, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1300,7 +1466,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_box_autoadd_map_padding(padding, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -1317,6 +1483,78 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "SparkleMap_set_padding",
         argNames: ["that", "padding"],
+      );
+
+  @override
+  void crateApiMapSparkleMapSetPuck({
+    required SparkleMap that,
+    required double lng,
+    required double lat,
+    required double bearing,
+    required double duration,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+            that,
+            serializer,
+          );
+          sse_encode_f_64(lng, serializer);
+          sse_encode_f_64(lat, serializer);
+          sse_encode_f_64(bearing, serializer);
+          sse_encode_f_64(duration, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiMapSparkleMapSetPuckConstMeta,
+        argValues: [that, lng, lat, bearing, duration],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMapSparkleMapSetPuckConstMeta =>
+      const TaskConstMeta(
+        debugName: "SparkleMap_set_puck",
+        argNames: ["that", "lng", "lat", "bearing", "duration"],
+      );
+
+  @override
+  void crateApiMapSparkleMapSetPuckStyle({
+    required SparkleMap that,
+    required PuckStyleInput style,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+            that,
+            serializer,
+          );
+          sse_encode_box_autoadd_puck_style_input(style, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiMapSparkleMapSetPuckStyleConstMeta,
+        argValues: [that, style],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMapSparkleMapSetPuckStyleConstMeta =>
+      const TaskConstMeta(
+        debugName: "SparkleMap_set_puck_style",
+        argNames: ["that", "style"],
       );
 
   @override
@@ -1343,7 +1581,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(north, serializer);
           sse_encode_f_64(maxZoom, serializer);
           sse_encode_f_64(margin, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1371,6 +1609,68 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  bool crateApiMapSparkleMapShowPuck({
+    required SparkleMap that,
+    required bool shown,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+            that,
+            serializer,
+          );
+          sse_encode_bool(shown, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiMapSparkleMapShowPuckConstMeta,
+        argValues: [that, shown],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMapSparkleMapShowPuckConstMeta =>
+      const TaskConstMeta(
+        debugName: "SparkleMap_show_puck",
+        argNames: ["that", "shown"],
+      );
+
+  @override
+  void crateApiMapSparkleMapStopFollowing({required SparkleMap that}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSparkleMap(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 37)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiMapSparkleMapStopFollowingConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMapSparkleMapStopFollowingConstMeta =>
+      const TaskConstMeta(
+        debugName: "SparkleMap_stop_following",
+        argNames: ["that"],
+      );
+
+  @override
   List<ClickedFeature> crateApiMapSparkleMapTakeClicked({
     required SparkleMap that,
   }) {
@@ -1382,7 +1682,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_clicked_feature,
@@ -1425,7 +1725,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_i_64(tileX, serializer);
           sse_encode_u_32(tileY, serializer);
           sse_encode_u_64(id, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 39)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_Map_String_String_None,
@@ -1466,7 +1766,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_f_64(dy, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 40)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1494,7 +1794,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 41)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1529,7 +1829,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 35,
+              funcId: 42,
               port: port_,
             );
           },
@@ -1568,7 +1868,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 36,
+            funcId: 43,
             port: port_,
           );
         },
@@ -1605,7 +1905,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 37,
+            funcId: 44,
             port: port_,
           );
         },
@@ -1640,7 +1940,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 38,
+            funcId: 45,
             port: port_,
           );
         },
@@ -1675,7 +1975,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 39,
+            funcId: 46,
             port: port_,
           );
         },
@@ -1716,7 +2016,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 40,
+            funcId: 47,
             port: port_,
           );
         },
@@ -1746,7 +2046,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 41,
+            funcId: 48,
             port: port_,
           );
         },
@@ -1770,7 +2070,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 42)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 49)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -1917,6 +2217,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  double dco_decode_box_autoadd_f_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
+  }
+
+  @protected
   LngLat dco_decode_box_autoadd_lng_lat(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_lng_lat(raw);
@@ -1926,6 +2232,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   MapPadding dco_decode_box_autoadd_map_padding(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_map_padding(raw);
+  }
+
+  @protected
+  PuckStyleInput dco_decode_box_autoadd_puck_style_input(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_puck_style_input(raw);
   }
 
   @protected
@@ -1988,6 +2300,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  EaseCurve dco_decode_ease_curve(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return EaseCurve.values[raw as int];
+  }
+
+  @protected
   double dco_decode_f_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
@@ -2003,8 +2321,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   FrameOutput dco_decode_frame_output(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 11)
-      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
+    if (arr.length != 12)
+      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
     return FrameOutput(
       commands: dco_decode_address(arr[0]),
       uniforms: dco_decode_address(arr[1]),
@@ -2017,6 +2335,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       zoom: dco_decode_f_64(arr[8]),
       bearing: dco_decode_f_64(arr[9]),
       pitch: dco_decode_f_64(arr[10]),
+      following: dco_decode_bool(arr[11]),
     );
   }
 
@@ -2171,9 +2490,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  double? dco_decode_opt_box_autoadd_f_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_f_64(raw);
+  }
+
+  @protected
   LngLat? dco_decode_opt_box_autoadd_lng_lat(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_lng_lat(raw);
+  }
+
+  @protected
+  PuckStyleInput dco_decode_puck_style_input(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return PuckStyleInput(
+      fill: dco_decode_u_32(arr[0]),
+      outline: dco_decode_u_32(arr[1]),
+      outlineWidth: dco_decode_f_64(arr[2]),
+      size: dco_decode_f_64(arr[3]),
+      beforeLayer: dco_decode_opt_String(arr[4]),
+    );
   }
 
   @protected
@@ -2379,6 +2719,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  double sse_decode_box_autoadd_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_f_64(deserializer));
+  }
+
+  @protected
   LngLat sse_decode_box_autoadd_lng_lat(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_lng_lat(deserializer));
@@ -2388,6 +2734,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   MapPadding sse_decode_box_autoadd_map_padding(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_map_padding(deserializer));
+  }
+
+  @protected
+  PuckStyleInput sse_decode_box_autoadd_puck_style_input(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_puck_style_input(deserializer));
   }
 
   @protected
@@ -2454,6 +2808,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  EaseCurve sse_decode_ease_curve(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return EaseCurve.values[inner];
+  }
+
+  @protected
   double sse_decode_f_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getFloat32();
@@ -2479,6 +2840,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_zoom = sse_decode_f_64(deserializer);
     var var_bearing = sse_decode_f_64(deserializer);
     var var_pitch = sse_decode_f_64(deserializer);
+    var var_following = sse_decode_bool(deserializer);
     return FrameOutput(
       commands: var_commands,
       uniforms: var_uniforms,
@@ -2491,6 +2853,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       zoom: var_zoom,
       bearing: var_bearing,
       pitch: var_pitch,
+      following: var_following,
     );
   }
 
@@ -2711,6 +3074,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_f_64(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   LngLat? sse_decode_opt_box_autoadd_lng_lat(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -2719,6 +3093,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     } else {
       return null;
     }
+  }
+
+  @protected
+  PuckStyleInput sse_decode_puck_style_input(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_fill = sse_decode_u_32(deserializer);
+    var var_outline = sse_decode_u_32(deserializer);
+    var var_outlineWidth = sse_decode_f_64(deserializer);
+    var var_size = sse_decode_f_64(deserializer);
+    var var_beforeLayer = sse_decode_opt_String(deserializer);
+    return PuckStyleInput(
+      fill: var_fill,
+      outline: var_outline,
+      outlineWidth: var_outlineWidth,
+      size: var_size,
+      beforeLayer: var_beforeLayer,
+    );
   }
 
   @protected
@@ -2943,6 +3334,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_64(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_lng_lat(LngLat self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_lng_lat(self, serializer);
@@ -2955,6 +3352,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_map_padding(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_puck_style_input(
+    PuckStyleInput self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_puck_style_input(self, serializer);
   }
 
   @protected
@@ -3000,6 +3406,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_ease_curve(EaseCurve self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_f_32(double self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putFloat32(self);
@@ -3025,6 +3437,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_f_64(self.zoom, serializer);
     sse_encode_f_64(self.bearing, serializer);
     sse_encode_f_64(self.pitch, serializer);
+    sse_encode_bool(self.following, serializer);
   }
 
   @protected
@@ -3216,6 +3629,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_f_64(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_lng_lat(
     LngLat? self,
     SseSerializer serializer,
@@ -3226,6 +3649,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (self != null) {
       sse_encode_box_autoadd_lng_lat(self, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_puck_style_input(
+    PuckStyleInput self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.fill, serializer);
+    sse_encode_u_32(self.outline, serializer);
+    sse_encode_f_64(self.outlineWidth, serializer);
+    sse_encode_f_64(self.size, serializer);
+    sse_encode_opt_String(self.beforeLayer, serializer);
   }
 
   @protected
@@ -3372,6 +3808,30 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
       .api
       .crateApiMapSparkleMapDoubleTapZoom(that: this, x: x, y: y);
 
+  /// Ease to show `lng, lat` in the middle of the view less the padding (at any pitch),
+  /// at `zoom`, and at `bearing` and `pitch` (as they are for `None`), over `duration`
+  /// seconds along `curve`, dropping any subject and following. The bearing turns the
+  /// short way; the pitch stops at the camera's limit (85°). Input that moves the map
+  /// stops it. Draw frames after.
+  void easeTo({
+    required double lng,
+    required double lat,
+    required double zoom,
+    double? bearing,
+    double? pitch,
+    required double duration,
+    required EaseCurve curve,
+  }) => RustLib.instance.api.crateApiMapSparkleMapEaseTo(
+    that: this,
+    lng: lng,
+    lat: lat,
+    zoom: zoom,
+    bearing: bearing,
+    pitch: pitch,
+    duration: duration,
+    curve: curve,
+  );
+
   /// Fly to show `lng, lat` at `zoom` in the middle of the view less the padding,
   /// zooming out on the way if it's far, and dropping any subject. Input that moves
   /// the map stops it. Draw a frame after.
@@ -3386,6 +3846,28 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
     zoom: zoom,
   );
 
+  /// Follow the puck, frame by frame: keep it in the middle of the view less the
+  /// padding and `padding` on top of it (to put it lower on screen, say), at `zoom` and
+  /// `pitch`, with `bearing` fixed or (`None`) turning with the puck. It eases in from
+  /// where the camera is over `duration` seconds; calling it again while following
+  /// changes the settings the same way. Input that moves the map, [`Self::fly_to`],
+  /// [`Self::ease_to`], [`Self::set_subject`] and [`Self::turn_north`] end it. Fails if
+  /// the puck hasn't been put anywhere yet. Draw frames after.
+  void follow({
+    required double zoom,
+    required double pitch,
+    double? bearing,
+    required MapPadding padding,
+    required double duration,
+  }) => RustLib.instance.api.crateApiMapSparkleMapFollow(
+    that: this,
+    zoom: zoom,
+    pitch: pitch,
+    bearing: bearing,
+    padding: padding,
+    duration: duration,
+  );
+
   /// Draw a frame. Dart must be done with the previous frame's commands.
   FrameOutput frame() =>
       RustLib.instance.api.crateApiMapSparkleMapFrame(that: this);
@@ -3398,6 +3880,11 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
   /// With `--hover x,y`, hover that point. Returns whether a frame should be drawn.
   bool hoverArgument() =>
       RustLib.instance.api.crateApiMapSparkleMapHoverArgument(that: this);
+
+  /// Whether the camera is following the puck: [`Self::follow`] started it, and nothing
+  /// has ended it since.
+  bool isFollowing() =>
+      RustLib.instance.api.crateApiMapSparkleMapIsFollowing(that: this);
 
   /// `key`: a character, or a named key such as `ArrowLeft`.
   bool key({required String key, required bool shift}) => RustLib.instance.api
@@ -3528,6 +4015,29 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
   bool setPadding({required MapPadding padding}) => RustLib.instance.api
       .crateApiMapSparkleMapSetPadding(that: this, padding: padding);
 
+  /// Put the navigation puck at `lng, lat`, pointing `bearing` degrees clockwise from
+  /// north, gliding there from where it's shown over `duration` seconds: linearly, and
+  /// turning the short way. The first pose, or one with no duration, is taken at once.
+  /// A pose that comes before the glide ends bends it from where it got to. Draw
+  /// frames after.
+  void setPuck({
+    required double lng,
+    required double lat,
+    required double bearing,
+    required double duration,
+  }) => RustLib.instance.api.crateApiMapSparkleMapSetPuck(
+    that: this,
+    lng: lng,
+    lat: lat,
+    bearing: bearing,
+    duration: duration,
+  );
+
+  /// Draw the puck as `style` has it. Fails if it names a layer the style lacks. Draw
+  /// a frame after.
+  void setPuckStyle({required PuckStyleInput style}) => RustLib.instance.api
+      .crateApiMapSparkleMapSetPuckStyle(that: this, style: style);
+
   /// Fly to the bounds (`west > east` crosses the antimeridian), zoomed in no closer
   /// than `max_zoom`, with `margin` logical pixels clear around them, and keep them in
   /// view as the padding changes until input moves the map or [`Self::clear_subject`].
@@ -3548,6 +4058,15 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
     maxZoom: maxZoom,
     margin: margin,
   );
+
+  /// Show or hide the puck (hidden until shown, or set by `--puck`). Returns whether
+  /// a frame should be drawn.
+  bool showPuck({required bool shown}) => RustLib.instance.api
+      .crateApiMapSparkleMapShowPuck(that: this, shown: shown);
+
+  /// Stop following the puck, leaving the camera where it is.
+  void stopFollowing() =>
+      RustLib.instance.api.crateApiMapSparkleMapStopFollowing(that: this);
 
   /// The features of the labels the last click landed on, nearest first. Later calls
   /// return nothing until the next click.

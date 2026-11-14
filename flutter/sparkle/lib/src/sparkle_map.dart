@@ -9,7 +9,8 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, ValueNotifier, defaultTargetPlatform, immutable;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
@@ -86,6 +87,46 @@ class _QuickZoom {
   bool dragging = false;
 }
 
+/// How the navigation puck looks (see [SparkleMapController.setPuckStyle]): a chevron
+/// lying flat on the map, pointing along its bearing. The defaults are neutral; the app
+/// picks its own.
+@immutable
+class PuckStyle {
+  const PuckStyle({
+    this.fill = const Color(0xFF333333),
+    this.outline = const Color(0xFFFFFFFF),
+    this.outlineWidth = 2,
+    this.size = 28,
+    this.beforeLayer,
+  });
+
+  final Color fill;
+
+  /// Drawn [outlineWidth] logical pixels in from the chevron's edge; 0 for none.
+  final Color outline;
+  final double outlineWidth;
+
+  /// The chevron's length from tip to tail, in logical pixels on screen. It keeps that
+  /// size wherever it is, as navigation pucks do; a tilted map still foreshortens it,
+  /// since it lies flat.
+  final double size;
+
+  /// The id of the style layer it's drawn under; by default it's over every layer.
+  /// Under the labels would also be under the 3D buildings of styles (such as
+  /// Headway's) that draw them after their first labels, which from zoom 14 up would
+  /// tint and hide it; naming the first label layer after the buildings keeps it over
+  /// them and under the labels.
+  final String? beforeLayer;
+
+  rust.PuckStyleInput _input() => rust.PuckStyleInput(
+    fill: fill.toARGB32(),
+    outline: outline.toARGB32(),
+    outlineWidth: outlineWidth,
+    size: size,
+    beforeLayer: beforeLayer,
+  );
+}
+
 /// Which gestures on a [SparkleMap] move it (see [SparkleMapController.gestures]).
 class MapGestures {
   const MapGestures({
@@ -158,7 +199,8 @@ class SparkleMapController {
   final _cameraMoved = _CameraMoved();
   rust.CameraState? _drawnCamera;
 
-  void _frameDrawn(rust.SparkleMap map) {
+  void _frameDrawn(rust.SparkleMap map, rust.FrameOutput out) {
+    _following.value = out.following;
     if (!_cameraMoved.listened) return;
     final camera = map.camera();
     if (camera == _drawnCamera) return;
@@ -204,6 +246,7 @@ class SparkleMapController {
   }) {
     _subject = (west, south, east, north, maxZoom, margin);
     _flight = null;
+    _following.value = false;
     final map = _map;
     if (map == null) return;
     map.setSubject(
@@ -216,6 +259,133 @@ class SparkleMapController {
     );
     _state!._requestFrame();
   }
+
+  /// Ease to show [lng], [lat] in the middle of the map less the padding (at any
+  /// pitch), at [zoom], and at [bearing] and [pitch] (as they are, if null), over
+  /// [duration] along [curve], dropping any subject and following. The bearing turns the
+  /// short way; the pitch stops at the camera's limit, 85°. Moving the map stops it.
+  /// Does nothing until the map [isReady].
+  void easeTo({
+    required double lng,
+    required double lat,
+    required double zoom,
+    double? bearing,
+    double? pitch,
+    Duration duration = const Duration(milliseconds: 500),
+    rust.EaseCurve curve = rust.EaseCurve.ease,
+  }) {
+    final map = _map;
+    if (map == null) return;
+    _subject = null;
+    _following.value = false;
+    map.easeTo(
+      lng: lng,
+      lat: lat,
+      zoom: zoom,
+      bearing: bearing,
+      pitch: pitch,
+      duration: _seconds(duration),
+      curve: curve,
+    );
+    _state!._requestFrame();
+  }
+
+  /// Put the navigation puck at [lng], [lat], pointing [bearing] degrees clockwise from
+  /// north. It glides there from where it's shown over [duration], linearly, turning the
+  /// short way, so it moves smoothly between fixes; a pose that comes before the glide
+  /// ends bends it from where it got to. The first pose is taken at once. It's drawn
+  /// once shown with [setPuckVisible], and the camera can [follow] it.
+  void setPuck({
+    required double lng,
+    required double lat,
+    required double bearing,
+    Duration duration = Duration.zero,
+  }) {
+    final map = _map;
+    if (map == null) {
+      _puck = (lng, lat, bearing);
+      return;
+    }
+    map.setPuck(
+      lng: lng,
+      lat: lat,
+      bearing: bearing,
+      duration: _seconds(duration),
+    );
+    _state!._requestFrame();
+  }
+
+  /// Show or hide the navigation puck; it's hidden at first.
+  void setPuckVisible(bool visible) {
+    _puckVisible = visible;
+    final map = _map;
+    if (map != null && map.showPuck(shown: visible)) _state!._requestFrame();
+  }
+
+  /// Draw the navigation puck as [style] has it.
+  ///
+  /// Throws if [PuckStyle.beforeLayer] isn't a layer of the style, once the map is set
+  /// up.
+  void setPuckStyle(PuckStyle style) {
+    _puckStyle = style;
+    final map = _map;
+    if (map == null) return;
+    map.setPuckStyle(style: style._input());
+    _state!._requestFrame();
+  }
+
+  /// Follow the navigation puck (see [setPuck]) frame by frame, so it stays put on
+  /// screen while the map moves under it: in the middle of the map less the padding
+  /// (see [setPadding]) and [padding] on top of that, which puts it elsewhere, such as
+  /// lower down with room ahead. At [zoom] and [pitch], with [bearing] fixed, or turning
+  /// with the puck's if null. It eases in from where the camera is over [duration];
+  /// following again changes the settings the same way.
+  ///
+  /// Moving the map by hand (panning, zooming, rotating or tilting it, but not tapping
+  /// it, so a tap on a place or label while following leaves the camera on the puck),
+  /// [flyTo], [easeTo], [setSubject], [turnNorth] and [stopFollowing] end it, which
+  /// [following] tells. Throws if the puck hasn't been
+  /// put anywhere. Does nothing until the map [isReady].
+  void follow({
+    required double zoom,
+    double pitch = 0,
+    double? bearing,
+    EdgeInsets padding = EdgeInsets.zero,
+    Duration duration = const Duration(milliseconds: 600),
+  }) {
+    final map = _map;
+    if (map == null) return;
+    map.follow(
+      zoom: zoom,
+      pitch: pitch,
+      bearing: bearing,
+      padding: _mapPadding(padding),
+      duration: _seconds(duration),
+    );
+    _subject = null;
+    _following.value = true;
+    _state!._requestFrame();
+  }
+
+  /// Stop following the puck, leaving the camera where it is.
+  void stopFollowing() {
+    _map?.stopFollowing();
+    _following.value = false;
+  }
+
+  /// Whether the camera is following the puck: [follow] started it, and nothing has
+  /// ended it since. Updated as each frame is drawn, so it tells when moving the map
+  /// by hand ended it.
+  ValueListenable<bool> get following => _following;
+  final _following = ValueNotifier(false);
+
+  /// Where [setPuck] put the puck before the map was made, and what [setPuckVisible]
+  /// and [setPuckStyle] last said.
+  (double, double, double)? _puck;
+  bool _puckVisible = false;
+  PuckStyle? _puckStyle;
+
+  static double _seconds(Duration d) => d.inMicroseconds / 1e6;
 
   /// Stop keeping the subject in view, leaving the camera where it is.
   void clearSubject() {
@@ -238,6 +408,7 @@ class SparkleMapController {
   /// it.
   void flyTo({required double lng, required double lat, required double zoom}) {
     _subject = null;
+    _following.value = false;
     final map = _map;
     if (map == null) {
       // The map is still being made: it flies there once it is.
@@ -249,10 +420,12 @@ class SparkleMapController {
   }
 
   /// Turn the map back to north up, keeping the middle of the map less the padding
-  /// where it is and the zoom and tilt as they are. Moving the map stops it.
+  /// where it is and the zoom and tilt as they are, and ending [follow]. Moving the map
+  /// stops it.
   void turnNorth() {
     final map = _map;
     if (map == null) return;
+    _following.value = false;
     map.turnNorth();
     _state!._requestFrame();
   }
@@ -323,6 +496,18 @@ class SparkleMapController {
       _flight = null;
     }
     if (_images.isNotEmpty) map.addImages(images: _images.values.toList());
+    if (_puck case (final lng, final lat, final bearing)?) {
+      map.setPuck(lng: lng, lat: lat, bearing: bearing, duration: 0);
+      _puck = null;
+    }
+    map.showPuck(shown: _puckVisible);
+    if (_puckStyle case final style?) {
+      try {
+        map.setPuckStyle(style: style._input());
+      } on Object catch (e) {
+        _state?.widget.onError?.call(e);
+      }
+    }
     for (final MapEntry(key: source, value: text) in _pending.entries) {
       try {
         map.setGeojson(source: source, geojson: text);
@@ -691,7 +876,7 @@ class _SparkleMapState extends State<SparkleMap> {
       final gap = _sinceFrame.elapsedMicroseconds; // PERF-TEMP
       _sinceFrame.reset(); // PERF-TEMP
       out = map.frame();
-      widget.controller?._frameDrawn(map);
+      widget.controller?._frameDrawn(map, out);
       if (out.complete) widget.controller?._drewComplete();
       if (_bench && _benchFrame == -2 && out.complete) {
         _benchFrame = -1;

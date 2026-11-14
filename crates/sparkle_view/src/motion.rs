@@ -1,12 +1,13 @@
 //! Easing for window input: wheel zooms that glide to their level, flings that carry a
-//! pan on after the mouse lets go and a pinch zoom on after the fingers lift; and flights the app starts, which zoom out and back in
-//! to get somewhere, or turn back to north up. All advance once per frame through
-//! [`Motion::step`].
+//! pan on after the mouse lets go and a pinch zoom on after the fingers lift; and moves
+//! the app starts: flights, which zoom out and back in to get somewhere, eases straight
+//! to a zoom, bearing and pitch, and turns back to north up. All advance once per frame
+//! through [`Motion::step`].
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::camera::{Camera, MAX_ZOOM, Padding, TILE_SIZE};
+use crate::camera::{Camera, Framing, MAX_PITCH, MAX_ZOOM, Padding, TILE_SIZE};
 
 /// The zoom still to go shrinks by a factor of e every this many seconds.
 const ZOOM_TIME: f64 = 0.06;
@@ -65,6 +66,63 @@ pub struct Motion {
     last: Option<Instant>,
     flight: Option<Flight>,
     turn: Option<Turn>,
+    ease: Option<Ease>,
+}
+
+/// How an ease's progress follows time, as CSS's timing functions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Curve {
+    Linear,
+    /// `cubic-bezier(0.25, 0.1, 0.25, 1)`, as MapLibre eases.
+    #[default]
+    Ease,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+}
+
+impl Curve {
+    /// How far along the ease is (0 to 1) at `t`, the share of its time gone.
+    pub fn at(self, t: f64) -> f64 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            Self::Linear => t,
+            Self::Ease => cubic_bezier([0.25, 0.1, 0.25, 1.0], t),
+            Self::EaseIn => cubic_bezier([0.42, 0.0, 1.0, 1.0], t),
+            Self::EaseOut => cubic_bezier([0.0, 0.0, 0.58, 1.0], t),
+            Self::EaseInOut => cubic_bezier([0.42, 0.0, 0.58, 1.0], t),
+        }
+    }
+}
+
+/// Easing from one framing to another along a [`Curve`], keeping the target in the
+/// middle of the view less `padding` on the way.
+struct Ease {
+    start: Instant,
+    /// Seconds.
+    duration: f64,
+    from: Framing,
+    to: Framing,
+    curve: Curve,
+    padding: Padding,
+}
+
+impl Ease {
+    /// Move `camera` to where the ease is at `now`. Returns whether it has further to go.
+    fn step(&self, camera: &mut Camera, now: Instant) -> bool {
+        let t = if self.duration > 0.0 {
+            ((now - self.start).as_secs_f64() / self.duration).min(1.0)
+        } else {
+            1.0
+        };
+        let framing = if t < 1.0 {
+            self.from.toward(&self.to, self.curve.at(t))
+        } else {
+            self.to
+        };
+        camera.show(&framing, self.padding);
+        t < 1.0
+    }
 }
 
 /// Turning the bearing to north up, keeping the middle of the view less `padding` where
@@ -81,9 +139,11 @@ impl Turn {
     /// Turn `camera` to where it is at `now`. Returns whether it has further to go.
     fn step(&self, camera: &mut Camera, now: Instant) -> bool {
         let t = ((now - self.start).as_secs_f64() / self.duration).min(1.0);
-        let middle = camera.padded_center(self.padding);
-        camera.set_bearing(self.from * (1.0 - ease(t)));
-        camera.center = camera.center_for(middle, camera.zoom, self.padding);
+        let framing = Framing {
+            bearing: self.from * (1.0 - ease(t)),
+            ..camera.framing(self.padding)
+        };
+        camera.show(&framing, self.padding);
         t < 1.0
     }
 }
@@ -200,6 +260,11 @@ impl Flight {
 /// CSS's `ease` timing curve, `cubic-bezier(0.25, 0.1, 0.25, 1)`, as MapLibre eases
 /// flights.
 fn ease(t: f64) -> f64 {
+    Curve::Ease.at(t)
+}
+
+/// CSS's `cubic-bezier(x1, y1, x2, y2)` at `t`.
+fn cubic_bezier([x1, y1, x2, y2]: [f64; 4], t: f64) -> f64 {
     let bezier = |a: f64, b: f64, x: f64| {
         let m = 1.0 - x;
         3.0 * m * m * x * a + 3.0 * m * x * x * b + x * x * x
@@ -208,13 +273,13 @@ fn ease(t: f64) -> f64 {
     let (mut lo, mut hi) = (0.0, 1.0);
     for _ in 0..30 {
         let mid = (lo + hi) / 2.0;
-        if bezier(0.25, 0.25, mid) < t {
+        if bezier(x1, x2, mid) < t {
             lo = mid;
         } else {
             hi = mid;
         }
     }
-    bezier(0.1, 1.0, (lo + hi) / 2.0)
+    bezier(y1, y2, (lo + hi) / 2.0)
 }
 
 impl Motion {
@@ -224,6 +289,7 @@ impl Motion {
             || self.zoom_velocity != 0.0
             || self.flight.is_some()
             || self.turn.is_some()
+            || self.ease.is_some()
     }
 
     /// Where `camera` comes to rest if the motion under way runs its course, or `None`
@@ -244,6 +310,9 @@ impl Motion {
                 &mut end,
                 turn.start + Duration::from_secs_f64(turn.duration),
             );
+        }
+        if let Some(ease) = &self.ease {
+            end.show(&ease.to, ease.padding);
         }
         if self.zoom != 0.0 {
             end.zoom_around(self.zoom, self.zoom_anchor);
@@ -272,6 +341,8 @@ impl Motion {
             self.turn = None;
             return;
         }
+        // An ease would turn the bearing too.
+        self.ease = None;
         self.wake(now);
         // The camera keeps its bearing within ±180°, so heading for 0 is the short way.
         self.turn = Some(Turn {
@@ -282,11 +353,64 @@ impl Motion {
         });
     }
 
-    /// The view's padding changed: keep the new middle where it is through any turn.
+    /// The view's padding changed: keep the new middle where it is through any turn, and
+    /// any ease heading for it.
     pub fn repad(&mut self, padding: Padding) {
         if let Some(turn) = &mut self.turn {
             turn.padding = padding;
         }
+        if let Some(ease) = &mut self.ease {
+            ease.padding = padding;
+        }
+    }
+
+    /// Ease to `to` over `duration` seconds along `curve`, keeping the target in the
+    /// middle of the view less `padding` (as [`Motion::repad`] changes it), ending
+    /// anything else in progress. The bearing turns the short way, and the pitch stays
+    /// within [`MAX_PITCH`].
+    pub fn ease_to(
+        &mut self,
+        camera: &Camera,
+        to: Framing,
+        duration: f64,
+        curve: Curve,
+        padding: Padding,
+        now: Instant,
+    ) {
+        self.stop();
+        let to = Framing {
+            zoom: to.zoom.clamp(0.0, MAX_ZOOM),
+            pitch: to.pitch.clamp(0.0, MAX_PITCH),
+            ..to
+        };
+        self.ease = Some(Ease {
+            start: now,
+            duration: duration.max(0.0),
+            from: camera.framing(padding),
+            to,
+            curve,
+            padding,
+        });
+        self.last = Some(now);
+    }
+
+    /// Whether an ease is under way.
+    pub fn easing(&self) -> bool {
+        self.ease.is_some()
+    }
+
+    /// End everything in progress, leaving the camera where it is: something else, such
+    /// as following the puck, moves it from now on.
+    pub fn stop(&mut self) {
+        self.zoom = 0.0;
+        self.velocity = [0.0; 2];
+        self.zoom_velocity = 0.0;
+        self.samples.clear();
+        self.zoom_samples.clear();
+        self.flight = None;
+        self.turn = None;
+        self.ease = None;
+        self.last = None;
     }
 
     /// Fly to `center` (world coordinates) at `zoom`, ending anything else in progress.
@@ -296,6 +420,7 @@ impl Motion {
         self.zoom_velocity = 0.0;
         self.samples.clear();
         self.zoom_samples.clear();
+        self.ease = None;
         self.flight = Some(Flight::new(camera, center, zoom.clamp(0.0, MAX_ZOOM), now));
         self.last = Some(now);
     }
@@ -303,6 +428,7 @@ impl Motion {
     /// Glide `levels` further than any zoom in progress, around `anchor`.
     pub fn zoom(&mut self, camera: &Camera, levels: f64, anchor: [f64; 2], now: Instant) {
         self.flight = None;
+        self.ease = None;
         self.wake(now);
         let target = (camera.zoom + self.zoom + levels).clamp(0.0, MAX_ZOOM);
         self.zoom = target - camera.zoom;
@@ -324,17 +450,19 @@ impl Motion {
         true
     }
 
-    /// A pan or pinch starts at `p`: stop any fling or flight. Returns whether there was
-    /// one.
+    /// A pan or pinch starts at `p`: stop any fling, flight, turn or ease. Returns
+    /// whether there was one.
     pub fn grab(&mut self, p: [f64; 2], now: Instant) -> bool {
         let stopped = self.velocity != [0.0; 2]
             || self.zoom_velocity != 0.0
             || self.flight.is_some()
-            || self.turn.is_some();
+            || self.turn.is_some()
+            || self.ease.is_some();
         self.velocity = [0.0; 2];
         self.zoom_velocity = 0.0;
         self.flight = None;
         self.turn = None;
+        self.ease = None;
         self.samples.clear();
         self.samples.push_back((now, p));
         self.zoom_samples.clear();
@@ -433,6 +561,12 @@ impl Motion {
             && !turn.step(camera, now)
         {
             self.turn = None;
+        }
+
+        if let Some(ease) = &self.ease
+            && !ease.step(camera, now)
+        {
+            self.ease = None;
         }
 
         if self.zoom != 0.0 {
@@ -740,28 +874,34 @@ mod tests {
 
     #[test]
     fn turning_north_changes_only_the_bearing() {
-        let mut c = camera();
-        c.set_bearing(-150.0);
-        c.set_pitch(30.0);
-        let padding = Padding {
-            top: 50.0,
-            right: 0.0,
-            bottom: 300.0,
-            left: 0.0,
-        };
-        let middle = c.padded_center(padding);
-        let mut m = Motion::default();
-        let t = Instant::now();
-        m.turn_north(&c, padding, t);
-        m.step(&mut c, t + Duration::from_millis(100));
-        // Partway, it's turning the short way, straight back toward 0.
-        assert!(c.bearing > -150.0 && c.bearing < 0.0, "{}", c.bearing);
-        let frames = settle(&mut m, &mut c, t + Duration::from_millis(100));
-        assert!(frames < 40, "{frames} frames");
-        assert_eq!(c.bearing, 0.0);
-        assert_eq!((c.zoom, c.pitch), (12.0, 30.0));
-        let after = c.padded_center(padding);
-        assert!((after[0] - middle[0]).abs() < 1e-12 && (after[1] - middle[1]).abs() < 1e-12);
+        for pitch in [0.0, 60.0] {
+            let mut c = camera();
+            c.set_bearing(-150.0);
+            c.set_pitch(pitch);
+            let padding = Padding {
+                top: 50.0,
+                right: 20.0,
+                bottom: 300.0,
+                left: 130.0,
+            };
+            let middle = c.framing(padding).target;
+            let mut m = Motion::default();
+            let t = Instant::now();
+            m.turn_north(&c, padding, t);
+            m.step(&mut c, t + Duration::from_millis(100));
+            // Partway, it's turning the short way, straight back toward 0, around the
+            // middle of the padding.
+            assert!(c.bearing > -150.0 && c.bearing < 0.0, "{}", c.bearing);
+            let partway = c.framing(padding).target;
+            assert!((partway[0] - middle[0]).abs() < 1e-12, "{pitch}");
+            assert!((partway[1] - middle[1]).abs() < 1e-12, "{pitch}");
+            let frames = settle(&mut m, &mut c, t + Duration::from_millis(100));
+            assert!(frames < 40, "{frames} frames");
+            assert_eq!(c.bearing, 0.0);
+            assert_eq!((c.zoom, c.pitch), (12.0, pitch));
+            let after = c.framing(padding).target;
+            assert!((after[0] - middle[0]).abs() < 1e-12 && (after[1] - middle[1]).abs() < 1e-12);
+        }
     }
 
     #[test]
@@ -855,6 +995,103 @@ mod tests {
         let foreseen = m.end(&c).unwrap();
         settle(&mut m, &mut c, t);
         assert_foreseen(&foreseen, &c);
+    }
+
+    fn framing(lng: f64, lat: f64, zoom: f64, bearing: f64, pitch: f64) -> Framing {
+        Framing {
+            target: crate::camera::lng_lat_to_world(lng, lat),
+            zoom,
+            bearing,
+            pitch,
+        }
+    }
+
+    #[test]
+    fn an_ease_ends_at_its_framing_turning_the_short_way() {
+        let mut c = camera();
+        c.set_bearing(170.0);
+        let padding = Padding {
+            bottom: 200.0,
+            ..Padding::default()
+        };
+        let to = framing(-122.3, 47.62, 15.0, -160.0, 50.0);
+        let mut m = Motion::default();
+        let t = Instant::now();
+        m.ease_to(&c, to, 0.5, Curve::Linear, padding, t);
+        m.step(&mut c, t + Duration::from_millis(250));
+        // Halfway, linearly: 15° on from 170 through 180.
+        assert!((c.bearing - -175.0).abs() < 1e-9, "{}", c.bearing);
+        assert!((c.zoom - 13.5).abs() < 1e-9 && (c.pitch - 25.0).abs() < 1e-9);
+        let frames = settle(&mut m, &mut c, t + Duration::from_millis(250));
+        assert!(frames <= 17, "{frames} frames");
+        let shown = c.framing(padding);
+        assert!((shown.target[0] - to.target[0]).abs() < 1e-12);
+        assert!((shown.target[1] - to.target[1]).abs() < 1e-12);
+        assert_eq!((c.zoom, c.bearing, c.pitch), (15.0, -160.0, 50.0));
+    }
+
+    #[test]
+    fn an_ease_keeps_the_pitch_within_the_cap() {
+        let mut c = camera();
+        let mut m = Motion::default();
+        let t = Instant::now();
+        let to = framing(-122.33, 47.6, 12.0, 0.0, 120.0);
+        m.ease_to(&c, to, 0.2, Curve::Ease, Padding::default(), t);
+        let foreseen = m.end(&c).unwrap();
+        settle(&mut m, &mut c, t);
+        assert_eq!(c.pitch, MAX_PITCH);
+        assert_foreseen(&foreseen, &c);
+    }
+
+    #[test]
+    fn an_ease_of_no_time_lands_on_the_next_step() {
+        let mut c = camera();
+        let mut m = Motion::default();
+        let t = Instant::now();
+        m.ease_to(
+            &c,
+            framing(-122.2, 47.7, 14.0, 10.0, 0.0),
+            0.0,
+            Curve::Ease,
+            Padding::default(),
+            t,
+        );
+        assert!(!m.step(&mut c, t));
+        assert_eq!((c.zoom, c.bearing), (14.0, 10.0));
+    }
+
+    #[test]
+    fn grabbing_or_zooming_stops_an_ease() {
+        let c = camera();
+        let mut m = Motion::default();
+        let t = Instant::now();
+        let to = framing(-122.2, 47.7, 14.0, 10.0, 0.0);
+        m.ease_to(&c, to, 1.0, Curve::Ease, Padding::default(), t);
+        assert!(m.grab([400.0, 300.0], t + Duration::from_millis(10)));
+        assert!(!m.active());
+        m.ease_to(&c, to, 1.0, Curve::Ease, Padding::default(), t);
+        m.zoom(&c, 1.0, [400.0, 300.0], t);
+        assert!(!m.easing());
+    }
+
+    #[test]
+    fn curves_start_and_end_in_place() {
+        for curve in [
+            Curve::Linear,
+            Curve::Ease,
+            Curve::EaseIn,
+            Curve::EaseOut,
+            Curve::EaseInOut,
+        ] {
+            assert!(curve.at(0.0).abs() < 1e-6 && (curve.at(1.0) - 1.0).abs() < 1e-6);
+            let mut last = 0.0;
+            for i in 1..=20 {
+                let k = curve.at(f64::from(i) / 20.0);
+                assert!(k >= last, "{curve:?} goes back");
+                last = k;
+            }
+        }
+        assert!(Curve::EaseIn.at(0.25) < 0.25 && Curve::EaseOut.at(0.25) > 0.25);
     }
 
     #[test]

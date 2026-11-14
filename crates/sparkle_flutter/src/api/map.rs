@@ -9,6 +9,8 @@ use flutter_rust_bridge::frb;
 
 use sparkle::sprite::{ImageMeta, SpriteImage};
 use sparkle_view::camera::Padding;
+use sparkle_view::motion::Curve;
+use sparkle_view::puck::PuckStyle;
 
 use crate::app::{Button, MapView, Wake};
 use crate::frb_generated::StreamSink;
@@ -59,6 +61,60 @@ pub struct FrameOutput {
     pub zoom: f64,
     pub bearing: f64,
     pub pitch: f64,
+    /// The camera is following the puck: see [`SparkleMap::follow`]. Input that moves
+    /// the map ends it, which the next frame tells.
+    pub following: bool,
+}
+
+/// How the navigation puck, a chevron, looks: see [`SparkleMap::set_puck_style`].
+pub struct PuckStyleInput {
+    /// `0xAARRGGBB`, as Dart's `Color.toARGB32`.
+    pub fill: u32,
+    pub outline: u32,
+    /// In logical pixels, inside the chevron's edge; 0 for none.
+    pub outline_width: f64,
+    /// The chevron's length from tip to tail, in logical pixels.
+    pub size: f64,
+    /// The id of the style layer it's drawn under; `None` for over every layer (see
+    /// `sparkle_view::puck::PuckStyle::before_layer` for why that's the default).
+    pub before_layer: Option<String>,
+}
+
+impl From<PuckStyleInput> for PuckStyle {
+    fn from(p: PuckStyleInput) -> Self {
+        let rgba = |argb: u32| {
+            let [a, r, g, b] = argb.to_be_bytes().map(|c| f32::from(c) / 255.0);
+            [r, g, b, a]
+        };
+        PuckStyle {
+            fill: rgba(p.fill),
+            outline: rgba(p.outline),
+            outline_width: p.outline_width.max(0.0) as f32,
+            size: p.size.max(0.0) as f32,
+            before_layer: p.before_layer,
+        }
+    }
+}
+
+/// How an ease's progress follows time, as CSS's timing functions of the same names.
+pub enum EaseCurve {
+    Linear,
+    Ease,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+}
+
+impl From<EaseCurve> for Curve {
+    fn from(c: EaseCurve) -> Self {
+        match c {
+            EaseCurve::Linear => Curve::Linear,
+            EaseCurve::Ease => Curve::Ease,
+            EaseCurve::EaseIn => Curve::EaseIn,
+            EaseCurve::EaseOut => Curve::EaseOut,
+            EaseCurve::EaseInOut => Curve::EaseInOut,
+        }
+    }
 }
 
 fn properties_text(
@@ -220,6 +276,7 @@ impl SparkleMap {
             zoom: frame.zoom,
             bearing: frame.bearing,
             pitch: frame.pitch,
+            following: frame.following,
         }
     }
 
@@ -463,6 +520,84 @@ impl SparkleMap {
     #[frb(sync)]
     pub fn turn_north(&self) {
         self.view().turn_north();
+    }
+
+    /// Ease to show `lng, lat` in the middle of the view less the padding (at any pitch),
+    /// at `zoom`, and at `bearing` and `pitch` (as they are for `None`), over `duration`
+    /// seconds along `curve`, dropping any subject and following. The bearing turns the
+    /// short way; the pitch stops at the camera's limit (85°). Input that moves the map
+    /// stops it. Draw frames after.
+    #[frb(sync)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn ease_to(
+        &self,
+        lng: f64,
+        lat: f64,
+        zoom: f64,
+        bearing: Option<f64>,
+        pitch: Option<f64>,
+        duration: f64,
+        curve: EaseCurve,
+    ) {
+        self.view()
+            .ease_to(lng, lat, zoom, bearing, pitch, duration, curve.into());
+    }
+
+    /// Put the navigation puck at `lng, lat`, pointing `bearing` degrees clockwise from
+    /// north, gliding there from where it's shown over `duration` seconds: linearly, and
+    /// turning the short way. The first pose, or one with no duration, is taken at once.
+    /// A pose that comes before the glide ends bends it from where it got to. Draw
+    /// frames after.
+    #[frb(sync)]
+    pub fn set_puck(&self, lng: f64, lat: f64, bearing: f64, duration: f64) {
+        self.view().set_puck(lng, lat, bearing, duration);
+    }
+
+    /// Show or hide the puck (hidden until shown, or set by `--puck`). Returns whether
+    /// a frame should be drawn.
+    #[frb(sync)]
+    pub fn show_puck(&self, shown: bool) -> bool {
+        self.view().show_puck(shown)
+    }
+
+    /// Draw the puck as `style` has it. Fails if it names a layer the style lacks. Draw
+    /// a frame after.
+    #[frb(sync)]
+    pub fn set_puck_style(&self, style: PuckStyleInput) -> anyhow::Result<()> {
+        self.view().set_puck_style(style.into())
+    }
+
+    /// Follow the puck, frame by frame: keep it in the middle of the view less the
+    /// padding and `padding` on top of it (to put it lower on screen, say), at `zoom` and
+    /// `pitch`, with `bearing` fixed or (`None`) turning with the puck. It eases in from
+    /// where the camera is over `duration` seconds; calling it again while following
+    /// changes the settings the same way. Input that moves the map, [`Self::fly_to`],
+    /// [`Self::ease_to`], [`Self::set_subject`] and [`Self::turn_north`] end it. Fails if
+    /// the puck hasn't been put anywhere yet. Draw frames after.
+    #[frb(sync)]
+    pub fn follow(
+        &self,
+        zoom: f64,
+        pitch: f64,
+        bearing: Option<f64>,
+        padding: MapPadding,
+        duration: f64,
+    ) -> anyhow::Result<()> {
+        self.view()
+            .follow(zoom, pitch, bearing, padding.into(), duration)
+    }
+
+    /// Stop following the puck, leaving the camera where it is.
+    #[frb(sync)]
+    pub fn stop_following(&self) {
+        self.view().stop_following();
+    }
+
+    /// Whether the camera is following the puck: [`Self::follow`] started it, and nothing
+    /// has ended it since.
+    #[frb(sync)]
+    pub fn is_following(&self) -> bool {
+        self.view().is_following()
     }
 
     /// `key`: a character, or a named key such as `ArrowLeft`.

@@ -150,5 +150,13 @@
   "LineMergedFragment": {
     "type": "fragment",
     "file": "shaders/line_merged.frag"
+  },
+  "PuckVertex": {
+    "type": "vertex",
+    "file": "shaders/puck.vert"
+  },
+  "PuckFragment": {
+    "type": "fragment",
+    "file": "shaders/puck.frag"
   }
 }

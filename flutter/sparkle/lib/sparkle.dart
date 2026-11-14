@@ -3,6 +3,12 @@
 library;
 
 export 'src/rust/api/map.dart'
-    show CameraState, ClickedFeature, SpriteImageInput;
+    show CameraState, ClickedFeature, EaseCurve, SpriteImageInput;
 export 'src/sparkle_map.dart'
-    show MapGestures, MapStatus, SparkleMap, SparkleMapController, initSparkle;
+    show
+        MapGestures,
+        MapStatus,
+        PuckStyle,
+        SparkleMap,
+        SparkleMapController,
+        initSparkle;

@@ -67,12 +67,17 @@ Future<List<String>> _bundledArgs() async {
   }
   final d = dir.path;
   return [
-    '--style', '$d/headway.json',
-    '--sprite', '$d/sprites',
-    '--cache', '$d/cache',
-    '--tiles', 'dem=$d/dem-terrarium.mbtiles',
+    '--style',
+    '$d/headway.json',
+    '--sprite',
+    '$d/sprites',
+    '--cache',
+    '$d/cache',
+    '--tiles',
+    'dem=$d/dem-terrarium.mbtiles',
     if (_view.isNotEmpty) ...['--view', _view],
-    '--tiles', 'openmaptiles=$_tilesUrl',
+    '--tiles',
+    'openmaptiles=$_tilesUrl',
   ];
 }
 
@@ -112,7 +117,9 @@ class _HarnessAppState extends State<HarnessApp> {
             Positioned.fill(
               child: SparkleMap(
                 args: widget.args,
-                multisample: const bool.fromEnvironment("SPARKLE_NO_MSAA") ? false : true, // PERF-TEMP
+                multisample: const bool.fromEnvironment("SPARKLE_NO_MSAA")
+                    ? false
+                    : true, // PERF-TEMP
                 onStatus: (s) => _status.value =
                     'zoom ${s.zoom.toStringAsFixed(2)}, '
                     'bearing ${s.bearing.toStringAsFixed(0)}°, '
