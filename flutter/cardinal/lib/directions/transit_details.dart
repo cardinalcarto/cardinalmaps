@@ -3,6 +3,8 @@
 /// the other departures of its route, so a rider can see what happens if they miss it.
 library;
 
+import 'dart:math' as math;
+
 import 'package:material_ui/material_ui.dart';
 
 import 'format.dart';
@@ -336,6 +338,11 @@ class RouteBadge extends StatelessWidget {
 /// A ride's stops from where it's boarded to where it ends, each with its time, on a bar
 /// in its route's color: the itinerary's rows for a ride, with every stop between
 /// showing. A time from real-time data is in the live color.
+///
+/// A stay-seated ride shows each of its trips' stops on a bar in that trip's route's
+/// color, and where the vehicle goes on as the next trip, the itinerary's stay-on-board
+/// row, naming the route it continues as. A join at one stop shows that stop once, before
+/// the stay-on-board row.
 class RideStops extends StatelessWidget {
   const RideStops({super.key, required this.ride});
 
@@ -343,32 +350,80 @@ class RideStops extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color =
-        parseRouteColor(ride.route?.color) ??
-        Theme.of(context).colorScheme.primary;
+    final primary = Theme.of(context).colorScheme.primary;
+    Color colorOf(TransitRoute? route) =>
+        parseRouteColor(route?.color) ?? primary;
     final stops = ride.stops;
     final last = stops.length - 1;
+    final rows = <Widget>[];
+    void stop(int i, Color color) {
+      final visit = stops[i];
+      rows.add(
+        _RailRow(
+          key: ValueKey((i, visit.stop.id)),
+          rail: _Rail(
+            above: i == 0 ? _Line.none : _Line.bar,
+            below: i == last ? _Line.none : _Line.bar,
+            marker: i == 0 || i == last ? _Marker.stop : _Marker.pass,
+            aboveColor: color,
+            belowColor: color,
+          ),
+          child: _StopText(
+            visit: visit,
+            time: i == last ? visit.arrival : visit.departure,
+            live: visit.predicted,
+            strong: i == 0,
+          ),
+        ),
+      );
+    }
+
+    if (ride.segments.length < 2) {
+      final color = colorOf(ride.route);
+      for (var i = 0; i <= last; i++) {
+        stop(i, color);
+      }
+    } else {
+      final segments = ride.segments;
+      // The next stop to show: a join at one stop is shown with the trip arriving there.
+      var next = 0;
+      for (final (s, segment) in segments.indexed) {
+        final color = colorOf(segmentRoute(ride, segment));
+        final to = segment.lastStop.clamp(0, last);
+        for (
+          var i = math.max(next, segment.firstStop.clamp(0, last));
+          i <= to;
+          i++
+        ) {
+          stop(i, color);
+        }
+        next = math.max(next, to + 1);
+        if (s + 1 < segments.length) {
+          final following = segments[s + 1];
+          rows.add(
+            _RailRow(
+              key: ValueKey(('seat', s)),
+              rail: _Rail(
+                above: _Line.bar,
+                below: _Line.bar,
+                marker: _Marker.seat,
+                aboveColor: color,
+                belowColor: colorOf(segmentRoute(ride, following)),
+                icon: Icons.airline_seat_recline_normal,
+              ),
+              child: _ContinueText(
+                ride: ride,
+                segment: following,
+                at: stops[following.firstStop.clamp(0, last)],
+              ),
+            ),
+          );
+        }
+      }
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final (i, visit) in stops.indexed)
-          _RailRow(
-            key: ValueKey((i, visit.stop.id)),
-            rail: _Rail(
-              above: i == 0 ? _Line.none : _Line.bar,
-              below: i == last ? _Line.none : _Line.bar,
-              marker: i == 0 || i == last ? _Marker.stop : _Marker.pass,
-              aboveColor: color,
-              belowColor: color,
-            ),
-            child: _StopText(
-              visit: visit,
-              time: i == last ? visit.arrival : visit.departure,
-              live: visit.predicted,
-              strong: i == 0,
-            ),
-          ),
-      ],
+      children: rows,
     );
   }
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/directions/transit_sheet.dart' show liveColor;
+import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/map/route_layer.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
@@ -72,6 +73,45 @@ Map<String, Object?> _ride(
           'departure': t + i * 120,
           if (live) 'predicted_departure': t + i * 120,
         },
+    ],
+  };
+}
+
+/// [_ride] of the 44 through Stop A and Leary Ave to U District, where its vehicle goes
+/// on as the 43, in green, through Broadway to Capitol Hill, Broadway's times live.
+Map<String, Object?> _seatedRide(String trip, int minutes) {
+  final ride = _ride(trip, minutes, [
+    _ballard,
+    'Leary Ave',
+    'U District',
+    'Broadway',
+    'Capitol Hill',
+  ]);
+  final stops = (ride['stops']! as List).cast<Map<String, Object?>>();
+  stops[3] = {...stops[3], 'predicted_departure': stops[3]['departure']};
+  return {
+    ...ride,
+    'stops': stops,
+    'segments': [
+      {
+        'trip_id': trip,
+        'route': {'route_id': '44', 'short_name': '44', 'route_type': 3},
+        'headsign': 'University District',
+        'first_stop_index': 0,
+        'last_stop_index': 2,
+      },
+      {
+        'trip_id': '43-$trip',
+        'route': {
+          'route_id': '43',
+          'short_name': '43',
+          'route_type': 3,
+          'color': '00A040',
+        },
+        'headsign': 'Capitol Hill',
+        'first_stop_index': 2,
+        'last_stop_index': 4,
+      },
     ],
   };
 }
@@ -778,6 +818,115 @@ void main() {
       await tester.pump(routeDetailRefresh * 3);
       expect(source.routesAsked, hasLength(asked));
     });
+  });
+
+  group('a ride that stays seated', () {
+    testWidgets('shows every trip\'s stops, and where it continues as the next '
+        'route', (tester) async {
+      await openList(tester);
+      await open44(tester);
+      await answerRoute(
+        tester,
+        _detail([nearbyDepartureJson('a', 10)], ride: _seatedRide('a', 10)),
+      );
+      for (final name in [
+        'Leary Ave',
+        'U District',
+        'Broadway',
+        'Capitol Hill',
+      ]) {
+        expect(find.text(name), findsOneWidget, reason: name);
+      }
+      expect(find.text('Stay on board'), findsOneWidget);
+      expect(find.text('At U District it continues as'), findsOneWidget);
+      expect(find.text('to Capitol Hill'), findsOneWidget);
+      double y(String text) => tester.getTopLeft(find.text(text)).dy;
+      expect(y('U District'), lessThan(y('Stay on board')));
+      expect(y('Stay on board'), lessThan(y('Broadway')));
+      expect(y('Broadway'), lessThan(y('Capitol Hill')));
+
+      // The second trip's live time in the live color, as the first's would be.
+      final time = const DefaultMaterialLocalizations().formatTimeOfDay(
+        TimeOfDay.fromDateTime(now.add(const Duration(minutes: 16))),
+      );
+      final text = tester.widget<Text>(find.text(time));
+      expect(
+        text.style!.color,
+        liveColor(Theme.of(tester.element(find.text(time)))),
+      );
+    });
+
+    testWidgets('draws each trip in its own color, and fits them all', (
+      tester,
+    ) async {
+      await openList(tester);
+      await open44(tester);
+      await answerRoute(
+        tester,
+        _detail([nearbyDepartureJson('a', 10)], ride: _seatedRide('a', 10)),
+      );
+      final data = map.geoJson[nearbyRouteSource]! as Map<String, Object?>;
+      final features = (data['features']! as List).cast<Map<String, Object?>>();
+      Map<String, Object?> props(Map<String, Object?> f) =>
+          f['properties']! as Map<String, Object?>;
+      List<Object?> lats(Map<String, Object?> f) => [
+        for (final c in (f['geometry']! as Map)['coordinates'] as List)
+          (c as List)[1],
+      ];
+      expect(features.map((f) => props(f)['role']), [
+        'line',
+        'line',
+        'stop',
+        'stop',
+        'stop',
+        'stop',
+        'boarding',
+      ]);
+      // The 44 to U District in its color, and on from there the 43 in its own.
+      expect(props(features[0])['color'], '#FDB71A');
+      expect(lats(features[0]), [47.65, 47.66, 47.67]);
+      expect(props(features[1])['color'], '#00A040');
+      expect(lats(features[1]), [47.67, 47.68, 47.69]);
+      expect(
+        [for (final f in features.sublist(2, 6)) props(f)['casing']],
+        ['#7e5b0d', '#7e5b0d', '#005020', '#005020'],
+      );
+      // The camera takes in the 43 too.
+      expect(map.subjectBounds!.south, closeTo(47.65, 1e-9));
+      expect(map.subjectBounds!.north, closeTo(47.69, 1e-9));
+    });
+  });
+
+  test("a ride's line is cut where its shape passes nearest the join", () {
+    final ride = TransitLeg.fromJson({
+      ..._seatedRide('a', 10),
+      // Off to the side of the stops, passing U District 27 m before it and 19 m
+      // after: cut at the nearer.
+      'shape': polyline6([
+        [-122.3502, 47.65],
+        [-122.3502, 47.66],
+        [-122.3502, 47.6698],
+        [-122.3502, 47.6701],
+        [-122.3502, 47.69],
+      ]),
+    });
+    final lines = nearbyRideLines(ride);
+    expect([for (final l in lines) l.segment], [0, 1]);
+    expect([for (final l in lines) l.route?.id], ['44', '43']);
+    expect(
+      [for (final p in lines[0].points) p.lat],
+      [47.65, 47.66, 47.6698, 47.6701],
+    );
+    expect([for (final p in lines[1].points) p.lat], [47.6701, 47.69]);
+    expect(
+      [
+        for (final l in lines) [for (final s in l.stops) s.stop.name],
+      ],
+      [
+        ['Leary Ave', 'U District'],
+        ['Broadway', 'Capitol Hill'],
+      ],
+    );
   });
 
   testWidgets('draws the trip, its stops, and vehicles on the map, and clears '
