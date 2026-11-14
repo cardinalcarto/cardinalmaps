@@ -114,8 +114,8 @@ class NearbyTransitPage extends StatefulWidget {
   State<NearbyTransitPage> createState() => _NearbyTransitPageState();
 }
 
-/// Why there are no rows to show.
-// Placeholders until the states are agreed.
+/// Why there are no rows to show, as plain text: what the user settled on for these
+/// states.
 enum _Note {
   locating('Finding your location…'),
   noLocation('Turn on location to see transit near you.'),
@@ -454,7 +454,7 @@ class _Header extends StatelessWidget {
   );
 }
 
-// A placeholder until the states are agreed.
+/// A one-line message in place of the rows, with room around it.
 class _Placeholder extends StatelessWidget {
   const _Placeholder(this.note);
 
@@ -464,7 +464,7 @@ class _Placeholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      padding: _placeholderPadding,
       child: Text(
         note.text,
         style: theme.textTheme.bodyMedium?.copyWith(
@@ -474,6 +474,9 @@ class _Placeholder extends StatelessWidget {
     );
   }
 }
+
+/// The room around a message shown in place of the rows.
+const _placeholderPadding = EdgeInsets.symmetric(horizontal: 24, vertical: 20);
 
 /// The space above and below a nearby row's lines.
 const nearbyRowPadding = 11.0;

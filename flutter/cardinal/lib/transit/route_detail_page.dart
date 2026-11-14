@@ -426,13 +426,10 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
                       now: _now,
                     )
                   else if (controller.detail != null)
-                    // A placeholder until the states are agreed.
                     const _Placeholder('No departures in the next 2 hours.')
                   else if (controller.failed)
-                    // A placeholder until the states are agreed.
                     const _Placeholder("Couldn't find departures."),
                   if (controller.failed && controller.detail != null)
-                    // A placeholder until the states are agreed.
                     const _Placeholder("Couldn't refresh departures."),
                   Padding(
                     padding: const EdgeInsets.only(top: 4, bottom: 16),
@@ -484,7 +481,6 @@ class _Header extends StatelessWidget {
         children: [
           Expanded(
             child: route == null
-                // A placeholder until the states are agreed.
                 ? const _Placeholder('Finding departures…')
                 : NearbyHeader(
                     key: const ValueKey('header'),
@@ -503,7 +499,7 @@ class _Header extends StatelessWidget {
   }
 }
 
-// A placeholder until the states are agreed.
+/// A one-line message in place of the tiles or the trip, with room around it.
 class _Placeholder extends StatelessWidget {
   const _Placeholder(this.text);
 
@@ -513,7 +509,7 @@ class _Placeholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
       child: Text(
         text,
         style: theme.textTheme.bodyMedium?.copyWith(
