@@ -3,6 +3,7 @@
 import 'package:drift/drift.dart';
 import 'package:drift_dev/api/migrations_native.dart';
 import 'package:cardinal/store/src/database.dart';
+import 'package:cardinal/store/src/headsigns.dart';
 import 'package:cardinal/store/src/saved.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -83,6 +84,35 @@ void main() {
     expect(copy.pinned, isTrue);
     expect(copy.emoji, null);
     expect(copy.shownOnMap, isFalse);
+  });
+
+  test('v7 keeps what was saved, and remembers no headsigns yet', () async {
+    final schema = await verifier.schemaAt(6);
+    schema.rawDatabase.execute(
+      "INSERT INTO places (id, kind, center_lon, center_lat, tags, updated_at, "
+      "accessed_at) VALUES ('poi:1', 'poi', 0, 0, '{}', 0, 0)",
+    );
+    schema.rawDatabase.execute(
+      "INSERT INTO saved_places (place_id, name, pinned, position, saved_at, "
+      "emoji, shown_on_map) VALUES ('poi:1', 'Home', 1, 3, 0, '🏠', 1)",
+    );
+    final db = CardinalDatabase(schema.newConnection());
+    addTearDown(db.close);
+    await verifier.migrateAndValidate(db, 7);
+
+    final copy = (await SavedStore(db).watch().first).copiesOf('poi:1').single;
+    expect(copy.customName, 'Home');
+    expect(copy.emoji, '🏠');
+    expect(copy.shownOnMap, isTrue);
+
+    final headsigns = HeadsignStore(db);
+    const stop = (feed: 'f', routeId: '44', stopId: 's');
+    expect(await headsigns.recall([stop]), isEmpty);
+    final at = DateTime(2026, 11, 13, 9);
+    await headsigns.remember(stop, 'Ballard', chosenAt: at);
+    expect(await headsigns.recall([stop]), {
+      stop: RememberedHeadsign('Ballard', at),
+    });
   });
 
   // The following template shows how to write tests ensuring your migrations

@@ -109,8 +109,27 @@ class SavedPlaces extends Table {
   BoolColumn get shownOnMap => boolean().withDefault(const Constant(false))();
 }
 
+/// The headsign a rider last settled on for a route at a stop, so its row in Nearby
+/// transit opens on that headsign's page there: see `HeadsignStore`.
+@DataClassName('RememberedHeadsignRow')
+class RememberedHeadsigns extends Table {
+  /// The GTFS feed, in which [routeId] and [stopId] are unique.
+  TextColumn get feed => text()();
+  TextColumn get routeId => text()();
+  TextColumn get stopId => text()();
+
+  /// The headsign; empty for the departures that have none.
+  TextColumn get headsign => text()();
+
+  /// When the rider settled on it.
+  DateTimeColumn get chosenAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {feed, routeId, stopId};
+}
+
 @DriftDatabase(
-  tables: [Places, Settings, SavedLists, SavedPlaces],
+  tables: [Places, Settings, SavedLists, SavedPlaces, RememberedHeadsigns],
   include: {'saved.drift'},
 )
 class CardinalDatabase extends _$CardinalDatabase {
@@ -128,7 +147,7 @@ class CardinalDatabase extends _$CardinalDatabase {
       );
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -158,6 +177,7 @@ class CardinalDatabase extends _$CardinalDatabase {
         await m.addColumn(schema.savedPlaces, schema.savedPlaces.emoji);
         await m.addColumn(schema.savedPlaces, schema.savedPlaces.shownOnMap);
       },
+      from6To7: (m, schema) => m.createTable(schema.rememberedHeadsigns),
     ),
     // Deleting a list takes what's in it along.
     beforeOpen: (details) => customStatement('PRAGMA foreign_keys = ON'),

@@ -1,12 +1,13 @@
 import 'package:material_ui/material_ui.dart';
 
 import 'database.dart';
+import 'headsigns.dart';
 import 'places.dart';
 import 'saved.dart';
 import 'settings.dart';
 
 /// The app's persistent state: what screens are about, stored by ID so that routes
-/// can name it, and the app's [settings].
+/// can name it, the app's [settings], and the [headsigns] nearby transit remembers.
 ///
 /// To open a screen about something, put it here and then navigate to its ID; the screen
 /// reads it back by ID. Routes then carry only IDs, so they can be deep-linked and
@@ -16,20 +17,24 @@ class Store {
     : _db = db,
       places = PlaceStore(db),
       saved = SavedStore(db),
-      settings = SettingsStore(db);
+      settings = SettingsStore(db),
+      headsigns = HeadsignStore(db);
 
   /// The store in the app's database.
   Store.open() : this(CardinalDatabase.open());
 
   /// A store of [places] and [saved] without a database, for widget tests to give
-  /// fakes. Settings are kept in memory unless [settings] is given.
+  /// fakes. Settings and headsigns are kept in memory unless [settings] or [headsigns]
+  /// is given.
   @visibleForTesting
   Store.withoutDatabase({
     required this.places,
     required this.saved,
     SettingsStore? settings,
+    HeadsignStore? headsigns,
   }) : _db = null,
-       settings = settings ?? SettingsStore.inMemory();
+       settings = settings ?? SettingsStore.inMemory(),
+       headsigns = headsigns ?? HeadsignStore.inMemory();
 
   final CardinalDatabase? _db;
 
@@ -38,6 +43,8 @@ class Store {
   final SavedStore saved;
 
   final SettingsStore settings;
+
+  final HeadsignStore headsigns;
 
   /// Deletes what hasn't been used in a while.
   Future<void> prune() => places.prune();
