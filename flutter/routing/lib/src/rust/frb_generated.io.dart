@@ -282,6 +282,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SpeedLimitSign dco_decode_box_autoadd_speed_limit_sign(dynamic raw);
+
+  @protected
+  SpeedLimitUnit dco_decode_box_autoadd_speed_limit_unit(dynamic raw);
+
+  @protected
   int dco_decode_box_autoadd_u_16(dynamic raw);
 
   @protected
@@ -418,6 +424,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   NavProgress dco_decode_nav_progress(dynamic raw);
 
   @protected
+  NavSpeedLimit dco_decode_nav_speed_limit(dynamic raw);
+
+  @protected
   NavSpokenInstruction dco_decode_nav_spoken_instruction(dynamic raw);
 
   @protected
@@ -478,6 +487,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SpeedLimitSign? dco_decode_opt_box_autoadd_speed_limit_sign(dynamic raw);
+
+  @protected
+  SpeedLimitUnit? dco_decode_opt_box_autoadd_speed_limit_unit(dynamic raw);
+
+  @protected
   int? dco_decode_opt_box_autoadd_u_16(dynamic raw);
 
   @protected
@@ -509,6 +524,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SimulationError dco_decode_simulation_error(dynamic raw);
+
+  @protected
+  SpeedLimitKind dco_decode_speed_limit_kind(dynamic raw);
+
+  @protected
+  SpeedLimitSign dco_decode_speed_limit_sign(dynamic raw);
+
+  @protected
+  SpeedLimitUnit dco_decode_speed_limit_unit(dynamic raw);
 
   @protected
   TileCheckError dco_decode_tile_check_error(dynamic raw);
@@ -778,6 +802,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SpeedLimitSign sse_decode_box_autoadd_speed_limit_sign(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SpeedLimitUnit sse_decode_box_autoadd_speed_limit_unit(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   int sse_decode_box_autoadd_u_16(SseDeserializer deserializer);
 
   @protected
@@ -932,6 +966,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   NavProgress sse_decode_nav_progress(SseDeserializer deserializer);
 
   @protected
+  NavSpeedLimit sse_decode_nav_speed_limit(SseDeserializer deserializer);
+
+  @protected
   NavSpokenInstruction sse_decode_nav_spoken_instruction(
     SseDeserializer deserializer,
   );
@@ -1008,6 +1045,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SpeedLimitSign? sse_decode_opt_box_autoadd_speed_limit_sign(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SpeedLimitUnit? sse_decode_opt_box_autoadd_speed_limit_unit(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   int? sse_decode_opt_box_autoadd_u_16(SseDeserializer deserializer);
 
   @protected
@@ -1043,6 +1090,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SimulationError sse_decode_simulation_error(SseDeserializer deserializer);
+
+  @protected
+  SpeedLimitKind sse_decode_speed_limit_kind(SseDeserializer deserializer);
+
+  @protected
+  SpeedLimitSign sse_decode_speed_limit_sign(SseDeserializer deserializer);
+
+  @protected
+  SpeedLimitUnit sse_decode_speed_limit_unit(SseDeserializer deserializer);
 
   @protected
   TileCheckError sse_decode_tile_check_error(SseDeserializer deserializer);
@@ -1354,6 +1410,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_speed_limit_sign(
+    SpeedLimitSign self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_speed_limit_unit(
+    SpeedLimitUnit self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_u_16(int self, SseSerializer serializer);
 
   @protected
@@ -1564,6 +1632,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_nav_progress(NavProgress self, SseSerializer serializer);
 
   @protected
+  void sse_encode_nav_speed_limit(NavSpeedLimit self, SseSerializer serializer);
+
+  @protected
   void sse_encode_nav_spoken_instruction(
     NavSpokenInstruction self,
     SseSerializer serializer,
@@ -1654,6 +1725,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_speed_limit_sign(
+    SpeedLimitSign? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_speed_limit_unit(
+    SpeedLimitUnit? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_u_16(int? self, SseSerializer serializer);
 
   @protected
@@ -1701,6 +1784,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_simulation_error(
     SimulationError self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_speed_limit_kind(
+    SpeedLimitKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_speed_limit_sign(
+    SpeedLimitSign self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_speed_limit_unit(
+    SpeedLimitUnit self,
     SseSerializer serializer,
   );
 

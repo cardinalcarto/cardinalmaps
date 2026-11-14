@@ -242,7 +242,9 @@ fn device_config() -> RouterConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::directions::{DirectionsAdapter, DirectionsPoint, DistanceUnits};
+    use crate::api::directions::{
+        DirectionsAdapter, DirectionsPoint, DistanceUnits, SpeedLimitSign, SpeedLimitUnit,
+    };
     use ferrostar::models::RouteStep;
     use ferrostar::routing_adapters::{RouteAdapter, WellKnownRouteProvider};
     use std::path::PathBuf;
@@ -282,7 +284,7 @@ mod tests {
         let tiles = std::env::var("CARDINAL_SEATTLE_TILES").expect("CARDINAL_SEATTLE_TILES");
         let router = OfflineRouter::open(vec![tiles], None).ok().unwrap();
         let endpoint = "http://router/route";
-        let request = DirectionsAdapter::valhalla(
+        let adapter = DirectionsAdapter::valhalla(
             endpoint.into(),
             "auto".into(),
             2,
@@ -290,9 +292,8 @@ mod tests {
             DistanceUnits::Miles,
             false,
         )
-        .unwrap()
-        .request(from, to)
         .unwrap();
+        let request = adapter.request(from, to).unwrap();
         // Ferrostar's request already asks for the shape attributes that become the
         // annotation, speed limits among them; the app adds nothing for them.
         let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
@@ -310,6 +311,14 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&response.body)
         );
+        // The app's adapter has each step's speed limits signed as the US signs them,
+        // on MUTCD signs in mph, for every route.
+        for route in adapter.parse(response.body.clone()).unwrap() {
+            for step in route.navigable.steps() {
+                assert_eq!(step.speed_limit_sign, Some(SpeedLimitSign::Mutcd));
+                assert_eq!(step.speed_limit_unit, Some(SpeedLimitUnit::MilesPerHour));
+            }
+        }
         // Ferrostar's parser doesn't depend on the request's options.
         let parser =
             RouteAdapter::from_well_known_route_provider(WellKnownRouteProvider::Valhalla {

@@ -69,6 +69,19 @@
 // 8. `8-arrival-landscape.png`: 7 in landscape.
 // 9. `9-arrival-dark.png`: 7 in the dark theme.
 //
+// `guidance`, for lane guidance, exit badges and the speed-limit sign:
+//
+// 1. `1-freeway-portrait.png`: a drive of its own down I-5 from Northgate to
+//    downtown, at the first banner with an exit number and lanes (exit 165B, to Union
+//    Street), with the speed-limit sign showing. The long drive's exit has neither.
+// 2. `2-freeway-landscape.png`: 1 in landscape.
+// 3. `3-freeway-dark.png`: 1 in the dark theme.
+// 4. `4-residential.png`: a short drive of its own through Wallingford, from Woodlawn
+//    Avenue North to Eastern Avenue North, 300 m along once the sign shows 25 mph or
+//    less: Seattle posts 20 mph on residential streets and 25 on arterials.
+//
+// A Vienna sign can't be shown in Seattle; the widget tests cover it.
+//
 // The overview and Recenter are pressed by calling the buttons' own callbacks, as a tap
 // would, rather than by tapping.
 //
@@ -97,6 +110,7 @@ import 'package:cardinal/navigation/navigation_page.dart';
 import 'package:cardinal/navigation/navigation_scope.dart';
 import 'package:cardinal/navigation/navigation_status.dart';
 import 'package:cardinal/navigation/road_name.dart';
+import 'package:cardinal/navigation/speed_limit.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/store/src/database.dart' show SettingRow;
 import 'package:cardinal/store/store.dart';
@@ -120,8 +134,8 @@ const outDir = String.fromEnvironment('CARDINAL_SCREENSHOTS_DIR');
 const bucketDir = String.fromEnvironment('CARDINAL_SCREENSHOTS_BUCKET');
 const releasesUrl = String.fromEnvironment('CARDINAL_RELEASES_URL');
 
-/// Which screenshots to take: `banner`, `progress`, `buttons`, `steps` or `status` (see
-/// above).
+/// Which screenshots to take: `banner`, `progress`, `buttons`, `steps`, `status` or
+/// `guidance` (see above).
 const shotSet = String.fromEnvironment(
   'CARDINAL_SCREENSHOTS_SET',
   defaultValue: 'banner',
@@ -135,6 +149,16 @@ const destinationId = 'dev:navigation-screenshots';
 /// Northeast has a secondary row.
 const start = LngLat(-122.3373, 47.6107);
 const destination = LngLat(-122.3127, 47.6600);
+
+/// I-5 south from Northgate to downtown, leaving it at exit 165B to Union Street,
+/// whose banner has its exit number and lanes.
+const northgate = LngLat(-122.3255, 47.7066);
+const downtown = LngLat(-122.3321, 47.6062);
+
+/// Wallingford, from Woodlawn Avenue North to Eastern Avenue North by North 45th Street:
+/// 20 mph residential streets either side of a 25 mph arterial.
+const wallingfordStart = LngLat(-122.3390, 47.6585);
+const wallingfordEnd = LngLat(-122.3290, 47.6630);
 
 const portrait = Size(412, 915);
 
@@ -150,7 +174,7 @@ void main() {
 
   testWidgets(
     'navigation screenshots',
-    timeout: const Timeout(Duration(minutes: 10)),
+    timeout: const Timeout(Duration(minutes: 30)),
     (tester) async {
       if (outDir.isEmpty || !simulateNavigation) {
         fail(
@@ -163,10 +187,11 @@ void main() {
         'buttons',
         'steps',
         'status',
+        'guidance',
       }.contains(shotSet)) {
         fail(
-          'CARDINAL_SCREENSHOTS_SET is banner, progress, buttons, steps or '
-          'status, not $shotSet',
+          'CARDINAL_SCREENSHOTS_SET is banner, progress, buttons, steps, '
+          'status or guidance, not $shotSet',
         );
       }
       await Directory(outDir).create(recursive: true);
@@ -235,6 +260,23 @@ void main() {
               ..paused = false
               ..offsetNorth = 0;
           }
+          return;
+        }
+        if (shotSet == 'guidance') {
+          final freeway = await _route(routes, northgate, to: downtown);
+          _logSteps(freeway);
+          await _navigate(tester, context, freeway);
+          await _guidance(tester, binding, controller);
+          await _end(tester, context);
+          final residential = await _route(
+            routes,
+            wallingfordStart,
+            to: wallingfordEnd,
+          );
+          _logSteps(residential);
+          await _navigate(tester, context, residential);
+          await _residential(tester, controller);
+          await _end(tester, context);
           return;
         }
         if (shotSet == 'buttons') {
@@ -589,14 +631,81 @@ void _press(WidgetTester tester, String tooltip) {
   buttons.singleWhere((b) => b.tooltip == tooltip).onPressed();
 }
 
-/// The fastest driving route from [from] to [destination].
-Future<DirectionsRoute> _route(RouteSource routes, LngLat from) async =>
-    (await routes.routes(
-      mode: TravelMode.driving,
-      wheelchair: false,
-      from: from,
-      to: destination,
-    )).first;
+/// The fastest driving route from [from] to [to], [destination] unless given.
+Future<DirectionsRoute> _route(
+  RouteSource routes,
+  LngLat from, {
+  LngLat to = destination,
+}) async => (await routes.routes(
+  mode: TravelMode.driving,
+  wheelchair: false,
+  from: from,
+  to: to,
+)).first;
+
+/// On the drive down I-5 from Northgate: the first banner with both an exit number and
+/// lanes, with the speed-limit sign showing, in portrait, landscape and the dark
+/// theme. It's 13 minutes in, at the simulation's 50 km/h.
+Future<void> _guidance(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding,
+  NavigationController controller,
+) async {
+  final found = await _waitFor(tester, controller, (update) {
+    final primary = update.visualInstruction?.primary;
+    final lanes = update.visualInstruction?.sub?.lanes ?? const [];
+    return speedLimitOf(controller) != null &&
+        lanes.isNotEmpty &&
+        (primary?.exitNumbers.isNotEmpty ?? false);
+  }, within: const Duration(minutes: 18));
+  if (found == null) {
+    debugPrint('nav-shots: no banner with an exit number and lanes');
+    return;
+  }
+  await _shoot(tester, '1-freeway-portrait', controller);
+  _setView(tester, landscape: true);
+  await _settle(tester, const Duration(seconds: 2));
+  await _shoot(tester, '2-freeway-landscape', controller);
+  _setView(tester, landscape: false);
+  await _settle(tester, const Duration(seconds: 1));
+  _brightness(binding, Brightness.dark);
+  await _settle(tester, const Duration(seconds: 2));
+  await _shoot(tester, '3-freeway-dark', controller);
+  _brightness(binding, Brightness.light);
+  await _settle(tester, const Duration(seconds: 1));
+}
+
+/// On the Wallingford drive, once it's 300 m along and the speed-limit sign shows
+/// 25 mph or less.
+Future<void> _residential(
+  WidgetTester tester,
+  NavigationController controller,
+) async {
+  double? first;
+  final found = await _waitFor(tester, controller, (update) {
+    final left = update.progress?.distanceRemaining;
+    if (left == null) return false;
+    first ??= left;
+    final speed = speedLimitOf(controller)?.speed;
+    return left < first! - 300 && speed != null && speed <= 25;
+  }, within: const Duration(minutes: 3));
+  if (found == null) {
+    debugPrint('nav-shots: no limit of 25 mph or less in Wallingford');
+    return;
+  }
+  await _shoot(tester, '4-residential', controller);
+}
+
+/// What the guidance on the screen is, for the log.
+String _describe(NavigationController controller) {
+  final update = controller.update;
+  final visual = update?.visualInstruction;
+  final lanes = visual?.sub?.lanes ?? const <NavLane>[];
+  return 'exit ${visual?.primary.exitNumbers}, lanes '
+      '${[for (final l in lanes) '${l.active ? '*' : ''}${l.directions.join('+')}']}, '
+      'limit ${speedLimitOf(controller)} (${update?.speedLimit.kind.name} '
+      '${update?.speedLimit.kph})';
+}
 
 /// Starts navigating [route] and opens the navigation screen, as directions' Start
 /// Navigation does.
@@ -791,7 +900,7 @@ Future<void> _capture(
     '${controller.update?.progress?.distanceRemaining.round()} m and '
     '${controller.update?.progress?.durationRemaining.round()} s left; '
     '${controller.state.name}, ${controller.locationProblem?.name}, '
-    '${controller.rerouteFailure?.name}',
+    '${controller.rerouteFailure?.name}; ${_describe(controller)}',
   );
 }
 
@@ -819,7 +928,8 @@ void _logSteps(DirectionsRoute route) {
       'nav-shots: step $i ${banner?.primary.maneuverType?.name} '
       '${banner?.primary.maneuverModifier?.name} "${banner?.primary.text}"'
       '${banner?.secondary == null ? '' : ' / "${banner!.secondary!.text}"'} '
-      '${step.distance.round()} m',
+      '${step.distance.round()} m; banners ${[for (final v in step.visualInstructions) '${v.triggerDistanceBeforeManeuver.round()} m: exit ${v.primary.exitNumbers} lanes ${v.sub?.lanes.length ?? 0}']} '
+      '${step.speedLimitSign?.name} ${step.speedLimitUnit?.name}',
     );
   }
 }

@@ -11,6 +11,7 @@
 
 use super::directions::{
     DirectionsAdapter, DirectionsError, DirectionsPoint, DirectionsRequest, NavigableRoute,
+    SpeedLimitSign, SpeedLimitUnit,
 };
 use super::matching::MatchedPosition;
 use ferrostar::algorithms::deviation_from_line;
@@ -770,6 +771,12 @@ pub struct NavStep {
     pub driving_side: Option<NavDrivingSide>,
     /// For a roundabout, the exit to take (1 is the first).
     pub roundabout_exit_number: Option<u32>,
+    /// The kind of sign speed limits are posted on where the step is; none if the
+    /// router didn't say.
+    pub speed_limit_sign: Option<SpeedLimitSign>,
+    /// The unit speed limits are posted in where the step is, whatever unit the app
+    /// shows distances in; none if the router didn't say.
+    pub speed_limit_unit: Option<SpeedLimitUnit>,
 }
 
 /// Where in the route's line each step's line starts.
@@ -803,12 +810,13 @@ impl NavigableRoute {
             .steps
             .iter()
             .zip(starts)
-            .map(|(step, start)| nav_step(step, start))
+            .enumerate()
+            .map(|(i, (step, start))| nav_step(step, start, self.step_signs(i)))
             .collect()
     }
 }
 
-fn nav_step(step: &RouteStep, start: usize) -> NavStep {
+fn nav_step(step: &RouteStep, start: usize, signs: super::directions::StepSigns) -> NavStep {
     let step = step.clone();
     NavStep {
         road_name: step.road_name,
@@ -830,6 +838,69 @@ fn nav_step(step: &RouteStep, start: usize) -> NavStep {
         geometry_start: start as u32,
         driving_side: step.driving_side.map(Into::into),
         roundabout_exit_number: step.roundabout_exit_number.map(u32::from),
+        speed_limit_sign: signs.sign,
+        speed_limit_unit: signs.unit,
+    }
+}
+
+/// What a speed limit is, as a route's annotations say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpeedLimitKind {
+    /// There's a limit, [`NavSpeedLimit::kph`].
+    Limited,
+    /// There's no limit, as on parts of Germany's autobahns.
+    Unlimited,
+    /// The map doesn't say.
+    Unknown,
+}
+
+/// The speed limit where you are.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NavSpeedLimit {
+    pub kind: SpeedLimitKind,
+    /// The limit in km/h, as annotations always give it, even where signs are in mph;
+    /// only when [`SpeedLimitKind::Limited`].
+    pub kph: Option<f64>,
+}
+
+impl NavSpeedLimit {
+    const UNKNOWN: Self = Self {
+        kind: SpeedLimitKind::Unknown,
+        kph: None,
+    };
+
+    /// The limit in an annotation's JSON, as Ferrostar gives the stretch you're on
+    /// (`TripState::Navigating.annotation_json`): its `maxspeed`, which is
+    /// `{"speed": 97, "unit": "km/h"}`, `{"none": true}` or `{"unknown": true}`. Anything
+    /// else, a missing annotation or `maxspeed` included, is unknown.
+    fn from_annotation(json: Option<&str>) -> Self {
+        let Some(annotation) =
+            json.and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+        else {
+            return Self::UNKNOWN;
+        };
+        let maxspeed = &annotation["maxspeed"];
+        if maxspeed["none"] == true {
+            return Self {
+                kind: SpeedLimitKind::Unlimited,
+                kph: None,
+            };
+        }
+        let speed = maxspeed["speed"].as_f64().filter(|speed| *speed > 0.0);
+        // Valhalla converts every limit to km/h, and mainline says so; a limit in any
+        // other unit would be read wrong, so it isn't read.
+        let kph = match maxspeed["unit"].as_str() {
+            Some("km/h") | None => speed,
+            Some("mph") => speed.map(|mph| mph * 1.609_344),
+            Some(_) => None,
+        };
+        match kph {
+            Some(kph) => Self {
+                kind: SpeedLimitKind::Limited,
+                kph: Some(kph),
+            },
+            None => Self::UNKNOWN,
+        }
     }
 }
 
@@ -880,6 +951,9 @@ pub struct NavUpdate {
     pub spoken_instruction: Option<NavSpokenInstruction>,
     /// Only while navigating.
     pub progress: Option<NavProgress>,
+    /// The speed limit on the stretch of the route at the snapped location; unknown
+    /// unless navigating.
+    pub speed_limit: NavSpeedLimit,
 }
 
 /// A trip along one route: Ferrostar's controller, and the state it threads through fixes.
@@ -925,6 +999,7 @@ impl Trip {
                 visual_instruction: None,
                 spoken_instruction: None,
                 progress: None,
+                speed_limit: NavSpeedLimit::UNKNOWN,
             },
             TripState::Complete { user_location, .. } => NavUpdate {
                 status: TripStatus::Complete,
@@ -939,6 +1014,7 @@ impl Trip {
                 visual_instruction: None,
                 spoken_instruction: None,
                 progress: None,
+                speed_limit: NavSpeedLimit::UNKNOWN,
             },
             TripState::Navigating {
                 current_step_geometry_index,
@@ -949,6 +1025,7 @@ impl Trip {
                 deviation,
                 visual_instruction,
                 spoken_instruction,
+                annotation_json,
                 ..
             } => {
                 let step_index = self.route.steps.len() - remaining_steps.len();
@@ -988,6 +1065,7 @@ impl Trip {
                         distance_remaining: progress.distance_remaining,
                         duration_remaining: progress.duration_remaining,
                     }),
+                    speed_limit: NavSpeedLimit::from_annotation(annotation_json.as_deref()),
                 }
             }
         }
@@ -1640,6 +1718,87 @@ mod tests {
                 .iter()
                 .any(|b| b.primary.maneuver_type == Some(ManeuverType::Arrive))
         );
+    }
+
+    #[test]
+    fn a_speed_limit_is_read_from_the_annotation() {
+        let limit = |json: Option<&str>| NavSpeedLimit::from_annotation(json);
+        let limited = |kph: f64| NavSpeedLimit {
+            kind: SpeedLimitKind::Limited,
+            kph: Some(kph),
+        };
+        // A number, in km/h as annotations always are.
+        assert_eq!(
+            limit(Some(
+                r#"{"maxspeed":{"speed":97,"unit":"km/h"},"speed":26.4,"distance":12.1}"#
+            )),
+            limited(97.0)
+        );
+        // Without a unit, km/h; in mph, converted, should a router give one.
+        assert_eq!(limit(Some(r#"{"maxspeed":{"speed":50}}"#)), limited(50.0));
+        assert_eq!(
+            limit(Some(r#"{"maxspeed":{"speed":60,"unit":"mph"}}"#)),
+            limited(60.0 * 1.609_344)
+        );
+        // No limit.
+        assert_eq!(
+            limit(Some(r#"{"maxspeed":{"none":true}}"#)),
+            NavSpeedLimit {
+                kind: SpeedLimitKind::Unlimited,
+                kph: None,
+            }
+        );
+        // Unknown, said or not.
+        for json in [
+            Some(r#"{"maxspeed":{"unknown":true}}"#),
+            Some(r#"{"speed":26.4}"#),
+            Some(r#"{"maxspeed":{"speed":0,"unit":"km/h"}}"#),
+            Some(r#"{"maxspeed":{"speed":50,"unit":"knots"}}"#),
+            Some("{}"),
+            Some("not json"),
+            None,
+        ] {
+            assert_eq!(limit(json), NavSpeedLimit::UNKNOWN, "{json:?}");
+        }
+    }
+
+    #[test]
+    fn a_trip_has_the_speed_limit_of_where_it_is() {
+        let route = capture("ferrostar_auto", "auto");
+        let updates = simulate(&route, NavigationMode::Driving);
+        let limits: Vec<_> = updates
+            .iter()
+            .filter(|update| update.status == TripStatus::Navigating)
+            .map(|update| update.speed_limit)
+            .collect();
+        // The capture's streets are 50 km/h, or have no limit in the map.
+        assert!(limits.contains(&NavSpeedLimit {
+            kind: SpeedLimitKind::Limited,
+            kph: Some(50.0),
+        }));
+        assert!(limits.contains(&NavSpeedLimit::UNKNOWN));
+        let complete = updates.last().unwrap();
+        assert_eq!(complete.status, TripStatus::Complete);
+        assert_eq!(complete.speed_limit, NavSpeedLimit::UNKNOWN);
+    }
+
+    #[test]
+    fn steps_say_how_speed_limits_are_signed() {
+        for (name, costing, _) in TRIPS {
+            for step in capture(name, costing).steps() {
+                // Andorra's are on Vienna signs, in km/h.
+                assert_eq!(
+                    step.speed_limit_sign,
+                    Some(SpeedLimitSign::Vienna),
+                    "{name}"
+                );
+                assert_eq!(
+                    step.speed_limit_unit,
+                    Some(SpeedLimitUnit::KilometersPerHour),
+                    "{name}"
+                );
+            }
+        }
     }
 
     #[test]

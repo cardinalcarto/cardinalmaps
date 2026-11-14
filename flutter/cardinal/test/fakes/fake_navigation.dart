@@ -42,6 +42,7 @@ NavUpdate fakeUpdate({
   int geometryIndex = 0,
   NavVisualInstruction? visual,
   double? toManeuver,
+  NavSpeedLimit speedLimit = const NavSpeedLimit(kind: SpeedLimitKind.unknown),
 }) => NavUpdate(
   status: status,
   location: location,
@@ -62,10 +63,17 @@ NavUpdate fakeUpdate({
           distanceRemaining: toManeuver + 1000,
           durationRemaining: toManeuver / 10 + 100,
         ),
+  speedLimit: speedLimit,
 );
 
-/// A step of a navigated route along [roadName], with nothing else to it.
-NavStep fakeNavStep(String? roadName) => NavStep(
+/// A step of a navigated route along [roadName], with nothing else to it but how its
+/// speed limits are signed, and where traffic keeps.
+NavStep fakeNavStep(
+  String? roadName, {
+  SpeedLimitSign? sign,
+  SpeedLimitUnit? unit,
+  NavDrivingSide? drivingSide,
+}) => NavStep(
   roadName: roadName,
   instruction: 'Drive along ${roadName ?? 'the road'}.',
   distance: 100,
@@ -75,6 +83,9 @@ NavStep fakeNavStep(String? roadName) => NavStep(
   spokenInstructions: const [],
   geometry: const [],
   geometryStart: 0,
+  speedLimitSign: sign,
+  speedLimitUnit: unit,
+  drivingSide: drivingSide,
 );
 
 /// A step [distance] long whose banner, for the maneuver at its end, says [text], for
@@ -85,6 +96,8 @@ NavStep fakeManeuverStep(
   ManeuverType? type,
   ManeuverModifier? modifier,
   String? roadName,
+  List<String> exitNumbers = const [],
+  List<NavLane> lanes = const [],
 }) => NavStep(
   roadName: roadName,
   instruction: text,
@@ -92,35 +105,65 @@ NavStep fakeManeuverStep(
   duration: distance / 10,
   exits: const [],
   visualInstructions: [
-    fakeVisual(fakeContent(text, type: type, modifier: modifier)),
+    fakeVisual(
+      fakeContent(
+        text,
+        type: type,
+        modifier: modifier,
+        exitNumbers: exitNumbers,
+      ),
+      sub: lanes.isEmpty ? null : fakeLanes(lanes),
+    ),
   ],
   spokenInstructions: const [],
   geometry: const [],
   geometryStart: 0,
 );
 
-/// A banner line saying [text], for a maneuver of [type] and [modifier].
+/// A banner line saying [text], for a maneuver of [type] and [modifier], with [lanes]
+/// and [exitNumbers].
 NavInstructionContent fakeContent(
   String text, {
   ManeuverType? type,
   ManeuverModifier? modifier,
+  List<NavLane> lanes = const [],
+  List<String> exitNumbers = const [],
 }) => NavInstructionContent(
   text: text,
   maneuverType: type,
   maneuverModifier: modifier,
-  lanes: const [],
-  exitNumbers: const [],
+  lanes: lanes,
+  exitNumbers: exitNumbers,
 );
 
-/// A banner with [primary], and [secondary] under it if given.
+/// A banner with [primary], and [secondary] under it if given, and [sub], such as lane
+/// guidance.
 NavVisualInstruction fakeVisual(
   NavInstructionContent primary, {
   NavInstructionContent? secondary,
+  NavInstructionContent? sub,
 }) => NavVisualInstruction(
   primary: primary,
   secondary: secondary,
+  sub: sub,
   triggerDistanceBeforeManeuver: 400,
 );
+
+/// A lane with arrows pointing [directions], [active] for the maneuver toward
+/// [activeDirection].
+NavLane fakeLane(
+  List<String> directions, {
+  bool active = false,
+  String? activeDirection,
+}) => NavLane(
+  active: active,
+  directions: directions,
+  activeDirection: activeDirection,
+);
+
+/// Lane guidance for a banner: a sub line of no text with [lanes].
+NavInstructionContent fakeLanes(List<NavLane> lanes) =>
+    fakeContent('', lanes: lanes);
 
 /// An announcement with [id], saying [text].
 NavSpokenInstruction fakeSpoken(String id, [String? text]) =>

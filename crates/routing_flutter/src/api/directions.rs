@@ -11,6 +11,7 @@ use ferrostar::models::{
 use ferrostar::routing_adapters::error::ParsingError;
 use ferrostar::routing_adapters::{RouteAdapter, RouteRequest, WellKnownRouteProvider};
 use flutter_rust_bridge::frb;
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -68,6 +69,100 @@ impl From<RouteStep> for DirectionsStep {
     }
 }
 
+/// The kind of sign a country posts its speed limits on, as Valhalla says for each step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpeedLimitSign {
+    /// The United States' (and a few others'): a white rectangle reading "Speed limit"
+    /// over the number.
+    Mutcd,
+    /// The Vienna Convention's, as in most of the world: a red ring around the number.
+    Vienna,
+}
+
+/// The unit a country's speed-limit signs are in, as Valhalla says for each step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpeedLimitUnit {
+    KilometersPerHour,
+    MilesPerHour,
+}
+
+/// How a step's speed limits are signed where it is: what Valhalla's OSRM answer gives
+/// each step as `speedLimitSign` and `speedLimitUnit`, which Ferrostar's parser drops.
+/// Dart has them on each `NavStep`.
+#[frb(ignore)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StepSigns {
+    pub(crate) sign: Option<SpeedLimitSign>,
+    pub(crate) unit: Option<SpeedLimitUnit>,
+}
+
+/// The little of an OSRM answer that Ferrostar's parser leaves out and the app wants:
+/// each step's speed-limit sign and unit. Everything else in the answer is skipped.
+#[derive(Deserialize)]
+struct OsrmSigns {
+    #[serde(default)]
+    routes: Vec<OsrmSignsRoute>,
+}
+
+#[derive(Deserialize)]
+struct OsrmSignsRoute {
+    #[serde(default)]
+    legs: Vec<OsrmSignsLeg>,
+}
+
+#[derive(Deserialize)]
+struct OsrmSignsLeg {
+    #[serde(default)]
+    steps: Vec<OsrmSignsStep>,
+}
+
+#[derive(Deserialize)]
+struct OsrmSignsStep {
+    #[serde(rename = "speedLimitSign")]
+    sign: Option<String>,
+    #[serde(rename = "speedLimitUnit")]
+    unit: Option<String>,
+}
+
+impl From<OsrmSignsStep> for StepSigns {
+    fn from(step: OsrmSignsStep) -> Self {
+        Self {
+            sign: match step.sign.as_deref() {
+                Some("mutcd") => Some(SpeedLimitSign::Mutcd),
+                Some("vienna") => Some(SpeedLimitSign::Vienna),
+                _ => None,
+            },
+            unit: match step.unit.as_deref() {
+                Some("km/h") => Some(SpeedLimitUnit::KilometersPerHour),
+                Some("mph") => Some(SpeedLimitUnit::MilesPerHour),
+                _ => None,
+            },
+        }
+    }
+}
+
+/// Each route's [`StepSigns`] in an OSRM answer's `body`, step by step as Ferrostar lays
+/// a route's steps out: every leg's, in order. Empty if the answer doesn't parse, which
+/// leaves every step without them.
+fn step_signs(body: &[u8]) -> Vec<Vec<StepSigns>> {
+    serde_json::from_slice::<OsrmSigns>(body)
+        .map(|answer| {
+            answer
+                .routes
+                .into_iter()
+                .map(|route| {
+                    route
+                        .legs
+                        .into_iter()
+                        .flat_map(|leg| leg.steps)
+                        .map(Into::into)
+                        .collect()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// A route as Ferrostar parsed it, whole: what navigation follows. Opaque to Dart.
 ///
 /// [`DirectionsRoute`] summarizes it for the directions sheet; navigation starts from this,
@@ -79,6 +174,16 @@ pub struct NavigableRoute {
     /// The locale its instructions are in, as [`valhalla_language`] resolved the one asked
     /// for: what the announcements are spoken in.
     pub(crate) language: &'static str,
+    /// How each of the route's steps has its speed limits signed, one for each of
+    /// `route.steps`; or none at all if the answer didn't say for every step.
+    pub(crate) signs: Vec<StepSigns>,
+}
+
+impl NavigableRoute {
+    /// How the step at `index` has its speed limits signed; unsaid if the answer didn't.
+    pub(crate) fn step_signs(&self, index: usize) -> StepSigns {
+        self.signs.get(index).copied().unwrap_or_default()
+    }
 }
 
 impl NavigableRoute {
@@ -113,15 +218,23 @@ pub struct DirectionsRoute {
 }
 
 impl DirectionsRoute {
-    /// `route`, its instructions in `language`.
-    fn new(route: Route, language: &'static str) -> Self {
+    /// `route`, its instructions in `language`, with `signs` for its steps: none unless
+    /// there's one for each step.
+    fn new(route: Route, language: &'static str, mut signs: Vec<StepSigns>) -> Self {
+        if signs.len() != route.steps.len() {
+            signs.clear();
+        }
         Self {
             geometry: route.geometry.iter().copied().map(Into::into).collect(),
             distance: route.distance,
             // Ferrostar's routes have no total of their own.
             duration: route.steps.iter().map(|step| step.duration).sum(),
             steps: route.steps.iter().cloned().map(Into::into).collect(),
-            navigable: NavigableRoute { route, language },
+            navigable: NavigableRoute {
+                route,
+                language,
+                signs,
+            },
         }
     }
 }
@@ -308,11 +421,18 @@ impl DirectionsAdapter {
     /// Not `#[frb(sync)]`: an answer can be megabytes of JSON, so this runs off the UI
     /// thread. The status of the answer doesn't matter, since an error's body says what
     /// went wrong.
+    ///
+    /// Ferrostar's parser reads the routes; the answer is read again only for what it
+    /// leaves out, each step's speed-limit sign and unit.
     pub fn parse(&self, body: Vec<u8>) -> Result<Vec<DirectionsRoute>, DirectionsError> {
+        let signs = step_signs(&body);
         let routes = self.adapter.parse_response(body)?;
+        let mut signs = signs.into_iter();
         Ok(routes
             .into_iter()
-            .map(|route| DirectionsRoute::new(route, self.language))
+            .map(|route| {
+                DirectionsRoute::new(route, self.language, signs.next().unwrap_or_default())
+            })
             .collect())
     }
 }
@@ -446,6 +566,100 @@ mod tests {
             adapter().parse(b"<html>".to_vec()).unwrap_err().kind,
             DirectionsErrorKind::Failed
         );
+    }
+
+    /// The routes in a fixture of a router's answer, as the app's adapter reads them.
+    fn parse_fixture(path: &str) -> Vec<DirectionsRoute> {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+        let mut body: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        // Valinor's captures hold the answer under `body`.
+        if let Some(inner) = body.get_mut("body") {
+            body = inner.take();
+        }
+        adapter().parse(serde_json::to_vec(&body).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn each_step_keeps_its_speed_limit_sign_and_unit() {
+        // Mainline Valhalla's answer in Seattle, which signs in mph on MUTCD signs.
+        let routes = parse_fixture("fixtures/wallingford_osrm.json");
+        let navigable = &routes[0].navigable;
+        assert_eq!(navigable.route.steps.len(), 8);
+        assert_eq!(navigable.signs.len(), 8);
+        for i in 0..8 {
+            assert_eq!(
+                navigable.step_signs(i),
+                StepSigns {
+                    sign: Some(SpeedLimitSign::Mutcd),
+                    unit: Some(SpeedLimitUnit::MilesPerHour),
+                }
+            );
+        }
+
+        // Valinor's in Andorra, through a waypoint, on Vienna signs in km/h: the legs'
+        // steps are one list, as Ferrostar's are.
+        let routes = parse_fixture(
+            "../../valinor/valinor-tyr/fixtures/captures/andorra/ferrostar_auto_via/osrm/response.json",
+        );
+        let navigable = &routes[0].navigable;
+        assert!(navigable.route.steps.len() > 2);
+        assert_eq!(navigable.signs.len(), navigable.route.steps.len());
+        assert!(navigable.signs.iter().all(|signs| *signs
+            == StepSigns {
+                sign: Some(SpeedLimitSign::Vienna),
+                unit: Some(SpeedLimitUnit::KilometersPerHour),
+            }));
+    }
+
+    #[test]
+    fn signs_are_unsaid_where_the_answer_does_not_say() {
+        // An unknown sign or unit is none, and the other still counts.
+        let step = |sign: Option<&str>, unit: Option<&str>| {
+            StepSigns::from(OsrmSignsStep {
+                sign: sign.map(Into::into),
+                unit: unit.map(Into::into),
+            })
+        };
+        assert_eq!(
+            step(Some("china"), Some("mph")),
+            StepSigns {
+                sign: None,
+                unit: Some(SpeedLimitUnit::MilesPerHour),
+            }
+        );
+        assert_eq!(step(None, None), StepSigns::default());
+        assert!(step_signs(b"<html>").is_empty());
+
+        // An answer whose steps don't line up with Ferrostar's has none for any step,
+        // rather than some step's for another.
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/wallingford_osrm.json");
+        let mut body: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let mut signs = step_signs(&serde_json::to_vec(&body).unwrap());
+        assert_eq!(signs.len(), 1);
+        signs[0].pop();
+        let route = adapter()
+            .adapter
+            .parse_response(serde_json::to_vec(&body).unwrap())
+            .unwrap()
+            .swap_remove(0);
+        let navigable = DirectionsRoute::new(route, "en-US", signs.swap_remove(0)).navigable;
+        assert!(navigable.signs.is_empty());
+        assert_eq!(navigable.step_signs(0), StepSigns::default());
+
+        // Nor does one without them.
+        for step in body["routes"][0]["legs"][0]["steps"]
+            .as_array_mut()
+            .unwrap()
+        {
+            let step = step.as_object_mut().unwrap();
+            step.remove("speedLimitSign");
+            step.remove("speedLimitUnit");
+        }
+        let routes = adapter().parse(serde_json::to_vec(&body).unwrap()).unwrap();
+        assert_eq!(routes[0].navigable.step_signs(3), StepSigns::default());
     }
 
     /// What Ferrostar parses from the offline router's answer to the request its own

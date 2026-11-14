@@ -8,8 +8,10 @@ import 'navigation.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `failed`, `new`, `request_through`, `valhalla_language`, `valhalla`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`
+// These functions are ignored because they are not marked as `pub`: `failed`, `new`, `request_through`, `step_signs`, `step_signs`, `valhalla_language`, `valhalla`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OsrmSignsLeg`, `OsrmSignsRoute`, `OsrmSignsStep`, `OsrmSigns`, `StepSigns`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DirectionsAdapter>>
 abstract class DirectionsAdapter implements RustOpaqueInterface {
@@ -18,6 +20,9 @@ abstract class DirectionsAdapter implements RustOpaqueInterface {
   /// Not `#[frb(sync)]`: an answer can be megabytes of JSON, so this runs off the UI
   /// thread. The status of the answer doesn't matter, since an error's body says what
   /// went wrong.
+  ///
+  /// Ferrostar's parser reads the routes; the answer is read again only for what it
+  /// leaves out, each step's speed-limit sign and unit.
   Future<List<DirectionsRoute>> parse({required List<int> body});
 
   /// The request for routes from `from` to `to`.
@@ -220,3 +225,16 @@ class DirectionsStep {
 
 /// The units a route's instructions give distances in.
 enum DistanceUnits { kilometers, miles }
+
+/// The kind of sign a country posts its speed limits on, as Valhalla says for each step.
+enum SpeedLimitSign {
+  /// The United States' (and a few others'): a white rectangle reading "Speed limit"
+  /// over the number.
+  mutcd,
+
+  /// The Vienna Convention's, as in most of the world: a red ring around the number.
+  vienna,
+}
+
+/// The unit a country's speed-limit signs are in, as Valhalla says for each step.
+enum SpeedLimitUnit { kilometersPerHour, milesPerHour }

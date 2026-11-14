@@ -2436,6 +2436,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SpeedLimitSign dco_decode_box_autoadd_speed_limit_sign(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_speed_limit_sign(raw);
+  }
+
+  @protected
+  SpeedLimitUnit dco_decode_box_autoadd_speed_limit_unit(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_speed_limit_unit(raw);
+  }
+
+  @protected
   int dco_decode_box_autoadd_u_16(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
@@ -2806,6 +2818,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  NavSpeedLimit dco_decode_nav_speed_limit(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return NavSpeedLimit(
+      kind: dco_decode_speed_limit_kind(arr[0]),
+      kph: dco_decode_opt_box_autoadd_f_64(arr[1]),
+    );
+  }
+
+  @protected
   NavSpokenInstruction dco_decode_nav_spoken_instruction(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2823,8 +2847,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   NavStep dco_decode_nav_step(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 11)
-      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
+    if (arr.length != 13)
+      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
     return NavStep(
       roadName: dco_decode_opt_String(arr[0]),
       instruction: dco_decode_String(arr[1]),
@@ -2837,6 +2861,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       geometryStart: dco_decode_u_32(arr[8]),
       drivingSide: dco_decode_opt_box_autoadd_nav_driving_side(arr[9]),
       roundaboutExitNumber: dco_decode_opt_box_autoadd_u_32(arr[10]),
+      speedLimitSign: dco_decode_opt_box_autoadd_speed_limit_sign(arr[11]),
+      speedLimitUnit: dco_decode_opt_box_autoadd_speed_limit_unit(arr[12]),
     );
   }
 
@@ -2844,8 +2870,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   NavUpdate dco_decode_nav_update(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 12)
-      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
+    if (arr.length != 13)
+      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
     return NavUpdate(
       status: dco_decode_trip_status(arr[0]),
       location: dco_decode_opt_box_autoadd_nav_location(arr[1]),
@@ -2863,6 +2889,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         arr[10],
       ),
       progress: dco_decode_opt_box_autoadd_nav_progress(arr[11]),
+      speedLimit: dco_decode_nav_speed_limit(arr[12]),
     );
   }
 
@@ -2983,6 +3010,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SpeedLimitSign? dco_decode_opt_box_autoadd_speed_limit_sign(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_speed_limit_sign(raw);
+  }
+
+  @protected
+  SpeedLimitUnit? dco_decode_opt_box_autoadd_speed_limit_unit(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_speed_limit_unit(raw);
+  }
+
+  @protected
   int? dco_decode_opt_box_autoadd_u_16(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_u_16(raw);
@@ -3081,6 +3120,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (arr.length != 1)
       throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
     return SimulationError(message: dco_decode_String(arr[0]));
+  }
+
+  @protected
+  SpeedLimitKind dco_decode_speed_limit_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return SpeedLimitKind.values[raw as int];
+  }
+
+  @protected
+  SpeedLimitSign dco_decode_speed_limit_sign(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return SpeedLimitSign.values[raw as int];
+  }
+
+  @protected
+  SpeedLimitUnit dco_decode_speed_limit_unit(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return SpeedLimitUnit.values[raw as int];
   }
 
   @protected
@@ -3639,6 +3696,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SpeedLimitSign sse_decode_box_autoadd_speed_limit_sign(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_speed_limit_sign(deserializer));
+  }
+
+  @protected
+  SpeedLimitUnit sse_decode_box_autoadd_speed_limit_unit(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_speed_limit_unit(deserializer));
+  }
+
+  @protected
   int sse_decode_box_autoadd_u_16(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_u_16(deserializer));
@@ -4144,6 +4217,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  NavSpeedLimit sse_decode_nav_speed_limit(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_kind = sse_decode_speed_limit_kind(deserializer);
+    var var_kph = sse_decode_opt_box_autoadd_f_64(deserializer);
+    return NavSpeedLimit(kind: var_kind, kph: var_kph);
+  }
+
+  @protected
   NavSpokenInstruction sse_decode_nav_spoken_instruction(
     SseDeserializer deserializer,
   ) {
@@ -4182,6 +4263,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_roundaboutExitNumber = sse_decode_opt_box_autoadd_u_32(
       deserializer,
     );
+    var var_speedLimitSign = sse_decode_opt_box_autoadd_speed_limit_sign(
+      deserializer,
+    );
+    var var_speedLimitUnit = sse_decode_opt_box_autoadd_speed_limit_unit(
+      deserializer,
+    );
     return NavStep(
       roadName: var_roadName,
       instruction: var_instruction,
@@ -4194,6 +4281,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       geometryStart: var_geometryStart,
       drivingSide: var_drivingSide,
       roundaboutExitNumber: var_roundaboutExitNumber,
+      speedLimitSign: var_speedLimitSign,
+      speedLimitUnit: var_speedLimitUnit,
     );
   }
 
@@ -4218,6 +4307,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_spokenInstruction =
         sse_decode_opt_box_autoadd_nav_spoken_instruction(deserializer);
     var var_progress = sse_decode_opt_box_autoadd_nav_progress(deserializer);
+    var var_speedLimit = sse_decode_nav_speed_limit(deserializer);
     return NavUpdate(
       status: var_status,
       location: var_location,
@@ -4231,6 +4321,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       visualInstruction: var_visualInstruction,
       spokenInstruction: var_spokenInstruction,
       progress: var_progress,
+      speedLimit: var_speedLimit,
     );
   }
 
@@ -4417,6 +4508,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SpeedLimitSign? sse_decode_opt_box_autoadd_speed_limit_sign(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_speed_limit_sign(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  SpeedLimitUnit? sse_decode_opt_box_autoadd_speed_limit_unit(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_speed_limit_unit(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   int? sse_decode_opt_box_autoadd_u_16(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -4535,6 +4652,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_message = sse_decode_String(deserializer);
     return SimulationError(message: var_message);
+  }
+
+  @protected
+  SpeedLimitKind sse_decode_speed_limit_kind(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return SpeedLimitKind.values[inner];
+  }
+
+  @protected
+  SpeedLimitSign sse_decode_speed_limit_sign(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return SpeedLimitSign.values[inner];
+  }
+
+  @protected
+  SpeedLimitUnit sse_decode_speed_limit_unit(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return SpeedLimitUnit.values[inner];
   }
 
   @protected
@@ -5117,6 +5255,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_speed_limit_sign(
+    SpeedLimitSign self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_speed_limit_sign(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_speed_limit_unit(
+    SpeedLimitUnit self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_speed_limit_unit(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_u_16(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_16(self, serializer);
@@ -5557,6 +5713,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_nav_speed_limit(
+    NavSpeedLimit self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_speed_limit_kind(self.kind, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.kph, serializer);
+  }
+
+  @protected
   void sse_encode_nav_spoken_instruction(
     NavSpokenInstruction self,
     SseSerializer serializer,
@@ -5582,6 +5748,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.geometryStart, serializer);
     sse_encode_opt_box_autoadd_nav_driving_side(self.drivingSide, serializer);
     sse_encode_opt_box_autoadd_u_32(self.roundaboutExitNumber, serializer);
+    sse_encode_opt_box_autoadd_speed_limit_sign(
+      self.speedLimitSign,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_speed_limit_unit(
+      self.speedLimitUnit,
+      serializer,
+    );
   }
 
   @protected
@@ -5605,6 +5779,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       serializer,
     );
     sse_encode_opt_box_autoadd_nav_progress(self.progress, serializer);
+    sse_encode_nav_speed_limit(self.speedLimit, serializer);
   }
 
   @protected
@@ -5785,6 +5960,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_speed_limit_sign(
+    SpeedLimitSign? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_speed_limit_sign(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_speed_limit_unit(
+    SpeedLimitUnit? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_speed_limit_unit(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_u_16(int? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -5896,6 +6097,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.message, serializer);
+  }
+
+  @protected
+  void sse_encode_speed_limit_kind(
+    SpeedLimitKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_speed_limit_sign(
+    SpeedLimitSign self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_speed_limit_unit(
+    SpeedLimitUnit self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -6068,6 +6296,9 @@ class DirectionsAdapterImpl extends RustOpaque implements DirectionsAdapter {
   /// Not `#[frb(sync)]`: an answer can be megabytes of JSON, so this runs off the UI
   /// thread. The status of the answer doesn't matter, since an error's body says what
   /// went wrong.
+  ///
+  /// Ferrostar's parser reads the routes; the answer is read again only for what it
+  /// leaves out, each step's speed-limit sign and unit.
   Future<List<DirectionsRoute>> parse({required List<int> body}) => RustLib
       .instance
       .api

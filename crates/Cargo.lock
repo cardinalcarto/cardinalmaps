@@ -3546,6 +3546,7 @@ dependencies = [
  "illuvatar",
  "libc",
  "offline_map",
+ "serde",
  "serde_json",
  "sha2",
  "valhalla-graphtile",

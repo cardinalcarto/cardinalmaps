@@ -23,9 +23,10 @@ looks: the maneuver banner with and without a secondary row, landscape, a rounda
 the drive has one, the recenter button, and the dark theme. It needs the Seattle region
 downloaded in the desktop app; `BUCKET_DIR` is a `cardinal-publish --target dir:`
 release bucket, served locally as the app's release URL. `--shots progress`, `buttons`,
-`steps` or `status` takes another set instead: trip progress, the road name and map
-buttons, the banner's list of steps, or the status cards, the GPS-lost indicator and
-the arrival, made by steering the simulated trip from the Dart file.
+`steps`, `status` or `guidance` takes another set instead: trip progress, the road name
+and map buttons, the banner's list of steps, the status cards, the GPS-lost indicator
+and the arrival, made by steering the simulated trip from the Dart file, or lane
+guidance, exit badges and the speed-limit sign on I-5 and in Wallingford.
 
 It builds a profile build for the Linux desktop and runs
 `tool/screenshots/navigation_screenshots.dart` in it with `flutter drive -d linux`, and
