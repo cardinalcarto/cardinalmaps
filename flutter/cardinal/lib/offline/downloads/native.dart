@@ -244,7 +244,10 @@ class RustOfflineNative implements OfflineNative {
     String name,
   ) async {
     await sparkle.initSparkle();
-    await sparkle.basemapPrepare(path: path, headerBytes: header, name: name);
+    await _mapCall(
+      'preparing the basemap',
+      () => sparkle.basemapPrepare(path: path, headerBytes: header, name: name),
+    );
   }
 
   @override
@@ -277,13 +280,30 @@ class RustOfflineNative implements OfflineNative {
   @override
   Future<int> basemapClaim(String path, int region, Uint8List tileKeys) async {
     await sparkle.initSparkle();
-    return sparkle.basemapClaim(path: path, region: region, tileKeys: tileKeys);
+    return _mapCall(
+      'claiming tiles',
+      () =>
+          sparkle.basemapClaim(path: path, region: region, tileKeys: tileKeys),
+    );
   }
 
   @override
   Future<int> basemapRelease(String path, int region) async {
     await sparkle.initSparkle();
-    return sparkle.basemapRelease(path: path, region: region);
+    return _mapCall(
+      'releasing tiles',
+      () => sparkle.basemapRelease(path: path, region: region),
+    );
+  }
+}
+
+/// Runs a map operation, turning Rust's [sparkle.MapError] (which doesn't print its
+/// message) into a [StateError] that does.
+Future<T> _mapCall<T>(String what, Future<T> Function() call) async {
+  try {
+    return await call();
+  } on sparkle.MapError catch (e) {
+    throw StateError('$what: ${e.kind.name}: ${e.message}');
   }
 }
 
@@ -298,12 +318,17 @@ class _RustMapPlanning implements MapPlanning {
   ];
 
   @override
-  Future<void> addLeaf(int start, Uint8List bytes) =>
-      _planner.addLeaf(offset: start, bytes: bytes);
+  Future<void> addLeaf(int start, Uint8List bytes) => _mapCall(
+    'reading a leaf directory',
+    () => _planner.addLeaf(offset: start, bytes: bytes),
+  );
 
   @override
   Future<MapPlanResult> finish(String? basemap) async {
-    final plan = await _planner.finish(basemap: basemap);
+    final plan = await _mapCall(
+      'planning the map',
+      () => _planner.finish(basemap: basemap),
+    );
     return (
       coveringTiles: plan.coveringTiles,
       archiveTiles: plan.archiveTiles,
@@ -339,8 +364,10 @@ class _RustArchivePlanning implements ArchivePlanning {
   ];
 
   @override
-  Future<void> addLeaf(int start, Uint8List bytes) =>
-      _planner.addLeaf(offset: start, bytes: bytes);
+  Future<void> addLeaf(int start, Uint8List bytes) => _mapCall(
+    'reading a leaf directory',
+    () => _planner.addLeaf(offset: start, bytes: bytes),
+  );
 
   @override
   void want(List<TileKey> tiles) => _planner.want(tiles: _archiveTiles(tiles));
