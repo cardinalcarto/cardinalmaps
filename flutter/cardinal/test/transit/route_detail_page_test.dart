@@ -348,6 +348,24 @@ void main() {
     expect(find.text('Leary Ave'), findsOneWidget);
   });
 
+  testWidgets("a swipe that starts on the header's dots moves its pages", (
+    tester,
+  ) async {
+    await openList(tester);
+    await open44(tester);
+    await answerRoute(tester, _detail([nearbyDepartureJson('b1', 30)]));
+    final dots = find.descendant(
+      of: find.byType(RouteDetailPage),
+      matching: find.byKey(const ValueKey('dots')),
+    );
+    expect(dots, findsOneWidget);
+
+    await tester.flingFrom(tester.getCenter(dots), const Offset(-300, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(_shown(_header, find.text('UW Medical Center')), findsOneWidget);
+    expect(source.routesAsked.last.query.stopId, _uw);
+  });
+
   testWidgets('swiping its pages remembers the headsign, as a row does, and '
       'shows that page', (tester) async {
     await openList(tester);

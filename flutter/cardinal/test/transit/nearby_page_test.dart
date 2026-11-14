@@ -7,6 +7,7 @@ import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:cardinal/transit/nearby_transit.dart';
 import 'package:cardinal/transit/nearby_page.dart';
+import 'package:cardinal/transit/route_detail_page.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -406,6 +407,78 @@ void main() {
       // At the last page, a swipe settles where it was: nothing changes.
       await swipe(tester, '44');
       expect(haptics, hasLength(1));
+    });
+
+    group('a swipe moves the pages wherever on the row it starts:', () {
+      /// Flings left from [at], and lets the row settle.
+      Future<void> swipeFrom(WidgetTester tester, Offset at) async {
+        await tester.flingFrom(at, const Offset(-300, 0), 1000);
+        await tester.pumpAndSettle();
+      }
+
+      Offset centerOf(WidgetTester tester, Finder finder) {
+        expect(finder, findsOneWidget);
+        return tester.getCenter(finder);
+      }
+
+      final starts = <String, Offset Function(WidgetTester tester)>{
+        'the dots': (tester) => centerOf(
+          tester,
+          find.descendant(
+            of: _row('44'),
+            matching: find.byKey(const ValueKey('dots')),
+          ),
+        ),
+        // The dots' strip at the row's start, away from the dots themselves.
+        'the dots strip': (tester) {
+          final row = tester.getRect(_row('44'));
+          final dots = tester.getRect(
+            find.descendant(
+              of: _row('44'),
+              matching: find.byKey(const ValueKey('dots')),
+            ),
+          );
+          return Offset(row.left + 8, dots.center.dy);
+        },
+        'the stop line': (tester) =>
+            centerOf(tester, _in('44', find.text(ballard))),
+        'the countdown': (tester) =>
+            centerOf(tester, _in('44', find.byKey(const ValueKey('next')))),
+        // Between the headsign line and the stop line, at the row's start.
+        'the gap between lines': (tester) {
+          final headsign = tester.getRect(_in('44', find.text('Ballard')));
+          final stop = tester.getRect(_in('44', find.text(ballard)));
+          return Offset(
+            tester.getRect(_row('44')).left + 4,
+            (headsign.bottom + stop.top) / 2,
+          );
+        },
+      };
+      for (final MapEntry(key: name, value: start) in starts.entries) {
+        testWidgets(name, (tester) async {
+          await open(tester);
+          await answer(tester, [u44()]);
+          expect(shows(tester, '44', 'Ballard'), isTrue);
+
+          await swipeFrom(tester, start(tester));
+          expect(shows(tester, '44', 'UW Medical Center'), isTrue);
+          expect(shows(tester, '44', 'Ballard'), isFalse);
+        });
+      }
+    });
+
+    testWidgets('a tap on a row with pages still opens its detail, on the dots '
+        'too', (tester) async {
+      await open(tester);
+      await answer(tester, [u44()]);
+      await tester.tap(
+        find.descendant(
+          of: _row('44'),
+          matching: find.byKey(const ValueKey('dots')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(RouteDetailPage), findsOneWidget);
     });
 
     testWidgets("a page with nothing left that runs keeps the row's height", (

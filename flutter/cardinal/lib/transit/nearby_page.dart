@@ -481,8 +481,8 @@ String headsignsText(HeadsignPage page) => page.headsigns.join(' / ');
 /// One route near you, on one of its pages: its badge and where the page goes, the stop
 /// and the walk there, and its next departures counting down by [now].
 ///
-/// With more than one page, the rider swipes between them, and dots below say which
-/// is shown. A swipe that settles on another page gives a light haptic and calls
+/// With more than one page, the rider swipes between them from anywhere on the row,
+/// the dots below that say which is shown among it. A swipe that settles on another page gives a light haptic and calls
 /// [onShown]; the list decides what's [shown]. Every page has the same lines, and the
 /// row is as tall as its first page, so it keeps its height from one page to the next.
 ///
@@ -586,40 +586,54 @@ class _NearbyRowState extends State<NearbyRow> {
   Widget _row() {
     final pages = widget.route.pages;
     if (pages.length < 2) return _page(pages.firstOrNull);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+    // The pages take the whole row, the dots' strip with them, so a swipe that starts
+    // anywhere on it, the dots and the gaps between lines too, moves them. The dots are
+    // drawn over the pages, and let swipes and taps through.
+    return Stack(
       children: [
-        Stack(
-          children: [
-            // The row's height: the first page's, which every page shares.
-            Visibility(
-              visible: false,
-              maintainSize: true,
-              maintainAnimation: true,
-              maintainState: true,
-              child: _page(pages.first),
-            ),
-            Positioned.fill(
-              child: NotificationListener<ScrollNotification>(
-                onNotification: _scrolled,
-                child: PageView.builder(
-                  // A new controller starts a new page view: one that went on would
-                  // take the old one's place, not the controller's first page.
-                  key: ObjectKey(_pages),
-                  controller: _pages,
-                  itemCount: pages.length,
-                  findChildIndexCallback: (key) {
-                    final i = pages.indexWhere((p) => _key(p) == key);
-                    return i < 0 ? null : i;
-                  },
-                  itemBuilder: (context, i) =>
-                      _page(pages[i], key: _key(pages[i])),
-                ),
+        // The row's height: the first page's, which every page shares, and the dots'.
+        Visibility(
+          visible: false,
+          maintainSize: true,
+          maintainAnimation: true,
+          maintainState: true,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _page(pages.first),
+              const SizedBox(height: _Dots.height),
+            ],
+          ),
+        ),
+        Positioned.fill(
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _scrolled,
+            child: PageView.builder(
+              // A new controller starts a new page view: one that went on would
+              // take the old one's place, not the controller's first page.
+              key: ObjectKey(_pages),
+              controller: _pages,
+              itemCount: pages.length,
+              findChildIndexCallback: (key) {
+                final i = pages.indexWhere((p) => _key(p) == key);
+                return i < 0 ? null : i;
+              },
+              itemBuilder: (context, i) => Align(
+                key: _key(pages[i]),
+                alignment: Alignment.topCenter,
+                child: _page(pages[i]),
               ),
             ),
-          ],
+          ),
         ),
-        _Dots(count: pages.length, controller: _pages, shown: _at),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: IgnorePointer(
+            child: _Dots(count: pages.length, controller: _pages, shown: _at),
+          ),
+        ),
       ],
     );
   }
@@ -653,12 +667,16 @@ class _Dots extends StatelessWidget {
   final int shown;
 
   static const _size = 6.0;
+  static const _below = 6.0;
+
+  /// The strip's height: the dots and the space below them.
+  static const height = _size + _below;
 
   @override
   Widget build(BuildContext context) {
     final color = Theme.of(context).colorScheme.onSurfaceVariant;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: _below),
       child: AnimatedBuilder(
         animation: controller,
         builder: (context, _) {
