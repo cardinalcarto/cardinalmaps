@@ -8,7 +8,8 @@
 /// The layout follows Ferrostar's in each orientation (see `NavigationView`); for now
 /// it holds the maneuver banner, which opens into the trip's steps and gives way to a
 /// status card or the arrival, the camera and mute buttons with the GPS-lost
-/// indicator under them, the road-name pill, and the trip-progress pill with End.
+/// indicator under them, the speed-limit sign, the road-name pill, and the
+/// trip-progress pill with End.
 library;
 
 import 'dart:async';
@@ -35,6 +36,7 @@ import 'navigation_map.dart';
 import 'navigation_scope.dart';
 import 'navigation_status.dart';
 import 'road_name.dart';
+import 'speed_limit.dart';
 import 'step_list.dart';
 import 'trip_progress.dart';
 
@@ -165,6 +167,13 @@ class NavigationLayer extends StatelessWidget {
 /// them. In landscape it stays in the start half. The trip carries on under it, the
 /// camera following and the list keeping up with each step and each new route; it
 /// stays open until closed, across new routes and turns of the screen.
+///
+/// ## Speed limit
+///
+/// The speed-limit sign ([SpeedLimitSignView], [speedLimitOf]) is at the top start, as
+/// in Ferrostar's grid (spec §1): in portrait under the closed banner, across from the
+/// buttons, and in landscape at the top of the end half, at its start. The banner open
+/// covers it in portrait, as it covers the buttons.
 ///
 /// ## Status and arrival
 ///
@@ -422,13 +431,43 @@ class _NavigationViewState extends State<NavigationView> {
           upcoming: update == null
               ? const []
               : upcomingSteps(controller.steps, update.stepIndex),
+          drivingSide: update == null
+              ? null
+              : controller.steps.elementAtOrNull(update.stepIndex)?.drivingSide,
           expanded: _stepsExpanded,
           collapsedHeight: _bannerHeight,
         );
       },
     );
+    final speedLimit = ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final limit = speedLimitOf(controller);
+        return limit == null
+            ? const SizedBox.shrink()
+            : SpeedLimitSignView(limit: limit);
+      },
+    );
     return Stack(
       children: [
+        if (landscape)
+          // At the top of the end half, at its start.
+          PositionedDirectional(
+            start: start + layout.width / 2 + _gap,
+            top: top,
+            child: speedLimit,
+          )
+        else
+          // Under the closed banner, across from the buttons.
+          ValueListenableBuilder(
+            valueListenable: _bannerHeight,
+            builder: (context, height, child) => PositionedDirectional(
+              start: start,
+              top: top + (height > 0 ? height + _gap : 0),
+              child: child!,
+            ),
+            child: speedLimit,
+          ),
         if (landscape)
           PositionedDirectional(end: end, top: top, child: buttons)
         else

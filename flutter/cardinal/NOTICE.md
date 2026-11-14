@@ -5,8 +5,10 @@ repository). It includes the following works by others.
 
 ## Mapbox directions-icons
 
-The maneuver icons in navigation's banner, in `tool/icons/maneuvers/` and built into
-`assets/fonts/CardinalIcons.ttf` by `tool/icon_font.py`, are Mapbox's directions-icons:
+The maneuver icons in navigation's banner, and its lane arrows (drawn with the `turn_`
+icons, directions-icons having no lane icons of its own), in `tool/icons/maneuvers/` and
+built into `assets/fonts/CardinalIcons.ttf` by `tool/icon_font.py`, are Mapbox's
+directions-icons:
 
 - Source: https://github.com/mapbox/directions-icons, `src/svg/`, at commit
   `9016ba92176cf1a8207cc1c4005b951fe49d59cb`.

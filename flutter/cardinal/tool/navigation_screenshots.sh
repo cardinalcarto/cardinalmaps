@@ -13,14 +13,15 @@
 # simulated, and with --bucket, a `cardinal-publish --target dir:` release bucket is
 # served on 127.0.0.1:--port (default 18090) as the app's release URL, so the app
 # checks for updates against the data it has. --shots picks which screenshots: banner
-# (the default), progress, buttons, steps or status, as the Dart file lists them.
+# (the default), progress, buttons, steps, status or guidance, as the Dart file lists
+# them.
 #
 # Nothing is tapped or typed into the desktop: the app's own code moves it. It adds one
 # place to the app's store and deletes it by its ID at the end.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-usage() { sed -n '2,19p' "$0" | sed 's/^# \?//' >&2; exit 2; }
+usage() { sed -n '2,20p' "$0" | sed 's/^# \?//' >&2; exit 2; }
 [[ $# -ge 1 && $1 != --* ]] || usage
 out=$(realpath -m "$1")
 shift

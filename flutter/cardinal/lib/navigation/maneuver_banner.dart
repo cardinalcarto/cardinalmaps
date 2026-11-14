@@ -9,6 +9,7 @@ import '../l10n/app_localizations.dart';
 import '../ui/adaptive.dart';
 import '../ui/symbols.dart';
 import '../units.dart';
+import 'lanes.dart';
 import 'maneuver_icon.dart';
 import 'navigation_format.dart';
 import 'step_list.dart';
@@ -23,7 +24,16 @@ import 'step_list.dart';
 /// row, and only iOS's opens and closes by dragging. Each row is an icon column, then
 /// the text: the primary row has the distance above two lines at most of the
 /// instruction, and the secondary row, on a band of its own, just its instruction.
-/// Lanes, the sub row and exit numbers aren't here yet.
+///
+/// Ferrostar shows neither lanes nor exit numbers on a phone, so these are the app's
+/// own:
+///
+/// - When the banner's sub content has lanes, a [LaneStrip] shows under the primary
+///   row, centered, above the secondary row if there is one: the sub content is lane
+///   guidance for the primary maneuver. Sub content without lanes isn't shown; the
+///   router gives none.
+/// - A row whose content has exit numbers starts its text with an [ExitBadge], as
+///   exit signs put the number above the destination.
 ///
 /// ## The step list
 ///
@@ -77,9 +87,14 @@ class ManeuverBanner extends StatefulWidget {
     this.expanded,
     this.collapsedHeight,
     this.status,
+    this.drivingSide,
   });
 
   final NavVisualInstruction? instruction;
+
+  /// Which side of the road traffic keeps to on the current step, which the lanes'
+  /// U-turn arrows turn by.
+  final NavDrivingSide? drivingSide;
 
   /// What shows in the banner's card instead of the maneuver and its list, while set
   /// (see the class's description).
@@ -320,6 +335,7 @@ class _ManeuverBannerState extends State<ManeuverBanner>
         instruction: instruction,
         distance: widget.distance,
         units: widget.units,
+        drivingSide: widget.drivingSide,
         band: band,
         // The handle's strip takes some of the bottom row's padding.
         bottom: hasList
@@ -450,6 +466,7 @@ class _BannerRows extends StatelessWidget {
     required this.instruction,
     required this.distance,
     required this.units,
+    required this.drivingSide,
     required this.band,
     required this.bottom,
   });
@@ -457,6 +474,7 @@ class _BannerRows extends StatelessWidget {
   final NavVisualInstruction instruction;
   final double? distance;
   final UnitSystem units;
+  final NavDrivingSide? drivingSide;
   final Color band;
   final double bottom;
 
@@ -467,7 +485,10 @@ class _BannerRows extends StatelessWidget {
     final text = theme.textTheme;
     final cupertino = isCupertinoOf(context);
     final secondary = instruction.secondary;
+    final lanes = instruction.sub?.lanes ?? const <NavLane>[];
     final distance = this.distance;
+    // The bottom padding of the last row before the secondary band, or of the last.
+    final beforeBand = secondary == null ? bottom : ManeuverBanner._between;
     final (distanceStyle, textStyle) = ManeuverBanner.primaryStyles(context);
     const sides = ManeuverBanner.sides;
 
@@ -480,7 +501,7 @@ class _BannerRows extends StatelessWidget {
             sides,
             ManeuverBanner.ends,
             sides,
-            secondary == null ? bottom : ManeuverBanner._between,
+            lanes.isEmpty ? beforeBand : ManeuverBanner._between,
           ),
           child: ManeuverRow(
             content: instruction.primary,
@@ -495,6 +516,13 @@ class _BannerRows extends StatelessWidget {
             textStyle: textStyle,
           ),
         ),
+        if (lanes.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.fromLTRB(sides, 0, sides, beforeBand),
+            child: Center(
+              child: LaneStrip(lanes: lanes, drivingSide: drivingSide),
+            ),
+          ),
         if (secondary != null)
           ColoredBox(
             // iOS's secondary system background: the iOS theme's container low.
@@ -628,8 +656,19 @@ class ManeuverRow extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (distance != null) Text(distance, style: distanceStyle),
-              Text(
-                content.text,
+              Text.rich(
+                TextSpan(
+                  children: [
+                    if (content.exitNumbers.isNotEmpty) ...[
+                      WidgetSpan(
+                        alignment: PlaceholderAlignment.middle,
+                        child: ExitBadge(numbers: content.exitNumbers),
+                      ),
+                      const TextSpan(text: ' '),
+                    ],
+                    TextSpan(text: content.text),
+                  ],
+                ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: textStyle,
@@ -638,6 +677,39 @@ class ManeuverRow extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The exit to take, as a badge before a maneuver's text: "Exit 154B", in a rounded
+/// rectangle of the theme's primary color, the app's stand-in for the exit tab on a
+/// highway sign. Several numbers, as for an exit signed 1A and 1B, are joined by a
+/// slash.
+class ExitBadge extends StatelessWidget {
+  const ExitBadge({super.key, required this.numbers});
+
+  final List<String> numbers;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.primary,
+        borderRadius: const BorderRadius.all(Radius.circular(6)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        child: Text(
+          AppLocalizations.of(context).navigationExitNumber(numbers.join('/')),
+          maxLines: 1,
+          style: theme.textTheme.labelLarge?.copyWith(
+            color: colors.onPrimary,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
     );
   }
 }

@@ -19,6 +19,7 @@ import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/navigation/road_matcher.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/navigation_location.dart';
+import 'package:cardinal/navigation/speed_limit.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -116,11 +117,13 @@ void main() {
     final states = <NavigationState>[];
     var updates = 0;
     var followedMatches = 0;
+    final speedLimits = <SpeedLimitToShow?>{};
     controller.addListener(() {
       final update = controller.update;
       if (update != null && controller.state == NavigationState.onRoute) {
         updates++;
         if (update.matched) followedMatches++;
+        speedLimits.add(speedLimitOf(controller));
       }
       if (states.isEmpty || states.last != controller.state) {
         states.add(controller.state);
@@ -147,6 +150,18 @@ void main() {
     expect(matcher.matched, greaterThan(10));
     expect(followedMatches, greaterThan(updates * 0.9));
     expect(controller.update!.stepIndex, controller.steps.length);
+    // Andorra's limits are posted in km/h on Vienna signs, and the route's streets are
+    // 50 km/h where the map says.
+    expect(
+      speedLimits,
+      contains((
+        sign: SpeedLimitSign.vienna,
+        unit: SpeedLimitUnit.kilometersPerHour,
+        speed: 50,
+      )),
+    );
+    expect(speedLimits, contains(null));
+    expect(speedLimitOf(controller), isNull);
     await controller.end();
     controller.dispose();
   });

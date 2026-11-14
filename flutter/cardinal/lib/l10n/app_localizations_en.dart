@@ -49,6 +49,46 @@ class AppLocalizationsEn extends AppLocalizations {
   String get navigationHideSteps => 'Hide upcoming maneuvers';
 
   @override
+  String navigationExitNumber(String number) {
+    return 'Exit $number';
+  }
+
+  @override
+  String navigationLanes(int active, int total) {
+    String _temp0 = intl.Intl.pluralLogic(
+      active,
+      locale: localeName,
+      other: '$active lanes of $total for this maneuver',
+      one: '1 lane of $total for this maneuver',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get navigationSpeedLimitSign => 'SPEED LIMIT';
+
+  @override
+  String navigationSpeedLimit(String speed) {
+    return 'Speed limit $speed';
+  }
+
+  @override
+  String get navigationNoSpeedLimit => 'No speed limit';
+
+  @override
+  String navigationSpeedKph(String speed) {
+    return '$speed km/h';
+  }
+
+  @override
+  String navigationSpeedMph(String speed) {
+    return '$speed mph';
+  }
+
+  @override
+  String get navigationKph => 'km/h';
+
+  @override
   String get navigationEnd => 'End';
 
   @override

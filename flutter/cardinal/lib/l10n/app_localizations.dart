@@ -160,6 +160,54 @@ abstract class AppLocalizations {
   /// **'Hide upcoming maneuvers'**
   String get navigationHideSteps;
 
+  /// The small badge before a navigation maneuver's instruction naming the highway exit to take, as signs number exits. number is the exit's number or numbers as the road signs them, such as 154B or 1A/1B.
+  ///
+  /// In en, this message translates to:
+  /// **'Exit {number}'**
+  String navigationExitNumber(String number);
+
+  /// The spoken label of the row of lane arrows under the navigation screen's maneuver banner: how many of the road's lanes can be used for the coming maneuver. active and total are numbers.
+  ///
+  /// In en, this message translates to:
+  /// **'{active, plural, =1{1 lane of {total} for this maneuver} other{{active} lanes of {total} for this maneuver}}'**
+  String navigationLanes(int active, int total);
+
+  /// The words on the US-style speed-limit sign on the navigation screen, over the number, in capitals as the road sign has them. They're set on two lines in a narrow white rectangle, so keep them as short as the language's road signs do.
+  ///
+  /// In en, this message translates to:
+  /// **'SPEED LIMIT'**
+  String get navigationSpeedLimitSign;
+
+  /// The spoken label of the speed-limit sign on the navigation screen. speed is the limit with its unit, such as 25 mph or 50 km/h.
+  ///
+  /// In en, this message translates to:
+  /// **'Speed limit {speed}'**
+  String navigationSpeedLimit(String speed);
+
+  /// The spoken label of the end-of-restrictions sign on the navigation screen, on roads with no speed limit, such as parts of German autobahns.
+  ///
+  /// In en, this message translates to:
+  /// **'No speed limit'**
+  String get navigationNoSpeedLimit;
+
+  /// A speed in kilometers per hour, in short form, as the speed-limit sign on the navigation screen gives it. speed is the number, already formatted for the language.
+  ///
+  /// In en, this message translates to:
+  /// **'{speed} km/h'**
+  String navigationSpeedKph(String speed);
+
+  /// A speed in miles per hour, in short form, as the speed-limit sign on the navigation screen gives it. speed is the number, already formatted for the language.
+  ///
+  /// In en, this message translates to:
+  /// **'{speed} mph'**
+  String navigationSpeedMph(String speed);
+
+  /// The unit under the number on the navigation screen's US-style speed-limit sign where limits are posted in kilometers per hour, as in Canada, in short form.
+  ///
+  /// In en, this message translates to:
+  /// **'km/h'**
+  String get navigationKph;
+
   /// The button at the end of the trip-progress bar that ends turn-by-turn navigation and goes back to directions, as its tooltip and spoken label.
   ///
   /// In en, this message translates to:
