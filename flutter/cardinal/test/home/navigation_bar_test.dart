@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cardinal/home/navigation_bar.dart';
 import 'package:cardinal/home/stub_page.dart';
 import 'package:cardinal/offline/offline_page.dart';
+import 'package:cardinal/transit/nearby_page.dart';
 import 'package:cardinal/place/place_page.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/saved/saved_page.dart';
@@ -57,10 +58,7 @@ void main() {
     expect(xs[2], closeTo(appScreen.width / 2, 1));
   });
 
-  for (final (tip, title) in [
-    ('Nearby places', 'Nearby places'),
-    ('Nearby transit', 'Nearby transit'),
-  ]) {
+  for (final (tip, title) in [('Nearby places', 'Nearby places')]) {
     testWidgets('$tip opens its page, and Search comes back', (tester) async {
       await pumpFakeApp(tester, store: _store());
       await tester.tap(_tab(tip));
@@ -74,6 +72,21 @@ void main() {
       expect(find.byType(StubPage), findsNothing);
     });
   }
+
+  testWidgets('Nearby transit opens its page, and Search comes back', (
+    tester,
+  ) async {
+    await pumpFakeApp(tester, store: _store());
+    await tester.tap(_tab('Nearby transit'));
+    await tester.pumpAndSettle();
+    expect(find.byType(NearbyTransitPage), findsOneWidget);
+    expect(find.byType(SearchBar), findsNothing);
+
+    await tester.tap(_tab('Search'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SearchBar), findsOneWidget);
+    expect(find.byType(NearbyTransitPage), findsNothing);
+  });
 
   testWidgets('Offline maps opens its page, and Search comes back', (
     tester,

@@ -19,6 +19,8 @@ import 'offline/offline_scope.dart';
 import 'offline/realtime.dart';
 import 'routes.dart';
 import 'store/store.dart';
+import 'transit/nearby_page.dart';
+import 'transit/nearby_source.dart';
 import 'ui/theme.dart';
 
 void main() {
@@ -60,7 +62,10 @@ void main() {
                 await initRouting();
                 return freeBytes(path: await offlineFolder());
               },
-              child: MainApp(router: appRouter(map)),
+              child: NearbyTransitScope(
+                source: OfflineNearbySource(offline.area, realtime),
+                child: MainApp(router: appRouter(map)),
+              ),
             ),
           ),
         ),

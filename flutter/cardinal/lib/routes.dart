@@ -15,6 +15,7 @@ import 'place/place_page.dart';
 import 'saved/saved_page.dart';
 import 'search/search_sheet.dart';
 import 'sheet/sheet.dart';
+import 'transit/nearby_page.dart';
 import 'ui/glass.dart';
 
 /// Tells the sheet's pages when a page covers them and when it closes again, so the
@@ -116,7 +117,7 @@ List<RouteBase> sheetRoutes() => [
     ],
   ),
   _topLevel('/nearby', const StubPage(title: 'Nearby places')),
-  _topLevel('/transit', const StubPage(title: 'Nearby transit')),
+  _topLevel('/transit', const NearbyTransitPage()),
   _topLevel(
     '/offline',
     const OfflinePage(),

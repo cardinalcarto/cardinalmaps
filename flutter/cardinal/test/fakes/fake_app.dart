@@ -12,6 +12,8 @@ import 'package:cardinal/offline/offline_scope.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
+import 'package:cardinal/transit/nearby_page.dart';
+import 'package:cardinal/transit/nearby_source.dart';
 import 'package:cardinal/ui/glass.dart';
 import 'package:cardinal/ui/theme.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +24,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'fake_map.dart';
 import 'fake_location.dart';
+import 'fake_nearby.dart';
 import 'fake_place_store.dart';
 import 'fake_routes.dart';
 import 'fake_saved_store.dart';
@@ -45,6 +48,8 @@ Future<GoRouter> pumpFakeApp(
   String location = '/',
   RouteSource? routes,
   TransitSource? transit,
+  NearbyTransitSource? nearby,
+  DateTime Function()? clock,
   LocationSource? locationSource,
   FakeMap? map,
   MapOverlays? overlays,
@@ -102,12 +107,16 @@ Future<GoRouter> pumpFakeApp(
               // A build without downloads, unless the test gives some.
               downloads: downloads ?? Future.value(),
               freeBytes: freeBytes ?? () async => 64 * 1000 * 1000 * 1000,
-              child: MaterialApp.router(
-                // The app's theme for [platform], or the test's default theme.
-                theme: platform == null
-                    ? null
-                    : appTheme(Brightness.light, platform: platform),
-                routerConfig: router,
+              child: NearbyTransitScope(
+                source: nearby ?? FakeNearbySource(),
+                clock: clock ?? DateTime.now,
+                child: MaterialApp.router(
+                  // The app's theme for [platform], or the test's default theme.
+                  theme: platform == null
+                      ? null
+                      : appTheme(Brightness.light, platform: platform),
+                  routerConfig: router,
+                ),
               ),
             ),
           ),
