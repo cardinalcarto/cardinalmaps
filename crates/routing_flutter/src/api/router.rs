@@ -40,14 +40,15 @@ const RETAINED_LABELS: usize = 0;
 /// from the park; at 100 it lands on Nagle Place, as a car's does.
 const MIN_REACHABILITY: u32 = valinor_walk::DEFAULT_MIN_REACHABILITY;
 
-/// How many tiles' candidate grids a map matching workspace keeps before it drops them all
-/// (`meili.grid.cache_size`).
+/// How many bins' candidate grids a map matching workspace keeps before it drops them all
+/// (`meili.grid.cache_size`). A bin is a 25th of a level-2 tile, about 5 km across.
 ///
 /// Mainline's default (100,240) suits a server; on a device it would let the grids of every
-/// tile a navigation session passes through pile up. A trace being matched during navigation
-/// covers a few level-2 tiles (about 25 km across each), so 16 keeps the current ones,
-/// and dropping them costs only rebuilding the grids of the tiles the next trace uses.
-const GRID_CACHE_TILES: usize = 16;
+/// bin a navigation session passes through pile up. Over Seattle's tiles a bin's grid averages
+/// 116 KB (half are under 58 KB; the densest downtown bin is 2.1 MB), so 16 bins hold about
+/// 2 MB typically and at most about 34 MB, and cover the few kilometers a trace being matched
+/// during navigation spans. Dropping them costs only rebuilding the next trace's bins.
+const GRID_CACHE_BINS: usize = 16;
 
 /// The router over the device's offline regions. Opaque to Dart.
 #[frb(opaque)]
@@ -205,7 +206,7 @@ fn device_config() -> RouterConfig {
         },
         ..ThorConfig::default()
     };
-    thor.meili.candidate_search.cache_size = GRID_CACHE_TILES;
+    thor.meili.candidate_search.cache_size = GRID_CACHE_BINS;
     RouterConfig {
         loki,
         workspaces: WORKSPACES,
@@ -290,7 +291,7 @@ mod tests {
     #[test]
     fn caps_the_map_matching_grid_cache() {
         let thor = device_config().thor;
-        assert_eq!(thor.meili.candidate_search.cache_size, GRID_CACHE_TILES);
+        assert_eq!(thor.meili.candidate_search.cache_size, GRID_CACHE_BINS);
     }
 
     #[test]

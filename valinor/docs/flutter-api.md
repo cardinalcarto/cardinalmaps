@@ -69,10 +69,10 @@ pub struct RouterResponse {
   they take the same bodies the server's `/trace_route` and `/trace_attributes` do.
   `valinor-router` serves every action, so `locate` or `status` can be added the same way
   when a feature needs one.
-- **Map matching's memory.** Each map matching workspace keeps the candidate grids of the tiles
-  it has matched in; on the device it drops them all past 16 tiles
-  (`meili.grid.cache_size`; mainline's server default is 100,240), since a navigation trace
-  spans only a few.
+- **Map matching's memory.** Each map matching workspace keeps the candidate grids of the bins
+  (a 25th of a level-2 tile, about 5 km across) it has matched in; on the device it drops
+  them all past 16 bins (`meili.grid.cache_size`; mainline's server default is 100,240),
+  about 2 MB typically over Seattle's tiles, since a navigation trace spans only a few.
 - **Snapping like transit.** On the device, a location's edge must reach 250 nodes in and out
   (Loki's default is 50), the bound transit uses for its stops and plan endpoints,
   so street and transit directions start and end in the same places.
