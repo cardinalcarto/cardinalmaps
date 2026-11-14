@@ -419,6 +419,66 @@ Departures add about 11% to a Washington plan's JSON. Finding and describing the
 on plans of 50 to 460 ms, measured with `multi_feed_bench`'s `ride departure ranges` stage.
 A plan describes each departure once, however many of its journeys list it.
 
+### Nearby departures
+
+`POST /transit/nearby` answers which routes a rider can catch near a place, in each direction,
+and when. `POST /transit/route` shows one of them from the stop it used, for a detail view.
+The device answers both with the same bytes (`OfflineTransit::nearby` and `::route`), and the
+logic is in `valinor-transit-plan` (`nearby.rs` and `response/nearby.rs`); the server and the
+bridge only supply the clock and pass bytes through.
+
+A nearby request has a `location`; `time` (`now` by default); `mode`, `walking` (the default) or
+`wheelchair`; `max_walk_seconds` (1800); `horizon_seconds` (7200, at most a day);
+`max_departures` per direction (3, at most 10); and optionally `max_routes`.
+
+- Stops are those the plan's access search reaches: a walk on real streets bounded by Sif's cost,
+  with the wheelchair costing and snaps for a wheelchair, not straight-line distance.
+  The device's 45-minute limit on walks holds here too.
+- Departures are found by the departure-range code, from the same pinned snapshot, as departures
+  to ride on from a stop: every pattern serving it at a position some later stop follows (a trip's
+  last stop is no departure), every service day of the window, every lane, and the rules the
+  mode reads, so a wheelchair rider sees only trips and stops not marked inaccessible.
+  Frequency runs are each a departure. Canceled and skipped departures are found in the
+  schedule's block as for a range, and listed at their scheduled times; skipped means the trip
+  runs but doesn't let riders on at the stop any more.
+- They are grouped by GTFS route (an original trip's own on a stay-seated combined trip),
+  then by direction: the trip's `direction_id`, or for a trip without one, its last stop
+  (`terminus_stop_id`). There is no grouping by headsign. A trip no GTFS route names isn't listed.
+- A departure is catchable when it leaves at or after `time` plus the walk to its stop, as
+  routing counts a first boarding. A direction's `stop` is the reachable stop with its earliest
+  catchable departure that runs (ties go to the shorter walk), with `walk_seconds`.
+  It lists the next `max_departures` departures from that stop within the horizon, in order, which
+  can begin with canceled or skipped ones; a direction with no catchable departure that runs is
+  dropped, and so is a route with no directions left.
+- `headsigns` are the distinct headsigns of a direction's listed departures, the most frequent
+  first. Each departure has the fields of a range's, less those about an alighting stop:
+  `trip_id`, `start_date`, `headsign`, `status`, `departure`, `scheduled_departure`,
+  `delay_seconds`, `realtime`, `vehicle_id`, `accessibility` (of its trip and stop), `bikes_allowed`,
+  and `alerts`, indices into the response's `alerts`.
+- Routes are ordered by their soonest catchable departure, and directions by `direction_id`, then
+  `terminus_stop_id`, so a row's pages keep their order from one refresh to the next.
+  A route has its `feed`, `route` (names, type, and colors), and `agency`.
+- `realtime` states each feed's age, as a plan's does. With no routes, `no_routes_reason` says
+  `no_access` (no stop within the walk) or `no_service`.
+
+A route request names what a nearby direction gave: `feed`, `route_id`, `direction_id` or
+`terminus_stop_id`, and `stop_id`; with `time`, `mode`, `walk_seconds` (0), `horizon_seconds`,
+`max_departures`, and optionally a departure's `trip_id` and `start_date`.
+It answers with the route, `departures` from the stop in that direction from `time` plus
+`walk_seconds`, `ride`, a plan's transit leg on the chosen trip (or the first that runs) from the
+stop to the end of its trip, with every stop's times, its shape as polyline6, vehicle, and alerts,
+and `vehicles`, those real-time data has on the route's trips in that direction. A vehicle not
+matched to a trip of the timetable has no direction, and isn't listed. A route, stop, or trip that
+isn't there is a 404 (`unknown_route`, `unknown_stop`, or `unknown_trip`); a direction with
+nothing in the horizon is an answer with no departures and no `ride`.
+
+Measured with `nearby_bench` on Seattle's seven feeds (the 2026-11-12 planet build) on a desktop,
+warm, a 30-minute walk takes 4 to 35 ms, nearly all of it the access table:
+15 ms from Fremont (11 routes), 22 to 24 ms downtown (50 to 70 routes), and 28 to 32 ms on
+Capitol Hill. Departures take under 3 ms, also with King County Metro's real-time data
+(a Monday 10:18 capture). The process's first query takes about 110 ms, reading tiles from disk.
+A response is 8 to 130 KB of JSON.
+
 ## Offline build
 
 `valinor-transit-build` runs the offline stages, each a plain command with explicit

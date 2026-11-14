@@ -40,14 +40,7 @@ pub(crate) fn build_response<A: AccessEgressSearch>(
     access_egress: &mut A,
 ) -> Result<PlanResponse, A::Error> {
     let found = profile.entries.len();
-    let mut builder = Builder {
-        snapshot,
-        request,
-        access_egress,
-        access_paths: HashMap::new(),
-        egress_paths: HashMap::new(),
-        departure_cache: RefCell::new(DepartureCache::default()),
-    };
+    let mut builder = Builder::new(snapshot, request, access_egress);
     let mut journeys = Vec::new();
     for entry in profile.entries {
         // A journey no faster than going there directly only adds a wait.
@@ -84,22 +77,13 @@ fn assemble(
     no_journeys_reason: Option<NoJourneysReason>,
     direct: &DirectSearch,
 ) -> PlanResponse {
-    let feeds: Vec<FeedReport> = snapshot
-        .feed_status_at(request.now)
-        .iter()
-        .map(feed_report)
-        .collect();
     PlanResponse {
         generated_at: request.now,
         window: Window {
             earliest: request.departure,
             latest: request.departure + i64::from(request.window_seconds),
         },
-        realtime: RealtimeStatus {
-            level: realtime_level(&feeds),
-            built_at: snapshot.built_at,
-            feeds,
-        },
+        realtime: realtime_status(snapshot, request.now),
         journeys,
         no_journeys_reason,
         direct: direct_response(direct),
@@ -123,6 +107,20 @@ fn direct_response(direct: &DirectSearch) -> DirectResponse {
             DirectSearch::Failed(error) => Some(error.clone()),
             _ => None,
         },
+    }
+}
+
+/// How current a snapshot's real-time data is at `now`, as every response states it.
+pub(crate) fn realtime_status(snapshot: &TransitSnapshot, now: i64) -> RealtimeStatus {
+    let feeds: Vec<FeedReport> = snapshot
+        .feed_status_at(now)
+        .iter()
+        .map(feed_report)
+        .collect();
+    RealtimeStatus {
+        level: realtime_level(&feeds),
+        built_at: snapshot.built_at,
+        feeds,
     }
 }
 
@@ -252,7 +250,23 @@ pub(super) struct VisitTimes {
 type ChosenVehicle<'a> = (Option<&'a VehicleDetails>, Option<&'a VehicleRef>);
 
 impl<'a, A: AccessEgressSearch> Builder<'a, A> {
-    fn set(&self) -> &'a TimetableSet {
+    /// A builder for one request's responses, drawing walks with `access_egress`.
+    pub(super) fn new(
+        snapshot: &'a TransitSnapshot,
+        request: &'a TransitRequest,
+        access_egress: &'a mut A,
+    ) -> Self {
+        Self {
+            snapshot,
+            request,
+            access_egress,
+            access_paths: HashMap::new(),
+            egress_paths: HashMap::new(),
+            departure_cache: RefCell::new(DepartureCache::default()),
+        }
+    }
+
+    pub(super) fn set(&self) -> &'a TimetableSet {
         &self.snapshot.data.set
     }
 
@@ -442,7 +456,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         })
     }
 
-    fn stop_ref(&self, stop: StopId) -> StopRef {
+    pub(super) fn stop_ref(&self, stop: StopId) -> StopRef {
         if let Some((part, local)) = self.set().stop_part(stop)
             && let Some(info) = part.compiled().stop(local)
         {
@@ -576,7 +590,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         }
     }
 
-    fn transit_leg(&self, ride: &Ride, wait: i64) -> TransitLeg {
+    pub(super) fn transit_leg(&self, ride: &Ride, wait: i64) -> TransitLeg {
         let view = self.ride_view(ride);
         let events = self
             .snapshot
@@ -865,7 +879,7 @@ impl<'a, A: AccessEgressSearch> Builder<'a, A> {
         })
     }
 
-    fn stop_gtfs_id_of(&self, stop: StopId) -> Option<&'a str> {
+    pub(super) fn stop_gtfs_id_of(&self, stop: StopId) -> Option<&'a str> {
         self.set()
             .stop_part(stop)
             .and_then(|(part, local)| part.compiled().stop(local))
@@ -1213,7 +1227,7 @@ pub(super) fn gtfs_route_of(
     })
 }
 
-fn route_response(route: RouteInfo<'_>) -> RouteResponse {
+pub(super) fn route_response(route: RouteInfo<'_>) -> RouteResponse {
     RouteResponse {
         route_id: route.gtfs_id.to_owned(),
         short_name: route.short_name.map(str::to_owned),
@@ -1226,7 +1240,7 @@ fn route_response(route: RouteInfo<'_>) -> RouteResponse {
     }
 }
 
-fn agency_response(agency: AgencyInfo<'_>) -> AgencyResponse {
+pub(super) fn agency_response(agency: AgencyInfo<'_>) -> AgencyResponse {
     AgencyResponse {
         agency_id: agency.gtfs_id.map(str::to_owned),
         name: agency.name.to_owned(),

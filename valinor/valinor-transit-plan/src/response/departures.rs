@@ -34,20 +34,44 @@ use crate::response::build::{
     Builder, gtfs_route_of, leg_accessibility, stop_headsign, trip_accessibility,
     trip_bikes_allowed, trip_headsign,
 };
-use crate::response::{AlertResponse, DepartureStatus, RideDeparture, TransitLeg};
+use crate::response::{Accessibility, AlertResponse, DepartureStatus, RideDeparture, TransitLeg};
 use crate::window::calendar_date;
 
 /// A pattern serving a ride's boarding stop and then its alighting stop, at these positions.
+///
+/// A departure from a stop to wherever the rider likes ([`Serving::Board`]) has its alighting
+/// at its boarding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct Pair {
-    route: RouteId,
-    board: u32,
-    alight: u32,
+pub(super) struct Pair {
+    pub(super) route: RouteId,
+    pub(super) board: u32,
+    pub(super) alight: u32,
+}
+
+/// What a listed departure must let a rider do at its pair's positions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Serving {
+    /// Board at the boarding position and alight at the alighting one: a ride's departures.
+    BoardAndAlight,
+    /// Board at the boarding position, to ride on: a stop's departures.
+    ///
+    /// The caller pairs only positions some later stop follows, so a trip ending there isn't one.
+    Board,
+}
+
+/// Where departures are looked for: patterns at positions, the rules read, and a time bound.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct DepartureSearch<'p> {
+    pub(super) pairs: &'p [Pair],
+    pub(super) filter: RouteFilter,
+    pub(super) serving: Serving,
+    /// The departures from the boarding position to list, inclusive, on the window clock.
+    pub(super) bounds: (i32, i32),
 }
 
 /// What became of a departure the schedule has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Found {
+pub(super) enum Found {
     /// It runs between the two stops, in the snapshot.
     Runs,
     Canceled,
@@ -56,19 +80,20 @@ enum Found {
 
 /// One departure between the ride's stops, read from a lane.
 #[derive(Debug, Clone, Copy)]
-struct Candidate {
-    pair: Pair,
-    lane: LaneRef,
-    row: u32,
-    key: TripKey,
-    board: StopEvent,
-    alight: StopEvent,
-    found: Found,
+pub(super) struct Candidate {
+    pub(super) pair: Pair,
+    pub(super) lane: LaneRef,
+    pub(super) row: u32,
+    pub(super) key: TripKey,
+    pub(super) board: StopEvent,
+    /// The event at the alighting position; for [`Serving::Board`], the boarding's departure.
+    pub(super) alight: StopEvent,
+    pub(super) found: Found,
 }
 
 impl Candidate {
     /// The order departures are listed in.
-    fn order(&self) -> (Time, Time, ServiceDate, TripId, u32) {
+    pub(super) fn order(&self) -> (Time, Time, ServiceDate, TripId, u32) {
         (
             self.board.departure,
             self.alight.arrival,
@@ -93,9 +118,9 @@ pub(super) struct DepartureCache {
 
 /// A departure's leg-independent description.
 #[derive(Debug)]
-struct Described {
-    departure: RideDeparture,
-    alerts: Vec<AlertResponse>,
+pub(super) struct Described {
+    pub(super) departure: RideDeparture,
+    pub(super) alerts: Vec<AlertResponse>,
 }
 
 impl<A: AccessEgressSearch> Builder<'_, A> {
@@ -168,7 +193,22 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                 board.saturating_sub(seconds(range.before, range.before_seconds)),
                 board.saturating_add(seconds(range.after, range.after_seconds)),
             );
-            self.candidates(&pairs, filter, bounds, &own, &routes)
+            let mut scratch = RiddenRoutes::new();
+            // A departure is listed when its trip rides the same routes between the two stops.
+            let mut rides_the_route = |key: TripKey, pair: Pair| {
+                self.ridden_routes(key, pair.route, pair.board, pair.alight, &mut scratch);
+                scratch == routes
+            };
+            self.candidates(
+                &DepartureSearch {
+                    pairs: &pairs,
+                    filter,
+                    serving: Serving::BoardAndAlight,
+                    bounds,
+                },
+                Some((own.key, own.pair)),
+                &mut rides_the_route,
+            )
         };
         candidates.sort_unstable_by_key(Candidate::order);
         let at = candidates.partition_point(|c| c.order() < own.order());
@@ -200,41 +240,37 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         (departures, pool)
     }
 
-    /// Every departure in `bounds` (window clock) of `pairs` whose trip rides `routes`,
-    /// other than the ride's own.
-    fn candidates(
+    /// Every departure of the search whose trip `accepts`, but `skip`'s run at its pair:
+    /// those that run, and those the overlay took away.
+    pub(super) fn candidates(
         &self,
-        pairs: &[Pair],
-        filter: RouteFilter,
-        bounds: (i32, i32),
-        own: &Candidate,
-        routes: &[(usize, GtfsRoute)],
+        search: &DepartureSearch<'_>,
+        skip: Option<(TripKey, Pair)>,
+        accepts: &mut dyn FnMut(TripKey, Pair) -> bool,
     ) -> Vec<Candidate> {
         let snapshot: &Snapshot = &self.snapshot.snapshot;
         let mut out = Vec::new();
-        let mut scratch = RiddenRoutes::new();
         // Every run seen running between the stops, so the schedule's copy isn't listed again.
-        let mut runs: HashSet<TripKey> = HashSet::from([own.key]);
-        for &pair in pairs {
+        let mut runs: HashSet<TripKey> = skip.iter().map(|&(key, _)| key).collect();
+        for &pair in search.pairs {
             for day in day_slots(snapshot.days().len()) {
                 for lane in snapshot.block_lanes(pair.route, day).unwrap_or_default() {
-                    if !serves(snapshot, lane, pair, filter) {
+                    if !serves(snapshot, lane, pair, search.filter, search.serving) {
                         continue;
                     }
-                    for row in rows_between(snapshot, lane, pair.board, bounds) {
+                    for row in rows_between(snapshot, lane, pair.board, search.bounds) {
                         let Some(key) = snapshot.trip_key(lane, row) else {
                             continue;
                         };
-                        if key == own.key && pair == own.pair {
+                        if skip == Some((key, pair)) {
                             continue;
                         }
-                        self.ridden_routes(key, pair.route, pair.board, pair.alight, &mut scratch);
-                        if scratch != routes {
+                        if !accepts(key, pair) {
                             continue;
                         }
                         let (Some(board), Some(alight)) = (
                             snapshot.lane_event(lane, row, pair.board),
-                            snapshot.lane_event(lane, row, pair.alight),
+                            alight_event(snapshot, lane, row, pair, search.serving),
                         ) else {
                             continue;
                         };
@@ -253,27 +289,25 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             }
         }
 
-        out.extend(self.removed(pairs, filter, bounds, routes, &runs));
+        out.extend(self.removed(search, accepts, &runs));
         out
     }
 
-    /// The schedule's departures in `bounds` that the overlay took away from between the two
+    /// The schedule's departures of the search that the overlay took away from between the two
     /// stops, from the blocks it changed: canceled, or skipped at one of the stops.
     ///
     /// `runs` are the runs found running between the stops, which aren't listed again.
     fn removed(
         &self,
-        pairs: &[Pair],
-        filter: RouteFilter,
-        bounds: (i32, i32),
-        routes: &[(usize, GtfsRoute)],
+        search: &DepartureSearch<'_>,
+        accepts: &mut dyn FnMut(TripKey, Pair) -> bool,
         runs: &HashSet<TripKey>,
     ) -> Vec<Candidate> {
         let snapshot: &Snapshot = &self.snapshot.snapshot;
+        let (filter, serving) = (search.filter, search.serving);
         let mut out = Vec::new();
-        let mut scratch = RiddenRoutes::new();
         let mut listed: HashSet<(TripKey, u32)> = HashSet::new();
-        for &pair in pairs {
+        for &pair in search.pairs {
             for day in day_slots(snapshot.days().len()) {
                 if !snapshot.block_changed(pair.route, day) {
                     continue;
@@ -284,18 +318,17 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                 // Built on first use: where each of the block's trips is now.
                 let mut current: Option<HashMap<TripId, LaneRef>> = None;
                 for lane in base_lanes {
-                    if !serves(snapshot, lane, pair, filter) {
+                    if !serves(snapshot, lane, pair, filter, serving) {
                         continue;
                     }
-                    for row in rows_between(snapshot, lane, pair.board, bounds) {
+                    for row in rows_between(snapshot, lane, pair.board, search.bounds) {
                         let Some(key) = snapshot.trip_key(lane, row) else {
                             continue;
                         };
                         if runs.contains(&key) || !listed.insert((key, pair.board)) {
                             continue;
                         }
-                        self.ridden_routes(key, pair.route, pair.board, pair.alight, &mut scratch);
-                        if scratch != routes {
+                        if !accepts(key, pair) {
                             continue;
                         }
                         let found = match self.snapshot.rider.trip_state(key) {
@@ -315,11 +348,16 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                                     .and_then(|details| details.route);
                                 match (here, moved_to) {
                                     // It still runs between the stops, but outside the bounds.
-                                    (Some(lane), _) if serves(snapshot, lane, pair, filter) => {
+                                    (Some(lane), _)
+                                        if serves(snapshot, lane, pair, filter, serving) =>
+                                    {
                                         continue;
                                     }
                                     (None, Some(route))
-                                        if pairs.iter().any(|other| other.route == route) =>
+                                        if search
+                                            .pairs
+                                            .iter()
+                                            .any(|other| other.route == route) =>
                                     {
                                         continue;
                                     }
@@ -331,7 +369,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                         };
                         let (Some(board), Some(alight)) = (
                             snapshot.lane_event(lane, row, pair.board),
-                            snapshot.lane_event(lane, row, pair.alight),
+                            alight_event(snapshot, lane, row, pair, serving),
                         ) else {
                             continue;
                         };
@@ -393,7 +431,7 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
             let mut latest: Option<Time> = None;
             for &pair in pairs {
                 for lane in snapshot.block_lanes(pair.route, day).unwrap_or_default() {
-                    if !serves(snapshot, lane, pair, filter) {
+                    if !serves(snapshot, lane, pair, filter, Serving::BoardAndAlight) {
                         continue;
                     }
                     // Rows run in departure order, so the last that rides the route is the latest.
@@ -473,7 +511,6 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         }
     }
 
-    /// Describes a departure other than the journey's own.
     /// Describes a departure other than the journey's own, for one leg.
     ///
     /// A departure's description depends only on its run and its two stops, so the journeys of
@@ -488,7 +525,15 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
         let key = (candidate.key, candidate.pair);
         let cached = self.departure_cache.borrow().described.get(&key).cloned();
         let described = cached.unwrap_or_else(|| {
-            let described = Rc::new(self.described(ride, candidate, leg));
+            // The pair's two stops are the leg's: the same positions of the same pattern.
+            let described = Rc::new(self.described(
+                (ride.board_stop, ride.alight_stop),
+                candidate,
+                (
+                    leg.stops.first().map(|visit| visit.stop.accessibility),
+                    leg.stops.last().map(|visit| visit.stop.accessibility),
+                ),
+            ));
             self.departure_cache
                 .borrow_mut()
                 .described
@@ -535,17 +580,25 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
 
     /// What a departure is, apart from any leg: every field but the leg-relative ones,
     /// and the alerts that apply to it.
-    fn described(&self, ride: &Ride, candidate: &Candidate, leg: &TransitLeg) -> Described {
+    ///
+    /// `stops` are the boarding and alighting stops, and `access` what is known of a wheelchair
+    /// at each; a stop's departures ([`Serving::Board`]) give its boarding stop for both.
+    pub(super) fn described(
+        &self,
+        (board_stop, alight_stop): (StopId, StopId),
+        candidate: &Candidate,
+        (board_access, alight_access): (Option<Accessibility>, Option<Accessibility>),
+    ) -> Described {
         let snapshot: &Snapshot = &self.snapshot.snapshot;
         let run = Ride {
             route: candidate.pair.route,
             lane: candidate.lane,
             row: candidate.row,
             trip: candidate.key,
-            board_stop: ride.board_stop,
+            board_stop,
             board_position: candidate.pair.board,
             board_time: candidate.board.departure,
-            alight_stop: ride.alight_stop,
+            alight_stop,
             alight_position: candidate.pair.alight,
             alight_time: candidate.alight.arrival,
         };
@@ -606,11 +659,10 @@ impl<A: AccessEgressSearch> Builder<'_, A> {
                 delay_seconds: board.departure_delay.filter(|_| runs),
                 realtime,
                 vehicle_id,
-                // The pair's two stops are the leg's: the same positions of the same pattern.
                 accessibility: leg_accessibility(
                     trip_accessibility(&view),
-                    leg.stops.first().map(|visit| visit.stop.accessibility),
-                    leg.stops.last().map(|visit| visit.stop.accessibility),
+                    board_access,
+                    alight_access,
                 ),
                 bikes_allowed: trip_bikes_allowed(&view),
                 suggested: false,
@@ -696,14 +748,44 @@ fn pairs_for(snapshot: &Snapshot, filter: RouteFilter, ride: &Ride) -> Vec<Pair>
     pairs
 }
 
-/// Whether a lane lets a query with `filter` board at the pair's boarding and alight at its end.
-fn serves(snapshot: &Snapshot, lane: LaneRef, pair: Pair, filter: RouteFilter) -> bool {
+/// Whether a lane lets a query with `filter` board at the pair's boarding, and for a ride's
+/// departures, alight at its end.
+fn serves(
+    snapshot: &Snapshot,
+    lane: LaneRef,
+    pair: Pair,
+    filter: RouteFilter,
+    serving: Serving,
+) -> bool {
     snapshot
         .lane_rules(lane, pair.board, filter)
         .is_some_and(|rules| rules.pickup)
-        && snapshot
-            .lane_rules(lane, pair.alight, filter)
-            .is_some_and(|rules| rules.drop_off)
+        && match serving {
+            Serving::BoardAndAlight => snapshot
+                .lane_rules(lane, pair.alight, filter)
+                .is_some_and(|rules| rules.drop_off),
+            Serving::Board => true,
+        }
+}
+
+/// A candidate's event at its alighting: for a stop's departures, which have none, the
+/// boarding's departure, so a departure's alerts are matched at that moment alone.
+fn alight_event(
+    snapshot: &Snapshot,
+    lane: LaneRef,
+    row: u32,
+    pair: Pair,
+    serving: Serving,
+) -> Option<StopEvent> {
+    match serving {
+        Serving::BoardAndAlight => snapshot.lane_event(lane, row, pair.alight),
+        Serving::Board => snapshot
+            .lane_event(lane, row, pair.board)
+            .map(|event| StopEvent {
+                arrival: event.departure,
+                ..event
+            }),
+    }
 }
 
 /// The rows of a lane leaving `position` within `bounds`, inclusive, on the window clock.

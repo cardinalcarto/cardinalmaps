@@ -9,12 +9,18 @@
 mod alerts;
 mod build;
 mod departures;
+mod nearby;
 mod vehicle;
 
 use serde::Serialize;
 use serde_with::skip_serializing_none;
 
 pub(crate) use build::{build_response, empty_response, language_supported};
+pub use nearby::{
+    DirectionRef, NearbyDirection, NearbyResponse, NearbyRoute, NoRoutesReason,
+    RouteDetailResponse, StopDeparture,
+};
+pub(crate) use nearby::{RouteLookupError, build_nearby, build_route_detail, empty_nearby};
 pub(crate) use vehicle::lower;
 pub(crate) use vehicle::vehicle_update;
 
