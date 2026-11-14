@@ -106,7 +106,7 @@ abstract class TransitSource {
   });
 }
 
-/// Why a transit plan failed.
+/// Why a transit plan, or another question to the transit router, failed.
 class TransitPlanError implements Exception {
   const TransitPlanError(this.kind, this.message);
 
@@ -119,7 +119,7 @@ class TransitPlanError implements Exception {
 }
 
 /// Throws [http.RequestAbortedException] if [abort] completes before [work] does.
-Future<T> _abortable<T>(Future<T> work, Future<void>? abort) {
+Future<T> abortable<T>(Future<T> work, Future<void>? abort) {
   if (abort == null) return work;
   return Future.any([
     work,
@@ -130,7 +130,8 @@ Future<T> _abortable<T>(Future<T> work, Future<void>? abort) {
 /// Where the offline area comes from: null until there is one.
 typedef OfflineAreaSource = Future<OfflineArea?> Function();
 
-Future<OfflineArea> _need(OfflineAreaSource area) async =>
+/// The offline area, or [NoOfflineArea] if there's none.
+Future<OfflineArea> needOfflineArea(OfflineAreaSource area) async =>
     await area() ?? (throw const NoOfflineArea());
 
 Future<void> _checkCovers(OfflineArea area, LngLat from, LngLat to) async {
@@ -167,7 +168,7 @@ class OfflineRouteSource implements RouteSource {
     required LngLat from,
     required LngLat to,
     Future<void>? abort,
-  }) => _abortable(
+  }) => abortable(
     _routes(mode, mode.byWheelchair(wheelchair: wheelchair), from, to),
     abort,
   );
@@ -178,7 +179,7 @@ class OfflineRouteSource implements RouteSource {
     LngLat from,
     LngLat to,
   ) async {
-    final area = await _need(_area);
+    final area = await needOfflineArea(_area);
     await _checkCovers(area, from, to);
 
     // Ferrostar's adapter is in the routing library too, made before the router opens.
@@ -248,7 +249,7 @@ class OfflineTransitSource implements TransitSource {
   }) async {
     final cancel = TransitCancel();
     unawaited(abort?.then((_) => cancel.cancel()));
-    return _abortable(_plan(access, from, to, cancel), abort);
+    return abortable(_plan(access, from, to, cancel), abort);
   }
 
   Future<TransitPlan> _plan(
@@ -257,7 +258,7 @@ class OfflineTransitSource implements TransitSource {
     LngLat to,
     TransitCancel cancel,
   ) async {
-    final area = await _need(_area);
+    final area = await needOfflineArea(_area);
     await _checkCovers(area, from, to);
     // Real-time messages are fetched while the timetables open.
     final fetching = _realtime(area).fresh();
@@ -280,17 +281,23 @@ class OfflineTransitSource implements TransitSource {
       '${watch.elapsedMilliseconds} ms (${response.status}, '
       '${feeds.length} new real-time messages)',
     );
-    if (response.status == 499) throw http.RequestAbortedException();
-    if (response.status != 200) {
-      final body = jsonDecode(utf8.decode(response.body));
-      final error = body is Map<String, Object?> ? body : const {};
-      throw TransitPlanError(
-        error['kind'] as String? ?? 'failed',
-        error['error'] as String? ?? 'status ${response.status}',
-      );
-    }
-    return TransitPlan.decode(response.body);
+    return TransitPlan.decode(transitAnswer(response));
   }
+}
+
+/// The body of the transit router's [response]: throws [http.RequestAbortedException]
+/// if it was cancelled, and [TransitPlanError] if it failed.
+List<int> transitAnswer(TransitResponse response) {
+  if (response.status == 499) throw http.RequestAbortedException();
+  if (response.status != 200) {
+    final body = jsonDecode(utf8.decode(response.body));
+    final error = body is Map<String, Object?> ? body : const {};
+    throw TransitPlanError(
+      error['kind'] as String? ?? 'failed',
+      error['error'] as String? ?? 'status ${response.status}',
+    );
+  }
+  return response.body;
 }
 
 /// Provides what directions need to the widgets below it.
