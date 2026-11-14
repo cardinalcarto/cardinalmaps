@@ -14,12 +14,15 @@ import 'navigation_controller.dart';
 /// be the road you're on; and with the camera showing the rest of the trip, or moved
 /// by hand, the road under you may not be on screen at all. iOS counts a shortcut onto
 /// a later step ([NavDeviation.offStep]) as off too, since the current step is then
-/// one you've left. Nor at the destination, where the trip is over.
+/// one you've left. Nor at the destination, where the trip is over. Nor while a
+/// location problem's status card shows: the trip may still say it's on the route
+/// then, but with no fixes coming, where it has you can't be relied on.
 String? roadNameToShow(
   NavigationController controller, {
   required bool following,
 }) {
   if (!following || controller.state != NavigationState.onRoute) return null;
+  if (controller.locationProblem != null) return null;
   final update = controller.update;
   if (update == null || update.deviation != NavDeviation.onRoute) return null;
   final steps = controller.steps;

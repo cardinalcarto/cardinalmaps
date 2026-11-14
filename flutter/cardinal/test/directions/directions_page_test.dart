@@ -586,6 +586,24 @@ void main() {
         await tester.pump(minRerouteInterval);
       });
 
+      testWidgets('hides while a location problem shows', (tester) async {
+        navigateInTestTime();
+        await start(tester);
+        await fix(tester);
+        expect(find.text('Pike Street'), findsOneWidget);
+        navigationLocation.fail(
+          const NavigationLocationError(LocationProblem.failed),
+        );
+        await tester.pump();
+        // Still on the route, as far as the trip knows.
+        expect(navigation.state, NavigationState.onRoute);
+        expect(find.text('Pike Street'), findsNothing);
+        // Until a fix comes again.
+        await fix(tester);
+        expect(navigation.locationProblem, isNull);
+        expect(find.text('Pike Street'), findsOneWidget);
+      });
+
       testWidgets('hides when the camera is not following you', (tester) async {
         navigateInTestTime();
         await start(tester);
