@@ -173,6 +173,75 @@ fn interrupted_requests_have_no_response() {
     assert_eq!(response.status, StatusCode::OK);
 }
 
+/// A captured trace request's body (from `valinor-tyr`'s trace fixtures).
+fn trace_body(case: &str) -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../valinor-tyr/fixtures/traces/andorra")
+        .join(case)
+        .join("request.json");
+    let recorded: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    recorded["request"].to_string()
+}
+
+#[test]
+fn interrupted_traces_have_no_response() {
+    let router = router();
+    for (target, case) in [
+        ("/trace_route", "andorra-0000-clean"),
+        ("/trace_attributes", "andorra-0033-clean"),
+        ("/trace_route", "andorra-0086-edge_walk_exact"),
+    ] {
+        let body = trace_body(case);
+        assert_eq!(
+            router.handle_interruptible(&post(target, &body), &|| true),
+            Err(Interrupted),
+            "{case}"
+        );
+        let response = router.handle(&post(target, &body));
+        assert_eq!(response.status, StatusCode::OK, "{case}");
+    }
+}
+
+#[test]
+fn matches_traces_on_many_threads_at_once() {
+    let config = RouterConfig {
+        workspaces: core::num::NonZeroUsize::new(2).unwrap(),
+        ..RouterConfig::default()
+    };
+    let router = Arc::new(Router::open(config, &[tiles()]).unwrap());
+    let route = trace_body("andorra-0000-clean");
+    let attributes = trace_body("andorra-0033-clean");
+    let expected = (
+        router.handle(&post("/trace_route", &route)),
+        router.handle(&post("/trace_attributes", &attributes)),
+    );
+    assert_eq!(expected.0.status, StatusCode::OK);
+    assert_eq!(expected.1.status, StatusCode::OK);
+    let threads: Vec<_> = (0..6)
+        .map(|_| {
+            let (router, route, attributes) = (router.clone(), route.clone(), attributes.clone());
+            std::thread::spawn(move || {
+                (0..3)
+                    .map(|_| {
+                        (
+                            router.handle(&post("/trace_route", &route)),
+                            router.handle(&post("/trace_attributes", &attributes)),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    for thread in threads {
+        for responses in thread.join().unwrap() {
+            assert_eq!(responses, expected);
+        }
+    }
+    assert!(router.match_workspaces.created() <= 2);
+    // Map matching doesn't take path search's workspaces.
+    assert_eq!(router.workspaces.created(), 0);
+}
+
 #[test]
 fn serves_many_threads_at_once() {
     let config = RouterConfig {

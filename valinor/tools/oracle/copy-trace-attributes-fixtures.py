@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Copies a sample of the `trace_attributes` helper's results into `valinor-tyr/fixtures`.
 
-Usage: copy-trace-attributes-fixtures.py <results.tsv> <targeted.tsv> <out-dir>
+Usage: copy-trace-attributes-fixtures.py <results.tsv> <targeted.tsv> <out-dir> [<requests.tsv>]
 
 <results.tsv> is the output of `cpp/trace_attributes.cc`; <targeted.tsv> holds the requests of
 `trace-attributes-corpus.py`, all of which are kept. Of the other (corpus) cases,
@@ -14,12 +14,15 @@ Each case becomes a directory with:
 
 - `api.bin`: the `valhalla.Api` the serializer got (for `trace_route`, Odin's output),
 - `matches.json`: the match results and scores (`trace_attributes` only),
-- `response.json` or `response.bin`: mainline's response body.
+- `response.json` or `response.bin`: mainline's response body,
+- `request.json`: the request (`{"action", "request"}`, from <requests.tsv>, the helper's input),
+  which `valinor-router`'s `trace_tests` send end to end.
 
 Errors are not copied: they happen before serialization.
 """
 
 import base64
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -27,6 +30,12 @@ from pathlib import Path
 
 def main():
     results, targeted, out = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+    requests = {}
+    if len(sys.argv) > 4:
+        for line in Path(sys.argv[4]).read_text().splitlines():
+            fields = line.split("\t")
+            if len(fields) >= 3:
+                requests[fields[0]] = {"action": fields[1], "request": json.loads(fields[2])}
     keep = {line.split("\t", 1)[0] for line in targeted.read_text().splitlines() if line}
     if out.exists():
         shutil.rmtree(out)
@@ -55,6 +64,10 @@ def main():
         # JSON responses start with `{`; PBF ones are `valhalla.Api` bytes.
         name = "response.json" if response.startswith(b"{") else "response.bin"
         (directory / name).write_bytes(response)
+        if case in requests:
+            (directory / "request.json").write_text(
+                json.dumps(requests[case], separators=(",", ":"), ensure_ascii=False) + "\n"
+            )
         copied += 1
     print(f"copied {copied} cases", file=sys.stderr)
 

@@ -35,11 +35,14 @@ pub struct RouterConfig {
     /// `mjolnir.tile_extract`, if the config names one (relative to the working directory,
     /// as mainline reads it). [`crate::Router::open`] doesn't read it: callers pass tile sets.
     pub tile_extract: Option<PathBuf>,
-    /// How many path search workspaces to keep, and so how many routes run at once;
+    /// How many path search workspaces to keep, and so how many routes run at once,
+    /// and as many map matching workspaces (for `trace_route` and `trace_attributes`);
     /// requests beyond that wait for one.
     ///
     /// A workspace keeps its searches' storage between requests,
-    /// which grows to the size of the largest search it has run.
+    /// which grows to the size of the largest search it has run;
+    /// a map matching workspace also keeps its candidate grids
+    /// (up to `meili.grid.cache_size` of them, as mainline's matcher does).
     pub workspaces: NonZeroUsize,
 }
 

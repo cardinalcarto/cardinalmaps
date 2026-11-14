@@ -2974,6 +2974,7 @@ dependencies = [
  "valhalla-proto",
  "valhalla-response",
  "valinor-loki",
+ "valinor-meili",
  "valinor-thor",
  "valinor-tyr",
 ]
@@ -3056,6 +3057,7 @@ dependencies = [
  "valhalla-microservice",
  "valhalla-proto",
  "valhalla-response",
+ "valinor-meili",
  "valinor-thor",
 ]
 

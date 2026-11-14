@@ -21,6 +21,7 @@ valhalla-graphtile = { workspace = true }
 valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
 valinor-loki = { workspace = true }
+valinor-meili = { workspace = true }
 valinor-thor = { workspace = true }
 valinor-tyr = { workspace = true }
 

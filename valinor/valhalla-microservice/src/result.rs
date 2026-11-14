@@ -85,6 +85,23 @@ impl WorkerResult {
         }
     }
 
+    /// An HTTP response with a body that is already serialized,
+    /// such as a Tyr response (`content_type` must be its type).
+    pub fn body(
+        status_code: StatusCode,
+        content_type: &'static str,
+        body: Vec<u8>,
+    ) -> WorkerResult {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
+
+        WorkerResult::HttpResponse {
+            status_code,
+            headers,
+            body,
+        }
+    }
+
     /// An error response, serialized for the request's format as mainline does.
     ///
     /// This records the error in the request's `info` (see [`ValhallaError::serialize`]).
