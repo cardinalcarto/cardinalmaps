@@ -40,14 +40,17 @@
 //! The order only matters through the reach cache and the opposing edge swap above,
 //! and only when several locations visit the same edges.
 
-use crate::geo::{DistanceApproximator, PointLL, Projector, tangent_angle};
-use crate::graph::{Graph, GraphError, Tile, edge as get_edge, node as get_node, node_ll, shape};
+use crate::graph::GraphError;
 use crate::reach::{DirectedReach, Reach};
 use crate::tiles::{ClosestFirst, bin_center};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use thiserror::Error;
+use valhalla_graphtile::graph_reader::{
+    GraphReadError, GraphReader, Tile, edge as get_edge, node as get_node, node_ll, shape,
+};
 use valhalla_graphtile::graph_tile::{DirectedEdge, GraphTile};
+use valhalla_graphtile::midgard::{DistanceApproximator, PointLL, Projector, tangent_angle};
 use valhalla_graphtile::tile_provider::GraphTileProvider;
 use valhalla_graphtile::{GraphId, RoadUse};
 use valhalla_proto::lat_lng::{HasLat, HasLng};
@@ -83,6 +86,13 @@ pub enum SearchError {
     /// (mainline throws "Subdivisions were exhausted").
     #[error("search the bins: subdivisions were exhausted")]
     Exhausted,
+}
+
+impl From<GraphReadError> for SearchError {
+    #[inline]
+    fn from(e: GraphReadError) -> Self {
+        Self::Graph(e.into())
+    }
 }
 
 /// A location's search filter, with mainline's accessor defaults for unset fields.
@@ -405,7 +415,7 @@ impl<T: GraphTile + Clone> Projection<T> {
     /// Moves to the next bin that might hold something useful (`next_bin`).
     fn next_bin<P: GraphTileProvider<TileHandle = T>>(
         &mut self,
-        graph: Graph<'_, P>,
+        graph: GraphReader<'_, P>,
     ) -> Result<(), SearchError> {
         loop {
             let (tile_index, bin_index, distance) =
@@ -441,7 +451,7 @@ impl<T: GraphTile + Clone> Projection<T> {
 
 /// The search over a set of locations (mainline's `bin_handler_t`).
 struct Handler<'g, P: GraphTileProvider, C> {
-    graph: Graph<'g, P>,
+    graph: GraphReader<'g, P>,
     costing: &'g C,
     pps: Vec<Projection<Tile<P>>>,
     max_reach_limit: u32,
@@ -467,7 +477,7 @@ pub fn search<P: GraphTileProvider, C: Costing>(
     if locations.is_empty() {
         return Ok(());
     }
-    let graph = Graph::new(provider);
+    let graph = GraphReader::new(provider);
     let mut handler = Handler {
         graph,
         costing,
@@ -602,7 +612,7 @@ impl<P: GraphTileProvider, C: Costing> Handler<'_, P, C> {
             && reach.inbound > 0
             && let Some(end_tile) = self.graph.tile_from(edge.end_node_id(), tile)?
         {
-            let opp_id = crate::graph::opposing_in_end_tile(&end_tile, edge)?;
+            let opp_id = valhalla_graphtile::graph_reader::opposing_in_end_tile(&end_tile, edge)?;
             let opp = get_edge(&end_tile, opp_id)?;
             if self
                 .costing

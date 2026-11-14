@@ -1,6 +1,6 @@
-//! Mainline's planar and spherical geometry (`midgard`), as Loki uses it.
+//! Mainline's planar and spherical geometry (`midgard`), as Loki and Meili use it.
 //!
-//! Loki's results depend on the exact floating point values these produce:
+//! Their results depend on the exact floating point values these produce:
 //! a candidate wins by being closer, a node snap is decided by an exact comparison
 //! of a projected point with a shape point, and headings are compared with tolerances.
 //! So each function here follows mainline's arithmetic step by step,
@@ -26,7 +26,7 @@ use geo::Coord;
 
 /// Valhalla's (rounded) meters per degree of latitude (`kMetersPerDegreeLat`, a float constant
 /// stored as a double).
-pub(crate) const METERS_PER_DEGREE_LAT: f64 = 110_567.0;
+pub const METERS_PER_DEGREE_LAT: f64 = 110_567.0;
 
 /// The earth radius in double precision (`kRadEarthMetersD`).
 const RAD_EARTH_METERS_D: f64 = 6_378_160.187;
@@ -40,26 +40,26 @@ const DEG_PER_RAD_D: f64 = 180.0 / PI;
 /// Degrees to radians in single precision (`kRadPerDeg`, `3.14159265f / 180.0f`).
 ///
 /// `3.14159265f` rounds to the same `f32` as [`core::f32::consts::PI`].
-pub(crate) const RAD_PER_DEG_F: f32 = core::f32::consts::PI / 180.0;
+pub const RAD_PER_DEG_F: f32 = core::f32::consts::PI / 180.0;
 
 /// A longitude and latitude in degrees (mainline's `PointLL`, a pair of doubles).
 ///
 /// Equality is exact, as for mainline's `std::pair` comparison.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct PointLL {
-    pub(crate) lng: f64,
-    pub(crate) lat: f64,
+pub struct PointLL {
+    pub lng: f64,
+    pub lat: f64,
 }
 
 impl PointLL {
     #[inline]
-    pub(crate) const fn new(lng: f64, lat: f64) -> Self {
+    pub const fn new(lng: f64, lat: f64) -> Self {
         Self { lng, lat }
     }
 
     /// The great circle distance in meters (`GeoPoint::Distance`, a haversine).
     #[inline]
-    pub(crate) fn distance(self, other: Self) -> f64 {
+    pub fn distance(self, other: Self) -> f64 {
         if self == other {
             return 0.0;
         }
@@ -82,7 +82,7 @@ impl PointLL {
 
     /// The heading from this point to `other`, in degrees in `[0, 360)` (`GeoPoint::Heading`).
     #[inline]
-    pub(crate) fn heading(self, other: Self) -> f64 {
+    pub fn heading(self, other: Self) -> f64 {
         if self == other {
             return 0.0;
         }
@@ -102,7 +102,8 @@ impl PointLL {
     /// The point a fraction of the way along the great circle to `p`
     /// (`GeoPoint::PointAlongSegment`).
     #[inline]
-    pub(crate) fn point_along_segment(self, p: Self, distance: f64) -> Self {
+    #[must_use]
+    pub fn point_along_segment(self, p: Self, distance: f64) -> Self {
         if distance == 0.0 {
             return self;
         }
@@ -134,14 +135,14 @@ impl PointLL {
 
     /// The approximate squared distance in meters (`GeoPoint::DistanceSquared`).
     #[inline]
-    pub(crate) fn distance_squared(self, other: Self) -> f64 {
+    pub fn distance_squared(self, other: Self) -> f64 {
         DistanceApproximator::new(self).distance_squared(other)
     }
 
     /// Which side of the line from `p1` to `p2` this point is on (`GeoPoint::IsLeft`):
     /// positive to the left, negative to the right, and zero on the line.
     #[inline]
-    pub(crate) fn is_left(self, p1: Self, p2: Self) -> f64 {
+    pub fn is_left(self, p1: Self, p2: Self) -> f64 {
         (p2.lng - p1.lng) * (self.lat - p1.lat) - (self.lng - p1.lng) * (p2.lat - p1.lat)
     }
 
@@ -149,7 +150,7 @@ impl PointLL {
     /// (`GeoPoint::ClosestPoint` with its default arguments: the whole polyline).
     ///
     /// Returns `None` for an empty polyline (mainline returns an invalid point and index -1).
-    pub(crate) fn closest_point(self, pts: &[Self]) -> Option<(Self, f64, usize)> {
+    pub fn closest_point(self, pts: &[Self]) -> Option<(Self, f64, usize)> {
         let first = *pts.first()?;
         let approx = DistanceApproximator::new(self);
         let mut closest = first;
@@ -198,13 +199,13 @@ impl From<Coord<f64>> for PointLL {
 
 /// `std::min(a, b)`: `a` unless `b` is smaller.
 #[inline]
-pub(crate) fn cpp_min(a: f64, b: f64) -> f64 {
+pub fn cpp_min(a: f64, b: f64) -> f64 {
     if b < a { b } else { a }
 }
 
 /// `std::max(a, b)`: `a` unless it is smaller than `b`.
 #[inline]
-pub(crate) fn cpp_max(a: f64, b: f64) -> f64 {
+pub fn cpp_max(a: f64, b: f64) -> f64 {
     if a < b { b } else { a }
 }
 
@@ -213,7 +214,7 @@ pub(crate) fn cpp_max(a: f64, b: f64) -> f64 {
 ///
 /// The product is a double (the float constant is promoted), rounded to a float for `cosf`.
 #[inline]
-pub(crate) fn lng_scale_per_lat(lat: f64) -> f64 {
+pub fn lng_scale_per_lat(lat: f64) -> f64 {
     #[expect(
         clippy::cast_possible_truncation,
         reason = "mainline passes the double product to cosf, which takes a float"
@@ -224,13 +225,13 @@ pub(crate) fn lng_scale_per_lat(lat: f64) -> f64 {
 
 /// Meters per degree of longitude at a latitude (`DistanceApproximator::MetersPerLngDegree`).
 #[inline]
-pub(crate) fn meters_per_lng_degree(lat: f64) -> f64 {
+pub fn meters_per_lng_degree(lat: f64) -> f64 {
     lng_scale_per_lat(lat) * METERS_PER_DEGREE_LAT
 }
 
 /// Fast squared distances from a fixed point (mainline's `DistanceApproximator<PointLL>`).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct DistanceApproximator {
+pub struct DistanceApproximator {
     center: PointLL,
     lng_scale: f64,
     m_per_lng_degree: f64,
@@ -238,7 +239,7 @@ pub(crate) struct DistanceApproximator {
 
 impl DistanceApproximator {
     #[inline]
-    pub(crate) fn new(center: PointLL) -> Self {
+    pub fn new(center: PointLL) -> Self {
         let lng_scale = lng_scale_per_lat(center.lat);
         Self {
             center,
@@ -249,13 +250,13 @@ impl DistanceApproximator {
 
     /// The longitude scale at the center (`GetLngScale`).
     #[inline]
-    pub(crate) const fn lng_scale(&self) -> f64 {
+    pub const fn lng_scale(&self) -> f64 {
         self.lng_scale
     }
 
     /// The approximate squared distance in meters (`DistanceSquared`).
     #[inline]
-    pub(crate) fn distance_squared(&self, ll: PointLL) -> f64 {
+    pub fn distance_squared(&self, ll: PointLL) -> f64 {
         let dlat = (ll.lat - self.center.lat) * METERS_PER_DEGREE_LAT;
         let dlng = (ll.lng - self.center.lng) * self.m_per_lng_degree;
         dlat * dlat + dlng * dlng
@@ -264,16 +265,16 @@ impl DistanceApproximator {
 
 /// Projects one point onto many segments (mainline's `projector_t`).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Projector {
+pub struct Projector {
     lon_scale: f64,
     lat: f64,
     lng: f64,
-    pub(crate) approx: DistanceApproximator,
+    pub approx: DistanceApproximator,
 }
 
 impl Projector {
     #[inline]
-    pub(crate) fn new(ll: PointLL) -> Self {
+    pub fn new(ll: PointLL) -> Self {
         let approx = DistanceApproximator::new(ll);
         Self {
             lon_scale: approx.lng_scale(),
@@ -285,7 +286,7 @@ impl Projector {
 
     /// The closest point to ours on the segment from `u` to `v` (`projector_t::operator()`).
     #[inline]
-    pub(crate) fn project(&self, u: PointLL, v: PointLL) -> PointLL {
+    pub fn project(&self, u: PointLL, v: PointLL) -> PointLL {
         if u == v {
             return u;
         }
@@ -313,7 +314,7 @@ impl Projector {
 ///
 /// `shape` must not be empty and `index` must be within it (mainline asserts both);
 /// out-of-range input returns 0.
-pub(crate) fn tangent_angle(
+pub fn tangent_angle(
     index: usize,
     point: PointLL,
     shape: &[PointLL],
@@ -382,7 +383,7 @@ fn at(shape: &[PointLL], i: isize) -> Option<&PointLL> {
 
 /// Rounds a double to a float, as mainline does when it stores a double in a `float`.
 #[inline]
-pub(crate) fn narrow(value: f64) -> f32 {
+pub fn narrow(value: f64) -> f32 {
     #[expect(
         clippy::cast_possible_truncation,
         reason = "mainline stores the double in a float"
@@ -393,17 +394,17 @@ pub(crate) fn narrow(value: f64) -> f32 {
 
 /// An axis-aligned bounding box in degrees (mainline's `AABB2<PointLL>`).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Aabb {
-    pub(crate) minx: f64,
-    pub(crate) miny: f64,
-    pub(crate) maxx: f64,
-    pub(crate) maxy: f64,
+pub struct Aabb {
+    pub minx: f64,
+    pub miny: f64,
+    pub maxx: f64,
+    pub maxy: f64,
 }
 
 impl Aabb {
     /// The bounding box of some points (`AABB2::Create`); `None` if there are none
     /// (mainline reads past the end of an empty vector).
-    pub(crate) fn of_points(points: &[PointLL]) -> Option<Self> {
+    pub fn of_points(points: &[PointLL]) -> Option<Self> {
         let (first, rest) = points.split_first()?;
         let mut bbox = Self {
             minx: first.lng,
@@ -428,7 +429,7 @@ impl Aabb {
 
     /// Whether the boxes overlap, edges included (`AABB2::Intersects(const AABB2&)`).
     #[inline]
-    pub(crate) fn intersects(&self, r2: &Self) -> bool {
+    pub fn intersects(&self, r2: &Self) -> bool {
         !((r2.minx < self.minx && r2.maxx < self.minx)
             || (r2.miny < self.miny && r2.maxy < self.miny)
             || (r2.minx > self.maxx && r2.maxx > self.maxx)
@@ -438,7 +439,8 @@ impl Aabb {
     /// The overlap of two boxes, or an all-zero box if they don't overlap
     /// (`AABB2::Intersection`).
     #[inline]
-    pub(crate) fn intersection(&self, other: &Self) -> Self {
+    #[must_use]
+    pub fn intersection(&self, other: &Self) -> Self {
         if !self.intersects(other) {
             return Self {
                 minx: 0.0,

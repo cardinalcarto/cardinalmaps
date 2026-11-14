@@ -27,8 +27,7 @@
     reason = "a port of mainline's arithmetic, which compares floats exactly and names its terms tersely"
 )]
 
-use crate::geo::{Aabb, PointLL, cpp_max, cpp_min, meters_per_lng_degree};
-use crate::graph::{Graph, GraphError, edge as get_edge, shape};
+use crate::graph::GraphError;
 use crate::search::{CIRCLE_MARGIN_METERS, point_of};
 use crate::tiles::{
     BINS_DIM, COLUMNS, ROWS, SUBDIVISION_SIZE, bin_bbox, bin_center, neighboring_bins,
@@ -36,7 +35,9 @@ use crate::tiles::{
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use thiserror::Error;
 use valhalla_graphtile::GraphId;
+use valhalla_graphtile::graph_reader::{GraphReadError, GraphReader, edge as get_edge, shape};
 use valhalla_graphtile::graph_tile::GraphTile;
+use valhalla_graphtile::midgard::{Aabb, PointLL, cpp_max, cpp_min, meters_per_lng_degree};
 use valhalla_graphtile::tile_provider::GraphTileProvider;
 use valhalla_proto::Options;
 use valhalla_proto::lat_lng::{HasLat, HasLng};
@@ -57,6 +58,13 @@ pub enum PolygonError {
     /// The graph couldn't be read.
     #[error(transparent)]
     Graph(#[from] GraphError),
+}
+
+impl From<GraphReadError> for PolygonError {
+    #[inline]
+    fn from(e: GraphReadError) -> Self {
+        Self::Graph(e.into())
+    }
 }
 
 /// A closed, clockwise ring and its bounding box.
@@ -472,7 +480,7 @@ fn circle_outside_bounds(center: PointLL, radius_sq: f32, bbox: &Aabb) -> bool {
 )]
 pub(crate) fn edges_in_rings<P: GraphTileProvider, C: Costing>(
     options: &Options,
-    graph: Graph<'_, P>,
+    graph: GraphReader<'_, P>,
     costing: &C,
     max_length: f32,
     max_vertices: usize,

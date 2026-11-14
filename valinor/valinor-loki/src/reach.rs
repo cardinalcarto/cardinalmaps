@@ -28,10 +28,11 @@
 //! - The exact check's reverse expansion tests complex restrictions as if it went forward
 //!   (`Restricted(..., true)`), as `thor::Dijkstras` does.
 
-use crate::graph::{
-    Graph, GraphError, Tile, edge as get_edge, node as get_node, opposing_in_end_tile,
-};
+use crate::graph::GraphError;
 use std::collections::{HashMap, HashSet, VecDeque};
+use valhalla_graphtile::graph_reader::{
+    GraphReader, Tile, edge as get_edge, node as get_node, opposing_in_end_tile,
+};
 use valhalla_graphtile::graph_tile::{DirectedEdge, GraphTile};
 use valhalla_graphtile::tile_provider::GraphTileProvider;
 use valhalla_graphtile::{GraphId, RoadClass, RoadUse};
@@ -398,7 +399,7 @@ impl Reach {
         edge: &DirectedEdge,
         edge_id: GraphId,
         max_reach: u32,
-        graph: Graph<'_, P>,
+        graph: GraphReader<'_, P>,
         costing: &C,
     ) -> Result<DirectedReach, GraphError> {
         if max_reach == 0 {
@@ -505,7 +506,7 @@ impl Reach {
     fn enqueue<P: GraphTileProvider, C: Costing>(
         &mut self,
         node_id: GraphId,
-        graph: Graph<'_, P>,
+        graph: GraphReader<'_, P>,
         costing: &C,
         hint: &Tile<P>,
     ) -> Result<(), GraphError> {
@@ -536,7 +537,7 @@ impl Reach {
         &mut self,
         edge: &DirectedEdge,
         edge_id: GraphId,
-        graph: Graph<'_, P>,
+        graph: GraphReader<'_, P>,
         costing: &C,
         outbound: bool,
         inbound: bool,
@@ -573,7 +574,7 @@ impl Reach {
         &mut self,
         direction: Direction,
         edge_id: GraphId,
-        graph: Graph<'_, P>,
+        graph: GraphReader<'_, P>,
         costing: &C,
     ) -> Result<(), GraphError> {
         // `GetExpansionHints`: 50 buckets per node of reach, each one cost unit wide.
@@ -642,7 +643,7 @@ impl Reach {
         &mut self,
         direction: Direction,
         edge_id: GraphId,
-        graph: Graph<'_, P>,
+        graph: GraphReader<'_, P>,
         costing: &C,
     ) -> Result<(), GraphError> {
         let base = costing.base();
@@ -733,7 +734,7 @@ impl Reach {
         pred_index: u32,
         opp_pred_edge: Option<&DirectedEdge>,
         from_transition: bool,
-        graph: Graph<'_, P>,
+        graph: GraphReader<'_, P>,
         costing: &C,
     ) -> Result<(), GraphError> {
         let forward = direction == Direction::Forward;
@@ -926,7 +927,7 @@ fn clamp_count(count: u64, max_reach: u32) -> u32 {
 /// The begin node of an edge: the end node of its opposing edge (`GetBeginNodeId`),
 /// or `None` if the opposing edge's tile isn't in the tile set.
 fn begin_node<P: GraphTileProvider>(
-    graph: Graph<'_, P>,
+    graph: GraphReader<'_, P>,
     edge: &DirectedEdge,
     tile: &Tile<P>,
 ) -> Result<Option<GraphId>, GraphError> {
