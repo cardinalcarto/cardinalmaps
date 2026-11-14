@@ -184,6 +184,10 @@ class FakeNative implements OfflineNative {
   /// Called while a region claims its map tiles (as it starts).
   Future<void> Function(int region)? onClaim;
 
+  /// Called as a basemap is prepared, with its path: it may throw, as a basemap that
+  /// can't be written does.
+  Future<void> Function(String path)? onPrepare;
+
   /// Called before a file is hashed, and a range unpacked, with its path.
   Future<void> Function(String path)? onHash, onUnpack;
 
@@ -208,6 +212,7 @@ class FakeNative implements OfflineNative {
     Uint8List header,
     String name,
   ) async {
+    await onPrepare?.call(path);
     await File(path).create(recursive: true);
     basemaps.putIfAbsent(path, () => {});
   }

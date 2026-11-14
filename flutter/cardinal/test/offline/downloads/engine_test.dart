@@ -362,6 +362,26 @@ void main() {
     },
   );
 
+  test('a basemap that cannot be prepared fails the region; retry prepares it and downloads', () async {
+    final plan = await engine.plan(downtown);
+    native.onPrepare = (_) async =>
+        throw StateError('preparing the basemap: storage: permission denied');
+    final id = await engine.start(plan, feeds: {metro});
+    await settle();
+    final failed = await region(id);
+    expect(failed.state, RegionState.failed);
+    expect(failed.error, contains('permission denied'));
+    expect(transfers.history, isEmpty);
+
+    native.onPrepare = null;
+    await engine.retry(id);
+    await settle();
+    expect((await region(id)).state, RegionState.ready);
+    final basemap = native.basemaps[engine.basemapPath(mapDate)]!;
+    expect(basemap, isNotEmpty);
+    expect(basemap.values.every((r) => r.contains(id)), isTrue);
+  });
+
   test('a corrupt file fails its check, is retried, and fails the region; retry downloads it again', () async {
     final plan = await engine.plan(downtown);
     final tile = plan.routingFiles.first.path;

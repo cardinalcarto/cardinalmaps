@@ -251,6 +251,9 @@ String transferPath(String mode, int zoom, int x, int y) =>
 /// The map archive in the bucket, under `releases/`.
 String mapArchivePath(String release) => 'map/$release/planet.pmtiles';
 
+/// How long a PMTiles header is: the basemap's metadata comes from it.
+const mapHeaderBytes = 127;
+
 /// The zoom the transit index gives feeds' stop cells at (`cell_zoom` in its
 /// `feeds.json`): coarser than transfer tiles, whose zoom comes from their archive.
 const cellZoom = 12;
@@ -654,7 +657,11 @@ class Planner {
     }
     return (
       await planning.finish(basemap),
-      Uint8List.sublistView(first.bytes, 0, math.min(127, first.bytes.length)),
+      Uint8List.sublistView(
+        first.bytes,
+        0,
+        math.min(mapHeaderBytes, first.bytes.length),
+      ),
       archiveEtag,
     );
   }

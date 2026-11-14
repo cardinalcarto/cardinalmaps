@@ -669,19 +669,19 @@ class OfflineDownloads {
       return id;
     });
     if (plan.map case final map? when r.map != null) {
-      final basemap = basemapPath(r.map!);
-      await native.basemapPrepare(
-        basemap,
-        plan.mapHeader!,
-        'Cardinal offline map',
-      );
-      // Tiles other regions brought are this region's too from now on, so deleting
-      // those regions keeps them.
-      final missing = await native.basemapClaim(
-        basemap,
-        regionId,
-        map.tileKeys,
-      );
+      final int missing;
+      try {
+        missing = await _claimMap(
+          regionId,
+          r.map!,
+          plan.mapHeader!,
+          map.tileKeys,
+        );
+      } on Object catch (e) {
+        // The region is written: it fails, and Retry prepares the map again.
+        await _setRegion(regionId, RegionState.failed, error: '$e');
+        return regionId;
+      }
       final planned = map.archiveTiles - map.presentTiles;
       if (missing != planned) {
         await _setRegion(
@@ -697,6 +697,21 @@ class OfflineDownloads {
     await _pump();
     return regionId;
   });
+
+  /// Makes the basemap of map release [release] if needed, from the archive's [header],
+  /// and gives [region] its tiles in [tileKeys] that it holds: tiles other regions
+  /// brought are this region's too from now on, so deleting those regions keeps them.
+  /// Returns how many tiles it lacks. Doing it again changes nothing.
+  Future<int> _claimMap(
+    int region,
+    String release,
+    Uint8List header,
+    Uint8List tileKeys,
+  ) async {
+    final basemap = basemapPath(release);
+    await native.basemapPrepare(basemap, header, 'Cardinal offline map');
+    return native.basemapClaim(basemap, region, tileKeys);
+  }
 
   Future<void> _setRegion(int id, RegionState state, {String? error}) async {
     await (db.update(db.regions)..where((r) => r.id.equals(id))).write(
@@ -1288,6 +1303,22 @@ class OfflineDownloads {
       db.regions,
     )..where((r) => r.id.equals(region))).getSingleOrNull();
     if (row == null || row.state != RegionState.failed) return;
+    // Its map may not have been prepared: starting it may have failed there.
+    if ((row.mapRelease, row.mapTiles) case (final release?, final keys?)) {
+      try {
+        final archive = mapArchivePath(release);
+        final first = await bucket.range(
+          archive,
+          0,
+          mapHeaderBytes,
+          ifMatch: (await archiveEtags())[archive],
+        );
+        await _claimMap(region, release, first.bytes, keys);
+      } on Object catch (e) {
+        await _setRegion(region, RegionState.failed, error: '$e');
+        return;
+      }
+    }
     final files = await _regionFiles(region);
     await db.batch((b) {
       for (final f in files.where((f) => f.state == FileState.failed)) {
