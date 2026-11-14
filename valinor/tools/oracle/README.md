@@ -366,6 +366,74 @@ as `<prefix>-trip.tsv`) and the trip corpora (`thor-corpus.py andorra 3000 31 tr
 and the test counts apart). Two Seattle trip-corpus cases have paths that tie at equal cost.
 In CI, the `captured_trips` test compares the trips of `valinor-tyr`'s Andorra captures.
 
+## Map matching (trace_route and trace_attributes)
+
+[`trace-corpus.py`](trace-corpus.py) generates reproducible trace requests as JSON lines
+(`{"name", "action", "body"}`), from real routes: it routes with a staged mainline
+between random points, resamples the shape at varied intervals, and adds GPS noise.
+Its kinds of cases (the case name's suffix) are clean, noisy, sparse, and dense traces
+(points closer than `interpolation_distance`), gaps past `breakage_distance`,
+exact route shapes for `edge_walk` and `walk_or_snap`, noisy shapes for both,
+point types (break, break_through, via, through), point `time`s and `begin_time` with
+`durations` (with and without `use_timestamps`), U-turns, loops, GPS spikes, off-road and
+very short traces, stationary points, every `trace_options` field, `alternates`, and
+`filters`, for auto, pedestrian, and bicycle with costing options, in every format
+(JSON, OSRM, and PBF), with `id`, `units`, and `encoded_polyline` or `shape`.
+Then come fixed cases: the `service_limits.trace` limits on both sides, the trace option
+bounds, and every error the trace path can give (100, 101, 103, 114, 123, 124, 125, 134,
+135, 136, 140, 153, 154, 157, 158, 160, 162, 164, 172, 442, 443, 444, and 445),
+some in OSRM and PBF format, plus a GET and two PBF request bodies.
+The same seed, tiles, and mainline give the same corpus.
+
+The Andorra build is `c0-fixture-build-2/build`, whose tiles are the fixture tiles
+(`valhalla-graphtile/fixtures/andorra-tiles.tar`, byte for byte);
+both builds' `meili` sections and trace limits are `valhalla_build_config`'s defaults.
+Each line is captured once, in its own format; trace_attributes is answered by Thor,
+so only trace_route cases have a Thor→Odin message.
+
+```shell
+cargo build --release -p valinor-tap
+oracle=/mnt/maps/cardinal/valhalla-oracle
+tools/oracle/serve-staged.sh $oracle/c0-fixture-build-2/build $oracle/traces/taps-andorra 8471 $oracle/traces/ipc-a &
+tools/oracle/serve-staged.sh $oracle/seattle $oracle/traces/taps-seattle 8472 $oracle/traces/ipc-s &
+python3 -I tools/oracle/trace-corpus.py andorra 300 1 --url http://localhost:8471 > $oracle/traces/andorra.jsonl
+python3 -I tools/oracle/trace-corpus.py seattle 300 2 --url http://localhost:8472 > $oracle/traces/seattle.jsonl
+# Routing for the corpus leaves messages in the taps; clear them before capturing.
+rm -f $oracle/traces/taps-*/*/*.bin
+python3 -I tools/oracle/capture.py $oracle/traces/andorra.jsonl $oracle/traces/taps-andorra \
+  $oracle/captures/traces-andorra --url http://localhost:8471 --protos valhalla-proto/proto
+python3 -I tools/oracle/capture.py $oracle/traces/seattle.jsonl $oracle/traces/taps-seattle \
+  $oracle/captures/traces-seattle --url http://localhost:8472 --protos valhalla-proto/proto
+tools/oracle/copy-trace-fixtures.sh
+```
+
+Each corpus has 354 cases (300 generated and 54 fixed). In Andorra 304 succeed and 50 fail;
+in Seattle 300 and 54. Rerunning a sample of about 90 cases per region gave the same
+responses, Loki→Thor messages, and Thor→Odin messages (apart from latency statistics).
+
+[`copy-trace-fixtures.sh`](copy-trace-fixtures.sh) copies the first Andorra case of each
+kind and action, and the limit and error cases, under 80 KB each:
+`valinor-thor/fixtures/traces/andorra` has the Loki→Thor message of the cases that reached Thor,
+with the Thor→Odin message (trace_route) or Thor's response (trace_attributes and errors),
+and `valinor-tyr/fixtures/traces/andorra` has every copied case's request and response,
+end to end. See the script for the layout. No tests read them yet.
+
+Mainline behavior to know when comparing:
+
+- A body with `trace` instead of `shape` fails with 135, even with valid points.
+- `use_timestamps` without times is never 159: parsing gives every point a time of -1
+  (JSON and PBF alike).
+- `trace_options.breakage_distance` only changes Loki's check (172);
+  meili's breakage distance isn't customizable in the default config.
+  `max_route_distance_factor` and `max_route_time_factor` in `trace_options` are ignored.
+- An unknown `date_time.type` is ignored (200).
+- trace_attributes with `alternates` fails with 444 when there aren't that many
+  distinct matches, though the same trace matches with fewer alternates.
+- `edge_walk` on the concatenated shape of a multi-leg route often fails (443),
+  and now and then on a single leg's shape (in a check of 40 Seattle routes, 12 of 20
+  three-stop routes and 2 of their 56 legs);
+  the `edge_walk_exact` cases include both kinds of routes.
+
 ## Message fixtures
 
 [`copy-message-fixtures.sh`](copy-message-fixtures.sh) copies the captured
