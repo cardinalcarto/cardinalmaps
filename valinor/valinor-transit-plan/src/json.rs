@@ -166,7 +166,8 @@ pub struct NearbyRequestBody {
     /// How far ahead departures are listed, in seconds; two hours when absent.
     #[serde(default)]
     pub horizon_seconds: Option<u32>,
-    /// How many departures each direction lists, at most ten; three when absent.
+    /// How many departures that run each direction lists (canceled and skipped ones among
+    /// them don't count), at most ten; three when absent.
     #[serde(default)]
     pub max_departures: Option<u8>,
     /// How many routes to list, soonest first; all when absent.
@@ -202,7 +203,8 @@ pub struct RouteRequestBody {
     /// How far ahead departures are listed, in seconds; two hours when absent.
     #[serde(default)]
     pub horizon_seconds: Option<u32>,
-    /// How many departures to list, at most ten; three when absent.
+    /// How many departures that run to list (canceled and skipped ones among them don't
+    /// count), at most ten; three when absent.
     #[serde(default)]
     pub max_departures: Option<u8>,
     /// The trip whose stops to show, by a departure's `trip_id`; the next that runs when absent.

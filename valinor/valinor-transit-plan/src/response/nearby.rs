@@ -310,6 +310,24 @@ fn window_clock(origin: i64, unix: i64) -> i32 {
     })
 }
 
+/// How many of some departures, in order of departure, to list for `max` that run: up to
+/// and including the `max`-th that runs, so canceled and skipped ones within that span are
+/// listed beside them and don't count; all of them when fewer than `max` run.
+fn listed_span<'a>(departures: impl Iterator<Item = &'a Candidate>, max: u8) -> usize {
+    let mut runs = 0;
+    let mut span = 0;
+    for candidate in departures {
+        if runs == max {
+            break;
+        }
+        span += 1;
+        if candidate.found == Found::Runs {
+            runs += 1;
+        }
+    }
+    span
+}
+
 /// The distinct headsigns of some departures, the most frequent first, then in order of
 /// departure.
 fn ranked_headsigns(departures: &[StopDeparture]) -> Vec<String> {
@@ -551,7 +569,7 @@ impl RideDescriber<'_> {
                 .map(|s| &s.candidate)
                 .collect();
             listed.sort_unstable_by_key(|c| c.order());
-            listed.truncate(usize::from(request.max_departures));
+            listed.truncate(listed_span(listed.iter().copied(), request.max_departures));
             let stop_ref = self.stop_ref(stop);
             let departures: Vec<StopDeparture> = listed
                 .into_iter()
@@ -674,7 +692,7 @@ impl RideDescriber<'_> {
         let mut pool = Vec::new();
         let departures: Vec<StopDeparture> = found
             .iter()
-            .take(usize::from(request.max_departures))
+            .take(listed_span(found.iter(), request.max_departures))
             .map(|c| self.stop_departure(stop, stop_ref.accessibility, c, &mut pool))
             .collect();
         let vehicles = self.route_vehicles(info.gtfs_id, &request.feed, &|group| wanted(group));

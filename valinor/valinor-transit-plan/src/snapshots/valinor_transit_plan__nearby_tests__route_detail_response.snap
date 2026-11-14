@@ -1,0 +1,355 @@
+---
+source: valinor-transit-plan/src/nearby_tests.rs
+expression: "&detail(&state, &request)"
+---
+{
+  "generated_at": 1781535015,
+  "window": {
+    "earliest": 1781535600,
+    "latest": 1781542800
+  },
+  "realtime": {
+    "level": "realtime",
+    "built_at": 1781535015,
+    "feeds": [
+      {
+        "feed": "metro",
+        "kind": "trip_updates",
+        "state": "applied",
+        "age_seconds": 15,
+        "header_timestamp": 1781535000,
+        "stale_after_seconds": 300,
+        "entities_dropped": 0
+      },
+      {
+        "feed": "metro",
+        "kind": "vehicle_positions",
+        "state": "applied",
+        "age_seconds": 15,
+        "header_timestamp": 1781535000,
+        "stale_after_seconds": 300,
+        "entities_dropped": 0
+      },
+      {
+        "feed": "metro",
+        "kind": "alerts",
+        "state": "applied",
+        "age_seconds": 15,
+        "header_timestamp": 1781535000,
+        "stale_after_seconds": 1800,
+        "entities_dropped": 0
+      }
+    ]
+  },
+  "feed": "metro",
+  "route": {
+    "route_id": "R1",
+    "short_name": "1",
+    "long_name": "First Avenue",
+    "route_type": 3,
+    "color": "FDB71A",
+    "text_color": "000000"
+  },
+  "agency": {
+    "agency_id": "MT",
+    "name": "Metro",
+    "url": "https://m.test"
+  },
+  "direction_id": 0,
+  "headsigns": [
+    "Northgate",
+    "Northgate via 2nd"
+  ],
+  "stop": {
+    "accessibility": "accessible",
+    "feed": "metro",
+    "stop_id": "N1",
+    "name": "North 1st",
+    "latitude": 47.6005,
+    "longitude": -122.33,
+    "wheelchair_boarding": "yes",
+    "time_zone": "America/Los_Angeles"
+  },
+  "walk_seconds": 42,
+  "departures": [
+    {
+      "trip_id": "R1N-0810",
+      "start_date": "20260615",
+      "headsign": "Northgate",
+      "status": "live",
+      "departure": 1781536350,
+      "scheduled_departure": 1781536230,
+      "delay_seconds": 120,
+      "realtime": true,
+      "vehicle_id": "7033",
+      "accessibility": "accessible",
+      "alerts": [
+        0
+      ]
+    },
+    {
+      "trip_id": "R1N-0820",
+      "start_date": "20260615",
+      "headsign": "Northgate via 2nd",
+      "status": "canceled",
+      "departure": 1781536830,
+      "scheduled_departure": 1781536830,
+      "accessibility": "accessible",
+      "alerts": [
+        0
+      ]
+    },
+    {
+      "trip_id": "R1N-0830",
+      "start_date": "20260615",
+      "headsign": "Northgate",
+      "status": "scheduled",
+      "departure": 1781537430,
+      "scheduled_departure": 1781537430,
+      "accessibility": "accessible",
+      "alerts": [
+        0
+      ]
+    }
+  ],
+  "ride": {
+    "accessibility": "accessible",
+    "departure": 1781536350,
+    "arrival": 1781536950,
+    "duration_seconds": 600,
+    "wait_seconds": 708,
+    "delay_seconds": 120,
+    "realtime": true,
+    "route": {
+      "route_id": "R1",
+      "short_name": "1",
+      "long_name": "First Avenue",
+      "route_type": 3,
+      "color": "FDB71A",
+      "text_color": "000000"
+    },
+    "agency": {
+      "agency_id": "MT",
+      "name": "Metro",
+      "url": "https://m.test"
+    },
+    "trip": {
+      "feed": "metro",
+      "trip_id": "R1N-0810",
+      "start_date": "20260615",
+      "headsign": "Northgate",
+      "direction_id": 0,
+      "wheelchair_accessible": "yes",
+      "realtime_state": "delayed"
+    },
+    "stops": [
+      {
+        "accessibility": "accessible",
+        "feed": "metro",
+        "stop_id": "N1",
+        "name": "North 1st",
+        "latitude": 47.6005,
+        "longitude": -122.33,
+        "wheelchair_boarding": "yes",
+        "time_zone": "America/Los_Angeles",
+        "stop_sequence": 20,
+        "arrival": 1781536350,
+        "departure": 1781536350,
+        "scheduled_arrival": 1781536230,
+        "scheduled_departure": 1781536230,
+        "predicted_arrival": 1781536350,
+        "predicted_departure": 1781536350,
+        "arrival_delay_seconds": 120,
+        "departure_delay_seconds": 120,
+        "arrival_uncertainty_seconds": 30,
+        "schedule_relationship": "scheduled",
+        "skipped": false,
+        "removed_by_alert": false,
+        "utc_offset_seconds": -25200
+      },
+      {
+        "accessibility": "accessible",
+        "feed": "metro",
+        "stop_id": "N2",
+        "name": "North 2nd",
+        "latitude": 47.604,
+        "longitude": -122.33,
+        "wheelchair_boarding": "yes",
+        "time_zone": "America/Los_Angeles",
+        "stop_sequence": 30,
+        "arrival": 1781536440,
+        "departure": 1781536440,
+        "scheduled_arrival": 1781536320,
+        "scheduled_departure": 1781536320,
+        "predicted_arrival": 1781536440,
+        "predicted_departure": 1781536440,
+        "arrival_delay_seconds": 120,
+        "departure_delay_seconds": 120,
+        "skipped": false,
+        "removed_by_alert": false,
+        "utc_offset_seconds": -25200
+      },
+      {
+        "accessibility": "accessible",
+        "feed": "metro",
+        "stop_id": "NF",
+        "name": "North Far",
+        "latitude": 47.63,
+        "longitude": -122.33,
+        "wheelchair_boarding": "yes",
+        "time_zone": "America/Los_Angeles",
+        "stop_sequence": 40,
+        "arrival": 1781536950,
+        "departure": 1781536950,
+        "scheduled_arrival": 1781536830,
+        "scheduled_departure": 1781536830,
+        "predicted_arrival": 1781536950,
+        "predicted_departure": 1781536950,
+        "arrival_delay_seconds": 120,
+        "departure_delay_seconds": 120,
+        "skipped": false,
+        "removed_by_alert": false,
+        "utc_offset_seconds": -25200
+      }
+    ],
+    "shape": "gvhxyA~wlihFw|AnK_|BoK_xq@?",
+    "vehicle": {
+      "feed": "metro",
+      "id": "7033",
+      "label": "Bus 7033",
+      "trip_id": "R1N-0810",
+      "route_id": "R1",
+      "latitude": 47.585,
+      "longitude": -122.33,
+      "bearing": 90.0,
+      "speed_meters_per_second": 11.5,
+      "current_stop": {
+        "stop_id": "S2"
+      },
+      "current_stop_sequence": 20,
+      "occupancy": "many_seats_available",
+      "congestion": "running_smoothly",
+      "timestamp": 1781535000
+    },
+    "alerts": [
+      {
+        "feed": "metro",
+        "id": "a1",
+        "cause": "construction",
+        "effect": "detour",
+        "severity": "warning",
+        "active_periods": [
+          {
+            "start": 1700000000,
+            "end": 1900000000
+          }
+        ],
+        "communication_periods": [],
+        "impact_periods": [],
+        "header": [
+          {
+            "text": "Stop relocated",
+            "language": "en"
+          },
+          {
+            "text": "Parada reubicada",
+            "language": "es"
+          }
+        ],
+        "description": [
+          {
+            "text": "The temporary stop is on Pine St just east of the old one.",
+            "language": "en"
+          }
+        ],
+        "url": [
+          {
+            "text": "https://m.test/alert",
+            "language": "en"
+          }
+        ],
+        "tts_header": [],
+        "tts_description": [],
+        "cause_detail": [],
+        "effect_detail": [],
+        "image": [],
+        "image_alternative_text": [],
+        "informed": [
+          {
+            "route_id": "R1"
+          }
+        ]
+      }
+    ]
+  },
+  "vehicles": [
+    {
+      "feed": "metro",
+      "id": "7033",
+      "label": "Bus 7033",
+      "trip_id": "R1N-0810",
+      "route_id": "R1",
+      "latitude": 47.585,
+      "longitude": -122.33,
+      "bearing": 90.0,
+      "speed_meters_per_second": 11.5,
+      "current_stop": {
+        "stop_id": "S2"
+      },
+      "current_stop_sequence": 20,
+      "occupancy": "many_seats_available",
+      "congestion": "running_smoothly",
+      "timestamp": 1781535000
+    }
+  ],
+  "alerts": [
+    {
+      "feed": "metro",
+      "id": "a1",
+      "cause": "construction",
+      "effect": "detour",
+      "severity": "warning",
+      "active_periods": [
+        {
+          "start": 1700000000,
+          "end": 1900000000
+        }
+      ],
+      "communication_periods": [],
+      "impact_periods": [],
+      "header": [
+        {
+          "text": "Stop relocated",
+          "language": "en"
+        },
+        {
+          "text": "Parada reubicada",
+          "language": "es"
+        }
+      ],
+      "description": [
+        {
+          "text": "The temporary stop is on Pine St just east of the old one.",
+          "language": "en"
+        }
+      ],
+      "url": [
+        {
+          "text": "https://m.test/alert",
+          "language": "en"
+        }
+      ],
+      "tts_header": [],
+      "tts_description": [],
+      "cause_detail": [],
+      "effect_detail": [],
+      "image": [],
+      "image_alternative_text": [],
+      "informed": [
+        {
+          "route_id": "R1"
+        }
+      ]
+    }
+  ]
+}

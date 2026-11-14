@@ -79,42 +79,46 @@ void main() {
 
   test('reads a route detail as the router writes it', () {
     final detail = RouteDetail.decode(
-      utf8.encode(jsonEncode(fakeRouteDetailJson())),
+      utf8.encode(jsonEncode(snapshotRouteDetailJson())),
     );
+    expect(detail.realtime.level, RealtimeLevel.realtime);
     expect(
       (detail.feed, detail.route.id, detail.route.color),
-      ('us-wa-Metro-Transit', '100040', 'FDB71A'),
+      ('metro', 'R1', 'FDB71A'),
     );
-    expect(detail.agency, 'Metro Transit');
+    expect(detail.agency, 'Metro');
     expect(detail.direction, const DirectionRef.id(0));
-    expect(detail.stop.id, 'fremont');
-    expect(detail.walkSeconds, 240);
-    expect(detail.departures.map((d) => d.status), [
-      DepartureStatus.live,
-      DepartureStatus.canceled,
+    expect((detail.stop.id, detail.walkSeconds), ('N1', 42));
+    expect(detail.headsigns, ['Northgate', 'Northgate via 2nd']);
+    // The canceled one is beside the two that run.
+    expect(detail.departures.map((d) => (d.tripId, d.status)), [
+      ('R1N-0810', DepartureStatus.live),
+      ('R1N-0820', DepartureStatus.canceled),
+      ('R1N-0830', DepartureStatus.scheduled),
     ]);
-    expect(detail.departures.first.vehicleId, '7033');
-    expect(detail.departures.first.alerts.single.header, 'Route 40 detoured');
+    final live = detail.departures.first;
+    expect((live.vehicleId, live.delaySeconds), ('7033', 120));
+    expect(live.alerts.single.header, 'Stop relocated');
     final ride = detail.ride!;
-    expect(ride.stops.map((s) => s.stop.id), [
-      'fremont',
-      'wallingford',
-      'northgate',
-    ]);
+    expect(ride.departure, live.departure);
+    expect(ride.stops.map((s) => s.stop.id), ['N1', 'N2', 'NF']);
+    expect(ride.tripState, 'delayed');
     expect(ride.vehicle!.id, '7033');
-    expect(ride.alerts.single.effect, 'detour');
+    expect(ride.shape, isNotEmpty);
     final vehicle = detail.vehicles.single;
-    expect((vehicle.tripId, vehicle.bearing), ('t40', 10.0));
-    expect(vehicle.point!.lat, closeTo(47.64, 1e-9));
+    expect((vehicle.id, vehicle.tripId), ('7033', 'R1N-0810'));
+    expect(vehicle.point!.lat, closeTo(47.585, 1e-4));
   });
 
   test('a route detail with nothing in the horizon has no ride', () {
-    final json = fakeRouteDetailJson()
+    final json = snapshotRouteDetailJson()
       ..remove('ride')
+      ..remove('vehicles')
       ..['departures'] = <Object>[];
     final detail = RouteDetail.fromJson(json);
     expect(detail.ride, isNull);
     expect(detail.departures, isEmpty);
+    expect(detail.vehicles, isEmpty);
   });
 
   test('asks for nearby departures from a place, with the fixed limits', () {

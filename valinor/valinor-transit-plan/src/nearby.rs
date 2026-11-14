@@ -71,7 +71,8 @@ pub struct NearbyRequest {
     pub max_walk_seconds: u32,
     /// How far after `time` departures are listed, in seconds; at most a day.
     pub horizon_seconds: u32,
-    /// How many departures each direction lists; 1 to [`MAX_RANGE_DEPARTURES`].
+    /// How many departures that run each direction lists; 1 to [`MAX_RANGE_DEPARTURES`].
+    /// Canceled and skipped ones among them are listed too, and don't count.
     pub max_departures: u8,
     /// How many routes to list, soonest first; all when `None`.
     pub max_routes: Option<u32>,
@@ -123,7 +124,7 @@ pub struct RouteDetailRequest {
     pub walk_seconds: u32,
     /// How far after `time` departures are listed, in seconds; at most a day.
     pub horizon_seconds: u32,
-    /// How many departures to list; 1 to [`MAX_RANGE_DEPARTURES`].
+    /// How many departures that run to list, as for [`NearbyRequest::max_departures`].
     pub max_departures: u8,
     /// The trip whose stops to show; the first departure that runs when `None`.
     pub trip: Option<TripChoice>,

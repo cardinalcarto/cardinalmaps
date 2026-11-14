@@ -1119,9 +1119,11 @@ fn a_route_detail_shows_skipped_departures_and_a_direction_by_terminus() {
     assert_eq!(
         statuses,
         vec![
+            // Skipped, so beside the three that run rather than one of them.
             ("R1S-0800", DepartureStatus::Skipped),
             ("R1S-0810", SCHEDULED),
             ("R1S-0820", SCHEDULED),
+            ("R1S-0830", SCHEDULED),
         ]
     );
     // The ride is the first that runs.
@@ -1216,4 +1218,95 @@ fn the_nearby_json_has_everything_a_row_needs() {
         ..request(june_15(8, 0))
     };
     assert_json_snapshot!("nearby_response", &run(&state, &request));
+}
+
+#[test]
+fn only_departures_that_run_count_toward_max_departures() {
+    let state = state();
+    ingest(&state, FeedKind::TripUpdates, vec![canceled("R1N-0820")]);
+    let response = run(
+        &state,
+        &NearbyRequest {
+            max_departures: 2,
+            ..request(june_15(8, 0))
+        },
+    );
+    let north = direction(route(&response, FEED, "R1"), &DirectionKey::Id(0));
+    // The canceled 08:20 is listed beside the two that run, within their span.
+    assert_eq!(
+        rows(north),
+        vec![
+            ("R1N-0810", at(8, 10, 30), SCHEDULED),
+            ("R1N-0820", at(8, 20, 30), DepartureStatus::Canceled),
+            ("R1N-0830", at(8, 30, 30), SCHEDULED),
+        ]
+    );
+    let one = run(
+        &state,
+        &NearbyRequest {
+            max_departures: 1,
+            ..request(june_15(8, 0))
+        },
+    );
+    let north = direction(route(&one, FEED, "R1"), &DirectionKey::Id(0));
+    // A canceled departure after the span isn't listed.
+    assert_eq!(rows(north), vec![("R1N-0810", at(8, 10, 30), SCHEDULED)]);
+
+    // A route detail counts the same way.
+    let detail = detail(
+        &state,
+        &RouteDetailRequest {
+            walk_seconds: WALK_N1,
+            max_departures: 2,
+            ..detail_request("R1", DirectionKey::Id(0), "N1", june_15(8, 0))
+        },
+    );
+    let statuses: Vec<(&str, DepartureStatus)> = detail
+        .departures
+        .iter()
+        .map(|d| (d.trip_id.as_str(), d.status))
+        .collect();
+    assert_eq!(
+        statuses,
+        vec![
+            ("R1N-0810", SCHEDULED),
+            ("R1N-0820", DepartureStatus::Canceled),
+            ("R1N-0830", SCHEDULED),
+        ]
+    );
+}
+
+#[test]
+fn the_route_detail_json_has_everything_a_detail_needs() {
+    let state = state();
+    ingest(
+        &state,
+        FeedKind::TripUpdates,
+        vec![
+            delay_update("R1N-0810", JUNE_15, 20, 120),
+            canceled("R1N-0820"),
+        ],
+    );
+    ingest(
+        &state,
+        FeedKind::Alerts,
+        vec![crate::testing::alert_entity(
+            "a1",
+            proto::alert::Effect::Detour,
+            vec![crate::testing::route_selector("R1")],
+        )],
+    );
+    ingest(
+        &state,
+        FeedKind::VehiclePositions,
+        vec![vehicle_entity(
+            "7033", "R1N-0810", JUNE_15, None, 47.585, -122.33,
+        )],
+    );
+    let request = RouteDetailRequest {
+        walk_seconds: WALK_N1,
+        max_departures: 2,
+        ..detail_request("R1", DirectionKey::Id(0), "N1", june_15(8, 0))
+    };
+    assert_json_snapshot!("route_detail_response", &detail(&state, &request));
 }

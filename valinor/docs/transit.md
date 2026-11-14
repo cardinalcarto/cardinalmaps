@@ -453,9 +453,10 @@ A nearby request has a `location`; `time` (`now` by default); `mode`, `walking` 
   A trip is a run on its service date (`trip_id` and `start_date`), and each run of a frequency
   trip is a trip of its own, since runs that share a `trip_id` are different vehicles.
   A loop's two visits to one stop are one stop, at the earlier departure.
-  It lists the next `max_departures` departures from that stop within the horizon, in order, which
-  can begin with canceled or skipped ones; a direction with no catchable departure that runs is
-  dropped, and so is a route with no directions left.
+  It lists the next `max_departures` departures that run from that stop within the horizon, in
+  order, with the canceled and skipped ones among them listed beside them without counting: those
+  up to the last one counted, or to the end of the horizon when fewer run. A direction with no
+  catchable departure that runs is dropped, and so is a route with no directions left.
 - `headsigns` are the distinct headsigns of a direction's listed departures, the most frequent
   first. Each departure has the fields of a range's, less those about an alighting stop:
   `trip_id`, `start_date`, `headsign`, `status`, `departure`, `scheduled_departure`,
@@ -471,7 +472,7 @@ A route request names what a nearby direction gave: `feed`, `route_id`, `directi
 `terminus_stop_id`, and `stop_id`; with `time`, `mode`, `walk_seconds` (0), `horizon_seconds`,
 `max_departures`, and optionally a departure's `trip_id` and `start_date`.
 It answers with the route, `departures` from the stop in that direction from `time` plus
-`walk_seconds`, `ride`, a plan's transit leg on the chosen trip (or the first that runs) from the
+`walk_seconds` (`max_departures` counting only those that run, as for nearby), `ride`, a plan's transit leg on the chosen trip (or the first that runs) from the
 stop to the end of its trip, with every stop's times, its shape as polyline6, vehicle, and alerts,
 and `vehicles`, those real-time data has on the route's trips in that direction. A vehicle not
 matched to a trip of the timetable has no direction, and isn't listed. A route, stop, or trip that
