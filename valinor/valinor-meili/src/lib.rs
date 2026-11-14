@@ -42,6 +42,9 @@ mod state;
 mod topk;
 mod viterbi;
 
+#[cfg(test)]
+mod oracle_tests;
+
 pub use candidate_search::{Candidate, CandidateEdge, CandidateGrids};
 pub use config::{
     CandidateSearchConfig, ConfigError, EmissionCostConfig, MeiliConfig, RoutingConfig,

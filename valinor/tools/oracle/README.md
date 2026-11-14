@@ -366,6 +366,72 @@ as `<prefix>-trip.tsv`) and the trip corpora (`thor-corpus.py andorra 3000 31 tr
 and the test counts apart). Two Seattle trip-corpus cases have paths that tie at equal cost.
 In CI, the `captured_trips` test compares the trips of `valinor-tyr`'s Andorra captures.
 
+### Map matching (Meili)
+
+[`cpp/meili.cc`](cpp/meili.cc) runs mainline's map matcher on trace requests, one JSON object
+per line (`{"name", "action", "body"}`, the form of the shared trace corpus in
+`/mnt/maps/cardinal/valhalla-oracle/traces`): `ParseApi`, `MapMatcherFactory::Create`, the
+measurements Thor's `parse_measurements` makes, and `OfflineMatch` with k = `alternates` + 1 for
+`trace_attributes` (1 for `trace_route`), with one factory for the run.
+It prints each case's error, or every `MatchResults` (results, segments, and score),
+in the text format the `oracle_tests` in `valinor-meili` also produce.
+With `columns`, it also prints each column's candidates in mainline's (hash) order,
+the paths the top-k search cloned, and the states it removed;
+the test replays those candidates, so that every difference that remains is a bug
+(or a tie between equal costs), and without the replay counts apart the differences that
+mainline's hash order makes (see "Known divergences" in `docs/routing.md`).
+`MEILI_DEBUG_STATE=<time>/<id>` prints that state's routes to the next column.
+
+The helper's `walks` mode prints random walks along the graph, which
+[`meili-corpus.py`](meili-corpus.py) turns into traces of every kind Meili handles
+(clean, noisy, dense enough to interpolate, lingering, with gaps and breakage distances,
+point types, times, U-turns, alternates, turn penalty and interpolation options,
+outliers and traces off the roads, pedestrian and bicycle costings, and encoded polylines).
+`valinor-meili/fixtures/oracle` holds 130 of these over the Andorra fixture tiles, with the
+error cases of the shared Andorra corpus (`cut_segments` failures, a negative turn penalty
+factor, and negative accuracies and radii), mainline's output for them, and the `meili`
+config they use (the oracle build's, with `breakage_distance` customizable);
+the `oracle_andorra` test checks them.
+
+```shell
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" valinor-valhalla-dev:3.9.1 /w/build-meili.sh
+work=/mnt/maps/cardinal/valhalla-oracle/meili
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" \
+  -v "$PWD/valhalla-graphtile/fixtures/andorra-tiles:/fx:ro,z" \
+  -v /mnt/maps/cardinal/valhalla-oracle/andorra-oracle:/cfg:ro,z \
+  valinor-valhalla-dev:3.9.1 /w/meili /cfg/valhalla.json /fx walks 60 7 > "$work/walks-andorra.jsonl"
+python3 -I tools/oracle/meili-corpus.py "$work/walks-andorra.jsonl" 130 11 \
+  > valinor-meili/fixtures/oracle/andorra.jsonl
+# Append the shared corpus's error cases (see above), then, with the fixture config merged
+# into the oracle build's valhalla.json as $work/fixture-config.json:
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" \
+  -v "$PWD/valhalla-graphtile/fixtures/andorra-tiles:/fx:ro,z" -v "$work:/cfg:ro,z" \
+  -v "$PWD/valinor-meili/fixtures/oracle:/io:z" valinor-valhalla-dev:3.9.1 \
+  sh -c '/w/meili /cfg/fixture-config.json /fx match /io/andorra.jsonl columns > /io/andorra-3.9.1.txt'
+```
+
+The shared corpora are checked with the ignored `oracle_external` test:
+
+```shell
+traces=/mnt/maps/cardinal/valhalla-oracle/traces
+podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" -v /mnt/maps/cardinal/valhalla-oracle/seattle:/cfg:ro,z \
+  -v "$traces:/tr:ro,z" valinor-valhalla-dev:3.9.1 \
+  sh -c '/w/meili /cfg/valhalla.json /cfg/tiles match /tr/seattle.jsonl columns' > "$work/seattle-columns.txt"
+VALINOR_MEILI_CORPUS=$traces/seattle.jsonl VALINOR_MEILI_EXPECTED=$work/seattle-columns.txt \
+  VALINOR_MEILI_CONFIG=/mnt/maps/cardinal/valhalla-oracle/seattle/valhalla.json \
+  VALINOR_MEILI_TILES=/mnt/maps/cardinal/valhalla-oracle/seattle/tiles \
+  cargo test --release -p valinor-meili oracle_external -- --ignored --nocapture
+```
+
+(Andorra likewise, with the fixture tiles and the Andorra build's config, and without
+`VALINOR_MEILI_TILES`.)
+Of the 350 requests with bodies in each shared corpus, Andorra has 272 cases exactly the same,
+52 the same but for a node candidate's edge count, 1 tie, and 24 errors as mainline's;
+Seattle has 258, 67, and 1, 3 alternates that differ by candidate order, and 20 errors.
+With mainline's candidates replayed, Andorra has 325 exactly the same, and Seattle 327
+and 2 ties (each a path through either of two candidates at one node).
+In each, one request uses the multimodal costing, which Sif doesn't have
+(Loki rejects multimodal traces with error 140 before they reach Thor).
 ## Map matching (trace_route and trace_attributes)
 
 [`trace-corpus.py`](trace-corpus.py) generates reproducible trace requests as JSON lines
