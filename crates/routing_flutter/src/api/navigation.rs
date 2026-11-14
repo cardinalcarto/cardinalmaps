@@ -26,8 +26,11 @@ use ferrostar::models::{
 use ferrostar::navigation_controller::models::{
     CourseFiltering, NavState, NavigationControllerConfig, TripState, WaypointAdvanceMode,
 };
-use ferrostar::navigation_controller::step_advance::SerializableStepAdvanceCondition;
 use ferrostar::navigation_controller::step_advance::conditions::DistanceToEndOfStepCondition;
+use ferrostar::navigation_controller::step_advance::{
+    SerializableStepAdvanceCondition, StepAdvanceCondition, StepAdvanceConditionSerializable,
+    StepAdvanceResult,
+};
 use ferrostar::navigation_controller::{Navigator, create_navigator};
 use ferrostar::simulation::{
     LocationBias, LocationSimulationState, advance_location_simulation,
@@ -446,6 +449,76 @@ fn deviation_from_steps(at: Point, remaining_steps: &[RouteStep], max: f64) -> R
     }
 }
 
+/// Ferrostar's entry-and-exit step advance, which can also advance a step the location went
+/// past without coming near its end.
+///
+/// The entry-and-exit conditions only finish a step once the location has come within the
+/// entry distance of its end. A location that jumps past a short step never does: a match
+/// held at a roundabout's entrance while the car goes around it and up the next street, or a
+/// gap in the fixes. Ferrostar then finds it on a later step
+/// ([`DeviationKind::OffStepOnRoute`]), which isn't a reason for a new route, and the trip
+/// would wait on the step forever. So the step is also done when the deviation detector puts
+/// the location on a later step and farther from this one's line than `beyond`, the entry
+/// distance: as far off the step as the entry allows near its end, so a fix's noise at the
+/// corner, or a parallel street the route takes later, doesn't skip it. The detector's
+/// accuracy gate applies, so a poor fix can't.
+///
+/// Ferrostar asks about the location against the step it's checking: one fix late as a fix
+/// comes in, and then, after a step is done, the same fix again against the next, so a
+/// location past several short steps is carried through all of them at once.
+struct PastStepOr {
+    inner: Arc<dyn StepAdvanceCondition>,
+    /// In meters.
+    beyond: f64,
+}
+
+impl PastStepOr {
+    fn past_step(&self, trip_state: &TripState) -> bool {
+        matches!(
+            trip_state,
+            TripState::Navigating {
+                deviation: RouteDeviation::Deviation {
+                    kind: DeviationKind::OffStepOnRoute {
+                        deviation_from_step_line,
+                    },
+                },
+                ..
+            } if *deviation_from_step_line > self.beyond
+        )
+    }
+}
+
+impl StepAdvanceCondition for PastStepOr {
+    fn should_advance_step(&self, trip_state: TripState) -> StepAdvanceResult {
+        if self.past_step(&trip_state) {
+            return StepAdvanceResult::advance_to_new_instance(self);
+        }
+        let inner = self.inner.should_advance_step(trip_state);
+        if inner.should_advance() {
+            StepAdvanceResult::advance_to_new_instance(self)
+        } else {
+            StepAdvanceResult::continue_with_state(Arc::new(PastStepOr {
+                inner: inner.next_iteration,
+                beyond: self.beyond,
+            }))
+        }
+    }
+
+    fn new_instance(&self) -> Arc<dyn StepAdvanceCondition> {
+        Arc::new(PastStepOr {
+            inner: self.inner.new_instance(),
+            beyond: self.beyond,
+        })
+    }
+}
+
+impl StepAdvanceConditionSerializable for PastStepOr {
+    /// Only for Ferrostar's web build, which this isn't: the condition it wraps.
+    fn to_js(&self) -> SerializableStepAdvanceCondition {
+        self.inner.to_js()
+    }
+}
+
 impl NavigationMode {
     /// How far from the route this way of traveling may be before it's off it: for a
     /// matched position, for a fix used as it came, and the worst accuracy a fix may have to
@@ -474,7 +547,7 @@ impl NavigationMode {
     /// against the route's line with [`MatchAwareDeviation`], which looks up in `fed`
     /// whether each location was matched.
     fn config(self, fed: Arc<FedLocations>) -> NavigationControllerConfig {
-        let (step_advance, arrival, course_filtering) = match self {
+        let (step_advance, entry, arrival, course_filtering) = match self {
             NavigationMode::Driving => (
                 SerializableStepAdvanceCondition::DistanceEntryExit {
                     distance_to_end_of_step: DRIVING_ENTRY,
@@ -482,6 +555,7 @@ impl NavigationMode {
                     minimum_horizontal_accuracy: DRIVING_ADVANCE_ACCURACY,
                     has_reached_end_of_current_step: false,
                 },
+                DRIVING_ENTRY,
                 (DRIVING_ARRIVAL, DRIVING_ADVANCE_ACCURACY),
                 // A car goes where the road goes; the snapped course keeps the map steady
                 // through the noise of a fix's own.
@@ -494,6 +568,7 @@ impl NavigationMode {
                     minimum_horizontal_accuracy: CYCLING_ADVANCE_ACCURACY,
                     has_reached_end_of_current_step: false,
                 },
+                CYCLING_ENTRY,
                 (CYCLING_ARRIVAL, CYCLING_ADVANCE_ACCURACY),
                 CourseFiltering::SnapToRoute,
             ),
@@ -504,6 +579,7 @@ impl NavigationMode {
                     minimum_horizontal_accuracy: WALKING_ADVANCE_ACCURACY,
                     has_reached_end_of_current_step: false,
                 },
+                WALKING_ENTRY,
                 (WALKING_ARRIVAL, WALKING_ADVANCE_ACCURACY),
                 // Walkers cut across plazas and stop to look around; the route's direction
                 // would point them the wrong way.
@@ -516,7 +592,10 @@ impl NavigationMode {
             waypoint_advance: WaypointAdvanceMode::WaypointAlongAdvancingStep(WAYPOINT_RANGE),
             // Ferrostar's constructors for the entry-and-exit conditions are only in its
             // UniFFI build; its serializable form makes the same conditions.
-            step_advance_condition: step_advance.into(),
+            step_advance_condition: Arc::new(PastStepOr {
+                inner: step_advance.into(),
+                beyond: f64::from(entry),
+            }),
             arrival_step_advance_condition: Arc::new(DistanceToEndOfStepCondition {
                 distance: arrival_distance,
                 minimum_horizontal_accuracy: arrival_accuracy,
@@ -1830,6 +1909,57 @@ mod tests {
         let back = NavLocation::from(UserLocation::from(bare));
         assert_eq!(back.course_accuracy, None);
         assert_eq!(back.speed_accuracy, None);
+    }
+
+    /// A trip whose fixes stop short of a maneuver and start again past it, beyond the
+    /// entry distance of the step's end, moves on to the step it's on, rather than waiting
+    /// for one it never came near the end of: as with a gap in the fixes, or a match held at
+    /// a roundabout's entrance while the car goes around it and up the next street.
+    #[test]
+    fn a_trip_moves_on_from_steps_its_fixes_went_past() {
+        for (name, costing, mode) in TRIPS {
+            let route = capture(name, costing);
+            let steps = &route.route.steps;
+            let entry = match mode {
+                NavigationMode::Driving => DRIVING_ENTRY,
+                NavigationMode::Cycling => CYCLING_ENTRY,
+                NavigationMode::Walking => WALKING_ENTRY,
+            };
+            let gap = f64::from(entry) + 10.0;
+            let (_, raw, _) = mode.deviation();
+            // The steps whose ends the fixes skip: not the last two, which finish on
+            // arrival's condition instead, and only where the fixes along the step after
+            // get past the unmatched deviation from this one, before which Ferrostar can't
+            // say they're on a later step.
+            let skips =
+                |k: usize| k > 0 && k + 2 < steps.len() && steps[k + 1].distance > raw + gap;
+            let mut simulation =
+                LocationSimulation::new(&route, Some(5.0), SimulationBias::None, 0.0).unwrap();
+            let mut session = NavigationSession::start(&route, mode, simulation.current());
+            let mut last = session.current();
+            let mut skipped = std::collections::BTreeSet::new();
+            while !simulation.is_finished() {
+                let next = simulation.advance();
+                let k = last.step_index as usize;
+                if skips(k) {
+                    let end = steps[k].geometry.last().unwrap();
+                    if meters_between(next.lat, next.lng, end.lat, end.lng) < gap {
+                        skipped.insert(k);
+                        continue;
+                    }
+                }
+                let update = session.update_location(next, None);
+                assert!(update.step_index >= last.step_index, "{name}");
+                last = update;
+            }
+            assert!(!skipped.is_empty(), "{name}");
+            assert_eq!(
+                last.status,
+                TripStatus::Complete,
+                "{name}: stuck on step {} after skipping the ends of {skipped:?}",
+                last.step_index
+            );
+        }
     }
 
     #[test]
