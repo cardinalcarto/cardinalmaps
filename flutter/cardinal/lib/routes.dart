@@ -15,6 +15,9 @@ import 'place/place_page.dart';
 import 'saved/saved_page.dart';
 import 'search/search_sheet.dart';
 import 'sheet/sheet.dart';
+import 'transit/nearby_page.dart';
+import 'transit/nearby_transit.dart' show NearbyRoute;
+import 'transit/route_detail_page.dart';
 import 'ui/glass.dart';
 
 /// Tells the sheet's pages when a page covers them and when it closes again, so the
@@ -33,6 +36,26 @@ String placeLocation(String id) => '/place/${Uri.encodeComponent(id)}';
 
 /// The location of the screen with directions to the place with [id].
 String directionsLocation(String id) => '${placeLocation(id)}/directions';
+
+/// The location of a nearby route's detail: [routeId] of [feed] from [stopId], on the
+/// page of [headsigns] (none for the departures without one).
+///
+/// `/transit/route/<feed>/<route>/<stop>?headsign=…`, each ID escaped as a place's is,
+/// with a `headsign` for each of the page's, in its order.
+String routeDetailLocation({
+  required String feed,
+  required String routeId,
+  required String stopId,
+  required List<String> headsigns,
+}) => Uri(
+  path: [
+    '/transit/route',
+    Uri.encodeComponent(feed),
+    Uri.encodeComponent(routeId),
+    Uri.encodeComponent(stopId),
+  ].join('/'),
+  queryParameters: headsigns.isEmpty ? null : {'headsign': headsigns},
+).toString();
 
 /// Shows the place with [id], tapped on the map. It takes the place of a place card
 /// already open, so that going back leaves the map's places all at once.
@@ -116,7 +139,30 @@ List<RouteBase> sheetRoutes() => [
     ],
   ),
   _topLevel('/nearby', const StubPage(title: 'Nearby places')),
-  _topLevel('/transit', const StubPage(title: 'Nearby transit')),
+  _topLevel(
+    '/transit',
+    const NearbyTransitPage(),
+    routes: [
+      GoRoute(
+        path: 'route/:feed/:route/:stop',
+        pageBuilder: (context, state) => _page(
+          state,
+          HidesMapOverlays(
+            child: RouteDetailPage(
+              feed: state.pathParameters['feed']!,
+              routeId: state.pathParameters['route']!,
+              stopId: state.pathParameters['stop']!,
+              headsigns: state.uri.queryParametersAll['headsign'] ?? const [],
+              // The row it was opened from, unless the app restored it.
+              from: state.extra is NearbyRoute
+                  ? state.extra! as NearbyRoute
+                  : null,
+            ),
+          ),
+        ),
+      ),
+    ],
+  ),
   _topLevel(
     '/offline',
     const OfflinePage(),

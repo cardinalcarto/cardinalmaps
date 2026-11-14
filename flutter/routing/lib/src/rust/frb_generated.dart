@@ -71,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 903675742;
+  int get rustContentHash => 1914134346;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -130,6 +130,7 @@ abstract class RustLibApi extends BaseApi {
     required String endpointUrl,
     required String costing,
     required int alternates,
+    required bool wheelchair,
   });
 
   Future<OfflineRouter> crateApiRouterOfflineRouterOpen({
@@ -156,6 +157,13 @@ abstract class RustLibApi extends BaseApi {
     required List<int> body,
   });
 
+  Future<TransitResponse> crateApiTransitOfflineTransitNearby({
+    required OfflineTransit that,
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  });
+
   Future<OfflineTransit> crateApiTransitOfflineTransitOpen({
     required String build,
     List<String>? feeds,
@@ -172,6 +180,13 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiTransitOfflineTransitRefreshTiles({
     required OfflineTransit that,
+  });
+
+  Future<TransitResponse> crateApiTransitOfflineTransitRoute({
+    required OfflineTransit that,
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
   });
 
   Future<TransitResponse> crateApiTransitOfflineTransitVehicle({
@@ -575,6 +590,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String endpointUrl,
     required String costing,
     required int alternates,
+    required bool wheelchair,
   }) {
     return handler.executeSync(
       SyncTask(
@@ -583,6 +599,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(endpointUrl, serializer);
           sse_encode_String(costing, serializer);
           sse_encode_u_32(alternates, serializer);
+          sse_encode_bool(wheelchair, serializer);
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
         },
         codec: SseCodec(
@@ -591,7 +608,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_directions_error,
         ),
         constMeta: kCrateApiDirectionsDirectionsAdapterValhallaConstMeta,
-        argValues: [endpointUrl, costing, alternates],
+        argValues: [endpointUrl, costing, alternates, wheelchair],
         apiImpl: this,
       ),
     );
@@ -600,7 +617,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiDirectionsDirectionsAdapterValhallaConstMeta =>
       const TaskConstMeta(
         debugName: "DirectionsAdapter_valhalla",
-        argNames: ["endpointUrl", "costing", "alternates"],
+        argNames: ["endpointUrl", "costing", "alternates", "wheelchair"],
       );
 
   @override
@@ -790,6 +807,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<TransitResponse> crateApiTransitOfflineTransitNearby({
+    required OfflineTransit that,
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+            that,
+            serializer,
+          );
+          sse_encode_list_prim_u_8_loose(request, serializer);
+          sse_encode_list_transit_feed(feeds, serializer);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+            cancel,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 16,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_transit_response,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTransitOfflineTransitNearbyConstMeta,
+        argValues: [that, request, feeds, cancel],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTransitOfflineTransitNearbyConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineTransit_nearby",
+        argNames: ["that", "request", "feeds", "cancel"],
+      );
+
+  @override
   Future<OfflineTransit> crateApiTransitOfflineTransitOpen({
     required String build,
     List<String>? feeds,
@@ -807,7 +869,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 17,
             port: port_,
           );
         },
@@ -853,7 +915,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 18,
             port: port_,
           );
         },
@@ -889,7 +951,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 18,
+            funcId: 19,
             port: port_,
           );
         },
@@ -911,6 +973,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<TransitResponse> crateApiTransitOfflineTransitRoute({
+    required OfflineTransit that,
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineTransit(
+            that,
+            serializer,
+          );
+          sse_encode_list_prim_u_8_loose(request, serializer);
+          sse_encode_list_transit_feed(feeds, serializer);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTransitCancel(
+            cancel,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 20,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_transit_response,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTransitOfflineTransitRouteConstMeta,
+        argValues: [that, request, feeds, cancel],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTransitOfflineTransitRouteConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineTransit_route",
+        argNames: ["that", "request", "feeds", "cancel"],
+      );
+
+  @override
   Future<TransitResponse> crateApiTransitOfflineTransitVehicle({
     required OfflineTransit that,
     required String feed,
@@ -929,7 +1036,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 19,
+            funcId: 21,
             port: port_,
           );
         },
@@ -960,7 +1067,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -988,7 +1095,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 23,
             port: port_,
           );
         },
@@ -1013,7 +1120,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -1036,7 +1143,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -1058,7 +1165,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -1080,7 +1187,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -1116,7 +1223,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 28,
             port: port_,
           );
         },
@@ -1147,7 +1254,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 29,
             port: port_,
           );
         },
@@ -1175,7 +1282,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 28,
+            funcId: 30,
             port: port_,
           );
         },
@@ -1211,7 +1318,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 29,
+            funcId: 31,
             port: port_,
           );
         },
@@ -1476,6 +1583,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       x: dco_decode_u_32(arr[1]),
       y: dco_decode_u_32(arr[2]),
     );
+  }
+
+  @protected
+  bool dco_decode_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
   }
 
   @protected
@@ -2119,6 +2232,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool sse_decode_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
   DirectionsPoint sse_decode_box_autoadd_directions_point(
     SseDeserializer deserializer,
   ) {
@@ -2605,12 +2724,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getUint8() != 0;
-  }
-
-  @protected
   void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArchivePlanner(
     ArchivePlanner self,
@@ -2863,6 +2976,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_8(self.z, serializer);
     sse_encode_u_32(self.x, serializer);
     sse_encode_u_32(self.y, serializer);
+  }
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint8(self ? 1 : 0);
   }
 
   @protected
@@ -3325,12 +3444,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putBigUint64(self);
   }
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putUint8(self ? 1 : 0);
-  }
 }
 
 @sealed
@@ -3508,6 +3621,22 @@ class OfflineTransitImpl extends RustOpaque implements OfflineTransit {
         RustLib.instance.api.rust_arc_decrement_strong_count_OfflineTransitPtr,
   );
 
+  /// The routes a rider can catch near a place, in each direction, and when, from JSON
+  /// request bytes (the server's `/transit/nearby` body), applying `feeds` first as
+  /// [`Self::plan`] does.
+  ///
+  /// It answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+  Future<TransitResponse> nearby({
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  }) => RustLib.instance.api.crateApiTransitOfflineTransitNearby(
+    that: this,
+    request: request,
+    feeds: feeds,
+    cancel: cancel,
+  );
+
   /// Plans a trip from JSON request bytes (the server's `/transit/plan` body),
   /// applying `feeds` first.
   ///
@@ -3534,6 +3663,21 @@ class OfflineTransitImpl extends RustOpaque implements OfflineTransit {
   /// missing the next time it plans.
   Future<void> refreshTiles() => RustLib.instance.api
       .crateApiTransitOfflineTransitRefreshTiles(that: this);
+
+  /// One route and direction from one stop, for a detail view, from JSON request bytes
+  /// (the server's `/transit/route` body), applying `feeds` first as [`Self::plan`] does.
+  ///
+  /// It answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+  Future<TransitResponse> route({
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  }) => RustLib.instance.api.crateApiTransitOfflineTransitRoute(
+    that: this,
+    request: request,
+    feeds: feeds,
+    cancel: cancel,
+  );
 
   /// The latest real-time state of a vehicle, as the server's vehicle lookup returns it.
   Future<TransitResponse> vehicle({required String feed, required String id}) =>

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -16,8 +17,11 @@ import 'map/overlays.dart';
 import 'offline/downloads/geometry.dart';
 import 'offline/offline_area.dart';
 import 'offline/offline_scope.dart';
+import 'offline/realtime.dart';
 import 'routes.dart';
 import 'store/store.dart';
+import 'transit/nearby_page.dart';
+import 'transit/nearby_source.dart';
 import 'ui/theme.dart';
 
 void main() {
@@ -28,6 +32,9 @@ void main() {
   unawaited(store.prune());
   final map = SparkleMapController();
   final offline = OfflineAreas.open();
+  // Directions and nearby transit share each area's real-time messages.
+  final realtime = AreaRealtimeFeeds();
+  final nearby = OfflineNearbySource(offline.area, realtime);
   runApp(
     StoreScope(
       store: store,
@@ -44,7 +51,7 @@ void main() {
               ),
             ),
           ),
-          transit: OfflineTransitSource(offline.area),
+          transit: OfflineTransitSource(offline.area, realtime),
           location: const GeolocatorSource(),
           child: MapScope(
             controller: map,
@@ -57,13 +64,20 @@ void main() {
                 await initRouting();
                 return freeBytes(path: await offlineFolder());
               },
-              child: MainApp(router: appRouter(map)),
+              child: NearbyTransitScope(
+                source: nearby,
+                child: MainApp(router: appRouter(map)),
+              ),
             ),
           ),
         ),
       ),
     ),
   );
+  // Nearby transit's timetables open once the first frame is out, so the launch doesn't
+  // wait for them, and the tab's first answer doesn't either. They open on the routing
+  // library's threads.
+  SchedulerBinding.instance.addPostFrameCallback((_) => nearby.prepare());
 }
 
 class MainApp extends StatelessWidget {

@@ -3,6 +3,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:routing/routing.dart';
 
@@ -20,6 +21,10 @@ const routeCalloutSource = 'route-callouts';
 /// The style's GeoJSON source for a transit journey's legs and the stops it boards and
 /// leaves vehicles at.
 const transitSource = 'transit';
+
+/// The style's GeoJSON source for a nearby route's detail: its trip's line and stops,
+/// the stop the rider gets on at, and its vehicles.
+const nearbyRouteSource = 'nearby-route';
 
 /// The property of a callout saying which route it's for.
 const routeIndexProperty = 'route';
@@ -69,6 +74,7 @@ void addRouteLayers(Map<String, Object?> style) {
   sources[routeSource] = {'type': 'geojson', 'data': empty};
   sources[routeCalloutSource] = {'type': 'geojson', 'data': empty};
   sources[transitSource] = {'type': 'geojson', 'data': empty};
+  sources[nearbyRouteSource] = {'type': 'geojson', 'data': empty};
   final layers = style['layers'] as List<Object?>;
   final firstSymbol = layers.indexWhere((l) => (l as Map)['type'] == 'symbol');
   layers.insertAll(firstSymbol < 0 ? layers.length : firstSymbol, [
@@ -77,8 +83,10 @@ void addRouteLayers(Map<String, Object?> style) {
     _line('route-selected-casing', _selectedCasing, 9, selected: true),
     _line('route-selected', _selectedColor, 6, selected: true),
     ..._transitLayers,
+    ..._nearbyRouteLines,
   ]);
   layers.addAll([
+    ..._nearbyRouteMarkers,
     {
       'id': 'route-start',
       'type': 'circle',
@@ -328,4 +336,286 @@ String _darker(String hex) {
   final g = (value >> 8 & 0xff) ~/ 2;
   final b = (value & 0xff) ~/ 2;
   return '#${[r, g, b].map((c) => c.toRadixString(16).padLeft(2, '0')).join()}';
+}
+
+List<Object?> _nearbyRole(String role) => [
+  '==',
+  ['get', 'role'],
+  role,
+];
+
+/// A nearby route's trip in its color over a darker casing, with its stops as small
+/// dots, under the map's labels; and under it, the trip before the rider's stop, at half
+/// the width, with a casing scaled down alike and no stops.
+final _nearbyRouteLines = <Map<String, Object?>>[
+  {
+    'id': 'nearby-route-before-casing',
+    'type': 'line',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('before'),
+    'layout': {'line-cap': 'round', 'line-join': 'round'},
+    'paint': {
+      'line-color': [
+        'to-color',
+        ['get', 'casing'],
+      ],
+      'line-width': 4.5,
+    },
+  },
+  {
+    'id': 'nearby-route-before',
+    'type': 'line',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('before'),
+    'layout': {'line-cap': 'round', 'line-join': 'round'},
+    'paint': {
+      'line-color': [
+        'to-color',
+        ['get', 'color'],
+      ],
+      'line-width': 3,
+    },
+  },
+  {
+    'id': 'nearby-route-casing',
+    'type': 'line',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('line'),
+    'layout': {'line-cap': 'round', 'line-join': 'round'},
+    'paint': {
+      'line-color': [
+        'to-color',
+        ['get', 'casing'],
+      ],
+      'line-width': 9,
+    },
+  },
+  {
+    'id': 'nearby-route-line',
+    'type': 'line',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('line'),
+    'layout': {'line-cap': 'round', 'line-join': 'round'},
+    'paint': {
+      'line-color': [
+        'to-color',
+        ['get', 'color'],
+      ],
+      'line-width': 6,
+    },
+  },
+  {
+    'id': 'nearby-route-stops',
+    'type': 'circle',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('stop'),
+    'paint': {
+      'circle-radius': 3.5,
+      'circle-color': '#ffffff',
+      'circle-stroke-color': [
+        'to-color',
+        ['get', 'casing'],
+      ],
+      'circle-stroke-width': 2,
+    },
+  },
+];
+
+/// The stop the rider gets on at, larger, and the route's vehicles, each with a pointer
+/// the way it's heading when that's known, above everything.
+final _nearbyRouteMarkers = <Map<String, Object?>>[
+  {
+    'id': 'nearby-route-boarding',
+    'type': 'circle',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('boarding'),
+    'paint': {
+      'circle-radius': 7,
+      'circle-color': '#ffffff',
+      'circle-stroke-color': [
+        'to-color',
+        ['get', 'casing'],
+      ],
+      'circle-stroke-width': 4,
+    },
+  },
+  {
+    'id': 'nearby-route-headings',
+    'type': 'symbol',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('heading'),
+    'layout': {
+      'icon-image': ['get', 'icon'],
+      'icon-rotate': ['get', 'bearing'],
+      'icon-rotation-alignment': 'map',
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+    },
+  },
+  {
+    'id': 'nearby-route-vehicles',
+    'type': 'symbol',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('vehicle'),
+    'layout': {
+      'icon-image': ['get', 'icon'],
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+    },
+  },
+];
+
+/// A nearby route's detail as GeoJSON: [ride]'s line and its stops, from [boarding],
+/// emphasized, to its end, in [route]'s color, and the trip before it, [shapeToStop],
+/// without stops; and [vehicles], drawn with [vehicleIcon] and turned to their bearing
+/// by [headingIcon] when they have one.
+///
+/// A stay-seated ride is drawn trip by trip ([nearbyRideLines]), each later trip's line
+/// and stops in its own route's color (or [route]'s, when it has none).
+Map<String, Object?> nearbyRouteGeoJson({
+  required TransitRoute? route,
+  required TransitLeg? ride,
+  List<DirectionsPoint> shapeToStop = const [],
+  required StopRef? boarding,
+  required List<TransitVehicle> vehicles,
+  required String vehicleIcon,
+  required String headingIcon,
+}) {
+  final color = _hex(route?.color) ?? _defaultRideColor;
+  final casing = _darker(color);
+  Map<String, Object?> point(DirectionsPoint p, Map<String, Object?> props) => {
+    'type': 'Feature',
+    'properties': props,
+    'geometry': {
+      'type': 'Point',
+      'coordinates': [p.lng, p.lat],
+    },
+  };
+  Map<String, Object?> line(
+    String role,
+    List<DirectionsPoint> points,
+    String color,
+  ) => {
+    'type': 'Feature',
+    'properties': {'role': role, 'color': color, 'casing': _darker(color)},
+    'geometry': {
+      'type': 'LineString',
+      'coordinates': [
+        for (final p in points) [p.lng, p.lat],
+      ],
+    },
+  };
+  final lines = ride == null ? const <NearbyRideLine>[] : nearbyRideLines(ride);
+  String colorOf(NearbyRideLine piece) =>
+      piece.segment == 0 ? color : _hex(piece.route?.color) ?? color;
+  return {
+    'type': 'FeatureCollection',
+    'features': [
+      if (ride != null && shapeToStop.length >= 2)
+        line('before', shapeToStop, color),
+      for (final piece in lines)
+        if (piece.points.length >= 2)
+          line('line', piece.points, colorOf(piece)),
+      for (final piece in lines)
+        for (final visit in piece.stops)
+          if (visit.stop.point case final p?)
+            point(p, {'role': 'stop', 'casing': _darker(colorOf(piece))}),
+      if (boarding?.point case final p?)
+        point(p, {'role': 'boarding', 'casing': casing}),
+      for (final v in vehicles)
+        if (v.point case final p?) ...[
+          if (v.bearing case final bearing?)
+            point(p, {
+              'role': 'heading',
+              'icon': headingIcon,
+              'bearing': bearing,
+            }),
+          point(p, {'role': 'vehicle', 'icon': vehicleIcon}),
+        ],
+    ],
+  };
+}
+
+/// One trip's part of a ride's line, for the map.
+typedef NearbyRideLine = ({
+  /// Which of the ride's segments it is: 0 for the trip boarded, or a ride on one trip.
+  int segment,
+
+  /// Its trip's route, or null for a ride on one trip.
+  TransitRoute? route,
+
+  /// Its part of the ride's shape.
+  List<DirectionsPoint> points,
+
+  /// Its stops after the boarding stop, each once: a join at one stop is the arriving
+  /// trip's.
+  List<StopVisit> stops,
+});
+
+/// [ride]'s line and stops trip by trip: one for a ride on one trip, and one for each
+/// trip of a stay-seated ride.
+///
+/// The shape is cut where each trip ends, at the point of it nearest that trip's last
+/// stop, searched for from the last cut on: the first point within [_joinMeters] that's
+/// nearer than the next one, or else the nearest. Each line begins where the one before
+/// it ends, so they meet without a gap.
+List<NearbyRideLine> nearbyRideLines(TransitLeg ride) {
+  final shape = ride.shape;
+  final stops = ride.stops;
+  final segments = ride.segments;
+  if (segments.length < 2) {
+    return [
+      (segment: 0, route: null, points: shape, stops: stops.skip(1).toList()),
+    ];
+  }
+  final last = stops.length - 1;
+  final lines = <NearbyRideLine>[];
+  var cut = 0;
+  var nextStop = 1;
+  for (final (s, segment) in segments.indexed) {
+    final to = segment.lastStop.clamp(0, last);
+    final end = s == segments.length - 1
+        ? shape.length - 1
+        : _nearestFrom(shape, cut, stops[to].stop.point);
+    final from = math.min(cut, end);
+    lines.add((
+      segment: s,
+      route: segment.route,
+      points: shape.isEmpty ? const [] : shape.sublist(from, end + 1),
+      stops: [for (var i = nextStop; i <= to; i++) stops[i]],
+    ));
+    cut = end;
+    nextStop = math.max(nextStop, to + 1);
+  }
+  return lines;
+}
+
+/// How near a ride's shape passes a trip's last stop where the trip ends, in meters.
+const _joinMeters = 30.0;
+
+/// The index of [shape]'s point from [from] on where it reaches [stop] (see
+/// [nearbyRideLines]); [from] when there's no stop to look for.
+int _nearestFrom(List<DirectionsPoint> shape, int from, DirectionsPoint? stop) {
+  if (stop == null || from >= shape.length) {
+    return math.min(from, math.max(0, shape.length - 1));
+  }
+  final scale = math.cos(stop.lat * math.pi / 180);
+  double meters(DirectionsPoint p) {
+    final dx = (p.lng - stop.lng) * scale;
+    final dy = p.lat - stop.lat;
+    return math.sqrt(dx * dx + dy * dy) * 111195;
+  }
+
+  var nearest = from;
+  var nearestMeters = double.infinity;
+  for (var i = from; i < shape.length; i++) {
+    final d = meters(shape[i]);
+    final rising = i + 1 >= shape.length || meters(shape[i + 1]) >= d;
+    if (d <= _joinMeters && rising) return i;
+    if (d < nearestMeters) {
+      nearest = i;
+      nearestMeters = d;
+    }
+  }
+  return nearest;
 }

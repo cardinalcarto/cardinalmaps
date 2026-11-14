@@ -2193,6 +2193,376 @@ class SettingsCompanion extends UpdateCompanion<SettingRow> {
   }
 }
 
+class $RememberedHeadsignsTable extends RememberedHeadsigns
+    with TableInfo<$RememberedHeadsignsTable, RememberedHeadsignRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $RememberedHeadsignsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _feedMeta = const VerificationMeta('feed');
+  @override
+  late final GeneratedColumn<String> feed = GeneratedColumn<String>(
+    'feed',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _routeIdMeta = const VerificationMeta(
+    'routeId',
+  );
+  @override
+  late final GeneratedColumn<String> routeId = GeneratedColumn<String>(
+    'route_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _stopIdMeta = const VerificationMeta('stopId');
+  @override
+  late final GeneratedColumn<String> stopId = GeneratedColumn<String>(
+    'stop_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _headsignMeta = const VerificationMeta(
+    'headsign',
+  );
+  @override
+  late final GeneratedColumn<String> headsign = GeneratedColumn<String>(
+    'headsign',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _chosenAtMeta = const VerificationMeta(
+    'chosenAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> chosenAt = GeneratedColumn<DateTime>(
+    'chosen_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    feed,
+    routeId,
+    stopId,
+    headsign,
+    chosenAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'remembered_headsigns';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<RememberedHeadsignRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('feed')) {
+      context.handle(
+        _feedMeta,
+        feed.isAcceptableOrUnknown(data['feed']!, _feedMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_feedMeta);
+    }
+    if (data.containsKey('route_id')) {
+      context.handle(
+        _routeIdMeta,
+        routeId.isAcceptableOrUnknown(data['route_id']!, _routeIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_routeIdMeta);
+    }
+    if (data.containsKey('stop_id')) {
+      context.handle(
+        _stopIdMeta,
+        stopId.isAcceptableOrUnknown(data['stop_id']!, _stopIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_stopIdMeta);
+    }
+    if (data.containsKey('headsign')) {
+      context.handle(
+        _headsignMeta,
+        headsign.isAcceptableOrUnknown(data['headsign']!, _headsignMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_headsignMeta);
+    }
+    if (data.containsKey('chosen_at')) {
+      context.handle(
+        _chosenAtMeta,
+        chosenAt.isAcceptableOrUnknown(data['chosen_at']!, _chosenAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_chosenAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {feed, routeId, stopId};
+  @override
+  RememberedHeadsignRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RememberedHeadsignRow(
+      feed: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}feed'],
+      )!,
+      routeId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}route_id'],
+      )!,
+      stopId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}stop_id'],
+      )!,
+      headsign: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}headsign'],
+      )!,
+      chosenAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}chosen_at'],
+      )!,
+    );
+  }
+
+  @override
+  $RememberedHeadsignsTable createAlias(String alias) {
+    return $RememberedHeadsignsTable(attachedDatabase, alias);
+  }
+}
+
+class RememberedHeadsignRow extends DataClass
+    implements Insertable<RememberedHeadsignRow> {
+  /// The GTFS feed, in which [routeId] and [stopId] are unique.
+  final String feed;
+  final String routeId;
+  final String stopId;
+
+  /// The headsign; empty for the departures that have none.
+  final String headsign;
+
+  /// When the rider settled on it.
+  final DateTime chosenAt;
+  const RememberedHeadsignRow({
+    required this.feed,
+    required this.routeId,
+    required this.stopId,
+    required this.headsign,
+    required this.chosenAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['feed'] = Variable<String>(feed);
+    map['route_id'] = Variable<String>(routeId);
+    map['stop_id'] = Variable<String>(stopId);
+    map['headsign'] = Variable<String>(headsign);
+    map['chosen_at'] = Variable<DateTime>(chosenAt);
+    return map;
+  }
+
+  RememberedHeadsignsCompanion toCompanion(bool nullToAbsent) {
+    return RememberedHeadsignsCompanion(
+      feed: Value(feed),
+      routeId: Value(routeId),
+      stopId: Value(stopId),
+      headsign: Value(headsign),
+      chosenAt: Value(chosenAt),
+    );
+  }
+
+  factory RememberedHeadsignRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RememberedHeadsignRow(
+      feed: serializer.fromJson<String>(json['feed']),
+      routeId: serializer.fromJson<String>(json['routeId']),
+      stopId: serializer.fromJson<String>(json['stopId']),
+      headsign: serializer.fromJson<String>(json['headsign']),
+      chosenAt: serializer.fromJson<DateTime>(json['chosenAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'feed': serializer.toJson<String>(feed),
+      'routeId': serializer.toJson<String>(routeId),
+      'stopId': serializer.toJson<String>(stopId),
+      'headsign': serializer.toJson<String>(headsign),
+      'chosenAt': serializer.toJson<DateTime>(chosenAt),
+    };
+  }
+
+  RememberedHeadsignRow copyWith({
+    String? feed,
+    String? routeId,
+    String? stopId,
+    String? headsign,
+    DateTime? chosenAt,
+  }) => RememberedHeadsignRow(
+    feed: feed ?? this.feed,
+    routeId: routeId ?? this.routeId,
+    stopId: stopId ?? this.stopId,
+    headsign: headsign ?? this.headsign,
+    chosenAt: chosenAt ?? this.chosenAt,
+  );
+  RememberedHeadsignRow copyWithCompanion(RememberedHeadsignsCompanion data) {
+    return RememberedHeadsignRow(
+      feed: data.feed.present ? data.feed.value : this.feed,
+      routeId: data.routeId.present ? data.routeId.value : this.routeId,
+      stopId: data.stopId.present ? data.stopId.value : this.stopId,
+      headsign: data.headsign.present ? data.headsign.value : this.headsign,
+      chosenAt: data.chosenAt.present ? data.chosenAt.value : this.chosenAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RememberedHeadsignRow(')
+          ..write('feed: $feed, ')
+          ..write('routeId: $routeId, ')
+          ..write('stopId: $stopId, ')
+          ..write('headsign: $headsign, ')
+          ..write('chosenAt: $chosenAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(feed, routeId, stopId, headsign, chosenAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RememberedHeadsignRow &&
+          other.feed == this.feed &&
+          other.routeId == this.routeId &&
+          other.stopId == this.stopId &&
+          other.headsign == this.headsign &&
+          other.chosenAt == this.chosenAt);
+}
+
+class RememberedHeadsignsCompanion
+    extends UpdateCompanion<RememberedHeadsignRow> {
+  final Value<String> feed;
+  final Value<String> routeId;
+  final Value<String> stopId;
+  final Value<String> headsign;
+  final Value<DateTime> chosenAt;
+  final Value<int> rowid;
+  const RememberedHeadsignsCompanion({
+    this.feed = const Value.absent(),
+    this.routeId = const Value.absent(),
+    this.stopId = const Value.absent(),
+    this.headsign = const Value.absent(),
+    this.chosenAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  RememberedHeadsignsCompanion.insert({
+    required String feed,
+    required String routeId,
+    required String stopId,
+    required String headsign,
+    required DateTime chosenAt,
+    this.rowid = const Value.absent(),
+  }) : feed = Value(feed),
+       routeId = Value(routeId),
+       stopId = Value(stopId),
+       headsign = Value(headsign),
+       chosenAt = Value(chosenAt);
+  static Insertable<RememberedHeadsignRow> custom({
+    Expression<String>? feed,
+    Expression<String>? routeId,
+    Expression<String>? stopId,
+    Expression<String>? headsign,
+    Expression<DateTime>? chosenAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (feed != null) 'feed': feed,
+      if (routeId != null) 'route_id': routeId,
+      if (stopId != null) 'stop_id': stopId,
+      if (headsign != null) 'headsign': headsign,
+      if (chosenAt != null) 'chosen_at': chosenAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  RememberedHeadsignsCompanion copyWith({
+    Value<String>? feed,
+    Value<String>? routeId,
+    Value<String>? stopId,
+    Value<String>? headsign,
+    Value<DateTime>? chosenAt,
+    Value<int>? rowid,
+  }) {
+    return RememberedHeadsignsCompanion(
+      feed: feed ?? this.feed,
+      routeId: routeId ?? this.routeId,
+      stopId: stopId ?? this.stopId,
+      headsign: headsign ?? this.headsign,
+      chosenAt: chosenAt ?? this.chosenAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (feed.present) {
+      map['feed'] = Variable<String>(feed.value);
+    }
+    if (routeId.present) {
+      map['route_id'] = Variable<String>(routeId.value);
+    }
+    if (stopId.present) {
+      map['stop_id'] = Variable<String>(stopId.value);
+    }
+    if (headsign.present) {
+      map['headsign'] = Variable<String>(headsign.value);
+    }
+    if (chosenAt.present) {
+      map['chosen_at'] = Variable<DateTime>(chosenAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RememberedHeadsignsCompanion(')
+          ..write('feed: $feed, ')
+          ..write('routeId: $routeId, ')
+          ..write('stopId: $stopId, ')
+          ..write('headsign: $headsign, ')
+          ..write('chosenAt: $chosenAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$CardinalDatabase extends GeneratedDatabase {
   _$CardinalDatabase(QueryExecutor e) : super(e);
   $CardinalDatabaseManager get managers => $CardinalDatabaseManager(this);
@@ -2216,6 +2586,8 @@ abstract class _$CardinalDatabase extends GeneratedDatabase {
     'saved_lists_no_cycle_on_insert',
   );
   late final $SettingsTable settings = $SettingsTable(this);
+  late final $RememberedHeadsignsTable rememberedHeadsigns =
+      $RememberedHeadsignsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -2229,6 +2601,7 @@ abstract class _$CardinalDatabase extends GeneratedDatabase {
     savedListsNoCycleOnUpdate,
     savedListsNoCycleOnInsert,
     settings,
+    rememberedHeadsigns,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -3842,6 +4215,233 @@ typedef $$SettingsTableProcessedTableManager =
       SettingRow,
       PrefetchHooks Function()
     >;
+typedef $$RememberedHeadsignsTableCreateCompanionBuilder =
+    RememberedHeadsignsCompanion Function({
+      required String feed,
+      required String routeId,
+      required String stopId,
+      required String headsign,
+      required DateTime chosenAt,
+      Value<int> rowid,
+    });
+typedef $$RememberedHeadsignsTableUpdateCompanionBuilder =
+    RememberedHeadsignsCompanion Function({
+      Value<String> feed,
+      Value<String> routeId,
+      Value<String> stopId,
+      Value<String> headsign,
+      Value<DateTime> chosenAt,
+      Value<int> rowid,
+    });
+
+class $$RememberedHeadsignsTableFilterComposer
+    extends Composer<_$CardinalDatabase, $RememberedHeadsignsTable> {
+  $$RememberedHeadsignsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get feed => $composableBuilder(
+    column: $table.feed,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get routeId => $composableBuilder(
+    column: $table.routeId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get stopId => $composableBuilder(
+    column: $table.stopId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get headsign => $composableBuilder(
+    column: $table.headsign,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get chosenAt => $composableBuilder(
+    column: $table.chosenAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$RememberedHeadsignsTableOrderingComposer
+    extends Composer<_$CardinalDatabase, $RememberedHeadsignsTable> {
+  $$RememberedHeadsignsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get feed => $composableBuilder(
+    column: $table.feed,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get routeId => $composableBuilder(
+    column: $table.routeId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get stopId => $composableBuilder(
+    column: $table.stopId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get headsign => $composableBuilder(
+    column: $table.headsign,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get chosenAt => $composableBuilder(
+    column: $table.chosenAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$RememberedHeadsignsTableAnnotationComposer
+    extends Composer<_$CardinalDatabase, $RememberedHeadsignsTable> {
+  $$RememberedHeadsignsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get feed =>
+      $composableBuilder(column: $table.feed, builder: (column) => column);
+
+  GeneratedColumn<String> get routeId =>
+      $composableBuilder(column: $table.routeId, builder: (column) => column);
+
+  GeneratedColumn<String> get stopId =>
+      $composableBuilder(column: $table.stopId, builder: (column) => column);
+
+  GeneratedColumn<String> get headsign =>
+      $composableBuilder(column: $table.headsign, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get chosenAt =>
+      $composableBuilder(column: $table.chosenAt, builder: (column) => column);
+}
+
+class $$RememberedHeadsignsTableTableManager
+    extends
+        RootTableManager<
+          _$CardinalDatabase,
+          $RememberedHeadsignsTable,
+          RememberedHeadsignRow,
+          $$RememberedHeadsignsTableFilterComposer,
+          $$RememberedHeadsignsTableOrderingComposer,
+          $$RememberedHeadsignsTableAnnotationComposer,
+          $$RememberedHeadsignsTableCreateCompanionBuilder,
+          $$RememberedHeadsignsTableUpdateCompanionBuilder,
+          (
+            RememberedHeadsignRow,
+            BaseReferences<
+              _$CardinalDatabase,
+              $RememberedHeadsignsTable,
+              RememberedHeadsignRow
+            >,
+          ),
+          RememberedHeadsignRow,
+          PrefetchHooks Function()
+        > {
+  $$RememberedHeadsignsTableTableManager(
+    _$CardinalDatabase db,
+    $RememberedHeadsignsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$RememberedHeadsignsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$RememberedHeadsignsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$RememberedHeadsignsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> feed = const Value.absent(),
+                Value<String> routeId = const Value.absent(),
+                Value<String> stopId = const Value.absent(),
+                Value<String> headsign = const Value.absent(),
+                Value<DateTime> chosenAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => RememberedHeadsignsCompanion(
+                feed: feed,
+                routeId: routeId,
+                stopId: stopId,
+                headsign: headsign,
+                chosenAt: chosenAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String feed,
+                required String routeId,
+                required String stopId,
+                required String headsign,
+                required DateTime chosenAt,
+                Value<int> rowid = const Value.absent(),
+              }) => RememberedHeadsignsCompanion.insert(
+                feed: feed,
+                routeId: routeId,
+                stopId: stopId,
+                headsign: headsign,
+                chosenAt: chosenAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$RememberedHeadsignsTable, RememberedHeadsignRow>(
+                    table,
+                  ),
+                  BaseReferences<
+                    _$CardinalDatabase,
+                    $RememberedHeadsignsTable,
+                    RememberedHeadsignRow
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$RememberedHeadsignsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$CardinalDatabase,
+      $RememberedHeadsignsTable,
+      RememberedHeadsignRow,
+      $$RememberedHeadsignsTableFilterComposer,
+      $$RememberedHeadsignsTableOrderingComposer,
+      $$RememberedHeadsignsTableAnnotationComposer,
+      $$RememberedHeadsignsTableCreateCompanionBuilder,
+      $$RememberedHeadsignsTableUpdateCompanionBuilder,
+      (
+        RememberedHeadsignRow,
+        BaseReferences<
+          _$CardinalDatabase,
+          $RememberedHeadsignsTable,
+          RememberedHeadsignRow
+        >,
+      ),
+      RememberedHeadsignRow,
+      PrefetchHooks Function()
+    >;
 
 class $CardinalDatabaseManager {
   final _$CardinalDatabase _db;
@@ -3854,4 +4454,6 @@ class $CardinalDatabaseManager {
       $$SavedPlacesTableTableManager(_db, _db.savedPlaces);
   $$SettingsTableTableManager get settings =>
       $$SettingsTableTableManager(_db, _db.settings);
+  $$RememberedHeadsignsTableTableManager get rememberedHeadsigns =>
+      $$RememberedHeadsignsTableTableManager(_db, _db.rememberedHeadsigns);
 }

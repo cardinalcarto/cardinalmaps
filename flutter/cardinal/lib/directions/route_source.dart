@@ -28,6 +28,17 @@ enum TravelMode {
   final IconData icon;
 
   bool get available => true;
+
+  /// Whether it's walking by wheelchair, when walking is by [wheelchair].
+  bool byWheelchair({required bool wheelchair}) =>
+      wheelchair && this == walking;
+
+  /// What its chip says: Wheelchair for walking by [wheelchair].
+  String labelFor({required bool wheelchair}) =>
+      byWheelchair(wheelchair: wheelchair) ? 'Wheelchair' : label;
+
+  IconData iconFor({required bool wheelchair}) =>
+      byWheelchair(wheelchair: wheelchair) ? Icons.accessible : icon;
 }
 
 /// The way of traveling last chosen, which directions start with.
@@ -37,12 +48,21 @@ final lastTravelMode = Setting.choice(
   TravelMode.driving,
 );
 
-/// How transit directions last got to and from stops.
-final lastTransitAccess = Setting.choice(
+/// How transit directions last got to and from stops, or null if that's never been
+/// chosen.
+final lastTransitAccess = Setting.optionalChoice(
   'directions.transitAccess',
   TransitAccess.values,
-  TransitAccess.walking,
 );
+
+/// How transit gets to and from stops: as [remembered], or if nothing is, by
+/// [wheelchair] or else on foot.
+TransitAccess transitAccess(
+  TransitAccess? remembered, {
+  required bool wheelchair,
+}) =>
+    remembered ??
+    (wheelchair ? TransitAccess.wheelchair : TransitAccess.walking);
 
 /// The trip has an end the offline area's streets don't reach.
 class OutsideOfflineArea implements Exception {
@@ -56,11 +76,13 @@ class NoOfflineArea implements Exception {
 
 /// Where routes come from, behind what the app needs of it, so tests can fake it.
 abstract class RouteSource {
-  /// The routes [from] to [to], the best first. Throws a [DirectionsError] if there are
-  /// none, [OutsideOfflineArea] or [NoOfflineArea] if they can't be looked for, and
+  /// The routes [from] to [to], the best first, by wheelchair if [mode] is walking and
+  /// [wheelchair] is set. Throws a [DirectionsError] if there are none,
+  /// [OutsideOfflineArea] or [NoOfflineArea] if they can't be looked for, and
   /// [http.RequestAbortedException] if [abort] completes first.
   Future<List<DirectionsRoute>> routes({
     required TravelMode mode,
+    required bool wheelchair,
     required LngLat from,
     required LngLat to,
     Future<void>? abort,
@@ -84,7 +106,7 @@ abstract class TransitSource {
   });
 }
 
-/// Why a transit plan failed.
+/// Why a transit plan, or another question to the transit router, failed.
 class TransitPlanError implements Exception {
   const TransitPlanError(this.kind, this.message);
 
@@ -97,7 +119,7 @@ class TransitPlanError implements Exception {
 }
 
 /// Throws [http.RequestAbortedException] if [abort] completes before [work] does.
-Future<T> _abortable<T>(Future<T> work, Future<void>? abort) {
+Future<T> abortable<T>(Future<T> work, Future<void>? abort) {
   if (abort == null) return work;
   return Future.any([
     work,
@@ -108,7 +130,8 @@ Future<T> _abortable<T>(Future<T> work, Future<void>? abort) {
 /// Where the offline area comes from: null until there is one.
 typedef OfflineAreaSource = Future<OfflineArea?> Function();
 
-Future<OfflineArea> _need(OfflineAreaSource area) async =>
+/// The offline area, or [NoOfflineArea] if there's none.
+Future<OfflineArea> needOfflineArea(OfflineAreaSource area) async =>
     await area() ?? (throw const NoOfflineArea());
 
 Future<void> _checkCovers(OfflineArea area, LngLat from, LngLat to) async {
@@ -128,7 +151,9 @@ class OfflineRouteSource implements RouteSource {
   /// Told the line of each route found, so the tiles it passes through count as used
   /// (`OfflineDownloads.touchRoute`).
   final void Function(List<DirectionsPoint> shape)? used;
-  final _adapters = <TravelMode, DirectionsAdapter>{};
+
+  /// Ferrostar's adapters, by mode and whether it's by wheelchair.
+  final _adapters = <(TravelMode, bool), DirectionsAdapter>{};
 
   /// How many routes to ask for besides the best.
   static const _alternates = 3;
@@ -139,27 +164,34 @@ class OfflineRouteSource implements RouteSource {
   @override
   Future<List<DirectionsRoute>> routes({
     required TravelMode mode,
+    required bool wheelchair,
     required LngLat from,
     required LngLat to,
     Future<void>? abort,
-  }) => _abortable(_routes(mode, from, to), abort);
+  }) => abortable(
+    _routes(mode, mode.byWheelchair(wheelchair: wheelchair), from, to),
+    abort,
+  );
 
   Future<List<DirectionsRoute>> _routes(
     TravelMode mode,
+    bool wheelchair,
     LngLat from,
     LngLat to,
   ) async {
-    final area = await _need(_area);
+    final area = await needOfflineArea(_area);
     await _checkCovers(area, from, to);
 
     // Ferrostar's adapter is in the routing library too, made before the router opens.
     await initRouting();
-    final adapter = _adapters[mode] ??= DirectionsAdapter.valhalla(
-      // Ferrostar wants an endpoint to make the request for; nothing is sent to it.
-      endpointUrl: 'offline:route',
-      costing: mode.costing!,
-      alternates: _alternates,
-    );
+    final adapter = _adapters[(mode, wheelchair)] ??=
+        DirectionsAdapter.valhalla(
+          // Ferrostar wants an endpoint to make the request for; nothing is sent to it.
+          endpointUrl: 'offline:route',
+          costing: mode.costing!,
+          alternates: _alternates,
+          wheelchair: wheelchair,
+        );
     final made = adapter.request(from: _point(from), to: _point(to));
     final watch = Stopwatch()..start();
     final response = await area.useRouter(
@@ -178,22 +210,14 @@ class OfflineRouteSource implements RouteSource {
 /// [TransitSource] on the device, over the offline area's timetables, with the latest
 /// real-time data its agencies publish when there's a network.
 class OfflineTransitSource implements TransitSource {
-  OfflineTransitSource(this._area, {this.client});
+  OfflineTransitSource(this._area, this._feeds);
 
   final OfflineAreaSource _area;
 
-  /// What real-time messages are fetched with.
-  final http.Client? client;
+  /// The area's real-time feeds, shared with the planner's other askers.
+  final AreaRealtimeFeeds _feeds;
 
-  /// The real-time feeds of the area they were made for.
-  (OfflineArea, RealtimeFeeds)? _feeds;
-
-  RealtimeFeeds _realtime(OfflineArea area) {
-    if (_feeds case (final made, final feeds) when made == area) return feeds;
-    final feeds = RealtimeFeeds(() => area.realtimeSources, client: client);
-    _feeds = (area, feeds);
-    return feeds;
-  }
+  RealtimeFeeds _realtime(OfflineArea area) => _feeds.of(area);
 
   @override
   void prepare() {
@@ -217,7 +241,7 @@ class OfflineTransitSource implements TransitSource {
   }) async {
     final cancel = TransitCancel();
     unawaited(abort?.then((_) => cancel.cancel()));
-    return _abortable(_plan(access, from, to, cancel), abort);
+    return abortable(_plan(access, from, to, cancel), abort);
   }
 
   Future<TransitPlan> _plan(
@@ -226,7 +250,7 @@ class OfflineTransitSource implements TransitSource {
     LngLat to,
     TransitCancel cancel,
   ) async {
-    final area = await _need(_area);
+    final area = await needOfflineArea(_area);
     await _checkCovers(area, from, to);
     // Real-time messages are fetched while the timetables open.
     final fetching = _realtime(area).fresh();
@@ -249,17 +273,23 @@ class OfflineTransitSource implements TransitSource {
       '${watch.elapsedMilliseconds} ms (${response.status}, '
       '${feeds.length} new real-time messages)',
     );
-    if (response.status == 499) throw http.RequestAbortedException();
-    if (response.status != 200) {
-      final body = jsonDecode(utf8.decode(response.body));
-      final error = body is Map<String, Object?> ? body : const {};
-      throw TransitPlanError(
-        error['kind'] as String? ?? 'failed',
-        error['error'] as String? ?? 'status ${response.status}',
-      );
-    }
-    return TransitPlan.decode(response.body);
+    return TransitPlan.decode(transitAnswer(response));
   }
+}
+
+/// The body of the transit router's [response]: throws [http.RequestAbortedException]
+/// if it was cancelled, and [TransitPlanError] if it failed.
+List<int> transitAnswer(TransitResponse response) {
+  if (response.status == 499) throw http.RequestAbortedException();
+  if (response.status != 200) {
+    final body = jsonDecode(utf8.decode(response.body));
+    final error = body is Map<String, Object?> ? body : const {};
+    throw TransitPlanError(
+      error['kind'] as String? ?? 'failed',
+      error['error'] as String? ?? 'status ${response.status}',
+    );
+  }
+  return response.body;
 }
 
 /// Provides what directions need to the widgets below it.

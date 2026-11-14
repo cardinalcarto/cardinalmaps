@@ -419,6 +419,158 @@ Departures add about 11% to a Washington plan's JSON. Finding and describing the
 on plans of 50 to 460 ms, measured with `multi_feed_bench`'s `ride departure ranges` stage.
 A plan describes each departure once, however many of its journeys list it.
 
+### Nearby departures
+
+`POST /transit/nearby` answers which routes a rider can catch near a place, under which
+headsigns, and when. `POST /transit/route` shows one page of one of them from the stop it used,
+for a detail view. The device answers both with the same bytes (`OfflineTransit::nearby` and
+`::route`), and the logic is in `valinor-transit-plan` (`nearby.rs` and `response/nearby.rs`);
+the server and the bridge only supply the clock and pass bytes through.
+
+A nearby request has a `location`; `time` (`now` by default); `mode`, `walking` (the default) or
+`wheelchair`; `max_walk_seconds` (1800); `horizon_seconds` (7200, at most a day);
+`max_departures` per page (3, at most 10); and optionally `max_routes`.
+
+- Stops are those the plan's access search reaches: a walk on real streets bounded by Sif's cost,
+  with the wheelchair costing and snaps for a wheelchair, not straight-line distance.
+  The device's 45-minute limit on walks holds here too.
+- Departures are found by the departure-range code, from the same pinned snapshot, as departures
+  to ride on from a stop: every pattern serving it at a position some later stop follows (a trip's
+  last stop is no departure), every service day of the window, every lane, and the rules the
+  mode reads, so a wheelchair rider sees only trips and stops not marked inaccessible.
+  Frequency runs are each a departure. Canceled and skipped departures are found in the
+  schedule's block as for a range, and listed at their scheduled times; skipped means the trip
+  runs but doesn't let riders on at the stop any more.
+- They are grouped by GTFS route (an original trip's own on a stay-seated combined trip),
+  then into pages. A trip no GTFS route names isn't listed. A row shows one page at a time,
+  and a rider swipes between them.
+- A departure's `headsign` is the one a rider reads at its stop: the stop's headsign there
+  (real-time data's, then the schedule's), else the trip's. A page is one headsign, or several
+  that merge. Only departures that run give a page its headsigns. A canceled or skipped
+  departure is listed on the page its own headsign is on, and on none if that headsign has no
+  departure that runs. `direction_id` doesn't group departures.
+- A departure is catchable when it leaves at or after `time` plus the walk to its stop, as
+  routing counts a first boarding. A page's `stop` is chosen in two steps, over all of its
+  headsigns' departures: first the trip of its earliest catchable departure that runs at any
+  reachable stop, then, of the stops where that same trip can still be caught, the one with the
+  shortest walk (then the earlier departure, then the lower stop number), with `walk_seconds`.
+  A later trip from a nearer stop never beats the earliest trip, and a trip caught only at a
+  farther stop is caught there.
+  A trip is a run on its service date (`trip_id` and `start_date`), and each run of a frequency
+  trip is a trip of its own, since runs that share a `trip_id` are different vehicles.
+  A loop's two visits to one stop are one stop, at the earlier departure.
+  It lists the next `max_departures` departures that run from that stop within the horizon, in
+  order, with the canceled and skipped ones among them listed beside them without counting: those
+  up to the last one counted, or to the end of the horizon when fewer run.
+  `soonest_departure` is when the trip that chose the stop leaves it.
+  A route with no page left isn't listed.
+- Two headsigns of one route share a page when, from the stop that page would have, every trip
+  of one and every trip of the other that run from it call at the same stops until one of them
+  ends: the shorter's stops from there are where the longer's begin (see the rounds below). Each trip is compared to the
+  end of its own GTFS trip, so a vehicle that goes on as another route is compared only as far
+  as this route goes. A short turn merges with the trips it runs with, as does a trip whose
+  vehicle goes on as another route, like King County Metro's 44 to the University District that
+  continues as the 43. Headsigns of different routes never merge.
+  - Every pair of a page's headsigns must merge, never a chain: if "A" merges with "B" and "B"
+    with "C", but "A" not with "C", "A" and "C" are on different pages.
+  - The comparison is made from the stop the merged page would have, chosen over all of their
+    departures as above, and each headsign needs a departure that runs from that stop. A page
+    lists departures from one stop, so headsigns that only go the same way from another stop
+    don't merge: when the merged page's earliest trip is caught where one of them doesn't stop,
+    they stay apart, each at its own stop.
+- Pages that share a trip (a run, by `trip_id` and `start_date`, whether it runs or not) are one
+  page, transitively, since they are the same vehicles. A trip's headsign can change along its
+  route, as King County Metro's 62 reads "Downtown Seattle Fremont" before Fremont and "Downtown
+  Seattle" after it, and each headsign alone would be a page at its own stop listing the same
+  trips. The page's stop is chosen over all its departures as above, it lists departures from
+  that stop only, and its headsigns are those read there, so a rider at Stone Way sees one page
+  under Stone Way's headsign. No trip is listed on two pages of a route.
+- Every headsign with a departure that runs starts as a page of its own. Then, in rounds until a
+  round changes nothing:
+  1. Pages are taken in a fixed order, most distinct catchable trips that run first, then by
+     their first headsign in string order. Each joins the first page before it that it goes the
+     same way as, at the stop the two would then have, or else stays. Two pages go the same way
+     when each lists a departure that runs from that stop, every one of their headsigns is there
+     (by a departure that runs, or by a trip listed there under another of their headsigns,
+     which is the same vehicle), and every pair of trips that run there under different
+     headsigns call at the same stops until one ends. A short turn so joins the main page
+     rather than a rarer one.
+  2. Pages that share a trip become one.
+
+  A union moves a page's stop, from which pages may now go the same way, so the rounds repeat.
+  Each round only merges, so they end, and since each round's order depends only on its pages,
+  the answer doesn't depend on the order departures were found in.
+  - Departures without a headsign never join a page by going the same way, only by sharing a
+    trip.
+- A page's `headsigns` are its merged headsigns, the one with the most departures that run from
+  its stop in the horizon first (then the earliest, then by string); a client shows them as
+  "A / B", and asks for the page's detail by them. A page's `direction_id` is that of its trips
+  that run from its stop, when they all share one, and is only for ordering and information.
+  Each departure has the fields of a range's, less those about an alighting stop:
+  `trip_id`, `start_date`, `headsign`, `status`, `departure`, `scheduled_departure`,
+  `delay_seconds`, `realtime`, `vehicle_id`, `accessibility` (of its trip and stop), `bikes_allowed`,
+  and `alerts`, indices into the response's `alerts`; and `continues_as` when its vehicle goes on
+  as another route after its trip, with riders staying on (see "Stay-seated transfers"): the next
+  trip's `route_id`, the route's `short_name`, and the next trip's `headsign`. It is read from the
+  compiled stay-seated trips, so it is there only where the compiler merged the two trips, and is
+  left out when the next trip's stretch lets no one on or off (canceled, replaced, or removed by a
+  `NO_SERVICE` alert), when the next trip is the same route's, and on a canceled departure.
+- Routes are ordered by their pages' soonest `soonest_departure`. A route's pages are in an order
+  that doesn't depend on time, so swiping between them is stable from one refresh to the next:
+  by `direction_id`, pages without one last, then by the first of their headsigns in string
+  (UTF-8 byte) order, a page without headsigns last.
+  A route has its `feed`, `route` (names, type, and colors), and `agency`.
+- `realtime` states each feed's age, as a plan's does. With no routes, `no_routes_reason` says
+  `no_access` (no stop within the walk) or `no_service`.
+
+A route request names what a nearby page gave: `feed`, `route_id`, `headsigns` (the page's,
+empty for a page without any), and `stop_id`; with `time`, `mode`, `walk_seconds` (0),
+`horizon_seconds`, `max_departures`, and optionally a departure's `trip_id` and `start_date`.
+It answers with the route, `headsigns` as asked, `departures` from the stop of the route's
+trips whose headsign there is one of them (or that have none, for an empty list) from `time` plus
+`walk_seconds` (`max_departures` counting only those that run, as for nearby), `ride`, a plan's
+transit leg on the chosen trip (or the first that runs) from the stop to where its vehicle stops
+carrying riders, with every stop's times, its shape as polyline6, vehicle, and alerts;
+`shape_to_stop`, the same trip
+before the stop, where the rider can't board it yet: its shape from the first stop of its GTFS trip
+to the stop, as polyline6, ending where the ride's begins (straight from stop to stop where the
+trip has no shape there, or runs on a pattern real-time data gave it; left out without a `ride`,
+and when the stop is the trip's first, as for a stay-seated trip's second stretch at the join);
+and `vehicles`, those real-time data has on the route's trips that leave the stop under one of the
+headsigns, whether or not they have left it yet. A vehicle not matched to a trip of the timetable has no stops to read that from,
+and isn't listed. A route, stop, or trip that isn't there is a 404 (`unknown_route`,
+`unknown_stop`, or `unknown_trip`); headsigns with nothing in the horizon are an answer with no
+departures and no `ride`. A request without `headsigns`, with an empty headsign, or naming one
+twice is a 400.
+
+Where the vehicle goes on as further trips of a stay-seated combined trip (see "Stay-seated
+transfers"), the `ride` goes on with it, as a plan's ride does: one ride in `segments`, each
+original trip with its `trip_id`, route, headsign, and the range of the ride's `stops` it covers,
+the joins one stop, every stop with its own trip's times and real-time data, and the shape across
+them all. A 44 to the University District that continues as the 43 to Capitol Hill so shows, before
+the rider boards, that it gets them to Capitol Hill. The ride goes on from the boarded trip through
+each next trip that still lets riders on or off somewhere, so it ends where `continues_as` would
+stop: at the end of the last trip before one that is canceled, replaced, or removed by a
+`NO_SERVICE` alert. The compiler's chain cap and rules (`block_id`, and `transfer_type` 4 and 5)
+made the chain, so every trip on it is one a rider can stay on for; a later trip of the same route
+is part of the ride as well. The ride's `route`, `trip`, and `departures` stay the row's, whatever
+routes the later segments are, and `shape_to_stop` is still only the boarded trip's own.
+On Seattle's build, the 44 from N 46th St & Phinney Ave N at 09:49 on a Tuesday rides 9 stops to
+U District Station as the 44 and 27 more as the 43, to Boren Ave & E Yesler Way: its detail grows
+from 9.0 KB of JSON to 23.3 KB, the ride from 5.1 KB to 19.4 KB.
+
+Measured with `nearby_bench` on Seattle's seven feeds (the 2026-11-12 planet build) on a desktop,
+warm, a 30-minute walk takes 4 to 35 ms, nearly all of it the access table:
+15 ms from Fremont (11 routes), 22 to 24 ms downtown (50 to 70 routes), and 28 to 32 ms on
+Capitol Hill. Departures take under 3 ms, also with King County Metro's real-time data
+(a Monday 10:18 capture). The process's first query takes about 110 ms, reading tiles from disk.
+A response is 8 to 130 KB of JSON.
+Paging by headsign, with pages that share a trip made one, takes departures from 0.1 to 1.8 ms
+to 0.1 to 3.6 ms (the most downtown and on Capitol Hill), mostly reading each departure's
+headsign. There are about as many pages as there were directions, and the JSON is 1 to 9%
+larger (8 to 134 KB), for `soonest_departure` and `continues_as`; measured warm with the
+planet's street tiles on 2026-11-13.
+
 ## Offline build
 
 `valinor-transit-build` runs the offline stages, each a plain command with explicit

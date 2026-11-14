@@ -79,6 +79,15 @@ impl StopTable {
             .map(|&stop| (stop, self.costs[stop.index()]))
     }
 
+    /// The reachable stops and their costs, in the order they were first reached.
+    pub fn reachable(&self) -> impl Iterator<Item = (StopId, Seconds)> + '_ {
+        self.entries().filter_map(|(stop, cost)| {
+            Seconds::try_new(cost.cast_unsigned())
+                .ok()
+                .map(|cost| (stop, cost))
+        })
+    }
+
     /// The cost at a stop, if it is reachable.
     pub fn cost(&self, stop: StopId) -> Option<Seconds> {
         let cost = *self.costs.get(stop.index())?;

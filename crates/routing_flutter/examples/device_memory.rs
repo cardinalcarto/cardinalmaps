@@ -426,7 +426,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let adapters: Vec<Arc<DirectionsAdapter>> = COSTINGS
         .iter()
         .map(|costing| {
-            DirectionsAdapter::valhalla("offline:route".into(), (*costing).into(), 3)
+            DirectionsAdapter::valhalla("offline:route".into(), (*costing).into(), 3, false)
                 .map(Arc::new)
                 .map_err(|e| e.message)
         })

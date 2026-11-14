@@ -48,11 +48,16 @@ use valinor_walk::snap_stops;
 
 use crate::build::{BuildLoadError, TransitBuild};
 use crate::error::{PlanError, StateError};
-use crate::plan::{
-    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, DirectSearch, PlanStage,
-    TransitRequest, TravelMode, plan_pinned, validated_latest,
+use crate::nearby::{
+    NearbyRequest, RouteDetailRequest, nearby_pinned, route_detail, validated_nearby,
 };
-use crate::response::{PlanResponse, VehicleUpdate, WalkManeuver, WalkPath, lower};
+use crate::plan::{
+    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, AccessRequest, DirectSearch,
+    PlanStage, TransitRequest, TravelMode, plan_pinned, validated_latest,
+};
+use crate::response::{
+    NearbyResponse, PlanResponse, RouteDetailResponse, VehicleUpdate, WalkManeuver, WalkPath, lower,
+};
 use crate::state::{StateConfig, StopSnapper, TransitSnapshot, TransitState};
 
 /// The farthest an origin or destination may be from a usable street, in meters.
@@ -703,6 +708,39 @@ impl AccessEgressSearch for StreetSearch<'_, '_> {
         })
     }
 
+    fn access_table(
+        &mut self,
+        request: &AccessRequest<'_>,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<StopTable, StreetError> {
+        let snaps = request
+            .snapshot
+            .snaps()
+            .ok_or(StreetError::NoSnaps)?
+            .for_mode(request.mode);
+        let stop_count = request.snapshot.snapshot().stop_count();
+        self.mode_worker_access.bind(Arc::clone(snaps))?;
+
+        (self.probe)(PlanStage::Locate);
+        let origin = correlated(self.tiles, self.costing, self.snap, request.origin)?;
+        let seeds = seeds_of(&origin);
+        if seeds.is_empty() {
+            return Err(StreetError::NoStreetNearby("location"));
+        }
+        (self.probe)(PlanStage::AccessTable);
+        let access = self.mode_worker_access.compute(
+            stop_count,
+            &TableRequest {
+                side: AccessSide::Access,
+                seeds: &seeds,
+                max_seconds: self.max_walk_seconds,
+                interrupt,
+            },
+        )?;
+        // Interrupted: an empty table, and the caller reports the interrupt.
+        Ok(access.unwrap_or_else(|| StopTable::new(stop_count)))
+    }
+
     fn access_path(
         &mut self,
         request: &AccessEgressRequest<'_>,
@@ -1218,6 +1256,35 @@ impl StreetPlanner {
         interrupt: &dyn Fn() -> bool,
         probe: &dyn Fn(PlanStage),
     ) -> Result<PlanResponse, StreetPlanError> {
+        let snaps = snapshot
+            .snaps()
+            .ok_or(StreetError::NoSnaps)
+            .map_err(PlanError::AccessEgress)?;
+        let (router, mut search) = Self::street_search(
+            pool,
+            worker,
+            QueryContext {
+                mode: request.mode,
+                language,
+                max_walk_seconds: request.options.max_walk_seconds,
+                now,
+                interrupt,
+                probe,
+            },
+        )
+        .map_err(PlanError::AccessEgress)?;
+        router
+            .transfers_mut()
+            .bind(Arc::clone(snaps.transfers_for_mode(request.mode)));
+        plan_pinned(snapshot, router, &mut search, request, interrupt)
+    }
+
+    /// A worker's router and street search for one query's travel mode.
+    fn street_search<'w, 'a>(
+        pool: &'w WorkerPool<'a>,
+        worker: &'w mut Worker<'a>,
+        context: QueryContext<'w>,
+    ) -> Result<(&'w mut Router<TableTransfers>, StreetSearch<'w, 'a>), StreetError> {
         let Worker {
             walking,
             cycling,
@@ -1226,30 +1293,20 @@ impl StreetPlanner {
             workspace,
             tiles_generation: _,
         } = worker;
-        let mode_worker = match request.mode {
-            TravelMode::Walking => walking,
-            TravelMode::Cycling => cycling,
-            TravelMode::Wheelchair => wheelchair,
-        };
-        let snaps = snapshot
-            .snaps()
-            .ok_or(StreetError::NoSnaps)
-            .map_err(PlanError::AccessEgress)?;
-        mode_worker
-            .router
-            .transfers_mut()
-            .bind(Arc::clone(snaps.transfers_for_mode(request.mode)));
-
         let ModeWorker {
             router,
             access,
             egress,
             transfer,
             costing,
-        } = mode_worker;
-        let mut search = StreetSearch {
+        } = match context.mode {
+            TravelMode::Walking => walking,
+            TravelMode::Cycling => cycling,
+            TravelMode::Wheelchair => wheelchair,
+        };
+        let search = StreetSearch {
             tiles: pool.tiles,
-            mode: request.mode,
+            mode: context.mode,
             mode_worker_access: access,
             mode_worker_egress: egress,
             mode_worker_transfer: transfer,
@@ -1257,16 +1314,103 @@ impl StreetPlanner {
             thor,
             workspace,
             odin: &pool.odin,
-            options: trip_options(request.mode, language).map_err(PlanError::AccessEgress)?,
-            now,
-            interrupt,
-            probe,
-            max_walk_seconds: request.options.max_walk_seconds,
+            options: trip_options(context.mode, context.language)?,
+            now: context.now,
+            interrupt: context.interrupt,
+            probe: context.probe,
+            max_walk_seconds: context.max_walk_seconds,
             snap: pool.snap,
             transfer_paths: HashMap::new(),
         };
-        plan_pinned(snapshot, router, &mut search, request, interrupt)
+        Ok((router, search))
     }
+
+    /// Finds the routes a rider can catch near a place, in each direction, and when,
+    /// walking on real streets to the stops as a plan's access does.
+    ///
+    /// # Errors
+    ///
+    /// If the request is invalid, `interrupt` asks to stop, or the access search fails.
+    pub fn nearby(
+        &self,
+        request: &NearbyRequest,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<NearbyResponse, StreetPlanError> {
+        self.nearby_probed(request, interrupt, &|_| {})
+    }
+
+    /// [`Self::nearby`], telling `probe` as each stage of the work begins.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::nearby`].
+    pub fn nearby_probed(
+        &self,
+        request: &NearbyRequest,
+        interrupt: &dyn Fn() -> bool,
+        probe: &dyn Fn(PlanStage),
+    ) -> Result<NearbyResponse, StreetPlanError> {
+        probe(PlanStage::Setup);
+        let latest = validated_nearby::<WalkError, StreetError>(request)?;
+        if request.max_walk_seconds > self.limits.max_walk_seconds {
+            return Err(PlanError::InvalidRequest(
+                "max_walk_seconds exceeds the service limit",
+            ));
+        }
+        require_mode_built(request.mode, self.has_wheelchair)?;
+        let snapshot = self
+            .state
+            .pin_for_departure(request.now, request.time, latest)?;
+        let now = Timestamp::from_second(request.now)
+            .map_err(|_| PlanError::InvalidRequest("now is out of range"))?;
+        self.cell.with_dependent(|_, pool| {
+            let mut worker = pool.take().map_err(PlanError::AccessEgress)?;
+            let result = Self::street_search(
+                pool,
+                &mut worker,
+                QueryContext {
+                    mode: request.mode,
+                    // Nothing is narrated: a nearby query draws no walks.
+                    language: "en-US",
+                    max_walk_seconds: request.max_walk_seconds,
+                    now,
+                    interrupt,
+                    probe,
+                },
+            )
+            .map_err(PlanError::AccessEgress)
+            .and_then(|(_, mut search)| nearby_pinned(&snapshot, &mut search, request, interrupt));
+            probe(PlanStage::Release);
+            pool.put(worker);
+            result
+        })
+    }
+
+    /// One route and direction from one stop: its next departures, a trip's stops and shape,
+    /// and the route's vehicles in that direction.
+    ///
+    /// # Errors
+    ///
+    /// If the request is invalid or names what isn't loaded, or `interrupt` asks to stop.
+    pub fn route_detail(
+        &self,
+        request: &RouteDetailRequest,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<RouteDetailResponse, StreetPlanError> {
+        route_detail(&self.state, request, interrupt)
+    }
+}
+
+/// What a query's street search is set up with.
+#[derive(Clone, Copy)]
+struct QueryContext<'w> {
+    mode: TravelMode,
+    /// The narration language of the walks it draws.
+    language: &'w str,
+    max_walk_seconds: u32,
+    now: Timestamp,
+    interrupt: &'w dyn Fn() -> bool,
+    probe: &'w dyn Fn(PlanStage),
 }
 
 /// What an idle worker keeps, for tests of the pool.

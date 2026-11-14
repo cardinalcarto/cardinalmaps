@@ -10,6 +10,8 @@
 //!   so a server and a phone use it identically.
 //! - [`plan`] answers a [`TransitRequest`] over one pinned snapshot, using an
 //!   [`AccessEgressSearch`] for stop tables and a [`valinor_transit::TransferSearch`] for walks.
+//! - [`nearby()`] answers which routes a rider can catch near a place, a page per headsign,
+//!   and [`route_detail()`] one page of them from one stop, over a pinned snapshot alike.
 //! - [`PlanResponse`] is the rider-facing JSON answer, with its own endpoint's schema
 //!   rather than Valhalla's.
 //! - [`CompiledLookup`] is the bridge that lets the GTFS-RT overlay builder see compiled GTFS.
@@ -18,6 +20,7 @@ mod build;
 mod error;
 mod json;
 mod lookup;
+mod nearby;
 mod plan;
 pub mod response;
 mod state;
@@ -35,6 +38,10 @@ mod multi_feed_regressions;
 #[cfg(test)]
 mod multi_feed_tests;
 #[cfg(test)]
+mod nearby_seated_tests;
+#[cfg(test)]
+mod nearby_tests;
+#[cfg(test)]
 mod review_tests;
 #[cfg(test)]
 mod scenario_tests;
@@ -44,17 +51,23 @@ mod street_tests;
 mod testing;
 
 pub use build::{BuildLoadError, BuildLoadReport, TransitBuild, default_decode_limits};
-pub use error::{PlanError, StateError};
-pub use json::{JsonCoordinate, JsonResponse, PlanRequestBody};
+pub use error::{Missing, PlanError, StateError};
+pub use json::{
+    JsonCoordinate, JsonResponse, NearbyRequestBody, PlanRequestBody, RouteRequestBody,
+};
 pub use lookup::CompiledLookup;
+pub use nearby::{
+    DEFAULT_HORIZON_SECONDS, DEFAULT_NEARBY_DEPARTURES, DEFAULT_NEARBY_WALK_SECONDS, NearbyRequest,
+    RouteDetailRequest, TripChoice, nearby, nearby_pinned, route_detail, route_detail_pinned,
+};
 pub use plan::{
-    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, DepartureRange, DirectSearch,
-    MAX_DEPARTURE_WINDOW_SECONDS, MAX_RANGE_DEPARTURES, PlanStage, TransitOptions, TransitRequest,
-    TravelMode, plan, plan_pinned,
+    AccessEgressRequest, AccessEgressSearch, AccessEgressTables, AccessRequest, DepartureRange,
+    DirectSearch, MAX_DEPARTURE_WINDOW_SECONDS, MAX_RANGE_DEPARTURES, PlanStage, TransitOptions,
+    TransitRequest, TravelMode, plan, plan_pinned,
 };
 pub use response::{
-    Accessibility, DepartureStatus, PlanResponse, RideDeparture, StopMovedNotice, Vehicle,
-    VehicleUpdate, WalkManeuver, WalkPath,
+    Accessibility, DepartureStatus, NearbyResponse, PlanResponse, RideDeparture,
+    RouteDetailResponse, StopMovedNotice, Vehicle, VehicleUpdate, WalkManeuver, WalkPath,
 };
 pub use state::{
     FeedUpdate, IngestAndRefresh, IngestOutcome, ModeSnaps, StateConfig, StopLocation, StopSnapper,

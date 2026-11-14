@@ -4,9 +4,12 @@
 /// - [PlaceStore] holds [Place]s: POIs, addresses and administrative areas.
 /// - [SavedStore] holds what the user has saved: nested [SavedList]s of [SavedPlace]s.
 /// - [SettingsStore] holds the app's [Setting]s.
+/// - [HeadsignStore] holds the headsign the rider last settled on for each route at each
+///   stop, for nearby transit.
 library;
 
 export 'src/database.dart' show CardinalDatabase, SavedListRow, SavedPlaceRow;
+export 'src/headsigns.dart';
 export 'src/place.dart';
 export 'src/places.dart';
 export 'src/saved.dart';
