@@ -14,7 +14,7 @@ use valinor_gtfs_rt::{
     VehicleDetails, VehicleRef,
 };
 use valinor_transit::{
-    Leg, Profile, ProfileEntry, Ride, StopEvent, StopId, StopRules, TripId, TripKey,
+    Leg, Profile, ProfileEntry, Ride, RouteId, StopEvent, StopId, StopRules, TripId, TripKey,
 };
 
 use crate::plan::{
@@ -553,9 +553,24 @@ impl<'a> RideDescriber<'a> {
 
     /// Resolves what a ride's trip is, for a leg or for one of a leg's departures.
     pub(super) fn ride_view(&self, ride: &Ride) -> RideView<'a> {
+        self.trip_view(
+            ride.trip,
+            ride.route,
+            (ride.board_position, ride.alight_position),
+        )
+    }
+
+    /// Resolves what a run is, ridden on `pattern` between two of its positions: what
+    /// [`Self::ride_view`] reads of a ride, for a run that needn't have been found in a lane.
+    pub(super) fn trip_view(
+        &self,
+        key: TripKey,
+        pattern: RouteId,
+        (board_position, alight_position): (u32, u32),
+    ) -> RideView<'a> {
         let set = self.set();
         let rider = &self.snapshot.rider;
-        let trip_part = set.trip_part(ride.trip.trip);
+        let trip_part = set.trip_part(key.trip);
         let static_trip = trip_part.and_then(|(part, local)| part.compiled().trip(local));
         // The original trip this ride boards, on a combined stay-seated trip.
         let trip_segments = trip_part
@@ -563,28 +578,24 @@ impl<'a> RideDescriber<'a> {
             .unwrap_or_default();
         let boarded_segment = trip_segments
             .iter()
-            .find(|s| {
-                s.first_position <= ride.board_position && ride.board_position <= s.last_position
-            })
+            .find(|s| s.first_position <= board_position && board_position <= s.last_position)
             .copied();
         // A combined trip's update is about one original trip, so a leg on another reads nothing
         // from it: `details` belongs to the stretch the rider boards.
         let details = match boarded_segment {
-            Some(segment) => rider.trip_details_named(ride.trip, segment.gtfs_id),
-            None => rider.trip_by_key(ride.trip),
+            Some(segment) => rider.trip_details_named(key, segment.gtfs_id),
+            None => rider.trip_by_key(key),
         };
         // The stretches this ride actually rides, in order; empty for a ride on one plain trip.
         let ridden_segments: Vec<TripSegmentInfo<'_>> = trip_segments
             .iter()
-            .filter(|s| {
-                s.first_position <= ride.alight_position && ride.board_position <= s.last_position
-            })
+            .filter(|s| s.first_position <= alight_position && board_position <= s.last_position)
             .copied()
             .collect();
         // Static positions are valid only when the ride is on the trip's own stop pattern.
         let on_base_pattern = trip_part
             .zip(static_trip)
-            .is_some_and(|((part, _), info)| part.global_route(info.pattern) == ride.route);
+            .is_some_and(|((part, _), info)| part.global_route(info.pattern) == pattern);
         // Which file answers for this leg: its trip's, or for a trip only real-time data knows,
         // the file of its feed or of its route.
         let part = trip_part
@@ -594,7 +605,7 @@ impl<'a> RideDescriber<'a> {
                     .and_then(|d| d.feed.as_ref())
                     .and_then(|feed| set.part_of_feed(feed.as_str()))
             })
-            .or_else(|| set.route_part(ride.route).map(|(part, _)| part));
+            .or_else(|| set.route_part(pattern).map(|(part, _)| part));
         let gtfs_route = boarded_segment
             .map(|segment| segment.route)
             .or_else(|| part.and_then(|part| gtfs_route_of(set, part, static_trip, details)));
@@ -1223,6 +1234,17 @@ impl VisitContext<'_> {
             day_start + i64::from(departure),
         ))
     }
+}
+
+/// What a rider waiting at a ride's boarding stop reads on the vehicle, as a leg shows it:
+/// the stop's headsign there (real-time data's, or the schedule's), or else the trip's.
+pub(super) fn boarding_headsign(
+    view: &RideView<'_>,
+    visit: &VisitContext<'_>,
+    index: usize,
+    live: Option<&StopTimeDetails>,
+) -> Option<String> {
+    stop_headsign(visit, index, live).or_else(|| trip_headsign(view))
 }
 
 /// A visit's headsign when it differs from the trip's: from real-time data, or the schedule's.

@@ -30,8 +30,8 @@ use valinor_transit::{
 };
 
 use crate::response::build::{
-    RideDescriber, gtfs_route_of, leg_accessibility, stop_headsign, trip_accessibility,
-    trip_bikes_allowed, trip_headsign,
+    RideDescriber, boarding_headsign, gtfs_route_of, leg_accessibility, trip_accessibility,
+    trip_bikes_allowed,
 };
 use crate::response::{Accessibility, AlertResponse, DepartureStatus, RideDeparture, TransitLeg};
 use crate::window::calendar_date;
@@ -609,8 +609,7 @@ impl RideDescriber<'_> {
         let board = self.visit_times(&context, board_index, board_live, candidate.board);
         // What a rider waiting at the boarding stop reads on the vehicle, as a leg shows it:
         // the stop's headsign there, or the trip's.
-        let headsign =
-            stop_headsign(&context, board_index, board_live).or_else(|| trip_headsign(&view));
+        let headsign = boarding_headsign(&view, &context, board_index, board_live);
         let alight = self.visit_times(
             &context,
             alight_index,
