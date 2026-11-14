@@ -399,6 +399,9 @@ fn ferry_source() -> InMemorySource {
 ///   (one block, a three-minute wait); "Ballard" goes the other way.
 /// - Route 26 has one trip a page: by `direction_id` 1, none, and 0 twice, one without a
 ///   headsign, each leaving `P1` earlier than the page before it in the route's order.
+/// - Route 62's trips read "Downtown via Fremont" at `P1` and "Downtown" from `P2` on.
+/// - Route 71's 11:10 reads "Alpha" at `P1` and "Beta" at `P2`, and its 11:20 "Gamma" at `P3`
+///   and "Beta" at `P2`, each going on somewhere else.
 fn lines_source() -> InMemorySource {
     InMemorySource::new()
         .with(
@@ -414,7 +417,9 @@ fn lines_source() -> InMemorySource {
              L23,LN,23,3\n\
              L44,LN,44,3\n\
              L43,LN,43,3\n\
-             L26,LN,26,3\n",
+             L26,LN,26,3\n\
+             L62,LN,62,3\n\
+             L71,LN,71,3\n",
         )
         .with(
             "stops.txt",
@@ -455,13 +460,18 @@ fn lines_source() -> InMemorySource {
              L26,WK,L26-M1101,Maple,,\n\
              L26,WK,L26-A1102,Aspen,1,\n\
              L26,WK,L26-N1103,,0,\n\
-             L26,WK,L26-Z1104,Zinnia,0,\n",
+             L26,WK,L26-Z1104,Zinnia,0,\n\
+             L62,WK,L62-1110,Downtown,1,\n\
+             L62,WK,L62-1150,Downtown,1,\n\
+             L71,WK,L71-1110,Beta,0,\n\
+             L71,WK,L71-1120,Beta,0,\n",
         )
         .with("stop_times.txt", &lines_stop_times())
 }
 
+#[expect(clippy::too_many_lines, reason = "one feed's trips, listed in full")]
 fn lines_stop_times() -> String {
-    let trips: [(&str, &[(&str, u32)]); 20] = [
+    let trips: [(&str, &[(&str, u32)]); 24] = [
         (
             "L21-A1110",
             &[("P1", hm(11, 10)), ("P2", hm(11, 12)), ("PX", hm(11, 20))],
@@ -537,12 +547,41 @@ fn lines_stop_times() -> String {
         ("L26-A1102", &[("P1", hm(11, 2)), ("PY", hm(11, 10))]),
         ("L26-N1103", &[("P1", hm(11, 3)), ("PZ", hm(11, 10))]),
         ("L26-Z1104", &[("P1", hm(11, 4)), ("PW", hm(11, 10))]),
+        (
+            "L62-1110",
+            &[("P1", hm(11, 10)), ("P2", hm(11, 12)), ("PY", hm(11, 25))],
+        ),
+        (
+            "L62-1150",
+            &[("P1", hm(11, 50)), ("P2", hm(11, 52)), ("PY", hm(12, 5))],
+        ),
+        (
+            "L71-1110",
+            &[("P1", hm(11, 10)), ("P2", hm(11, 12)), ("PX", hm(11, 20))],
+        ),
+        (
+            "L71-1120",
+            &[("P3", hm(11, 20)), ("P2", hm(11, 23)), ("PY", hm(11, 35))],
+        ),
     ];
-    let mut times = String::from("trip_id,arrival_time,departure_time,stop_id,stop_sequence\n");
+    // Headsigns that differ from their trip's, by trip and stop.
+    let stop_headsigns = [
+        ("L62-1110", "P1", "Downtown via Fremont"),
+        ("L62-1150", "P1", "Downtown via Fremont"),
+        ("L71-1110", "P1", "Alpha"),
+        ("L71-1120", "P3", "Gamma"),
+    ];
+    let mut times =
+        String::from("trip_id,arrival_time,departure_time,stop_id,stop_sequence,stop_headsign\n");
     for (trip, stops) in trips {
         for (sequence, &(stop, at)) in stops.iter().enumerate() {
             let at = clock(at);
-            writeln!(times, "{trip},{at},{at},{stop},{}", sequence + 1).expect("to a string");
+            let headsign = stop_headsigns
+                .iter()
+                .find(|&&(t, s, _)| t == trip && s == stop)
+                .map_or("", |&(_, _, headsign)| headsign);
+            writeln!(times, "{trip},{at},{at},{stop},{},{headsign}", sequence + 1)
+                .expect("to a string");
         }
     }
     times
@@ -582,7 +621,29 @@ fn try_run(
 }
 
 fn run(state: &TransitState, request: &NearbyRequest) -> NearbyResponse {
-    try_run(state, request).expect("nearby succeeds")
+    let response = try_run(state, request).expect("nearby succeeds");
+    assert_no_trip_on_two_pages(&response);
+    response
+}
+
+/// A run, by `trip_id` and `start_date`, is one vehicle, so it is on one page of its route.
+fn assert_no_trip_on_two_pages(response: &NearbyResponse) {
+    for route in &response.routes {
+        let mut seen: Vec<(&str, Option<&str>, usize)> = Vec::new();
+        for (index, page) in route.pages.iter().enumerate() {
+            for departure in &page.departures {
+                let run = (departure.trip_id.as_str(), departure.start_date.as_deref());
+                if let Some(&(_, _, other)) = seen.iter().find(|&&(t, d, _)| (t, d) == run) {
+                    assert_eq!(
+                        other, index,
+                        "{run:?} is on two pages of {}",
+                        route.route.route_id
+                    );
+                }
+                seen.push((run.0, run.1, index));
+            }
+        }
+    }
 }
 
 fn detail_request(route: &str, headsigns: &[&str], stop: &str, time: i64) -> RouteDetailRequest {
@@ -1821,14 +1882,67 @@ fn a_route_detail_shows_one_page_and_its_vehicles() {
 fn the_json_of_a_shared_page_has_what_a_row_needs() {
     let state = state();
     let request = NearbyRequest {
-        max_routes: Some(2),
+        max_routes: Some(3),
         ..request(june_15(11, 30))
     };
     let response = run(&state, &request);
     assert_eq!(
         listed(&response),
-        vec!["lines:L44", "lines:L22"],
-        "route 44's 11:40 from P1, then route 22's 11:44"
+        vec!["lines:L44", "lines:L22", "lines:L62"],
+        "route 44's 11:40 from P1, then route 22's 11:44, then route 62's 11:50"
     );
     assert_json_snapshot!("nearby_shared_page", &response);
+}
+
+#[test]
+fn a_trip_whose_headsign_changes_along_its_route_is_on_one_page() {
+    let state = state();
+    let response = run(&state, &request(june_15(11, 0)));
+    let r62 = route(&response, LINES, "L62");
+    // Its trips read "Downtown via Fremont" at `P1` and "Downtown" at `P2`, so the headsigns
+    // never share a stop to go the same way from; but they're the same trips, so one page, at
+    // `P1`, under what a rider reads there.
+    assert_eq!(pages(r62), vec![vec!["Downtown via Fremont"]]);
+    let only = &r62.pages[0];
+    assert_eq!(
+        (only.stop.stop_id.as_str(), only.walk_seconds),
+        ("P1", WALK_N1)
+    );
+    assert_eq!(
+        rows(only),
+        vec![
+            ("L62-1110", june_15(11, 10), SCHEDULED),
+            ("L62-1150", june_15(11, 50), SCHEDULED),
+        ]
+    );
+    assert!(
+        only.departures
+            .iter()
+            .all(|d| d.headsign.as_deref() == Some("Downtown via Fremont"))
+    );
+    // The page's detail is asked for by its own headsigns.
+    let detail = detail(
+        &state,
+        &lines_detail("L62", &["Downtown via Fremont"], "P1", june_15(11, 0)),
+    );
+    let trips: Vec<&str> = detail
+        .departures
+        .iter()
+        .map(|d| d.trip_id.as_str())
+        .collect();
+    assert_eq!(trips, vec!["L62-1110", "L62-1150"]);
+}
+
+#[test]
+fn pages_that_share_trips_are_one_page_transitively() {
+    let state = state();
+    let response = run(&state, &request(june_15(11, 0)));
+    let r71 = route(&response, LINES, "L71");
+    // "Alpha" and "Beta" share the 11:10, and "Beta" and "Gamma" the 11:20; "Alpha" and "Gamma"
+    // share none, and no two go the same way from a stop all of them serve. Still one page:
+    // at `P1`, where the earliest trip is caught, listing what leaves there.
+    assert_eq!(pages(r71), vec![vec!["Alpha"]]);
+    let only = &r71.pages[0];
+    assert_eq!(only.stop.stop_id, "P1");
+    assert_eq!(rows(only), vec![("L71-1110", june_15(11, 10), SCHEDULED)]);
 }

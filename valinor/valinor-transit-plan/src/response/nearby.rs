@@ -5,8 +5,9 @@
 //! Each is described as a ride's departures are, so its status, times, headsign, vehicle,
 //! accessibility, and alerts mean the same here as on a plan's ride.
 //!
-//! A route's departures are shown in pages, one per headsign a rider reads at the stop, and
-//! headsigns whose trips go the same way from a page's stop share it; see [`route_pages`].
+//! A route's departures are shown in pages, one per headsign a rider reads at the stop:
+//! headsigns whose trips go the same way from a page's stop share it, and pages that share a
+//! trip are one; see [`route_pages`].
 //!
 //! # Performance
 //!
@@ -372,48 +373,120 @@ fn same_until_one_ends(a: &[StopId], b: &[StopId]) -> bool {
     a[..shared] == b[..shared]
 }
 
-/// Where some of a route's headsigns are caught if they share a page, or `None` if they can't.
-///
-/// The page's stop is chosen over all their departures, as [`chosen_boarding`] chooses one.
-/// They can share it when each has a departure that runs from that stop, and every pair of
-/// their trips that run from it, of two different headsigns, call at the same stops from it
-/// until one of them ends (each GTFS trip to its own last stop, so a stay-seated vehicle's
-/// next trip isn't compared).
-fn shared_page<'s>(
+/// The departure that chooses the stop of a page of some of a route's headsigns, as
+/// [`chosen_boarding`] chooses one over all their departures.
+fn page_stop<'s>(route: &'s RouteDepartures, members: &[usize]) -> Option<&'s Seen> {
+    chosen_boarding(route.seen.iter().filter(|s| members.contains(&s.headsign)))
+}
+
+/// Whether, from `stop`, every pair of trips that run there under two different headsigns of
+/// `members` calls at the same stops until one of them ends (each GTFS trip to its own last
+/// stop, so a stay-seated vehicle's next trip isn't compared). Headsigns without a departure
+/// that runs from `stop` aren't compared.
+fn same_way_from(
     snapshot: &Snapshot,
-    route: &'s RouteDepartures,
+    route: &RouteDepartures,
     members: &[usize],
-) -> Option<&'s Seen> {
-    let of_members = route.seen.iter().filter(|s| members.contains(&s.headsign));
-    let chosen = chosen_boarding(of_members.clone())?;
-    if members.len() < 2 {
-        return Some(chosen);
-    }
+    stop: StopId,
+) -> bool {
     // Each member's distinct stop sequences from the stop, to its trips' ends.
     let mut itineraries: Vec<Vec<&[StopId]>> = vec![Vec::new(); members.len()];
-    for seen in of_members.filter(|s| s.stop == chosen.stop && s.runs()) {
-        let stops = snapshot
-            .route_stops(seen.candidate.pair.route)?
-            .get(seen.candidate.pair.board as usize..=seen.end as usize)?;
-        let member = members.iter().position(|&m| m == seen.headsign)?;
+    for seen in route.seen.iter().filter(|s| s.stop == stop && s.runs()) {
+        let Some(member) = members.iter().position(|&m| m == seen.headsign) else {
+            continue;
+        };
+        let Some(stops) = snapshot
+            .route_stops(seen.candidate.pair.route)
+            .and_then(|stops| stops.get(seen.candidate.pair.board as usize..=seen.end as usize))
+        else {
+            return false;
+        };
         if !itineraries[member].contains(&stops) {
             itineraries[member].push(stops);
         }
     }
-    if itineraries.iter().any(Vec::is_empty) {
-        return None;
-    }
-    for (index, one) in itineraries.iter().enumerate() {
-        for other in &itineraries[index + 1..] {
-            if one
-                .iter()
-                .any(|a| other.iter().any(|b| !same_until_one_ends(a, b)))
-            {
-                return None;
+    itineraries.iter().enumerate().all(|(index, one)| {
+        itineraries[index + 1..].iter().all(|other| {
+            one.iter()
+                .all(|a| other.iter().all(|b| same_until_one_ends(a, b)))
+        })
+    })
+}
+
+/// What [`route_pages`] reads of each of a route's headsigns.
+struct HeadsignTrips {
+    /// The distinct trips that run under each headsign, at any reachable stop.
+    running: Vec<HashSet<TripKey>>,
+    /// The distinct trips under each headsign, whether they run or not.
+    all: Vec<HashSet<TripKey>>,
+}
+
+impl HeadsignTrips {
+    fn of(route: &RouteDepartures) -> Self {
+        let mut running = vec![HashSet::new(); route.headsigns.len()];
+        let mut all = vec![HashSet::new(); route.headsigns.len()];
+        for seen in &route.seen {
+            all[seen.headsign].insert(seen.candidate.key);
+            if seen.runs() {
+                running[seen.headsign].insert(seen.candidate.key);
             }
         }
+        Self { running, all }
     }
-    Some(chosen)
+
+    /// How many distinct trips run under any of `members`.
+    fn running_count(&self, members: &[usize]) -> usize {
+        let mut trips: HashSet<TripKey> = HashSet::new();
+        for &member in members {
+            trips.extend(&self.running[member]);
+        }
+        trips.len()
+    }
+
+    /// Whether two sets of headsigns have a trip in common, whether it runs or not.
+    fn share_a_trip(&self, a: &[usize], b: &[usize]) -> bool {
+        a.iter().any(|&one| {
+            b.iter()
+                .any(|&other| !self.all[one].is_disjoint(&self.all[other]))
+        })
+    }
+}
+
+/// The pages `a` and `b` of a route make together when their headsigns go the same way, or
+/// `None` when they don't.
+///
+/// They do when, from the stop the two would have together, each of them lists a departure
+/// that runs, every headsign of either is there (by a departure that runs, or by a trip that
+/// runs there under another of their headsigns, which is the same vehicle), and every pair of
+/// trips that run there under two different headsigns go the same way ([`same_way_from`]).
+/// Departures without a headsign go the same way as nothing.
+fn joined_pages(
+    snapshot: &Snapshot,
+    route: &RouteDepartures,
+    trips: &HeadsignTrips,
+    (a, b): (&[usize], &[usize]),
+) -> Option<Vec<usize>> {
+    let named = |members: &[usize]| members.iter().all(|&m| route.headsigns[m].is_some());
+    if !named(a) || !named(b) {
+        return None;
+    }
+    let members: Vec<usize> = a.iter().chain(b).copied().collect();
+    let stop = page_stop(route, &members)?.stop;
+    let there: Vec<&Seen> = route
+        .seen
+        .iter()
+        .filter(|s| s.stop == stop && s.runs() && members.contains(&s.headsign))
+        .collect();
+    let listed_trips: HashSet<TripKey> = there.iter().map(|s| s.candidate.key).collect();
+    let lists = |page: &[usize]| there.iter().any(|s| page.contains(&s.headsign));
+    let is_there = |member: usize| {
+        there.iter().any(|s| s.headsign == member) || !trips.all[member].is_disjoint(&listed_trips)
+    };
+    (lists(a)
+        && lists(b)
+        && members.iter().all(|&m| is_there(m))
+        && same_way_from(snapshot, route, &members, stop))
+    .then_some(members)
 }
 
 /// Orders headsigns by string, a missing one last.
@@ -421,55 +494,95 @@ fn headsign_order(a: Option<&str>, b: Option<&str>) -> core::cmp::Ordering {
     (a.is_none(), a).cmp(&(b.is_none(), b))
 }
 
-/// A route's pages, with their departures' headsigns merged where they go the same way.
+/// A route's pages: its departures' headsigns, merged where they go the same way, and where
+/// they share a trip.
 ///
-/// Only headsigns of departures that run are paged. They are taken in a fixed order, most
-/// distinct catchable trips first, then by string, and each joins the first page it can share
-/// with every headsign already on it ([`shared_page`]), at the stop the page would then have,
-/// or else starts a page of its own. Sharing is checked between every pair of a page's
-/// headsigns, so two that each go the same way as a third but not as each other stay apart.
-/// Departures without a headsign are a page of their own, which nothing joins.
+/// Only headsigns of departures that run are paged, each starting as a page of its own.
+/// Then, until nothing changes:
+///
+/// 1. Pages are taken in a fixed order, most distinct trips that run first, then by their
+///    first headsign in string order, and each joins the first page before it that it goes
+///    the same way as ([`joined_pages`]), at the stop the two would then have; or else stays.
+///    Every pair of headsigns is compared, so two that each go the same way as a third but not
+///    as each other stay apart.
+/// 2. Pages that share a trip, running or not, become one, transitively: a trip whose
+///    headsign changes along its route is one vehicle, which is on one page.
+///
+/// Each round only merges pages, so it ends; and since the order in each round depends only
+/// on the pages, not on the order departures were found in, so does the answer. Departures
+/// without a headsign never join a page by going the same way.
 fn route_pages<'s>(snapshot: &Snapshot, route: &'s RouteDepartures) -> Vec<Page<'s>> {
-    let mut trips: Vec<HashSet<TripKey>> = vec![HashSet::new(); route.headsigns.len()];
-    for seen in route.seen.iter().filter(|s| s.runs()) {
-        trips[seen.headsign].insert(seen.candidate.key);
-    }
-    let mut order: Vec<usize> = (0..route.headsigns.len())
-        .filter(|&headsign| !trips[headsign].is_empty())
+    let trips = HeadsignTrips::of(route);
+    let mut pages: Vec<Vec<usize>> = (0..route.headsigns.len())
+        .filter(|&headsign| !trips.running[headsign].is_empty())
+        .map(|headsign| vec![headsign])
         .collect();
-    order.sort_by(|&a, &b| {
-        trips[b].len().cmp(&trips[a].len()).then_with(|| {
-            headsign_order(route.headsigns[a].as_deref(), route.headsigns[b].as_deref())
-        })
-    });
-
-    let named = |headsign: usize| route.headsigns[headsign].is_some();
-    let mut pages: Vec<Page<'s>> = Vec::new();
-    for headsign in order {
-        let joined = if named(headsign) {
-            pages
-                .iter()
-                .enumerate()
-                .filter(|(_, page)| page.members.iter().all(|&m| named(m)))
-                .find_map(|(index, page)| {
-                    let mut members = page.members.clone();
-                    members.push(headsign);
-                    let chosen = shared_page(snapshot, route, &members)?;
-                    Some((index, Page { members, chosen }))
-                })
-        } else {
-            None
-        };
-        if let Some((index, page)) = joined {
-            pages[index] = page;
-        } else if let Some(chosen) = shared_page(snapshot, route, &[headsign]) {
-            pages.push(Page {
-                members: vec![headsign],
-                chosen,
+    let first_headsign = |members: &[usize]| {
+        members
+            .iter()
+            .filter_map(|&m| route.headsigns[m].as_deref())
+            .min()
+    };
+    loop {
+        let before = pages.len();
+        pages.sort_by(|a, b| {
+            trips
+                .running_count(b)
+                .cmp(&trips.running_count(a))
+                .then_with(|| headsign_order(first_headsign(a), first_headsign(b)))
+        });
+        let mut joined: Vec<Vec<usize>> = Vec::with_capacity(pages.len());
+        for page in pages {
+            let merged = joined.iter().enumerate().find_map(|(index, earlier)| {
+                joined_pages(snapshot, route, &trips, (earlier, &page)).map(|m| (index, m))
             });
+            match merged {
+                Some((index, members)) => joined[index] = members,
+                None => joined.push(page),
+            }
+        }
+        pages = union_sharing_trips(&trips, joined);
+        if pages.len() == before {
+            break;
         }
     }
     pages
+        .into_iter()
+        .filter_map(|members| {
+            let chosen = page_stop(route, &members)?;
+            Some(Page { members, chosen })
+        })
+        .collect()
+}
+
+/// The earliest page of `index`'s set, in a union-find over pages.
+fn root(parent: &mut [usize], mut index: usize) -> usize {
+    while parent[index] != index {
+        parent[index] = parent[parent[index]];
+        index = parent[index];
+    }
+    index
+}
+
+/// Pages made one wherever two share a trip, transitively.
+fn union_sharing_trips(trips: &HeadsignTrips, pages: Vec<Vec<usize>>) -> Vec<Vec<usize>> {
+    // Union-find over the pages, each pointing at the earliest page of its set.
+    let mut parent: Vec<usize> = (0..pages.len()).collect();
+    for one in 0..pages.len() {
+        for other in one + 1..pages.len() {
+            if trips.share_a_trip(&pages[one], &pages[other]) {
+                let (a, b) = (root(&mut parent, one), root(&mut parent, other));
+                parent[a.max(b)] = a.min(b);
+            }
+        }
+    }
+    let mut unions: Vec<Vec<usize>> = vec![Vec::new(); pages.len()];
+    for (index, page) in pages.into_iter().enumerate() {
+        let at = root(&mut parent, index);
+        unions[at].extend(page);
+    }
+    unions.retain(|page| !page.is_empty());
+    unions
 }
 
 /// A page's headsigns, the most departures that run from its stop in the horizon first, then

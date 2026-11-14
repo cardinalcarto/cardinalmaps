@@ -7,8 +7,9 @@
 //!
 //! For each place, period, and travel mode, it prints the median and slowest of `--repeat` warm
 //! queries after one cold one, how many routes and pages were listed, and the response's
-//! size, then the median time of each stage. `--rt DIR` ingests a King County Metro capture
-//! (`tripupdates.pb`, `vehiclepositions.pb`, and `alerts.pb`) and queries at its time.
+//! size, then the median time of each stage. It fails if a trip is on two pages of a route.
+//! `--rt DIR` ingests a King County Metro capture (`tripupdates.pb`, `vehiclepositions.pb`,
+//! and `alerts.pb`) and queries at its time.
 
 #![allow(
     clippy::print_stdout,
@@ -26,7 +27,8 @@ use std::time::Instant;
 use valinor_gtfs::LatLon;
 use valinor_gtfs_rt::FeedKind;
 use valinor_transit_plan::{
-    FeedUpdate, NearbyRequest, PlanStage, StreetConfig, StreetPlanner, TransitBuild, TravelMode,
+    FeedUpdate, NearbyRequest, NearbyResponse, PlanStage, StreetConfig, StreetPlanner,
+    TransitBuild, TravelMode,
 };
 
 const WASHINGTON: &str = "/mnt/maps/cardinal/transit/global/us-wa-2026-11-09";
@@ -118,6 +120,27 @@ impl StageClock {
     }
 }
 
+/// Fails if a run, by `trip_id` and `start_date`, is on two pages of one route: it is one
+/// vehicle, so it is on one page.
+fn no_trip_on_two_pages(response: &NearbyResponse) -> Result<(), Box<dyn Error>> {
+    for route in &response.routes {
+        let mut pages: BTreeMap<(&str, Option<&str>), usize> = BTreeMap::new();
+        for (index, page) in route.pages.iter().enumerate() {
+            for departure in &page.departures {
+                let run = (departure.trip_id.as_str(), departure.start_date.as_deref());
+                if *pages.entry(run).or_insert(index) != index {
+                    return Err(format!(
+                        "{run:?} is on two pages of route {}",
+                        route.route.route_id
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn median(mut values: Vec<f64>) -> f64 {
     values.sort_by(f64::total_cmp);
     values[values.len() / 2]
@@ -165,6 +188,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let t = Instant::now();
                 let cold = planner.nearby(&request, &|| false)?;
                 let cold_ms = t.elapsed().as_secs_f64() * 1000.0;
+                no_trip_on_two_pages(&cold)?;
                 let mut totals = Vec::new();
                 let mut stages: BTreeMap<PlanStage, Vec<f64>> = BTreeMap::new();
                 for _ in 0..repeat {

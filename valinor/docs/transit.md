@@ -466,7 +466,7 @@ A nearby request has a `location`; `time` (`now` by default); `mode`, `walking` 
   A route with no page left isn't listed.
 - Two headsigns of one route share a page when, from the stop that page would have, every trip
   of one and every trip of the other that run from it call at the same stops until one of them
-  ends: the shorter's stops from there are where the longer's begin. Each trip is compared to the
+  ends: the shorter's stops from there are where the longer's begin (see the rounds below). Each trip is compared to the
   end of its own GTFS trip, so a vehicle that goes on as another route is compared only as far
   as this route goes. A short turn merges with the trips it runs with, as does a trip whose
   vehicle goes on as another route, like King County Metro's 44 to the University District that
@@ -478,12 +478,30 @@ A nearby request has a `location`; `time` (`now` by default); `mode`, `walking` 
     lists departures from one stop, so headsigns that only go the same way from another stop
     don't merge: when the merged page's earliest trip is caught where one of them doesn't stop,
     they stay apart, each at its own stop.
-  - Pages are formed in a fixed order: headsigns with the most distinct catchable trips that run
-    first, then by string. Each joins the first page that every headsign already on it merges
-    with, at the stop the page then has (rechecking every pair there), or else starts a page.
-    So a short turn joins the main page rather than a rarer one, and the answer doesn't depend
-    on the order departures were found in.
-  - Departures without a headsign are a page of their own, which nothing joins.
+- Pages that share a trip (a run, by `trip_id` and `start_date`, whether it runs or not) are one
+  page, transitively, since they are the same vehicles. A trip's headsign can change along its
+  route, as King County Metro's 62 reads "Downtown Seattle Fremont" before Fremont and "Downtown
+  Seattle" after it, and each headsign alone would be a page at its own stop listing the same
+  trips. The page's stop is chosen over all its departures as above, it lists departures from
+  that stop only, and its headsigns are those read there, so a rider at Stone Way sees one page
+  under Stone Way's headsign. No trip is listed on two pages of a route.
+- Every headsign with a departure that runs starts as a page of its own. Then, in rounds until a
+  round changes nothing:
+  1. Pages are taken in a fixed order, most distinct catchable trips that run first, then by
+     their first headsign in string order. Each joins the first page before it that it goes the
+     same way as, at the stop the two would then have, or else stays. Two pages go the same way
+     when each lists a departure that runs from that stop, every one of their headsigns is there
+     (by a departure that runs, or by a trip listed there under another of their headsigns,
+     which is the same vehicle), and every pair of trips that run there under different
+     headsigns call at the same stops until one ends. A short turn so joins the main page
+     rather than a rarer one.
+  2. Pages that share a trip become one.
+
+  A union moves a page's stop, from which pages may now go the same way, so the rounds repeat.
+  Each round only merges, so they end, and since each round's order depends only on its pages,
+  the answer doesn't depend on the order departures were found in.
+  - Departures without a headsign never join a page by going the same way, only by sharing a
+    trip.
 - A page's `headsigns` are its merged headsigns, the one with the most departures that run from
   its stop in the horizon first (then the earliest, then by string); a client shows them as
   "A / B", and asks for the page's detail by them. A page's `direction_id` is that of its trips
@@ -526,9 +544,11 @@ warm, a 30-minute walk takes 4 to 35 ms, nearly all of it the access table:
 Capitol Hill. Departures take under 3 ms, also with King County Metro's real-time data
 (a Monday 10:18 capture). The process's first query takes about 110 ms, reading tiles from disk.
 A response is 8 to 130 KB of JSON.
-Reading each departure's headsign to page it added 0.1 to 1.3 ms to departures (up to 2.9 ms,
-downtown and on Capitol Hill), and pages add about 15% to the JSON over directions
-(8 to 153 KB), measured warm with the planet's street tiles on 2026-11-13.
+Paging by headsign, with pages that share a trip made one, takes departures from 0.1 to 1.8 ms
+to 0.1 to 3.6 ms (the most downtown and on Capitol Hill), mostly reading each departure's
+headsign. There are about as many pages as there were directions, and the JSON is 1 to 9%
+larger (8 to 134 KB), for `soonest_departure` and `continues_as`; measured warm with the
+planet's street tiles on 2026-11-13.
 
 ## Offline build
 

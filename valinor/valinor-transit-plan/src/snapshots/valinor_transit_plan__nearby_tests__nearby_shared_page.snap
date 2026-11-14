@@ -151,6 +151,49 @@ expression: "&response"
           ]
         }
       ]
+    },
+    {
+      "feed": "lines",
+      "route": {
+        "route_id": "L62",
+        "short_name": "62",
+        "route_type": 3
+      },
+      "agency": {
+        "agency_id": "LN",
+        "name": "Lines",
+        "url": "https://l.test"
+      },
+      "pages": [
+        {
+          "headsigns": [
+            "Downtown via Fremont"
+          ],
+          "direction_id": 1,
+          "stop": {
+            "accessibility": "unknown",
+            "feed": "lines",
+            "stop_id": "P1",
+            "name": "Line 1st",
+            "latitude": 47.6005,
+            "longitude": -122.33,
+            "time_zone": "America/Los_Angeles"
+          },
+          "walk_seconds": 42,
+          "soonest_departure": 1781549400,
+          "departures": [
+            {
+              "trip_id": "L62-1150",
+              "start_date": "20260615",
+              "headsign": "Downtown via Fremont",
+              "status": "scheduled",
+              "departure": 1781549400,
+              "scheduled_departure": 1781549400,
+              "accessibility": "unknown"
+            }
+          ]
+        }
+      ]
     }
   ]
 }
