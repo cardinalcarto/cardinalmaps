@@ -2946,6 +2946,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "valinor-meili"
+version = "0.1.0"
+dependencies = [
+ "valhalla-graphtile",
+ "valhalla-proto",
+]
+
+[[package]]
 name = "valinor-router"
 version = "0.1.0"
 dependencies = [

@@ -15,6 +15,7 @@ members = [
     "valinor-gtfs-rt",
     "valinor-loki",
     "valinor-loki-service",
+    "valinor-meili",
     "valinor-router",
     "valinor-server",
     "valinor-sif",
@@ -91,6 +92,7 @@ valhalla-proto = { path = "valhalla-proto" }
 valhalla-microservice = { path = "valhalla-microservice" }
 valhalla-response = { path = "valhalla-response" }
 valinor-loki = { path = "valinor-loki" }
+valinor-meili = { path = "valinor-meili" }
 valinor-router = { path = "valinor-router" }
 valinor-sif = { path = "valinor-sif" }
 valinor-thor = { path = "valinor-thor" }
