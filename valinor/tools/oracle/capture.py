@@ -33,8 +33,14 @@ in which case only that request is sent:
     "raw_body": "..."      a body sent verbatim instead of the JSON `request`
     "pbf_text": "..."      a valhalla.Api in protobuf text format, encoded with protoc
                            (needs --protos) and POSTed as application/x-protobuf
+    "content_type": "..."  the Content-Type of a `raw_body` (default: none)
     "format": "json"       the format directory to capture into
                            (default: the request's `format`, or pbf for `pbf_text`, or json)
+
+A corpus can also be JSON lines (`*.jsonl`, as trace-corpus.py writes):
+`{"name": ..., "action": ..., "body": {...}}` with any of the fields above.
+Each line is sent once, as is, into the format directory named by the body's `format`
+(default json), since trace corpora choose their formats case by case.
 
 The request.json of such a case also records the exact request under "http":
 its method, target (path and query), content type, and body
@@ -62,7 +68,7 @@ def tap_files(tap_dir: Path) -> set[Path]:
     return {p for tap in TAPS for p in (tap_dir / tap).glob("*.bin")}
 
 
-SPECIAL_FIELDS = ("method", "query", "raw_body", "pbf_text")
+SPECIAL_FIELDS = ("method", "query", "raw_body", "pbf_text", "content_type")
 PBF_MIME = "application/x-protobuf"
 
 
@@ -114,6 +120,7 @@ def special_request(case: dict, protos: Path | None) -> tuple[str, dict, str, st
     else:
         if "raw_body" in case:
             body = case["raw_body"].encode()
+            content_type = case.get("content_type")
         elif method == "GET":
             body = None
             json_param = "json=" + urllib.parse.quote(json.dumps(request), safe="")
@@ -163,7 +170,7 @@ def main() -> None:
     parser.add_argument("--protos", type=Path)
     args = parser.parse_args()
 
-    corpus = json.loads(args.corpus.read_text())
+    corpus = load(args.corpus)
     names = [case["name"] for case in corpus["cases"]]
     if len(names) != len(set(names)):
         sys.exit("case names must be unique")
@@ -174,7 +181,9 @@ def main() -> None:
             capture_special(case, args)
             continue
         variants = {"json": case["request"]}
-        if action in ROUTE_LIKE:
+        if case.get("as_is"):
+            variants = {case["request"].get("format", "json"): case["request"]}
+        elif action in ROUTE_LIKE:
             variants["osrm"] = {**case["request"], **OSRM_OPTIONS}
             # Mainline's Odin builds directions and serializes the response in one process,
             # so its `directions` output never crosses a tapped boundary.
@@ -188,6 +197,17 @@ def main() -> None:
             new = wait_for_quiet(args.tap_dir, before)
             (out / "request.json").write_text(json.dumps({"action": action, "request": request}, indent=2) + "\n")
             record(case["name"], fmt, out, status, body, new, args)
+
+
+def load(path: Path) -> dict:
+    """A corpus: a JSON object with `cases`, or JSON lines of cases sent as is."""
+    if path.suffix != ".jsonl":
+        return json.loads(path.read_text())
+    cases = []
+    for line in path.read_text().splitlines():
+        case = json.loads(line)
+        cases.append({**case, "request": case.pop("body"), "as_is": True})
+    return {"cases": cases}
 
 
 def fresh_dir(out: Path) -> Path:
