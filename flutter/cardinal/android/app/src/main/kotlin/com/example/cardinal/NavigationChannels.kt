@@ -11,11 +11,10 @@ import io.flutter.plugin.common.MethodChannel
 
 /**
  * Navigation's platform channels: `cardinal/navigation`, for the notification and its
- * permission, and `cardinal/navigation/fixes`, navigation's own location updates
- * ([NavigationFixes]).
+ * permission and for speech's audio focus ([SpeechFocus]), and `cardinal/navigation/fixes`,
+ * navigation's own location updates ([NavigationFixes]).
  *
- * Other native help navigation needs, such as asking for audio focus around each
- * announcement, can go on `cardinal/navigation` beside these.
+ * Other native help navigation needs can go on `cardinal/navigation` beside these.
  *
  * Methods, from Dart:
  * - `show` `{title, text?, glyph?, channel, end}`: shows the notification, starting
@@ -23,6 +22,9 @@ import io.flutter.plugin.common.MethodChannel
  * - `hide`: stops [NavigationService], and with it the notification.
  * - `requestNotificationPermission`: asks for `POST_NOTIFICATIONS` on Android 13 and
  *   later, answering whether notifications may be posted.
+ * - `requestSpeechFocus`: takes audio focus for speech, unless it's held, answering whether
+ *   it's held.
+ * - `abandonSpeechFocus`: gives it back, if it's held.
  *
  * And to Dart: `end`, when the notification's End is tapped.
  */
@@ -33,6 +35,7 @@ class NavigationChannels(
     private val methods = MethodChannel(messenger, "cardinal/navigation")
     private val fixes = EventChannel(messenger, "cardinal/navigation/fixes")
     private val fixHandler = NavigationFixes(activity.applicationContext)
+    private val speechFocus = SpeechFocus(activity.applicationContext)
     private var permissionResult: MethodChannel.Result? = null
 
     init {
@@ -45,6 +48,7 @@ class NavigationChannels(
         NavigationService.onEnd = null
         NavigationService.hide(activity.applicationContext)
         fixHandler.onCancel(null)
+        speechFocus.abandon()
         methods.setMethodCallHandler(null)
         fixes.setStreamHandler(null)
         permissionResult?.success(false)
@@ -71,6 +75,11 @@ class NavigationChannels(
                 result.success(null)
             }
             "requestNotificationPermission" -> requestNotificationPermission(result)
+            "requestSpeechFocus" -> result.success(speechFocus.request())
+            "abandonSpeechFocus" -> {
+                speechFocus.abandon()
+                result.success(null)
+            }
             else -> result.notImplemented()
         }
     }

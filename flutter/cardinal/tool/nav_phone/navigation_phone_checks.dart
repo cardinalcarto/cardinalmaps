@@ -367,29 +367,17 @@ List<NavLocation> _noisyFixes(DirectionsRoute route, double speed) {
 
 Future<void> _voice(BuildContext context) async {
   // flutter_tts has one channel, whose callbacks go to the instance made last, so the
-  // speech engine's events are watched through an instance made after each speaker
-  // (which set no callbacks of their own).
+  // speech engine's events are watched through what the speakers hear
+  // ([PlatformSpeaker.debugEngineEvents]), each of which makes its instance as its trip
+  // starts, after the one here for the engine's voices.
   final watch = Stopwatch()..start();
   String at() => 't=${(watch.elapsedMilliseconds / 1000).toStringAsFixed(1)}s';
   var speaking = false;
-  FlutterTts observe() => FlutterTts()
-    ..setStartHandler(() {
-      speaking = true;
-      log('tts start ${at()}');
-    })
-    ..setCompletionHandler(() {
-      speaking = false;
-      log('tts complete ${at()}');
-    })
-    ..setCancelHandler(() {
-      speaking = false;
-      log('tts cancel ${at()}');
-    })
-    ..setErrorHandler((message) {
-      speaking = false;
-      log('tts error ${at()}: $message');
-    });
-  final tts = observe();
+  PlatformSpeaker.debugEngineEvents = (event) {
+    speaking = event == 'start';
+    log('tts $event ${at()}');
+  };
+  final tts = FlutterTts();
   try {
     log('tts engines ${await tts.getEngines}');
     log('tts default engine ${await tts.getDefaultEngine}');
@@ -479,7 +467,6 @@ Future<void> _voice(BuildContext context) async {
     matcher: OfflineRoadMatcher(() async => offline),
     settings: StoreScope.of(context).settings,
   );
-  observe();
   final secondLog = _logTrip('reroute trip', second, at);
   // Off the route as a long announcement on it comes due, so it's still being said when
   // the trip finds it's off: the speech should be cut off, and "Rerouting" said.
@@ -520,6 +507,7 @@ Future<void> _voice(BuildContext context) async {
   await second.end();
   second.removeListener(secondLog);
   second.dispose();
+  PlatformSpeaker.debugEngineEvents = null;
 }
 
 /// Logs [controller]'s state changes and the announcements it comes to, as they come.
