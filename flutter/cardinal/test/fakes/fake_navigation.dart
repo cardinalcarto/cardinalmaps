@@ -26,7 +26,8 @@ NavLocation fakeFix(
   timestampMs: timestampMs,
 );
 
-/// An update while navigating, off the route or not, with [spoken] due.
+/// An update while navigating, off the route or not, with [spoken] due, showing
+/// [visual] with the maneuver [toManeuver] meters off.
 NavUpdate fakeUpdate({
   TripStatus status = TripStatus.navigating,
   NavDeviation deviation = NavDeviation.onRoute,
@@ -35,6 +36,8 @@ NavUpdate fakeUpdate({
   NavLocation? snapped,
   int stepIndex = 0,
   int geometryIndex = 0,
+  NavVisualInstruction? visual,
+  double? toManeuver,
 }) => NavUpdate(
   status: status,
   location: location,
@@ -44,6 +47,38 @@ NavUpdate fakeUpdate({
   deviation: deviation,
   deviationMeters: deviation == NavDeviation.offRoute ? 100 : 0,
   spokenInstruction: spoken,
+  visualInstruction: visual,
+  progress: toManeuver == null
+      ? null
+      : NavProgress(
+          distanceToNextManeuver: toManeuver,
+          durationToNextManeuver: toManeuver / 10,
+          distanceRemaining: toManeuver + 1000,
+          durationRemaining: toManeuver / 10 + 100,
+        ),
+);
+
+/// A banner line saying [text], for a maneuver of [type] and [modifier].
+NavInstructionContent fakeContent(
+  String text, {
+  ManeuverType? type,
+  ManeuverModifier? modifier,
+}) => NavInstructionContent(
+  text: text,
+  maneuverType: type,
+  maneuverModifier: modifier,
+  lanes: const [],
+  exitNumbers: const [],
+);
+
+/// A banner with [primary], and [secondary] under it if given.
+NavVisualInstruction fakeVisual(
+  NavInstructionContent primary, {
+  NavInstructionContent? secondary,
+}) => NavVisualInstruction(
+  primary: primary,
+  secondary: secondary,
+  triggerDistanceBeforeManeuver: 400,
 );
 
 /// An announcement with [id], saying [text].

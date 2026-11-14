@@ -40,8 +40,11 @@ class NavigationScope extends InheritedWidget {
   final NavigationController controller;
   final NavigationScreen screen;
 
-  static NavigationScope of(BuildContext context) =>
-      context.getInheritedWidgetOfExactType<NavigationScope>()!;
+  static NavigationScope of(BuildContext context) => maybeOf(context)!;
+
+  /// The scope, or null outside one, as in tests of widgets that don't need it.
+  static NavigationScope? maybeOf(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<NavigationScope>();
 
   @override
   bool updateShouldNotify(NavigationScope oldWidget) =>

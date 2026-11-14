@@ -37,6 +37,11 @@ class AppSymbols {
   IconData get check => _pick(CupertinoIcons.checkmark, Icons.check);
   IconData get search => _pick(CupertinoIcons.search, Icons.search);
   IconData get myLocation => _pick(CupertinoIcons.location, Icons.my_location);
+
+  /// Back to following you while navigating: iOS's Current Location after a pan,
+  /// Android's Recenter (Ferrostar's `location.fill` and `navigation_24px`).
+  IconData get recenter =>
+      _pick(CupertinoIcons.location_fill, Icons.navigation);
   IconData get layers =>
       _pick(CupertinoIcons.square_stack_3d_up, Icons.layers_outlined);
 }

@@ -134,7 +134,8 @@ class _DirectionsPageState extends State<DirectionsPage> {
   bool _dark = false;
 
   /// Whether the navigation screen shows over this page, and has the map: while it does,
-  /// this page draws nothing on it, and draws the trip again when it closes.
+  /// this page draws only the destination's pin on it, which the trip leads to, and
+  /// draws the rest of the trip again when it closes.
   NavigationScreen? _navigation;
   bool get _navigating => _navigation?.shown ?? false;
 
@@ -230,18 +231,17 @@ class _DirectionsPageState extends State<DirectionsPage> {
   }
 
   /// The navigation screen opened over this page, or closed: take the trip off the map
-  /// for it, or draw it again and show all of it. Navigation leaves the map tilted and
-  /// turned to the road ahead, so the routes come back flat and north up, as they were
-  /// first shown, in the same flight that fits them.
+  /// for it but for the destination's pin, or draw it again and show all of it.
+  /// Navigation leaves the map tilted and turned to the road ahead, so the routes come
+  /// back flat and north up, as they were first shown, in the same flight that fits
+  /// them.
   void _navigationChanged() {
     if (!mounted) return;
     if (_navigating) {
       _calloutTimer?.cancel();
       _callouts = const [];
-      _map
-        ..setGeoJson(routeSource, empty)
-        ..setGeoJson(routeCalloutSource, empty)
-        ..setGeoJson(transitSource, empty);
+      _drawRoutes();
+      _map.setGeoJson(routeCalloutSource, empty);
     } else {
       _drawRoutes();
       _showAll(flat: true);
@@ -318,21 +318,28 @@ class _DirectionsPageState extends State<DirectionsPage> {
       ? const SheetAnchor.full()
       : _summaryAnchor;
 
+  /// Draws the routes, their start and the destination's pin, and the transit journey;
+  /// while navigating, only the pin, the trip's own drawing taking the place of the
+  /// rest.
   void _drawRoutes() {
     final directions = _directions!;
+    final navigating = _navigating;
     _map.setGeoJson(
       routeSource,
       routesGeoJson(
-        directions.routes,
+        navigating ? const [] : directions.routes,
         selected: directions.selected,
         destination: directions.to?.point,
-        start: directions.from?.isMyLocation ?? true
+        start: navigating || (directions.from?.isMyLocation ?? true)
             ? null
             : directions.from!.point,
         dark: _dark,
       ),
     );
-    _map.setGeoJson(transitSource, journeyGeoJson(_shownJourney));
+    _map.setGeoJson(
+      transitSource,
+      journeyGeoJson(navigating ? null : _shownJourney),
+    );
   }
 
   /// Makes the transit journey the map's subject.

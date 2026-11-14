@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:routing/routing.dart';
 import 'package:sparkle/sparkle.dart';
@@ -18,7 +19,7 @@ import 'navigation_controller.dart';
 ///
 /// The camera follows from the first update, at the mode's zoom for your speed
 /// ([FollowCamera.zoomAt]). Moving the map by hand stops it following, and it stays
-/// where it was put.
+/// where it was put until [recenter]; [canRecenter] says when that would move it.
 class NavigationMap {
   NavigationMap({
     required this.map,
@@ -52,6 +53,9 @@ class NavigationMap {
 
   /// The zoom the camera was last told to follow at, null until it's told to.
   double? _zoom;
+
+  /// Your speed at the last update, in meters per second, if it could be told.
+  double? _speed;
   EdgeInsets _padding = EdgeInsets.zero;
   bool _started = false;
 
@@ -61,7 +65,24 @@ class NavigationMap {
     _started = true;
     map.setPuckStyle(const PuckStyle());
     controller.addListener(_changed);
+    map.following.addListener(_followingChanged);
     _changed();
+  }
+
+  /// Whether the camera has followed the chevron and been moved off it since, by hand
+  /// or by anything else that ends following: when [recenter] would bring it back.
+  ValueListenable<bool> get canRecenter => _canRecenter;
+  final _canRecenter = ValueNotifier(false);
+
+  void _followingChanged() =>
+      _canRecenter.value = _zoom != null && !map.following.value;
+
+  /// Follows the chevron again, as from an update: at the zoom for the last speed and
+  /// the mode's tilt, easing back over [zoomDuration]. Does nothing before the camera
+  /// first follows.
+  void recenter() {
+    if (_zoom == null) return;
+    _follow(_camera.zoomAt(_speed));
   }
 
   /// Where the camera puts the chevron: [padding] on top of the map's own (see
@@ -118,6 +139,7 @@ class NavigationMap {
     );
     final speed =
         update.location?.speed ?? at.speed ?? _motion(previous, at, since);
+    _speed = speed;
     final zoom = _camera.zoomAt(speed);
     final last = _zoom;
     if (last == null) {
@@ -144,6 +166,8 @@ class NavigationMap {
   void dispose() {
     if (!_started) return;
     controller.removeListener(_changed);
+    map.following.removeListener(_followingChanged);
+    _canRecenter.dispose();
     map
       ..stopFollowing()
       ..setPuckVisible(false)

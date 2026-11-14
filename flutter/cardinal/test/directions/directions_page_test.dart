@@ -69,6 +69,8 @@ void main() {
   late FakeMap map;
   late MapOverlays overlays;
   late NavigationController navigation;
+  late FakeNavigationLocation navigationLocation;
+  late FakeSessions sessions;
 
   setUp(() async {
     store = fakeStore();
@@ -77,7 +79,12 @@ void main() {
     transit = FakeTransit(immediately: fakePlan(journeys: 2));
     map = FakeMap()..hasGround = true;
     overlays = MapOverlays();
-    navigation = fakeNavigationController();
+    navigationLocation = FakeNavigationLocation();
+    sessions = FakeSessions();
+    navigation = fakeNavigationController(
+      location: navigationLocation,
+      sessions: sessions,
+    );
   });
 
   Future<GoRouter> open(
@@ -313,6 +320,90 @@ void main() {
       // The trip's own drawing takes the place of the directions'.
       expect(lines(), isEmpty);
       expect(features(navigationSource), hasLength(1));
+    });
+
+    /// Makes the controller again in the test's own fake time: its work runs in the
+    /// zone it's made in, and the test pumps only its own.
+    void navigateInTestTime() => navigation = fakeNavigationController(
+      location: navigationLocation,
+      sessions: sessions,
+    );
+
+    /// Navigation's answer to a fix: you on the route, with [visual] showing.
+    Future<void> fix(
+      WidgetTester tester, {
+      NavVisualInstruction? visual,
+      double toManeuver = 250,
+    }) async {
+      final update = fakeUpdate(
+        snapped: fakeFix(2.5, 0.6, course: 20, speed: 5),
+        visual: visual,
+        toManeuver: toManeuver,
+      );
+      if (sessions.sessions.isEmpty) {
+        sessions.start = update;
+      } else {
+        sessions.last.next = update;
+      }
+      navigationLocation.send(fakeFix(2.5, 0.6));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the destination keeps its pin', (tester) async {
+      await start(tester);
+      final pins = features(routeSource)
+          .where((f) => (f['properties']! as Map)['role'] == 'pin');
+      expect(pins, hasLength(1));
+      expect((pins.single['geometry']! as Map)['coordinates'], [1, 4]);
+      // And nothing else of the directions'.
+      expect(features(routeSource), hasLength(1));
+    });
+
+    testWidgets('the banner shows the next maneuver, in the units set', (
+      tester,
+    ) async {
+      navigateInTestTime();
+      await start(tester);
+      expect(find.text('Turn left onto Pike Street'), findsNothing);
+      await fix(
+        tester,
+        visual: fakeVisual(
+          fakeContent(
+            'Turn left onto Pike Street',
+            type: ManeuverType.turn,
+            modifier: ManeuverModifier.left,
+          ),
+        ),
+      );
+      expect(find.text('Turn left onto Pike Street'), findsOneWidget);
+      // The test's region is the US.
+      expect(find.text('800 ft'), findsOneWidget);
+      await store.settings.set(unitSystem, UnitSystem.metric);
+      await tester.pumpAndSettle();
+      // Rounded to the nearest 100 m, as Ferrostar does.
+      expect(find.text('300 m'), findsOneWidget);
+    });
+
+    testWidgets('recenter shows once the map is moved off you, and follows', (
+      tester,
+    ) async {
+      navigateInTestTime();
+      await start(tester);
+      await fix(tester);
+      expect(map.following.value, isTrue);
+      expect(find.byTooltip('Recenter'), findsNothing);
+
+      // Moved by hand.
+      map.following.value = false;
+      await tester.pump();
+      expect(find.byTooltip('Recenter'), findsOneWidget);
+
+      final follows = map.follows.length;
+      await tester.tap(find.byTooltip('Recenter'));
+      await tester.pump();
+      expect(map.follows, hasLength(follows + 1));
+      expect(map.following.value, isTrue);
+      expect(find.byTooltip('Recenter'), findsNothing);
     });
 
     testWidgets('Go starts it on iOS, with Cupertino controls', (tester) async {

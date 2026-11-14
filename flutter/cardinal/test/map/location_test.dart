@@ -6,6 +6,9 @@ import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/map.dart';
 import 'package:cardinal/map/map_drawing.dart';
 import 'package:cardinal/map/overlays.dart';
+import 'package:cardinal/directions/route_source.dart';
+import 'package:cardinal/navigation/navigation_controller.dart';
+import 'package:cardinal/navigation/navigation_scope.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
@@ -13,7 +16,9 @@ import 'package:material_ui/material_ui.dart';
 
 import '../fakes/fake_location.dart';
 import '../fakes/fake_map.dart';
+import '../fakes/fake_navigation.dart';
 import '../fakes/fake_place_store.dart';
+import '../fakes/fake_routes.dart';
 import '../fakes/fake_saved_store.dart';
 
 const seattle = Fix(lng: -122.3321, lat: 47.6062, accuracy: 25);
@@ -341,6 +346,67 @@ void main() {
       expect(source.asked, 0);
       expect(source.listening, 0);
     });
+  });
+
+  testWidgets('the dot stays while the trip is acquiring, hides once the chevron shows, and '
+      'comes back when the screen closes', (tester) async {
+    final map = FakeMap();
+    final source = FakeLocation();
+    final screen = NavigationScreen();
+    final fixes = FakeNavigationLocation();
+    final trip = fakeNavigationController(location: fixes);
+    final settings = SettingsStore.inMemory();
+    await settings.set(locationOffered, true);
+    await tester.pumpWidget(
+      MapScope(
+        controller: map,
+        overlays: MapOverlays(),
+        drawing: MapDrawing(),
+        child: StoreScope(
+          store: Store.withoutDatabase(
+            places: FakePlaceStore(),
+            saved: FakeSavedStore(FakePlaceStore()),
+            settings: settings,
+          ),
+          child: NavigationScope(
+            controller: trip,
+            screen: screen,
+            child: MaterialApp(
+              home: Scaffold(body: MyLocationButton(source: source)),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    source.positionsController.add(seattle);
+    expect(map.geoJson[locationSource], locationGeoJson(seattle));
+
+    // Started, with no fix good enough yet: no chevron, so the dot stays.
+    trip.start(
+      route: fakeRoute([
+        [1.52, 42.50],
+        [1.53, 42.51],
+      ]),
+      mode: TravelMode.driving,
+    );
+    final hide = screen.show();
+    await tester.pump();
+    expect(trip.state, NavigationState.acquiring);
+    expect(map.geoJson[locationSource], locationGeoJson(seattle));
+
+    // The trip starts from a fix: the chevron shows where you are, and the dot hides.
+    fixes.send(fakeFix(42.5, 1.52));
+    await tester.pump();
+    expect(trip.state, NavigationState.onRoute);
+    expect(map.geoJson[locationSource], locationGeoJson(null));
+    // Where you are still comes in, unshown.
+    const moved = Fix(lng: -122.34, lat: 47.61, accuracy: 10);
+    source.positionsController.add(moved);
+    expect(map.geoJson[locationSource], locationGeoJson(null));
+
+    hide();
+    expect(map.geoJson[locationSource], locationGeoJson(moved));
   });
 }
 

@@ -1,5 +1,6 @@
 /// Where you are: a dot on the map, with a circle as wide as the position's accuracy, and
-/// the button that moves the map to it.
+/// the button that moves the map to it. While the navigation screen shows, its chevron
+/// shows where you are instead.
 library;
 
 import 'dart:async';
@@ -10,6 +11,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
 
+import '../navigation/navigation_controller.dart';
+import '../navigation/navigation_scope.dart';
 import '../saved/saved_feedback.dart';
 import '../store/store.dart';
 import '../ui/adaptive.dart';
@@ -246,7 +249,17 @@ class LocationTracker {
 
   void _show(Fix fix) {
     _fix = fix;
-    map.setGeoJson(locationSource, locationGeoJson(fix));
+    if (!_hidden) map.setGeoJson(locationSource, locationGeoJson(fix));
+  }
+
+  /// Whether the dot and its circle are off the map, while position updates keep
+  /// coming, so that they're back where you are when shown again.
+  bool get hidden => _hidden;
+  bool _hidden = false;
+  set hidden(bool hidden) {
+    if (hidden == _hidden) return;
+    _hidden = hidden;
+    map.setGeoJson(locationSource, locationGeoJson(hidden ? null : _fix));
   }
 
   /// Whether you've allowed the app your location, or null if the platform has no
@@ -314,6 +327,13 @@ class MyLocationButton extends StatefulWidget {
 class _MyLocationButtonState extends State<MyLocationButton> {
   LocationTracker? _tracker;
 
+  /// Whether the navigation screen shows, and its trip: once the trip has a fix to start
+  /// from, its chevron is where you are, so the dot hides until the screen closes. While
+  /// the trip is still acquiring there's no chevron yet, so the dot stays. The button
+  /// stays built under the screen (see `NavigationLayer`), so it hears all of it.
+  NavigationScreen? _navigation;
+  NavigationController? _trip;
+
   /// The dot appears as soon as you've allowed it, however that happened: directions can
   /// ask, and so can the system's settings, and the app resumes after either.
   late final AppLifecycleListener _lifecycle = AppLifecycleListener(
@@ -326,6 +346,10 @@ class _MyLocationButtonState extends State<MyLocationButton> {
     if (_tracker != null) return;
     _tracker = LocationTracker(MapScope.of(context), source: widget.source)
       ..startIfAllowed();
+    final scope = NavigationScope.maybeOf(context);
+    _navigation = scope?.screen?..addListener(_navigationChanged);
+    _trip = scope?.controller?..addListener(_navigationChanged);
+    _navigationChanged();
     _lifecycle;
     final settings = StoreScope.of(context).settings;
     WidgetsBinding.instance.addPostFrameCallback((_) => _offer(settings));
@@ -365,8 +389,17 @@ class _MyLocationButtonState extends State<MyLocationButton> {
     if (yes && mounted) await _locate();
   }
 
+  void _navigationChanged() => _tracker!.hidden =
+      (_navigation?.shown ?? false) &&
+      switch (_trip?.state) {
+        null || NavigationState.idle || NavigationState.acquiring => false,
+        _ => true,
+      };
+
   @override
   void dispose() {
+    _navigation?.removeListener(_navigationChanged);
+    _trip?.removeListener(_navigationChanged);
     _lifecycle.dispose();
     _tracker?.dispose();
     super.dispose();

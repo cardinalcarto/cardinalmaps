@@ -6,7 +6,8 @@
 /// one map, in its style, and going back to directions finds them as they were.
 ///
 /// The layout follows Ferrostar's in each orientation (see `NavigationView`); for now
-/// it holds only End, where Ferrostar's trip progress goes.
+/// it holds the maneuver banner, the recenter button, and End, where Ferrostar's trip
+/// progress goes.
 library;
 
 import 'dart:async';
@@ -16,8 +17,14 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../map/map.dart';
+import '../map/map_control.dart';
 import '../sheet/sheet.dart';
+import '../store/store.dart';
 import '../ui/adaptive.dart';
+import '../ui/glass.dart';
+import '../ui/symbols.dart';
+import '../units.dart';
+import 'maneuver_banner.dart';
 import 'navigation_camera.dart';
 import 'navigation_controller.dart';
 import 'navigation_map.dart';
@@ -124,12 +131,18 @@ class NavigationLayer extends StatelessWidget {
 /// What the navigation screen shows over the map, and the trip drawn on it (see
 /// [NavigationMap]).
 ///
-/// Laid out as Ferrostar lays out its navigation overlay (spec §1): in portrait, trip
-/// progress along the bottom; in landscape (wider than tall, as iOS tells it), the
-/// instructions and trip progress down the start half, the map's controls in the end
-/// half. Content keeps at least 16 px from each edge, counting the system's bars, as
-/// iOS's overlay does (spec §1.3). For now only End is there, at the end of where trip
-/// progress goes, where Ferrostar's trip progress has its own exit button.
+/// Laid out as Ferrostar lays out its navigation overlay (spec §1):
+///
+/// - in portrait, the maneuver banner across the top, the recenter button at the end
+///   16 px under it, where Ferrostar's camera button is, and trip progress along the
+///   bottom;
+/// - in landscape (wider than tall, as iOS tells it), the banner at the top of the start
+///   half with trip progress at its bottom, as Android splits the screen, and the
+///   recenter button at the top of the end half.
+///
+/// Content keeps at least 16 px from each edge, counting the system's bars, as iOS's
+/// overlay does (spec §1.3). For now only End is where trip progress goes, at its end,
+/// where Ferrostar's trip progress has its own exit button.
 class NavigationView extends StatefulWidget {
   const NavigationView({super.key});
 
@@ -140,6 +153,11 @@ class NavigationView extends StatefulWidget {
 class _NavigationViewState extends State<NavigationView> {
   NavigationMap? _map;
 
+  /// The app's [unitSystem] setting, resolved for the device's region as each build
+  /// shows a distance. The default stands until the setting is read.
+  UnitSystem _units = UnitSystem.locale;
+  StreamSubscription<UnitSystem>? _watchUnits;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -147,6 +165,11 @@ class _NavigationViewState extends State<NavigationView> {
       map: MapScope.of(context),
       controller: NavigationScope.of(context).controller,
     )..start();
+    _watchUnits ??= StoreScope.of(context).settings
+        .watch(unitSystem)
+        .listen((units) {
+          if (units != _units) setState(() => _units = units);
+        });
     final size = MediaQuery.sizeOf(context);
     final system = MediaQuery.paddingOf(context);
     _map!.padding = followPadding(
@@ -164,9 +187,13 @@ class _NavigationViewState extends State<NavigationView> {
 
   @override
   void dispose() {
+    _watchUnits?.cancel();
     _map?.dispose();
     super.dispose();
   }
+
+  /// Between the banner and the controls under it, as in Ferrostar.
+  static const _gap = 16.0;
 
   @override
   Widget build(BuildContext context) {
@@ -176,16 +203,58 @@ class _NavigationViewState extends State<NavigationView> {
     const least = 16.0;
     final start = math.max(least, ltr ? system.left : system.right);
     final end = math.max(least, ltr ? system.right : system.left);
+    final top = math.max(least, system.top);
     final bottom = math.max(least, system.bottom);
     // In landscape, the start half of what's between the insets, as Android splits it;
     // else the full width.
     final width = size.width - start - end;
     final landscape = size.width > size.height;
+    final startHalfEnd = landscape ? end + width / 2 : end;
+    final controller = NavigationScope.of(context).controller;
+    final map = _map!;
+    final recenter = ValueListenableBuilder(
+      valueListenable: map.canRecenter,
+      builder: (context, shown, _) => shown
+          ? _RecenterButton(onPressed: map.recenter)
+          : const SizedBox.shrink(),
+    );
     return Stack(
       children: [
         PositionedDirectional(
           start: start,
-          end: landscape ? end + width / 2 : end,
+          end: startHalfEnd,
+          top: top,
+          child: ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) {
+              final update = controller.update;
+              final instruction = update?.visualInstruction;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ManeuverBanner(
+                    instruction: instruction,
+                    distance: update?.progress?.distanceToNextManeuver,
+                    units: _units.onDevice,
+                  ),
+                  if (!landscape) ...[
+                    if (instruction != null) const SizedBox(height: _gap),
+                    Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: recenter,
+                    ),
+                  ],
+                ],
+              );
+            },
+          ),
+        ),
+        if (landscape)
+          PositionedDirectional(end: end, top: top, child: recenter),
+        PositionedDirectional(
+          start: start,
+          end: startHalfEnd,
           bottom: bottom,
           child: Align(
             alignment: AlignmentDirectional.centerEnd,
@@ -196,6 +265,33 @@ class _NavigationViewState extends State<NavigationView> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Follows you again after the map was moved off you: a floating button, as Ferrostar
+/// Android's, or on iOS the map's glass control, as the app's other map buttons are.
+class _RecenterButton extends StatelessWidget {
+  const _RecenterButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final control = MapControl(
+      tooltip: 'Recenter',
+      icon: AppSymbols.of(context).recenter,
+      onPressed: onPressed,
+    );
+    if (!isCupertinoOf(context)) return control;
+    return AppGlassLayer(
+      // As tinted as the map's other buttons: the map behind it can be anything.
+      tintAmount: 0.8,
+      child: GlassSurface(
+        radius: MapControl.size / 2,
+        floating: true,
+        child: control,
+      ),
     );
   }
 }

@@ -144,7 +144,7 @@ void main() {
         controller.start(route: route, mode: TravelMode.driving);
         drawn.start();
         final camera = followCamera(NavigationMode.driving);
-        fix(async, at(0.5, 0, speed: 10));
+        fix(async, at(0.5, 0, speed: camera.referenceSpeed / 2));
         expect(map.follows.single.zoom, camera.zoom);
         expect(map.follows.single.pitch, camera.pitch);
 
@@ -157,6 +157,40 @@ void main() {
         now += const Duration(seconds: 1);
         fix(async, at(0.7, 0, speed: 1));
         expect(map.follows, hasLength(2));
+      });
+    });
+
+    test('has nothing to recenter on before it follows', () {
+      fakeAsync((async) {
+        make();
+        controller.start(route: route, mode: TravelMode.driving);
+        drawn.start();
+        expect(drawn.canRecenter.value, isFalse);
+        drawn.recenter();
+        expect(map.follows, isEmpty);
+      });
+    });
+
+    test('offers to recenter once moved off you, and follows again', () {
+      fakeAsync((async) {
+        make();
+        controller.start(route: route, mode: TravelMode.driving);
+        drawn.start();
+        final camera = followCamera(NavigationMode.driving);
+        fix(async, at(0.5, 0, speed: camera.referenceSpeed * 2));
+        expect(drawn.canRecenter.value, isFalse);
+
+        // Moved by hand.
+        map.following.value = false;
+        expect(drawn.canRecenter.value, isTrue);
+
+        drawn.recenter();
+        expect(map.follows, hasLength(2));
+        // At the zoom for the last speed, and the mode's tilt.
+        expect(map.follows.last.zoom, closeTo(camera.zoom - 1, 1e-9));
+        expect(map.follows.last.pitch, camera.pitch);
+        expect(map.following.value, isTrue);
+        expect(drawn.canRecenter.value, isFalse);
       });
     });
 
