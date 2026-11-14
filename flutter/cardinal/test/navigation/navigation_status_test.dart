@@ -125,6 +125,34 @@ void main() {
     expect(pressed, 1);
   });
 
+  testWidgets('rerouting\'s progress is the icons\' size, and spins', (
+    tester,
+  ) async {
+    for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
+      await tester.pumpWidget(
+        app(
+          const NavigationStatusContent(status: NavigationStatus.rerouting),
+          platform: platform,
+        ),
+      );
+      final progress = find.byWidgetPredicate(
+        (w) =>
+            w is CircularProgressIndicator || w is CupertinoActivityIndicator,
+      );
+      expect(
+        tester.getSize(progress),
+        const Size.square(ManeuverBanner.secondaryIconSize),
+      );
+      if (platform == TargetPlatform.android) {
+        expect(
+          tester.widget<CircularProgressIndicator>(progress).value,
+          isNull,
+        );
+      }
+      expect(tester.hasRunningAnimations, isTrue);
+    }
+  });
+
   testWidgets('on iOS, its button and progress are Cupertino', (tester) async {
     await tester.pumpWidget(
       app(

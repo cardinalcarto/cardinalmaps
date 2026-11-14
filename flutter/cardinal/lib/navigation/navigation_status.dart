@@ -340,12 +340,18 @@ class _StatusRow extends StatelessWidget {
   }
 }
 
-/// The small progress indicator in the rerouting card's icon column: Material's
-/// circular one on Android and the desktop, the activity indicator on iOS.
+/// The progress indicator in the rerouting card's icon column: Material's circular one
+/// on Android and the desktop, the activity indicator on iOS. It's the size of the other
+/// status cards' icons ([ManeuverBanner.secondaryIconSize]), so it reads as the card's
+/// icon, as they do, and keeps the card as tall as theirs; at 24 it read as a dot. Both
+/// spin for as long as it shows.
 class _Progress extends StatelessWidget {
   const _Progress();
 
-  static const size = 24.0;
+  static const size = ManeuverBanner.secondaryIconSize;
+
+  /// The circular indicator's stroke: Material's 4 at its default 36 size, scaled.
+  static const _stroke = 4 * size / 36;
 
   @override
   Widget build(BuildContext context) {
@@ -354,7 +360,7 @@ class _Progress extends StatelessWidget {
     }
     return const SizedBox.square(
       dimension: size,
-      child: CircularProgressIndicator(strokeWidth: 3),
+      child: CircularProgressIndicator(strokeWidth: _stroke),
     );
   }
 }
