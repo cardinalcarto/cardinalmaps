@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/geocoder/geocoder.dart';
 import 'package:cardinal/home/navigation_bar.dart';
+import 'package:cardinal/l10n/app_localizations.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/map.dart';
 import 'package:cardinal/map/map_drawing.dart';
@@ -118,6 +119,10 @@ Future<GoRouter> pumpFakeApp(
                       ? null
                       : appTheme(Brightness.light, platform: platform),
                   routerConfig: router,
+                  // The app's strings, as `main.dart` gives them.
+                  localizationsDelegates:
+                      AppLocalizations.localizationsDelegates,
+                  supportedLocales: AppLocalizations.supportedLocales,
                 ),
               ),
             ),

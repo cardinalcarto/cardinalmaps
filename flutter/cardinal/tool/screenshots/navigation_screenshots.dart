@@ -11,7 +11,9 @@
 // the router, starts and ends trips through the navigation controller, and moves the
 // map through its controller, as the app's own code does. Each screenshot is the app's
 // whole view, rendered from its root repaint boundary, the map included, into
-// `CARDINAL_SCREENSHOTS_DIR`:
+// `CARDINAL_SCREENSHOTS_DIR`. Which ones is `CARDINAL_SCREENSHOTS_SET`'s choice:
+//
+// `banner` (the default), for the maneuver banner and the recenter button:
 //
 // 1. `1-portrait-secondary.png`: the banner with a secondary row, if the route has one.
 // 2. `2-portrait-turn.png`: the banner for a plain turn.
@@ -19,6 +21,13 @@
 // 4. `4-roundabout.png`: a roundabout, if the route has one.
 // 5. `5-recenter.png`: the recenter button, after the map is moved off the chevron.
 // 6. `6-portrait-secondary-dark.png`: 1 in the dark theme.
+//
+// `progress`, for the trip-progress pill, a kilometer into the long drive:
+//
+// 1. `1-portrait.png`: mid-trip, in portrait.
+// 2. `2-landscape.png`: the same in landscape.
+// 3. `3-portrait-dark.png`: 1 in the dark theme.
+// 4. `4-portrait-24h.png`: 1 with the device's clock set to 24 hours.
 //
 // The router's secondary rows are rare and short-lived (the route's one is on a 25 m
 // step), so 1 and 6 are each taken on a short drive of their own, from the step before
@@ -60,6 +69,12 @@ const outDir = String.fromEnvironment('CARDINAL_SCREENSHOTS_DIR');
 const bucketDir = String.fromEnvironment('CARDINAL_SCREENSHOTS_BUCKET');
 const releasesUrl = String.fromEnvironment('CARDINAL_RELEASES_URL');
 
+/// Which screenshots to take: `banner` or `progress` (see above).
+const shotSet = String.fromEnvironment(
+  'CARDINAL_SCREENSHOTS_SET',
+  defaultValue: 'banner',
+);
+
 /// The ID the destination is stored under, and deleted by.
 const destinationId = 'dev:navigation-screenshots';
 
@@ -89,6 +104,9 @@ void main() {
         fail(
           'needs CARDINAL_SCREENSHOTS_DIR and CARDINAL_SIMULATE_NAVIGATION=true',
         );
+      }
+      if (shotSet != 'banner' && shotSet != 'progress') {
+        fail('CARDINAL_SCREENSHOTS_SET is banner or progress, not $shotSet');
       }
       await Directory(outDir).create(recursive: true);
       final bucket = await _serveBucket();
@@ -129,6 +147,13 @@ void main() {
         unawaited(router.push(directionsLocation(destinationId)));
         await _settle(tester, const Duration(seconds: 2));
 
+        if (shotSet == 'progress') {
+          await _navigate(tester, context, route);
+          await _progress(tester, binding, controller);
+          await _end(tester, context);
+          return;
+        }
+
         await _navigate(tester, context, route);
         await _turnAndRecenter(tester, controller, map, route);
         await _end(tester, context);
@@ -165,6 +190,51 @@ void _brightness(
   IntegrationTestWidgetsFlutterBinding binding,
   Brightness brightness,
 ) => binding.platformDispatcher.platformBrightnessTestValue = brightness;
+
+/// On the long drive, once it's [into] meters along, so the drive and the camera have
+/// settled: the trip-progress pill in portrait and landscape, in the dark theme, and in
+/// the 24-hour clock.
+Future<void> _progress(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding,
+  NavigationController controller, {
+  double into = 1000,
+}) async {
+  double? first;
+  final along = await _waitFor(tester, controller, (update) {
+    final left = update.progress?.distanceRemaining;
+    if (left == null) return false;
+    first ??= left;
+    return update.visualInstruction != null && left < first! - into;
+  }, within: const Duration(minutes: 8));
+  if (along == null) {
+    debugPrint('nav-shots: the drive never got $into m along');
+    return;
+  }
+  await _shoot(tester, '1-portrait', controller);
+  _setView(tester, landscape: true);
+  await _settle(tester, const Duration(seconds: 2));
+  await _shoot(tester, '2-landscape', controller);
+  _setView(tester, landscape: false);
+  await _settle(tester, const Duration(seconds: 2));
+
+  _brightness(binding, Brightness.dark);
+  await _settle(tester, const Duration(seconds: 2));
+  await _shoot(tester, '3-portrait-dark', controller);
+  _brightness(binding, Brightness.light);
+
+  // Setting the clock tells no one, so the brightness, set again, is what has the
+  // app's media query read it.
+  binding.platformDispatcher.alwaysUse24HourFormatTestValue = true;
+  try {
+    _brightness(binding, Brightness.light);
+    await _settle(tester, const Duration(seconds: 2));
+    await _shoot(tester, '4-portrait-24h', controller);
+  } finally {
+    binding.platformDispatcher.clearAlwaysUse24HourTestValue();
+    _brightness(binding, Brightness.light);
+  }
+}
 
 /// The fastest driving route from [from] to [destination].
 Future<DirectionsRoute> _route(RouteSource routes, LngLat from) async =>
@@ -347,7 +417,9 @@ Future<void> _shoot(
     'nav-shots: $name ${image.width}x${image.height}: '
     '${visual?.primary.maneuverType?.name} ${visual?.primary.maneuverModifier?.name} '
     '"${visual?.primary.text}" / "${visual?.secondary?.text}" '
-    'in ${controller.update?.progress?.distanceToNextManeuver.round()} m',
+    'in ${controller.update?.progress?.distanceToNextManeuver.round()} m; '
+    '${controller.update?.progress?.distanceRemaining.round()} m and '
+    '${controller.update?.progress?.durationRemaining.round()} s left',
   );
 }
 
