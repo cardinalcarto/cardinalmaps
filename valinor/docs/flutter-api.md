@@ -142,6 +142,13 @@ impl OfflineTransit {
         cancel: &TransitCancel,
     ) -> TransitResponse;
 
+    /// The body of the server's `POST /transit/nearby`: the routes a rider can catch near a
+    /// place, in each direction, and when. Feeds, cancellation, and the deadline are as for `plan`.
+    pub fn nearby(&self, request: Vec<u8>, feeds: Vec<TransitFeed>, cancel: &TransitCancel) -> TransitResponse;
+
+    /// The body of the server's `POST /transit/route`: one route and direction from one stop.
+    pub fn route(&self, request: Vec<u8>, feeds: Vec<TransitFeed>, cancel: &TransitCancel) -> TransitResponse;
+
     /// A vehicle's latest state, as the server's vehicle lookup returns it.
     pub fn vehicle(&self, feed: String, id: String) -> TransitResponse;
 }
@@ -161,6 +168,12 @@ impl OfflineTransit {
 - Not `#[frb(sync)]`: planning runs on flutter_rust_bridge's worker pool.
 - A plan with no journeys says why in `no_journeys_reason` (`no_access`, `no_egress`,
   `no_service`, or `slower_than_direct`), and `direct` reports the direct search's outcome.
+- `nearby` answers the screen of nearby routes: per GTFS route, per direction (its
+  `direction_id`, or a trip's last stop as `terminus_stop_id`), the reachable stop to use with its
+  walk, the next departures there, and their headsigns, the most frequent first; routes come
+  soonest first. A row's `feed`, `route_id`, direction, and stop's `stop_id` are what `route` takes
+  for the detail view, which adds a trip's stops from that stop on with its shape, and the route's
+  vehicles in that direction. See "Nearby departures" in `transit.md` for both.
 - The device refuses access or egress walks above 45 minutes with a 400,
   and a timetable must be replaced by renaming, never rewritten in place, while open.
 On first open (or `TransitBuild::prepare`) a flat transfer table is assembled under the build's

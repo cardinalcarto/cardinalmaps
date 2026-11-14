@@ -238,21 +238,59 @@ impl OfflineTransit {
         feeds: Vec<TransitFeed>,
         cancel: &TransitCancel,
     ) -> TransitResponse {
-        let cancelled = Arc::clone(&cancel.cancelled);
-        let deadline = Instant::now() + PLAN_DEADLINE;
-        let timed_out = move || Instant::now() >= deadline;
-        let answer = self.plan_at(&request, feeds, unix_now(), &|| {
-            cancelled.load(Ordering::Relaxed) || timed_out()
-        });
-        if answer.status == 499 && !cancel.cancelled.load(Ordering::Relaxed) {
-            return error_response(504, "timed_out", "the plan ran past its deadline");
-        }
-        answer
+        self.answer(Query::Plan, &request, feeds, cancel)
+    }
+
+    /// The routes a rider can catch near a place, in each direction, and when, from JSON
+    /// request bytes (the server's `/transit/nearby` body), applying `feeds` first as
+    /// [`Self::plan`] does.
+    ///
+    /// It answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+    pub fn nearby(
+        &self,
+        request: Vec<u8>,
+        feeds: Vec<TransitFeed>,
+        cancel: &TransitCancel,
+    ) -> TransitResponse {
+        self.answer(Query::Nearby, &request, feeds, cancel)
+    }
+
+    /// One route and direction from one stop, for a detail view, from JSON request bytes
+    /// (the server's `/transit/route` body), applying `feeds` first as [`Self::plan`] does.
+    ///
+    /// It answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+    pub fn route(
+        &self,
+        request: Vec<u8>,
+        feeds: Vec<TransitFeed>,
+        cancel: &TransitCancel,
+    ) -> TransitResponse {
+        self.answer(Query::Route, &request, feeds, cancel)
     }
 
     /// The latest real-time state of a vehicle, as the server's vehicle lookup returns it.
     pub fn vehicle(&self, feed: String, id: String) -> TransitResponse {
         response(self.planner.vehicle_json(&feed, &id, unix_now()))
+    }
+
+    /// Answers a query now, under `cancel` and the device's deadline.
+    fn answer(
+        &self,
+        query: Query,
+        request: &[u8],
+        feeds: Vec<TransitFeed>,
+        cancel: &TransitCancel,
+    ) -> TransitResponse {
+        let cancelled = Arc::clone(&cancel.cancelled);
+        let deadline = Instant::now() + PLAN_DEADLINE;
+        let timed_out = move || Instant::now() >= deadline;
+        let answer = self.answer_at(query, request, feeds, unix_now(), &|| {
+            cancelled.load(Ordering::Relaxed) || timed_out()
+        });
+        if answer.status == 499 && !cancel.cancelled.load(Ordering::Relaxed) {
+            return error_response(504, "timed_out", "the query ran past its deadline");
+        }
+        answer
     }
 
     /// [`Self::plan`] at a chosen moment, with a chosen interrupt,
@@ -267,7 +305,45 @@ impl OfflineTransit {
         now: i64,
         interrupt: &dyn Fn() -> bool,
     ) -> TransitResponse {
-        // A feed that isn't loaded is about nothing this plan can use, and only affects itself.
+        self.answer_at(Query::Plan, request, feeds, now, interrupt)
+    }
+
+    /// [`Self::nearby`] at a chosen moment, with a chosen interrupt, for tests.
+    /// Not part of the Dart API.
+    #[frb(ignore)]
+    pub fn nearby_at(
+        &self,
+        request: &[u8],
+        feeds: Vec<TransitFeed>,
+        now: i64,
+        interrupt: &dyn Fn() -> bool,
+    ) -> TransitResponse {
+        self.answer_at(Query::Nearby, request, feeds, now, interrupt)
+    }
+
+    /// [`Self::route`] at a chosen moment, with a chosen interrupt, for tests.
+    /// Not part of the Dart API.
+    #[frb(ignore)]
+    pub fn route_at(
+        &self,
+        request: &[u8],
+        feeds: Vec<TransitFeed>,
+        now: i64,
+        interrupt: &dyn Fn() -> bool,
+    ) -> TransitResponse {
+        self.answer_at(Query::Route, request, feeds, now, interrupt)
+    }
+
+    /// Applies `feeds`, then answers a query at `now`.
+    fn answer_at(
+        &self,
+        query: Query,
+        request: &[u8],
+        feeds: Vec<TransitFeed>,
+        now: i64,
+        interrupt: &dyn Fn() -> bool,
+    ) -> TransitResponse {
+        // A feed that isn't loaded is about nothing this query can use, and only affects itself.
         let state = self.planner.state();
         let mut ignored_feeds = Vec::new();
         for feed in &feeds {
@@ -279,7 +355,7 @@ impl OfflineTransit {
                 ignored_feeds.push(feed.feed.clone());
                 continue;
             }
-            // Undecodable bytes are reported by the plan itself.
+            // Undecodable bytes are reported by the response itself.
             let _ = state.ingest(FeedUpdate {
                 feed: &feed.feed,
                 kind: feed_kind(&feed.kind),
@@ -288,11 +364,26 @@ impl OfflineTransit {
                 stale_after: None,
             });
         }
+        let answer = match query {
+            Query::Plan => self.planner.plan_json(request, now, interrupt),
+            Query::Nearby => self.planner.nearby_json(request, now, interrupt),
+            Query::Route => self.planner.route_json(request, now, interrupt),
+        };
         TransitResponse {
             ignored_feeds,
-            ..response(self.planner.plan_json(request, now, interrupt))
+            ..response(answer)
         }
     }
+}
+
+/// Which of the server's transit paths a call answers as.
+enum Query {
+    /// `POST /transit/plan`.
+    Plan,
+    /// `POST /transit/nearby`.
+    Nearby,
+    /// `POST /transit/route`.
+    Route,
 }
 
 /// A JSON error body, as the server's would be.
@@ -486,6 +577,71 @@ mod tests {
         let request = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.51,"lon":1.535},"max_walk_seconds":600,"departure":1781506500}"#;
         let answer = transit.plan_at(request, Vec::new(), 1_781_506_440, &|| true);
         assert_eq!(answer.status, 499);
+    }
+
+    /// The device answers nearby and route-detail requests with the server's bytes: the server
+    /// calls the same planner methods, over a planner with the server's own limits.
+    #[test]
+    fn nearby_and_route_answer_with_the_servers_bytes() {
+        let (_dir, on_device) = timetable();
+        let (_server_dir, on_server) = timetable();
+        let transit = OfflineTransit::open_timetable(on_device, vec![tiles()])
+            .ok()
+            .unwrap();
+        let server = valinor_transit_plan::StreetPlanner::open_with_built_transfers(
+            valinor_gtfs::TimetableSet::single(on_server).unwrap(),
+            &[tiles()],
+            valinor_transit_plan::StreetConfig::default(),
+        )
+        .unwrap();
+        // 2026-06-15 08:54 local, a Monday.
+        let now = 1_781_506_440;
+        let nearby = br#"{"location":{"lat":42.5078,"lon":1.5205},"max_walk_seconds":600}"#;
+        let answer = transit.nearby_at(nearby, Vec::new(), now, &|| false);
+        assert_eq!(answer.status, 200);
+        assert_eq!(
+            answer.body,
+            server.nearby_json(nearby, now, &|| false).body,
+            "the same bytes as the server's /transit/nearby"
+        );
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        let direction = &body["routes"][0]["directions"][0];
+        assert_eq!(direction["terminus_stop_id"], "B");
+        assert_eq!(direction["departures"][0]["trip_id"], "T1");
+
+        let route = format!(
+            r#"{{"feed":"bus","route_id":"L1","terminus_stop_id":"B","stop_id":"A","walk_seconds":{}}}"#,
+            direction["walk_seconds"]
+        );
+        let answer = transit.route_at(route.as_bytes(), Vec::new(), now, &|| false);
+        assert_eq!(answer.status, 200);
+        assert_eq!(
+            answer.body,
+            server.route_json(route.as_bytes(), now, &|| false).body,
+            "the same bytes as the server's /transit/route"
+        );
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        assert_eq!(body["ride"]["stops"][1]["stop_id"], "B");
+
+        // Feeds are applied as for a plan, and a cancelled query stops.
+        let feeds = vec![TransitFeed {
+            feed: "bus".to_owned(),
+            kind: TransitFeedKind::Alerts,
+            bytes: Some(vec![0xff, 0xff, 0xff]),
+        }];
+        let answer = transit.nearby_at(nearby, feeds, now, &|| false);
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        assert_eq!(body["realtime"]["feeds"][0]["state"], "undecodable");
+        assert_eq!(
+            transit.nearby_at(nearby, Vec::new(), now, &|| true).status,
+            499
+        );
+        // The device's walk limit holds here as for a plan.
+        let far = br#"{"location":{"lat":42.5078,"lon":1.5205},"max_walk_seconds":2701}"#;
+        assert_eq!(
+            transit.nearby_at(far, Vec::new(), now, &|| false).status,
+            400
+        );
     }
 
     #[test]
