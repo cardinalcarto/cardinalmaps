@@ -11,15 +11,18 @@
 //! which of two nearly equal paths wins, and with it the edges of the route.
 //! So this follows mainline's arithmetic (including where it rounds to `float`)
 //! and its order within buckets exactly.
+//!
+//! Thor's path searches and Meili's routing between candidates both use it, as in mainline.
 
 /// What the queue needs to know about a label: its sort cost.
-pub(crate) trait SortCost {
+pub trait SortCost {
+    /// The cost the queue sorts by (mainline's `sortcost`).
     fn sortcost(&self) -> f32;
 }
 
 /// Label indexes sorted by sort cost (mainline's `DoubleBucketQueue`).
 #[derive(Debug, Default)]
-pub(crate) struct BucketQueue {
+pub struct BucketQueue {
     bucketrange: f32,
     bucketsize: f32,
     inv: f32,
@@ -40,7 +43,7 @@ enum Bucket {
 
 impl BucketQueue {
     /// Bytes of storage the queue holds, used or not.
-    pub(crate) fn bytes(&self) -> usize {
+    pub fn bytes(&self) -> usize {
         self.buckets.capacity() * size_of::<Vec<u32>>()
             + self
                 .buckets
@@ -55,7 +58,7 @@ impl BucketQueue {
     /// of `bucketsize` from `mincost` (rounded down to a multiple of the bucket size).
     ///
     /// The buckets' storage is kept for the next search.
-    pub(crate) fn reuse(&mut self, mincost: f32, range: f32, bucketsize: u32) {
+    pub fn reuse(&mut self, mincost: f32, range: f32, bucketsize: u32) {
         let bucketsize = bucketsize.max(1);
         #[expect(
             clippy::cast_possible_truncation,
@@ -128,7 +131,7 @@ impl BucketQueue {
 
     /// Adds a label, by its current sort cost (`add`).
     #[inline]
-    pub(crate) fn add(&mut self, label: u32, sortcost: f32) {
+    pub fn add(&mut self, label: u32, sortcost: f32) {
         let bucket = self.bucket_of(sortcost);
         self.bucket_mut(bucket).push(label);
     }
@@ -137,7 +140,7 @@ impl BucketQueue {
     ///
     /// Call this before updating the label's sort cost.
     #[inline]
-    pub(crate) fn decrease(&mut self, label: u32, oldcost: f32, newcost: f32) {
+    pub fn decrease(&mut self, label: u32, oldcost: f32, newcost: f32) {
         let old = self.bucket_of(oldcost);
         let new = self.bucket_of(newcost);
         if old != new {
@@ -159,7 +162,7 @@ impl BucketQueue {
     }
 
     /// Takes the next label (`pop`), or `None` if the queue is empty.
-    pub(crate) fn pop<L: SortCost>(&mut self, labels: &[L]) -> Option<u32> {
+    pub fn pop<L: SortCost>(&mut self, labels: &[L]) -> Option<u32> {
         if self.empty() {
             if self.overflow.is_empty() {
                 // Mainline steps back to the last bucket (`--currentbucket_`),

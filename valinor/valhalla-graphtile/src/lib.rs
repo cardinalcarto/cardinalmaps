@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+pub mod double_bucket_queue;
 mod graph_id;
 pub mod graph_tile;
 pub mod shape_codec;

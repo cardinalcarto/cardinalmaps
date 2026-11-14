@@ -44,7 +44,6 @@ mod geo;
 mod graph;
 mod label;
 mod path;
-mod queue;
 mod route;
 mod search;
 mod time;
