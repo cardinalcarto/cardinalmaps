@@ -9,9 +9,9 @@ import 'matching.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `config`, `deviation_from_steps`, `deviation`, `effective`, `match_limit`, `meters_between`, `nav_step`, `new`, `push`, `step_line`, `step_starts`, `update`, `update`, `was_matched`, `whole_degrees`
+// These functions are ignored because they are not marked as `pub`: `config`, `deviation_from_steps`, `deviation`, `effective`, `from_annotation`, `match_limit`, `meters_between`, `nav_step`, `new`, `push`, `step_line`, `step_starts`, `update`, `update`, `was_matched`, `whole_degrees`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `FedLocations`, `MatchAwareDeviation`, `MatchSelection`, `Trip`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `check_route_deviation`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `check_route_deviation`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LocationSimulation>>
@@ -330,6 +330,28 @@ class NavProgress {
           durationRemaining == other.durationRemaining;
 }
 
+/// The speed limit where you are.
+class NavSpeedLimit {
+  final SpeedLimitKind kind;
+
+  /// The limit in km/h, as annotations always give it, even where signs are in mph;
+  /// only when [`SpeedLimitKind::Limited`].
+  final double? kph;
+
+  const NavSpeedLimit({required this.kind, this.kph});
+
+  @override
+  int get hashCode => kind.hashCode ^ kph.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NavSpeedLimit &&
+          runtimeType == other.runtimeType &&
+          kind == other.kind &&
+          kph == other.kph;
+}
+
 /// An announcement for the coming maneuver.
 class NavSpokenInstruction {
   final String text;
@@ -404,6 +426,14 @@ class NavStep {
   /// For a roundabout, the exit to take (1 is the first).
   final int? roundaboutExitNumber;
 
+  /// The kind of sign speed limits are posted on where the step is; none if the
+  /// router didn't say.
+  final SpeedLimitSign? speedLimitSign;
+
+  /// The unit speed limits are posted in where the step is, whatever unit the app
+  /// shows distances in; none if the router didn't say.
+  final SpeedLimitUnit? speedLimitUnit;
+
   const NavStep({
     this.roadName,
     required this.instruction,
@@ -416,6 +446,8 @@ class NavStep {
     required this.geometryStart,
     this.drivingSide,
     this.roundaboutExitNumber,
+    this.speedLimitSign,
+    this.speedLimitUnit,
   });
 
   @override
@@ -430,7 +462,9 @@ class NavStep {
       geometry.hashCode ^
       geometryStart.hashCode ^
       drivingSide.hashCode ^
-      roundaboutExitNumber.hashCode;
+      roundaboutExitNumber.hashCode ^
+      speedLimitSign.hashCode ^
+      speedLimitUnit.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -447,7 +481,9 @@ class NavStep {
           geometry == other.geometry &&
           geometryStart == other.geometryStart &&
           drivingSide == other.drivingSide &&
-          roundaboutExitNumber == other.roundaboutExitNumber;
+          roundaboutExitNumber == other.roundaboutExitNumber &&
+          speedLimitSign == other.speedLimitSign &&
+          speedLimitUnit == other.speedLimitUnit;
 }
 
 /// Where navigation stands after a fix: what changes as you go, and nothing that doesn't.
@@ -494,6 +530,10 @@ class NavUpdate {
   /// Only while navigating.
   final NavProgress? progress;
 
+  /// The speed limit on the stretch of the route at the snapped location; unknown
+  /// unless navigating.
+  final NavSpeedLimit speedLimit;
+
   const NavUpdate({
     required this.status,
     this.location,
@@ -507,6 +547,7 @@ class NavUpdate {
     this.visualInstruction,
     this.spokenInstruction,
     this.progress,
+    required this.speedLimit,
   });
 
   @override
@@ -522,7 +563,8 @@ class NavUpdate {
       deviationMeters.hashCode ^
       visualInstruction.hashCode ^
       spokenInstruction.hashCode ^
-      progress.hashCode;
+      progress.hashCode ^
+      speedLimit.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -540,7 +582,8 @@ class NavUpdate {
           deviationMeters == other.deviationMeters &&
           visualInstruction == other.visualInstruction &&
           spokenInstruction == other.spokenInstruction &&
-          progress == other.progress;
+          progress == other.progress &&
+          speedLimit == other.speedLimit;
 }
 
 /// A banner for the coming maneuver.
@@ -609,6 +652,18 @@ class SimulationError implements FrbException {
       other is SimulationError &&
           runtimeType == other.runtimeType &&
           message == other.message;
+}
+
+/// What a speed limit is, as a route's annotations say.
+enum SpeedLimitKind {
+  /// There's a limit, [`NavSpeedLimit::kph`].
+  limited,
+
+  /// There's no limit, as on parts of Germany's autobahns.
+  unlimited,
+
+  /// The map doesn't say.
+  unknown,
 }
 
 /// Where a trip stands.

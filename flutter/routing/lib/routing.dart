@@ -23,7 +23,9 @@ export 'src/rust/api/directions.dart'
         DirectionsRoute,
         DirectionsStep,
         DistanceUnits,
-        NavigableRoute;
+        NavigableRoute,
+        SpeedLimitSign,
+        SpeedLimitUnit;
 export 'src/rust/api/matching.dart' show MatchKind, MatchedPosition;
 export 'src/rust/api/navigation.dart'
     show
@@ -36,6 +38,7 @@ export 'src/rust/api/navigation.dart'
         NavLane,
         NavLocation,
         NavProgress,
+        NavSpeedLimit,
         NavSpokenInstruction,
         NavStep,
         NavUpdate,
@@ -44,6 +47,7 @@ export 'src/rust/api/navigation.dart'
         NavigationSession,
         SimulationBias,
         SimulationError,
+        SpeedLimitKind,
         TripStatus;
 export 'src/rust/api/offline.dart'
     show

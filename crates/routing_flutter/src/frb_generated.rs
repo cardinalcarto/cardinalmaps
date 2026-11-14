@@ -3082,6 +3082,18 @@ impl SseDecode for crate::api::navigation::NavProgress {
     }
 }
 
+impl SseDecode for crate::api::navigation::NavSpeedLimit {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_kind = <crate::api::navigation::SpeedLimitKind>::sse_decode(deserializer);
+        let mut var_kph = <Option<f64>>::sse_decode(deserializer);
+        return crate::api::navigation::NavSpeedLimit {
+            kind: var_kind,
+            kph: var_kph,
+        };
+    }
+}
+
 impl SseDecode for crate::api::navigation::NavSpokenInstruction {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3116,6 +3128,10 @@ impl SseDecode for crate::api::navigation::NavStep {
         let mut var_drivingSide =
             <Option<crate::api::navigation::NavDrivingSide>>::sse_decode(deserializer);
         let mut var_roundaboutExitNumber = <Option<u32>>::sse_decode(deserializer);
+        let mut var_speedLimitSign =
+            <Option<crate::api::directions::SpeedLimitSign>>::sse_decode(deserializer);
+        let mut var_speedLimitUnit =
+            <Option<crate::api::directions::SpeedLimitUnit>>::sse_decode(deserializer);
         return crate::api::navigation::NavStep {
             road_name: var_roadName,
             instruction: var_instruction,
@@ -3128,6 +3144,8 @@ impl SseDecode for crate::api::navigation::NavStep {
             geometry_start: var_geometryStart,
             driving_side: var_drivingSide,
             roundabout_exit_number: var_roundaboutExitNumber,
+            speed_limit_sign: var_speedLimitSign,
+            speed_limit_unit: var_speedLimitUnit,
         };
     }
 }
@@ -3153,6 +3171,7 @@ impl SseDecode for crate::api::navigation::NavUpdate {
             <Option<crate::api::navigation::NavSpokenInstruction>>::sse_decode(deserializer);
         let mut var_progress =
             <Option<crate::api::navigation::NavProgress>>::sse_decode(deserializer);
+        let mut var_speedLimit = <crate::api::navigation::NavSpeedLimit>::sse_decode(deserializer);
         return crate::api::navigation::NavUpdate {
             status: var_status,
             location: var_location,
@@ -3166,6 +3185,7 @@ impl SseDecode for crate::api::navigation::NavUpdate {
             visual_instruction: var_visualInstruction,
             spoken_instruction: var_spokenInstruction,
             progress: var_progress,
+            speed_limit: var_speedLimit,
         };
     }
 }
@@ -3368,6 +3388,32 @@ impl SseDecode for Option<crate::api::navigation::NavVisualInstruction> {
     }
 }
 
+impl SseDecode for Option<crate::api::directions::SpeedLimitSign> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::directions::SpeedLimitSign>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::directions::SpeedLimitUnit> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::directions::SpeedLimitUnit>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<u16> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3501,6 +3547,43 @@ impl SseDecode for crate::api::navigation::SimulationError {
         let mut var_message = <String>::sse_decode(deserializer);
         return crate::api::navigation::SimulationError {
             message: var_message,
+        };
+    }
+}
+
+impl SseDecode for crate::api::navigation::SpeedLimitKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::navigation::SpeedLimitKind::Limited,
+            1 => crate::api::navigation::SpeedLimitKind::Unlimited,
+            2 => crate::api::navigation::SpeedLimitKind::Unknown,
+            _ => unreachable!("Invalid variant for SpeedLimitKind: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::directions::SpeedLimitSign {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::directions::SpeedLimitSign::Mutcd,
+            1 => crate::api::directions::SpeedLimitSign::Vienna,
+            _ => unreachable!("Invalid variant for SpeedLimitSign: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::directions::SpeedLimitUnit {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::directions::SpeedLimitUnit::KilometersPerHour,
+            1 => crate::api::directions::SpeedLimitUnit::MilesPerHour,
+            _ => unreachable!("Invalid variant for SpeedLimitUnit: {}", inner),
         };
     }
 }
@@ -4464,6 +4547,27 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::navigation::NavProgress>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::navigation::NavSpeedLimit {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.kind.into_into_dart().into_dart(),
+            self.kph.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::navigation::NavSpeedLimit
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::navigation::NavSpeedLimit>
+    for crate::api::navigation::NavSpeedLimit
+{
+    fn into_into_dart(self) -> crate::api::navigation::NavSpeedLimit {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::navigation::NavSpokenInstruction {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -4503,6 +4607,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::navigation::NavStep {
             self.geometry_start.into_into_dart().into_dart(),
             self.driving_side.into_into_dart().into_dart(),
             self.roundabout_exit_number.into_into_dart().into_dart(),
+            self.speed_limit_sign.into_into_dart().into_dart(),
+            self.speed_limit_unit.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4534,6 +4640,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::navigation::NavUpdate {
             self.visual_instruction.into_into_dart().into_dart(),
             self.spoken_instruction.into_into_dart().into_dart(),
             self.progress.into_into_dart().into_dart(),
+            self.speed_limit.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4762,6 +4869,70 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::navigation::SimulationError>
     for crate::api::navigation::SimulationError
 {
     fn into_into_dart(self) -> crate::api::navigation::SimulationError {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::navigation::SpeedLimitKind {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Limited => 0.into_dart(),
+            Self::Unlimited => 1.into_dart(),
+            Self::Unknown => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::navigation::SpeedLimitKind
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::navigation::SpeedLimitKind>
+    for crate::api::navigation::SpeedLimitKind
+{
+    fn into_into_dart(self) -> crate::api::navigation::SpeedLimitKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::directions::SpeedLimitSign {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Mutcd => 0.into_dart(),
+            Self::Vienna => 1.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::directions::SpeedLimitSign
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::directions::SpeedLimitSign>
+    for crate::api::directions::SpeedLimitSign
+{
+    fn into_into_dart(self) -> crate::api::directions::SpeedLimitSign {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::directions::SpeedLimitUnit {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::KilometersPerHour => 0.into_dart(),
+            Self::MilesPerHour => 1.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::directions::SpeedLimitUnit
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::directions::SpeedLimitUnit>
+    for crate::api::directions::SpeedLimitUnit
+{
+    fn into_into_dart(self) -> crate::api::directions::SpeedLimitUnit {
         self
     }
 }
@@ -5549,6 +5720,14 @@ impl SseEncode for crate::api::navigation::NavProgress {
     }
 }
 
+impl SseEncode for crate::api::navigation::NavSpeedLimit {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::navigation::SpeedLimitKind>::sse_encode(self.kind, serializer);
+        <Option<f64>>::sse_encode(self.kph, serializer);
+    }
+}
+
 impl SseEncode for crate::api::navigation::NavSpokenInstruction {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5579,6 +5758,14 @@ impl SseEncode for crate::api::navigation::NavStep {
         <u32>::sse_encode(self.geometry_start, serializer);
         <Option<crate::api::navigation::NavDrivingSide>>::sse_encode(self.driving_side, serializer);
         <Option<u32>>::sse_encode(self.roundabout_exit_number, serializer);
+        <Option<crate::api::directions::SpeedLimitSign>>::sse_encode(
+            self.speed_limit_sign,
+            serializer,
+        );
+        <Option<crate::api::directions::SpeedLimitUnit>>::sse_encode(
+            self.speed_limit_unit,
+            serializer,
+        );
     }
 }
 
@@ -5609,6 +5796,7 @@ impl SseEncode for crate::api::navigation::NavUpdate {
             serializer,
         );
         <Option<crate::api::navigation::NavProgress>>::sse_encode(self.progress, serializer);
+        <crate::api::navigation::NavSpeedLimit>::sse_encode(self.speed_limit, serializer);
     }
 }
 
@@ -5779,6 +5967,26 @@ impl SseEncode for Option<crate::api::navigation::NavVisualInstruction> {
     }
 }
 
+impl SseEncode for Option<crate::api::directions::SpeedLimitSign> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::directions::SpeedLimitSign>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::directions::SpeedLimitUnit> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::directions::SpeedLimitUnit>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<u16> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5887,6 +6095,55 @@ impl SseEncode for crate::api::navigation::SimulationError {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.message, serializer);
+    }
+}
+
+impl SseEncode for crate::api::navigation::SpeedLimitKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::navigation::SpeedLimitKind::Limited => 0,
+                crate::api::navigation::SpeedLimitKind::Unlimited => 1,
+                crate::api::navigation::SpeedLimitKind::Unknown => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::directions::SpeedLimitSign {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::directions::SpeedLimitSign::Mutcd => 0,
+                crate::api::directions::SpeedLimitSign::Vienna => 1,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::directions::SpeedLimitUnit {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::directions::SpeedLimitUnit::KilometersPerHour => 0,
+                crate::api::directions::SpeedLimitUnit::MilesPerHour => 1,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
