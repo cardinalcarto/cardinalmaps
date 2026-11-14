@@ -24,6 +24,16 @@
 //!   when a branch fails, so a transition can be costed from an edge that a failed branch tried.
 //! - The partial cost of the destination edge is taken at the time of the start of the walk.
 //!
+//! Mainline's walk fails on many of mainline's own route shapes. Two of the causes are in
+//! `check_shape`, which wants exactly the edge's shape points between its nodes: a shape
+//! point repeated (or a node matched at the shape point before it, which is within
+//! `LL_EPSILON`, so the next edge's check is a point out), and a point partway along an edge
+//! (where a route's legs are joined, or at a through or via location). Where mainline's walk
+//! finds no path, Thor walks again with a lenient `check_shape` that leaves those points out
+//! (see "Known divergences" in `docs/routing.md`); a shape mainline walks keeps mainline's path.
+//! The third cause, `followed_edges` kept per shape point rather than per node (so a second
+//! node at a shape point tries only its first edges), stays mainline's.
+//!
 //! Mainline recurses once per edge; this walks with an explicit stack, so that a long route
 //! can't overflow a thread's stack, and visits the same branches in the same order.
 
@@ -238,6 +248,11 @@ pub(crate) fn start_time_info<P: GraphTileProvider>(
 /// Whether the shape points between `from` and `to` are the edge's own shape points
 /// (`check_shape`). From the origin (`from` 0) the shape may start partway along the edge;
 /// otherwise every point of the edge must be there.
+///
+/// A `lenient` check (Valinor's, where mainline's walk fails; see "Known divergences" in
+/// `docs/routing.md`) first leaves out what a route's own shape has that mainline's check
+/// rejects: a point repeated (within `LL_EPSILON` of the one before it), and a point partway
+/// along the edge (where a route's legs are joined, or at a through or via location).
 fn check_shape<T: GraphTile>(
     tile: &T,
     edge_id: GraphId,
@@ -245,33 +260,74 @@ fn check_shape<T: GraphTile>(
     shape: &[PointLL],
     from: usize,
     to: usize,
+    lenient: bool,
 ) -> Result<bool, ThorError> {
     if to - from == 1 && edge.length() == 0 {
         return Ok(true);
     }
     let info = tile.get_edge_info(edge)?;
-    let edge_shape = info
+    let mut vertices: Vec<PointLL> = info
         .decode_raw_shape::<f64>()
-        .map_err(|e| ThorError::Shape(edge_id, e))?;
-    let size = edge_shape.len();
+        .map_err(|e| ThorError::Shape(edge_id, e))?
+        .into_iter()
+        .map(|c| PointLL::new(c.x, c.y))
+        .collect();
+    if !edge.edge_info_is_forward() {
+        vertices.reverse();
+    }
+    let interior = shape.get(from + 1..to).unwrap_or_default();
+    if matches_vertices(&vertices, interior, from) || !lenient {
+        return Ok(matches_vertices(&vertices, interior, from));
+    }
+    let mut kept: Vec<PointLL> = Vec::with_capacity(interior.len());
+    let mut last = shape[from];
+    for &p in interior {
+        let on_edge = !vertices.iter().any(|&v| approximately_equal(p, v))
+            && vertices.windows(2).any(|w| on_segment(p, w[0], w[1]));
+        if approximately_equal(p, last) || on_edge {
+            continue;
+        }
+        kept.push(p);
+        last = p;
+    }
+    if kept
+        .last()
+        .is_some_and(|&p| approximately_equal(p, shape[to]))
+    {
+        kept.pop();
+    }
+    Ok(matches_vertices(&vertices, &kept, from))
+}
+
+/// Mainline's `check_shape` comparison: `interior` (the shape points between the edge's ends)
+/// are the edge's last shape points before its end, all of them unless from the origin.
+fn matches_vertices(vertices: &[PointLL], interior: &[PointLL], from: usize) -> bool {
     // `int32_t i = edge_shape.size() - (to - from)`.
-    let Some(first) = size.checked_sub(to - from) else {
-        return Ok(false);
+    let Some(first) = vertices.len().checked_sub(interior.len() + 1) else {
+        return false;
     };
     if first < 1 || (from > 0 && first != 1) {
-        return Ok(false);
+        return false;
     }
-    let forward = edge.edge_info_is_forward();
-    for (j, i) in (from + 1..to).zip(first..) {
-        let shape_idx = if forward { i } else { size - 1 - i };
-        let Some(c) = edge_shape.get(shape_idx) else {
-            return Ok(false);
-        };
-        if !approximately_equal(shape[j], PointLL::new(c.x, c.y)) {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    interior
+        .iter()
+        .zip(&vertices[first..])
+        .all(|(&p, &v)| approximately_equal(p, v))
+}
+
+/// Whether a point is on the segment from `a` to `b`, within `LL_EPSILON` of it
+/// (with longitudes scaled to latitude degrees at `a`).
+fn on_segment(p: PointLL, a: PointLL, b: PointLL) -> bool {
+    let scale = a.lat.to_radians().cos();
+    let (dx, dy) = ((b.lng - a.lng) * scale, b.lat - a.lat);
+    let (px, py) = ((p.lng - a.lng) * scale, p.lat - a.lat);
+    let length2 = dx * dx + dy * dy;
+    let t = if length2 > 0.0 {
+        (px * dx + py * dy) / length2
+    } else {
+        0.0
+    };
+    (0.0..=1.0).contains(&t) && (px - t * dx).hypot(py - t * dy) <= f64::from(LL_EPSILON)
 }
 
 /// Where a node's expansion is (the loops of mainline's `expand_from_node`).
@@ -342,6 +398,8 @@ struct Walk<'a, P> {
     time_info: TimeInfo,
     use_timestamps: bool,
     use_shortcuts: bool,
+    /// Whether shape checks are lenient (see [`check_shape`]).
+    lenient: bool,
     end_nodes: Vec<EndEdge>,
     /// The last edge and transition followed from each shape point, by level.
     followed_edges: Vec<[(u32, u32); LEVELS]>,
@@ -463,7 +521,15 @@ impl<P: GraphTileProvider> Walk<'_, P> {
                         }
                         if approximately_equal(self.points[index], de_end_ll)
                             && de_length_f < length_comparison(length, true)
-                            && check_shape(&frame.tile, edge_id, &de, &self.points, ci, index)?
+                            && check_shape(
+                                &frame.tile,
+                                edge_id,
+                                &de,
+                                &self.points,
+                                ci,
+                                index,
+                                self.lenient,
+                            )?
                         {
                             let node = &frame.node;
                             let offset_time_info =
@@ -583,6 +649,9 @@ impl<P: GraphTileProvider> Walk<'_, P> {
 
 /// Walks a shape along the graph (mainline's `RouteMatcher::FormPath`).
 ///
+/// With `lenient`, shape checks are lenient (see [`check_shape`]); otherwise this is mainline's
+/// walk.
+///
 /// On success, returns the path's edges (one leg) and adds the origin and destination
 /// candidates the path uses to the first and last shape points' correlations,
 /// as mainline does; `Ok(None)` is a walk that found no path.
@@ -599,6 +668,7 @@ pub(crate) fn form_path<P: GraphTileProvider>(
     options: &mut Options,
     use_timestamps: bool,
     use_shortcuts: bool,
+    lenient: bool,
     now: jiff::Timestamp,
 ) -> Result<Option<Vec<PathEdge>>, ThorError> {
     if options.shape.len() < 2 {
@@ -643,6 +713,7 @@ pub(crate) fn form_path<P: GraphTileProvider>(
         time_info,
         use_timestamps,
         use_shortcuts,
+        lenient,
         end_nodes,
         followed_edges: vec![[(0, 0); LEVELS]; options.shape.len()],
     };
@@ -683,7 +754,7 @@ pub(crate) fn form_path<P: GraphTileProvider>(
             }
             if approximately_equal(walk.points[index], de_end_ll)
                 && de_remaining_length < length_comparison(length, true)
-                && check_shape(&begin_tile, begin_id, &de, &walk.points, 0, index)?
+                && check_shape(&begin_tile, begin_id, &de, &walk.points, 0, index, lenient)?
             {
                 // The first edge: from the origin to its end, at the start time.
                 let offset_time_info = time_info;
@@ -871,6 +942,25 @@ mod tests {
         assert_eq!(length_comparison(1000.0, true), 1025.0);
         assert_eq!(length_comparison(1000.0, false), 1100.0);
         assert_eq!(length_comparison(2000.0, false), 2100.0);
+    }
+
+    /// Mainline's comparison, and the points a lenient check leaves out first.
+    #[test]
+    fn compares_shape_points_with_an_edge() {
+        let v = |lng, lat| PointLL::new(lng, lat);
+        let edge = [v(1.0, 42.0), v(1.001, 42.0), v(1.002, 42.001)];
+        // From a node, exactly the edge's interior points.
+        assert!(matches_vertices(&edge, &[edge[1]], 1));
+        assert!(!matches_vertices(&edge, &[], 1));
+        assert!(!matches_vertices(&edge, &[edge[1], edge[1]], 1));
+        // From the origin partway along, its last ones.
+        assert!(matches_vertices(&edge, &[], 0));
+        assert!(matches_vertices(&edge, &[edge[1]], 0));
+        // On the edge (within `LL_EPSILON`), and off it.
+        assert!(on_segment(v(1.0005, 42.0), edge[0], edge[1]));
+        assert!(on_segment(v(1.0005, 42.000_01), edge[0], edge[1]));
+        assert!(!on_segment(v(1.0005, 42.0001), edge[0], edge[1]));
+        assert!(!on_segment(v(1.0015, 42.0), edge[0], edge[1]));
     }
 
     #[test]

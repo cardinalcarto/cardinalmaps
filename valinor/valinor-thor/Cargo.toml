@@ -26,6 +26,9 @@ valinor-tyr = { workspace = true }
 
 [dev-dependencies]
 base64 = { workspace = true }
+http = { workspace = true }
+# The edge walk's ground truth tests send requests through the front and Loki.
+valinor-loki = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

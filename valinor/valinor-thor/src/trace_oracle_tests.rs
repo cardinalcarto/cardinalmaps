@@ -31,10 +31,11 @@ use valhalla_graphtile::tile_provider::{
 };
 use valhalla_proto::options::{Action, Format};
 use valhalla_proto::prost::Message;
-use valhalla_proto::{Api, Options};
+use valhalla_proto::{Api, Options, ShapeMatch};
 use valhalla_response::ValhallaError;
 use valinor_meili::Workspace as MeiliWorkspace;
 
+use crate::trace::LENIENT_EDGE_WALK;
 use crate::trip_oracle_tests::{compare_trips, first_difference, floats_match};
 use crate::{Thor, ThorConfig};
 
@@ -256,6 +257,9 @@ pub(crate) struct Report {
     pub(crate) meili_divergence: Vec<String>,
     /// Cases whose matches tie in Meili (see [`MEILI_TIES`]).
     pub(crate) meili_ties: Vec<String>,
+    /// Cases mainline's edge walk fails on (443, or `walk_or_snap` map matching) and Valinor's
+    /// lenient walk walks, with what mainline did.
+    pub(crate) walked: Vec<String>,
     pub(crate) failures: Vec<String>,
 }
 
@@ -274,6 +278,13 @@ impl Report {
         );
         for t in &self.meili_ties {
             println!("  meili tie: {t}");
+        }
+        println!(
+            "  {} shapes mainline's edge walk fails on are walked:",
+            self.walked.len()
+        );
+        for w in &self.walked {
+            println!("    {w}");
         }
         for d in &self.meili_divergence {
             println!("  meili divergence: {d}");
@@ -310,11 +321,99 @@ fn check<P: GraphTileProvider>(
     case: &Case,
     report: &mut Report,
 ) {
-    let failures = report.failures.len();
+    let (failures, divergences) = (report.failures.len(), report.meili_divergence.len());
     check_case(thor, workspace, case, report);
-    if report.failures.len() > failures && MEILI_TIES.contains(&case.name.as_str()) {
+    let failed = report.failures.len() > failures;
+    if !failed && report.meili_divergence.len() == divergences {
+        return;
+    }
+    if failed && MEILI_TIES.contains(&case.name.as_str()) {
         let tie = report.failures.pop().unwrap_or_default();
         report.meili_ties.push(tie);
+        return;
+    }
+    // A shape mainline's edge walk fails on, which Valinor's lenient walk walks
+    // (see "Known divergences" in `docs/routing.md`): with mainline's walk alone,
+    // the case must be mainline's.
+    let walks = case.input.options.as_ref().is_some_and(|o| {
+        o.shape_match == ShapeMatch::EdgeWalk as i32
+            || o.shape_match == ShapeMatch::WalkOrSnap as i32
+    });
+    if !walks {
+        return;
+    }
+    LENIENT_EDGE_WALK.with(|t| t.set(false));
+    let mut mainline = Report::default();
+    check_case(thor, workspace, case, &mut mainline);
+    LENIENT_EDGE_WALK.with(|t| t.set(true));
+    if !mainline.failures.is_empty() || !mainline.meili_divergence.is_empty() {
+        return;
+    }
+    if failed {
+        report.failures.pop();
+    } else {
+        report.meili_divergence.pop();
+    }
+    let ours = output_edges(run(thor, workspace, &case.input));
+    // Where mainline fails, map matching the shape is the comparison.
+    let mut snapped = || {
+        let mut input = case.input.clone();
+        if let Some(o) = input.options.as_mut() {
+            o.shape_match = ShapeMatch::MapSnap as i32;
+        }
+        let edges = output_edges(run(thor, workspace, &input));
+        format!("; map matching gives {}", same_edges(&ours, &edges))
+    };
+    let what = match &case.reference {
+        Reference::Response(_, Body::Json(body)) if body.get("error_code").is_some() => {
+            format!("fails with {}{}", body["error_code"], snapped())
+        }
+        Reference::Response(_, Body::Json(body)) => {
+            format!("map matches, {}", same_edges(&ours, &json_edges(body)))
+        }
+        Reference::Response(status, Body::Pbf(theirs)) if *status != 200 => {
+            let code = theirs
+                .info
+                .as_ref()
+                .and_then(|i| i.errors.first())
+                .map_or(0, |e| e.code);
+            format!("fails with {code}{}", snapped())
+        }
+        Reference::Response(_, Body::Pbf(theirs)) | Reference::Trip(theirs) => {
+            format!("map matches, {}", same_edges(&ours, &trip_edges(theirs)))
+        }
+    };
+    report
+        .walked
+        .push(format!("{}: mainline {what}", case.name));
+}
+
+/// The edges of what Thor gave: a trip, or a response (JSON or PBF).
+fn output_edges((api, result): (Api, Result<Option<Vec<u8>>, ValhallaError>)) -> Vec<(u64, f64)> {
+    match &result {
+        Ok(Some(body)) => serde_json::from_slice::<Value>(body).map_or_else(
+            |_| {
+                Api::decode(body.as_slice())
+                    .map(|a| trip_edges(&a))
+                    .unwrap_or_default()
+            },
+            |v| json_edges(&v),
+        ),
+        _ => trip_edges(&api),
+    }
+}
+
+/// Whether two paths' edges are the same, for the report.
+fn same_edges(ours: &[(u64, f64)], theirs: &[(u64, f64)]) -> String {
+    let ids = |p: &[(u64, f64)]| p.iter().map(|e| e.0).collect::<Vec<_>>();
+    if ids(ours) == ids(theirs) {
+        "with the same edges".to_owned()
+    } else {
+        format!(
+            "with other edges ({} edges, ours {})",
+            theirs.len(),
+            ours.len()
+        )
     }
 }
 
@@ -517,6 +616,14 @@ fn traces_andorra() {
     );
     assert_eq!(report.cases, cases.len());
     assert!(report.trace_route > 15 && report.trace_attributes > 15 && report.errors > 5);
+    // The route shape mainline's edge walk fails on here walks to map matching's edges.
+    assert_eq!(report.walked.len(), 1);
+    assert!(
+        report
+            .walked
+            .iter()
+            .all(|w| w.ends_with("with the same edges"))
+    );
 }
 
 /// The whole captures of a region: `VALINOR_THOR_TRACES=<captures dir>` (such as
@@ -574,5 +681,11 @@ fn traces_external() {
         report.failures.is_empty(),
         "{} failures",
         report.failures.len()
+    );
+    assert!(
+        report
+            .walked
+            .iter()
+            .all(|w| w.ends_with("with the same edges"))
     );
 }

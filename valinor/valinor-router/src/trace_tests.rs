@@ -71,11 +71,16 @@ fn edges(body: &Value) -> Vec<(u64, f64)> {
 /// Cases with a costing Sif doesn't have yet, which Loki answers with error 107.
 const MISSING_COSTINGS: [&str; 1] = ["andorra-error_140_multimodal"];
 
+/// Route shapes mainline's edge walk fails on (443), which Valinor's walks
+/// (see "Known divergences" in `docs/routing.md`).
+const WALKED: [&str; 1] = ["andorra-0005-edge_walk_exact"];
+
 /// What a run found.
 #[derive(Debug, Default)]
 struct Tally {
     matched: usize,
     missing_costings: usize,
+    walked: usize,
     meili: Vec<String>,
     miles: Vec<String>,
     differences: Vec<String>,
@@ -84,6 +89,19 @@ struct Tally {
 /// Sends a case and compares the response with mainline's.
 fn check(router: &Router, label: &str, dir: &Path, tally: &mut Tally) {
     let response = send(router, dir);
+    if WALKED.contains(&label) {
+        assert_eq!(response.status, http::StatusCode::OK, "{label}");
+        let api = Api::decode(response.body.as_slice()).unwrap();
+        assert!(
+            api.trip.is_some_and(|t| t
+                .routes
+                .iter()
+                .all(|r| r.legs.iter().all(|l| !l.node.is_empty()))),
+            "{label}"
+        );
+        tally.walked += 1;
+        return;
+    }
     if MISSING_COSTINGS.contains(&label) {
         let body: Value = serde_json::from_slice(&response.body).unwrap();
         assert_eq!(body["error_code"], 107, "{label}");
@@ -172,9 +190,14 @@ fn matches_mainline_on_trace_captures() {
     eprintln!("{tally:?}");
     assert!(tally.differences.is_empty(), "{:?}", tally.differences);
     assert_eq!(
-        tally.matched + tally.meili.len() + tally.miles.len() + tally.missing_costings,
+        tally.matched
+            + tally.meili.len()
+            + tally.miles.len()
+            + tally.missing_costings
+            + tally.walked,
         82
     );
+    assert_eq!(tally.walked, WALKED.len());
     assert_eq!(tally.missing_costings, MISSING_COSTINGS.len());
     assert!(tally.matched >= 80, "{tally:?}");
 }

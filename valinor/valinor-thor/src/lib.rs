@@ -62,6 +62,8 @@ mod unidirectional;
 #[cfg(test)]
 mod bench_tests;
 #[cfg(test)]
+mod edge_walk_tests;
+#[cfg(test)]
 mod oracle_tests;
 #[cfg(test)]
 mod trace_oracle_tests;

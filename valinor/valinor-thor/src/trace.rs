@@ -6,7 +6,9 @@
 //! edge walk). Then the request's `shape_match` picks how the shape becomes a path:
 //!
 //! - `edge_walk`: the shape is a route's own shape, walked along the graph
-//!   ([`crate::route_matcher`]); a walk that fails is error 443.
+//!   ([`crate::route_matcher`]): mainline's walk, and where it finds no path, the same walk
+//!   with lenient shape checks (see "Known divergences" in `docs/routing.md`).
+//!   A walk that fails is error 443.
 //! - `map_snap`: Meili matches the shape (best only for `trace_route`, with `alternates` more
 //!   for `trace_attributes`), and its segments become paths ([`crate::map_matcher`]).
 //!   `trace_route` makes a route per discontinuity and a leg per break point;
@@ -428,15 +430,24 @@ impl<P: GraphTileProvider> Thor<P> {
             .as_mut()
             .ok_or(ThorError::Options("the request has no options".to_owned()))?;
         let use_timestamps = options.use_timestamps;
-        let Some(path) = route_matcher::form_path(
-            self.provider(),
-            &prepared.costing,
-            options,
-            use_timestamps,
-            false,
-            now,
-        )?
-        else {
+        let walk = |options: &mut Options, lenient| {
+            route_matcher::form_path(
+                self.provider(),
+                &prepared.costing,
+                options,
+                use_timestamps,
+                false,
+                lenient,
+                now,
+            )
+        };
+        // Mainline's walk, and where it finds no path, the same walk with lenient shape checks
+        // (see "Known divergences" in `docs/routing.md`).
+        let mut path = walk(options, false)?;
+        if path.is_none() && lenient_edge_walk() {
+            path = walk(options, true)?;
+        }
+        let Some(path) = path else {
             return Err(walk_failed());
         };
         // The leg goes from the first shape point to the first break after it (or the last).
@@ -597,6 +608,27 @@ impl<P: GraphTileProvider> Thor<P> {
                 .extend(core::iter::repeat_n(CandidateEdge::default(), others));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    /// Whether this thread's edge walks try again with lenient shape checks (the oracle tests
+    /// turn it off to reproduce mainline's results exactly).
+    pub(crate) static LENIENT_EDGE_WALK: core::cell::Cell<bool> =
+        const { core::cell::Cell::new(true) };
+}
+
+/// Whether an edge walk mainline's walk fails on is walked again with lenient shape checks.
+#[inline]
+fn lenient_edge_walk() -> bool {
+    #[cfg(test)]
+    {
+        LENIENT_EDGE_WALK.with(core::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        true
     }
 }
 
