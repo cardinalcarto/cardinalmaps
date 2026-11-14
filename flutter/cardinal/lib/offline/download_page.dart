@@ -34,7 +34,7 @@ enum DownloadStep {
   /// Page 1: what the area needs, the free space, and its name.
   size,
 
-  /// Page 2: transit (to be built).
+  /// Page 2: the transit feeds to download too.
   transit,
 }
 
@@ -54,6 +54,8 @@ enum DownloadStep {
 /// | failed | Try again | measuring |
 /// | page 1 | Next (there are transit feeds) | page 2 |
 /// | page 1 | Download (there are none) | the area downloads; the Offline tab |
+/// | page 2 | a feed's row | it's chosen, or not; the total changes |
+/// | page 2 | Download | the area downloads with the feeds chosen; the Offline tab |
 /// | page 2 | Back, or back | page 1, as it was |
 class DownloadAreaPage extends StatefulWidget {
   const DownloadAreaPage({super.key});
@@ -82,6 +84,11 @@ class _DownloadAreaPageState extends State<DownloadAreaPage> {
   LassoProblem? _problem;
   GeoPolygon? _area;
   OfflinePlan? _plan;
+
+  /// The plan's feeds, those with most of their stops in the area first, and the IDs
+  /// of those chosen.
+  List<CandidateFeed> _feeds = const [];
+  Set<String> _picked = const {};
   int? _free;
   bool _offline = false;
   TextEditingController? _name;
@@ -178,6 +185,13 @@ class _DownloadAreaPageState extends State<DownloadAreaPage> {
     final bytes = await free;
     if (attempt != _measuring || !mounted) return;
     _plan = plan;
+    _feeds = [...plan.feeds]
+      ..sort(
+        (a, b) => a.cellsInside != b.cellsInside
+            ? b.cellsInside.compareTo(a.cellsInside)
+            : a.index.compareTo(b.index),
+      );
+    _picked = const {};
     _free = bytes;
     _name ??= TextEditingController(
       text: defaultAreaName(context, DateTime.now()),
@@ -228,25 +242,35 @@ class _DownloadAreaPageState extends State<DownloadAreaPage> {
   /// The map and routing bytes the plan downloads: its total, before transit.
   int get _bytes => _plan!.totals(const {}).downloadBytes;
 
-  /// Whether [_bytes] fits in the free space, with [spareBytes] to spare; true if the
+  /// What the plan downloads with the feeds chosen.
+  int get _total => _plan!.totals(_picked).downloadBytes;
+
+  /// Whether [bytes] fit in the free space, with [spareBytes] to spare; true if the
   /// free space isn't known.
-  bool get _fits {
+  bool _fits(int bytes) {
     final free = _free;
     if (free == null) return true;
-    return free >= _bytes + math.max(_bytes ~/ 10, spareBytes);
+    return free >= bytes + math.max(bytes ~/ 10, spareBytes);
   }
+
+  void _toggle(String feed) => setState(() {
+    _picked = _picked.contains(feed)
+        ? ({..._picked}..remove(feed))
+        : {..._picked, feed};
+  });
 
   String get _chosenName {
     final name = _name!.text.trim();
     return name.isEmpty ? defaultAreaName(context, DateTime.now()) : name;
   }
 
-  Future<void> _download() async {
+  /// Downloads the area with [feeds] (by ID).
+  Future<void> _download({Set<String> feeds = const {}}) async {
     final downloads = await OfflineScope.of(context).downloads;
     if (downloads == null || !mounted) return;
     setState(() => _starting = true);
     try {
-      await downloads.start(_plan!, feeds: const {}, name: _chosenName);
+      await downloads.start(_plan!, feeds: feeds, name: _chosenName);
     } on StalePlan catch (e) {
       // The releases moved on since it was measured: measure it again.
       debugPrint('offline: plan went stale: $e');
@@ -294,7 +318,7 @@ class _DownloadAreaPageState extends State<DownloadAreaPage> {
     DownloadStep.size => SizeStep(
       bytes: _bytes,
       free: _free,
-      fits: _fits,
+      fits: _fits(_bytes),
       hasTransit: _plan!.feeds.isNotEmpty,
       name: _name!,
       busy: _starting,
@@ -306,7 +330,15 @@ class _DownloadAreaPageState extends State<DownloadAreaPage> {
       onDownload: _download,
     ),
     DownloadStep.transit => TransitStep(
+      feeds: _feeds,
+      picked: _picked,
+      total: _total,
+      free: _free,
+      fits: _fits(_total),
+      busy: _starting,
+      onToggle: _toggle,
       onBack: () => _go(DownloadStep.size, forward: false),
+      onDownload: () => _download(feeds: _picked),
     ),
   };
 
