@@ -12,7 +12,11 @@
 use super::directions::{
     DirectionsAdapter, DirectionsError, DirectionsPoint, DirectionsRequest, NavigableRoute,
 };
-use ferrostar::deviation_detection::{DeviationKind, RouteDeviation, RouteDeviationTracking};
+use super::matching::MatchedPosition;
+use ferrostar::algorithms::deviation_from_line;
+use ferrostar::deviation_detection::{
+    DeviationKind, RouteDeviation, RouteDeviationDetector, RouteDeviationTracking,
+};
 use ferrostar::models::{
     CourseOverGround, DrivingSide, LaneInfo, ManeuverModifier as FerrostarModifier,
     ManeuverType as FerrostarManeuverType, Route, RouteStep, Speed, SpokenInstruction,
@@ -29,7 +33,8 @@ use ferrostar::simulation::{
     location_simulation_from_coordinates,
 };
 use flutter_rust_bridge::frb;
-use std::sync::Arc;
+use geo::{Coord, LineString, Point};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 
 /// A fix from the device's location provider, or a simulated one.
@@ -139,7 +144,8 @@ const DRIVING_ADVANCE_ACCURACY: u16 = 32;
 /// than wait for the car to drive over the point.
 const DRIVING_ARRIVAL: u16 = 20;
 
-/// How far from the route a car may be before it's off it, in meters.
+/// How far from the route a car may be before it's off it, in meters, where its fix
+/// couldn't be matched to a road (see [`DRIVING_MATCHED_DEVIATION`] for where it could).
 ///
 /// Wide enough for a divided highway's far side and for fixes thrown 20 to 30 m in a city's
 /// canyons, which would otherwise ask for a new route on every block; narrow enough that a
@@ -170,8 +176,9 @@ const CYCLING_ADVANCE_ACCURACY: u16 = 32;
 /// door or the rack, closer than a car can park.
 const CYCLING_ARRIVAL: u16 = 15;
 
-/// How far from the route a bicycle may be before it's off it, in meters: a path beside a
-/// road or across a park is often 20 m or more from the street Valhalla routed along.
+/// How far from the route a bicycle may be before it's off it, in meters, where its fix
+/// couldn't be matched to a road: a path beside a road or across a park is often 20 m or
+/// more from the street Valhalla routed along.
 const CYCLING_DEVIATION: f64 = 40.0;
 
 /// The worst accuracy a fix may have to count a bicycle as off the route, in meters: half
@@ -198,13 +205,55 @@ const WALKING_ADVANCE_ACCURACY: u16 = 25;
 /// the street from it.
 const WALKING_ARRIVAL: u16 = 10;
 
-/// How far from the route a walker may be before they're off it, in meters: a wide street's
-/// far sidewalk, or a shortcut across a plaza, is still on the way.
+/// How far from the route a walker may be before they're off it, in meters, where their
+/// fix couldn't be matched to a way: a wide street's far sidewalk, or a shortcut across a
+/// plaza, is still on the way.
 const WALKING_DEVIATION: f64 = 30.0;
 
 /// The worst accuracy a fix may have to count a walker as off the route, in meters: half the
 /// deviation, as for a car.
 const WALKING_DEVIATION_ACCURACY: u16 = 15;
+
+/// How far from the route a car's matched position may be before it's off it, in meters.
+///
+/// A matched position is on a road's centerline, and the route's line is drawn along the
+/// same centerlines, so on the route the two are a meter or so apart, whatever the fix's
+/// noise. Off it, the matched road is another road: a parallel street 15 m away, or the
+/// frontage road beside a highway, which the unmatched 50 m can't tell from the route.
+/// 10 m leaves room for where the two lines are drawn differently, as at the corners of
+/// a turn, and is less than the narrowest gap between two parallel roads that matters.
+const DRIVING_MATCHED_DEVIATION: f64 = 10.0;
+
+/// How far from the route a bicycle's matched position may be before it's off it, in
+/// meters: as for a car, since a cycle track or path is its own way in the tiles, and the
+/// route follows it when it's the way to go.
+const CYCLING_MATCHED_DEVIATION: f64 = 10.0;
+
+/// How far from the route a walker's matched position may be before they're off it, in
+/// meters: wider than a car's, since the tiles often draw a sidewalk as its own way beside
+/// the street the route takes, and a walker crosses between them freely.
+const WALKING_MATCHED_DEVIATION: f64 = 20.0;
+
+/// The least distance a match may be from its fix before it's implausible, in meters, for
+/// a fix that says it's accurate. See [`match_limit`].
+const MATCH_LIMIT_FLOOR: f64 = 30.0;
+
+/// How many times its own accuracy a match may be from its fix before it's implausible.
+/// See [`match_limit`].
+const MATCH_LIMIT_ACCURACIES: f64 = 2.0;
+
+/// The fraction of [`match_limit`] a match must be within to be trusted again after one
+/// wasn't, so that a match hovering at the limit doesn't flip the position between the road
+/// and the fix on every fix.
+const MATCH_RETURN: f64 = 0.7;
+
+/// The accuracy a new route's start is asked for with when it's a matched position, in
+/// meters.
+///
+/// Ferrostar sends `max(5, accuracy)` as the start's `street_side_tolerance`, and a matched
+/// position is on the road's centerline, not wherever the fix's noise put it: 5 m, Ferrostar's
+/// least, says so, rather than the raw fix's 20 or 30 m in a city's canyons.
+const REROUTE_MATCHED_ACCURACY: f64 = 5.0;
 
 /// How near a step's line a stop along the route must be to count as passed when the step
 /// is done, in meters.
@@ -214,13 +263,217 @@ const WALKING_DEVIATION_ACCURACY: u16 = 15;
 /// the stop doesn't count it early.
 const WAYPOINT_RANGE: f64 = 15.0;
 
-impl NavigationMode {
-    /// Ferrostar's controller configuration for traveling this way.
+/// How far a match may be from its fix, in meters, before it's implausible and the fix is
+/// used as it came: 30 m, or twice the fix's own accuracy if that's more.
+///
+/// A good fix is within a few meters of where you are, and you're on a road, so a match
+/// farther off than that has put you on the wrong road, or on a road while you're in a
+/// parking lot or a plaza. A poor fix may be honestly that far off, so the limit grows with
+/// it, rather than throwing away a match exactly when it's most useful.
+pub(crate) fn match_limit(horizontal_accuracy: f64) -> f64 {
+    MATCH_LIMIT_FLOOR.max(MATCH_LIMIT_ACCURACIES * horizontal_accuracy)
+}
+
+/// The distance between two points along the ground, in meters.
+fn meters_between(a_lat: f64, a_lng: f64, b_lat: f64, b_lng: f64) -> f64 {
+    const EARTH_RADIUS: f64 = 6_371_008.8;
+    let (a_lat, b_lat) = (a_lat.to_radians(), b_lat.to_radians());
+    let d_lat = b_lat - a_lat;
+    let d_lng = (b_lng - a_lng).to_radians();
+    let h = (d_lat / 2.0).sin().powi(2) + a_lat.cos() * b_lat.cos() * (d_lng / 2.0).sin().powi(2);
+    2.0 * EARTH_RADIUS * h.sqrt().asin()
+}
+
+/// Whether to use each fix's match or the fix itself, with hysteresis.
+///
+/// Starts trusting matches, so the first plausible one is used.
+#[frb(ignore)]
+#[derive(Clone, Copy, Debug, Default)]
+struct MatchSelection {
+    /// Whether the last fix was used as it came, so a match must be within
+    /// [`MATCH_RETURN`] of the limit to be used again.
+    on_raw: bool,
+}
+
+impl MatchSelection {
+    /// Where navigation puts you for `raw`, given its `matched` position if it had one, and
+    /// whether that's the match.
     ///
-    /// Deviation is checked against the route's line. With offline tiles it can instead be
-    /// checked against the roads, through `RouteDeviationTracking::Custom`.
-    fn config(self) -> NavigationControllerConfig {
-        let (step_advance, arrival, deviation, course_filtering) = match self {
+    /// The match keeps the fix's accuracy, speed and time, so Ferrostar's accuracy gates
+    /// still judge it by how good the fix was; its course is the road's heading there, or
+    /// the fix's own course where the match has no heading.
+    fn effective(
+        &mut self,
+        raw: NavLocation,
+        matched: Option<MatchedPosition>,
+    ) -> (NavLocation, bool) {
+        let limit = match_limit(raw.horizontal_accuracy);
+        let allowed = if self.on_raw {
+            MATCH_RETURN * limit
+        } else {
+            limit
+        };
+        let plausible =
+            matched.filter(|m| meters_between(raw.lat, raw.lng, m.lat, m.lng) <= allowed);
+        self.on_raw = plausible.is_none();
+        match plausible {
+            Some(m) => (
+                NavLocation {
+                    lat: m.lat,
+                    lng: m.lng,
+                    course: m.heading.or(raw.course),
+                    // The road's heading is as good as the tiles, not the fix's estimate.
+                    course_accuracy: if m.heading.is_some() {
+                        None
+                    } else {
+                        raw.course_accuracy
+                    },
+                    ..raw
+                },
+                true,
+            ),
+            None => (raw, false),
+        }
+    }
+}
+
+/// The locations navigation fed Ferrostar lately, and whether each was a match, for
+/// [`MatchAwareDeviation`] to look up.
+///
+/// Ferrostar asks its detector about a trip state, which holds a location but not how it
+/// was made. It asks about the state before the fix it's given (one fix late), so the last
+/// two locations fed are kept, and each is found by its position and time; that way the
+/// detector is right whichever of them Ferrostar asks about.
+#[frb(ignore)]
+#[derive(Debug, Default)]
+struct FedLocations {
+    recent: Mutex<Vec<(NavLocation, bool)>>,
+}
+
+impl FedLocations {
+    fn push(&self, location: NavLocation, matched: bool) {
+        let mut recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
+        if recent.len() >= 2 {
+            recent.remove(0);
+        }
+        recent.push((location, matched));
+    }
+
+    /// Whether `location` was fed as a match; false for one not fed lately, so it's held to
+    /// the wider unmatched threshold.
+    fn was_matched(&self, location: &NavLocation) -> bool {
+        let recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
+        recent.iter().rev().any(|(fed, matched)| {
+            *matched
+                && fed.lat == location.lat
+                && fed.lng == location.lng
+                && fed.timestamp_ms == location.timestamp_ms
+        })
+    }
+}
+
+/// Ferrostar's static distance from the route's line, with a threshold that depends on
+/// whether the location checked was matched to a road.
+///
+/// A matched position is on a centerline, as the route's line is, so a small distance
+/// already means another road; a raw fix carries its noise, so it needs the wide threshold.
+/// Otherwise this is Ferrostar's `StaticThreshold` check: fixes worse than the accuracy
+/// gate say nothing, and a location near a later step is off the step but on the route.
+struct MatchAwareDeviation {
+    /// The threshold for a matched position, in meters.
+    matched: f64,
+    /// The threshold for a fix used as it came, in meters.
+    raw: f64,
+    /// The worst accuracy a fix may have to count as off the route, in meters.
+    minimum_horizontal_accuracy: f64,
+    fed: Arc<FedLocations>,
+}
+
+impl RouteDeviationDetector for MatchAwareDeviation {
+    fn check_route_deviation(&self, _route: Route, trip_state: TripState) -> RouteDeviation {
+        let TripState::Navigating {
+            user_location,
+            remaining_steps,
+            ..
+        } = trip_state
+        else {
+            return RouteDeviation::NoDeviation;
+        };
+        if user_location.horizontal_accuracy > self.minimum_horizontal_accuracy {
+            return RouteDeviation::NoDeviation;
+        }
+        let max = if self.fed.was_matched(&user_location.into()) {
+            self.matched
+        } else {
+            self.raw
+        };
+        deviation_from_steps(Point::from(user_location), &remaining_steps, max)
+    }
+}
+
+/// A step's line as geo's, x the longitude, as Ferrostar's own (crate-private) conversion.
+fn step_line(step: &RouteStep) -> LineString {
+    step.geometry
+        .iter()
+        .map(|c| Coord { x: c.lng, y: c.lat })
+        .collect()
+}
+
+/// How far `at` is from the steps left, against `max`, as Ferrostar's `StaticThreshold`
+/// decides it.
+fn deviation_from_steps(at: Point, remaining_steps: &[RouteStep], max: f64) -> RouteDeviation {
+    let Some(current) = remaining_steps.first() else {
+        return RouteDeviation::NoDeviation;
+    };
+    let from_step = deviation_from_line(&at, &step_line(current)).unwrap_or(0.0);
+    if from_step <= max {
+        return RouteDeviation::NoDeviation;
+    }
+    let on_later_step = remaining_steps[1..]
+        .iter()
+        .any(|step| deviation_from_line(&at, &step_line(step)).unwrap_or(f64::MAX) <= max);
+    RouteDeviation::Deviation {
+        kind: if on_later_step {
+            DeviationKind::OffStepOnRoute {
+                deviation_from_step_line: from_step,
+            }
+        } else {
+            DeviationKind::CompletelyOffRoute {
+                deviation_from_route_line: from_step,
+            }
+        },
+    }
+}
+
+impl NavigationMode {
+    /// How far from the route this way of traveling may be before it's off it: for a
+    /// matched position, for a fix used as it came, and the worst accuracy a fix may have to
+    /// count either way, in meters.
+    fn deviation(self) -> (f64, f64, u16) {
+        match self {
+            NavigationMode::Driving => (
+                DRIVING_MATCHED_DEVIATION,
+                DRIVING_DEVIATION,
+                DRIVING_DEVIATION_ACCURACY,
+            ),
+            NavigationMode::Cycling => (
+                CYCLING_MATCHED_DEVIATION,
+                CYCLING_DEVIATION,
+                CYCLING_DEVIATION_ACCURACY,
+            ),
+            NavigationMode::Walking => (
+                WALKING_MATCHED_DEVIATION,
+                WALKING_DEVIATION,
+                WALKING_DEVIATION_ACCURACY,
+            ),
+        }
+    }
+
+    /// Ferrostar's controller configuration for traveling this way, checking deviation
+    /// against the route's line with [`MatchAwareDeviation`], which looks up in `fed`
+    /// whether each location was matched.
+    fn config(self, fed: Arc<FedLocations>) -> NavigationControllerConfig {
+        let (step_advance, arrival, course_filtering) = match self {
             NavigationMode::Driving => (
                 SerializableStepAdvanceCondition::DistanceEntryExit {
                     distance_to_end_of_step: DRIVING_ENTRY,
@@ -229,7 +482,6 @@ impl NavigationMode {
                     has_reached_end_of_current_step: false,
                 },
                 (DRIVING_ARRIVAL, DRIVING_ADVANCE_ACCURACY),
-                (DRIVING_DEVIATION, DRIVING_DEVIATION_ACCURACY),
                 // A car goes where the road goes; the snapped course keeps the map steady
                 // through the noise of a fix's own.
                 CourseFiltering::SnapToRoute,
@@ -242,7 +494,6 @@ impl NavigationMode {
                     has_reached_end_of_current_step: false,
                 },
                 (CYCLING_ARRIVAL, CYCLING_ADVANCE_ACCURACY),
-                (CYCLING_DEVIATION, CYCLING_DEVIATION_ACCURACY),
                 CourseFiltering::SnapToRoute,
             ),
             NavigationMode::Walking => (
@@ -253,14 +504,13 @@ impl NavigationMode {
                     has_reached_end_of_current_step: false,
                 },
                 (WALKING_ARRIVAL, WALKING_ADVANCE_ACCURACY),
-                (WALKING_DEVIATION, WALKING_DEVIATION_ACCURACY),
                 // Walkers cut across plazas and stop to look around; the route's direction
                 // would point them the wrong way.
                 CourseFiltering::Raw,
             ),
         };
         let (arrival_distance, arrival_accuracy) = arrival;
-        let (max_acceptable_deviation, deviation_accuracy) = deviation;
+        let (matched, raw, deviation_accuracy) = self.deviation();
         NavigationControllerConfig {
             waypoint_advance: WaypointAdvanceMode::WaypointAlongAdvancingStep(WAYPOINT_RANGE),
             // Ferrostar's constructors for the entry-and-exit conditions are only in its
@@ -270,9 +520,13 @@ impl NavigationMode {
                 distance: arrival_distance,
                 minimum_horizontal_accuracy: arrival_accuracy,
             }),
-            route_deviation_tracking: RouteDeviationTracking::StaticThreshold {
-                minimum_horizontal_accuracy: deviation_accuracy,
-                max_acceptable_deviation,
+            route_deviation_tracking: RouteDeviationTracking::Custom {
+                detector: Arc::new(MatchAwareDeviation {
+                    matched,
+                    raw,
+                    minimum_horizontal_accuracy: f64::from(deviation_accuracy),
+                    fed,
+                }),
             },
             snapped_location_course_filtering: course_filtering,
         }
@@ -598,6 +852,13 @@ pub struct NavUpdate {
     pub status: TripStatus,
     /// The fix as it came; none when idle without one.
     pub location: Option<NavLocation>,
+    /// Where navigation put you for the fix, which is what Ferrostar followed the route
+    /// with: the fix's matched position on the road, with the road's heading as its course,
+    /// or the fix itself where the match was missing or implausible (see [`Self::matched`]).
+    /// None when idle without a fix.
+    pub effective_location: Option<NavLocation>,
+    /// Whether [`Self::effective_location`] is the fix's matched position.
+    pub matched: bool,
     /// The fix moved onto the route's line, with its course along the line for driving and
     /// cycling. Only while navigating.
     pub snapped_location: Option<NavLocation>,
@@ -609,8 +870,8 @@ pub struct NavUpdate {
     /// Once complete, the line's last point.
     pub geometry_index: u32,
     pub deviation: NavDeviation,
-    /// How far from the current step's line (or, off the route, the route's) the fix is,
-    /// in meters; 0 on the route.
+    /// How far from the current step's line (or, off the route, the route's) the effective
+    /// location was, in meters; 0 on the route.
     pub deviation_meters: f64,
     /// The banner to show; none off the route, where its distances would be wrong.
     pub visual_instruction: Option<NavVisualInstruction>,
@@ -631,9 +892,14 @@ struct Trip {
 }
 
 impl Trip {
-    fn new(route: &NavigableRoute, mode: NavigationMode, location: NavLocation) -> Self {
+    fn new(
+        route: &NavigableRoute,
+        mode: NavigationMode,
+        location: NavLocation,
+        fed: Arc<FedLocations>,
+    ) -> Self {
         let route = route.route.clone();
-        let navigator = create_navigator(route.clone(), mode.config(), false);
+        let navigator = create_navigator(route.clone(), mode.config(fed), false);
         let state = navigator.get_initial_state(location.into());
         Self {
             navigator,
@@ -649,6 +915,8 @@ impl Trip {
             TripState::Idle { user_location } => NavUpdate {
                 status: TripStatus::Idle,
                 location: user_location.map(Into::into),
+                effective_location: user_location.map(Into::into),
+                matched: false,
                 snapped_location: None,
                 step_index: 0,
                 geometry_index: 0,
@@ -661,6 +929,8 @@ impl Trip {
             TripState::Complete { user_location, .. } => NavUpdate {
                 status: TripStatus::Complete,
                 location: Some(user_location.into()),
+                effective_location: Some(user_location.into()),
+                matched: false,
                 snapped_location: None,
                 step_index: self.route.steps.len() as u32,
                 geometry_index: last_point,
@@ -703,6 +973,8 @@ impl Trip {
                 NavUpdate {
                     status: TripStatus::Navigating,
                     location: Some(user_location.into()),
+                    effective_location: Some(user_location.into()),
+                    matched: false,
                     snapped_location: Some(snapped_user_location.into()),
                     step_index: step_index as u32,
                     geometry_index: geometry_index as u32,
@@ -733,18 +1005,45 @@ impl Trip {
 pub struct NavigationSession {
     mode: NavigationMode,
     trip: Trip,
+    /// What the trip's deviation detector looks up, shared with every trip of the session.
+    fed: Arc<FedLocations>,
+    selection: MatchSelection,
+    /// The latest fix, as it came.
+    raw: NavLocation,
+    /// Where navigation put you for it, and whether that's its match.
+    effective: NavLocation,
+    matched: bool,
 }
 
 impl NavigationSession {
     /// Starts navigating `route` from `location`, traveling by `mode`.
+    ///
+    /// The start is the fix as it came; matching starts with the next.
     pub fn start(
         route: &NavigableRoute,
         mode: NavigationMode,
         location: NavLocation,
     ) -> NavigationSession {
+        let fed = Arc::new(FedLocations::default());
+        fed.push(location, false);
         Self {
             mode,
-            trip: Trip::new(route, mode, location),
+            trip: Trip::new(route, mode, location, fed.clone()),
+            fed,
+            selection: MatchSelection::default(),
+            raw: location,
+            effective: location,
+            matched: false,
+        }
+    }
+
+    /// The trip's update, with the latest fix as it came and where navigation put you.
+    fn update(&self) -> NavUpdate {
+        NavUpdate {
+            location: Some(self.raw),
+            effective_location: Some(self.effective),
+            matched: self.matched,
+            ..self.trip.update()
         }
     }
 
@@ -753,7 +1052,7 @@ impl NavigationSession {
     /// `#[frb(sync)]`: it only reads the state, which is quick.
     #[frb(sync)]
     pub fn current(&self) -> NavUpdate {
-        self.trip.update()
+        self.update()
     }
 
     /// How the session is traveling.
@@ -763,13 +1062,30 @@ impl NavigationSession {
     }
 
     /// Moves navigation on to `location`: advances the step when its maneuver is done,
-    /// finishes the trip on arrival, and says how far off the route the fix is.
-    pub fn update_location(&mut self, location: NavLocation) -> NavUpdate {
+    /// finishes the trip on arrival, and says how far off the route you are.
+    ///
+    /// `matched` is where the fix was matched to a road, with the fixes before it
+    /// ([`super::router::OfflineRouter::match_position`]), if it was. Navigation follows
+    /// the match unless it's implausible: farther from the fix than [`match_limit`], or,
+    /// once a fix was used as it came, than [`MATCH_RETURN`] of it. Then it follows the fix.
+    /// What it followed is the update's [`NavUpdate::effective_location`]; off-route
+    /// detection holds a match to a much tighter threshold than a fix
+    /// ([`MatchAwareDeviation`]), since a match has none of the fix's noise.
+    pub fn update_location(
+        &mut self,
+        location: NavLocation,
+        matched: Option<MatchedPosition>,
+    ) -> NavUpdate {
+        let (effective, is_matched) = self.selection.effective(location, matched);
+        self.fed.push(effective, is_matched);
+        self.raw = location;
+        self.effective = effective;
+        self.matched = is_matched;
         let trip = &mut self.trip;
         trip.state = trip
             .navigator
-            .update_user_location(location.into(), trip.state.clone());
-        trip.update()
+            .update_user_location(effective.into(), trip.state.clone());
+        self.update()
     }
 
     /// Skips to the next step, or finishes the trip from the last, whatever the fixes say:
@@ -777,19 +1093,33 @@ impl NavigationSession {
     pub fn advance(&mut self) -> NavUpdate {
         let trip = &mut self.trip;
         trip.state = trip.navigator.advance_to_next_step(trip.state.clone());
-        trip.update()
+        self.update()
     }
 
-    /// The request for a new route from `location` through the stops not yet passed, for
-    /// when the session is off the route. The location's course, if it has one, goes in as
-    /// the start's heading, so the new route doesn't begin with a U-turn.
+    /// Where a new route would start from now: the latest fix's matched position, with the
+    /// road's heading as its course and [`REROUTE_MATCHED_ACCURACY`], or the fix as it came
+    /// where it wasn't matched.
+    #[frb(sync)]
+    pub fn reroute_origin(&self) -> NavLocation {
+        if self.matched {
+            NavLocation {
+                horizontal_accuracy: REROUTE_MATCHED_ACCURACY,
+                ..self.effective
+            }
+        } else {
+            self.raw
+        }
+    }
+
+    /// The request for a new route from [`Self::reroute_origin`] through the stops not yet
+    /// passed, for when the session is off the route. The origin's course, if it has one,
+    /// goes in as the start's heading, so the new route doesn't begin with a U-turn.
     ///
     /// Errs once the trip is over, when there's nowhere left to go.
     #[frb(sync)]
     pub fn reroute_request(
         &self,
         adapter: &DirectionsAdapter,
-        location: NavLocation,
     ) -> Result<DirectionsRequest, DirectionsError> {
         let TripState::Navigating {
             remaining_waypoints,
@@ -798,14 +1128,18 @@ impl NavigationSession {
         else {
             return Err(DirectionsError::failed("the trip is over"));
         };
-        adapter.request_through(location.into(), remaining_waypoints)
+        adapter.request_through(self.reroute_origin().into(), remaining_waypoints)
     }
 
-    /// Navigates `route` instead, from `location`, traveling the same way: for a new route
-    /// after leaving the old one.
+    /// Navigates `route` instead, from `location` as it came, traveling the same way: for a
+    /// new route after leaving the old one. Matching carries on with the next fix.
     pub fn replace_route(&mut self, route: &NavigableRoute, location: NavLocation) -> NavUpdate {
-        self.trip = Trip::new(route, self.mode, location);
-        self.trip.update()
+        self.fed.push(location, false);
+        self.raw = location;
+        self.effective = location;
+        self.matched = false;
+        self.trip = Trip::new(route, self.mode, location, self.fed.clone());
+        self.update()
     }
 }
 
@@ -895,6 +1229,7 @@ impl LocationSimulation {
 mod tests {
     use super::*;
     use crate::api::directions::DistanceUnits;
+    use crate::api::matching::MatchKind;
     use std::path::PathBuf;
     use std::time::SystemTime;
 
@@ -956,7 +1291,7 @@ mod tests {
         let mut updates = vec![session.current()];
         while !simulation.is_finished() {
             let next = simulation.advance();
-            updates.push(session.update_location(next));
+            updates.push(session.update_location(next, None));
         }
         updates
     }
@@ -1146,8 +1481,8 @@ mod tests {
         // A kilometer south of the start, where the route doesn't go. Ferrostar checks the
         // fix before the one it's given, so it takes a second to tell.
         let away = fix(start.lat - 0.01, start.lng, None);
-        session.update_location(away);
-        let update = session.update_location(away);
+        session.update_location(away, None);
+        let update = session.update_location(away, None);
         assert_eq!(update.status, TripStatus::Navigating);
         assert_eq!(update.deviation, NavDeviation::OffRoute);
         assert!(
@@ -1161,9 +1496,9 @@ mod tests {
         // A fix that may be that far off by its own account says nothing either way.
         let mut vague = away;
         vague.horizontal_accuracy = 100.0;
-        session.update_location(vague);
+        session.update_location(vague, None);
         assert_eq!(
-            session.update_location(vague).deviation,
+            session.update_location(vague, None).deviation,
             NavDeviation::OnRoute
         );
     }
@@ -1187,7 +1522,8 @@ mod tests {
             fix(start.lat, start.lng, None),
         );
         let here = fix(42.51, 1.52, Some(271.6));
-        let before = locations(session.reroute_request(&adapter, here).unwrap());
+        session.update_location(here, None);
+        let before = locations(session.reroute_request(&adapter).unwrap());
         assert_eq!(before.len(), 3);
         assert_eq!(before[0]["lat"], 42.51);
         assert_eq!(before[0]["heading"], 272);
@@ -1202,29 +1538,26 @@ mod tests {
         let via = waypoints[1].coordinate;
         loop {
             let next = simulation.advance();
-            session.update_location(next);
+            session.update_location(next, None);
             if (next.lat - via.lat).abs() < 1e-6 && (next.lng - via.lng).abs() < 1e-6 {
                 break;
             }
         }
         for _ in 0..20 {
-            session.update_location(simulation.advance());
+            session.update_location(simulation.advance(), None);
         }
-        let after = locations(
-            session
-                .reroute_request(&adapter, fix(42.55, 1.52, None))
-                .unwrap(),
-        );
+        session.update_location(fix(42.55, 1.52, None), None);
+        let after = locations(session.reroute_request(&adapter).unwrap());
         assert_eq!(after.len(), 2);
         assert_eq!(after[0].get("heading"), None);
         assert_eq!(after[1]["lat"], waypoints[2].coordinate.lat);
 
         // Once there, there's nowhere to reroute to.
         while !simulation.is_finished() {
-            session.update_location(simulation.advance());
+            session.update_location(simulation.advance(), None);
         }
         assert_eq!(session.current().status, TripStatus::Complete);
-        assert!(session.reroute_request(&adapter, here).is_err());
+        assert!(session.reroute_request(&adapter).is_err());
     }
 
     #[test]
@@ -1362,5 +1695,317 @@ mod tests {
         assert!((last.lat - end.lat).abs() < 1e-4 && (last.lng - end.lng).abs() < 1e-4);
         assert!(last.course.is_some());
         assert_eq!(simulation.advance(), last);
+    }
+    #[test]
+    fn a_match_may_be_30_m_or_twice_the_fixs_accuracy_from_it() {
+        assert_eq!(match_limit(0.0), 30.0);
+        assert_eq!(match_limit(5.0), 30.0);
+        assert_eq!(match_limit(15.0), 30.0);
+        assert_eq!(match_limit(20.0), 40.0);
+        assert_eq!(match_limit(100.0), 200.0);
+    }
+
+    /// `meters` north of `at`.
+    fn north(at: NavLocation, meters: f64) -> (f64, f64) {
+        (at.lat + meters / 111_195.0, at.lng)
+    }
+
+    fn matched_at((lat, lng): (f64, f64), heading: Option<f64>) -> MatchedPosition {
+        MatchedPosition {
+            lat,
+            lng,
+            kind: MatchKind::Matched,
+            heading,
+        }
+    }
+
+    #[test]
+    fn once_on_the_fix_a_match_must_come_within_70_percent_of_the_limit() {
+        let raw = fix(47.6, -122.3, Some(10.0));
+        let mut selection = MatchSelection::default();
+        let near = |m| Some(matched_at(north(raw, m), Some(90.0)));
+
+        // 25 m is within 30 m: the match, with the road's heading.
+        let (at, matched) = selection.effective(raw, near(25.0));
+        assert!(matched);
+        assert_eq!((at.lat, at.lng), north(raw, 25.0));
+        assert_eq!(at.course, Some(90.0));
+        assert_eq!(at.course_accuracy, None);
+        assert_eq!(at.horizontal_accuracy, raw.horizontal_accuracy);
+        assert_eq!(at.timestamp_ms, raw.timestamp_ms);
+
+        // 35 m isn't: the fix, with its own course.
+        assert_eq!(selection.effective(raw, near(35.0)), (raw, false));
+        // Nor, now, is 25 m, past 21 m (70% of 30 m).
+        assert_eq!(selection.effective(raw, near(25.0)), (raw, false));
+        // No match at all is the fix too.
+        assert_eq!(selection.effective(raw, None), (raw, false));
+        // 20 m is back on the match, and then 25 m is again.
+        assert!(selection.effective(raw, near(20.0)).1);
+        assert!(selection.effective(raw, near(25.0)).1);
+
+        // A match with no heading keeps the fix's course.
+        let (at, _) = selection.effective(raw, Some(matched_at(north(raw, 1.0), None)));
+        assert_eq!(at.course, raw.course);
+        assert_eq!(at.course_accuracy, raw.course_accuracy);
+
+        // A poor fix allows more: 2 × 25 m.
+        let poor = NavLocation {
+            horizontal_accuracy: 25.0,
+            ..raw
+        };
+        assert!(selection.effective(poor, near(45.0)).1);
+        assert!(!selection.effective(poor, near(55.0)).1);
+        assert!(!selection.effective(poor, near(40.0)).1);
+        assert!(selection.effective(poor, near(30.0)).1);
+    }
+
+    /// A fix `meters` to the left of the middle of the longest segment of `route`'s line, as
+    /// accurate as `accuracy` says, and the session on that segment's step.
+    fn beside_longest_segment(
+        route: &NavigableRoute,
+        mode: NavigationMode,
+        meters: f64,
+        accuracy: f64,
+    ) -> (NavigationSession, NavLocation) {
+        let length = |p: &ferrostar::models::GeographicCoordinate,
+                      q: &ferrostar::models::GeographicCoordinate| {
+            meters_between(p.lat, p.lng, q.lat, q.lng)
+        };
+        let (step, a, b) = route
+            .route
+            .steps
+            .iter()
+            .enumerate()
+            .flat_map(|(i, step)| step.geometry.windows(2).map(move |w| (i, w[0], w[1])))
+            .max_by(|(_, a, b), (_, c, d)| length(a, b).total_cmp(&length(c, d)))
+            .unwrap();
+        let (lat, lng) = ((a.lat + b.lat) / 2.0, (a.lng + b.lng) / 2.0);
+        // On a plane tangent there: east and north, in meters.
+        let cos = lat.to_radians().cos();
+        let (dx, dy) = (
+            (b.lng - a.lng) * cos * 111_195.0,
+            (b.lat - a.lat) * 111_195.0,
+        );
+        let along = dx.hypot(dy);
+        // Left of the direction of travel.
+        let (ox, oy) = (-dy / along * meters, dx / along * meters);
+        let mut at = fix(lat + oy / 111_195.0, lng + ox / (cos * 111_195.0), None);
+        at.horizontal_accuracy = accuracy;
+        let mut session = NavigationSession::start(route, mode, fix(lat, lng, None));
+        for _ in 0..step {
+            session.advance();
+        }
+        assert_eq!(session.current().step_index as usize, step);
+        (session, at)
+    }
+
+    /// What the session says of `at`, fed twice (since Ferrostar checks the fix before),
+    /// matched where it is or as it came.
+    fn deviation_at(
+        route: &NavigableRoute,
+        mode: NavigationMode,
+        meters: f64,
+        accuracy: f64,
+        matched: bool,
+    ) -> NavDeviation {
+        let (mut session, at) = beside_longest_segment(route, mode, meters, accuracy);
+        let matched = matched.then(|| matched_at((at.lat, at.lng), None));
+        session.update_location(at, matched);
+        let update = session.update_location(at, matched);
+        assert_eq!(update.matched, matched.is_some());
+        assert_eq!(update.location, Some(at));
+        update.deviation
+    }
+
+    #[test]
+    fn a_match_on_a_parallel_road_is_off_the_route_where_a_fix_as_far_off_is_not() {
+        let route = capture("ferrostar_auto", "auto");
+        let mode = NavigationMode::Driving;
+        // A road 15 m beside the route.
+        assert_eq!(
+            deviation_at(&route, mode, 15.0, 5.0, true),
+            NavDeviation::OffRoute
+        );
+        // A fix 15 m off is the noise of a fix.
+        assert_eq!(
+            deviation_at(&route, mode, 15.0, 5.0, false),
+            NavDeviation::OnRoute
+        );
+    }
+
+    #[test]
+    fn matched_and_raw_thresholds_for_each_way_of_traveling() {
+        for (name, costing, mode, matched, raw) in [
+            (
+                "ferrostar_auto",
+                "auto",
+                NavigationMode::Driving,
+                10.0,
+                50.0,
+            ),
+            (
+                "ferrostar_bicycle",
+                "bicycle",
+                NavigationMode::Cycling,
+                10.0,
+                40.0,
+            ),
+            (
+                "ferrostar_pedestrian_german_miles",
+                "pedestrian",
+                NavigationMode::Walking,
+                20.0,
+                30.0,
+            ),
+        ] {
+            let route = capture(name, costing);
+            let off = |meters, is_matched| {
+                deviation_at(&route, mode, meters, 5.0, is_matched) == NavDeviation::OffRoute
+            };
+            assert!(!off(matched - 3.0, true), "{name}");
+            assert!(off(matched + 3.0, true), "{name}");
+            assert!(!off(raw - 3.0, false), "{name}");
+            assert!(off(raw + 3.0, false), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_fix_too_poor_to_say_is_never_off_the_route_matched_or_not() {
+        for (name, costing, mode, gate) in [
+            ("ferrostar_auto", "auto", NavigationMode::Driving, 25.0),
+            (
+                "ferrostar_bicycle",
+                "bicycle",
+                NavigationMode::Cycling,
+                20.0,
+            ),
+            (
+                "ferrostar_pedestrian_german_miles",
+                "pedestrian",
+                NavigationMode::Walking,
+                15.0,
+            ),
+        ] {
+            let route = capture(name, costing);
+            // Well past either threshold, and within the match limit for the accuracy.
+            for matched in [true, false] {
+                assert_eq!(
+                    deviation_at(&route, mode, 60.0, gate + 10.0, matched),
+                    NavDeviation::OnRoute,
+                    "{name} {matched}"
+                );
+                assert_eq!(
+                    deviation_at(&route, mode, 60.0, gate, matched),
+                    NavDeviation::OffRoute,
+                    "{name} {matched}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_reroute_starts_at_the_match_on_the_roads_heading() {
+        let route = capture("ferrostar_auto", "auto");
+        let adapter = adapter("auto");
+        let start = |request: DirectionsRequest| -> serde_json::Value {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            body["locations"][0].clone()
+        };
+        let (mut session, mut at) =
+            beside_longest_segment(&route, NavigationMode::Driving, 15.0, 5.0);
+        at.horizontal_accuracy = 20.0;
+        at.course = Some(10.0);
+        let road = north(at, 12.0);
+        let update = session.update_location(at, Some(matched_at(road, Some(181.4))));
+        assert!(update.matched);
+        let effective = update.effective_location.unwrap();
+        assert_eq!((effective.lat, effective.lng), road);
+        assert_eq!(effective.course, Some(181.4));
+
+        let origin = session.reroute_origin();
+        assert_eq!((origin.lat, origin.lng), road);
+        assert_eq!(origin.horizontal_accuracy, REROUTE_MATCHED_ACCURACY);
+        let from = start(session.reroute_request(&adapter).unwrap());
+        assert_eq!(
+            (from["lat"].as_f64(), from["lon"].as_f64()),
+            (Some(road.0), Some(road.1))
+        );
+        assert_eq!(from["heading"], 181);
+        assert_eq!(from["street_side_tolerance"], 5);
+
+        // Unmatched, it's the fix as it came, as accurate as it says.
+        session.update_location(at, None);
+        assert_eq!(session.reroute_origin(), at);
+        let from = start(session.reroute_request(&adapter).unwrap());
+        assert_eq!(from["lat"], at.lat);
+        assert_eq!(from["heading"], 10);
+        assert_eq!(from["street_side_tolerance"], 20);
+    }
+    /// A trip along a route the fixture tiles' router made, its fixes a second apart on the
+    /// line, each matched with the 30 before it as the app matches them: they're followed,
+    /// and never off the route.
+    ///
+    /// The fixes' times matter: Meili drops a transition between two fixes that would take
+    /// more than five times as long to drive as the time between them, so fixes stamped
+    /// milliseconds apart are matched each on its own, to whatever road is nearest.
+    #[test]
+    fn a_simulated_trip_on_matched_positions_stays_on_the_route() {
+        let tiles = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../valinor/valhalla-graphtile/fixtures/andorra-tiles.tar");
+        let router =
+            crate::api::router::OfflineRouter::open(vec![tiles.to_string_lossy().into()], None)
+                .ok()
+                .unwrap();
+        let adapter = adapter("auto");
+        let request = adapter
+            .request(
+                DirectionsPoint {
+                    lat: 42.5078,
+                    lng: 1.5211,
+                },
+                DirectionsPoint {
+                    lat: 42.5355,
+                    lng: 1.583,
+                },
+            )
+            .unwrap();
+        let route = adapter
+            .parse(router.route(request.body).body)
+            .unwrap()
+            .swap_remove(0)
+            .navigable;
+        let mut simulation =
+            LocationSimulation::new(&route, Some(50.0 / 3.6), SimulationBias::None, 0.0).unwrap();
+        let mut session =
+            NavigationSession::start(&route, NavigationMode::Driving, simulation.current());
+        let mut window = vec![simulation.current()];
+        let (mut matched, mut fixes) = (0usize, 0i64);
+        let start = window[0].timestamp_ms;
+        while !simulation.is_finished() {
+            let mut next = simulation.advance();
+            fixes += 1;
+            next.timestamp_ms = start + 1000 * fixes;
+            window.push(next);
+            if window.len() > 30 {
+                window.remove(0);
+            }
+            let position = router.match_position(NavigationMode::Driving, window.clone());
+            let update = session.update_location(next, position);
+            matched += usize::from(update.matched);
+            assert_ne!(
+                update.deviation,
+                NavDeviation::OffRoute,
+                "fix {fixes} at {:.6},{:.6} matched to {position:?}",
+                next.lat,
+                next.lng
+            );
+            assert_ne!(update.status, TripStatus::Idle);
+        }
+        assert_eq!(session.current().status, TripStatus::Complete);
+        assert!(
+            matched as i64 * 100 >= fixes * 95,
+            "{matched} of {fixes} matched"
+        );
     }
 }

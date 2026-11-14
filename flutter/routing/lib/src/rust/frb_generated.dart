@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/directions.dart';
+import 'api/matching.dart';
 import 'api/navigation.dart';
 import 'api/offline.dart';
 import 'api/router.dart';
@@ -72,7 +73,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -579997330;
+  int get rustContentHash => 988312610;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -180,10 +181,13 @@ abstract class RustLibApi extends BaseApi {
     required NavLocation location,
   });
 
+  NavLocation crateApiNavigationNavigationSessionRerouteOrigin({
+    required NavigationSession that,
+  });
+
   DirectionsRequest crateApiNavigationNavigationSessionRerouteRequest({
     required NavigationSession that,
     required DirectionsAdapter adapter,
-    required NavLocation location,
   });
 
   Future<NavigationSession> crateApiNavigationNavigationSessionStart({
@@ -195,6 +199,13 @@ abstract class RustLibApi extends BaseApi {
   Future<NavUpdate> crateApiNavigationNavigationSessionUpdateLocation({
     required NavigationSession that,
     required NavLocation location,
+    MatchedPosition? matched,
+  });
+
+  Future<MatchedPosition?> crateApiRouterOfflineRouterMatchPosition({
+    required OfflineRouter that,
+    required NavigationMode mode,
+    required List<NavLocation> fixes,
   });
 
   Future<OfflineRouter> crateApiRouterOfflineRouterOpen({
@@ -1034,10 +1045,41 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  NavLocation crateApiNavigationNavigationSessionRerouteOrigin({
+    required NavigationSession that,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigationSession(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_nav_location,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiNavigationNavigationSessionRerouteOriginConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiNavigationNavigationSessionRerouteOriginConstMeta =>
+      const TaskConstMeta(
+        debugName: "NavigationSession_reroute_origin",
+        argNames: ["that"],
+      );
+
+  @override
   DirectionsRequest crateApiNavigationNavigationSessionRerouteRequest({
     required NavigationSession that,
     required DirectionsAdapter adapter,
-    required NavLocation location,
   }) {
     return handler.executeSync(
       SyncTask(
@@ -1051,15 +1093,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             adapter,
             serializer,
           );
-          sse_encode_box_autoadd_nav_location(location, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_directions_request,
           decodeErrorData: sse_decode_directions_error,
         ),
         constMeta: kCrateApiNavigationNavigationSessionRerouteRequestConstMeta,
-        argValues: [that, adapter, location],
+        argValues: [that, adapter],
         apiImpl: this,
       ),
     );
@@ -1069,7 +1110,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   get kCrateApiNavigationNavigationSessionRerouteRequestConstMeta =>
       const TaskConstMeta(
         debugName: "NavigationSession_reroute_request",
-        argNames: ["that", "adapter", "location"],
+        argNames: ["that", "adapter"],
       );
 
   @override
@@ -1091,7 +1132,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 23,
             port: port_,
           );
         },
@@ -1117,6 +1158,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Future<NavUpdate> crateApiNavigationNavigationSessionUpdateLocation({
     required NavigationSession that,
     required NavLocation location,
+    MatchedPosition? matched,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -1127,10 +1169,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_box_autoadd_nav_location(location, serializer);
+          sse_encode_opt_box_autoadd_matched_position(matched, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 23,
+            funcId: 24,
             port: port_,
           );
         },
@@ -1139,7 +1182,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: null,
         ),
         constMeta: kCrateApiNavigationNavigationSessionUpdateLocationConstMeta,
-        argValues: [that, location],
+        argValues: [that, location, matched],
         apiImpl: this,
       ),
     );
@@ -1149,7 +1192,47 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   get kCrateApiNavigationNavigationSessionUpdateLocationConstMeta =>
       const TaskConstMeta(
         debugName: "NavigationSession_update_location",
-        argNames: ["that", "location"],
+        argNames: ["that", "location", "matched"],
+      );
+
+  @override
+  Future<MatchedPosition?> crateApiRouterOfflineRouterMatchPosition({
+    required OfflineRouter that,
+    required NavigationMode mode,
+    required List<NavLocation> fixes,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineRouter(
+            that,
+            serializer,
+          );
+          sse_encode_navigation_mode(mode, serializer);
+          sse_encode_list_nav_location(fixes, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 25,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_matched_position,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiRouterOfflineRouterMatchPositionConstMeta,
+        argValues: [that, mode, fixes],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRouterOfflineRouterMatchPositionConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineRouter_match_position",
+        argNames: ["that", "mode", "fixes"],
       );
 
   @override
@@ -1166,7 +1249,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 26,
             port: port_,
           );
         },
@@ -1203,7 +1286,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 27,
             port: port_,
           );
         },
@@ -1241,7 +1324,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 28,
             port: port_,
           );
         },
@@ -1279,7 +1362,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 29,
             port: port_,
           );
         },
@@ -1317,7 +1400,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 28,
+            funcId: 30,
             port: port_,
           );
         },
@@ -1356,7 +1439,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 29,
+            funcId: 31,
             port: port_,
           );
         },
@@ -1402,7 +1485,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 30,
+            funcId: 32,
             port: port_,
           );
         },
@@ -1438,7 +1521,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 31,
+            funcId: 33,
             port: port_,
           );
         },
@@ -1478,7 +1561,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 32,
+            funcId: 34,
             port: port_,
           );
         },
@@ -1509,7 +1592,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1537,7 +1620,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 34,
+            funcId: 36,
             port: port_,
           );
         },
@@ -1562,7 +1645,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 37)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -1585,7 +1668,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -1607,7 +1690,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 37)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 39)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -1629,7 +1712,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 40)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -1665,7 +1748,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 39,
+            funcId: 41,
             port: port_,
           );
         },
@@ -1696,7 +1779,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 40,
+            funcId: 42,
             port: port_,
           );
         },
@@ -1724,7 +1807,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 41,
+            funcId: 43,
             port: port_,
           );
         },
@@ -1760,7 +1843,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 42,
+            funcId: 44,
             port: port_,
           );
         },
@@ -2181,6 +2264,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MatchedPosition dco_decode_box_autoadd_matched_position(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_matched_position(raw);
+  }
+
+  @protected
   NavDrivingSide dco_decode_box_autoadd_nav_driving_side(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_nav_driving_side(raw);
@@ -2420,6 +2509,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<NavLocation> dco_decode_list_nav_location(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_nav_location).toList();
+  }
+
+  @protected
   List<NavSpokenInstruction> dco_decode_list_nav_spoken_instruction(
     dynamic raw,
   ) {
@@ -2491,6 +2586,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ManeuverType dco_decode_maneuver_type(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return ManeuverType.values[raw as int];
+  }
+
+  @protected
+  MatchKind dco_decode_match_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return MatchKind.values[raw as int];
+  }
+
+  @protected
+  MatchedPosition dco_decode_matched_position(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return MatchedPosition(
+      lat: dco_decode_f_64(arr[0]),
+      lng: dco_decode_f_64(arr[1]),
+      kind: dco_decode_match_kind(arr[2]),
+      heading: dco_decode_opt_box_autoadd_f_64(arr[3]),
+    );
   }
 
   @protected
@@ -2605,23 +2720,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   NavUpdate dco_decode_nav_update(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 12)
+      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
     return NavUpdate(
       status: dco_decode_trip_status(arr[0]),
       location: dco_decode_opt_box_autoadd_nav_location(arr[1]),
-      snappedLocation: dco_decode_opt_box_autoadd_nav_location(arr[2]),
-      stepIndex: dco_decode_u_32(arr[3]),
-      geometryIndex: dco_decode_u_32(arr[4]),
-      deviation: dco_decode_nav_deviation(arr[5]),
-      deviationMeters: dco_decode_f_64(arr[6]),
+      effectiveLocation: dco_decode_opt_box_autoadd_nav_location(arr[2]),
+      matched: dco_decode_bool(arr[3]),
+      snappedLocation: dco_decode_opt_box_autoadd_nav_location(arr[4]),
+      stepIndex: dco_decode_u_32(arr[5]),
+      geometryIndex: dco_decode_u_32(arr[6]),
+      deviation: dco_decode_nav_deviation(arr[7]),
+      deviationMeters: dco_decode_f_64(arr[8]),
       visualInstruction: dco_decode_opt_box_autoadd_nav_visual_instruction(
-        arr[7],
+        arr[9],
       ),
       spokenInstruction: dco_decode_opt_box_autoadd_nav_spoken_instruction(
-        arr[8],
+        arr[10],
       ),
-      progress: dco_decode_opt_box_autoadd_nav_progress(arr[9]),
+      progress: dco_decode_opt_box_autoadd_nav_progress(arr[11]),
     );
   }
 
@@ -2685,6 +2802,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ManeuverType? dco_decode_opt_box_autoadd_maneuver_type(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_maneuver_type(raw);
+  }
+
+  @protected
+  MatchedPosition? dco_decode_opt_box_autoadd_matched_position(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_matched_position(raw);
   }
 
   @protected
@@ -3336,6 +3459,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MatchedPosition sse_decode_box_autoadd_matched_position(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_matched_position(deserializer));
+  }
+
+  @protected
   NavDrivingSide sse_decode_box_autoadd_nav_driving_side(
     SseDeserializer deserializer,
   ) {
@@ -3643,6 +3774,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<NavLocation> sse_decode_list_nav_location(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <NavLocation>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_nav_location(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<NavSpokenInstruction> sse_decode_list_nav_spoken_instruction(
     SseDeserializer deserializer,
   ) {
@@ -3760,6 +3903,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return ManeuverType.values[inner];
+  }
+
+  @protected
+  MatchKind sse_decode_match_kind(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return MatchKind.values[inner];
+  }
+
+  @protected
+  MatchedPosition sse_decode_matched_position(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_lat = sse_decode_f_64(deserializer);
+    var var_lng = sse_decode_f_64(deserializer);
+    var var_kind = sse_decode_match_kind(deserializer);
+    var var_heading = sse_decode_opt_box_autoadd_f_64(deserializer);
+    return MatchedPosition(
+      lat: var_lat,
+      lng: var_lng,
+      kind: var_kind,
+      heading: var_heading,
+    );
   }
 
   @protected
@@ -3913,6 +4078,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_status = sse_decode_trip_status(deserializer);
     var var_location = sse_decode_opt_box_autoadd_nav_location(deserializer);
+    var var_effectiveLocation = sse_decode_opt_box_autoadd_nav_location(
+      deserializer,
+    );
+    var var_matched = sse_decode_bool(deserializer);
     var var_snappedLocation = sse_decode_opt_box_autoadd_nav_location(
       deserializer,
     );
@@ -3928,6 +4097,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return NavUpdate(
       status: var_status,
       location: var_location,
+      effectiveLocation: var_effectiveLocation,
+      matched: var_matched,
       snappedLocation: var_snappedLocation,
       stepIndex: var_stepIndex,
       geometryIndex: var_geometryIndex,
@@ -4025,6 +4196,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_maneuver_type(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  MatchedPosition? sse_decode_opt_box_autoadd_matched_position(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_matched_position(deserializer));
     } else {
       return null;
     }
@@ -4746,6 +4930,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_matched_position(
+    MatchedPosition self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_matched_position(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_nav_driving_side(
     NavDrivingSide self,
     SseSerializer serializer,
@@ -5030,6 +5223,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_nav_location(
+    List<NavLocation> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_nav_location(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_nav_spoken_instruction(
     List<NavSpokenInstruction> self,
     SseSerializer serializer,
@@ -5148,6 +5353,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_match_kind(MatchKind self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_matched_position(
+    MatchedPosition self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_64(self.lat, serializer);
+    sse_encode_f_64(self.lng, serializer);
+    sse_encode_match_kind(self.kind, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.heading, serializer);
+  }
+
+  @protected
   void sse_encode_nav_deviation(NavDeviation self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
@@ -5242,6 +5465,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_trip_status(self.status, serializer);
     sse_encode_opt_box_autoadd_nav_location(self.location, serializer);
+    sse_encode_opt_box_autoadd_nav_location(self.effectiveLocation, serializer);
+    sse_encode_bool(self.matched, serializer);
     sse_encode_opt_box_autoadd_nav_location(self.snappedLocation, serializer);
     sse_encode_u_32(self.stepIndex, serializer);
     sse_encode_u_32(self.geometryIndex, serializer);
@@ -5341,6 +5566,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_maneuver_type(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_matched_position(
+    MatchedPosition? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_matched_position(self, serializer);
     }
   }
 
@@ -5831,8 +6069,8 @@ class NavigationSessionImpl extends RustOpaque implements NavigationSession {
   NavigationMode mode() =>
       RustLib.instance.api.crateApiNavigationNavigationSessionMode(that: this);
 
-  /// Navigates `route` instead, from `location`, traveling the same way: for a new route
-  /// after leaving the old one.
+  /// Navigates `route` instead, from `location` as it came, traveling the same way: for a
+  /// new route after leaving the old one. Matching carries on with the next fix.
   Future<NavUpdate> replaceRoute({
     required NavigableRoute route,
     required NavLocation location,
@@ -5842,27 +6080,41 @@ class NavigationSessionImpl extends RustOpaque implements NavigationSession {
     location: location,
   );
 
-  /// The request for a new route from `location` through the stops not yet passed, for
-  /// when the session is off the route. The location's course, if it has one, goes in as
-  /// the start's heading, so the new route doesn't begin with a U-turn.
+  /// Where a new route would start from now: the latest fix's matched position, with the
+  /// road's heading as its course and [`REROUTE_MATCHED_ACCURACY`], or the fix as it came
+  /// where it wasn't matched.
+  NavLocation rerouteOrigin() => RustLib.instance.api
+      .crateApiNavigationNavigationSessionRerouteOrigin(that: this);
+
+  /// The request for a new route from [`Self::reroute_origin`] through the stops not yet
+  /// passed, for when the session is off the route. The origin's course, if it has one,
+  /// goes in as the start's heading, so the new route doesn't begin with a U-turn.
   ///
   /// Errs once the trip is over, when there's nowhere left to go.
-  DirectionsRequest rerouteRequest({
-    required DirectionsAdapter adapter,
-    required NavLocation location,
-  }) => RustLib.instance.api.crateApiNavigationNavigationSessionRerouteRequest(
-    that: this,
-    adapter: adapter,
-    location: location,
-  );
+  DirectionsRequest rerouteRequest({required DirectionsAdapter adapter}) =>
+      RustLib.instance.api.crateApiNavigationNavigationSessionRerouteRequest(
+        that: this,
+        adapter: adapter,
+      );
 
   /// Moves navigation on to `location`: advances the step when its maneuver is done,
-  /// finishes the trip on arrival, and says how far off the route the fix is.
-  Future<NavUpdate> updateLocation({required NavLocation location}) =>
-      RustLib.instance.api.crateApiNavigationNavigationSessionUpdateLocation(
-        that: this,
-        location: location,
-      );
+  /// finishes the trip on arrival, and says how far off the route you are.
+  ///
+  /// `matched` is where the fix was matched to a road, with the fixes before it
+  /// ([`super::router::OfflineRouter::match_position`]), if it was. Navigation follows
+  /// the match unless it's implausible: farther from the fix than [`match_limit`], or,
+  /// once a fix was used as it came, than [`MATCH_RETURN`] of it. Then it follows the fix.
+  /// What it followed is the update's [`NavUpdate::effective_location`]; off-route
+  /// detection holds a match to a much tighter threshold than a fix
+  /// ([`MatchAwareDeviation`]), since a match has none of the fix's noise.
+  Future<NavUpdate> updateLocation({
+    required NavLocation location,
+    MatchedPosition? matched,
+  }) => RustLib.instance.api.crateApiNavigationNavigationSessionUpdateLocation(
+    that: this,
+    location: location,
+    matched: matched,
+  );
 }
 
 @sealed
@@ -5882,6 +6134,21 @@ class OfflineRouterImpl extends RustOpaque implements OfflineRouter {
         RustLib.instance.api.rust_arc_decrement_strong_count_OfflineRouter,
     rustArcDecrementStrongCountPtr:
         RustLib.instance.api.rust_arc_decrement_strong_count_OfflineRouterPtr,
+  );
+
+  /// Where on the roads the last of `fixes` (the recent fixes, oldest first) was, matched
+  /// together with those before it, for a trip traveling by `mode`; none if it couldn't be
+  /// matched, or the match failed.
+  ///
+  /// It builds the `trace_attributes` request and reads the answer
+  /// ([`matching::match_body`], [`matching::parse_match`]), so a fix takes one call.
+  Future<MatchedPosition?> matchPosition({
+    required NavigationMode mode,
+    required List<NavLocation> fixes,
+  }) => RustLib.instance.api.crateApiRouterOfflineRouterMatchPosition(
+    that: this,
+    mode: mode,
+    fixes: fixes,
   );
 
   /// Makes tiles that arrived in the tile directories since the router was opened (or last

@@ -7,6 +7,7 @@
 // ignore_for_file: argument_type_not_assignable
 
 import 'api/directions.dart';
+import 'api/matching.dart';
 import 'api/navigation.dart';
 import 'api/offline.dart';
 import 'api/router.dart';
@@ -256,6 +257,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ManeuverType dco_decode_box_autoadd_maneuver_type(dynamic raw);
 
   @protected
+  MatchedPosition dco_decode_box_autoadd_matched_position(dynamic raw);
+
+  @protected
   NavDrivingSide dco_decode_box_autoadd_nav_driving_side(dynamic raw);
 
   @protected
@@ -352,6 +356,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<NavLane> dco_decode_list_nav_lane(dynamic raw);
 
   @protected
+  List<NavLocation> dco_decode_list_nav_location(dynamic raw);
+
+  @protected
   List<NavSpokenInstruction> dco_decode_list_nav_spoken_instruction(
     dynamic raw,
   );
@@ -387,6 +394,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ManeuverType dco_decode_maneuver_type(dynamic raw);
+
+  @protected
+  MatchKind dco_decode_match_kind(dynamic raw);
+
+  @protected
+  MatchedPosition dco_decode_matched_position(dynamic raw);
 
   @protected
   NavDeviation dco_decode_nav_deviation(dynamic raw);
@@ -438,6 +451,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ManeuverType? dco_decode_opt_box_autoadd_maneuver_type(dynamic raw);
+
+  @protected
+  MatchedPosition? dco_decode_opt_box_autoadd_matched_position(dynamic raw);
 
   @protected
   NavDrivingSide? dco_decode_opt_box_autoadd_nav_driving_side(dynamic raw);
@@ -733,6 +749,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  MatchedPosition sse_decode_box_autoadd_matched_position(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   NavDrivingSide sse_decode_box_autoadd_nav_driving_side(
     SseDeserializer deserializer,
   );
@@ -843,6 +864,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<NavLane> sse_decode_list_nav_lane(SseDeserializer deserializer);
 
   @protected
+  List<NavLocation> sse_decode_list_nav_location(SseDeserializer deserializer);
+
+  @protected
   List<NavSpokenInstruction> sse_decode_list_nav_spoken_instruction(
     SseDeserializer deserializer,
   );
@@ -882,6 +906,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ManeuverType sse_decode_maneuver_type(SseDeserializer deserializer);
+
+  @protected
+  MatchKind sse_decode_match_kind(SseDeserializer deserializer);
+
+  @protected
+  MatchedPosition sse_decode_matched_position(SseDeserializer deserializer);
 
   @protected
   NavDeviation sse_decode_nav_deviation(SseDeserializer deserializer);
@@ -941,6 +971,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ManeuverType? sse_decode_opt_box_autoadd_maneuver_type(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  MatchedPosition? sse_decode_opt_box_autoadd_matched_position(
     SseDeserializer deserializer,
   );
 
@@ -1279,6 +1314,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_matched_position(
+    MatchedPosition self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_nav_driving_side(
     NavDrivingSide self,
     SseSerializer serializer,
@@ -1429,6 +1470,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_nav_lane(List<NavLane> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_nav_location(
+    List<NavLocation> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_nav_spoken_instruction(
     List<NavSpokenInstruction> self,
     SseSerializer serializer,
@@ -1484,6 +1531,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_maneuver_type(ManeuverType self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_match_kind(MatchKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_matched_position(
+    MatchedPosition self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_nav_deviation(NavDeviation self, SseSerializer serializer);
@@ -1554,6 +1610,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_maneuver_type(
     ManeuverType? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_matched_position(
+    MatchedPosition? self,
     SseSerializer serializer,
   );
 

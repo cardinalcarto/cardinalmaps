@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:cardinal/navigation/road_matcher.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/navigation_location.dart';
 import 'package:cardinal/navigation/speech.dart';
@@ -34,6 +35,8 @@ NavUpdate fakeUpdate({
   NavSpokenInstruction? spoken,
   NavLocation? location,
   NavLocation? snapped,
+  NavLocation? effective,
+  bool matched = false,
   int stepIndex = 0,
   int geometryIndex = 0,
   NavVisualInstruction? visual,
@@ -41,6 +44,8 @@ NavUpdate fakeUpdate({
 }) => NavUpdate(
   status: status,
   location: location,
+  effectiveLocation: effective ?? location,
+  matched: matched,
   snappedLocation: snapped,
   stepIndex: stepIndex,
   geometryIndex: geometryIndex,
@@ -100,7 +105,12 @@ class FakeTripSession implements TripSession {
   NavUpdate? next;
   Completer<void>? hold;
   final fixes = <NavLocation>[];
+
+  /// The match given with each of [fixes].
+  final matches = <MatchedPosition?>[];
   final replaced = <(NavigableRoute, NavLocation)>[];
+
+  /// The origin of each new route asked for.
   final rerouteFrom = <NavLocation>[];
   bool disposed = false;
 
@@ -123,17 +133,23 @@ class FakeTripSession implements TripSession {
   NavUpdate current() => _current;
 
   @override
-  Future<NavUpdate> updateLocation(NavLocation location) {
+  Future<NavUpdate> updateLocation(
+    NavLocation location,
+    MatchedPosition? matched,
+  ) {
     fixes.add(location);
+    matches.add(matched);
     return _answer();
   }
 
+  /// Where navigation last put you, as the real session's origin is.
   @override
-  DirectionsRequest rerouteRequest(
-    DirectionsAdapter adapter,
-    NavLocation location,
-  ) {
-    rerouteFrom.add(location);
+  NavLocation rerouteOrigin() =>
+      _current.effectiveLocation ?? fixes.lastOrNull ?? fakeFix(0, 0);
+
+  @override
+  DirectionsRequest rerouteRequest(DirectionsAdapter adapter) {
+    rerouteFrom.add(rerouteOrigin());
     return DirectionsRequest(
       url: 'offline:route',
       headers: const {},
@@ -171,6 +187,21 @@ class FakeSessions {
   }
 
   FakeTripSession get last => sessions.last;
+}
+
+/// A matcher that answers [answer] (no match, by default), and records what it's asked.
+class FakeRoadMatcher implements RoadMatcher {
+  MatchedPosition? answer;
+  final asked = <(NavigationMode, List<NavLocation>)>[];
+
+  @override
+  Future<MatchedPosition?> match(
+    NavigationMode mode,
+    List<NavLocation> fixes,
+  ) async {
+    asked.add((mode, fixes));
+    return answer;
+  }
 }
 
 /// Fixes sent by the test.
@@ -245,10 +276,12 @@ NavigationController fakeNavigationController({
   FakeRoutes? routes,
   FakeNavigationLocation? location,
   FakeSessions? sessions,
+  FakeRoadMatcher? matcher,
 }) => NavigationController(
   routes: routes ?? FakeRoutes(),
   location: location ?? FakeNavigationLocation(),
   speaker: FakeSpeaker(),
   screen: FakeScreenWake(),
+  matcher: matcher ?? FakeRoadMatcher(),
   startSession: (sessions ?? FakeSessions()).call,
 );

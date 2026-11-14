@@ -16,6 +16,7 @@ import 'map/location.dart';
 import 'map/map.dart';
 import 'map/map_drawing.dart';
 import 'map/overlays.dart';
+import 'navigation/road_matcher.dart';
 import 'navigation/navigation_controller.dart';
 import 'navigation/navigation_location.dart';
 import 'navigation/navigation_scope.dart';
@@ -55,6 +56,7 @@ void main() {
         ? const LogSpeaker()
         : PlatformSpeaker(),
     screen: const PlatformScreenWake(),
+    matcher: OfflineRoadMatcher(offline.area),
   );
   runApp(
     StoreScope(

@@ -67,6 +67,9 @@ pub struct RouterResponse {
   `trace_route` and `trace_attributes` are there for map matching during navigation
   (snapping recent positions to the roads they were on, for a better reroute);
   they take the same bodies the server's `/trace_route` and `/trace_attributes` do.
+  Navigation itself calls `match_position(mode, fixes)`, which builds the `trace_attributes`
+  body from the recent fixes (`map_snap`, each fix's time and accuracy) and reads back the last
+  fix's matched point and the matched road's heading there (`api/matching.rs`), one call a fix.
   `valinor-router` serves every action, so `locate` or `status` can be added the same way
   when a feature needs one.
 - **Map matching's memory.** Each map matching workspace keeps the candidate grids of the bins

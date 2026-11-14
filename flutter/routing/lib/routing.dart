@@ -7,7 +7,8 @@
 /// sent (see `valinor/docs/flutter-api.md`). Either way, [DirectionsAdapter.parse] reads
 /// them. [OfflineRouter.traceRoute] and [OfflineRouter.traceAttributes] map match traces
 /// (such as recent positions during navigation) with the server's `/trace_route` and
-/// `/trace_attributes` bodies.
+/// `/trace_attributes` bodies, and [OfflineRouter.matchPosition] matches navigation's
+/// recent fixes in one call, for the session's `updateLocation`.
 library;
 
 import 'src/rust/frb_generated.dart';
@@ -23,6 +24,7 @@ export 'src/rust/api/directions.dart'
         DirectionsStep,
         DistanceUnits,
         NavigableRoute;
+export 'src/rust/api/matching.dart' show MatchKind, MatchedPosition;
 export 'src/rust/api/navigation.dart'
     show
         LocationSimulation,

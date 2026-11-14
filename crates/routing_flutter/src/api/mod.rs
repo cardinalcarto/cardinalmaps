@@ -1,4 +1,5 @@
 pub mod directions;
+pub mod matching;
 pub mod navigation;
 pub mod offline;
 pub mod router;

@@ -5,12 +5,14 @@
 
 import '../frb_generated.dart';
 import 'directions.dart';
+import 'matching.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `config`, `nav_step`, `new`, `step_starts`, `update`, `whole_degrees`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Trip`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These functions are ignored because they are not marked as `pub`: `config`, `deviation_from_steps`, `deviation`, `effective`, `match_limit`, `meters_between`, `nav_step`, `new`, `push`, `step_line`, `step_starts`, `update`, `update`, `was_matched`, `whole_degrees`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `FedLocations`, `MatchAwareDeviation`, `MatchSelection`, `Trip`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `check_route_deviation`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LocationSimulation>>
 abstract class LocationSimulation implements RustOpaqueInterface {
@@ -55,24 +57,28 @@ abstract class NavigationSession implements RustOpaqueInterface {
   /// How the session is traveling.
   NavigationMode mode();
 
-  /// Navigates `route` instead, from `location`, traveling the same way: for a new route
-  /// after leaving the old one.
+  /// Navigates `route` instead, from `location` as it came, traveling the same way: for a
+  /// new route after leaving the old one. Matching carries on with the next fix.
   Future<NavUpdate> replaceRoute({
     required NavigableRoute route,
     required NavLocation location,
   });
 
-  /// The request for a new route from `location` through the stops not yet passed, for
-  /// when the session is off the route. The location's course, if it has one, goes in as
-  /// the start's heading, so the new route doesn't begin with a U-turn.
+  /// Where a new route would start from now: the latest fix's matched position, with the
+  /// road's heading as its course and [`REROUTE_MATCHED_ACCURACY`], or the fix as it came
+  /// where it wasn't matched.
+  NavLocation rerouteOrigin();
+
+  /// The request for a new route from [`Self::reroute_origin`] through the stops not yet
+  /// passed, for when the session is off the route. The origin's course, if it has one,
+  /// goes in as the start's heading, so the new route doesn't begin with a U-turn.
   ///
   /// Errs once the trip is over, when there's nowhere left to go.
-  DirectionsRequest rerouteRequest({
-    required DirectionsAdapter adapter,
-    required NavLocation location,
-  });
+  DirectionsRequest rerouteRequest({required DirectionsAdapter adapter});
 
   /// Starts navigating `route` from `location`, traveling by `mode`.
+  ///
+  /// The start is the fix as it came; matching starts with the next.
   static Future<NavigationSession> start({
     required NavigableRoute route,
     required NavigationMode mode,
@@ -84,8 +90,19 @@ abstract class NavigationSession implements RustOpaqueInterface {
   );
 
   /// Moves navigation on to `location`: advances the step when its maneuver is done,
-  /// finishes the trip on arrival, and says how far off the route the fix is.
-  Future<NavUpdate> updateLocation({required NavLocation location});
+  /// finishes the trip on arrival, and says how far off the route you are.
+  ///
+  /// `matched` is where the fix was matched to a road, with the fixes before it
+  /// ([`super::router::OfflineRouter::match_position`]), if it was. Navigation follows
+  /// the match unless it's implausible: farther from the fix than [`match_limit`], or,
+  /// once a fix was used as it came, than [`MATCH_RETURN`] of it. Then it follows the fix.
+  /// What it followed is the update's [`NavUpdate::effective_location`]; off-route
+  /// detection holds a match to a much tighter threshold than a fix
+  /// ([`MatchAwareDeviation`]), since a match has none of the fix's noise.
+  Future<NavUpdate> updateLocation({
+    required NavLocation location,
+    MatchedPosition? matched,
+  });
 }
 
 /// Which way a maneuver goes.
@@ -440,6 +457,15 @@ class NavUpdate {
   /// The fix as it came; none when idle without one.
   final NavLocation? location;
 
+  /// Where navigation put you for the fix, which is what Ferrostar followed the route
+  /// with: the fix's matched position on the road, with the road's heading as its course,
+  /// or the fix itself where the match was missing or implausible (see [`Self::matched`]).
+  /// None when idle without a fix.
+  final NavLocation? effectiveLocation;
+
+  /// Whether [`Self::effective_location`] is the fix's matched position.
+  final bool matched;
+
   /// The fix moved onto the route's line, with its course along the line for driving and
   /// cycling. Only while navigating.
   final NavLocation? snappedLocation;
@@ -454,8 +480,8 @@ class NavUpdate {
   final int geometryIndex;
   final NavDeviation deviation;
 
-  /// How far from the current step's line (or, off the route, the route's) the fix is,
-  /// in meters; 0 on the route.
+  /// How far from the current step's line (or, off the route, the route's) the effective
+  /// location was, in meters; 0 on the route.
   final double deviationMeters;
 
   /// The banner to show; none off the route, where its distances would be wrong.
@@ -471,6 +497,8 @@ class NavUpdate {
   const NavUpdate({
     required this.status,
     this.location,
+    this.effectiveLocation,
+    required this.matched,
     this.snappedLocation,
     required this.stepIndex,
     required this.geometryIndex,
@@ -485,6 +513,8 @@ class NavUpdate {
   int get hashCode =>
       status.hashCode ^
       location.hashCode ^
+      effectiveLocation.hashCode ^
+      matched.hashCode ^
       snappedLocation.hashCode ^
       stepIndex.hashCode ^
       geometryIndex.hashCode ^
@@ -501,6 +531,8 @@ class NavUpdate {
           runtimeType == other.runtimeType &&
           status == other.status &&
           location == other.location &&
+          effectiveLocation == other.effectiveLocation &&
+          matched == other.matched &&
           snappedLocation == other.snappedLocation &&
           stepIndex == other.stepIndex &&
           geometryIndex == other.geometryIndex &&

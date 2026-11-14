@@ -13,6 +13,11 @@ import 'navigation_controller.dart';
 /// controller puts you, the route ahead with the part traveled over it, and the camera
 /// following the chevron.
 ///
+/// On the route, the chevron is on the route's line ([NavUpdate.snappedLocation]). Off
+/// it, and while a new route is coming, the line is the road you left, so the chevron is
+/// where navigation put you instead ([NavUpdate.effectiveLocation]): on the road you're
+/// on, where your fixes were matched to one, or at the fix itself.
+///
 /// Each update from the controller moves the chevron, gliding over the time since the
 /// update before, and ends the traveled line where the update put you; the chevron's
 /// disk covers the stretch between the two. A new route redraws the line.
@@ -116,8 +121,13 @@ class NavigationMap {
   }
 
   void _move(DirectionsRoute route, NavUpdate update) {
-    final at = update.snappedLocation;
-    if (at == null) return;
+    final snapped = update.snappedLocation;
+    if (snapped == null) return;
+    final at = switch (controller.state) {
+      NavigationState.offRoute ||
+      NavigationState.rerouting => update.effectiveLocation ?? snapped,
+      _ => snapped,
+    };
     final now = _elapsed();
     final movedAt = _movedAt;
     final since = movedAt == null ? null : now - movedAt;
@@ -132,10 +142,11 @@ class NavigationMap {
       duration: glideDuration(since),
     );
     if (previous == null) map.setPuckVisible(true);
+    // The traveled part ends where the route's line has you, wherever the chevron is.
     _traveled = traveledLine(
       route.geometry,
       update.geometryIndex,
-      DirectionsPoint(lat: at.lat, lng: at.lng),
+      DirectionsPoint(lat: snapped.lat, lng: snapped.lng),
     );
     final speed =
         update.location?.speed ?? at.speed ?? _motion(previous, at, since);

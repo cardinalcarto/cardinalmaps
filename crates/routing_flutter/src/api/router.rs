@@ -5,6 +5,8 @@
 //! No function here is `#[frb(sync)]`: flutter_rust_bridge runs them on its worker pool,
 //! off the UI isolate's thread, and concurrent calls are fine.
 
+use super::matching::{self, MatchedPosition};
+use super::navigation::{NavLocation, NavigationMode};
 use core::num::NonZeroUsize;
 use flutter_rust_bridge::frb;
 use valhalla_graphtile::graph_tile::BuildId;
@@ -179,6 +181,26 @@ impl OfflineRouter {
     /// Matching errors are responses, not exceptions.
     pub fn trace_attributes(&self, body: Vec<u8>) -> RouterResponse {
         self.router.trace_attributes(&body).into()
+    }
+
+    /// Where on the roads the last of `fixes` (the recent fixes, oldest first) was, matched
+    /// together with those before it, for a trip traveling by `mode`; none if it couldn't be
+    /// matched, or the match failed.
+    ///
+    /// It builds the `trace_attributes` request and reads the answer
+    /// ([`matching::match_body`], [`matching::parse_match`]), so a fix takes one call.
+    pub fn match_position(
+        &self,
+        mode: NavigationMode,
+        fixes: Vec<NavLocation>,
+    ) -> Option<MatchedPosition> {
+        if fixes.is_empty() {
+            return None;
+        }
+        let response = self
+            .router
+            .trace_attributes(&matching::match_body(mode, &fixes));
+        matching::parse_match(response.status.as_u16(), &response.body)
     }
 }
 

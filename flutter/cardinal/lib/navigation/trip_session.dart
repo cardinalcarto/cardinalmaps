@@ -9,15 +9,20 @@ abstract class TripSession {
   /// Where navigation stands now.
   NavUpdate current();
 
-  /// Moves navigation on to [location].
-  Future<NavUpdate> updateLocation(NavLocation location);
-
-  /// The request for a new route from [location] through the stops not yet passed, made
-  /// with [adapter]. Throws a [DirectionsError] once the trip is over.
-  DirectionsRequest rerouteRequest(
-    DirectionsAdapter adapter,
+  /// Moves navigation on to [location], which was [matched] to the roads there if it
+  /// could be. The session decides whether to follow the match or the fix.
+  Future<NavUpdate> updateLocation(
     NavLocation location,
+    MatchedPosition? matched,
   );
+
+  /// Where a new route would start from now: the latest fix's matched position, or the
+  /// fix as it came.
+  NavLocation rerouteOrigin();
+
+  /// The request for a new route from [rerouteOrigin] through the stops not yet passed,
+  /// made with [adapter]. Throws a [DirectionsError] once the trip is over.
+  DirectionsRequest rerouteRequest(DirectionsAdapter adapter);
 
   /// Navigates [route] instead, from [location].
   Future<NavUpdate> replaceRoute(NavigableRoute route, NavLocation location);
@@ -53,14 +58,17 @@ class RustTripSession implements TripSession {
   NavUpdate current() => _session.current();
 
   @override
-  Future<NavUpdate> updateLocation(NavLocation location) =>
-      _session.updateLocation(location: location);
+  Future<NavUpdate> updateLocation(
+    NavLocation location,
+    MatchedPosition? matched,
+  ) => _session.updateLocation(location: location, matched: matched);
 
   @override
-  DirectionsRequest rerouteRequest(
-    DirectionsAdapter adapter,
-    NavLocation location,
-  ) => _session.rerouteRequest(adapter: adapter, location: location);
+  NavLocation rerouteOrigin() => _session.rerouteOrigin();
+
+  @override
+  DirectionsRequest rerouteRequest(DirectionsAdapter adapter) =>
+      _session.rerouteRequest(adapter: adapter);
 
   @override
   Future<NavUpdate> replaceRoute(NavigableRoute route, NavLocation location) =>

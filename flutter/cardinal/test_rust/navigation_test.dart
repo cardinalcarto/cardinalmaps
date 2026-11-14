@@ -16,6 +16,7 @@
 import 'dart:io';
 
 import 'package:cardinal/directions/route_source.dart';
+import 'package:cardinal/navigation/road_matcher.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/navigation_location.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
@@ -41,12 +42,31 @@ String library() {
   return '../../crates/target/release/$name';
 }
 
+/// [RoadMatcher] over [router] directly, as [OfflineRoadMatcher] is over the offline area's.
+class RouterRoadMatcher implements RoadMatcher {
+  RouterRoadMatcher(this.router);
+
+  final OfflineRouter router;
+  int matched = 0;
+
+  @override
+  Future<MatchedPosition?> match(
+    NavigationMode mode,
+    List<NavLocation> fixes,
+  ) async {
+    final position = await router.matchPosition(mode: mode, fixes: fixes);
+    if (position != null) matched++;
+    return position;
+  }
+}
+
 void main() {
   setUpAll(() async {
     await RustLib.init(externalLibrary: ExternalLibrary.open(library()));
   });
 
-  test('a simulated trip arrives, saying each announcement once', () async {
+  test('a simulated trip arrives on matched positions, saying each '
+      'announcement once', () async {
     final router = await OfflineRouter.open(tileSets: [tiles]);
     final adapter = DirectionsAdapter.valhalla(
       endpointUrl: 'offline:route',
@@ -69,18 +89,31 @@ void main() {
 
     final routes = FakeRoutes();
     final speaker = FakeSpeaker();
+    final matcher = RouterRoadMatcher(router);
+    var clock = DateTime.utc(2026, 11, 14);
     final controller = NavigationController(
       routes: routes,
       // Fixes a second's drive apart, as fast as the session takes them.
       location: SimulatedLocationSource(
         route.navigable,
         interval: const Duration(milliseconds: 3),
+        // Stamped a second apart, as they'd come: the matcher won't join fixes that
+        // would have taken longer to drive between than the time between them.
+        now: () => clock = clock.add(const Duration(seconds: 1)),
       ),
       speaker: speaker,
       screen: FakeScreenWake(),
+      matcher: matcher,
     );
     final states = <NavigationState>[];
+    var updates = 0;
+    var followedMatches = 0;
     controller.addListener(() {
+      final update = controller.update;
+      if (update != null && controller.state == NavigationState.onRoute) {
+        updates++;
+        if (update.matched) followedMatches++;
+      }
       if (states.isEmpty || states.last != controller.state) {
         states.add(controller.state);
       }
@@ -102,6 +135,9 @@ void main() {
     expect(speaker.languages, ['de-DE']);
     expect(speaker.said, expected);
     expect(routes.rerouted, isEmpty);
+    // Fixes on the road's line all match it, and are followed.
+    expect(matcher.matched, greaterThan(10));
+    expect(followedMatches, greaterThan(updates * 0.9));
     expect(controller.update!.stepIndex, controller.steps.length);
     await controller.end();
     controller.dispose();

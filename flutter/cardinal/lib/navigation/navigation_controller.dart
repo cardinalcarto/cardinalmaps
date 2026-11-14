@@ -7,6 +7,7 @@ import 'package:routing/routing.dart';
 import '../directions/route_source.dart';
 import '../l10n/lookup.dart';
 import '../store/store.dart';
+import 'road_matcher.dart';
 import 'navigation_location.dart';
 import 'speech.dart';
 import 'trip_session.dart';
@@ -140,12 +141,20 @@ const maxRerouteBackoff = Duration(seconds: 60);
 /// Fixes are handled one at a time, in order, since each session call must finish before
 /// the next is made. A fix that comes while one is being handled waits; a newer one
 /// replaces it, so a slow call never builds up a backlog of stale fixes.
+///
+/// Once the session has started, each fix is matched to the roads with the fixes of the
+/// [MatchWindow] before it, and the session is given both: it follows the match where
+/// the match is plausible, which lets it tell a parallel road from the route, and the fix
+/// where it isn't (see `NavigationSession.updateLocation` in the routing library). A new
+/// route starts from the session's [TripSession.rerouteOrigin], the latest match when
+/// there was one.
 class NavigationController extends ChangeNotifier {
   NavigationController({
     required this._routes,
     required this._location,
     required this._speaker,
     required this._screen,
+    required this._matcher,
     this._startSession = RustTripSession.start,
   });
 
@@ -153,6 +162,7 @@ class NavigationController extends ChangeNotifier {
   final NavigationLocationSource _location;
   final Speaker _speaker;
   final ScreenWake _screen;
+  final RoadMatcher _matcher;
   final TripSessionStarter _startSession;
 
   NavigationState get state => _state;
@@ -205,6 +215,10 @@ class NavigationController extends ChangeNotifier {
   NavLocation? _lastFix;
   NavLocation? _pending;
   bool _handling = false;
+
+  /// The fixes the next one is matched with, every fix that came included, even those
+  /// replaced before they were handled.
+  final _window = MatchWindow();
 
   /// The end of the original route, which every new route goes to.
   LngLat? _destination;
@@ -302,6 +316,7 @@ class NavigationController extends ChangeNotifier {
   void _onFix(NavLocation fix) {
     if (_state == NavigationState.idle) return;
     _lastFix = fix;
+    _window.add(fix);
     _lastFixAt = DateTime.fromMillisecondsSinceEpoch(fix.timestampMs.toInt());
     _locationProblem = null;
     _pending = fix;
@@ -352,7 +367,10 @@ class NavigationController extends ChangeNotifier {
           NavigationState.offRoute ||
           NavigationState.rerouting:
         final session = _session!;
-        final update = await _call(() => session.updateLocation(fix));
+        // [fix] is the newest to come, so the window ends with it.
+        final matched = await _matcher.match(_navigationMode!, _window.fixes);
+        if (trip != _trip) return;
+        final update = await _call(() => session.updateLocation(fix, matched));
         if (trip != _trip) return;
         _apply(update);
     }
@@ -462,7 +480,7 @@ class NavigationController extends ChangeNotifier {
 
   Future<void> _reroute(int trip) async {
     final session = _session!;
-    final from = _lastFix!;
+    final from = session.rerouteOrigin();
     _state = NavigationState.rerouting;
     _interval = Timer(minRerouteInterval, _intervalEnded);
     notifyListeners();
@@ -472,11 +490,11 @@ class NavigationController extends ChangeNotifier {
         from: LngLat(from.lng, from.lat),
         to: _destination!,
         request: (adapter) =>
-            _call(() async => session.rerouteRequest(adapter, from)),
+            _call(() async => session.rerouteRequest(adapter)),
       );
       if (trip != _trip) return;
       // From where you are now, which may be past where the new route was asked from.
-      final at = _lastFix ?? from;
+      final at = _lastFix!;
       final update = await _call(
         () => session.replaceRoute(route.navigable, at),
       );
@@ -532,6 +550,7 @@ class NavigationController extends ChangeNotifier {
     _language = null;
     _update = null;
     _lastFix = null;
+    _window.clear();
     _lastFixAt = null;
     _locationProblem = null;
     _rerouteFailure = null;

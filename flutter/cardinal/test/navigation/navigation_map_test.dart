@@ -194,6 +194,63 @@ void main() {
       });
     });
 
+    test('puts the chevron where navigation put you off the route', () {
+      fakeAsync((async) {
+        make();
+        controller.start(route: route, mode: TravelMode.driving);
+        drawn.start();
+        fix(async, at(0.5, 0));
+        expect(map.pucks.last.lng, 0.5);
+
+        // On the line, even with a match beside it.
+        final road = fakeFix(0.001, 0.6, course: 45);
+        fix(
+          async,
+          fakeUpdate(
+            location: fakeFix(0.0012, 0.6),
+            snapped: fakeFix(0, 0.6, course: 90),
+            effective: road,
+            matched: true,
+          ),
+        );
+        expect((map.pucks.last.lat, map.pucks.last.lng), (0, 0.6));
+        expect(map.pucks.last.bearing, 90);
+
+        // Off the route, on the road you're on; the traveled line still ends on the
+        // route's.
+        fix(
+          async,
+          fakeUpdate(
+            deviation: NavDeviation.offRoute,
+            location: fakeFix(0.0012, 0.7),
+            snapped: fakeFix(0, 0.7, course: 90),
+            effective: fakeFix(0.001, 0.7, course: 45),
+            matched: true,
+          ),
+        );
+        expect(controller.state, NavigationState.offRoute);
+        expect((map.pucks.last.lat, map.pucks.last.lng), (0.001, 0.7));
+        expect(map.pucks.last.bearing, 45);
+        expect(coordinates(map, 'traveled').last, [0.7, 0]);
+
+        // And while the new route is coming.
+        async.elapse(offRouteHold);
+        expect(controller.state, NavigationState.rerouting);
+        fix(
+          async,
+          fakeUpdate(
+            deviation: NavDeviation.offRoute,
+            location: fakeFix(0.003, 0.8),
+            snapped: fakeFix(0, 0.8, course: 90),
+            effective: fakeFix(0.003, 0.8, course: 10),
+          ),
+        );
+        // Unmatched, it's the fix itself.
+        expect((map.pucks.last.lat, map.pucks.last.lng), (0.003, 0.8));
+        expect(map.pucks.last.bearing, 10);
+      });
+    });
+
     test('redraws a new route', () {
       fakeAsync((async) {
         make();

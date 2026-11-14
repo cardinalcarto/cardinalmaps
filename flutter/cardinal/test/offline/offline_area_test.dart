@@ -146,4 +146,10 @@ class _FakeRouter implements OfflineRouter {
   @override
   Future<RouterResponse> traceRoute({required List<int> body}) =>
       throw UnimplementedError();
+
+  @override
+  Future<MatchedPosition?> matchPosition({
+    required NavigationMode mode,
+    required List<NavLocation> fixes,
+  }) => throw UnimplementedError();
 }

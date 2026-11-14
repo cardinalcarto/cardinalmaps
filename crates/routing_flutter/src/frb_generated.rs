@@ -33,7 +33,7 @@ use crate::api::offline::*;
 use crate::api::router::*;
 use crate::api::transit::*;
 use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
+use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
 use flutter_rust_bridge::{Handler, IntoIntoDart};
 
 // Section: boilerplate
@@ -44,7 +44,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -579997330;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 988312610;
 
 // Section: executor
 
@@ -1034,6 +1034,54 @@ fn wire__crate__api__navigation__NavigationSession_replace_route_impl(
         },
     )
 }
+fn wire__crate__api__navigation__NavigationSession_reroute_origin_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "NavigationSession_reroute_origin",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NavigationSession>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>(
+                    crate::api::navigation::NavigationSession::reroute_origin(&*api_that_guard),
+                )?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__navigation__NavigationSession_reroute_request_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -1061,7 +1109,6 @@ fn wire__crate__api__navigation__NavigationSession_reroute_request_impl(
             let api_adapter = <RustOpaqueMoi<
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DirectionsAdapter>,
             >>::sse_decode(&mut deserializer);
-            let api_location = <crate::api::navigation::NavLocation>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, crate::api::directions::DirectionsError>((move || {
                 let mut api_that_guard = None;
@@ -1089,7 +1136,6 @@ fn wire__crate__api__navigation__NavigationSession_reroute_request_impl(
                 let output_ok = crate::api::navigation::NavigationSession::reroute_request(
                     &*api_that_guard,
                     &*api_adapter_guard,
-                    api_location,
                 )?;
                 std::result::Result::Ok(output_ok)
             })())
@@ -1177,6 +1223,8 @@ fn wire__crate__api__navigation__NavigationSession_update_location_impl(
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NavigationSession>,
             >>::sse_decode(&mut deserializer);
             let api_location = <crate::api::navigation::NavLocation>::sse_decode(&mut deserializer);
+            let api_matched =
+                <Option<crate::api::matching::MatchedPosition>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, ()>((move || {
@@ -1198,6 +1246,64 @@ fn wire__crate__api__navigation__NavigationSession_update_location_impl(
                         Ok::<_, ()>(crate::api::navigation::NavigationSession::update_location(
                             &mut *api_that_guard,
                             api_location,
+                            api_matched,
+                        ))?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__router__OfflineRouter_match_position_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "OfflineRouter_match_position",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineRouter>,
+            >>::sse_decode(&mut deserializer);
+            let api_mode = <crate::api::navigation::NavigationMode>::sse_decode(&mut deserializer);
+            let api_fixes =
+                <Vec<crate::api::navigation::NavLocation>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let mut api_that_guard = None;
+                    let decode_indices_ =
+                        flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                &api_that, 0, false,
+                            ),
+                        ]);
+                    for i in decode_indices_ {
+                        match i {
+                            0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                            _ => unreachable!(),
+                        }
+                    }
+                    let api_that_guard = api_that_guard.unwrap();
+                    let output_ok =
+                        Ok::<_, ()>(crate::api::router::OfflineRouter::match_position(
+                            &*api_that_guard,
+                            api_mode,
+                            api_fixes,
                         ))?;
                     std::result::Result::Ok(output_ok)
                 })())
@@ -2549,6 +2655,20 @@ impl SseDecode for Vec<crate::api::navigation::NavLane> {
     }
 }
 
+impl SseDecode for Vec<crate::api::navigation::NavLocation> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::navigation::NavLocation>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::navigation::NavSpokenInstruction> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2691,6 +2811,34 @@ impl SseDecode for crate::api::navigation::ManeuverType {
             14 => crate::api::navigation::ManeuverType::ExitRoundabout,
             15 => crate::api::navigation::ManeuverType::ExitRotary,
             _ => unreachable!("Invalid variant for ManeuverType: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::matching::MatchKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::matching::MatchKind::Matched,
+            1 => crate::api::matching::MatchKind::Interpolated,
+            _ => unreachable!("Invalid variant for MatchKind: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::matching::MatchedPosition {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_lat = <f64>::sse_decode(deserializer);
+        let mut var_lng = <f64>::sse_decode(deserializer);
+        let mut var_kind = <crate::api::matching::MatchKind>::sse_decode(deserializer);
+        let mut var_heading = <Option<f64>>::sse_decode(deserializer);
+        return crate::api::matching::MatchedPosition {
+            lat: var_lat,
+            lng: var_lng,
+            kind: var_kind,
+            heading: var_heading,
         };
     }
 }
@@ -2852,6 +3000,9 @@ impl SseDecode for crate::api::navigation::NavUpdate {
         let mut var_status = <crate::api::navigation::TripStatus>::sse_decode(deserializer);
         let mut var_location =
             <Option<crate::api::navigation::NavLocation>>::sse_decode(deserializer);
+        let mut var_effectiveLocation =
+            <Option<crate::api::navigation::NavLocation>>::sse_decode(deserializer);
+        let mut var_matched = <bool>::sse_decode(deserializer);
         let mut var_snappedLocation =
             <Option<crate::api::navigation::NavLocation>>::sse_decode(deserializer);
         let mut var_stepIndex = <u32>::sse_decode(deserializer);
@@ -2867,6 +3018,8 @@ impl SseDecode for crate::api::navigation::NavUpdate {
         return crate::api::navigation::NavUpdate {
             status: var_status,
             location: var_location,
+            effective_location: var_effectiveLocation,
+            matched: var_matched,
             snapped_location: var_snappedLocation,
             step_index: var_stepIndex,
             geometry_index: var_geometryIndex,
@@ -2978,6 +3131,19 @@ impl SseDecode for Option<crate::api::navigation::ManeuverType> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<crate::api::navigation::ManeuverType>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::matching::MatchedPosition> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::matching::MatchedPosition>::sse_decode(
                 deserializer,
             ));
         } else {
@@ -3343,65 +3509,71 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        22 => wire__crate__api__navigation__NavigationSession_start_impl(
+        23 => wire__crate__api__navigation__NavigationSession_start_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        23 => wire__crate__api__navigation__NavigationSession_update_location_impl(
+        24 => wire__crate__api__navigation__NavigationSession_update_location_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        24 => wire__crate__api__router__OfflineRouter_open_impl(port, ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__router__OfflineRouter_refresh_tiles_impl(
+        25 => wire__crate__api__router__OfflineRouter_match_position_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        26 => wire__crate__api__router__OfflineRouter_route_impl(port, ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__router__OfflineRouter_trace_attributes_impl(
+        26 => wire__crate__api__router__OfflineRouter_open_impl(port, ptr, rust_vec_len, data_len),
+        27 => wire__crate__api__router__OfflineRouter_refresh_tiles_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        28 => wire__crate__api__router__OfflineRouter_trace_route_impl(
+        28 => wire__crate__api__router__OfflineRouter_route_impl(port, ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__router__OfflineRouter_trace_attributes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        29 => {
+        30 => wire__crate__api__router__OfflineRouter_trace_route_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        31 => {
             wire__crate__api__transit__OfflineTransit_open_impl(port, ptr, rust_vec_len, data_len)
         }
-        30 => {
+        32 => {
             wire__crate__api__transit__OfflineTransit_plan_impl(port, ptr, rust_vec_len, data_len)
         }
-        31 => wire__crate__api__transit__OfflineTransit_refresh_tiles_impl(
+        33 => wire__crate__api__transit__OfflineTransit_refresh_tiles_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        32 => wire__crate__api__transit__OfflineTransit_vehicle_impl(
+        34 => wire__crate__api__transit__OfflineTransit_vehicle_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        34 => {
+        36 => {
             wire__crate__api__transit__TransitCancel_default_impl(port, ptr, rust_vec_len, data_len)
         }
-        39 => {
+        41 => {
             wire__crate__api__offline__check_transfer_tile_impl(port, ptr, rust_vec_len, data_len)
         }
-        40 => wire__crate__api__storage__free_bytes_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__offline__sha256_file_impl(port, ptr, rust_vec_len, data_len),
-        42 => {
+        42 => wire__crate__api__storage__free_bytes_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__offline__sha256_file_impl(port, ptr, rust_vec_len, data_len),
+        44 => {
             wire__crate__api__offline__unpack_transfer_range_impl(port, ptr, rust_vec_len, data_len)
         }
         _ => unreachable!(),
@@ -3465,16 +3637,21 @@ fn pde_ffi_dispatcher_sync_impl(
         19 => {
             wire__crate__api__navigation__NavigationSession_mode_impl(ptr, rust_vec_len, data_len)
         }
-        21 => wire__crate__api__navigation__NavigationSession_reroute_request_impl(
+        21 => wire__crate__api__navigation__NavigationSession_reroute_origin_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        33 => wire__crate__api__transit__TransitCancel_cancel_impl(ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__transit__TransitCancel_new_impl(ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__offline__archive_first_fetch_impl(ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__offline__archive_gap_bytes_impl(ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__offline__archive_max_range_bytes_impl(ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__navigation__NavigationSession_reroute_request_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        35 => wire__crate__api__transit__TransitCancel_cancel_impl(ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__transit__TransitCancel_new_impl(ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__offline__archive_first_fetch_impl(ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__offline__archive_gap_bytes_impl(ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__offline__archive_max_range_bytes_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3959,6 +4136,50 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::navigation::ManeuverType>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::matching::MatchKind {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Matched => 0.into_dart(),
+            Self::Interpolated => 1.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::matching::MatchKind
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::matching::MatchKind>
+    for crate::api::matching::MatchKind
+{
+    fn into_into_dart(self) -> crate::api::matching::MatchKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::matching::MatchedPosition {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.lat.into_into_dart().into_dart(),
+            self.lng.into_into_dart().into_dart(),
+            self.kind.into_into_dart().into_dart(),
+            self.heading.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::matching::MatchedPosition
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::matching::MatchedPosition>
+    for crate::api::matching::MatchedPosition
+{
+    fn into_into_dart(self) -> crate::api::matching::MatchedPosition {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::navigation::NavDeviation {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
@@ -4159,6 +4380,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::navigation::NavUpdate {
         [
             self.status.into_into_dart().into_dart(),
             self.location.into_into_dart().into_dart(),
+            self.effective_location.into_into_dart().into_dart(),
+            self.matched.into_into_dart().into_dart(),
             self.snapped_location.into_into_dart().into_dart(),
             self.step_index.into_into_dart().into_dart(),
             self.geometry_index.into_into_dart().into_dart(),
@@ -4933,6 +5156,16 @@ impl SseEncode for Vec<crate::api::navigation::NavLane> {
     }
 }
 
+impl SseEncode for Vec<crate::api::navigation::NavLocation> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::navigation::NavLocation>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::navigation::NavSpokenInstruction> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5065,6 +5298,32 @@ impl SseEncode for crate::api::navigation::ManeuverType {
     }
 }
 
+impl SseEncode for crate::api::matching::MatchKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::matching::MatchKind::Matched => 0,
+                crate::api::matching::MatchKind::Interpolated => 1,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::matching::MatchedPosition {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <f64>::sse_encode(self.lat, serializer);
+        <f64>::sse_encode(self.lng, serializer);
+        <crate::api::matching::MatchKind>::sse_encode(self.kind, serializer);
+        <Option<f64>>::sse_encode(self.heading, serializer);
+    }
+}
+
 impl SseEncode for crate::api::navigation::NavDeviation {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5185,6 +5444,11 @@ impl SseEncode for crate::api::navigation::NavUpdate {
         <crate::api::navigation::TripStatus>::sse_encode(self.status, serializer);
         <Option<crate::api::navigation::NavLocation>>::sse_encode(self.location, serializer);
         <Option<crate::api::navigation::NavLocation>>::sse_encode(
+            self.effective_location,
+            serializer,
+        );
+        <bool>::sse_encode(self.matched, serializer);
+        <Option<crate::api::navigation::NavLocation>>::sse_encode(
             self.snapped_location,
             serializer,
         );
@@ -5297,6 +5561,16 @@ impl SseEncode for Option<crate::api::navigation::ManeuverType> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::navigation::ManeuverType>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::matching::MatchedPosition> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::matching::MatchedPosition>::sse_encode(value, serializer);
         }
     }
 }
@@ -5591,7 +5865,7 @@ mod io {
     use flutter_rust_bridge::for_generated::byteorder::{
         NativeEndian, ReadBytesExt, WriteBytesExt,
     };
-    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
+    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate
@@ -5732,7 +6006,7 @@ mod web {
     };
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
-    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
+    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cardinal/directions/route_source.dart';
+import 'package:cardinal/navigation/road_matcher.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/navigation_location.dart';
 import 'package:cardinal/store/store.dart';
@@ -23,6 +24,7 @@ class Harness {
       location: location,
       speaker: speaker,
       screen: screen,
+      matcher: matcher,
       startSession: sessions.call,
     );
   }
@@ -32,6 +34,7 @@ class Harness {
   final speaker = FakeSpeaker();
   final screen = FakeScreenWake();
   final sessions = FakeSessions();
+  final matcher = FakeRoadMatcher();
   late final NavigationController controller;
 
   /// The route started with, its announcements in the harness's language.
@@ -620,6 +623,102 @@ void main() {
         h.fix(async);
         expect(h.state, NavigationState.arrived);
         expect(h.speaker.said, ['You have arrived']);
+      });
+    });
+  });
+
+  group('matching', () {
+    const t0 = 1763000000000;
+    NavLocation at(int second, {double lat = 42.5}) =>
+        fakeFix(lat, 1.52, timestampMs: t0 + second * 1000);
+    const road = MatchedPosition(
+      lat: 42.5001,
+      lng: 1.52,
+      kind: MatchKind.matched,
+      heading: 90,
+    );
+
+    test('matches each fix with the window before it, for the session', () {
+      fakeAsync((async, h) {
+        h.start(async, mode: TravelMode.walking);
+        h.fix(async, at(0));
+        expect(h.state, NavigationState.onRoute);
+        // The fix the session starts from isn't matched.
+        expect(h.matcher.asked, isEmpty);
+
+        h.matcher.answer = road;
+        h.fix(async, at(1));
+        h.fix(async, at(2));
+        final (mode, fixes) = h.matcher.asked.last;
+        expect(mode, NavigationMode.walking);
+        // The fix it started from too.
+        expect(fixes, [at(0), at(1), at(2)]);
+        expect(h.session.fixes.last, at(2));
+        expect(h.session.matches.last, road);
+
+        // No match goes to the session as none.
+        h.matcher.answer = null;
+        h.fix(async, at(3));
+        expect(h.session.matches.last, isNull);
+      });
+    });
+
+    test('the window keeps the last 30 s, starting over after a gap', () {
+      final window = MatchWindow();
+      for (var s = 0; s < 40; s++) {
+        window.add(at(s));
+      }
+      expect(window.fixes.first, at(10));
+      expect(window.fixes.last, at(39));
+      expect(window.fixes, hasLength(30));
+
+      // Fixes faster than a second apart: only the newest [maxMatchFixes].
+      final fast = MatchWindow();
+      for (var i = 0; i < 100; i++) {
+        fast.add(fakeFix(42.5, 1.52, timestampMs: t0 + i * 200));
+      }
+      expect(fast.fixes, hasLength(maxMatchFixes));
+      expect(fast.fixes.last.timestampMs.toInt(), t0 + 99 * 200);
+
+      // Over 10 s without one, the window starts over.
+      window.add(at(39 + 11));
+      expect(window.fixes, [at(50)]);
+      window.add(at(60));
+      expect(window.fixes, [at(50), at(60)]);
+    });
+
+    test('a fix replaced before it was handled is still in the window', () {
+      fakeAsync((async, h) {
+        h.onRoute(async);
+        final session = h.session;
+        session.hold = Completer();
+        h.fix(async, at(1));
+        h.fix(async, at(2));
+        h.fix(async, at(3));
+        session.hold!.complete();
+        session.hold = null;
+        async.flushMicrotasks();
+        expect(h.matcher.asked.last.$2.last, at(3));
+        expect(h.matcher.asked.last.$2, contains(at(2)));
+      });
+    });
+
+    test('a new route starts from where navigation put you', () {
+      fakeAsync((async, h) {
+        h.onRoute(async);
+        final raw = at(1, lat: 42.49);
+        final matched = fakeFix(42.4901, 1.5201, course: 90);
+        h.session.next = fakeUpdate(
+          deviation: NavDeviation.offRoute,
+          location: raw,
+          effective: matched,
+          matched: true,
+        );
+        h.fix(async, raw);
+        async.elapse(offRouteHold);
+        expect(h.state, NavigationState.rerouting);
+        expect(h.routes.rerouted.single.from, const LngLat(1.5201, 42.4901));
+        expect(h.session.rerouteFrom.single, matched);
       });
     });
   });
