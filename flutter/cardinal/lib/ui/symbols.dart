@@ -42,6 +42,27 @@ class AppSymbols {
   /// Android's Recenter (Ferrostar's `location.fill` and `navigation_24px`).
   IconData get recenter =>
       _pick(CupertinoIcons.location_fill, Icons.navigation);
+
+  /// Back to following you from the route overview: iOS's Recenter there
+  /// (`location.north.fill`); Android has the one Recenter.
+  IconData get recenterFromOverview =>
+      _pick(CupertinoIcons.location_north_fill, Icons.navigation);
+
+  /// The rest of the trip, while navigating: Ferrostar Android's `route_24px`, which
+  /// it turns a quarter (see [routeOverviewQuarterTurns]). iOS's is an S-shaped path
+  /// between two points, which Cupertino's icons have nothing like; a map stands in.
+  IconData get routeOverview => _pick(CupertinoIcons.map, Icons.route);
+
+  /// How many quarter turns clockwise [routeOverview] is drawn at: Material's route
+  /// icon runs side to side, which Ferrostar turns to run up the screen.
+  int get routeOverviewQuarterTurns => _ios ? 0 : 1;
+
+  /// Spoken announcements on, and off: Ferrostar's `speaker.2.fill` and
+  /// `speaker.slash.fill` on iOS, and Material's volume icons.
+  IconData get speaking =>
+      _pick(CupertinoIcons.speaker_2_fill, Icons.volume_up);
+  IconData get muted =>
+      _pick(CupertinoIcons.speaker_slash_fill, Icons.volume_off);
   IconData get layers =>
       _pick(CupertinoIcons.square_stack_3d_up, Icons.layers_outlined);
 }

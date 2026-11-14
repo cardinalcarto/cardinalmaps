@@ -106,17 +106,21 @@ class FakeDirectionsAdapter implements DirectionsAdapter {
   bool get isDisposed => false;
 }
 
-/// A route along [points], given as `[lng, lat]`.
+/// A route along [points], given as `[lng, lat]`, navigated in [navigationSteps].
 DirectionsRoute fakeRoute(
   List<List<double>> points, {
   double distance = 1000,
   double duration = 600,
   List<DirectionsStep> steps = const [],
+  List<NavStep> navigationSteps = const [],
   String language = 'en-US',
 }) => DirectionsRoute(
   geometry: [for (final p in points) DirectionsPoint(lat: p[1], lng: p[0])],
   distance: distance,
   duration: duration,
   steps: steps,
-  navigable: FakeNavigableRoute(locale: language),
+  navigable: FakeNavigableRoute(
+    navigationSteps: navigationSteps,
+    locale: language,
+  ),
 );

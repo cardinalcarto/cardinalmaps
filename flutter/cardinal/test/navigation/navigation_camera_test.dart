@@ -4,6 +4,7 @@ import 'package:cardinal/navigation/navigation_camera.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:routing/routing.dart';
+import 'package:sparkle/sparkle.dart' show PuckStyle;
 
 void main() {
   group('the zoom from speed', () {
@@ -150,6 +151,31 @@ void main() {
       );
       // Halfway between 50 and 100 − bottom is 100 − 44.
       expect(50 + (100 - 50 - padding.bottom) / 2, closeTo(100 - 44, 1e-9));
+    });
+
+    test('keeps its disk above what is under it, with a gap', () {
+      const size = Size(915, 412);
+      const under = 24 + 34.0;
+      final padding = followPadding(
+        size: size,
+        mapPadding: EdgeInsets.zero,
+        systemPadding: const EdgeInsets.only(bottom: 24),
+        direction: TextDirection.ltr,
+        under: under,
+      );
+      final chevron =
+          padding.top + (size.height - padding.top - padding.bottom) / 2;
+      final disk = chevron + const PuckStyle().diskRadius;
+      expect(size.height - under - disk, closeTo(8, 1e-9));
+      // Low enough that it doesn't lift it at all.
+      final low = followPadding(
+        size: size,
+        mapPadding: EdgeInsets.zero,
+        systemPadding: const EdgeInsets.only(bottom: 24),
+        direction: TextDirection.ltr,
+        under: 10,
+      );
+      expect(low.bottom, 0);
     });
 
     test('glides for as long as fixes are apart, up to a limit', () {

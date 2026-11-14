@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoButton;
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/transit_plan.dart';
@@ -6,7 +8,12 @@ import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/map/route_layer.dart';
 import 'package:cardinal/map/selection.dart';
+import 'package:cardinal/map/map_control.dart';
+import 'package:cardinal/navigation/maneuver_banner.dart';
+import 'package:cardinal/navigation/navigation_camera.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
+import 'package:cardinal/navigation/road_name.dart';
+import 'package:cardinal/navigation/trip_progress.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
@@ -16,6 +23,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:routing/routing.dart';
+import 'package:sparkle/sparkle.dart' show PuckStyle;
 
 import '../fakes/fake_app.dart';
 import '../fakes/fake_location.dart';
@@ -42,6 +50,8 @@ final best = fakeRoute(
     DirectionsStep(instruction: 'Drive north.', distance: 32, duration: 5),
     DirectionsStep(instruction: 'Turn right.', distance: 1000, duration: 60),
   ],
+  // The road names as the router may give them, with space around, and none.
+  navigationSteps: [fakeNavStep('  Pike Street '), fakeNavStep('   ')],
 );
 final other = fakeRoute(
   [
@@ -71,6 +81,8 @@ void main() {
   late NavigationController navigation;
   late FakeNavigationLocation navigationLocation;
   late FakeSessions sessions;
+  late FakeRoutes navigationRoutes;
+  late FakeSpeaker speaker;
 
   setUp(() async {
     store = fakeStore();
@@ -81,6 +93,8 @@ void main() {
     overlays = MapOverlays();
     navigationLocation = FakeNavigationLocation();
     sessions = FakeSessions();
+    navigationRoutes = FakeRoutes();
+    speaker = FakeSpeaker();
     navigation = fakeNavigationController(
       location: navigationLocation,
       sessions: sessions,
@@ -327,18 +341,39 @@ void main() {
     void navigateInTestTime() => navigation = fakeNavigationController(
       location: navigationLocation,
       sessions: sessions,
+      routes: navigationRoutes,
+      speaker: speaker,
+      settings: store.settings,
     );
+
+    /// Where the map buttons' column starts across the screen: the camera and mute
+    /// buttons are as wide.
+    double buttonsLeft(WidgetTester tester) => tester
+        .getRect(
+          find.byWidgetPredicate(
+            (w) =>
+                w is MapControl &&
+                (w.tooltip == 'Mute' || w.tooltip == 'Unmute'),
+          ),
+        )
+        .left;
 
     /// Navigation's answer to a fix: you on the route, with [visual] showing.
     Future<void> fix(
       WidgetTester tester, {
       NavVisualInstruction? visual,
       double toManeuver = 250,
+      int stepIndex = 0,
+      NavDeviation deviation = NavDeviation.onRoute,
+      NavSpokenInstruction? spoken,
     }) async {
       final update = fakeUpdate(
         snapped: fakeFix(2.5, 0.6, course: 20, speed: 5),
         visual: visual,
         toManeuver: toManeuver,
+        stepIndex: stepIndex,
+        deviation: deviation,
+        spoken: spoken,
       );
       if (sessions.sessions.isEmpty) {
         sessions.start = update;
@@ -392,6 +427,7 @@ void main() {
       await fix(tester);
       expect(map.following.value, isTrue);
       expect(find.byTooltip('Recenter'), findsNothing);
+      expect(find.byTooltip('Route overview'), findsOneWidget);
 
       // Moved by hand.
       map.following.value = false;
@@ -404,6 +440,348 @@ void main() {
       expect(map.follows, hasLength(follows + 1));
       expect(map.following.value, isTrue);
       expect(find.byTooltip('Recenter'), findsNothing);
+      expect(find.byTooltip('Route overview'), findsOneWidget);
+    });
+
+    group('the road name', () {
+      testWidgets('shows the step\'s, trimmed, and none for a blank one', (
+        tester,
+      ) async {
+        navigateInTestTime();
+        await start(tester);
+        // Before the first fix, there's no step.
+        expect(find.text('Pike Street'), findsNothing);
+        await fix(tester);
+        expect(find.text('Pike Street'), findsOneWidget);
+        expect(find.byType(RoadNamePill), findsOneWidget);
+        await fix(tester, stepIndex: 1);
+        expect(find.text('Pike Street'), findsNothing);
+        expect(
+          find.descendant(
+            of: find.byType(RoadNamePill),
+            matching: find.byType(Text),
+          ),
+          findsNothing,
+        );
+      });
+
+      testWidgets('hides off the route and while a new one comes', (
+        tester,
+      ) async {
+        navigateInTestTime();
+        await start(tester);
+        await fix(tester);
+        expect(find.text('Pike Street'), findsOneWidget);
+        // A shortcut onto a later step: the current step is one you've left.
+        await fix(tester, deviation: NavDeviation.offStep);
+        expect(find.text('Pike Street'), findsNothing);
+        await fix(tester);
+        expect(find.text('Pike Street'), findsOneWidget);
+        await fix(tester, deviation: NavDeviation.offRoute);
+        expect(navigation.state, NavigationState.offRoute);
+        expect(find.text('Pike Street'), findsNothing);
+        await tester.pump(offRouteHold);
+        expect(navigation.state, NavigationState.rerouting);
+        expect(find.text('Pike Street'), findsNothing);
+        // The new route, followed.
+        sessions.last.next = fakeUpdate(
+          snapped: fakeFix(2.5, 0.6, course: 20, speed: 5),
+        );
+        navigationRoutes.rerouted.single.answer.complete(best);
+        await tester.pumpAndSettle();
+        expect(navigation.state, NavigationState.onRoute);
+        expect(find.text('Pike Street'), findsOneWidget);
+        // Until the time between new routes is up.
+        await tester.pump(minRerouteInterval);
+      });
+
+      testWidgets('hides when the camera is not following you', (tester) async {
+        navigateInTestTime();
+        await start(tester);
+        await fix(tester);
+        // Moved by hand.
+        map.following.value = false;
+        await tester.pump();
+        expect(find.text('Pike Street'), findsNothing);
+        await tester.tap(find.byTooltip('Recenter'));
+        await tester.pump();
+        expect(find.text('Pike Street'), findsOneWidget);
+        // In the overview.
+        await tester.tap(find.byTooltip('Route overview'));
+        await tester.pump();
+        expect(find.text('Pike Street'), findsNothing);
+      });
+
+      testWidgets('is in label large on Material, and as tall as it says', (
+        tester,
+      ) async {
+        navigateInTestTime();
+        await start(tester);
+        await fix(tester);
+        final context = tester.element(find.byType(RoadNamePill));
+        expect(
+          tester.widget<Text>(find.text('Pike Street')).style!.fontSize,
+          Theme.of(context).textTheme.labelLarge!.fontSize,
+        );
+        expect(
+          tester.getSize(find.byType(RoadNamePill)).height,
+          closeTo(RoadNamePill.heightOf(context), 1e-9),
+        );
+      });
+
+      testWidgets('shrinks a long name to fit, then cuts it off', (
+        tester,
+      ) async {
+        Widget pill(String name) => MaterialApp(
+          home: Center(
+            child: SizedBox(
+              width: 300,
+              child: Center(child: RoadNamePill(name: name)),
+            ),
+          ),
+        );
+        double size(String name) =>
+            tester.widget<Text>(find.text(name)).style!.fontSize!;
+        await tester.pumpWidget(pill('Pike Street'));
+        final full = size('Pike Street');
+        const long = 'Martin Luther King Junior Way South';
+        await tester.pumpWidget(pill(long));
+        expect(size(long), lessThan(full));
+        expect(tester.takeException(), isNull);
+        const longer =
+            'Martin Luther King Junior Way South and then some more of it';
+        await tester.pumpWidget(pill(longer));
+        expect(size(longer), full * RoadNamePill.minScale);
+        expect(
+          tester.widget<Text>(find.text(longer)).overflow,
+          TextOverflow.ellipsis,
+        );
+        expect(tester.takeException(), isNull);
+      });
+    });
+
+    group('the camera button', () {
+      testWidgets('in landscape, fits the route clear of the buttons too', (
+        tester,
+      ) async {
+        navigateInTestTime();
+        await start(tester);
+        tester.view.physicalSize = appScreen.flipped * 2;
+        await tester.pumpAndSettle();
+        await fix(tester);
+        await tester.tap(find.byTooltip('Route overview'));
+        await tester.pump();
+        // The start half, and the end side in to the buttons' far side.
+        expect(map.subjectClear!.left, appScreen.height / 2);
+        expect(map.subjectClear!.right, appScreen.height - buttonsLeft(tester));
+      });
+
+      testWidgets('goes from following to overview and back', (tester) async {
+        navigateInTestTime();
+        await start(tester);
+        // Nothing to show the trip from before the first fix.
+        expect(find.byTooltip('Route overview'), findsNothing);
+        expect(find.byTooltip('Recenter'), findsNothing);
+        await fix(
+          tester,
+          visual: fakeVisual(fakeContent('Turn left onto Pike Street')),
+        );
+        final before = map.subjectsSet;
+        await tester.tap(find.byTooltip('Route overview'));
+        await tester.pump();
+        expect(map.subjectsSet, before + 1);
+        expect(map.following.value, isFalse);
+        // Flat and north up, from the chevron to the end.
+        expect((map.subjectBearing, map.subjectPitch), (0, 0));
+        expect(map.subjectBounds, (west: 0.6, south: 2.5, east: 1, north: 4));
+        // Clear of the banner, down to its bottom, and of trip progress, up to its
+        // top, less what the map's own padding covers: the status bar (none in the
+        // test) and what the sheet, down out of sight, still covers at the bottom.
+        final banner = tester.getRect(find.byType(ManeuverBanner));
+        final progress = tester.getRect(find.byType(TripProgressPill));
+        final sheet = SheetScaffold.viewOf(
+          tester.element(find.byType(TripProgressPill)),
+        ).obscured;
+        expect(map.subjectClear!.top, banner.bottom - sheet.top);
+        expect(
+          map.subjectClear!.bottom,
+          math.max(0, appScreen.height - progress.top - sheet.bottom),
+        );
+        // And of the map buttons, down the end side.
+        expect(map.subjectClear!.right, appScreen.width - buttonsLeft(tester));
+        expect(map.subjectClear!.left, 0);
+        expect(find.byTooltip('Route overview'), findsNothing);
+
+        await tester.tap(find.byTooltip('Recenter'));
+        await tester.pump();
+        expect(map.following.value, isTrue);
+        expect(find.byTooltip('Recenter'), findsNothing);
+        expect(find.byTooltip('Route overview'), findsOneWidget);
+      });
+
+      testWidgets('shows a new route in the overview', (tester) async {
+        navigateInTestTime();
+        await start(tester);
+        await fix(tester);
+        await tester.tap(find.byTooltip('Route overview'));
+        await tester.pump();
+        final fitted = map.subjectsSet;
+        await fix(tester, deviation: NavDeviation.offRoute);
+        await tester.pump(offRouteHold);
+        sessions.last.next = fakeUpdate(snapped: fakeFix(0, 0, course: 20));
+        navigationRoutes.rerouted.single.answer.complete(
+          fakeRoute([
+            [0, 0],
+            [3, 5],
+          ]),
+        );
+        await tester.pumpAndSettle();
+        expect(map.subjectsSet, fitted + 1);
+        expect(map.subjectBounds, (west: 0, south: 0, east: 3, north: 5));
+        expect(find.byTooltip('Recenter'), findsOneWidget);
+        // Until the time between new routes is up.
+        await tester.pump(minRerouteInterval);
+      });
+    });
+
+    group('the follow camera', () {
+      /// Where the chevron sits on screen, down from the top, with the camera
+      /// following at [padding] on top of the map's own.
+      double chevronY(WidgetTester tester, EdgeInsets padding) {
+        final context = tester.element(find.byType(TripProgressPill));
+        final size = MediaQuery.sizeOf(context);
+        final mapPadding =
+            EdgeInsets.only(top: MediaQuery.paddingOf(context).top) +
+            SheetScaffold.viewOf(context).obscured;
+        final all = mapPadding + padding;
+        return all.top + (size.height - all.top - all.bottom) / 2;
+      }
+
+      /// What's under the chevron in landscape: the road-name pill, up from the
+      /// bottom inset.
+      double under(WidgetTester tester) {
+        final context = tester.element(find.byType(TripProgressPill));
+        return math.max(16.0, MediaQuery.paddingOf(context).bottom) +
+            RoadNamePill.heightOf(context);
+      }
+
+      EdgeInsets expected(WidgetTester tester, {double under = 0}) {
+        final context = tester.element(find.byType(TripProgressPill));
+        return followPadding(
+          size: MediaQuery.sizeOf(context),
+          mapPadding:
+              EdgeInsets.only(top: MediaQuery.paddingOf(context).top) +
+              SheetScaffold.viewOf(context).obscured,
+          systemPadding: MediaQuery.paddingOf(context),
+          direction: TextDirection.ltr,
+          under: under,
+        );
+      }
+
+      testWidgets('keeps up with the sheet as it settles', (tester) async {
+        navigateInTestTime();
+        // In landscape, where the sheet is at the side, over the start half the chevron
+        // is kept out of: padding read with the sheet still there pads by too little.
+        await open(tester);
+        tester.view.physicalSize = appScreen.flipped * 2;
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Start Navigation'));
+        // The screen shows while the sheet is still on its way down.
+        await tester.pump();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(find.byType(TripProgressPill), findsOneWidget);
+        final early = SheetScaffold.viewOf(
+          tester.element(find.byType(TripProgressPill)),
+        ).obscured;
+        await tester.pumpAndSettle();
+        final settled = SheetScaffold.viewOf(
+          tester.element(find.byType(TripProgressPill)),
+        ).obscured;
+        // Or the test shows nothing.
+        expect(early, isNot(settled));
+        await fix(tester);
+        expect(
+          map.follows.last.padding,
+          expected(tester, under: under(tester)),
+        );
+      });
+
+      testWidgets('in landscape, keeps the disk above the road name', (
+        tester,
+      ) async {
+        navigateInTestTime();
+        // Type large enough that the pill would reach the disk where it sits.
+        tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        await start(tester);
+        tester.view.physicalSize = appScreen.flipped * 2;
+        await tester.pumpAndSettle();
+        await fix(tester);
+        final pill = tester.getRect(find.byType(RoadNamePill));
+        final padding = map.follows.last.padding;
+        final disk = chevronY(tester, padding) + const PuckStyle().diskRadius;
+        expect(pill.top - disk, closeTo(8, 1e-6));
+        // Lifted off where it'd sit with nothing under it.
+        expect(padding.bottom, greaterThan(expected(tester).bottom));
+      });
+    });
+
+    group('the mute button', () {
+      testWidgets('stops speech and keeps quiet until unmuted', (tester) async {
+        navigateInTestTime();
+        await start(tester);
+        await fix(tester, spoken: fakeSpoken('a', 'Turn left'));
+        expect(speaker.said, ['Turn left']);
+        await tester.tap(find.byTooltip('Mute'));
+        await tester.pump();
+        expect(navigation.muted, isTrue);
+        expect(speaker.log.last, '(stop)');
+        expect(find.byTooltip('Mute'), findsNothing);
+
+        await fix(tester, spoken: fakeSpoken('b', 'Turn right'));
+        await fix(tester, deviation: NavDeviation.offRoute);
+        // Neither the announcement nor "Rerouting".
+        expect(speaker.said, ['Turn left']);
+        await fix(tester);
+        expect(navigation.state, NavigationState.onRoute);
+
+        await tester.tap(find.byTooltip('Unmute'));
+        await tester.pump();
+        expect(navigation.muted, isFalse);
+        await fix(tester, spoken: fakeSpoken('c', 'Keep left'));
+        expect(speaker.said, ['Turn left', 'Keep left']);
+      });
+
+      testWidgets('shows in the overview and once moved, as on iOS', (
+        tester,
+      ) async {
+        navigateInTestTime();
+        await start(tester);
+        // From the start.
+        expect(find.byTooltip('Mute'), findsOneWidget);
+        await fix(tester);
+        await tester.tap(find.byTooltip('Route overview'));
+        await tester.pump();
+        expect(find.byTooltip('Mute'), findsOneWidget);
+        map.following.value = false;
+        await tester.pump();
+        expect(find.byTooltip('Mute'), findsOneWidget);
+      });
+
+      testWidgets('persists across trips', (tester) async {
+        navigateInTestTime();
+        await start(tester);
+        await tester.tap(find.byTooltip('Mute'));
+        await tester.pump();
+        await tester.tap(find.byTooltip('End'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Start Navigation'));
+        await tester.pumpAndSettle();
+        expect(navigation.muted, isTrue);
+        expect(find.byTooltip('Unmute'), findsOneWidget);
+        expect(await store.settings.get(navigationMuted), isTrue);
+      });
     });
 
     testWidgets('Go starts it on iOS, with Cupertino controls', (tester) async {

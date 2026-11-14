@@ -22,11 +22,16 @@ class FakeMap extends SparkleMapController {
     required double north,
     required double maxZoom,
     double margin = 0,
+    EdgeInsets clear = EdgeInsets.zero,
     double? bearing,
     double? pitch,
   }) {
     subject = true;
     subjectsSet++;
+    subjectMargin = margin;
+    subjectClear = clear;
+    // As the map's: showing a subject ends following.
+    _following.value = false;
     subjectMaxZoom = maxZoom;
     subjectBearing = bearing;
     subjectPitch = pitch;
@@ -36,6 +41,10 @@ class FakeMap extends SparkleMapController {
   /// The bearing and pitch the last subject was set to show at, null for the camera's.
   double? subjectBearing;
   double? subjectPitch;
+
+  /// The margin, and what was to be kept clear, of the last subject set.
+  double? subjectMargin;
+  EdgeInsets? subjectClear;
 
   /// The bounds of the last subject set.
   ({double west, double south, double east, double north})? subjectBounds;

@@ -265,6 +265,11 @@ class SparkleMapController {
   /// the same flight, and the bounds are fitted as they'll be seen once there, so a
   /// tilted, turned map can come back flat and north up in one motion. Null keeps the
   /// camera's own. Moving the sheet on the way still steers toward them.
+  ///
+  /// [clear] is kept clear as well, edge by edge, on top of the padding and [margin]:
+  /// for what's drawn over some edges of the map and not others, such as the
+  /// navigation screen's banner and trip progress, which a margin the same all round
+  /// would either let the bounds run under or waste the sides on.
   void setSubject({
     required double west,
     required double south,
@@ -272,10 +277,21 @@ class SparkleMapController {
     required double north,
     required double maxZoom,
     double margin = 0,
+    EdgeInsets clear = EdgeInsets.zero,
     double? bearing,
     double? pitch,
   }) {
-    _subject = (west, south, east, north, maxZoom, margin, bearing, pitch);
+    _subject = (
+      west,
+      south,
+      east,
+      north,
+      maxZoom,
+      margin,
+      clear,
+      bearing,
+      pitch,
+    );
     _flight = null;
     _following.value = false;
     final map = _map;
@@ -287,6 +303,7 @@ class SparkleMapController {
       north: north,
       maxZoom: maxZoom,
       margin: margin,
+      clear: _mapPadding(clear),
       bearing: bearing,
       pitch: pitch,
     );
@@ -431,7 +448,18 @@ class SparkleMapController {
   bool get hasSubject => _map?.hasSubject() ?? _subject != null;
 
   /// The subject set before the map was.
-  (double, double, double, double, double, double, double?, double?)? _subject;
+  (
+    double,
+    double,
+    double,
+    double,
+    double,
+    double,
+    EdgeInsets,
+    double?,
+    double?,
+  )?
+  _subject;
 
   /// Where [flyTo] asked to go before the map was made.
   (double, double, double)? _flight;
@@ -521,6 +549,7 @@ class SparkleMapController {
               final n,
               final zoom,
               final margin,
+              final clear,
               final bearing,
               final pitch,
             )?) {
@@ -531,6 +560,7 @@ class SparkleMapController {
         north: n,
         maxZoom: zoom,
         margin: margin,
+        clear: _mapPadding(clear),
         bearing: bearing,
         pitch: pitch,
       );

@@ -57,6 +57,7 @@ void main() {
         : PlatformSpeaker(),
     screen: const PlatformScreenWake(),
     matcher: OfflineRoadMatcher(offline.area),
+    settings: store.settings,
   );
   runApp(
     StoreScope(

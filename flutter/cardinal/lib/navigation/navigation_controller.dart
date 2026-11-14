@@ -98,6 +98,9 @@ const rerouteBackoff = Duration(seconds: 10);
 /// trip that's stuck off the road tries once a minute rather than draining the battery.
 const maxRerouteBackoff = Duration(seconds: 60);
 
+/// Whether navigation's announcements are silenced (see [NavigationController.muted]).
+final navigationMuted = Setting.flag('navigation.muted', false);
+
 /// Navigation along a route: takes fixes, follows the route with Ferrostar's session,
 /// asks for a new route when you leave it, and speaks each announcement once.
 ///
@@ -138,6 +141,12 @@ const maxRerouteBackoff = Duration(seconds: 60);
 /// [end], from any state, goes to idle and stops the fixes (with the service that keeps
 /// them coming with the screen off), speech, and keeping the screen on.
 ///
+/// [muted] silences navigation: whatever is being said stops, and nothing more is said,
+/// "Rerouting" included, until it's unmuted. It's here rather than in the screen's
+/// button so that every screen showing the trip, a car's included, shares it. It's the
+/// app's [navigationMuted] setting, so it lasts across trips and restarts: someone who
+/// muted wants quiet until they say otherwise, not a voice at the next trip's start.
+///
 /// Fixes are handled one at a time, in order, since each session call must finish before
 /// the next is made. A fix that comes while one is being handled waits; a newer one
 /// replaces it, so a slow call never builds up a backlog of stale fixes.
@@ -155,8 +164,11 @@ class NavigationController extends ChangeNotifier {
     required this._speaker,
     required this._screen,
     required this._matcher,
+    required this._settings,
     this._startSession = RustTripSession.start,
-  });
+  }) {
+    unawaited(_readMuted());
+  }
 
   final RouteSource _routes;
   final NavigationLocationSource _location;
@@ -164,6 +176,7 @@ class NavigationController extends ChangeNotifier {
   final ScreenWake _screen;
   final RoadMatcher _matcher;
   final TripSessionStarter _startSession;
+  final SettingsStore _settings;
 
   NavigationState get state => _state;
   NavigationState _state = NavigationState.idle;
@@ -206,6 +219,41 @@ class NavigationController extends ChangeNotifier {
   /// What the last failed try at a new route threw, for logs.
   Object? get rerouteError => _rerouteError;
   Object? _rerouteError;
+
+  /// Whether announcements are silenced, until [setMuted] says otherwise: the stored
+  /// [navigationMuted] setting, once it's been read, which is well before the first
+  /// announcement of a trip can come due.
+  bool get muted => _muted;
+  bool _muted = false;
+
+  /// Whether [setMuted] has been called, so the stored setting, read late, doesn't undo
+  /// it.
+  bool _mutedSet = false;
+
+  Future<void> _readMuted() async {
+    final muted = await _settings.get(navigationMuted);
+    if (_mutedSet || muted == _muted) return;
+    _muted = muted;
+    notifyListeners();
+  }
+
+  /// Silences announcements, or lets them be heard again, on this trip and the next
+  /// ones, and stores that as the [navigationMuted] setting.
+  ///
+  /// Muting stops whatever is being said at once: someone who mutes wants quiet now,
+  /// not after the sentence. Announcements that come due while muted are passed over
+  /// for good, not said late on unmuting: by then they're about a point you may be past.
+  /// Unmuting says nothing by itself; the next announcement due is heard.
+  void setMuted(bool muted) {
+    _mutedSet = true;
+    // Stored even when it's no change here: the stored value may not have been read
+    // yet, and may differ.
+    unawaited(_settings.set(navigationMuted, muted));
+    if (muted == _muted) return;
+    _muted = muted;
+    if (muted) unawaited(_speaker.stop());
+    notifyListeners();
+  }
 
   /// Which trip this is: each [start] and [end] moves it on, so that work for an earlier
   /// trip that finishes late is dropped.
@@ -411,14 +459,14 @@ class NavigationController extends ChangeNotifier {
   }
 
   /// Says [spoken] if it hasn't been said on this trip, and only while on the route or
-  /// arriving.
+  /// arriving, and not [muted].
   ///
   /// Off the route, and while rerouting, the old route's announcements are about turns
   /// you're no longer heading for, so they're dropped rather than said. They're marked as
   /// said all the same, so one that came due while you were off isn't said late if you
   /// come back onto the line: by then it's about a point you may already be past.
   void _speak(NavSpokenInstruction? spoken) {
-    if (spoken == null || !_spoken.add(spoken.utteranceId)) return;
+    if (spoken == null || !_spoken.add(spoken.utteranceId) || _muted) return;
     switch (_state) {
       case NavigationState.onRoute || NavigationState.arrived:
         unawaited(_speaker.speak(spoken.text));
@@ -439,7 +487,7 @@ class NavigationController extends ChangeNotifier {
     // failing doesn't keep repeating it. Only in the route's own language: with no
     // translation for it, staying quiet beats another language in this voice.
     final rerouting = localizationsFor(_language!)?.rerouting;
-    if (rerouting != null) unawaited(_speaker.speak(rerouting));
+    if (rerouting != null && !_muted) unawaited(_speaker.speak(rerouting));
     _hold?.cancel();
     _hold = Timer(offRouteHold, _holdEnded);
   }

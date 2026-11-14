@@ -19,6 +19,7 @@ import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/navigation/road_matcher.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/navigation_location.dart';
+import 'package:cardinal/store/store.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:routing/routing.dart';
@@ -103,6 +104,7 @@ void main() {
       ),
       speaker: speaker,
       screen: FakeScreenWake(),
+      settings: SettingsStore.inMemory(),
       matcher: matcher,
     );
     final states = <NavigationState>[];

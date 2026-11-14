@@ -29,5 +29,61 @@
   "tripUnderAMinute": "<1 min",
   "@tripUnderAMinute": {
     "description": "How long is left of a trip when it's less than a minute, as the directions sheet shows it."
+  },
+  "navigationRouteOverview": "Route overview",
+  "@navigationRouteOverview": {
+    "description": "The navigation screen's camera button while the map follows you, as its tooltip and spoken label: shows the rest of the trip on the map, flat and north up."
+  },
+  "navigationRecenter": "Recenter",
+  "@navigationRecenter": {
+    "description": "The navigation screen's camera button once the map shows the route overview or was moved by hand, as its tooltip and spoken label: brings the map back to following you."
+  },
+  "navigationMute": "Mute",
+  "@navigationMute": {
+    "description": "The navigation screen's button that silences spoken directions, as its tooltip and spoken label, shown while they're being spoken."
+  },
+  "navigationUnmute": "Unmute",
+  "@navigationUnmute": {
+    "description": "The navigation screen's button that lets spoken directions be heard again, as its tooltip and spoken label, shown while they're silenced."
+  },
+  "navigationEnd": "End",
+  "@navigationEnd": {
+    "description": "The button at the end of the trip-progress bar that ends turn-by-turn navigation and goes back to directions, as its tooltip and spoken label."
+  },
+  "navigationDistanceMiles": "{distance} mi",
+  "@navigationDistanceMiles": {
+    "description": "A distance in miles while navigating, to the next turn or to the destination, in short form. distance is the number, already formatted for the language.",
+    "placeholders": {
+      "distance": {"type": "String", "example": "0.4"}
+    }
+  },
+  "navigationDistanceFeet": "{distance} ft",
+  "@navigationDistanceFeet": {
+    "description": "A distance in feet while navigating, to the next turn or to the destination, in short form. distance is the number, already formatted for the language.",
+    "placeholders": {
+      "distance": {"type": "String", "example": "0.4"}
+    }
+  },
+  "navigationDistanceKilometers": "{distance} km",
+  "@navigationDistanceKilometers": {
+    "description": "A distance in kilometers while navigating, to the next turn or to the destination, in short form. distance is the number, already formatted for the language.",
+    "placeholders": {
+      "distance": {"type": "String", "example": "0.4"}
+    }
+  },
+  "navigationDistanceMeters": "{distance} m",
+  "@navigationDistanceMeters": {
+    "description": "A distance in meters while navigating, to the next turn or to the destination, in short form. distance is the number, already formatted for the language.",
+    "placeholders": {
+      "distance": {"type": "String", "example": "0.4"}
+    }
+  },
+  "navigationNotificationText": "Navigating",
+  "@navigationNotificationText": {
+    "description": "The text of the Android notification shown while turn-by-turn navigation keeps getting your location with the screen off."
+  },
+  "navigationNotificationChannel": "Navigation",
+  "@navigationNotificationChannel": {
+    "description": "The name of the Android notification channel for the notification shown while navigating, as the system's notification settings list it."
   }
 }

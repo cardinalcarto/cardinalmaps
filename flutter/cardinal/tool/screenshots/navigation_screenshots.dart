@@ -29,13 +29,27 @@
 // 3. `3-portrait-dark.png`: 1 in the dark theme.
 // 4. `4-portrait-24h.png`: 1 with the device's clock set to 24 hours.
 //
+// `buttons`, for the road-name pill and the camera and mute buttons, on the long drive
+// once it's on a named road and 300 m along:
+//
+// 1. `1-portrait-following.png`: following, in portrait: the road name, Route overview
+//    and Mute.
+// 2. `2-portrait-overview.png`: the route overview, with Recenter and no road name.
+// 3. `3-landscape-following.png`: 1 in landscape.
+// 4. `4-portrait-muted.png`: 1, muted.
+// 5. `5-portrait-dark.png`: 1 in the dark theme.
+//
+// The overview and Recenter are pressed by calling the buttons' own callbacks, as a tap
+// would, rather than by tapping.
+//
 // The router's secondary rows are rare and short-lived (the route's one is on a 25 m
 // step), so 1 and 6 are each taken on a short drive of their own, from the step before
 // it, rather than seven minutes into the long one.
 //
 // The destination is put in the app's store, as search puts a place it opens, under the
-// ID [destinationId]; it's deleted by that ID at the end, which is all the drives add to
-// the store.
+// ID [destinationId]; it's deleted by that ID at the end. Muting stores the app's
+// navigation-muted setting, so `buttons` puts back the stored row as it was, or deletes
+// it if there was none. That's all the drives change in the store.
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -44,10 +58,13 @@ import 'package:cardinal/config.dart' show simulateNavigation;
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/main.dart' as app;
 import 'package:cardinal/map/map.dart';
+import 'package:cardinal/map/map_control.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/navigation_page.dart';
 import 'package:cardinal/navigation/navigation_scope.dart';
+import 'package:cardinal/navigation/road_name.dart';
 import 'package:cardinal/routes.dart';
+import 'package:cardinal/store/src/database.dart' show SettingRow;
 import 'package:cardinal/store/store.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
@@ -69,7 +86,7 @@ const outDir = String.fromEnvironment('CARDINAL_SCREENSHOTS_DIR');
 const bucketDir = String.fromEnvironment('CARDINAL_SCREENSHOTS_BUCKET');
 const releasesUrl = String.fromEnvironment('CARDINAL_RELEASES_URL');
 
-/// Which screenshots to take: `banner` or `progress` (see above).
+/// Which screenshots to take: `banner`, `progress` or `buttons` (see above).
 const shotSet = String.fromEnvironment(
   'CARDINAL_SCREENSHOTS_SET',
   defaultValue: 'banner',
@@ -105,8 +122,11 @@ void main() {
           'needs CARDINAL_SCREENSHOTS_DIR and CARDINAL_SIMULATE_NAVIGATION=true',
         );
       }
-      if (shotSet != 'banner' && shotSet != 'progress') {
-        fail('CARDINAL_SCREENSHOTS_SET is banner or progress, not $shotSet');
+      if (!const {'banner', 'progress', 'buttons'}.contains(shotSet)) {
+        fail(
+          'CARDINAL_SCREENSHOTS_SET is banner, progress or buttons, '
+          'not $shotSet',
+        );
       }
       await Directory(outDir).create(recursive: true);
       final bucket = await _serveBucket();
@@ -150,6 +170,12 @@ void main() {
         if (shotSet == 'progress') {
           await _navigate(tester, context, route);
           await _progress(tester, binding, controller);
+          await _end(tester, context);
+          return;
+        }
+        if (shotSet == 'buttons') {
+          await _navigate(tester, context, route);
+          await _buttons(tester, binding, controller);
           await _end(tester, context);
           return;
         }
@@ -234,6 +260,66 @@ Future<void> _progress(
     binding.platformDispatcher.clearAlwaysUse24HourTestValue();
     _brightness(binding, Brightness.light);
   }
+}
+
+/// On the long drive, once it's on a named road [into] meters along, so the drive and
+/// the camera have settled: the road-name pill and the camera and mute buttons,
+/// following in portrait, in the overview, in landscape, muted, and in the dark theme.
+Future<void> _buttons(
+  WidgetTester tester,
+  IntegrationTestWidgetsFlutterBinding binding,
+  NavigationController controller, {
+  double into = 300,
+}) async {
+  double? first;
+  final along = await _waitFor(tester, controller, (update) {
+    final left = update.progress?.distanceRemaining;
+    if (left == null) return false;
+    first ??= left;
+    return update.visualInstruction != null &&
+        left < first! - into &&
+        roadNameToShow(controller, following: true) != null;
+  }, within: const Duration(minutes: 8));
+  if (along == null) {
+    debugPrint('nav-shots: the drive never got $into m along a named road');
+    return;
+  }
+  await _shoot(tester, '1-portrait-following', controller);
+
+  final wasMuted = controller.muted;
+  final stored = await _storedMuted();
+  controller.setMuted(true);
+  await _settle(tester, const Duration(milliseconds: 500));
+  await _shoot(tester, '4-portrait-muted', controller);
+  controller.setMuted(wasMuted);
+  await _settle(tester, const Duration(milliseconds: 500));
+  await _restoreMuted(stored);
+
+  _setView(tester, landscape: true);
+  await _settle(tester, const Duration(seconds: 2));
+  await _shoot(tester, '3-landscape-following', controller);
+  _setView(tester, landscape: false);
+  await _settle(tester, const Duration(seconds: 2));
+
+  _brightness(binding, Brightness.dark);
+  await _settle(tester, const Duration(seconds: 2));
+  await _shoot(tester, '5-portrait-dark', controller);
+  _brightness(binding, Brightness.light);
+  await _settle(tester, const Duration(seconds: 2));
+
+  _press(tester, 'Route overview');
+  // Long enough for the flight there.
+  await _settle(tester, const Duration(seconds: 3));
+  await _shoot(tester, '2-portrait-overview', controller);
+  _press(tester, 'Recenter');
+  await _settle(tester, const Duration(seconds: 2));
+}
+
+/// Presses the navigation screen's map button labeled [tooltip] by calling its own
+/// callback, as a tap on it would.
+void _press(WidgetTester tester, String tooltip) {
+  final buttons = tester.widgetList<MapControl>(find.byType(MapControl));
+  buttons.singleWhere((b) => b.tooltip == tooltip).onPressed();
 }
 
 /// The fastest driving route from [from] to [destination].
@@ -415,6 +501,8 @@ Future<void> _shoot(
   final visual = controller.update?.visualInstruction;
   debugPrint(
     'nav-shots: $name ${image.width}x${image.height}: '
+    'road "${roadNameToShow(controller, following: true)}", '
+    '${controller.muted ? 'muted' : 'not muted'}; '
     '${visual?.primary.maneuverType?.name} ${visual?.primary.maneuverModifier?.name} '
     '"${visual?.primary.text}" / "${visual?.secondary?.text}" '
     'in ${controller.update?.progress?.distanceToNextManeuver.round()} m; '
@@ -456,6 +544,42 @@ Future<FakeBucket?> _serveBucket() async {
   if (bucketDir.isEmpty) return null;
   final port = Uri.parse(releasesUrl).port;
   return FakeBucket.serve(bucketDir, port: port);
+}
+
+/// The stored row of the navigation-muted setting, null if there's none.
+Future<String?> _storedMuted() async {
+  final db = CardinalDatabase.open();
+  try {
+    final row = await (db.select(
+      db.settings,
+    )..where((s) => s.key.equals(navigationMuted.key))).getSingleOrNull();
+    return row?.value;
+  } finally {
+    await db.close();
+  }
+}
+
+/// Puts the navigation-muted setting's row back to [value], or deletes it if there was
+/// none, through a connection of its own, as [_deleteDestination] does.
+Future<void> _restoreMuted(String? value) async {
+  final db = CardinalDatabase.open();
+  try {
+    final rows = db.settings;
+    if (value == null) {
+      await (db.delete(
+        rows,
+      )..where((s) => s.key.equals(navigationMuted.key))).go();
+    } else {
+      await db
+          .into(rows)
+          .insertOnConflictUpdate(
+            SettingRow(key: navigationMuted.key, value: value),
+          );
+    }
+    debugPrint('nav-shots: navigation-muted setting restored to $value');
+  } finally {
+    await db.close();
+  }
 }
 
 /// Deletes the destination from the app's store by its ID, through a connection of its

@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:routing/routing.dart';
 
+import '../l10n/app_localizations.dart';
 import '../ui/adaptive.dart';
 import '../units.dart';
 import 'maneuver_icon.dart';
@@ -70,7 +71,11 @@ class ManeuverBanner extends StatelessWidget {
       content: instruction.primary,
       distance: distance == null
           ? null
-          : formatManeuverDistance(distance, units: units),
+          : formatManeuverDistance(
+              distance,
+              units: units,
+              words: AppLocalizations.of(context),
+            ),
       // iOS: Title 1 bold for the distance, Title 2 in the secondary label color for
       // the instruction (Title 3's size standing in, the app's theme having no Title
       // 2). Android: title large for the distance, headline small for the

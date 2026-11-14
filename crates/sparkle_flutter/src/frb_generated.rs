@@ -1826,6 +1826,7 @@ fn wire__crate__api__map__SparkleMap_set_subject_impl(
             let api_north = <f64>::sse_decode(&mut deserializer);
             let api_max_zoom = <f64>::sse_decode(&mut deserializer);
             let api_margin = <f64>::sse_decode(&mut deserializer);
+            let api_clear = <crate::api::map::MapPadding>::sse_decode(&mut deserializer);
             let api_bearing = <Option<f64>>::sse_decode(&mut deserializer);
             let api_pitch = <Option<f64>>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -1853,6 +1854,7 @@ fn wire__crate__api__map__SparkleMap_set_subject_impl(
                         api_north,
                         api_max_zoom,
                         api_margin,
+                        api_clear,
                         api_bearing,
                         api_pitch,
                     );

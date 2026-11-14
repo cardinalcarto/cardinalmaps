@@ -13,7 +13,7 @@
 # simulated, and with --bucket, a `cardinal-publish --target dir:` release bucket is
 # served on 127.0.0.1:--port (default 18090) as the app's release URL, so the app
 # checks for updates against the data it has. --shots picks which screenshots: banner
-# (the default) or progress, as the Dart file lists them.
+# (the default), progress or buttons, as the Dart file lists them.
 #
 # Nothing is tapped or typed into the desktop: the app's own code moves it. It adds one
 # place to the app's store and deletes it by its ID at the end.

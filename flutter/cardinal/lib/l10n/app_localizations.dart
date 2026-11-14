@@ -123,6 +123,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'<1 min'**
   String get tripUnderAMinute;
+
+  /// The navigation screen's camera button while the map follows you, as its tooltip and spoken label: shows the rest of the trip on the map, flat and north up.
+  ///
+  /// In en, this message translates to:
+  /// **'Route overview'**
+  String get navigationRouteOverview;
+
+  /// The navigation screen's camera button once the map shows the route overview or was moved by hand, as its tooltip and spoken label: brings the map back to following you.
+  ///
+  /// In en, this message translates to:
+  /// **'Recenter'**
+  String get navigationRecenter;
+
+  /// The navigation screen's button that silences spoken directions, as its tooltip and spoken label, shown while they're being spoken.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get navigationMute;
+
+  /// The navigation screen's button that lets spoken directions be heard again, as its tooltip and spoken label, shown while they're silenced.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute'**
+  String get navigationUnmute;
+
+  /// The button at the end of the trip-progress bar that ends turn-by-turn navigation and goes back to directions, as its tooltip and spoken label.
+  ///
+  /// In en, this message translates to:
+  /// **'End'**
+  String get navigationEnd;
+
+  /// A distance in miles while navigating, to the next turn or to the destination, in short form. distance is the number, already formatted for the language.
+  ///
+  /// In en, this message translates to:
+  /// **'{distance} mi'**
+  String navigationDistanceMiles(String distance);
+
+  /// A distance in feet while navigating, to the next turn or to the destination, in short form. distance is the number, already formatted for the language.
+  ///
+  /// In en, this message translates to:
+  /// **'{distance} ft'**
+  String navigationDistanceFeet(String distance);
+
+  /// A distance in kilometers while navigating, to the next turn or to the destination, in short form. distance is the number, already formatted for the language.
+  ///
+  /// In en, this message translates to:
+  /// **'{distance} km'**
+  String navigationDistanceKilometers(String distance);
+
+  /// A distance in meters while navigating, to the next turn or to the destination, in short form. distance is the number, already formatted for the language.
+  ///
+  /// In en, this message translates to:
+  /// **'{distance} m'**
+  String navigationDistanceMeters(String distance);
+
+  /// The text of the Android notification shown while turn-by-turn navigation keeps getting your location with the screen off.
+  ///
+  /// In en, this message translates to:
+  /// **'Navigating'**
+  String get navigationNotificationText;
+
+  /// The name of the Android notification channel for the notification shown while navigating, as the system's notification settings list it.
+  ///
+  /// In en, this message translates to:
+  /// **'Navigation'**
+  String get navigationNotificationChannel;
 }
 
 class _AppLocalizationsDelegate

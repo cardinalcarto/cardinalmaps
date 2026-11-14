@@ -28,13 +28,18 @@ import '../units.dart';
 /// [UnitSystem.imperial].
 ///
 /// [units] is [UnitSystem.metric] or [UnitSystem.imperial], already resolved for the
-/// device's region.
-String formatManeuverDistance(double meters, {required UnitSystem units}) {
+/// device's region. The units' short forms come from [words], the app's strings, as
+/// each language writes them.
+String formatManeuverDistance(
+  double meters, {
+  required UnitSystem units,
+  required AppLocalizations words,
+}) {
   assert(units != UnitSystem.locale, 'resolve the units for a locale first');
   if (units == UnitSystem.imperial) {
     if (meters > _imperialCutoff) {
       final miles = meters / _metersPerMile;
-      return '${_number(miles, tenths: miles <= 10)} mi';
+      return words.navigationDistanceMiles(_number(miles, tenths: miles <= 10));
     }
     final feet = meters * _feetPerMeter;
     final step = feet < 50
@@ -44,17 +49,23 @@ String formatManeuverDistance(double meters, {required UnitSystem units}) {
         : feet < 500
         ? 50
         : 100;
-    return '${_number(_nearest(feet, step), tenths: false)} ft';
+    return words.navigationDistanceFeet(
+      _number(_nearest(feet, step), tenths: false),
+    );
   }
   if (meters > 1000) {
-    return '${_number(meters / 1000, tenths: meters <= 10000)} km';
+    return words.navigationDistanceKilometers(
+      _number(meters / 1000, tenths: meters <= 10000),
+    );
   }
   final step = meters > 100
       ? 100
       : meters > 10
       ? 10
       : 5;
-  return '${_number(_nearest(meters, step), tenths: false)} m';
+  return words.navigationDistanceMeters(
+    _number(_nearest(meters, step), tenths: false),
+  );
 }
 
 /// Up to where distances are in feet, in meters; miles beyond.

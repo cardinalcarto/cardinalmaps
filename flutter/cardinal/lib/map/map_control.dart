@@ -11,6 +11,7 @@ class MapControl extends StatelessWidget {
     required this.tooltip,
     required this.icon,
     required this.onPressed,
+    this.quarterTurns = 0,
   });
 
   /// The control's size on iOS: Apple's minimum touch target.
@@ -20,6 +21,10 @@ class MapControl extends StatelessWidget {
   final IconData icon;
   final VoidCallback onPressed;
 
+  /// How many quarter turns clockwise the icon is drawn at, for an icon drawn on its
+  /// side.
+  final int quarterTurns;
+
   @override
   Widget build(BuildContext context) {
     if (!isCupertinoOf(context)) {
@@ -27,7 +32,7 @@ class MapControl extends StatelessWidget {
         heroTag: null,
         tooltip: tooltip,
         onPressed: onPressed,
-        child: Icon(icon),
+        child: RotatedBox(quarterTurns: quarterTurns, child: Icon(icon)),
       );
     }
     return Tooltip(
@@ -40,10 +45,13 @@ class MapControl extends StatelessWidget {
           padding: EdgeInsets.zero,
           minimumSize: const Size.square(size),
           onPressed: onPressed,
-          child: Icon(
-            icon,
-            size: 22,
-            color: Theme.of(context).colorScheme.onSurface,
+          child: RotatedBox(
+            quarterTurns: quarterTurns,
+            child: Icon(
+              icon,
+              size: 22,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
           ),
         ),
       ),

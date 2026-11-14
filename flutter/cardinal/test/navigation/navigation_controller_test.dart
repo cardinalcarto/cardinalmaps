@@ -14,8 +14,9 @@ import '../fakes/fake_routes.dart';
 
 /// A controller over fakes, and the fakes, for one test.
 class Harness {
-  Harness({String language = 'pt-PT'})
-    : route = fakeRoute([
+  Harness({String language = 'pt-PT', SettingsStore? settings})
+    : settings = settings ?? SettingsStore.inMemory(),
+      route = fakeRoute([
         [1.52, 42.50],
         [1.53, 42.51],
       ], language: language) {
@@ -25,9 +26,12 @@ class Harness {
       speaker: speaker,
       screen: screen,
       matcher: matcher,
+      settings: this.settings,
       startSession: sessions.call,
     );
   }
+
+  final SettingsStore settings;
 
   final routes = FakeRoutes();
   final location = FakeNavigationLocation();
@@ -623,6 +627,131 @@ void main() {
         h.fix(async);
         expect(h.state, NavigationState.arrived);
         expect(h.speaker.said, ['You have arrived']);
+      });
+    });
+  });
+
+  group('mute', () {
+    /// The stored setting, read in [async]'s time.
+    bool? stored(FakeAsync async, SettingsStore settings) {
+      bool? value;
+      unawaited(settings.get(navigationMuted).then((v) => value = v));
+      async.flushMicrotasks();
+      return value;
+    }
+
+    test('stops what is being said, and says nothing more', () {
+      fakeAsync((async, h) {
+        h.sessions.start = fakeUpdate(spoken: fakeSpoken('a', 'Turn left'));
+        h.onRoute(async);
+        var notified = 0;
+        h.controller.addListener(() => notified++);
+        h.controller.setMuted(true);
+        expect(h.controller.muted, isTrue);
+        expect(notified, 1);
+        expect(h.speaker.log, ['Turn left', '(stop)']);
+
+        h.session.next = fakeUpdate(spoken: fakeSpoken('b', 'Turn right'));
+        h.fix(async);
+        expect(h.speaker.said, ['Turn left']);
+        // Muting again does nothing more.
+        h.controller.setMuted(true);
+        expect(h.speaker.stopped, 1);
+      });
+    });
+
+    test('says nothing on leaving the route, "Rerouting" included', () {
+      fakeAsync((async, h) {
+        h.onRoute(async);
+        h.controller.setMuted(true);
+        h.session.next = fakeUpdate(deviation: NavDeviation.offRoute);
+        h.fix(async);
+        expect(h.state, NavigationState.offRoute);
+        expect(h.speaker.said, isEmpty);
+
+        // Nor with the new route.
+        async.elapse(offRouteHold);
+        h.session.next = fakeUpdate(spoken: fakeSpoken('n', 'Head south'));
+        h.routes.rerouted.single.answer.complete(newRoute());
+        async.flushMicrotasks();
+        expect(h.state, NavigationState.onRoute);
+        expect(h.speaker.said, isEmpty);
+      }, language: 'en-GB');
+    });
+
+    test('unmuted, the next announcement is said, and none passed over', () {
+      fakeAsync((async, h) {
+        h.onRoute(async);
+        h.controller.setMuted(true);
+        h.session.next = fakeUpdate(spoken: fakeSpoken('a', 'Turn left'));
+        h.fix(async);
+        h.controller.setMuted(false);
+        expect(h.controller.muted, isFalse);
+        // Unmuting says nothing by itself, and what came due while muted isn't said
+        // late.
+        expect(h.speaker.said, isEmpty);
+        h.fix(async);
+        expect(h.speaker.said, isEmpty);
+        h.session.next = fakeUpdate(spoken: fakeSpoken('b', 'Turn right'));
+        h.fix(async);
+        expect(h.speaker.said, ['Turn right']);
+
+        // And "Rerouting" is said again.
+        h.session.next = fakeUpdate(deviation: NavDeviation.offRoute);
+        h.fix(async);
+        expect(h.speaker.said, ['Turn right', 'Rerouting']);
+      }, language: 'en-GB');
+    });
+
+    test('persists across trips, as the setting', () {
+      fakeAsync((async, h) {
+        h.onRoute(async);
+        h.controller.setMuted(true);
+        unawaited(h.controller.end());
+        async.flushMicrotasks();
+        expect(h.controller.muted, isTrue);
+        h.sessions.start = fakeUpdate(spoken: fakeSpoken('a', 'Turn left'));
+        h.onRoute(async);
+        expect(h.controller.muted, isTrue);
+        expect(h.speaker.said, isEmpty);
+        expect(stored(async, h.settings), isTrue);
+
+        h.controller.setMuted(false);
+        async.flushMicrotasks();
+        expect(stored(async, h.settings), isFalse);
+      });
+    });
+
+    test('a new controller starts muted with the setting on', () {
+      FakeAsync().run((async) {
+        final settings = SettingsStore.inMemory();
+        unawaited(settings.set(navigationMuted, true));
+        async.flushMicrotasks();
+        final h = Harness(settings: settings);
+        var notified = 0;
+        h.controller.addListener(() => notified++);
+        // Read before a trip's first announcement can come due.
+        h.sessions.start = fakeUpdate(spoken: fakeSpoken('a', 'Turn left'));
+        h.onRoute(async);
+        expect(h.controller.muted, isTrue);
+        expect(notified, greaterThan(0));
+        expect(h.speaker.said, isEmpty);
+        unawaited(h.controller.end());
+        async.flushMicrotasks();
+      });
+    });
+
+    test('muting set before the setting is read stands', () {
+      FakeAsync().run((async) {
+        final settings = SettingsStore.inMemory();
+        unawaited(settings.set(navigationMuted, true));
+        async.flushMicrotasks();
+        final h = Harness(settings: settings);
+        // Before the stored value is read.
+        h.controller.setMuted(false);
+        async.flushMicrotasks();
+        expect(h.controller.muted, isFalse);
+        expect(stored(async, settings), isFalse);
       });
     });
   });

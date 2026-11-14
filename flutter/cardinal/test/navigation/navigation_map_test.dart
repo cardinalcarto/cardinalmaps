@@ -5,6 +5,7 @@ import 'package:cardinal/navigation/navigation_map.dart';
 import 'package:cardinal/directions/route_source.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart' show EdgeInsets;
 import 'package:routing/routing.dart';
 
 import '../fakes/fake_map.dart';
@@ -165,9 +166,11 @@ void main() {
         make();
         controller.start(route: route, mode: TravelMode.driving);
         drawn.start();
-        expect(drawn.canRecenter.value, isFalse);
+        expect(drawn.cameraMode.value, isNull);
         drawn.recenter();
+        drawn.overview(EdgeInsets.zero);
         expect(map.follows, isEmpty);
+        expect(map.subjectsSet, 0);
       });
     });
 
@@ -178,11 +181,11 @@ void main() {
         drawn.start();
         final camera = followCamera(NavigationMode.driving);
         fix(async, at(0.5, 0, speed: camera.referenceSpeed * 2));
-        expect(drawn.canRecenter.value, isFalse);
+        expect(drawn.cameraMode.value, NavigationCameraMode.following);
 
         // Moved by hand.
         map.following.value = false;
-        expect(drawn.canRecenter.value, isTrue);
+        expect(drawn.cameraMode.value, NavigationCameraMode.free);
 
         drawn.recenter();
         expect(map.follows, hasLength(2));
@@ -190,7 +193,120 @@ void main() {
         expect(map.follows.last.zoom, closeTo(camera.zoom - 1, 1e-9));
         expect(map.follows.last.pitch, camera.pitch);
         expect(map.following.value, isTrue);
-        expect(drawn.canRecenter.value, isFalse);
+        expect(drawn.cameraMode.value, NavigationCameraMode.following);
+      });
+    });
+
+    test('overview shows the rest of the trip, flat and north up', () {
+      fakeAsync((async) {
+        make();
+        controller.start(route: route, mode: TravelMode.driving);
+        drawn.start();
+        fix(async, at(1.5, 1));
+        const clear = EdgeInsets.only(top: 150, bottom: 90);
+        drawn.overview(clear);
+        expect(map.following.value, isFalse);
+        expect(drawn.cameraMode.value, NavigationCameraMode.overview);
+        // From the chevron to the end: what's behind it is left out.
+        expect(map.subjectBounds, (west: 1.5, south: 0, east: 3, north: 0));
+        expect((map.subjectBearing, map.subjectPitch), (0, 0));
+        expect(map.subjectClear, clear);
+        expect(map.subjectMargin, overviewMargin);
+        expect(map.subjectMaxZoom, overviewMaxZoom);
+
+        // It stays as you move along.
+        now += const Duration(seconds: 1);
+        fix(async, at(1.7, 1));
+        expect(map.subjectsSet, 1);
+        expect(map.follows, hasLength(1));
+
+        // Told the same again, as the screen does on each move of the sheet, it
+        // stays; told to keep clear of something new, it fits the rest again.
+        drawn.overview(clear);
+        expect(map.subjectsSet, 1);
+        const wider = EdgeInsets.only(top: 150, bottom: 90, right: 70);
+        drawn.overview(wider);
+        expect(map.subjectsSet, 2);
+        expect(map.subjectClear, wider);
+        expect(map.subjectBounds, (west: 1.7, south: 0, east: 3, north: 0));
+
+        // Recenter follows again.
+        drawn.recenter();
+        expect(map.following.value, isTrue);
+        expect(drawn.cameraMode.value, NavigationCameraMode.following);
+        expect(map.follows, hasLength(2));
+      });
+    });
+
+    test('overview shows a new route in place of the old one', () {
+      fakeAsync((async) {
+        make();
+        final routes = FakeRoutes();
+        controller = fakeNavigationController(
+          routes: routes,
+          sessions: sessions,
+          location: location,
+        );
+        drawn = NavigationMap(map: map, controller: controller);
+        controller.start(route: route, mode: TravelMode.driving);
+        drawn.start();
+        fix(async, at(0.5, 0));
+        const clear = EdgeInsets.only(top: 150);
+        drawn.overview(clear);
+        fix(
+          async,
+          fakeUpdate(
+            deviation: NavDeviation.offRoute,
+            snapped: fakeFix(0, 0.5, course: 90),
+            effective: fakeFix(0.5, 0.5, course: 0),
+          ),
+        );
+        async.elapse(offRouteHold);
+        expect(map.subjectsSet, 1);
+        sessions.last.next = fakeUpdate(snapped: fakeFix(0.5, 0.5, course: 0));
+        routes.rerouted.single.answer.complete(
+          fakeRoute([
+            [0.5, 0.5],
+            [0.5, 2],
+            [1, 2],
+          ]),
+        );
+        async.flushMicrotasks();
+        expect(map.subjectsSet, 2);
+        expect(map.subjectBounds, (west: 0.5, south: 0.5, east: 1, north: 2));
+        expect(map.subjectClear, clear);
+        expect(drawn.cameraMode.value, NavigationCameraMode.overview);
+      });
+    });
+
+    test('a new route leaves the map where it was moved by hand', () {
+      fakeAsync((async) {
+        make();
+        final routes = FakeRoutes();
+        controller = fakeNavigationController(
+          routes: routes,
+          sessions: sessions,
+          location: location,
+        );
+        drawn = NavigationMap(map: map, controller: controller);
+        controller.start(route: route, mode: TravelMode.driving);
+        drawn.start();
+        fix(async, at(0.5, 0));
+        drawn.overview(EdgeInsets.zero);
+        // Moved by hand, which lets go of the overview.
+        map.clearSubject();
+        fix(async, fakeUpdate(deviation: NavDeviation.offRoute));
+        async.elapse(offRouteHold);
+        sessions.last.next = at(0.5, 0);
+        routes.rerouted.single.answer.complete(
+          fakeRoute([
+            [0.5, 0],
+            [0.5, 1],
+          ]),
+        );
+        async.flushMicrotasks();
+        expect(map.subjectsSet, 1);
+        expect(drawn.cameraMode.value, NavigationCameraMode.free);
       });
     });
 

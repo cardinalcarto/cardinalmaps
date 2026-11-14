@@ -195,7 +195,11 @@ abstract class SparkleMap implements RustOpaqueInterface {
   /// With a `bearing` or `pitch`, the camera turns (the short way) and tilts there on
   /// the same flight, and the bounds are fitted as seen from there: to come back flat
   /// and north up from a tilted, turned view in one motion, say. `None` keeps the
-  /// camera's own. Draw a frame after.
+  /// camera's own.
+  ///
+  /// `clear` is kept clear too, edge by edge, on top of the padding and the margin:
+  /// for what the app draws over some edges of the map and not others, such as the
+  /// navigation screen's banner and trip progress. Draw a frame after.
   void setSubject({
     required double west,
     required double south,
@@ -203,6 +207,7 @@ abstract class SparkleMap implements RustOpaqueInterface {
     required double north,
     required double maxZoom,
     required double margin,
+    required MapPadding clear,
     double? bearing,
     double? pitch,
   });

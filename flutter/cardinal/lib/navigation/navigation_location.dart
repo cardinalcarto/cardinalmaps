@@ -3,10 +3,14 @@
 library;
 
 import 'dart:async';
+import 'dart:ui' show Locale, PlatformDispatcher;
 
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:routing/routing.dart';
+
+import '../l10n/app_localizations.dart';
+import '../l10n/lookup.dart';
 
 /// Why fixes stopped coming.
 enum LocationProblem {
@@ -71,6 +75,13 @@ class GeolocatorNavigationSource implements NavigationLocationSource {
     _ => throw NavigationLocationError(LocationProblem.failed, error),
   };
 
+  /// The app's strings in the device's language, for the notification, which is
+  /// shown with no widget tree to look them up in; English when the app has no
+  /// translation for it, as the rest of the app falls back to.
+  static AppLocalizations get _words =>
+      localizationsFor(PlatformDispatcher.instance.locale.toLanguageTag()) ??
+      lookupAppLocalizations(const Locale('en'));
+
   static LocationSettings _settings(NavigationMode mode) {
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -85,10 +96,11 @@ class GeolocatorNavigationSource implements NavigationLocationSource {
           // A foreground service keeps fixes coming with the screen off, and its wake
           // lock keeps the CPU up to take them. It starts with the stream and stops when
           // the stream is cancelled. What the notification says is still to be designed.
-          foregroundNotificationConfig: const ForegroundNotificationConfig(
+          foregroundNotificationConfig: ForegroundNotificationConfig(
+            // The app's name, which isn't translated.
             notificationTitle: 'Cardinal Maps',
-            notificationText: 'Navigating',
-            notificationChannelName: 'Navigation',
+            notificationText: _words.navigationNotificationText,
+            notificationChannelName: _words.navigationNotificationChannel,
             enableWakeLock: true,
             setOngoing: true,
           ),

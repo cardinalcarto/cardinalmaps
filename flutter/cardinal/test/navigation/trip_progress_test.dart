@@ -57,10 +57,10 @@ void main() {
 
   Finder end(TargetPlatform platform) => platform == TargetPlatform.iOS
       ? find.descendant(
-          of: find.bySemanticsLabel(TripProgressPill.endLabel),
+          of: find.bySemanticsLabel('End'),
           matching: find.byType(CupertinoButton),
         )
-      : find.byTooltip(TripProgressPill.endLabel);
+      : find.byTooltip('End');
 
   for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
     group(platform.name, () {

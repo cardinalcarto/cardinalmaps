@@ -5,10 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
+  final words = lookupAppLocalizations(const Locale('en'));
   String metric(double meters) =>
-      formatManeuverDistance(meters, units: UnitSystem.metric);
+      formatManeuverDistance(meters, units: UnitSystem.metric, words: words);
   String imperial(double meters) =>
-      formatManeuverDistance(meters, units: UnitSystem.imperial);
+      formatManeuverDistance(meters, units: UnitSystem.imperial, words: words);
 
   test('metric: meters in steps of 5, 10 and 100 up to a kilometer', () {
     expect(metric(0), '0 m');
@@ -58,7 +59,6 @@ void main() {
   });
 
   group('trip duration', () {
-    final words = lookupAppLocalizations(const Locale('en'));
     String duration(double seconds) => formatTripDuration(seconds, words);
 
     test('under a minute is 0m, and nothing left is too', () {

@@ -29,4 +29,45 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get tripUnderAMinute => '<1 min';
+
+  @override
+  String get navigationRouteOverview => 'Route overview';
+
+  @override
+  String get navigationRecenter => 'Recenter';
+
+  @override
+  String get navigationMute => 'Mute';
+
+  @override
+  String get navigationUnmute => 'Unmute';
+
+  @override
+  String get navigationEnd => 'End';
+
+  @override
+  String navigationDistanceMiles(String distance) {
+    return '$distance mi';
+  }
+
+  @override
+  String navigationDistanceFeet(String distance) {
+    return '$distance ft';
+  }
+
+  @override
+  String navigationDistanceKilometers(String distance) {
+    return '$distance km';
+  }
+
+  @override
+  String navigationDistanceMeters(String distance) {
+    return '$distance m';
+  }
+
+  @override
+  String get navigationNotificationText => 'Navigating';
+
+  @override
+  String get navigationNotificationChannel => 'Navigation';
 }

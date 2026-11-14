@@ -6,6 +6,7 @@ import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/navigation_location.dart';
 import 'package:cardinal/navigation/speech.dart';
 import 'package:cardinal/navigation/trip_session.dart';
+import 'package:cardinal/store/store.dart';
 import 'package:routing/routing.dart';
 
 import 'fake_routes.dart';
@@ -61,6 +62,19 @@ NavUpdate fakeUpdate({
           distanceRemaining: toManeuver + 1000,
           durationRemaining: toManeuver / 10 + 100,
         ),
+);
+
+/// A step of a navigated route along [roadName], with nothing else to it.
+NavStep fakeNavStep(String? roadName) => NavStep(
+  roadName: roadName,
+  instruction: 'Drive along ${roadName ?? 'the road'}.',
+  distance: 100,
+  duration: 10,
+  exits: const [],
+  visualInstructions: const [],
+  spokenInstructions: const [],
+  geometry: const [],
+  geometryStart: 0,
 );
 
 /// A banner line saying [text], for a maneuver of [type] and [modifier].
@@ -277,11 +291,14 @@ NavigationController fakeNavigationController({
   FakeNavigationLocation? location,
   FakeSessions? sessions,
   FakeRoadMatcher? matcher,
+  FakeSpeaker? speaker,
+  SettingsStore? settings,
 }) => NavigationController(
   routes: routes ?? FakeRoutes(),
   location: location ?? FakeNavigationLocation(),
-  speaker: FakeSpeaker(),
+  speaker: speaker ?? FakeSpeaker(),
   screen: FakeScreenWake(),
   matcher: matcher ?? FakeRoadMatcher(),
+  settings: settings ?? SettingsStore.inMemory(),
   startSession: (sessions ?? FakeSessions()).call,
 );

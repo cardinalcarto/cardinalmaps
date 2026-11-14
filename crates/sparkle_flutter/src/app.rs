@@ -116,6 +116,10 @@ struct Subject {
     max_zoom: f64,
     /// Logical pixels kept clear around them.
     margin: f64,
+    /// More kept clear, edge by edge, on top of the view's padding and the margin: what
+    /// the app draws over the map there, such as the navigation screen's banner, which
+    /// the view's padding doesn't know about.
+    clear: Padding,
     /// The bearing and pitch to show them at, or `None` for the camera's own: it turns
     /// and tilts there on its way, and fits them as they'll be seen once there.
     bearing: Option<f64>,
@@ -764,11 +768,17 @@ impl MapView {
     /// `pitch`, the flight turns (the short way) and tilts there as it goes, and the
     /// bounds are fitted as they'll be seen at the end, so a tilted, turned map comes
     /// back flat and north up in one motion, say; without, it keeps the camera's.
+    ///
+    /// `clear` is kept clear too, edge by edge, on top of the padding and the margin, as
+    /// the margin is: for what's drawn over the map at some edges and not others, which
+    /// a margin the same all round would either let the bounds run under or waste room
+    /// for.
     pub fn set_subject(
         &mut self,
         bounds: [f64; 4],
         max_zoom: f64,
         margin: f64,
+        clear: Padding,
         bearing: Option<f64>,
         pitch: Option<f64>,
     ) {
@@ -777,6 +787,7 @@ impl MapView {
             bounds,
             max_zoom,
             margin,
+            clear,
             bearing,
             pitch,
         };
@@ -812,27 +823,24 @@ impl MapView {
         }
         let camera = &camera;
         let m = subject.margin;
-        let p = self.padding;
-        let fit = Padding {
-            top: p.top + m,
-            right: p.right + m,
-            bottom: p.bottom + m,
-            left: p.left + m,
+        // The margin and what's kept clear count the same, edge by edge.
+        let c = subject.clear;
+        let all = Padding {
+            top: c.top + m,
+            right: c.right + m,
+            bottom: c.bottom + m,
+            left: c.left + m,
         };
+        let fit = self.padding + all;
         let zoom = camera
             .fit_bounds(subject.bounds, fit)
             .zoom
             .min(subject.max_zoom);
         // However little of the view the padding leaves (none, under a full screen
         // sheet), don't zoom out more than SUBJECT_ZOOM_GIVE below how it shows with no
-        // padding: past that it isn't worth seeing all of. Easing towards the limit, as a
+        // padding, only the margin and what's kept clear: past that it isn't worth seeing
+        // all of. Easing towards the limit, as a
         // stiffening spring would, so the zoom never stops short.
-        let all = Padding {
-            top: m,
-            right: m,
-            bottom: m,
-            left: m,
-        };
         let open = camera
             .fit_bounds(subject.bounds, all)
             .zoom
@@ -842,7 +850,7 @@ impl MapView {
         } else {
             zoom
         };
-        // The margin is the same all round, so the middle of `fit` is the padding's.
+        // In the middle of what `fit` leaves.
         let framing = camera.frame_bounds(subject.bounds, fit, zoom);
         (camera.center_showing(&framing, fit), zoom)
     }
@@ -1098,6 +1106,7 @@ mod tests {
             [-122.3493, 47.6205, -122.3493, 47.6205],
             14.0,
             48.0,
+            Padding::default(),
             None,
             None,
         );
@@ -1112,7 +1121,14 @@ mod tests {
         assert!((lng + 122.3493).abs() < 1e-6 && (lat - 47.6205).abs() < 1e-6);
 
         // Bounds too big for zoom 14 in what's left zoom out to fit it, less the margin.
-        v.set_subject([-122.44, 47.50, -122.24, 47.73], 14.0, 48.0, None, None);
+        v.set_subject(
+            [-122.44, 47.50, -122.24, 47.73],
+            14.0,
+            48.0,
+            Padding::default(),
+            None,
+            None,
+        );
         settle(&mut v);
         let zoom = v.camera()[2];
         assert!(zoom < 12.0, "{zoom}");
@@ -1128,6 +1144,7 @@ mod tests {
             [-122.3493, 47.6205, -122.3493, 47.6205],
             14.0,
             48.0,
+            Padding::default(),
             None,
             None,
         );
@@ -1144,7 +1161,7 @@ mod tests {
     fn a_subject_zooms_out_only_so_far_however_little_shows() {
         let mut v = view();
         let seattle = [-122.44, 47.50, -122.24, 47.73];
-        v.set_subject(seattle, 14.0, 48.0, None, None);
+        v.set_subject(seattle, 14.0, 48.0, Padding::default(), None, None);
         settle(&mut v);
         let open = v.camera()[2];
         let mut last = open;
@@ -1190,7 +1207,7 @@ mod tests {
     fn fitted(v: &MapView, bounds: [f64; 4], bottom: f64, margin: f64) -> bool {
         let mut flat = view();
         flat.set_padding(sheet(bottom));
-        flat.set_subject(bounds, 18.0, margin, None, None);
+        flat.set_subject(bounds, 18.0, margin, Padding::default(), None, None);
         settle(&mut flat);
         let [left, top, right, low] = drawn(v, bounds);
         let middle = [(left + right) / 2.0, (top + low) / 2.0];
@@ -1209,7 +1226,7 @@ mod tests {
         v.set_padding(sheet(250.0));
         v.camera.set_bearing(-120.0);
         v.camera.set_pitch(45.0);
-        v.set_subject(ROUTE, 18.0, 48.0, Some(0.0), Some(0.0));
+        v.set_subject(ROUTE, 18.0, 48.0, Padding::default(), Some(0.0), Some(0.0));
         v.frame(Stream::default());
         // On its way it's partly turned and tilted, not snapped flat.
         let [.., bearing, pitch] = v.camera();
@@ -1227,7 +1244,7 @@ mod tests {
         v.set_padding(sheet(450.0));
         v.camera.set_bearing(80.0);
         v.camera.set_pitch(50.0);
-        v.set_subject(ROUTE, 18.0, 48.0, Some(0.0), Some(0.0));
+        v.set_subject(ROUTE, 18.0, 48.0, Padding::default(), Some(0.0), Some(0.0));
         v.frame(Stream::default());
         // The sheet settles lower mid-flight.
         v.set_padding(sheet(200.0));
@@ -1253,10 +1270,11 @@ mod tests {
             bounds: ROUTE,
             max_zoom: 18.0,
             margin: 48.0,
+            clear: Padding::default(),
             bearing: None,
             pitch: None,
         });
-        v.set_subject(ROUTE, 18.0, 48.0, None, None);
+        v.set_subject(ROUTE, 18.0, 48.0, Padding::default(), None, None);
         settle(&mut v);
         let [.., bearing, pitch] = v.camera();
         assert!((bearing + 120.0).abs() < 1e-9 && (pitch - 45.0).abs() < 1e-9);
@@ -1267,6 +1285,35 @@ mod tests {
         assert!(((left + right) / 2.0 - 400.0).abs() < 0.5, "{left} {right}");
         assert!(((top + low) / 2.0 - 175.0).abs() < 0.5, "{top} {low}");
         assert!(left >= 47.5 && right <= 752.5, "{left} {right}");
+    }
+
+    #[test]
+    fn a_subject_keeps_clear_of_what_is_drawn_over_the_map() {
+        // The top 200 and the bottom 100 of the 800 × 600 view covered, as by the
+        // navigation screen's banner and trip progress, the top 24 of it being the view's
+        // own padding, for a status bar.
+        let mut v = view();
+        v.set_padding(Padding {
+            top: 24.0,
+            ..Padding::default()
+        });
+        let clear = Padding {
+            top: 176.0,
+            bottom: 100.0,
+            ..Padding::default()
+        };
+        v.camera.set_pitch(45.0);
+        v.set_subject(ROUTE, 18.0, 16.0, clear, Some(0.0), Some(0.0));
+        settle(&mut v);
+        // The route is taller than what's left is wide for it, so it fills the height
+        // between 200 and 500, less the margin, and is in the middle across.
+        let [left, top, right, low] = drawn(&v, ROUTE);
+        assert!(
+            (top - 216.0).abs() < 0.5 && (low - 484.0).abs() < 0.5,
+            "{top} {low}"
+        );
+        assert!(left >= 16.0 && right <= 784.0, "{left} {right}");
+        assert!(((left + right) / 2.0 - 400.0).abs() < 0.5, "{left} {right}");
     }
 
     fn world(lng: f64, lat: f64) -> [f64; 2] {
@@ -1384,7 +1431,14 @@ mod tests {
         v.fly_to(-122.3, 47.6, 12.0);
         assert!(!v.is_following());
         follow(&mut v);
-        v.set_subject([-122.35, 47.6, -122.3, 47.62], 16.0, 0.0, None, None);
+        v.set_subject(
+            [-122.35, 47.6, -122.3, 47.62],
+            16.0,
+            0.0,
+            Padding::default(),
+            None,
+            None,
+        );
         assert!(!v.is_following());
         follow(&mut v);
         v.camera.set_bearing(20.0);
@@ -1546,6 +1600,7 @@ mod tests {
             [-122.3493, 47.6205, -122.3493, 47.6205],
             14.0,
             48.0,
+            Padding::default(),
             None,
             None,
         );
@@ -1670,6 +1725,7 @@ mod tests {
                 [-122.3493, 47.6205, -122.3493, 47.6205],
                 14.0,
                 48.0,
+                Padding::default(),
                 None,
                 None,
             );
@@ -1686,7 +1742,14 @@ mod tests {
             // quite fit it: padding zooms out less than it would take, see
             // SUBJECT_ZOOM_GIVE, and the camera's tests check the fit itself.)
             v.set_padding(lopsided());
-            v.set_subject([-122.36, 47.60, -122.30, 47.63], 18.0, 0.0, None, None);
+            v.set_subject(
+                [-122.36, 47.60, -122.30, 47.63],
+                18.0,
+                0.0,
+                Padding::default(),
+                None,
+                None,
+            );
             settle(&mut v);
             let corners = [
                 [-122.36, 47.63],

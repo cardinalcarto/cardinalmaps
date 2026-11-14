@@ -54,9 +54,6 @@ class TripProgressPill extends StatefulWidget {
   /// What time it is, which tests set.
   final DateTime Function() clock;
 
-  /// End's accessibility label and tooltip: what the text button it replaces said.
-  static const endLabel = 'End';
-
   @override
   State<TripProgressPill> createState() => _TripProgressPillState();
 }
@@ -103,7 +100,7 @@ class _TripProgressPillState extends State<TripProgressPill> {
       values = [
         formatArrivalTime(context, arrivedAt),
         formatTripDuration(0, words),
-        formatManeuverDistance(0, units: widget.units),
+        formatManeuverDistance(0, units: widget.units, words: words),
       ];
     } else if (progress != null) {
       final seconds = progress.durationRemaining;
@@ -117,7 +114,11 @@ class _TripProgressPillState extends State<TripProgressPill> {
       values = [
         formatArrivalTime(context, eta),
         formatTripDuration(seconds, words),
-        formatManeuverDistance(progress.distanceRemaining, units: widget.units),
+        formatManeuverDistance(
+          progress.distanceRemaining,
+          units: widget.units,
+          words: words,
+        ),
       ];
     } else {
       values = null;
@@ -184,9 +185,11 @@ class _EndButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    // End's accessibility label and tooltip: what the text button it replaces said.
+    final label = AppLocalizations.of(context).navigationEnd;
     if (!isCupertinoOf(context)) {
       return IconButton(
-        tooltip: TripProgressPill.endLabel,
+        tooltip: label,
         onPressed: onPressed,
         style: IconButton.styleFrom(
           backgroundColor: colors.secondary,
@@ -198,7 +201,7 @@ class _EndButton extends StatelessWidget {
     }
     return Semantics(
       button: true,
-      label: TripProgressPill.endLabel,
+      label: label,
       excludeSemantics: true,
       child: CupertinoButton(
         padding: EdgeInsets.zero,

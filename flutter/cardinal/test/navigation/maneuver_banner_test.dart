@@ -1,3 +1,4 @@
+import 'package:cardinal/l10n/app_localizations.dart';
 import 'package:cardinal/navigation/maneuver_banner.dart';
 import 'package:cardinal/navigation/maneuver_glyphs.dart';
 import 'package:cardinal/ui/theme.dart';
@@ -29,6 +30,7 @@ void main() {
   }) => tester.pumpWidget(
     MaterialApp(
       theme: appTheme(Brightness.light, platform: platform),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       home: Scaffold(
         body: Align(
           alignment: Alignment.topCenter,

@@ -277,6 +277,7 @@ abstract class RustLibApi extends BaseApi {
     required double north,
     required double maxZoom,
     required double margin,
+    required MapPadding clear,
     double? bearing,
     double? pitch,
   });
@@ -1568,6 +1569,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required double north,
     required double maxZoom,
     required double margin,
+    required MapPadding clear,
     double? bearing,
     double? pitch,
   }) {
@@ -1585,6 +1587,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_f_64(north, serializer);
           sse_encode_f_64(maxZoom, serializer);
           sse_encode_f_64(margin, serializer);
+          sse_encode_box_autoadd_map_padding(clear, serializer);
           sse_encode_opt_box_autoadd_f_64(bearing, serializer);
           sse_encode_opt_box_autoadd_f_64(pitch, serializer);
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
@@ -1602,6 +1605,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           north,
           maxZoom,
           margin,
+          clear,
           bearing,
           pitch,
         ],
@@ -1621,6 +1625,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "north",
           "maxZoom",
           "margin",
+          "clear",
           "bearing",
           "pitch",
         ],
@@ -4080,7 +4085,11 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
   /// With a `bearing` or `pitch`, the camera turns (the short way) and tilts there on
   /// the same flight, and the bounds are fitted as seen from there: to come back flat
   /// and north up from a tilted, turned view in one motion, say. `None` keeps the
-  /// camera's own. Draw a frame after.
+  /// camera's own.
+  ///
+  /// `clear` is kept clear too, edge by edge, on top of the padding and the margin:
+  /// for what the app draws over some edges of the map and not others, such as the
+  /// navigation screen's banner and trip progress. Draw a frame after.
   void setSubject({
     required double west,
     required double south,
@@ -4088,6 +4097,7 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
     required double north,
     required double maxZoom,
     required double margin,
+    required MapPadding clear,
     double? bearing,
     double? pitch,
   }) => RustLib.instance.api.crateApiMapSparkleMapSetSubject(
@@ -4098,6 +4108,7 @@ class SparkleMapImpl extends RustOpaque implements SparkleMap {
     north: north,
     maxZoom: maxZoom,
     margin: margin,
+    clear: clear,
     bearing: bearing,
     pitch: pitch,
   );

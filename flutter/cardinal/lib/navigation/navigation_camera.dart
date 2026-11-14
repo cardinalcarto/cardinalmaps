@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:routing/routing.dart';
+import 'package:sparkle/sparkle.dart' show PuckStyle;
 
 /// How the camera follows the chevron while traveling one way.
 ///
@@ -115,6 +116,11 @@ const _walking = FollowCamera(
 /// (`NavigationCamera.kt:102-125`).
 const _chevronClearance = 24.0;
 
+/// The least distance, in logical pixels, between the chevron's disk and what the
+/// screen draws under the chevron ([followPadding]'s `under`): the same 8 as between
+/// the road-name pill and trip progress, so they read as kept apart, not touching.
+const _chevronGap = 8.0;
+
 /// The padding [SparkleMapController.follow] takes, on top of the map's own [mapPadding],
 /// to put the chevron where Ferrostar's Android camera does (spec §3, "Puck position",
 /// `NavigationCamera.kt:87-125`), in a map of [size] with the system's bars over
@@ -124,18 +130,31 @@ const _chevronClearance = 24.0;
 ///   the way down, with the road ahead of it in view;
 /// - in landscape (wider than tall), the start half is too, which puts it in the end
 ///   half, clear of the instructions and trip progress down the start side;
-/// - and the bottom is padded enough to keep it at least 24 px above the system's bars.
+/// - the bottom is padded enough to keep it at least 24 px above the system's bars;
+/// - and enough to keep the chevron's disk [_chevronGap] above [under], what the screen
+///   draws under the chevron, as logical pixels up from the bottom of the screen: in
+///   landscape, the road-name pill. Ferrostar's own pill is small enough to fit under
+///   the disk; the app's, in larger type, isn't.
+///
+/// The disk counts at its full [PuckStyle.diskRadius] below the chevron's point. Tilted,
+/// it's drawn shorter, but nearer the camera its near half is drawn larger than its far
+/// one, so the full radius is the bound that holds at every tilt.
 EdgeInsets followPadding({
   required Size size,
   required EdgeInsets mapPadding,
   required EdgeInsets systemPadding,
   required TextDirection direction,
+  double under = 0,
 }) {
   final top = size.height / 2;
   final landscape = size.width > size.height;
-  // The chevron is halfway between the top padding and the bottom one.
+  // The chevron is halfway between the top padding and the bottom one, so it's as far
+  // above where it'd be with none as half the bottom padding.
   final below = (size.height - top) / 2;
-  final needed = _chevronClearance + systemPadding.bottom;
+  final needed = math.max(
+    _chevronClearance + systemPadding.bottom,
+    under > 0 ? under + _chevronGap + const PuckStyle().diskRadius : 0.0,
+  );
   final bottom = below < needed ? 2 * (needed - below) : 0.0;
   final start = landscape ? size.width / 2 : 0.0;
   final full = EdgeInsetsDirectional.only(
@@ -143,14 +162,38 @@ EdgeInsets followPadding({
     bottom: bottom,
     start: start,
   ).resolve(direction);
-  // The map's padding is already taken off.
-  return EdgeInsets.fromLTRB(
-    math.max(0, full.left - mapPadding.left),
-    math.max(0, full.top - mapPadding.top),
-    math.max(0, full.right - mapPadding.right),
-    math.max(0, full.bottom - mapPadding.bottom),
-  );
+  return _beyond(full, mapPadding);
 }
+
+/// The closest [NavigationMap.overview] zooms in, for when little of the trip is left:
+/// as close as directions fit routes, which shows the streets around the end without
+/// the overview looking like following.
+const overviewMaxZoom = 17.0;
+
+/// What [NavigationMap.overview] keeps clear around the rest of the trip, beyond what
+/// the screen draws over the map: the overlay's own 16 from the edges, so the route
+/// doesn't run under the banner's edge or off the screen's, and the chevron's disk
+/// around its point, which is all the fit knows of it. Without the disk, the chevron at
+/// the bottom of the rest of the trip is half under trip progress.
+final overviewMargin = 16 + const PuckStyle().diskRadius;
+
+/// What [NavigationMap.overview] is to keep the trip clear of, on top of the map's own
+/// [mapPadding]: [covered], what the navigation screen draws over each edge of the map,
+/// less what the map's padding already covers.
+EdgeInsets overviewClear({
+  required EdgeInsets covered,
+  required EdgeInsets mapPadding,
+}) => _beyond(covered, mapPadding);
+
+/// What of [full] is beyond [mapPadding], edge by edge: what to pad by on top of the
+/// map's own padding, which the camera already takes off.
+EdgeInsets _beyond(EdgeInsets full, EdgeInsets mapPadding) =>
+    EdgeInsets.fromLTRB(
+      math.max(0, full.left - mapPadding.left),
+      math.max(0, full.top - mapPadding.top),
+      math.max(0, full.right - mapPadding.right),
+      math.max(0, full.bottom - mapPadding.bottom),
+    );
 
 /// The longest the chevron glides from one fix to the next. Fixes come a second apart,
 /// and one a little late still glides all the way; after a longer gap, such as a

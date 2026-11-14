@@ -498,7 +498,11 @@ impl SparkleMap {
     /// With a `bearing` or `pitch`, the camera turns (the short way) and tilts there on
     /// the same flight, and the bounds are fitted as seen from there: to come back flat
     /// and north up from a tilted, turned view in one motion, say. `None` keeps the
-    /// camera's own. Draw a frame after.
+    /// camera's own.
+    ///
+    /// `clear` is kept clear too, edge by edge, on top of the padding and the margin:
+    /// for what the app draws over some edges of the map and not others, such as the
+    /// navigation screen's banner and trip progress. Draw a frame after.
     #[frb(sync)]
     #[allow(clippy::too_many_arguments)]
     pub fn set_subject(
@@ -509,11 +513,18 @@ impl SparkleMap {
         north: f64,
         max_zoom: f64,
         margin: f64,
+        clear: MapPadding,
         bearing: Option<f64>,
         pitch: Option<f64>,
     ) {
-        self.view()
-            .set_subject([west, south, east, north], max_zoom, margin, bearing, pitch);
+        self.view().set_subject(
+            [west, south, east, north],
+            max_zoom,
+            margin,
+            clear.into(),
+            bearing,
+            pitch,
+        );
     }
 
     /// Stop keeping the subject in view, leaving the camera where it is.
