@@ -3,14 +3,11 @@
 library;
 
 import 'dart:async';
-import 'dart:ui' show Locale, PlatformDispatcher;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:routing/routing.dart';
-
-import '../l10n/app_localizations.dart';
-import '../l10n/lookup.dart';
 
 /// Why fixes stopped coming.
 enum LocationProblem {
@@ -48,14 +45,85 @@ abstract class NavigationLocationSource {
   Stream<NavLocation> fixes(NavigationMode mode);
 }
 
+/// The device's [NavigationLocationSource]: [AndroidNavigationSource] on Android, and
+/// [GeolocatorNavigationSource] elsewhere.
+NavigationLocationSource deviceNavigationSource() =>
+    defaultTargetPlatform == TargetPlatform.android
+    ? const AndroidNavigationSource()
+    : const GeolocatorNavigationSource();
+
+/// How often navigation asks for a fix on Android: once a second, as GPS gives them,
+/// which is what Ferrostar's step and arrival distances assume.
+const androidFixInterval = Duration(seconds: 1);
+
+/// [NavigationLocationSource] on Android: navigation's own location updates, from the
+/// app's native code (`NavigationFixes.kt`) on [channel], every [androidFixInterval],
+/// as precise as the device gives them, from the platform's location manager rather
+/// than Google Play services'.
+///
+/// Not `geolocator`'s: it has a single position stream per app, which the map's
+/// location dot already holds with its own looser settings when navigation starts, and
+/// which it hands to any later caller whatever settings that asks for. Navigation would
+/// get the dot's fixes, every 5 s at best, and they stop with the screen off.
+///
+/// Fixes keep coming with the screen off while the navigation notification's
+/// foreground service runs (`NavigationService.kt`, see `TripNotification`),
+/// from when a trip starts until it ends. With location turned off the stream stays
+/// open, with a [LocationProblem.off] error, and fixes come again once it's on.
+class AndroidNavigationSource implements NavigationLocationSource {
+  const AndroidNavigationSource();
+
+  static const channel = EventChannel('cardinal/navigation/fixes');
+
+  @override
+  Stream<NavLocation> fixes(NavigationMode mode) => channel
+      .receiveBroadcastStream({'intervalMs': androidFixInterval.inMilliseconds})
+      .map(
+        (event) => navLocationFromMap((event as Map).cast<String, Object?>()),
+      )
+      .handleError(_explain);
+
+  static Never _explain(Object error, StackTrace stack) => switch (error) {
+    PlatformException(code: 'off') => throw NavigationLocationError(
+      LocationProblem.off,
+      error,
+    ),
+    PlatformException(code: 'denied') => throw NavigationLocationError(
+      LocationProblem.denied,
+      error,
+    ),
+    _ => throw NavigationLocationError(LocationProblem.failed, error),
+  };
+}
+
+/// A fix as `NavigationFixes.kt` sends it: what the platform didn't measure is left
+/// out, and 0 accuracies are taken as unknown, as for [navLocation].
+@visibleForTesting
+NavLocation navLocationFromMap(Map<String, Object?> fix) {
+  double? measured(String key) {
+    final value = (fix[key] as num?)?.toDouble();
+    return value != null && value > 0 ? value : null;
+  }
+
+  final speed = (fix['speed'] as num?)?.toDouble();
+  final heading = (fix['heading'] as num?)?.toDouble();
+  return NavLocation(
+    lat: (fix['latitude']! as num).toDouble(),
+    lng: (fix['longitude']! as num).toDouble(),
+    horizontalAccuracy: measured('accuracy') ?? double.infinity,
+    course: heading != null && heading >= 0 ? heading : null,
+    courseAccuracy: measured('heading_accuracy'),
+    speed: speed != null && speed >= 0 ? speed : null,
+    speedAccuracy: measured('speed_accuracy'),
+    timestampMs: (fix['timestamp']! as num).toInt(),
+  );
+}
+
 /// [NavigationLocationSource] from `geolocator`, as precise and as often as the device can
-/// give them, kept coming with the screen off.
+/// give them, kept coming with the screen off: on iOS, and on the desktop. Android has
+/// [AndroidNavigationSource].
 class GeolocatorNavigationSource implements NavigationLocationSource {
   const GeolocatorNavigationSource();
-
-  /// How often to ask for a fix on Android: once a second, as GPS gives them, which is what
-  /// Ferrostar's step and arrival distances assume.
-  static const _interval = Duration(seconds: 1);
 
   @override
   Stream<NavLocation> fixes(NavigationMode mode) =>
@@ -75,36 +143,8 @@ class GeolocatorNavigationSource implements NavigationLocationSource {
     _ => throw NavigationLocationError(LocationProblem.failed, error),
   };
 
-  /// The app's strings in the device's language, for the notification, which is
-  /// shown with no widget tree to look them up in; English when the app has no
-  /// translation for it, as the rest of the app falls back to.
-  static AppLocalizations get _words =>
-      localizationsFor(PlatformDispatcher.instance.locale.toLanguageTag()) ??
-      lookupAppLocalizations(const Locale('en'));
-
   static LocationSettings _settings(NavigationMode mode) {
     switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-        return AndroidSettings(
-          accuracy: LocationAccuracy.bestForNavigation,
-          distanceFilter: 0,
-          intervalDuration: _interval,
-          // The platform's location manager rather than Google Play services', as for the
-          // map's dot (`GeolocatorSource`), so Google's Location Accuracy is never asked
-          // for.
-          forceLocationManager: true,
-          // A foreground service keeps fixes coming with the screen off, and its wake
-          // lock keeps the CPU up to take them. It starts with the stream and stops when
-          // the stream is cancelled. What the notification says is still to be designed.
-          foregroundNotificationConfig: ForegroundNotificationConfig(
-            // The app's name, which isn't translated.
-            notificationTitle: 'Cardinal Maps',
-            notificationText: _words.navigationNotificationText,
-            notificationChannelName: _words.navigationNotificationChannel,
-            enableWakeLock: true,
-            setOngoing: true,
-          ),
-        );
       case TargetPlatform.iOS || TargetPlatform.macOS:
         return AppleSettings(
           accuracy: LocationAccuracy.bestForNavigation,

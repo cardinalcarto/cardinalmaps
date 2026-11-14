@@ -4,12 +4,17 @@
     <!-- The my location button and the dot that shows where you are. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
-    <!-- Navigation keeps taking fixes with the screen off, through geolocator's location
-         foreground service, whose wake lock keeps the CPU up to take them. It always starts
-         in the foreground, so it needs no ACCESS_BACKGROUND_LOCATION. -->
+    <!-- Navigation keeps taking fixes with the screen off, through its own location
+         foreground service (NavigationService), whose wake lock keeps the CPU up to take
+         them. It always starts in the foreground, so it needs no
+         ACCESS_BACKGROUND_LOCATION. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- The service's notification, with the next maneuver and End, asked for as a trip
+         first starts on Android 13 and later. Without it the service still runs, and the
+         notification isn't shown. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="cardinal"
         android:name="${applicationName}"
@@ -44,6 +49,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Keeps navigation going with the screen off, and shows its notification. -->
+        <service
+            android:name=".NavigationService"
+            android:exported="false"
+            android:foregroundServiceType="location"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

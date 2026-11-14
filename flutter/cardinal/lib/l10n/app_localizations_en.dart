@@ -75,6 +75,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get navigationNotificationText => 'Navigating';
 
   @override
+  String get navigationNotificationEnd => 'End';
+
+  @override
   String get navigationNotificationChannel => 'Navigation';
 
   @override

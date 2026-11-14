@@ -32,6 +32,15 @@ AppLocalizations? localizationsFor(String tag) {
   return match == null ? null : lookupAppLocalizations(match);
 }
 
+/// The app's strings in the device's language, for what's shown with no widget tree
+/// to look them up in, such as navigation's Android notification; English when the
+/// app has no translation for it, as the rest of the app falls back to.
+AppLocalizations deviceLocalizations() =>
+    localizationsFor(
+      WidgetsBinding.instance.platformDispatcher.locale.toLanguageTag(),
+    ) ??
+    lookupAppLocalizations(const Locale('en'));
+
 /// [tag] as a [Locale]: its language, then a four-letter script or a region, if it has
 /// them. Null for an empty tag.
 Locale? _parse(String tag) {

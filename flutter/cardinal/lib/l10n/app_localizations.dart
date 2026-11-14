@@ -190,11 +190,17 @@ abstract class AppLocalizations {
   /// **'{distance} m'**
   String navigationDistanceMeters(String distance);
 
-  /// The text of the Android notification shown while turn-by-turn navigation keeps getting your location with the screen off.
+  /// The title of the Android notification shown while turn-by-turn navigation is under way, when there's no maneuver to show in it yet.
   ///
   /// In en, this message translates to:
   /// **'Navigating'**
   String get navigationNotificationText;
+
+  /// The action on the Android notification shown while navigating that ends turn-by-turn navigation.
+  ///
+  /// In en, this message translates to:
+  /// **'End'**
+  String get navigationNotificationEnd;
 
   /// The name of the Android notification channel for the notification shown while navigating, as the system's notification settings list it.
   ///

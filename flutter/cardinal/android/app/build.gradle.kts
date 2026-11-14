@@ -52,3 +52,9 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // NotificationCompat, ServiceCompat and LocationManagerCompat for navigation's service
+    // and fixes; the version the app's plugins already bring in.
+    implementation("androidx.core:core-ktx:1.17.0")
+}

@@ -16,6 +16,13 @@ The maneuver icons in navigation's banner, in `tool/icons/maneuvers/` and built 
   Ferrostar's iOS copies are, `uturn` to `turn_uturn` and `notificaiton_sharp_right` to
   `notification_sharp_right`.
 
+## Material icons
+
+The navigation notification's status-bar icon,
+`android/app/src/main/res/drawable/ic_notification.xml`, is the path of Material Design
+icons' `navigation` icon (https://github.com/google/material-design-icons), under the
+Apache License 2.0.
+
 ## Ferrostar
 
 Navigation follows Ferrostar's default user interface, and rounds distances to the next

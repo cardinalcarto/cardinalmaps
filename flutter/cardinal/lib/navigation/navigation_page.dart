@@ -41,9 +41,11 @@ import 'trip_progress.dart';
 /// The navigation screen's page in the sheet: it hides the sheet and shows the
 /// navigation screen over the map while it's open.
 ///
-/// End, and back, end the trip and go back to the directions under it. Opened with no
-/// trip under way, as when the app is restored to it after being closed, it goes back at
-/// once.
+/// End, and back, end the trip, and the page goes back to the directions under it
+/// whenever the trip ends, however it's ended: by End on the navigation notification
+/// too, at once if the app is showing, or for when it's next opened. Opened with no
+/// trip under way, as when the app is restored to it after being closed, it goes back
+/// at once.
 class NavigationPage extends StatefulWidget {
   const NavigationPage({super.key});
 
@@ -55,6 +57,9 @@ class _NavigationPageState extends State<NavigationPage> {
   VoidCallback? _hide;
   bool _checked = false;
 
+  /// The controller whose trip ending takes the page back, while it's listened to.
+  NavigationController? _controller;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -62,6 +67,7 @@ class _NavigationPageState extends State<NavigationPage> {
     _checked = true;
     final scope = NavigationScope.of(context);
     final idle = scope.controller.state == NavigationState.idle;
+    if (!idle) _controller = scope.controller..addListener(_tripChanged);
     // After the frame: showing and hiding rebuild the floating layer, which can't be
     // changed while this page is built or taken away.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -74,8 +80,18 @@ class _NavigationPageState extends State<NavigationPage> {
     });
   }
 
+  /// The trip ended: back to directions, once, if this page is still the one showing.
+  void _tripChanged() {
+    final controller = _controller;
+    if (controller == null || controller.state != NavigationState.idle) return;
+    controller.removeListener(_tripChanged);
+    _controller = null;
+    if (mounted && (ModalRoute.of(context)?.isCurrent ?? true)) _leave();
+  }
+
   @override
   void dispose() {
+    _controller?.removeListener(_tripChanged);
     final hide = _hide;
     if (hide != null) {
       WidgetsBinding.instance
@@ -102,12 +118,10 @@ class _NavigationPageState extends State<NavigationPage> {
   );
 }
 
-/// Ends the trip and goes back from the navigation screen to the directions under it.
-void endNavigation(BuildContext context) {
-  final router = GoRouter.of(context);
-  unawaited(NavigationScope.of(context).controller.end());
-  router.canPop() ? router.pop() : router.go('/');
-}
+/// Ends the trip, which takes the navigation screen back to the directions under it
+/// ([NavigationPage]).
+void endNavigation(BuildContext context) =>
+    unawaited(NavigationScope.of(context).controller.end());
 
 /// The sheet scaffold's floating layer: [child], the map's own buttons, and, while the
 /// navigation screen shows, [NavigationView] instead. [child] stays built while hidden,
