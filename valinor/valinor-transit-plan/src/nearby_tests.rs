@@ -1358,6 +1358,170 @@ fn a_route_detail_lists_departures_a_trip_and_vehicles() {
     ));
 }
 
+/// Decodes a polyline6 to `(lat, lon)` pairs in millionths of a degree, as it encodes them.
+fn polyline6(encoded: &str) -> Vec<(i64, i64)> {
+    let mut values = Vec::new();
+    let (mut value, mut shift) = (0_i64, 0_u32);
+    for byte in encoded.bytes() {
+        let chunk = i64::from(byte) - 63;
+        value |= (chunk & 0x1f) << shift;
+        shift += 5;
+        if chunk < 0x20 {
+            values.push(if value & 1 == 1 {
+                !(value >> 1)
+            } else {
+                value >> 1
+            });
+            (value, shift) = (0, 0);
+        }
+    }
+    let (mut lat, mut lon) = (0, 0);
+    values
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[d_lat, d_lon]| {
+            lat += d_lat;
+            lon += d_lon;
+            (lat, lon)
+        })
+        .collect()
+}
+
+/// `(lat, lon)` in millionths of a degree.
+fn micro(lat: f64, lon: f64) -> (i64, i64) {
+    #[expect(clippy::cast_possible_truncation, reason = "test coordinates")]
+    ((lat * 1e6).round() as i64, (lon * 1e6).round() as i64)
+}
+
+fn shape_to_stop(response: &RouteDetailResponse) -> Option<Vec<(i64, i64)>> {
+    response.shape_to_stop.as_deref().map(polyline6)
+}
+
+#[test]
+fn a_route_detail_draws_its_trip_before_the_stop_on_the_trip_shape() {
+    let state = state();
+    // From `N1`: the shape from `SF`, the trip's first stop, to `N1`, where the ride's begins.
+    let at_n1 = detail(&state, &detail_request("R1", NORTH, "N1", june_15(8, 0)));
+    let ride = at_n1.ride.as_ref().expect("a ride");
+    assert_eq!(ride.trip.trip_id, "R1N-0800");
+    let before = shape_to_stop(&at_n1).expect("a shape before the stop");
+    assert_eq!(before, vec![micro(47.57, -122.33), micro(47.6005, -122.33)]);
+    let after = polyline6(ride.shape.as_deref().expect("the ride's shape"));
+    assert_eq!(
+        before.last(),
+        after.first(),
+        "the two lines meet at the stop"
+    );
+
+    // From `N2`: on along the shape, by its bend between `N1` and `N2`.
+    let at_n2 = detail(&state, &detail_request("R1", NORTH, "N2", june_15(8, 0)));
+    assert_eq!(
+        shape_to_stop(&at_n2).expect("a shape before the stop"),
+        vec![
+            micro(47.57, -122.33),
+            micro(47.6005, -122.33),
+            micro(47.602, -122.3302),
+            micro(47.604, -122.33),
+        ]
+    );
+
+    // A chosen trip's, not the first's.
+    let chosen = detail(
+        &state,
+        &RouteDetailRequest {
+            trip: Some(TripChoice {
+                trip_id: "R1N-0830".to_owned(),
+                start_date: Some(JUNE_15.to_owned()),
+            }),
+            ..detail_request("R1", NORTH, "N2", june_15(8, 0))
+        },
+    );
+    assert_eq!(shape_to_stop(&chosen), shape_to_stop(&at_n2));
+}
+
+#[test]
+fn a_route_detail_draws_a_trip_without_a_shape_before_the_stop_straight() {
+    let state = state();
+    // The southbound trips have no shape: straight from `NF` through `N2` to `N1`.
+    let response = detail(
+        &state,
+        &detail_request("R1", &["Southcenter"], "N1", june_15(8, 0)),
+    );
+    assert_eq!(
+        response
+            .ride
+            .as_ref()
+            .map(|ride| ride.trip.trip_id.as_str()),
+        Some("R1S-0800")
+    );
+    assert!(
+        response
+            .ride
+            .as_ref()
+            .is_some_and(|ride| ride.shape.is_none()),
+        "the ride has no shape either"
+    );
+    assert_eq!(
+        shape_to_stop(&response).expect("a line before the stop"),
+        vec![
+            micro(47.63, -122.33),
+            micro(47.604, -122.33),
+            micro(47.6005, -122.33),
+        ]
+    );
+}
+
+#[test]
+fn a_route_detail_has_nothing_before_a_trip_first_stop() {
+    let state = state();
+    // Route 2's eastbound trips start at `N1`.
+    let response = detail(
+        &state,
+        &detail_request("R2", &["East End"], "N1", june_15(8, 0)),
+    );
+    assert!(response.ride.is_some());
+    assert_eq!(response.shape_to_stop, None);
+    let json = serde_json::to_value(&response).expect("serializes");
+    assert!(json.get("shape_to_stop").is_none(), "left out of the JSON");
+
+    // Nor without a ride.
+    let none = detail(
+        &state,
+        &lines_detail("L44", &["Capitol Hill"], "P1", june_15(11, 30)),
+    );
+    assert!(none.ride.is_none() && none.shape_to_stop.is_none());
+}
+
+#[test]
+fn a_stay_seated_trip_is_drawn_before_the_stop_from_its_own_first_stop() {
+    let state = state();
+    // The 43 begins at `PZ`, where the 44 it continues ends: nothing of the 44 is drawn.
+    let r43 = detail(
+        &state,
+        &lines_detail("L43", &["Capitol Hill"], "PZ", june_15(11, 30)),
+    );
+    assert_eq!(
+        r43.ride.as_ref().map(|ride| ride.trip.trip_id.as_str()),
+        Some("L43-1203")
+    );
+    assert_eq!(r43.shape_to_stop, None);
+
+    // And the 44 from `P2` is drawn from its own first stop, `P1`.
+    let r44 = detail(
+        &state,
+        &lines_detail("L44", &["University District"], "P2", june_15(11, 45)),
+    );
+    assert_eq!(
+        r44.ride.as_ref().map(|ride| ride.trip.trip_id.as_str()),
+        Some("L44-1150")
+    );
+    assert_eq!(
+        shape_to_stop(&r44).expect("a line before the stop"),
+        vec![micro(47.6005, -122.33), micro(47.604, -122.33)]
+    );
+}
+
 #[test]
 fn a_route_detail_shows_skipped_departures_and_a_direction_by_terminus() {
     let state = state();

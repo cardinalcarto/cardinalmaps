@@ -428,7 +428,7 @@ mod tests {
                     .with("routes.txt", "route_id,route_short_name,route_type\nL1,1,3\n")
                     .with(
                         "stops.txt",
-                        "stop_id,stop_name,stop_lat,stop_lon\nA,Plaça,42.5078,1.5211\nB,Meritxell,42.5095,1.5345\n",
+                        "stop_id,stop_name,stop_lat,stop_lon\nA,Plaça,42.5078,1.5211\nB,Meritxell,42.5095,1.5345\nC,Escaldes,42.5101,1.5402\n",
                     )
                     .with(
                         "calendar.txt",
@@ -439,7 +439,7 @@ mod tests {
                     .with(
                         "stop_times.txt",
                         "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
-                         T1,09:00:00,09:00:00,A,1\nT1,09:08:00,09:08:00,B,2\n",
+                         T1,09:00:00,09:00:00,A,1\nT1,09:08:00,09:08:00,B,2\nT1,09:11:00,09:11:00,C,3\n",
                     ),
             ),
         }])
@@ -623,6 +623,22 @@ mod tests {
         );
         let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
         assert_eq!(body["ride"]["stops"][1]["stop_id"], "B");
+        assert!(
+            body.get("shape_to_stop").is_none(),
+            "A is the trip's first stop"
+        );
+
+        // From the trip's second stop, with its line before the stop: straight, without a shape.
+        let from_b = route.replace(r#""stop_id":"A""#, r#""stop_id":"B""#);
+        let answer = transit.route_at(from_b.as_bytes(), Vec::new(), now, &|| false);
+        assert_eq!(answer.status, 200);
+        assert_eq!(
+            answer.body,
+            server.route_json(from_b.as_bytes(), now, &|| false).body,
+            "the same bytes as the server's /transit/route from B"
+        );
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        assert!(body["shape_to_stop"].is_string(), "{body}");
 
         // Feeds are applied as for a plan, and a cancelled query stops.
         let feeds = vec![TransitFeed {

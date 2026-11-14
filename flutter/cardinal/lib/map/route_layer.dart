@@ -344,8 +344,37 @@ List<Object?> _nearbyRole(String role) => [
 ];
 
 /// A nearby route's trip in its color over a darker casing, with its stops as small
-/// dots, under the map's labels.
+/// dots, under the map's labels; and under it, the trip before the rider's stop, at half
+/// the width, with a casing scaled down alike and no stops.
 final _nearbyRouteLines = <Map<String, Object?>>[
+  {
+    'id': 'nearby-route-before-casing',
+    'type': 'line',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('before'),
+    'layout': {'line-cap': 'round', 'line-join': 'round'},
+    'paint': {
+      'line-color': [
+        'to-color',
+        ['get', 'casing'],
+      ],
+      'line-width': 4.5,
+    },
+  },
+  {
+    'id': 'nearby-route-before',
+    'type': 'line',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('before'),
+    'layout': {'line-cap': 'round', 'line-join': 'round'},
+    'paint': {
+      'line-color': [
+        'to-color',
+        ['get', 'color'],
+      ],
+      'line-width': 3,
+    },
+  },
   {
     'id': 'nearby-route-casing',
     'type': 'line',
@@ -436,11 +465,13 @@ final _nearbyRouteMarkers = <Map<String, Object?>>[
 ];
 
 /// A nearby route's detail as GeoJSON: [ride]'s line and its stops, from [boarding],
-/// emphasized, to the end of its trip, in [route]'s color; and [vehicles], drawn with
-/// [vehicleIcon] and turned to their bearing by [headingIcon] when they have one.
+/// emphasized, to the end of its trip, in [route]'s color, and the trip before it,
+/// [shapeToStop], without stops; and [vehicles], drawn with [vehicleIcon] and turned to
+/// their bearing by [headingIcon] when they have one.
 Map<String, Object?> nearbyRouteGeoJson({
   required TransitRoute? route,
   required TransitLeg? ride,
+  List<DirectionsPoint> shapeToStop = const [],
   required StopRef? boarding,
   required List<TransitVehicle> vehicles,
   required String vehicleIcon,
@@ -457,20 +488,21 @@ Map<String, Object?> nearbyRouteGeoJson({
     },
   };
   final shape = ride?.shape ?? const <DirectionsPoint>[];
+  Map<String, Object?> line(String role, List<DirectionsPoint> points) => {
+    'type': 'Feature',
+    'properties': {'role': role, 'color': color, 'casing': casing},
+    'geometry': {
+      'type': 'LineString',
+      'coordinates': [
+        for (final p in points) [p.lng, p.lat],
+      ],
+    },
+  };
   return {
     'type': 'FeatureCollection',
     'features': [
-      if (shape.length >= 2)
-        {
-          'type': 'Feature',
-          'properties': {'role': 'line', 'color': color, 'casing': casing},
-          'geometry': {
-            'type': 'LineString',
-            'coordinates': [
-              for (final p in shape) [p.lng, p.lat],
-            ],
-          },
-        },
+      if (ride != null && shapeToStop.length >= 2) line('before', shapeToStop),
+      if (shape.length >= 2) line('line', shape),
       if (ride != null)
         for (final visit in ride.stops.skip(1))
           if (visit.stop.point case final p?)

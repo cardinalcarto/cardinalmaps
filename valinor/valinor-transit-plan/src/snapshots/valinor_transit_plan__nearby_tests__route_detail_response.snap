@@ -281,6 +281,7 @@ expression: "&detail(&state, &request)"
       }
     ]
   },
+  "shape_to_stop": "_dmvyA~wlihFgqz@?",
   "vehicles": [
     {
       "feed": "metro",

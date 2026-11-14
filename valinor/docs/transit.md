@@ -530,9 +530,13 @@ It answers with the route, `headsigns` as asked, `departures` from the stop of t
 trips whose headsign there is one of them (or that have none, for an empty list) from `time` plus
 `walk_seconds` (`max_departures` counting only those that run, as for nearby), `ride`, a plan's
 transit leg on the chosen trip (or the first that runs) from the stop to the end of its trip, with
-every stop's times, its shape as polyline6, vehicle, and alerts, and `vehicles`, those real-time
-data has on the route's trips that leave the stop under one of the headsigns, whether or not they
-have left it yet. A vehicle not matched to a trip of the timetable has no stops to read that from,
+every stop's times, its shape as polyline6, vehicle, and alerts; `shape_to_stop`, the same trip
+before the stop, where the rider can't board it yet: its shape from the first stop of its GTFS trip
+to the stop, as polyline6, ending where the ride's begins (straight from stop to stop where the
+trip has no shape there, or runs on a pattern real-time data gave it; left out without a `ride`,
+and when the stop is the trip's first, as for a stay-seated trip's second stretch at the join);
+and `vehicles`, those real-time data has on the route's trips that leave the stop under one of the
+headsigns, whether or not they have left it yet. A vehicle not matched to a trip of the timetable has no stops to read that from,
 and isn't listed. A route, stop, or trip that isn't there is a 404 (`unknown_route`,
 `unknown_stop`, or `unknown_trip`); headsigns with nothing in the horizon are an answer with no
 departures and no `ride`. A request without `headsigns`, with an empty headsign, or naming one

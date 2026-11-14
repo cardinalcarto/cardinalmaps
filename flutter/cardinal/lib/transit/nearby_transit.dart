@@ -8,6 +8,8 @@ library;
 
 import 'dart:convert';
 
+import 'package:routing/routing.dart' show DirectionsPoint;
+
 import '../directions/transit_plan.dart';
 
 /// Why a nearby answer lists no routes.
@@ -185,6 +187,10 @@ class RouteDetail {
       ride = json['ride'] == null
           ? null
           : TransitLeg.fromJson(_map(json['ride'])),
+      shapeToStop = switch (json['shape_to_stop']) {
+        final String shape => decodePolyline6(shape),
+        _ => const [],
+      },
       vehicles = [
         for (final v in _list(json['vehicles']))
           TransitVehicle.fromJson(_map(v)),
@@ -212,6 +218,11 @@ class RouteDetail {
   /// its trip, with every stop's times, its shape, vehicle, and alerts. Null when nothing
   /// runs in the horizon.
   final TransitLeg? ride;
+
+  /// [ride]'s trip before [stop], where the rider can't board it yet: from its first stop
+  /// to [stop], where [ride]'s shape begins. Empty when [stop] is its first, or without
+  /// a ride.
+  final List<DirectionsPoint> shapeToStop;
 
   /// Vehicles real-time data has on this route's trips that leave [stop] under one of
   /// the page's headsigns.

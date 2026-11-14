@@ -27,8 +27,8 @@ use crate::error::Missing;
 use crate::nearby::{NearbyRequest, RouteDetailRequest};
 use crate::plan::DepartureRange;
 use crate::response::build::{
-    RideDescriber, agency_response, boarding_headsign, gtfs_route_of, realtime_status,
-    route_response,
+    RideDescriber, agency_response, boarding_headsign, encode_polyline6, gtfs_route_of,
+    realtime_status, route_response,
 };
 use crate::response::departures::{Candidate, DepartureSearch, Found, Pair, Serving};
 use crate::response::vehicle::vehicle_from;
@@ -183,6 +183,12 @@ pub struct RouteDetailResponse {
     ///
     /// Absent when nothing runs in the horizon.
     pub ride: Option<TransitLeg>,
+    /// The ride's trip before the stop, where the rider can't board it yet: its shape from the
+    /// first stop of its GTFS trip to the stop, as polyline6, ending where the ride's begins.
+    /// A trip without a shape there is drawn straight from stop to stop.
+    ///
+    /// Absent without a ride, and when the stop is its trip's first.
+    pub shape_to_stop: Option<String>,
     /// Vehicles real-time data has on this route's trips that leave the stop under one of the
     /// page's headsigns, whether or not they have left it yet.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1029,11 +1035,9 @@ impl RideDescriber<'_> {
             ),
             None => found.iter().find(|c| c.found == Found::Runs),
         };
-        let ride = chosen.and_then(|candidate| {
-            let ride = self.ride_to_end(stop, candidate)?;
-            let board = self.origin() + i64::from(candidate.board.departure.into_inner());
-            Some(self.transit_leg(&ride, board - ready, &|_| {}))
-        });
+        let (ride, shape_to_stop) = chosen
+            .and_then(|candidate| self.detail_ride(stop, candidate, ready))
+            .unzip();
 
         let stop_ref = self.stop_ref(stop);
         let mut pool = Vec::new();
@@ -1079,6 +1083,7 @@ impl RideDescriber<'_> {
             walk_seconds: request.walk_seconds,
             departures,
             ride,
+            shape_to_stop: shape_to_stop.flatten(),
             vehicles,
             alerts: pool,
         })
@@ -1101,6 +1106,63 @@ impl RideDescriber<'_> {
         }
         let run = boarding_ride(stop, candidate);
         self.ride_view(&run).trip_id == choice.trip_id
+    }
+
+    /// The ride a detail shows on a departure from `stop`, for a rider ready there at `ready`,
+    /// and its trip's shape before the stop.
+    fn detail_ride(
+        &self,
+        stop: StopId,
+        candidate: &Candidate,
+        ready: i64,
+    ) -> Option<(TransitLeg, Option<String>)> {
+        let ride = self.ride_to_end(stop, candidate)?;
+        let board = self.origin() + i64::from(candidate.board.departure.into_inner());
+        Some((
+            self.transit_leg(&ride, board - ready, &|_| {}),
+            self.shape_to_stop(candidate),
+        ))
+    }
+
+    /// A departure's trip before the stop it boards at: its shape from its GTFS trip's first
+    /// stop to there, as polyline6.
+    ///
+    /// The trip's shape where it has one there, read as a ride's is; otherwise, or on a pattern
+    /// real-time data moved the trip to, straight from stop to stop, as a client draws a ride
+    /// without a shape from its stops (it has none of the stops before this one to draw from).
+    /// `None` when it boards at its trip's first stop, or fewer than two of the stops are placed.
+    fn shape_to_stop(&self, candidate: &Candidate) -> Option<String> {
+        let pair = candidate.pair;
+        let boarded = self.boarded_at(candidate.key, pair)?;
+        let board = pair.board as usize;
+        if board <= boarded.first {
+            return None;
+        }
+        // Static positions are the trip's own only on its own pattern.
+        let shaped = self
+            .set()
+            .trip_part(candidate.key.trip)
+            .and_then(|(part, local)| {
+                let info = part.compiled().trip(local)?;
+                (part.global_route(info.pattern) == pair.route)
+                    .then(|| {
+                        part.compiled()
+                            .shape_points_between(local, boarded.first, board)
+                    })
+                    .flatten()
+            });
+        let points = match shaped {
+            Some(points) => points,
+            None => self
+                .snapshot
+                .snapshot
+                .route_stops(pair.route)?
+                .get(boarded.first..=board)?
+                .iter()
+                .filter_map(|&stop| self.stop_coordinate(stop))
+                .collect(),
+        };
+        (points.len() >= 2).then(|| encode_polyline6(&points))
     }
 
     /// A departure ridden from `stop` to the last stop of its GTFS trip.

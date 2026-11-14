@@ -122,6 +122,11 @@ void main() {
     expect(ride.tripState, 'delayed');
     expect(ride.vehicle!.id, '7033');
     expect(ride.shape, isNotEmpty);
+    // The trip before the stop: from South Far, its first stop, to where the ride begins.
+    expect(detail.shapeToStop, hasLength(2));
+    expect(detail.shapeToStop.first.lat, closeTo(47.57, 1e-6));
+    expect(detail.shapeToStop.last.lat, ride.shape.first.lat);
+    expect(detail.shapeToStop.last.lng, ride.shape.first.lng);
     final vehicle = detail.vehicles.single;
     expect((vehicle.id, vehicle.tripId), ('7033', 'R1N-0810'));
     expect(vehicle.point!.lat, closeTo(47.585, 1e-4));
@@ -130,10 +135,12 @@ void main() {
   test('a route detail with nothing in the horizon has no ride', () {
     final json = snapshotRouteDetailJson()
       ..remove('ride')
+      ..remove('shape_to_stop')
       ..remove('vehicles')
       ..['departures'] = <Object>[];
     final detail = RouteDetail.fromJson(json);
     expect(detail.ride, isNull);
+    expect(detail.shapeToStop, isEmpty);
     expect(detail.departures, isEmpty);
     expect(detail.vehicles, isEmpty);
   });

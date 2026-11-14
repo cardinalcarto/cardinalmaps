@@ -531,6 +531,24 @@ impl<'a> RideDescriber<'a> {
         }
     }
 
+    /// Where a stop is: the timetable's coordinate, or an added stop's; `None` when neither
+    /// says.
+    pub(super) fn stop_coordinate(&self, stop: StopId) -> Option<LatLon> {
+        if let Some((part, local)) = self.set().stop_part(stop)
+            && let Some(info) = part.compiled().stop(local)
+        {
+            return info.coordinate;
+        }
+        self.snapshot
+            .new_stops
+            .iter()
+            .find(|s| s.stop == stop)
+            .map(|s| LatLon {
+                lat: f64::from(s.latitude),
+                lon: f64::from(s.longitude),
+            })
+    }
+
     fn static_stop_ref(part: TimetablePart<'_>, info: StopInfo<'_>) -> StopRef {
         let parent = info
             .parent_station
@@ -1473,7 +1491,7 @@ fn first_text(text: Option<&valinor_gtfs_rt::proto::TranslatedString>) -> Option
 }
 
 /// Encodes coordinates as a polyline with six decimal places, as Valhalla does.
-fn encode_polyline6(points: &[LatLon]) -> String {
+pub(super) fn encode_polyline6(points: &[LatLon]) -> String {
     let mut encoded = String::with_capacity(points.len() * 8);
     let (mut last_lat, mut last_lon) = (0_i64, 0_i64);
     for point in points {

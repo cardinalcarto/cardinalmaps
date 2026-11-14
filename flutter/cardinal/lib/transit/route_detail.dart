@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:routing/routing.dart' show DirectionsPoint;
 
 import '../directions/transit_plan.dart';
 import 'countdown.dart';
@@ -122,6 +123,11 @@ class RouteDetailController extends ChangeNotifier {
   /// being asked for; null before the first.
   TransitLeg? get ride => _ride;
   TransitLeg? _ride;
+
+  /// [ride]'s trip before the stop, from the answer [ride] came with
+  /// ([RouteDetail.shapeToStop]).
+  List<DirectionsPoint> get shapeToStop => _shapeToStop;
+  List<DirectionsPoint> _shapeToStop = const [];
 
   /// How the rider gets to the stop, from the first [refresh].
   TransitAccess? _access;
@@ -266,10 +272,16 @@ class RouteDetailController extends ChangeNotifier {
     final ride = answer.ride;
     if (ride == null) {
       // Nothing runs in the horizon.
-      if (answer.departures.isEmpty) _ride = null;
+      if (answer.departures.isEmpty) {
+        _ride = null;
+        _shapeToStop = const [];
+      }
       return;
     }
-    if (_selected == null || rideRun(ride) == _selected) _ride = ride;
+    if (_selected == null || rideRun(ride) == _selected) {
+      _ride = ride;
+      _shapeToStop = answer.shapeToStop;
+    }
   }
 
   /// Asks again once real-time data the answer to question [asked] went without arrives,

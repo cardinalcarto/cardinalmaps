@@ -82,6 +82,7 @@ RouteDetail _detail(
   List<String> headsigns = const ['Ballard'],
   String stop = _ballard,
   Map<String, Object?>? ride,
+  String? shapeToStop,
   List<Map<String, Object?>> vehicles = const [],
   int walkSeconds = 240,
 }) => RouteDetail.fromJson({
@@ -100,6 +101,7 @@ RouteDetail _detail(
   'walk_seconds': walkSeconds,
   'departures': departures,
   'ride': ?ride,
+  'shape_to_stop': ?shapeToStop,
   'vehicles': vehicles,
 });
 
@@ -582,6 +584,69 @@ void main() {
       expect(find.text('Market St'), findsOneWidget);
     });
 
+    testWidgets("the trip before the stop goes with its ride's", (
+      tester,
+    ) async {
+      /// The line of the trip before the stop on the map, as latitudes.
+      List<Object?>? before() {
+        final data = map.geoJson[nearbyRouteSource]! as Map<String, Object?>;
+        for (final f in (data['features']! as List).cast<Map>()) {
+          if ((f['properties'] as Map)['role'] == 'before') {
+            return [
+              for (final c in (f['geometry'] as Map)['coordinates'] as List)
+                (c as List)[1],
+            ];
+          }
+        }
+        return null;
+      }
+
+      final departures = [
+        nearbyDepartureJson('a', 10),
+        nearbyDepartureJson('b', 20),
+      ];
+      await openList(tester);
+      await open44(tester);
+      await answerRoute(
+        tester,
+        _detail(
+          departures,
+          ride: _ride('a', 10, [_ballard, 'Leary Ave']),
+          shapeToStop: polyline6([
+            [-122.35, 47.6],
+            [-122.35, 47.65],
+          ]),
+        ),
+      );
+      expect(before(), [47.6, 47.65]);
+
+      // Another trip selected: the old ride, and the line before it, stay until its own.
+      await tester.tap(_tile('b'));
+      await tester.pumpAndSettle();
+      expect(before(), [47.6, 47.65]);
+      await answerRoute(
+        tester,
+        _detail(
+          departures,
+          ride: _ride('b', 20, [_ballard, 'Market St']),
+          shapeToStop: polyline6([
+            [-122.35, 47.62],
+            [-122.35, 47.65],
+          ]),
+        ),
+      );
+      expect(before(), [47.62, 47.65]);
+
+      // A ride from its trip's first stop has nothing before it.
+      now = now.add(routeDetailRefresh);
+      await tester.pump(routeDetailRefresh);
+      await answerRoute(
+        tester,
+        _detail(departures, ride: _ride('b', 20, [_ballard, 'Market St'])),
+      );
+      expect(before(), isNull);
+    });
+
     testWidgets('a canceled tile is not selected', (tester) async {
       await openWithRide(tester);
       final asked = source.routesAsked.length;
@@ -729,6 +794,12 @@ void main() {
           'Leary Ave',
           'Ballard End',
         ]),
+        // From well south of Stop A, off the fitted camera.
+        shapeToStop: polyline6([
+          [-122.35, 47.55],
+          [-122.35, 47.6],
+          [-122.35, 47.65],
+        ]),
         vehicles: [
           {
             'id': '7033',
@@ -747,6 +818,7 @@ void main() {
         .map((f) => f['properties']! as Map<String, Object?>)
         .toList();
     expect(features.map((f) => f['role']), [
+      'before',
       'line',
       'stop',
       'stop',
@@ -755,18 +827,27 @@ void main() {
       'vehicle',
       'vehicle',
     ]);
+    // The trip before the stop, in the route's colors, with no stops of its own.
     expect(features.first['color'], '#FDB71A');
-    expect(features[4]['bearing'], 90.0);
+    expect(features[1]['color'], '#FDB71A');
+    final before =
+        ((data['features']! as List).first as Map)['geometry'] as Map;
+    expect(before['coordinates'], [
+      [-122.35, 47.55],
+      [-122.35, 47.6],
+      [-122.35, 47.65],
+    ]);
+    expect(features[5]['bearing'], 90.0);
     expect(map.images.map((i) => i.name), [
       features.last['icon'],
-      features[4]['icon'],
+      features[5]['icon'],
     ]);
     // The images came before the data that uses them.
     expect(
       map.calls.lastIndexOf('images'),
       lessThan(map.calls.lastIndexOf(nearbyRouteSource)),
     );
-    // The camera fits the stop and the line: Stop A to Ballard End.
+    // The camera fits the stop and the line: Stop A to Ballard End, not the trip before.
     expect(map.subjectsSet, subjects + 1);
     expect(map.subjectBounds!.south, closeTo(47.65, 1e-9));
     expect(map.subjectBounds!.north, closeTo(47.67, 1e-9));

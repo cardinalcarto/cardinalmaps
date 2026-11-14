@@ -1,5 +1,5 @@
 /// A nearby route's detail: one of its pages from its stop, with the next departures as
-/// tiles, the selected one's trip from the stop to its end, and that trip and the
+/// tiles, the selected one's trip from the stop to its end, and that whole trip and the
 /// route's vehicles on the map.
 library;
 
@@ -104,6 +104,9 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
   /// The ride the timeline and the map show: the shown page's, or the last one shown
   /// until that's arrived.
   TransitLeg? _ride;
+
+  /// [_ride]'s trip before the stop.
+  List<DirectionsPoint> _shapeToStop = const [];
 
   /// The ride's run the camera last fitted, and whether it fitted the stop alone.
   TripRun? _fitted;
@@ -293,7 +296,13 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
   /// The shown page's ride, once it has one; until then the last page's stays.
   void _showRide() {
     final controller = _current;
-    _ride = controller.ride ?? (controller.detail == null ? _ride : null);
+    if (controller.ride != null) {
+      _ride = controller.ride;
+      _shapeToStop = controller.shapeToStop;
+    } else if (controller.detail != null) {
+      _ride = null;
+      _shapeToStop = const [];
+    }
   }
 
   /// A swipe settled on page [index]: remember its headsign at its stop, as a row does,
@@ -346,6 +355,7 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
     final data = nearbyRouteGeoJson(
       route: route,
       ride: ride,
+      shapeToStop: _shapeToStop,
       boarding: stop,
       vehicles: vehicles,
       vehicleIcon: marker,
@@ -361,7 +371,8 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
   }
 
   /// Fits the camera to [ride]'s line and [stop] when the ride is new; or to the stop
-  /// alone once an answer has no ride.
+  /// alone once an answer has no ride. The trip before the stop isn't fitted: the rider
+  /// can't board it there, and it may run off the screen.
   void _fit(TransitLeg? ride, StopRef? stop, {required bool answered}) {
     final points = <DirectionsPoint>[?stop?.point];
     if (ride != null) {
