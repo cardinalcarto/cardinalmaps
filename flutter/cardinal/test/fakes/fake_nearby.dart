@@ -77,6 +77,8 @@ class FakeNearbySource implements NearbyTransitSource {
   }) {
     final question = RouteQuestion(query, access, abort);
     routesAsked.add(question);
+    _landing = realtimeLanding;
+    realtimeLanding = null;
     if (immediateRoute case final now?) question.answer.complete(now);
     return _abortable(question.answer.future, abort);
   }

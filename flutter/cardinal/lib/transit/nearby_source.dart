@@ -63,6 +63,17 @@ class RouteDetailQuery {
     startDate: departure?.startDate,
   );
 
+  /// The same page, showing [departure]'s trip, or the first that runs if it's null.
+  RouteDetailQuery showing(StopDeparture? departure) => RouteDetailQuery(
+    feed: feed,
+    routeId: routeId,
+    headsigns: headsigns,
+    stopId: stopId,
+    walkSeconds: walkSeconds,
+    tripId: departure?.tripId,
+    startDate: departure?.startDate,
+  );
+
   final String feed;
   final String routeId;
 
@@ -140,15 +151,17 @@ abstract class NearbyTransitSource {
     Future<void>? abort,
   });
 
-  /// Whether real-time data has arrived that the last [nearby] answer was asked without,
-  /// because it was still being fetched for the first time: completes to true once it
-  /// has, when asking again gives live times, and to false when it brought nothing. It
-  /// completes to false at once when the last answer didn't wait on such a fetch; after
-  /// the first fetch, each answer takes what has arrived since the one before.
+  /// Whether real-time data has arrived that the last answer ([nearby] or [route]) was
+  /// asked without, because it was still being fetched for the first time: completes to
+  /// true once it has, when asking again gives live times, and to false when it brought
+  /// nothing. It completes to false at once when the last answer didn't wait on such a
+  /// fetch; after the first fetch, each answer takes what has arrived since the one
+  /// before.
   Future<bool> realtimeArrived() async => false;
 
   /// One page of a route from a stop, as [query] names it, getting to the stop by
-  /// [access]. Throws as [nearby] does; a route, stop, or trip that isn't there is a
+  /// [access]. Like [nearby], it never waits for real-time data being fetched, and
+  /// [realtimeArrived] says when to ask again. Throws as [nearby] does; a route, stop, or trip that isn't there is a
   /// [TransitPlanError] of kind `unknown_route`, `unknown_stop`, or `unknown_trip`.
   Future<RouteDetail> route({
     required RouteDetailQuery query,
@@ -169,7 +182,7 @@ class OfflineNearbySource implements NearbyTransitSource {
 
   RealtimeFeeds _realtime(OfflineArea area) => _feeds.of(area);
 
-  /// The first real-time fetch the last nearby answer was asked during, if any.
+  /// The first real-time fetch the last answer was asked during, if any.
   Future<bool>? _firstRealtime;
 
   /// Opens the area's timetables (on the routing library's threads), so the first
@@ -227,7 +240,11 @@ class OfflineNearbySource implements NearbyTransitSource {
       _ask(
         'route',
         routeRequest(query, access),
-        realtime: (realtime) => realtime.fresh(),
+        realtime: (realtime) {
+          final (:feeds, :first) = realtime.arrived();
+          _firstRealtime = first;
+          return Future.value(feeds);
+        },
         query: (transit, request, feeds) =>
             transit.route(request: request, feeds: feeds, cancel: cancel),
       ).then(RouteDetail.decode),

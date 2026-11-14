@@ -21,6 +21,10 @@ const routeCalloutSource = 'route-callouts';
 /// leaves vehicles at.
 const transitSource = 'transit';
 
+/// The style's GeoJSON source for a nearby route's detail: its trip's line and stops,
+/// the stop the rider gets on at, and its vehicles.
+const nearbyRouteSource = 'nearby-route';
+
 /// The property of a callout saying which route it's for.
 const routeIndexProperty = 'route';
 
@@ -69,6 +73,7 @@ void addRouteLayers(Map<String, Object?> style) {
   sources[routeSource] = {'type': 'geojson', 'data': empty};
   sources[routeCalloutSource] = {'type': 'geojson', 'data': empty};
   sources[transitSource] = {'type': 'geojson', 'data': empty};
+  sources[nearbyRouteSource] = {'type': 'geojson', 'data': empty};
   final layers = style['layers'] as List<Object?>;
   final firstSymbol = layers.indexWhere((l) => (l as Map)['type'] == 'symbol');
   layers.insertAll(firstSymbol < 0 ? layers.length : firstSymbol, [
@@ -77,8 +82,10 @@ void addRouteLayers(Map<String, Object?> style) {
     _line('route-selected-casing', _selectedCasing, 9, selected: true),
     _line('route-selected', _selectedColor, 6, selected: true),
     ..._transitLayers,
+    ..._nearbyRouteLines,
   ]);
   layers.addAll([
+    ..._nearbyRouteMarkers,
     {
       'id': 'route-start',
       'type': 'circle',
@@ -328,4 +335,158 @@ String _darker(String hex) {
   final g = (value >> 8 & 0xff) ~/ 2;
   final b = (value & 0xff) ~/ 2;
   return '#${[r, g, b].map((c) => c.toRadixString(16).padLeft(2, '0')).join()}';
+}
+
+List<Object?> _nearbyRole(String role) => [
+  '==',
+  ['get', 'role'],
+  role,
+];
+
+/// A nearby route's trip in its color over a darker casing, with its stops as small
+/// dots, under the map's labels.
+final _nearbyRouteLines = <Map<String, Object?>>[
+  {
+    'id': 'nearby-route-casing',
+    'type': 'line',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('line'),
+    'layout': {'line-cap': 'round', 'line-join': 'round'},
+    'paint': {
+      'line-color': [
+        'to-color',
+        ['get', 'casing'],
+      ],
+      'line-width': 9,
+    },
+  },
+  {
+    'id': 'nearby-route-line',
+    'type': 'line',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('line'),
+    'layout': {'line-cap': 'round', 'line-join': 'round'},
+    'paint': {
+      'line-color': [
+        'to-color',
+        ['get', 'color'],
+      ],
+      'line-width': 6,
+    },
+  },
+  {
+    'id': 'nearby-route-stops',
+    'type': 'circle',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('stop'),
+    'paint': {
+      'circle-radius': 3.5,
+      'circle-color': '#ffffff',
+      'circle-stroke-color': [
+        'to-color',
+        ['get', 'casing'],
+      ],
+      'circle-stroke-width': 2,
+    },
+  },
+];
+
+/// The stop the rider gets on at, larger, and the route's vehicles, each with a pointer
+/// the way it's heading when that's known, above everything.
+final _nearbyRouteMarkers = <Map<String, Object?>>[
+  {
+    'id': 'nearby-route-boarding',
+    'type': 'circle',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('boarding'),
+    'paint': {
+      'circle-radius': 7,
+      'circle-color': '#ffffff',
+      'circle-stroke-color': [
+        'to-color',
+        ['get', 'casing'],
+      ],
+      'circle-stroke-width': 4,
+    },
+  },
+  {
+    'id': 'nearby-route-headings',
+    'type': 'symbol',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('heading'),
+    'layout': {
+      'icon-image': ['get', 'icon'],
+      'icon-rotate': ['get', 'bearing'],
+      'icon-rotation-alignment': 'map',
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+    },
+  },
+  {
+    'id': 'nearby-route-vehicles',
+    'type': 'symbol',
+    'source': nearbyRouteSource,
+    'filter': _nearbyRole('vehicle'),
+    'layout': {
+      'icon-image': ['get', 'icon'],
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+    },
+  },
+];
+
+/// A nearby route's detail as GeoJSON: [ride]'s line and its stops, from [boarding],
+/// emphasized, to the end of its trip, in [route]'s color; and [vehicles], drawn with
+/// [vehicleIcon] and turned to their bearing by [headingIcon] when they have one.
+Map<String, Object?> nearbyRouteGeoJson({
+  required TransitRoute? route,
+  required TransitLeg? ride,
+  required StopRef? boarding,
+  required List<TransitVehicle> vehicles,
+  required String vehicleIcon,
+  required String headingIcon,
+}) {
+  final color = _hex(route?.color) ?? _defaultRideColor;
+  final casing = _darker(color);
+  Map<String, Object?> point(DirectionsPoint p, Map<String, Object?> props) => {
+    'type': 'Feature',
+    'properties': props,
+    'geometry': {
+      'type': 'Point',
+      'coordinates': [p.lng, p.lat],
+    },
+  };
+  final shape = ride?.shape ?? const <DirectionsPoint>[];
+  return {
+    'type': 'FeatureCollection',
+    'features': [
+      if (shape.length >= 2)
+        {
+          'type': 'Feature',
+          'properties': {'role': 'line', 'color': color, 'casing': casing},
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              for (final p in shape) [p.lng, p.lat],
+            ],
+          },
+        },
+      if (ride != null)
+        for (final visit in ride.stops.skip(1))
+          if (visit.stop.point case final p?)
+            point(p, {'role': 'stop', 'casing': casing}),
+      if (boarding?.point case final p?)
+        point(p, {'role': 'boarding', 'casing': casing}),
+      for (final v in vehicles)
+        if (v.point case final p?) ...[
+          if (v.bearing case final bearing?)
+            point(p, {
+              'role': 'heading',
+              'icon': headingIcon,
+              'bearing': bearing,
+            }),
+          point(p, {'role': 'vehicle', 'icon': vehicleIcon}),
+        ],
+    ],
+  };
 }

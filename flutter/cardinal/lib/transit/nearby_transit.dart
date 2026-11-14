@@ -68,6 +68,14 @@ class NearbyRoute {
         for (final p in _list(json['pages'])) HeadsignPage._(_map(p), alerts),
       ];
 
+  /// [detail]'s route on its one page, for a detail opened without the row it came
+  /// from, as when the app restores it.
+  NearbyRoute.ofDetail(RouteDetail detail)
+    : feed = detail.feed,
+      route = detail.route,
+      agency = detail.agency,
+      pages = [HeadsignPage.ofDetail(detail)];
+
   final String feed;
   final TransitRoute route;
 
@@ -95,6 +103,16 @@ class HeadsignPage {
         for (final d in _list(json['departures']))
           NearbyDeparture.fromJson(_map(d), alerts: alerts),
       ];
+
+  /// [detail]'s page.
+  HeadsignPage.ofDetail(RouteDetail detail)
+    : headsigns = detail.headsigns,
+      directionId = null,
+      stop = detail.stop,
+      walkSeconds = detail.walkSeconds,
+      soonestDeparture =
+          detail.departures.firstOrNull?.departure ?? detail.generatedAt,
+      departures = detail.departures;
 
   /// The page's headsigns, the most frequent first, shown as "A / B"; empty for the
   /// departures that have none. A route's detail asks for the page by these.

@@ -1,4 +1,7 @@
 import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:cardinal/directions/transit_plan.dart' show TransitRoute;
 
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/geocoder/geocoder.dart';
@@ -14,6 +17,7 @@ import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:cardinal/transit/nearby_page.dart';
 import 'package:cardinal/transit/nearby_source.dart';
+import 'package:cardinal/transit/vehicle_markers.dart';
 import 'package:cardinal/ui/glass.dart';
 import 'package:cardinal/ui/theme.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +25,7 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:sparkle/sparkle.dart' show SpriteImageInput;
 
 import 'fake_map.dart';
 import 'fake_location.dart';
@@ -33,6 +38,20 @@ import 'fake_transit.dart';
 const appScreen = Size(400, 800);
 const appNavigationBar = 24.0;
 const appBarHeight = 56.0;
+
+/// Vehicle markers without drawing them, which a widget test can't wait for: a pixel
+/// each, by the names the device's would have.
+Future<List<SpriteImageInput>> fakeVehicleMarkers(TransitRoute? route) async =>
+    [
+      for (final name in [vehicleMarkerName(route), vehicleHeadingName(route)])
+        SpriteImageInput(
+          name: name,
+          pixels: Uint8List(4),
+          width: 1,
+          height: 1,
+          pixelRatio: 1,
+        ),
+    ];
 
 /// A store of fakes.
 Store fakeStore() {
@@ -50,6 +69,7 @@ Future<GoRouter> pumpFakeApp(
   TransitSource? transit,
   NearbyTransitSource? nearby,
   DateTime Function()? clock,
+  VehicleMarkerPainter? vehicleMarkers,
   LocationSource? locationSource,
   FakeMap? map,
   MapOverlays? overlays,
@@ -110,6 +130,7 @@ Future<GoRouter> pumpFakeApp(
               child: NearbyTransitScope(
                 source: nearby ?? FakeNearbySource(),
                 clock: clock ?? DateTime.now,
+                vehicleMarkers: vehicleMarkers ?? fakeVehicleMarkers,
                 child: MaterialApp.router(
                   // The app's theme for [platform], or the test's default theme.
                   theme: platform == null

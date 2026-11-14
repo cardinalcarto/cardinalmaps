@@ -265,7 +265,12 @@ class _RailPainter extends CustomPainter {
 
 /// A row of the itinerary: its rail, and what's said beside it.
 class _RailRow extends StatelessWidget {
-  const _RailRow({required this.rail, required this.child, this.onTap});
+  const _RailRow({
+    super.key,
+    required this.rail,
+    required this.child,
+    this.onTap,
+  });
 
   final _Rail rail;
   final Widget child;
@@ -324,6 +329,46 @@ class RouteBadge extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// A ride's stops from where it's boarded to where it ends, each with its time, on a bar
+/// in its route's color: the itinerary's rows for a ride, with every stop between
+/// showing. A time from real-time data is in the live color.
+class RideStops extends StatelessWidget {
+  const RideStops({super.key, required this.ride});
+
+  final TransitLeg ride;
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        parseRouteColor(ride.route?.color) ??
+        Theme.of(context).colorScheme.primary;
+    final stops = ride.stops;
+    final last = stops.length - 1;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (i, visit) in stops.indexed)
+          _RailRow(
+            key: ValueKey((i, visit.stop.id)),
+            rail: _Rail(
+              above: i == 0 ? _Line.none : _Line.bar,
+              below: i == last ? _Line.none : _Line.bar,
+              marker: i == 0 || i == last ? _Marker.stop : _Marker.pass,
+              aboveColor: color,
+              belowColor: color,
+            ),
+            child: _StopText(
+              visit: visit,
+              time: i == last ? visit.arrival : visit.departure,
+              live: visit.predicted,
+              strong: i == 0,
+            ),
+          ),
+      ],
     );
   }
 }

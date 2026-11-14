@@ -257,6 +257,8 @@ class TransitLeg extends JourneyLeg {
           : TransitRoute.fromJson(_map(json['route'])),
       agency = _map(json['agency'])['name'] as String?,
       headsign = _map(json['trip'])['headsign'] as String?,
+      tripId = _map(json['trip'])['trip_id'] as String?,
+      startDate = _map(json['trip'])['start_date'] as String?,
       tripState = _map(json['trip'])['realtime_state'] as String?,
       bikesAllowed = _map(json['trip'])['bikes_allowed'] as String?,
       stops = [for (final s in _list(json['stops'])) StopVisit._(_map(s))],
@@ -296,6 +298,11 @@ class TransitLeg extends JourneyLeg {
   final TransitRoute? route;
   final String? agency;
   final String? headsign;
+
+  /// The trip it rides, when the plan names it, and its service day as `YYYYMMDD`:
+  /// with [tripId], which run of the trip it is.
+  final String? tripId;
+  final String? startDate;
 
   /// What real-time data did to the trip: `delayed`, `stop_skipped`, `replaced`, or
   /// `added`.

@@ -5,6 +5,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../directions/format.dart';
@@ -23,6 +24,7 @@ import 'countdown.dart';
 import 'nearby_rows.dart';
 import 'nearby_source.dart';
 import 'nearby_transit.dart';
+import 'vehicle_markers.dart';
 
 /// Departures further off than this many minutes show the clock time they leave at,
 /// instead of a countdown.
@@ -40,6 +42,7 @@ class NearbyTransitScope extends InheritedWidget {
     super.key,
     required this.source,
     this.clock = DateTime.now,
+    this.vehicleMarkers = paintVehicleMarkers,
     required super.child,
   });
 
@@ -48,12 +51,17 @@ class NearbyTransitScope extends InheritedWidget {
   /// What time it is: the device's clock, or a test's.
   final DateTime Function() clock;
 
+  /// Draws a route's vehicle markers for the map: the device's drawing, or a test's.
+  final VehicleMarkerPainter vehicleMarkers;
+
   static NearbyTransitScope of(BuildContext context) =>
       context.getInheritedWidgetOfExactType<NearbyTransitScope>()!;
 
   @override
   bool updateShouldNotify(NearbyTransitScope oldWidget) =>
-      source != oldWidget.source || clock != oldWidget.clock;
+      source != oldWidget.source ||
+      clock != oldWidget.clock ||
+      vehicleMarkers != oldWidget.vehicleMarkers;
 }
 
 /// A page's departures at one moment, as a row shows them: the next that runs, and
@@ -343,6 +351,24 @@ class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
     setState(() => _note = failed ?? _Note.none);
   }
 
+  /// Opens [route]'s detail on the page its row shows. This page stays under it as it
+  /// is, rows, pages, and scroll, for coming back to.
+  void _open(NearbyRoute route) {
+    final page = _controller!.rows.shownPage(route);
+    if (page == null) return;
+    unawaited(
+      context.push<void>(
+        routeDetailLocation(
+          feed: route.feed,
+          routeId: route.route.id,
+          stopId: page.stop.id,
+          headsigns: page.headsigns,
+        ),
+        extra: route,
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _stop();
@@ -387,6 +413,7 @@ class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
                               shown: _controller!.rows.shown(route.key),
                               onShown: (page) =>
                                   _controller!.show(route.key, page),
+                              onTap: () => _open(route),
                               access: access,
                               now: _now,
                             ),
@@ -458,12 +485,17 @@ String headsignsText(HeadsignPage page) => page.headsigns.join(' / ');
 /// is shown. A swipe that settles on another page gives a light haptic and calls
 /// [onShown]; the list decides what's [shown]. Every page has the same lines, and the
 /// row is as tall as its first page, so it keeps its height from one page to the next.
+///
+/// Without [showsTimes], it's a route detail's header: the badge, where the page goes,
+/// and its stop, without the departures.
 class NearbyRow extends StatefulWidget {
   const NearbyRow({
     super.key,
     required this.route,
     this.shown = 0,
     this.onShown,
+    this.onTap,
+    this.showsTimes = true,
     required this.access,
     required this.now,
   });
@@ -475,6 +507,12 @@ class NearbyRow extends StatefulWidget {
 
   /// Called with the page a swipe settles on, when it isn't [shown].
   final ValueChanged<int>? onShown;
+
+  /// Called when the row is tapped.
+  final VoidCallback? onTap;
+
+  /// Whether each page shows its departures.
+  final bool showsTimes;
 
   /// How the walk to the stop goes.
   final TransitAccess access;
@@ -540,6 +578,12 @@ class _NearbyRowState extends State<NearbyRow> {
 
   @override
   Widget build(BuildContext context) {
+    final onTap = widget.onTap;
+    final row = _row();
+    return onTap == null ? row : InkWell(onTap: onTap, child: row);
+  }
+
+  Widget _row() {
     final pages = widget.route.pages;
     if (pages.length < 2) return _page(pages.firstOrNull);
     return Column(
@@ -588,6 +632,7 @@ class _NearbyRowState extends State<NearbyRow> {
     key: key,
     route: widget.route,
     page: page,
+    showsTimes: widget.showsTimes,
     access: widget.access,
     now: widget.now,
   );
@@ -649,12 +694,14 @@ class _NearbyPage extends StatelessWidget {
     super.key,
     required this.route,
     required this.page,
+    required this.showsTimes,
     required this.access,
     required this.now,
   });
 
   final NearbyRoute route;
   final HeadsignPage? page;
+  final bool showsTimes;
   final TransitAccess access;
   final ValueListenable<DateTime> now;
 
@@ -714,8 +761,8 @@ class _NearbyPage extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 12),
-          if (page != null)
+          if (page != null && showsTimes) ...[
+            const SizedBox(width: 12),
             // Room for where it goes, however many times follow.
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: _timesWidth),
@@ -724,6 +771,7 @@ class _NearbyPage extends StatelessWidget {
                 builder: (context, now, _) => _Times(NearbyTimes.of(page, now)),
               ),
             ),
+          ],
         ],
       ),
     );
@@ -761,7 +809,7 @@ class _Times extends StatelessWidget {
         // The line keeps its height when nothing that runs is left.
         Visibility.maintain(
           visible: next != null,
-          child: next == null ? const _Next.empty() : _Next(next),
+          child: CountdownNumber(next, key: const ValueKey('next')),
         ),
         const SizedBox(height: 2),
         Text.rich(
@@ -811,20 +859,50 @@ class _Times extends StatelessWidget {
   };
 }
 
-/// The next departure's countdown, large, with the live mark when it's real-time; or
-/// the time it leaves at, when that's more than [countdownMinutes] off.
-class _Next extends StatelessWidget {
-  const _Next(Countdown this.countdown);
-  const _Next.empty() : countdown = null;
+/// A departure's countdown, large, with the live mark when it's real-time; or the time
+/// it leaves at, when that's more than [countdownMinutes] off. Dimmed when the walk
+/// can't make it any more, and struck through when it doesn't run. A changed number
+/// fades into the new one.
+///
+/// Without a [countdown], it's as tall as one, for a line that keeps its height.
+class CountdownNumber extends StatelessWidget {
+  const CountdownNumber(
+    this.countdown, {
+    super.key,
+    this.numberStyle,
+    this.unitStyle,
+    this.liveSize = 14,
+    this.alignment = Alignment.centerRight,
+  });
 
   final Countdown? countdown;
+
+  /// The number's style, over the theme's `titleLarge` at weight 600.
+  final TextStyle? numberStyle;
+
+  /// The style of " min" after it, over the theme's `labelMedium`.
+  final TextStyle? unitStyle;
+
+  /// The live mark's size.
+  final double liveSize;
+
+  /// Where a number fading out sits under the one fading in.
+  final AlignmentGeometry alignment;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final c = countdown;
-    final dimmed = c?.state == CountdownState.unreachable;
-    final color = dimmed ? _dimmed(theme) : theme.colorScheme.onSurface;
+    final state = c?.state;
+    final dimmed = state == CountdownState.unreachable;
+    final struck =
+        state == CountdownState.canceled || state == CountdownState.skipped;
+    final color = dimmed
+        ? _dimmed(theme)
+        : struck
+        ? theme.colorScheme.onSurfaceVariant
+        : theme.colorScheme.onSurface;
+    final decoration = struck ? TextDecoration.lineThrough : null;
     final minutes = c?.minutesUntil ?? 0;
     final counts = c == null || !_showsClock(c);
     final number = !counts
@@ -833,7 +911,6 @@ class _Next extends StatelessWidget {
         ? 'Now'
         : '$minutes';
     return Row(
-      key: const ValueKey('next'),
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.baseline,
       textBaseline: TextBaseline.alphabetic,
@@ -842,32 +919,34 @@ class _Next extends StatelessWidget {
           Icon(
             Icons.sensors,
             key: const ValueKey('live'),
-            size: 14,
+            size: liveSize,
             color: dimmed ? color : liveColor(theme),
           ),
           const SizedBox(width: 3),
         ],
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 250),
-          layoutBuilder: (current, previous) => Stack(
-            alignment: Alignment.centerRight,
-            children: [...previous, ?current],
-          ),
+          layoutBuilder: (current, previous) =>
+              Stack(alignment: alignment, children: [...previous, ?current]),
           child: Text(
             number,
             key: ValueKey(number),
-            style: theme.textTheme.titleLarge?.copyWith(
-              color: color,
-              fontWeight: FontWeight.w600,
-              height: 1.1,
-              fontFeatures: _Times._figures,
-            ),
+            style: theme.textTheme.titleLarge
+                ?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  height: 1.1,
+                  fontFeatures: _Times._figures,
+                )
+                .merge(numberStyle)
+                .copyWith(color: color, decoration: decoration),
           ),
         ),
         if (counts && minutes >= 1)
           Text(
             ' min',
-            style: theme.textTheme.labelMedium?.copyWith(color: color),
+            style: theme.textTheme.labelMedium
+                ?.merge(unitStyle)
+                .copyWith(color: color, decoration: decoration),
           ),
       ],
     );
