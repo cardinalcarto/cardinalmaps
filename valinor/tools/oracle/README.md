@@ -482,7 +482,8 @@ kind and action, and the limit and error cases, under 80 KB each:
 `valinor-thor/fixtures/traces/andorra` has the Loki→Thor message of the cases that reached Thor,
 with the Thor→Odin message (trace_route) or Thor's response (trace_attributes and errors),
 and `valinor-tyr/fixtures/traces/andorra` has every copied case's request and response,
-end to end. See the script for the layout. No tests read them yet.
+end to end. See the script for the layout. `valinor-thor`'s `traces_andorra` test checks the
+Thor fixtures, and `valinor-router`'s `trace_tests` send the end-to-end ones through the router.
 
 Mainline behavior to know when comparing:
 
@@ -499,6 +500,49 @@ Mainline behavior to know when comparing:
   and now and then on a single leg's shape (in a check of 40 Seattle routes, 12 of 20
   three-stop routes and 2 of their 56 legs);
   the `edge_walk_exact` cases include both kinds of routes.
+  The causes, and Valinor's lenient walk where mainline's fails, are in "Known divergences"
+  in `docs/routing.md` and in `valinor-thor`'s `route_matcher`.
+
+### Thor's map matching
+
+`valinor-thor`'s ignored `traces_external` test runs every case of a capture run that reached
+Thor (its Loki→Thor message) through `Thor::trace_route` or `Thor::trace_attributes` and
+compares the Thor→Odin message (the trip, the options with the shape's correlations,
+and the warnings) or Thor's response (`trace_attributes`, and errors) with mainline's:
+
+```shell
+VALINOR_THOR_TRACES=/mnt/maps/cardinal/valhalla-oracle/captures/traces-andorra \
+  cargo test --release -p valinor-thor traces_external -- --ignored --nocapture
+VALINOR_THOR_TRACES=/mnt/maps/cardinal/valhalla-oracle/captures/traces-seattle \
+  VALINOR_THOR_TILES=/mnt/maps/cardinal/valhalla-oracle/seattle/tiles \
+  VALINOR_THOR_CONFIG=/mnt/maps/cardinal/valhalla-oracle/seattle/valhalla.json \
+  cargo test --release -p valinor-thor traces_external -- --ignored --nocapture
+```
+
+(`VALINOR_THOR_ONLY` picks cases by name prefix.) Each region has 322 cases that reached Thor.
+In Andorra, 139 trace_route messages, 162 trace_attributes responses, and 17 errors are
+mainline's; 3 differ by the documented Meili divergence (two OSRM `alternatives_count`s and a
+node's zero-length edge); and 1 is a route shape mainline's edge walk fails on (443) and Valinor's
+lenient walk walks. In Seattle, 132, 158, and 18 are mainline's; 7 differ by the Meili divergence
+(OSRM `alternatives_count`s, alternates, and one candidate's percent along); 1 is the Meili tie
+(`seattle-0194-uturn`, exact when mainline's candidates are replayed in `valinor-meili`'s oracle
+test); and 6 are shapes mainline's walk fails on (4 with 443, 2 `walk_or_snap` that map match).
+Each of those walks gives the same edges as map matching the shape. With the lenient walk turned
+off, every one of them is mainline's.
+
+The ground truth for the lenient walk is mainline's own routes: `valinor-thor`'s
+`edge_walk_tests` walk a few legs of the Andorra route captures (and one shape joined from two
+legs partway along an edge) back to the routes' edges, through the front and Loki, as mainline
+walks and as Valinor does. In a one-off run over every route of the Seattle `thor` helper corpus
+(2,000 routes; the test that ran it was not kept), of 2,552 single legs that are paths on the
+graph, mainline's walk gives 1,944 their routes' edges and 41 other edges (short edges at a
+junction that tie within `LL_EPSILON`), and fails on 567; the lenient walk gives 329 of those
+their routes' edges and 10 other edges, and fails on 228. Of 349 joined multi-leg shapes,
+mainline's walk gives 24 their routes' edges and fails on 323; the lenient walk gives 246 of
+those their edges and 6 other edges, and fails on 71. Most of what still fails is the third
+cause in `route_matcher`, which stays mainline's. The 213 legs and 271 joined shapes that turn
+around partway along an edge (at via and break locations) are no paths on the graph, and 13 legs
+go nowhere (one point, repeated); both were counted apart.
 
 ### The trace_attributes serializer (Tyr)
 
@@ -531,7 +575,9 @@ The map matching corpora above (their JSON body lines) run through the same help
 targeted case and the first corpus case of each action and kind (leaving out the `limit_`
 cases and any over 512 KB) into `valinor-tyr/fixtures/trace-attributes/andorra`
 (`api.bin`, `matches.json` for trace_attributes, and `response.json` or `response.bin`),
-which `responses_match_mainline` in `valinor-tyr`'s `trace_attributes` tests checks.
+which `responses_match_mainline` in `valinor-tyr`'s `trace_attributes` tests checks,
+and, given `requests.tsv`, each case's `request.json`, which `valinor-router`'s `trace_tests`
+send end to end.
 The ignored `trace_oracle_external` test checks a whole run.
 
 ```shell
@@ -552,7 +598,7 @@ podman run --rm -v "$PWD/tools/oracle/cpp:/w:z" \
   valinor-valhalla-dev:3.9.1 sh -c '/w/trace_attributes /cfg/valhalla.json /fx /io/requests.tsv \
     > /io/results.tsv'
 python3 -I tools/oracle/copy-trace-attributes-fixtures.py "$work/results.tsv" "$work/targeted.tsv" \
-  valinor-tyr/fixtures/trace-attributes/andorra
+  valinor-tyr/fixtures/trace-attributes/andorra "$work/requests.tsv"
 VALINOR_TYR_TRACE_ORACLE=$work/results.tsv \
   cargo test -p valinor-tyr trace_oracle_external -- --ignored --nocapture
 ```

@@ -40,7 +40,7 @@ request ──► front ──► Loki ──► Thor ──► Odin ──► T
 |---|---|---|---|
 | Front | `valinor-tyr` | HTTP request (action + JSON) | `Api` with `options` |
 | Loki | `valinor-loki` | `Api` with `options` | `Api` with correlated locations |
-| Thor | `valinor-thor` | `Api` with correlated locations | `Api` with `trip` |
+| Thor | `valinor-thor` | `Api` with correlated locations | `Api` with `trip` (for `trace_attributes`, the serialized response) |
 | Odin | `illuvatar` | `Api` with `trip` | `Api` with `directions` |
 | Tyr | `valinor-tyr` | `Api` with `directions` | serialized response |
 | Sif | `valinor-sif` | edges, nodes, and costing options | costs, access, and filters |
@@ -146,7 +146,7 @@ so that a different `cosf` can never make us skip an edge that mainline keeps.
 ## Path search (Thor)
 
 `valinor-thor` is mainline's Thor for `route` requests, up to trip building
-(`thor_worker_t::route` and `route_action.cc`).
+(`thor_worker_t::route` and `route_action.cc`), and for map matching (see "Map matching (Thor)").
 
 - `Thor::route` scores Loki's candidates (`adjust_locations`: filtered candidates are used
   only if nothing else is, with warning 215, and every distance becomes a score),
@@ -251,7 +251,8 @@ edge walk fails), as mainline's Thor does.
   its factory) and the search state, whose storage is reused;
   `Workspace::candidate` gives a matched state's candidate (OSRM's `alternatives_count`).
   The interrupt callback is checked where mainline checks its interrupt.
-- `MeiliError` documents how mainline's Thor reports each error (443, 424, 499, or 442).
+- `MeiliError` documents how mainline's Thor reports each error (443, 424, 499, or 442;
+  `trace_attributes` reports every matching failure as 444).
 
 What decides the matched edges follows mainline step by step: the float and double arithmetic
 of the projections, distances, and costs, the double bucket queue of the routing, the routes
@@ -264,6 +265,65 @@ Viterbi queue (a Fibonacci heap). The oracle test replays mainline's candidates 
 those orders alone account for every difference (see `tools/oracle/README.md`).
 On the oracle corpora, every match is the same as mainline's but for ties and that order:
 see the counts in `tools/oracle/README.md`.
+
+## Map matching (Thor)
+
+`Thor::trace_route` and `Thor::trace_attributes` (and their interruptible variants, which take
+the time and an interrupt) are mainline's `thor_worker_t` actions of the same names, with
+`trace_route_action.cc`, `trace_attributes_action.cc`, `map_matcher.cc`, and `route_matcher.cc`.
+Each takes a `valinor_meili::Workspace` (pooled in the router as path search's workspaces are);
+`Thor` holds the matcher factory, made once from the config's `meili` section
+(`ThorConfig::meili`).
+
+- Both start as mainline's do: Loki's candidates are scored (`adjust_locations`), the costing
+  is made, and so are the matcher and the measurements (`parse_measurements`: a negative
+  accuracy or radius is 424, a negative turn penalty factor 499), even for an edge walk.
+  Then `shape_match` decides; an unknown one is 400.
+- `edge_walk` walks the shape along the graph (`RouteMatcher::FormPath`, from Loki's
+  correlation of the shape's first and last points), and builds a leg from the first shape
+  point to the first break after it. A walk that fails is 443. Where mainline's walk fails,
+  it runs again with lenient shape checks (see "Known divergences").
+- `map_snap` runs Meili's `OfflineMatch` (k is `alternates` + 1 for `trace_attributes`,
+  1 for `trace_route`) and turns each match into paths (`MapMatcher::FormPath`): a path per
+  discontinuity and break point, with the elapsed cost from each segment's partial edge cost
+  and the transition onto it, or, with `use_timestamps` on a trace without discontinuities,
+  from the trace's times interpolated along the path. Each path after the first gets its first
+  point's `date_time`.
+  - `trace_route` makes a leg per path and a route per discontinuity (`build_route`): each
+    shape point gets its `route_index` and `waypoint_index`, the leg's ends get the edge they
+    use (`add_path_edge`), and edges are trimmed where the path turns around on them.
+    For OSRM, every matched point also gets its edge, with the edge's names, and an empty edge
+    for each other edge of its candidate (OSRM's `alternatives_count`).
+  - `trace_attributes` makes one leg of every path of a match (`build_trace`), the edge after a
+    discontinuity disconnected (`PathEdge::is_disconnected`: trip building starts it at its own
+    start node), trimmed at the matched points around the gap, and each match result gets the
+    index of its edge (`edge_index`).
+  - A match with no path is 442 for `trace_route` (Meili's own 443 for a trace without
+    candidates passes through) and 444 for `trace_attributes`, which reports every failure so.
+- `walk_or_snap` walks, and if the walk fails, map matches the request as it was before the
+  walk (`request.Clear()`: without the trip, warnings, and statistics it had).
+- `trace_route` leaves the trip for Odin, built with the non-strict attribute filter.
+  `trace_attributes` builds its trip with the strict one (a route per match, the scores of
+  each, or 1 and 0 for an edge walk) and answers with Tyr's `serialize_trace_attributes`.
+- Interrupts are checked where Meili checks them and before each leg is built.
+  An interrupted request is error 499, which callers drop.
+
+What decides the paths follows mainline step by step: the edge walk's comparisons
+(`LL_EPSILON`, `length_comparison`, `check_shape`, the 5 meter end check, the order it tries
+edges and transitions, its `followed_edges`, which a node resumes at while taking its edges
+from its first, and its shared predecessor label), the float
+arithmetic of the elapsed costs, edge trimming keyed as mainline keys it (by segment for
+`trace_route`, by `edge_index` for `trace_attributes`), and the x86-64 conversion of negative
+shape attribute times (which `trace_attributes` legs have after a break point, where the elapsed
+time restarts) to integers. Mainline's recursion is an explicit stack, so a long walk can't
+overflow a thread's stack. Where mainline reads out of bounds (a matched path that ends without
+a match), Thor fails with 499.
+
+On the oracle runs (see `tools/oracle/README.md`), every map matching response, Thor→Odin
+message, and error is mainline's, apart from the documented Meili divergence, one Meili tie,
+and the route shapes mainline's walk fails on and Valinor's lenient walk walks (1 in Andorra and
+6 in Seattle, each with map matching's edges).
+
 ## Map matching responses (Tyr)
 
 `valinor_tyr::tyr::serialize_trace_attributes` is mainline's `tyr::serializeTraceAttributes`,
@@ -310,10 +370,12 @@ On the oracle runs (see `tools/oracle/README.md`), every trace_attributes respon
 `valinor-router` is mainline's whole server in one process.
 `Router::handle` takes an HTTP request (method, target, content type, and body)
 and runs the front and Loki (`valinor_loki::handle_request`),
-Thor's worker (path search with a pooled `Workspace`, then trip building),
+Thor's worker (path search with a pooled `Workspace`, then trip building; or map matching with a
+pooled Meili workspace, which answers `trace_attributes` itself),
 and Odin's (narration and Tyr), as the staged chain does, and answers with what mainline sends:
 the status, content type, GPX disposition, and body, with errors in the request's format.
-Actions Valinor doesn't have yet are error 107, as in the Thor worker.
+Actions Valinor doesn't have yet (`optimized_route`, matrices, isochrones, expansion,
+and centroids) are error 107, as in the Thor worker.
 `Router::route` is `POST /route` with a body, the one function the app calls.
 
 - **Tile sets.** `Router::open` takes one or more `build_extract` tarballs or tile directories
@@ -326,9 +388,11 @@ Actions Valinor doesn't have yet are error 107, as in the Thor worker.
   map, which the stages copy freely; an `Arc` per lookup, or a shared LRU's lock, made
   concurrent routes slower than one (see `valinor-router`'s `tiles` module).
 - **Concurrency.** `Router` is `Send` and `Sync`; requests run on the caller's threads,
-  and path searches take workspaces from a bounded pool (`RouterConfig::workspaces`).
-- **Interrupts.** `handle_interruptible` stops path search and trip building when asked
-  (every 5000 iterations, as mainline); Loki and Odin, which take milliseconds, don't check.
+  and path searches and map matches take workspaces from bounded pools
+  (`RouterConfig::workspaces` of each).
+- **Interrupts.** `handle_interruptible` stops path search (every 5000 iterations, as
+  mainline), map matching, and trip building when asked; Loki and Odin, which take
+  milliseconds, don't check.
 
 `valinor-server` serves the router over HTTP (axum), at Valhalla's paths with GET `?json=`
 and POST: `valinor-server --config <valhalla.json> [--tiles <set>...] --listen <addr:port>`.
@@ -340,7 +404,8 @@ It adds `Access-Control-Allow-Origin: *` to every response and answers methods
 `prime_server` doesn't parse with its bare 501, as mainline's server does.
 
 `valinor-router`'s `capture_tests` send every Andorra capture in `valinor-tyr/fixtures` through
-the router; the end-to-end runs of `valinor-server` are in `tools/oracle/README.md`.
+the router, and its `trace_tests` every Andorra trace capture and `trace_attributes` fixture;
+the end-to-end runs of `valinor-server` are in `tools/oracle/README.md`.
 
 ## The oracle
 
@@ -372,6 +437,7 @@ given the same input message at that boundary.
 | Loki | The set of candidate edges per location (graph id, side of street), and errors | `percent_along` within 1e-6; distances within 0.01 m; candidate order may differ only among equal distances (in practice every field matches, including reach, headings, and order) |
 | Thor (path search) | Errors | Same edge sequence wherever costs are not tied. Otherwise the total cost must be within 0.1% of mainline's and never higher, with length and time within 0.5%. Alternates: same count, each meeting the same bounds. |
 | Thor (trip building) | Every `trip` field, given the same edge path | Floating point values within a relative 1e-6 |
+| Thor (map matching) | Errors, and every `trip`, response, and shape point correlation field, given the same match | As for Meili's results and trip building (floats within a relative 1e-6); where Meili's candidate order differs (see Meili), OSRM's `alternatives_count`, a node's zero-length edge, and the alternates may differ |
 | Meili | Errors | Per match result, the same edge with `distance_along` within 1e-6, and the same segments per point, wherever scores don't tie; scores within a relative 1e-6. A candidate at a node may stand for the node with another of its edges (so its edge count, OSRM's `alternatives_count`, may differ), and alternates after the best may differ where the candidates' order decides which are removed as redundant. |
 | Odin | Maneuver types, order, instruction strings, and verbal and banner instructions, given the same `trip` | Lengths and times within a relative 1e-6 |
 | Tyr | Response JSON after parsing (key order is irrelevant), given the same `directions` | Floating point values within a relative 1e-6; encoded polylines must decode to the same coordinates at their precision |
@@ -395,4 +461,5 @@ Deliberate differences, each documented next to the test that covers it.
 | Two intermediate locations at one node | When two through or via locations in a row snap to the same node, the segment between them is empty and merged away, so both get the same edge index; `CopyLocations` takes an equal index for an unset one and fails with 499 "leg_shape_index not set for intermediate location" (4 of about 11,000 generated routes, all with two vias, such as `andorra-01959`) | Builds the trip, with both locations at the node's shape index and distance (`trip/leg.rs`); mainline's Odin and Tyr serve that trip | A client gets an error for a routable request. Tested by `builds_trips_with_two_vias_at_one_node`; the oracle tests count these cases apart. |
 | Candidates at a node, and their order (map matching) | Candidate search walks edges in hash order (`std::unordered_set`), keeps the first candidate it finds at each node, and numbers each column's states in that order | Graph ID order | Hash order can't be reproduced. A node is the same candidate for routing whichever edge stands for it; the edge count (OSRM's `alternatives_count`) and, with alternates, which candidates are removed as redundant can differ. Counted apart by `valinor-meili`'s `oracle_tests`, which replay mainline's candidates to check the rest exactly. |
 | A match at a node on another hierarchy level (map matching) | `FindMatchResult` reads the transitions of the route's node from whichever tile it last loaded (another tile's node at that index), and dereferences no tile when the next edge's tile is missing | Reads the node's own tile | Reading the wrong node helps no client. No oracle case reaches it; see `find_match_result` in `valinor-meili`. |
+| Route shapes the edge walk can't follow (`edge_walk`, and `walk_or_snap` before it map matches) | `RouteMatcher::FormPath` fails on many of mainline's own route shapes. Its `check_shape` wants exactly an edge's shape points between its nodes, so it fails on a shape point repeated (or a node matched at the shape point before it, within `LL_EPSILON`, which puts the next edge's check a point out) and on a point partway along an edge (where legs are joined, or at a through or via location) | Where mainline's walk finds no path, the same greedy walk runs again with a lenient `check_shape` that first leaves out repeated points and points on the edge between its shape points (within `LL_EPSILON`). A shape mainline walks gets mainline's path and costs; one off the graph still fails with 443. A third cause (`followed_edges` per shape point, not per node) stays mainline's | Of the Seattle oracle corpus's routes, mainline's walk fails on 567 of 2,552 single legs that are paths on the graph and on 323 of 349 joined multi-leg shapes; the lenient walk gives the routes' own edges for 329 and 246 of them (see `tools/oracle/README.md`). Tested by `edge_walk_tests` in `valinor-thor`; the trace oracle tests count these cases apart, and each gives map matching's edges. |
 | `meili.grid.size` of 0, or above 46,000 | Accepted; with 0, every match fails, reading outside a grid of no cells, and above about 46,340 cell indexes overflow (undefined behavior) | A config error | Fails at startup instead of on every request; tested in `valinor-meili`'s `config` tests. |

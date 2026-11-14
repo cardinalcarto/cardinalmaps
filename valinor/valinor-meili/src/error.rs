@@ -9,15 +9,19 @@ use crate::measurement::MeasurementError;
 /// A failure to build a matcher or to match a trace.
 ///
 /// Mainline's Thor reports these as follows (`thor_worker_t::trace_route`, `trace_attributes`,
-/// and `parse_measurements`):
+/// and `parse_measurements`; `valinor-thor` does the same):
 ///
-/// - [`NoCandidates`](Self::NoCandidates) is error 443 (`valhalla_exception_t{443}`).
+/// - [`NoCandidates`](Self::NoCandidates) is error 443 (`valhalla_exception_t{443}`)
+///   for `trace_route`.
 /// - [`Measurement`](Self::Measurement) is error 424 ("Failed to parse shape").
 /// - [`TurnPenaltyFactor`](Self::TurnPenaltyFactor) and [`Costing`](Self::Costing) happen
 ///   when the matcher is made, before matching: error 499 with mainline's exception message.
 /// - [`Interrupted`](Self::Interrupted) means the client went away; nothing is sent.
-/// - Everything else happens inside `OfflineMatch`, which Thor reports as error 442
+/// - Everything else happens inside `OfflineMatch`, which `trace_route` reports as error 442
 ///   ("No path could be found for input").
+///
+/// `trace_attributes` reports every failure inside matching, [`NoCandidates`](Self::NoCandidates)
+/// included, as error 444 ("Map Match algorithm failed to find path").
 #[derive(Debug, Error)]
 pub enum MeiliError {
     /// Fewer than two measurements, or no measurement with candidate edges
