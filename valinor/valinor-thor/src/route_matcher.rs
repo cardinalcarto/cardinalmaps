@@ -16,8 +16,10 @@
 //! - The walk is greedy: once an origin candidate's end node is found on the shape and the walk
 //!   from there fails, no other origin candidate is tried.
 //! - The edges followed from each shape point and level are remembered across the whole walk
-//!   (`followed_edges`), so a node reached again at the same shape point resumes where it
-//!   left off.
+//!   (`followed_edges`), not per node. A node reached at a shape point starts its loops over
+//!   edges and transitions at the count recorded there, but takes them from the node's first
+//!   (mainline's pointers start at the first, its counter at the record), so it tries only its
+//!   first `edge_count - start_de` edges.
 //! - The predecessor label for transition costs is shared by the whole walk and isn't put back
 //!   when a branch fails, so a transition can be costed from an edge that a failed branch tried.
 //! - The partial cost of the destination edge is taken at the time of the start of the walk.
@@ -298,6 +300,12 @@ struct Frame<T> {
     node: NodeInfo,
     from_transition: bool,
     phase: Phase,
+    /// Where the loops over the node's edges and transitions started counting
+    /// (`start_de` and `start_trans`): mainline counts from there, but takes the edges and
+    /// transitions from the node's first, so a node resumed at `start_de` tries its first
+    /// `edge_count - start_de` edges.
+    start_edge: u32,
+    start_transition: u32,
 }
 
 impl<T: GraphTile> Frame<T> {
@@ -316,6 +324,8 @@ impl<T: GraphTile> Frame<T> {
             node,
             from_transition,
             phase: Phase::Start,
+            start_edge: 0,
+            start_transition: 0,
         })
     }
 }
@@ -396,6 +406,7 @@ impl<P: GraphTileProvider> Walk<'_, P> {
                         .get(ci)
                         .and_then(|f| f.get(level))
                         .ok_or(ThorError::EdgeWalk("a node is on the transit level"))?;
+                    frame.start_edge = followed.0;
                     frame.phase = Phase::Edges(followed.0);
                 }
                 (Phase::Edges(i), _) => {
@@ -405,9 +416,12 @@ impl<P: GraphTileProvider> Walk<'_, P> {
                     }
                     self.followed_edges[ci][level].0 = i;
                     frame.phase = Phase::Edges(i + 1);
+                    // Mainline's `de` and `edge_id` start at the node's first edge, whatever
+                    // `start_de` is.
+                    let offset = i - frame.start_edge;
                     let edge_id = frame
                         .node_id
-                        .with_feature_index(u64::from(frame.node.edge_index()) + u64::from(i))
+                        .with_feature_index(u64::from(frame.node.edge_index()) + u64::from(offset))
                         .map_err(GraphTileProviderError::from)?;
                     let de = graph::edge(&frame.tile, edge_id)?.clone();
 
@@ -522,6 +536,7 @@ impl<P: GraphTileProvider> Walk<'_, P> {
                 (Phase::TransitionsStart, _) => {
                     let start_trans = self.followed_edges[ci][level].1;
                     if !frame.from_transition && frame.node.transition_count() > 0 {
+                        frame.start_transition = start_trans;
                         frame.phase = Phase::Transitions(start_trans);
                     } else {
                         stack.pop();
@@ -529,12 +544,20 @@ impl<P: GraphTileProvider> Walk<'_, P> {
                     }
                 }
                 (Phase::Transitions(i), _) => {
-                    let transitions = frame.tile.get_transitions(&frame.node);
-                    let Some(transition) = usize::try_from(i).ok().and_then(|i| transitions.get(i))
-                    else {
+                    if i >= u32::from(frame.node.transition_count()) {
                         stack.pop();
                         returned = Some(false);
                         continue;
+                    }
+                    // As with edges, from the node's first transition.
+                    let transitions = frame.tile.get_transitions(&frame.node);
+                    let Some(transition) = usize::try_from(i - frame.start_transition)
+                        .ok()
+                        .and_then(|t| transitions.get(t))
+                    else {
+                        return Err(ThorError::EdgeWalk(
+                            "a node's transition is not in its tile",
+                        ));
                     };
                     self.followed_edges[ci][level].1 = i;
                     let end_node_id = transition.corresponding_end_node_id();
