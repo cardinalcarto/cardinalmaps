@@ -88,7 +88,11 @@
   },
   "navigationNotificationText": "Navigating",
   "@navigationNotificationText": {
-    "description": "The text of the Android notification shown while turn-by-turn navigation keeps getting your location with the screen off."
+    "description": "The title of the Android notification shown while turn-by-turn navigation is under way, when there's no maneuver to show in it yet."
+  },
+  "navigationNotificationEnd": "End",
+  "@navigationNotificationEnd": {
+    "description": "The action on the Android notification shown while navigating that ends turn-by-turn navigation."
   },
   "navigationNotificationChannel": "Navigation",
   "@navigationNotificationChannel": {

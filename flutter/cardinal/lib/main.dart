@@ -20,6 +20,7 @@ import 'map/overlays.dart';
 import 'navigation/road_matcher.dart';
 import 'navigation/navigation_controller.dart';
 import 'navigation/navigation_location.dart';
+import 'navigation/navigation_notification.dart';
 import 'navigation/navigation_scope.dart';
 import 'navigation/speech.dart';
 import 'offline/downloads/geometry.dart';
@@ -60,7 +61,7 @@ void main() {
         ? simulatedTrip = SimulatedTripLocation(
             () => navigation.route!.navigable,
           )
-        : const GeolocatorNavigationSource(),
+        : deviceNavigationSource(),
     // flutter_tts has no Linux engine.
     speaker: defaultTargetPlatform == TargetPlatform.linux
         ? const LogSpeaker()
@@ -69,6 +70,14 @@ void main() {
     matcher: OfflineRoadMatcher(offline.area),
     settings: store.settings,
   );
+  // On Android, the notification that keeps the trip going with the screen off.
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    TripNotification(
+      controller: navigation,
+      notifier: AndroidNavigationNotifier(),
+      settings: store.settings,
+    ).start();
+  }
   // Directions and nearby transit share each area's real-time messages.
   final realtime = AreaRealtimeFeeds();
   final nearby = OfflineNearbySource(offline.area, realtime);

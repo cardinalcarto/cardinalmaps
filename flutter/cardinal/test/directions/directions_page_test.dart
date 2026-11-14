@@ -1049,6 +1049,20 @@ void main() {
     });
 
     testWidgets(
+      'a trip ended from elsewhere, as by the notification, goes back too',
+      (tester) async {
+        await start(tester);
+        // As the notification's End does, with no tap on the screen.
+        unawaited(navigation.end());
+        await tester.pumpAndSettle();
+        expect(navigation.state, NavigationState.idle);
+        expect(find.text('Start Navigation'), findsOneWidget);
+        expect(find.byTooltip('End'), findsNothing);
+        expect(features(navigationSource), isEmpty);
+      },
+    );
+
+    testWidgets(
       'trip progress shows the time and distance left, in the units set',
       (tester) async {
         navigateInTestTime();
