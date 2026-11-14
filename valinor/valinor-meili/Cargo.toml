@@ -9,8 +9,15 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
 valhalla-graphtile = { workspace = true }
 valhalla-proto = { workspace = true }
+valinor-sif = { workspace = true }
+
+[dev-dependencies]
+valinor-tyr = { workspace = true }
 
 [lints]
 workspace = true

@@ -2949,8 +2949,13 @@ dependencies = [
 name = "valinor-meili"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
  "valhalla-graphtile",
  "valhalla-proto",
+ "valinor-sif",
+ "valinor-tyr",
 ]
 
 [[package]]
