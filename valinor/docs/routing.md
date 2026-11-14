@@ -258,6 +258,11 @@ OSRM `tracepoints` (each trace point's match, with `alternatives_count`, `waypoi
 null for points that are neither breaks nor leg ends, and `matchings_index`,
 or `null` for unmatched points), `matchings` (a route per discontinuity, each with
 mainline's placeholder `confidence` of 1), and Valhalla JSON as for routes.
+The front parses map matching requests as mainline's `ParseApi` does (`shape`, or `trace`
+when there is no shape, `encoded_polyline`, `shape_match`, every `trace_options` key,
+`use_timestamps`, `begin_time` and `durations`, `filters`, and `alternates` or `best_paths`),
+with the same errors; on both regions' map matching captures, every request that reached Thor
+has mainline's options (apart from what Loki adds) and every front error is mainline's.
 On the oracle runs (see `tools/oracle/README.md`), every trace_attributes response
 (182 in Andorra and 160 in Seattle, JSON and PBF) and every trace_route response
 (146 and 137) matches mainline's, given mainline's serializer input.
