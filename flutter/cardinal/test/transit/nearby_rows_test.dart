@@ -12,6 +12,8 @@ const here = LngLat(-122.35, 47.65);
 /// [meters] north of [here]: a degree of latitude is about 111,195 m.
 LngLat north(double meters) => LngLat(here.lon, here.lat + meters / 111195);
 
+const walk = TransitAccess.walking;
+
 List<String> ids(NearbyRows rows) => [for (final r in rows.routes) r.route.id];
 
 void main() {
@@ -20,7 +22,7 @@ void main() {
       final rows = NearbyRows();
       expect(rows.sortedAt, isNull);
       final answer = fakeNearby([nearbyRouteJson('40'), nearbyRouteJson('62')]);
-      rows.apply(answer, origin: here);
+      rows.apply(answer, origin: here, access: walk);
       expect(ids(rows), ['40', '62']);
       expect(rows.sortedAt, here);
       expect(rows.latest, same(answer));
@@ -31,6 +33,7 @@ void main() {
         ..apply(
           fakeNearby([nearbyRouteJson('40'), nearbyRouteJson('62')]),
           origin: here,
+          access: walk,
         );
       final far = north(100.5);
       rows.apply(
@@ -40,6 +43,7 @@ void main() {
           nearbyRouteJson('40'),
         ]),
         origin: far,
+        access: walk,
       );
       expect(ids(rows), ['5', '62', '40']);
       expect(rows.sortedAt, far);
@@ -55,6 +59,7 @@ void main() {
               nearbyRouteJson('62', minutes: [8]),
             ]),
             origin: here,
+            access: walk,
           );
         // 62 now leaves first, from another stop; 40 is late.
         rows.apply(
@@ -63,6 +68,7 @@ void main() {
             nearbyRouteJson('40', minutes: [6]),
           ]),
           origin: north(99),
+          access: walk,
         );
         expect(ids(rows), ['40', '62']);
         final [forty, sixtyTwo] = rows.routes;
@@ -82,10 +88,12 @@ void main() {
             nearbyRouteJson('5'),
           ]),
           origin: here,
+          access: walk,
         );
       rows.apply(
         fakeNearby([nearbyRouteJson('5'), nearbyRouteJson('40')]),
         origin: here,
+        access: walk,
       );
       expect(ids(rows), ['40', '5']);
     });
@@ -95,6 +103,7 @@ void main() {
         ..apply(
           fakeNearby([nearbyRouteJson('40'), nearbyRouteJson('62')]),
           origin: here,
+          access: walk,
         );
       rows.apply(
         fakeNearby([
@@ -104,6 +113,7 @@ void main() {
           nearbyRouteJson('40'),
         ]),
         origin: north(50),
+        access: walk,
       );
       expect(ids(rows), ['40', '62', '31', '28']);
     });
@@ -116,12 +126,14 @@ void main() {
             nearbyRouteJson('1', feed: 'b'),
           ]),
           origin: here,
+          access: walk,
         );
       rows.apply(
         fakeNearby([
           nearbyRouteJson('1', feed: 'b', minutes: [2]),
         ]),
         origin: here,
+        access: walk,
       );
       expect(rows.routes.single.feed, 'b');
       expect(
@@ -135,16 +147,33 @@ void main() {
         ..apply(
           fakeNearby([nearbyRouteJson('40'), nearbyRouteJson('62')]),
           origin: here,
+          access: walk,
         );
       final reversed = fakeNearby([
         nearbyRouteJson('62'),
         nearbyRouteJson('40'),
       ]);
-      rows.apply(reversed, origin: north(60));
+      rows.apply(reversed, origin: north(60), access: walk);
       expect(ids(rows), ['40', '62']);
-      rows.apply(reversed, origin: north(120));
+      rows.apply(reversed, origin: north(120), access: walk);
       expect(ids(rows), ['62', '40']);
       expect(rows.sortedAt, north(120));
+    });
+
+    test('2. shown, by another access: the answer sorts again', () {
+      final rows = NearbyRows()
+        ..apply(
+          fakeNearby([nearbyRouteJson('40'), nearbyRouteJson('62')]),
+          origin: here,
+          access: walk,
+        );
+      rows.apply(
+        fakeNearby([nearbyRouteJson('62'), nearbyRouteJson('40')]),
+        origin: here,
+        access: TransitAccess.wheelchair,
+      );
+      expect(ids(rows), ['62', '40']);
+      expect(rows.sortedBy, TransitAccess.wheelchair);
     });
 
     test('4. reset: the next answer sorts', () {
@@ -152,6 +181,7 @@ void main() {
         ..apply(
           fakeNearby([nearbyRouteJson('40'), nearbyRouteJson('62')]),
           origin: here,
+          access: walk,
         )
         ..reset();
       expect(rows.routes, isEmpty);
@@ -160,6 +190,7 @@ void main() {
       rows.apply(
         fakeNearby([nearbyRouteJson('62'), nearbyRouteJson('40')]),
         origin: here,
+        access: walk,
       );
       expect(ids(rows), ['62', '40']);
     });
@@ -216,6 +247,23 @@ void main() {
       );
       await expectLater(failing, throwsA(isA<TransitPlanError>()));
       expect(ids(controller.rows), ['40']);
+      controller.dispose();
+    });
+
+    test('a refresh by another access sorts again', () async {
+      final source = FakeNearbySource(
+        immediately: fakeNearby([nearbyRouteJson('40'), nearbyRouteJson('62')]),
+      );
+      final controller = NearbyTransitController(source);
+      await controller.refresh(origin: here, access: TransitAccess.walking);
+      source.immediately = fakeNearby([
+        nearbyRouteJson('62'),
+        nearbyRouteJson('40'),
+      ]);
+      await controller.refresh(origin: here, access: TransitAccess.walking);
+      expect(ids(controller.rows), ['40', '62']);
+      await controller.refresh(origin: here, access: TransitAccess.wheelchair);
+      expect(ids(controller.rows), ['62', '40']);
       controller.dispose();
     });
 

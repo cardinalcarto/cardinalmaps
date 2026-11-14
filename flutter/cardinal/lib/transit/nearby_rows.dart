@@ -23,16 +23,19 @@ const resortMeters = 100.0;
 /// - **Unsorted**: nothing applied since it was made or [reset]. [routes] is empty and
 ///   there's no sort origin.
 /// - **Shown**: [routes] are in the order of the answer last sorted by, and the sort
-///   origin is where that answer was asked from.
+///   origin and access are where and how that answer was asked.
 ///
-/// Transitions, on [apply] of an answer asked from an origin, and on [reset]:
+/// Transitions, on [apply] of an answer asked from an origin by an access, and on
+/// [reset]:
 ///
 /// 1. Unsorted, apply: **sort**. [routes] take the answer's order (soonest catchable
-///    departure first, as the router orders them), and its origin becomes the sort
-///    origin. Now Shown.
-/// 2. Shown, apply from [resortMeters] or more from the sort origin: **sort**, as in 1.
-/// 3. Shown, apply from less than [resortMeters] from the sort origin: **freeze**. The
-///    order stays, and rows are matched by [NearbyRoute.key] (feed and `route_id`):
+///    departure first, as the router orders them), and its origin and access become
+///    the sort origin and access. Now Shown.
+/// 2. Shown, apply from [resortMeters] or more from the sort origin, or by another
+///    access (wheelchair turned on or off): **sort**, as in 1.
+/// 3. Shown, apply by the same access from less than [resortMeters] from the sort
+///    origin: **freeze**. The order stays, and rows are matched by [NearbyRoute.key]
+///    (feed and `route_id`):
 ///    a. a row the answer has is replaced in place by the answer's, with its directions,
 ///       stops, and departures;
 ///    b. a row the answer doesn't have is removed;
@@ -57,13 +60,24 @@ class NearbyRows {
   LngLat? get sortedAt => _sortedAt;
   LngLat? _sortedAt;
 
-  /// Applies [answer], asked from [origin].
-  void apply(NearbyTransit answer, {required LngLat origin}) {
+  /// How the answer last sorted by got to stops, or null when Unsorted.
+  TransitAccess? get sortedBy => _sortedBy;
+  TransitAccess? _sortedBy;
+
+  /// Applies [answer], asked from [origin], getting to stops by [access].
+  void apply(
+    NearbyTransit answer, {
+    required LngLat origin,
+    required TransitAccess access,
+  }) {
     _latest = answer;
     final sortedAt = _sortedAt;
-    if (sortedAt == null || _meters(sortedAt, origin) >= resortMeters) {
+    if (sortedAt == null ||
+        access != _sortedBy ||
+        _meters(sortedAt, origin) >= resortMeters) {
       _routes = List.unmodifiable(answer.routes);
       _sortedAt = origin;
+      _sortedBy = access;
       return;
     }
     final fresh = {for (final route in answer.routes) route.key: route};
@@ -76,6 +90,7 @@ class NearbyRows {
     _routes = const [];
     _latest = null;
     _sortedAt = null;
+    _sortedBy = null;
   }
 
   static double _meters(LngLat a, LngLat b) =>
@@ -93,7 +108,8 @@ class NearbyTransitController extends ChangeNotifier {
   /// Completes to abandon the question being asked, if any.
   Completer<void>? _asking;
 
-  /// Asks again from [origin], getting to stops by [access], and applies the answer.
+  /// Asks again from [origin], getting to stops by [access], and applies the answer:
+  /// one by another access than the rows were sorted by sorts them again.
   ///
   /// A refresh started before this one is answered abandons it, and its answer isn't
   /// applied. Throws as [NearbyTransitSource.nearby] does, leaving the rows as they were.
@@ -110,7 +126,7 @@ class NearbyTransitController extends ChangeNotifier {
         abort: asking.future,
       );
       if (asking.isCompleted) return;
-      rows.apply(answer, origin: origin);
+      rows.apply(answer, origin: origin, access: access);
       notifyListeners();
     } on http.RequestAbortedException {
       if (!asking.isCompleted) rethrow;
