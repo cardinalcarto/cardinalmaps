@@ -74,6 +74,9 @@ StopDeparture? firstCatchable(
 ///    [ride] stays until that answer arrives (1).
 /// 3. [keepSelection] at a moment the selected departure has left: the first catchable
 ///    is selected, and asked for as in 2.
+/// 4. Asking for the selected trip fails (the router doesn't know it, or any error): the
+///    first catchable is selected at once instead, and asked for as in 2, unless it's the
+///    trip that failed.
 ///
 /// The first answer is on the schedule when real-time data is still being fetched for
 /// the first time ([NearbyTransitSource.realtimeArrived]); once it arrives, the page is
@@ -253,13 +256,26 @@ class RouteDetailController extends ChangeNotifier {
       return null;
     } on Object {
       if (!asking.isCompleted) {
+        _asking = null;
         _failed = true;
+        _fallBack(selected);
         notifyListeners();
       }
       rethrow;
     } finally {
       if (identical(_asking, asking)) _asking = null;
     }
+  }
+
+  /// After the trip of [failed] couldn't be loaded, selects the first catchable departure
+  /// instead and asks for its trip, unless that's the one that failed or another has been
+  /// selected since.
+  void _fallBack(TripRun? failed) {
+    if (failed == null || _selected != failed) return;
+    final first = _firstAt(departures, clock());
+    if (first == null || first == failed) return;
+    _selected = first;
+    _askForSelected();
   }
 
   void _apply(RouteDetail answer) {

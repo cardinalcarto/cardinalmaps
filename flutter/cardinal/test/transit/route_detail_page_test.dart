@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/directions/transit_sheet.dart' show liveColor;
+import 'package:cardinal/directions/route_source.dart' show TransitPlanError;
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/map/route_layer.dart';
 import 'package:cardinal/routes.dart';
@@ -390,52 +391,52 @@ void main() {
     expect(find.text('Leary Ave'), findsOneWidget);
   });
 
-  testWidgets("a swipe that starts on the header's dots moves its pages", (
-    tester,
-  ) async {
+  testWidgets('shows only the page it was opened on, without swiping, its '
+      'lines where the row\'s are', (tester) async {
     await openList(tester);
-    await open44(tester);
-    await answerRoute(tester, _detail([nearbyDepartureJson('b1', 30)]));
-    final dots = find.descendant(
-      of: find.byType(RouteDetailPage),
-      matching: find.byKey(const ValueKey('dots')),
-    );
-    expect(dots, findsOneWidget);
-
-    await tester.flingFrom(tester.getCenter(dots), const Offset(-300, 0), 1000);
+    await scrollTo44(tester);
+    final rowHeight = tester.getSize(_row('110')).height;
+    await tester.tap(_row('44'));
     await tester.pumpAndSettle();
-    expect(_shown(_header, find.text('UW Medical Center')), findsOneWidget);
-    expect(source.routesAsked.last.query.stopId, _uw);
-  });
-
-  testWidgets('swiping its pages remembers the headsign, as a row does, and '
-      'shows that page', (tester) async {
-    await openList(tester);
-    await open44(tester);
     await answerRoute(tester, _detail([nearbyDepartureJson('b1', 30)]));
-    expect(source.routesAsked.first.query.stopId, _ballard);
-
-    await swipe(tester, _header);
-    expect(_shown(_header, find.text('UW Medical Center')), findsOneWidget);
-    expect(
-      await headsigns.recall([(feed: _feed, routeId: '44', stopId: _uw)]),
-      {
-        (feed: _feed, routeId: '44', stopId: _uw): RememberedHeadsign(
-          'UW Medical Center',
-          now,
-        ),
-      },
+    final page = find.descendant(
+      of: find.byType(RouteDetailPage),
+      matching: find.byType(PageView),
     );
-    final query = source.routesAsked.last.query;
-    expect(query.stopId, _uw);
-    expect(query.headsigns, ['UW Medical Center']);
-    // The page's own departures show while its detail is asked for.
-    expect(_tile('44-UW Medical Center-35'), findsOneWidget);
-    expect(_tile('b1'), findsNothing);
+    expect(page, findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(RouteDetailPage),
+        matching: find.byKey(const ValueKey('dots')),
+      ),
+      findsNothing,
+    );
+    // As tall as a row of one page, without its dots.
+    expect(tester.getSize(_header).height, rowHeight);
 
-    // The list stays as it was.
-    await back(tester);
-    expect(_shown(_row('44'), find.text('Ballard')), findsOneWidget);
+    // A swipe on it changes nothing, and remembers nothing.
+    final asked = source.routesAsked.length;
+    // Nothing on the header takes a pointer: the swipe lands on the sheet under it.
+    await tester.fling(
+      _header,
+      const Offset(-300, 0),
+      1000,
+      warnIfMissed: false,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: _header, matching: find.text('Ballard')),
+      findsOneWidget,
+    );
+    expect(find.text('UW Medical Center'), findsNothing);
+    expect(source.routesAsked, hasLength(asked));
+    expect(
+      await headsigns.recall([
+        (feed: _feed, routeId: '44', stopId: _uw),
+        (feed: _feed, routeId: '44', stopId: _ballard),
+      ]),
+      isEmpty,
+    );
   });
 
   group('tiles', () {
@@ -694,6 +695,51 @@ void main() {
       await tester.pumpAndSettle();
       expect(source.routesAsked, hasLength(asked));
       expect(_selected(tester, 'a'), isTrue);
+    });
+
+    testWidgets("a tile whose trip can't be loaded gives way to the first "
+        'catchable', (tester) async {
+      await openWithRide(tester);
+      await tester.tap(_tile('b'));
+      await tester.pumpAndSettle();
+      expect(_selected(tester, 'b'), isTrue);
+      final asked = source.routesAsked.length;
+      source.routesAsked.last.answer.completeError(
+        const TransitPlanError('unknown_trip', 'no such trip'),
+      );
+      await tester.pumpAndSettle();
+      // a's trip is the one shown: nothing more to ask.
+      expect(_selected(tester, 'b'), isFalse);
+      expect(_selected(tester, 'a'), isTrue);
+      expect(source.routesAsked, hasLength(asked));
+      expect(find.text('Leary Ave'), findsOneWidget);
+
+      // With b's trip shown, a refresh that fails for it asks for the first
+      // catchable's, and shows it.
+      await tester.tap(_tile('b'));
+      await tester.pumpAndSettle();
+      final departures = [
+        nearbyDepartureJson('a', 10),
+        nearbyDepartureJson('b', 20),
+      ];
+      await answerRoute(
+        tester,
+        _detail(departures, ride: _ride('b', 20, [_ballard, 'Market St'])),
+      );
+      now = now.add(routeDetailRefresh);
+      await tester.pump(routeDetailRefresh);
+      expect(source.routesAsked.last.query.tripId, 'b');
+      source.routesAsked.last.answer.completeError(Exception('offline'));
+      await tester.pumpAndSettle();
+      expect(_selected(tester, 'a'), isTrue);
+      expect(_selected(tester, 'b'), isFalse);
+      expect(source.routesAsked.last.query.tripId, 'a');
+      await answerRoute(
+        tester,
+        _detail(departures, ride: _ride('a', 10, [_ballard, 'Leary Ave'])),
+      );
+      expect(find.text('Leary Ave'), findsOneWidget);
+      expect(find.text('Market St'), findsNothing);
     });
 
     testWidgets('marks live times in the timeline', (tester) async {

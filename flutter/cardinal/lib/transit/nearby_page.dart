@@ -488,9 +488,6 @@ String headsignsText(HeadsignPage page) => page.headsigns.join(' / ');
 /// the dots below that say which is shown among it. A swipe that settles on another page gives a light haptic and calls
 /// [onShown]; the list decides what's [shown]. Every page has the same lines, and the
 /// row is as tall as its first page, so it keeps its height from one page to the next.
-///
-/// Without [showsTimes], it's a route detail's header: the badge, where the page goes,
-/// and its stop, without the departures.
 class NearbyRow extends StatefulWidget {
   const NearbyRow({
     super.key,
@@ -498,7 +495,6 @@ class NearbyRow extends StatefulWidget {
     this.shown = 0,
     this.onShown,
     this.onTap,
-    this.showsTimes = true,
     required this.access,
     required this.now,
   });
@@ -513,9 +509,6 @@ class NearbyRow extends StatefulWidget {
 
   /// Called when the row is tapped.
   final VoidCallback? onTap;
-
-  /// Whether each page shows its departures.
-  final bool showsTimes;
 
   /// How the walk to the stop goes.
   final TransitAccess access;
@@ -649,7 +642,6 @@ class _NearbyRowState extends State<NearbyRow> {
     key: key,
     route: widget.route,
     page: page,
-    showsTimes: widget.showsTimes,
     access: widget.access,
     now: widget.now,
   );
@@ -708,6 +700,26 @@ class _Dots extends StatelessWidget {
   }
 }
 
+/// A route detail's header: [page] of [route] as its row shows it, badge, headsigns,
+/// stop, and walk, without its times or the route's other pages, its lines where the
+/// row's are.
+class NearbyHeader extends StatelessWidget {
+  const NearbyHeader({
+    super.key,
+    required this.route,
+    required this.page,
+    required this.access,
+  });
+
+  final NearbyRoute route;
+  final HeadsignPage? page;
+  final TransitAccess access;
+
+  @override
+  Widget build(BuildContext context) =>
+      _NearbyPage(route: route, page: page, access: access);
+}
+
 /// One page of a row: the route's badge and where [page] goes, its stop and the walk
 /// there, and its departures counting down by [now].
 class _NearbyPage extends StatelessWidget {
@@ -715,22 +727,19 @@ class _NearbyPage extends StatelessWidget {
     super.key,
     required this.route,
     required this.page,
-    required this.showsTimes,
     required this.access,
-    required this.now,
+    this.now,
   });
 
   final NearbyRoute route;
   final HeadsignPage? page;
-  final bool showsTimes;
   final TransitAccess access;
-  final ValueListenable<DateTime> now;
+
+  /// What its departures count down by; without it, they aren't shown.
+  final ValueListenable<DateTime>? now;
 
   /// The most the departures take of the row's width.
   static const _timesWidth = 160.0;
-
-  /// The space above and below a detail header's lines.
-  static const _headerPadding = 8.0;
 
   @override
   Widget build(BuildContext context) {
@@ -739,9 +748,14 @@ class _NearbyPage extends StatelessWidget {
       color: theme.colorScheme.onSurfaceVariant,
     );
     final page = this.page;
-    final vertical = showsTimes ? nearbyRowPadding : _headerPadding;
+    final now = this.now;
     return Padding(
-      padding: EdgeInsets.fromLTRB(12, vertical, 12, vertical),
+      padding: const EdgeInsets.fromLTRB(
+        12,
+        nearbyRowPadding,
+        12,
+        nearbyRowPadding,
+      ),
       child: Row(
         children: [
           Expanded(
@@ -786,7 +800,7 @@ class _NearbyPage extends StatelessWidget {
               ],
             ),
           ),
-          if (page != null && showsTimes) ...[
+          if (page != null && now != null) ...[
             const SizedBox(width: 12),
             // Room for where it goes, however many times follow.
             ConstrainedBox(

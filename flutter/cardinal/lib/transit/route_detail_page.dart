@@ -26,7 +26,6 @@ import '../store/store.dart';
 import '../ui/adaptive.dart';
 import 'countdown.dart';
 import 'nearby_page.dart';
-import 'nearby_rows.dart';
 import 'nearby_source.dart';
 import 'nearby_transit.dart';
 import 'route_detail.dart';
@@ -38,10 +37,12 @@ const routeDetailRefresh = nearbyRefresh;
 /// A nearby route's detail, opened from its row on the page the row showed: [routeId]
 /// of [feed] from [stopId], under [headsigns].
 ///
-/// The header is the row's, without its times, and swipes between the route's pages as
-/// the row does: settling on one remembers its headsign at its stop, as a row does, and
-/// shows that page. Under it, the page's next departures are tiles, the first catchable
-/// selected; tapping another shows its trip below and on the map.
+/// It shows the one page it was opened on: the headsigns the row's page merged, from its
+/// stop. The header is that page as the row showed it, without its times and without
+/// swiping to the route's other pages. Under it, the page's next departures are tiles,
+/// the first catchable selected; tapping another shows its trip below and on the map.
+/// When a selected trip can't be loaded, the first catchable departure is selected
+/// instead, and its trip shown.
 ///
 /// While it shows, it asks again every [routeDetailRefresh], on the schedule first as
 /// the list does, and countdowns tick each second; while it doesn't, it asks nothing.
@@ -86,23 +87,20 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
   late final DateTime Function() _clock;
   late final VehicleMarkerPainter _markers;
   late final SparkleMapController _map;
-  late final HeadsignStore _headsigns;
   late final SettingsStore _settings;
   late final ValueNotifier<DateTime> _now;
   bool _started = false;
   ModalRoute<Object?>? _modal;
 
-  /// The route and its pages: the row's, or else the first answer's.
+  /// The route: the row's, or else the first answer's.
   NearbyRoute? _route;
 
-  /// The page shown, by index into [_route]'s pages.
-  int _page = 0;
+  /// The page shown: the row's, or else the first answer's.
+  HeadsignPage? _page;
 
-  /// Each page shown so far, kept for swiping back to.
-  final _controllers = <int, RouteDetailController>{};
+  late final RouteDetailController _controller;
 
-  /// The ride the timeline and the map show: the shown page's, or the last one shown
-  /// until that's arrived.
+  /// The ride the timeline and the map show, once there is one.
   TransitLeg? _ride;
 
   /// [_ride]'s trip before the stop.
@@ -141,14 +139,7 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
     },
   );
 
-  RouteDetailController get _current =>
-      _controllers[_page] ??= _controllerFor(_page);
-
-  HeadsignPage? get _shownPage => _route?.pages.elementAtOrNull(_page);
-
-  RouteDetailController _controllerFor(int index) {
-    final route = _route;
-    final page = route?.pages.elementAtOrNull(index);
+  RouteDetailController _controllerFor(NearbyRoute? route, HeadsignPage? page) {
     final query = route != null && page != null
         ? RouteDetailQuery.of(route, page)
         : RouteDetailQuery(
@@ -164,7 +155,7 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
       query,
       seed: page?.departures ?? const [],
       clock: _clock,
-    )..addListener(() => _changed(index));
+    )..addListener(_changed);
   }
 
   @override
@@ -177,21 +168,19 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
       _clock = scope.clock;
       _markers = scope.vehicleMarkers;
       _map = MapScope.of(context);
-      final store = StoreScope.of(context);
-      _headsigns = store.headsigns;
-      _settings = store.settings;
+      _settings = StoreScope.of(context).settings;
       _now = ValueNotifier(_clock());
       _route = widget.from;
-      _page = math.max(
-        0,
-        _route?.pages.indexWhere(
-              (p) =>
-                  p.stop.id == widget.stopId &&
-                  listEquals(p.headsigns, widget.headsigns),
-            ) ??
-            0,
-      );
-      _current;
+      _page =
+          _route?.pages
+              .where(
+                (p) =>
+                    p.stop.id == widget.stopId &&
+                    listEquals(p.headsigns, widget.headsigns),
+              )
+              .firstOrNull ??
+          _route?.pages.firstOrNull;
+      _controller = _controllerFor(_route, _page);
       _appShown = switch (WidgetsBinding.instance.lifecycleState) {
         AppLifecycleState.hidden ||
         AppLifecycleState.paused ||
@@ -234,14 +223,14 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
     _running = true;
     final run = ++_runs;
     _now.value = _clock();
-    _current.keepSelection(_now.value);
+    _controller.keepSelection(_now.value);
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
       _now.value = _clock();
-      _current.keepSelection(_now.value);
+      _controller.keepSelection(_now.value);
     });
     _refresh = Timer.periodic(routeDetailRefresh, (_) {
       // A slow answer isn't abandoned for the next.
-      if (!_current.asking) _ask();
+      if (!_controller.asking) _ask();
     });
     unawaited(_follow(run));
   }
@@ -255,7 +244,7 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
     _tick = _refresh = null;
     _wheelchair = null;
     _access = null;
-    _current.abandon();
+    _controller.abandon();
   }
 
   /// Follows the wheelchair setting, and asks once it's known.
@@ -276,26 +265,26 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
     final access = _access;
     if (!_running || access == null) return;
     unawaited(
-      _current.refresh(access).catchError((Object e) {
+      _controller.refresh(access).catchError((Object e) {
         debugPrint('route detail: $e');
       }),
     );
   }
 
-  /// Page [index]'s controller changed.
-  void _changed(int index) {
-    if (!mounted || index != _page) return;
-    final controller = _current;
+  void _changed() {
+    if (!mounted) return;
+    final controller = _controller;
     if (_route == null && controller.detail != null) {
-      _route = NearbyRoute.ofDetail(controller.detail!);
+      final route = _route = NearbyRoute.ofDetail(controller.detail!);
+      _page = route.pages.first;
     }
     setState(_showRide);
     _drawMap();
   }
 
-  /// The shown page's ride, once it has one; until then the last page's stays.
+  /// The controller's ride, once it has one.
   void _showRide() {
-    final controller = _current;
+    final controller = _controller;
     if (controller.ride != null) {
       _ride = controller.ride;
       _shapeToStop = controller.shapeToStop;
@@ -305,38 +294,15 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
     }
   }
 
-  /// A swipe settled on page [index]: remember its headsign at its stop, as a row does,
-  /// and show it.
-  void _shown(int index) {
-    final route = _route;
-    final page = route?.pages.elementAtOrNull(index);
-    if (route == null || page == null || index == _page) return;
-    unawaited(
-      _headsigns
-          .remember(
-            headsignStop(route, page),
-            rememberedHeadsign(page),
-            chosenAt: _clock(),
-          )
-          .catchError((Object e) => debugPrint('route detail: $e')),
-    );
-    _current.abandon();
-    _page = index;
-    _current.keepSelection(_now.value);
-    setState(_showRide);
-    _drawMap();
-    _ask();
-  }
-
   /// Sets the map's route, stops, and vehicles to what's shown, drawing the vehicles'
   /// markers first if the map doesn't have them; and fits the camera to a new ride.
   Future<void> _drawMap() async {
     final draw = ++_draws;
-    final controller = _current;
+    final controller = _controller;
     // The latest answer's colors and names.
     final route = controller.detail?.route ?? _ride?.route ?? _route?.route;
     final ride = _ride;
-    final stop = controller.detail?.stop ?? _shownPage?.stop;
+    final stop = controller.detail?.stop ?? _page?.stop;
     final vehicles = controller.detail?.vehicles ?? const <TransitVehicle>[];
     final marker = vehicleMarkerName(route);
     final heading = vehicleHeadingName(route);
@@ -410,9 +376,7 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
     _stop();
     sheetPages.unsubscribe(this);
     _lifecycle.dispose();
-    for (final c in _controllers.values) {
-      c.dispose();
-    }
+    _controller.dispose();
     _now.dispose();
     _draws++;
     _map
@@ -423,7 +387,7 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
 
   @override
   Widget build(BuildContext context) {
-    final controller = _current;
+    final controller = _controller;
     final route = _route;
     final walkSeconds = controller.query.walkSeconds;
     final ride = _ride;
@@ -444,11 +408,9 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
                 children: [
                   _Header(
                     route: route,
-                    shown: _page,
-                    onShown: _shown,
+                    page: _page,
                     // As the list's rows show the walk.
                     access: _access ?? TransitAccess.walking,
-                    now: _now,
                   ),
                   if (departures.isNotEmpty)
                     DepartureTiles(
@@ -501,22 +463,17 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
   }
 }
 
-/// The row's badge, headsign, stop, and walk, swiping between the route's pages, and a
-/// close button.
+/// The row's badge, headsign, stop, and walk for the page shown, and a close button.
 class _Header extends StatelessWidget {
   const _Header({
     required this.route,
-    required this.shown,
-    required this.onShown,
+    required this.page,
     required this.access,
-    required this.now,
   });
 
   final NearbyRoute? route;
-  final int shown;
-  final ValueChanged<int> onShown;
+  final HeadsignPage? page;
   final TransitAccess access;
-  final ValueListenable<DateTime> now;
 
   @override
   Widget build(BuildContext context) {
@@ -529,14 +486,11 @@ class _Header extends StatelessWidget {
             child: route == null
                 // A placeholder until the states are agreed.
                 ? const _Placeholder('Finding departures…')
-                : NearbyRow(
+                : NearbyHeader(
                     key: const ValueKey('header'),
                     route: route,
-                    shown: shown,
-                    onShown: onShown,
-                    showsTimes: false,
+                    page: page,
                     access: access,
-                    now: now,
                   ),
           ),
           AppCloseButton(
