@@ -5,6 +5,7 @@ library;
 
 import 'package:material_ui/material_ui.dart';
 
+import '../units.dart';
 import 'format.dart';
 import 'transit_plan.dart';
 import 'transit_sheet.dart';
@@ -17,13 +18,15 @@ class JourneyHeader extends StatelessWidget {
     super.key,
     required this.journey,
     required this.now,
-    required this.miles,
+    required this.units,
     required this.onBack,
   });
 
   final Journey journey;
   final DateTime now;
-  final bool miles;
+
+  /// Metric or imperial, for the distances on foot.
+  final UnitSystem units;
   final VoidCallback onBack;
 
   @override
@@ -87,7 +90,7 @@ class JourneyHeader extends StatelessWidget {
                       final n => '$n transfers',
                     },
                     if (street > 0)
-                      '${formatDistance(street, miles: miles)} '
+                      '${formatDistance(street, units: units)} '
                           '${streetDistanceWord(journey)}',
                   ].join(' · '),
                   style: muted,
@@ -335,7 +338,7 @@ class JourneyItinerary extends StatefulWidget {
     required this.journey,
     required this.start,
     required this.destination,
-    required this.miles,
+    required this.units,
     required this.access,
     required this.now,
   });
@@ -345,7 +348,9 @@ class JourneyItinerary extends StatefulWidget {
   /// What the trip's ends are called.
   final String start;
   final String destination;
-  final bool miles;
+
+  /// Metric or imperial, for the distances on foot.
+  final UnitSystem units;
   final TransitAccess access;
   final DateTime now;
 
@@ -410,7 +415,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
             _StreetRow(
               key: ValueKey(('street', i)),
               leg: leg,
-              miles: widget.miles,
+              units: widget.units,
               start: widget.start,
               destination: widget.destination,
             ),
@@ -690,13 +695,15 @@ class _StreetRow extends StatefulWidget {
   const _StreetRow({
     super.key,
     required this.leg,
-    required this.miles,
+    required this.units,
     required this.start,
     required this.destination,
   });
 
   final StreetLeg leg;
-  final bool miles;
+
+  /// Metric or imperial, for the distances on foot.
+  final UnitSystem units;
   final String start;
   final String destination;
 
@@ -752,7 +759,7 @@ class _StreetRowState extends State<_StreetRow> {
                         TextSpan(
                           text: [
                             if (walk != null)
-                              ' · ${formatDistance(walk.distance, miles: widget.miles)}',
+                              ' · ${formatDistance(walk.distance, units: widget.units)}',
                             ' to $to',
                           ].join(),
                         ),
@@ -789,7 +796,7 @@ class _StreetRowState extends State<_StreetRow> {
                       ),
                       if (m.distance > 0)
                         Text(
-                          formatDistance(m.distance, miles: widget.miles),
+                          formatDistance(m.distance, units: widget.units),
                           style: muted,
                         ),
                     ],

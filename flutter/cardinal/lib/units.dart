@@ -3,6 +3,8 @@ library;
 
 import 'dart:ui' show Locale;
 
+import 'package:flutter/widgets.dart' show WidgetsBinding;
+
 import 'store/store.dart';
 
 /// Which units distances are in.
@@ -23,6 +25,13 @@ enum UnitSystem {
       _imperialRegions.contains(locale.countryCode) ? imperial : metric,
     _ => this,
   };
+
+  /// [resolve] for the region the device is set to, now.
+  ///
+  /// The locale comes from the widgets binding rather than `PlatformDispatcher.instance`
+  /// so that widget tests can set it.
+  UnitSystem get onDevice =>
+      resolve(WidgetsBinding.instance.platformDispatcher.locale);
 }
 
 /// The regions whose distances are in miles: those CLDR puts in the US measurement system

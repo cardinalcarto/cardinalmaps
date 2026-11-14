@@ -28,6 +28,7 @@ import '../sheet/sheet.dart';
 import '../store/store.dart';
 import '../ui/adaptive.dart';
 import '../ui/haptics.dart';
+import '../units.dart';
 import 'callouts.dart';
 import 'directions.dart';
 import 'format.dart';
@@ -99,6 +100,12 @@ class _DirectionsPageState extends State<DirectionsPage> {
   SettingsStore? _settings;
   StreamSubscription<Place?>? _watchTo;
   StreamSubscription<SavedTree>? _watchSaved;
+  StreamSubscription<UnitSystem>? _watchUnits;
+
+  /// The app's [unitSystem] setting, resolved for the device's region as each build shows
+  /// distances, so a change to either shows at once. The default stands until the setting
+  /// is read.
+  UnitSystem _units = UnitSystem.locale;
   StreamSubscription<int>? _taps;
   Timer? _calloutTimer;
   Timer? _clock;
@@ -171,6 +178,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
     _watchSaved = store.saved.watch().listen((tree) {
       setState(() => _saved = tree.allPlaces);
     });
+    _watchUnits = store.settings.watch(unitSystem).listen((units) {
+      if (units != _units) setState(() => _units = units);
+    });
     _taps = routeTaps.stream.listen(directions.select);
     _map.cameraMoved.addListener(_viewChanged);
     // This page's own pin marks the destination, which can change.
@@ -189,6 +199,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
   void dispose() {
     _watchTo?.cancel();
     _watchSaved?.cancel();
+    _watchUnits?.cancel();
     _taps?.cancel();
     _calloutTimer?.cancel();
     _clock?.cancel();
@@ -495,7 +506,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
   List<Widget> _tripSlivers(Directions directions) {
     final theme = Theme.of(context);
     final cupertino = isCupertinoOf(context);
-    final miles = usesMiles(PlatformDispatcher.instance.locale);
+    final units = _units.onDevice;
     final transit = directions.mode == TravelMode.transit;
     final route = transit ? null : directions.selectedRoute;
     final plan = transit && !directions.loading ? directions.plan : null;
@@ -624,8 +635,8 @@ class _DirectionsPageState extends State<DirectionsPage> {
                   child: route == null
                       ? _Message(_messageFor(directions))
                       : cupertino
-                      ? _CupertinoSummary(route: route, miles: miles)
-                      : _Summary(route: route, miles: miles),
+                      ? _CupertinoSummary(route: route, units: units)
+                      : _Summary(route: route, units: units),
                 ),
             ],
           ),
@@ -654,7 +665,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
               header: 'Steps',
               children: [
                 for (final (i, step) in route.steps.indexed)
-                  _CupertinoStep(number: i + 1, step: step, miles: miles),
+                  _CupertinoStep(number: i + 1, step: step, units: units),
               ],
             ),
           ),
@@ -665,7 +676,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
           sliver: SliverList.builder(
             itemCount: route.steps.length,
             itemBuilder: (context, i) =>
-                _StepCard(number: i + 1, step: route.steps[i], miles: miles),
+                _StepCard(number: i + 1, step: route.steps[i], units: units),
           ),
         ),
     ];
@@ -673,7 +684,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
 
   /// A transit journey's legs in detail, under a header to go back to the journeys.
   List<Widget> _journeySlivers(Directions directions, Journey journey) {
-    final miles = usesMiles(PlatformDispatcher.instance.locale);
+    final units = _units.onDevice;
     final now = DateTime.now();
     return [
       SliverToBoxAdapter(
@@ -682,7 +693,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
           child: JourneyHeader(
             journey: journey,
             now: now,
-            miles: miles,
+            units: units,
             onBack: _closeJourney,
           ),
         ),
@@ -691,7 +702,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
         journey: journey,
         start: directions.from?.label ?? 'Start',
         destination: directions.to?.label ?? 'Destination',
-        miles: miles,
+        units: units,
         access: directions.transitAccess,
         now: now,
       ),
@@ -897,10 +908,10 @@ class _ModeChip extends StatelessWidget {
 
 /// A route's distance and travel time, with the button that will start navigation.
 class _Summary extends StatelessWidget {
-  const _Summary({required this.route, required this.miles});
+  const _Summary({required this.route, required this.units});
 
   final DirectionsRoute route;
-  final bool miles;
+  final UnitSystem units;
 
   @override
   Widget build(BuildContext context) => Card.filled(
@@ -910,7 +921,7 @@ class _Summary extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _SummaryRow('Distance', formatDistance(route.distance, miles: miles)),
+          _SummaryRow('Distance', formatDistance(route.distance, units: units)),
           const SizedBox(height: 4),
           _SummaryRow('Duration', formatDuration(route.duration)),
           const SizedBox(height: 8),
@@ -950,12 +961,12 @@ class _StepCard extends StatelessWidget {
   const _StepCard({
     required this.number,
     required this.step,
-    required this.miles,
+    required this.units,
   });
 
   final int number;
   final DirectionsStep step;
-  final bool miles;
+  final UnitSystem units;
 
   @override
   Widget build(BuildContext context) {
@@ -980,7 +991,7 @@ class _StepCard extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Text(
-              formatDistance(step.distance, miles: miles),
+              formatDistance(step.distance, units: units),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -1313,10 +1324,10 @@ class _CupertinoModes extends StatelessWidget {
 /// iOS's route summary: the time large, the distance under it, and Go, as Apple shows a
 /// route. Go waits for navigation.
 class _CupertinoSummary extends StatelessWidget {
-  const _CupertinoSummary({required this.route, required this.miles});
+  const _CupertinoSummary({required this.route, required this.units});
 
   final DirectionsRoute route;
-  final bool miles;
+  final UnitSystem units;
 
   @override
   Widget build(BuildContext context) {
@@ -1341,7 +1352,7 @@ class _CupertinoSummary extends StatelessWidget {
                     style: theme.textTheme.headlineSmall,
                   ),
                   Text(
-                    formatDistance(route.distance, miles: miles),
+                    formatDistance(route.distance, units: units),
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -1378,12 +1389,12 @@ class _CupertinoStep extends StatelessWidget {
   const _CupertinoStep({
     required this.number,
     required this.step,
-    required this.miles,
+    required this.units,
   });
 
   final int number;
   final DirectionsStep step;
-  final bool miles;
+  final UnitSystem units;
 
   @override
   Widget build(BuildContext context) {
@@ -1397,7 +1408,7 @@ class _CupertinoStep extends StatelessWidget {
       ),
       title: Text(step.instruction, maxLines: 3),
       trailing: Text(
-        formatDistance(step.distance, miles: miles),
+        formatDistance(step.distance, units: units),
         style: theme.textTheme.bodySmall?.copyWith(
           color: theme.colorScheme.onSurfaceVariant,
         ),

@@ -1,5 +1,6 @@
 import 'package:cardinal/directions/transit_details.dart';
 import 'package:cardinal/directions/transit_plan.dart';
+import 'package:cardinal/units.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -164,7 +165,7 @@ void main() {
                 journey: journey,
                 start: 'Waiting for the Interurban',
                 destination: 'Chu Minh',
-                miles: true,
+                units: UnitSystem.imperial,
                 access: access,
                 now: at(0),
               ),

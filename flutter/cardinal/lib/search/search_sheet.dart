@@ -25,6 +25,7 @@ import '../saved/saved_names.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
 import '../ui/adaptive.dart';
+import '../units.dart';
 import 'place_search.dart';
 
 /// The home sheet: a search bar, peeking over the map, with results below it as you type.
@@ -65,6 +66,11 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
   List<SavedPlace> _pinned = const [];
   StreamSubscription<SavedTree>? _watchSaved;
 
+  /// The app's [unitSystem] setting, for how far each result is. The default stands until
+  /// the setting is read.
+  UnitSystem _units = UnitSystem.locale;
+  StreamSubscription<UnitSystem>? _watchUnits;
+
   /// Whether the sheet is searching; see [SearchSheet].
   bool _searching = false;
 
@@ -98,6 +104,11 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     _watchSaved ??= StoreScope.of(context).saved.watch().listen((tree) {
       setState(() => _pinned = tree.pinned);
     });
+    _watchUnits ??= StoreScope.of(context).settings
+        .watch(unitSystem)
+        .listen((units) {
+          if (units != _units) setState(() => _units = units);
+        });
     _search ??= PlaceSearch(
       GeocoderScope.of(context),
       lang: PlatformDispatcher.instance.locale.toLanguageTag(),
@@ -109,6 +120,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     sheetPages.unsubscribe(this);
     searchRequests.removeListener(_searchRequested);
     _watchSaved?.cancel();
+    _watchUnits?.cancel();
     _focus.dispose();
     _text.dispose();
     _search?.dispose();
@@ -344,8 +356,12 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
             ),
             ListenableBuilder(
               listenable: search,
-              builder: (context, _) =>
-                  _Results(search: search, here: _here, onTap: _open),
+              builder: (context, _) => _Results(
+                search: search,
+                here: _here,
+                units: _units.onDevice,
+                onTap: _open,
+              ),
             ),
           ],
         ),
@@ -436,6 +452,7 @@ class _Results extends StatelessWidget {
   const _Results({
     required this.search,
     required this.here,
+    required this.units,
     required this.onTap,
   });
 
@@ -443,6 +460,9 @@ class _Results extends StatelessWidget {
 
   /// Where you are, for how far each result is; null if that isn't known.
   final Fix? here;
+
+  /// Metric or imperial, for how far each result is.
+  final UnitSystem units;
   final void Function(Place place) onTap;
 
   @override
@@ -490,7 +510,12 @@ class _Results extends StatelessWidget {
               itemCount: results.length,
               itemBuilder: (context, i) => Column(
                 children: [
-                  _ResultRow(place: results[i], here: here, onTap: onTap),
+                  _ResultRow(
+                    place: results[i],
+                    here: here,
+                    units: units,
+                    onTap: onTap,
+                  ),
                   if (i < results.length - 1)
                     const Divider(indent: _ResultRow.textInset, height: 0.5),
                 ],
@@ -620,11 +645,15 @@ class _ResultRow extends StatelessWidget {
   const _ResultRow({
     required this.place,
     required this.here,
+    required this.units,
     required this.onTap,
   });
 
   final Place place;
   final Fix? here;
+
+  /// Metric or imperial, for how far each result is.
+  final UnitSystem units;
   final void Function(Place place) onTap;
 
   /// Where the text starts, past the icon: where separators start.
@@ -655,7 +684,7 @@ class _ResultRow extends StatelessWidget {
               place.center.lat,
               place.center.lon,
             ),
-            miles: usesMiles(PlatformDispatcher.instance.locale),
+            units: units,
           );
     final subtitle = [?distance, ?address].join(' · ');
     return AppListTile(

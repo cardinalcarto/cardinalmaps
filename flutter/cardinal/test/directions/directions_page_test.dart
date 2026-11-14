@@ -8,6 +8,7 @@ import 'package:cardinal/map/selection.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
+import 'package:cardinal/units.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
@@ -113,6 +114,35 @@ void main() {
     expect(find.text('6.5 mi'), findsOneWidget);
     expect(find.text('Drive north.'), findsOneWidget);
     expect(find.text('Turn right.'), findsOneWidget);
+  });
+
+  group('distances follow the units setting over the region', () {
+    void inLocale(WidgetTester tester, Locale locale) {
+      tester.platformDispatcher.localeTestValue = locale;
+      addTearDown(tester.platformDispatcher.clearLocaleTestValue);
+    }
+
+    testWidgets('metric in the US', (tester) async {
+      inLocale(tester, const Locale('en', 'US'));
+      await store.settings.set(unitSystem, UnitSystem.metric);
+      await open(tester);
+      expect(find.text('10 km'), findsOneWidget);
+      expect(find.text('6.5 mi'), findsNothing);
+    });
+
+    testWidgets('imperial in Germany', (tester) async {
+      inLocale(tester, const Locale('de', 'DE'));
+      await store.settings.set(unitSystem, UnitSystem.imperial);
+      await open(tester);
+      expect(find.text('6.5 mi'), findsOneWidget);
+      expect(find.text('10 km'), findsNothing);
+    });
+
+    testWidgets("and the region's units until it's set", (tester) async {
+      inLocale(tester, const Locale('de', 'DE'));
+      await open(tester);
+      expect(find.text('10 km'), findsOneWidget);
+    });
   });
 
   testWidgets('without permission the start is left empty and nothing asks', (

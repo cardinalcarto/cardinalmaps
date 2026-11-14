@@ -282,6 +282,7 @@ impl DirectionsAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ferrostar::models::ManeuverType;
 
     fn adapter() -> DirectionsAdapter {
         DirectionsAdapter::valhalla(
@@ -358,5 +359,249 @@ mod tests {
             adapter().parse(b"<html>".to_vec()).unwrap_err().kind,
             DirectionsErrorKind::Failed
         );
+    }
+
+    /// What Ferrostar parses from the offline router's answer to the request its own
+    /// generator makes, through the adapter the app makes for `costing`, `language` and
+    /// `units`.
+    fn ferrostar_routes(
+        router: &crate::api::router::OfflineRouter,
+        costing: &str,
+        language: &str,
+        units: DistanceUnits,
+        from: DirectionsPoint,
+        to: DirectionsPoint,
+    ) -> Vec<Route> {
+        let adapter = DirectionsAdapter::valhalla(
+            "http://router/route".into(),
+            costing.into(),
+            0,
+            language.into(),
+            units,
+        )
+        .unwrap();
+        let request = adapter.request(from, to).unwrap();
+        let response = router.route(request.body);
+        let body = String::from_utf8(response.body).unwrap();
+        assert_eq!(
+            response.status, 200,
+            "{costing} {language} {units:?}: {body}"
+        );
+        adapter.adapter.parse_response(body.into_bytes()).unwrap()
+    }
+
+    /// Checks what turn-by-turn guidance needs of each step, and returns every spoken text.
+    ///
+    /// Every step but the arrival has banners and announcements (the arrival, which has no
+    /// length, has neither, as in mainline), and each triggers within its step,
+    /// farthest from the maneuver first.
+    fn check_guidance(routes: &[Route], context: &str) -> Vec<String> {
+        assert!(!routes.is_empty(), "{context}: no routes");
+        let mut spoken = Vec::new();
+        for route in routes {
+            let (arrival, steps) = route.steps.split_last().unwrap();
+            assert!(!steps.is_empty(), "{context}: only an arrival");
+            assert!(arrival.visual_instructions.is_empty(), "{context}");
+            assert!(arrival.spoken_instructions.is_empty(), "{context}");
+            for (i, step) in steps.iter().enumerate() {
+                let context = format!("{context}, step {i} ({})", step.instruction);
+                assert!(
+                    !step.visual_instructions.is_empty(),
+                    "{context}: no banners"
+                );
+                assert!(
+                    !step.spoken_instructions.is_empty(),
+                    "{context}: no announcements"
+                );
+                // Announcement distances are written with one decimal, so they may round up
+                // past the step's length by half a decimeter.
+                let within = |distance: f64| (0.0..=step.distance + 0.05).contains(&distance);
+                let mut previous = f64::INFINITY;
+                for banner in &step.visual_instructions {
+                    let primary = &banner.primary_content;
+                    assert!(!primary.text.is_empty(), "{context}: empty banner");
+                    assert!(
+                        primary.maneuver_type.is_some(),
+                        "{context}: no maneuver type"
+                    );
+                    let distance = banner.trigger_distance_before_maneuver;
+                    assert!(within(distance), "{context}: banner at {distance}");
+                    assert!(distance <= previous, "{context}: banners out of order");
+                    previous = distance;
+                }
+                previous = f64::INFINITY;
+                for announcement in &step.spoken_instructions {
+                    assert!(
+                        !announcement.text.is_empty(),
+                        "{context}: empty announcement"
+                    );
+                    assert_eq!(
+                        announcement.ssml.as_deref(),
+                        Some(format!("<speak>{}</speak>", announcement.text).as_str()),
+                        "{context}"
+                    );
+                    let distance = announcement.trigger_distance_before_maneuver;
+                    assert!(
+                        within(distance),
+                        "{context}: announcement at {distance} of {}",
+                        step.distance
+                    );
+                    assert!(
+                        distance <= previous,
+                        "{context}: announcements out of order"
+                    );
+                    previous = distance;
+                    spoken.push(announcement.text.clone());
+                }
+            }
+            // The departure is announced as the trip starts.
+            let first = &steps[0];
+            let departure = first.spoken_instructions[0].trigger_distance_before_maneuver;
+            assert!(
+                (departure - first.distance).abs() <= 0.05,
+                "{context}: departure announced at {departure} of {}",
+                first.distance
+            );
+        }
+        spoken
+    }
+
+    /// Whether any announcement says one of `words`.
+    fn says(spoken: &[String], words: &[&str]) -> bool {
+        spoken
+            .iter()
+            .any(|text| words.iter().any(|word| text.contains(word)))
+    }
+
+    /// Ferrostar's own request and parser around the offline router, for each costing,
+    /// in English and kilometers, in German and miles, and in a language Valhalla doesn't
+    /// have.
+    fn check_ferrostar_guidance(
+        router: &crate::api::router::OfflineRouter,
+        trips: &[(&str, DirectionsPoint, DirectionsPoint)],
+    ) {
+        use DistanceUnits::{Kilometers, Miles};
+        for &(costing, from, to) in trips {
+            let english = check_guidance(
+                &ferrostar_routes(router, costing, "en-US", Kilometers, from, to),
+                &format!("{costing} en-US kilometers"),
+            );
+            assert!(says(&english, &["destination"]), "{costing}: {english:?}");
+            assert!(says(&english, &[" meters", "kilometer"]), "{costing}");
+            assert!(!says(&english, &[" feet", " mile"]), "{costing}");
+
+            let german = check_guidance(
+                &ferrostar_routes(router, costing, "de-DE", Miles, from, to),
+                &format!("{costing} de-DE miles"),
+            );
+            assert!(says(&german, &["Ziel"]), "{costing}: {german:?}");
+            assert!(says(&german, &["Fuß", "Meile"]), "{costing}");
+            assert!(!says(&german, &[" Meter", "Kilometer"]), "{costing}");
+
+            // A language Valhalla doesn't have is asked for in en-US (`valhalla_language`),
+            // as mainline would answer it anyway.
+            let fallback = check_guidance(
+                &ferrostar_routes(router, costing, "xx-XX", Kilometers, from, to),
+                &format!("{costing} xx-XX kilometers"),
+            );
+            assert_eq!(fallback, english, "{costing}");
+        }
+    }
+
+    fn point(lat: f64, lng: f64) -> DirectionsPoint {
+        DirectionsPoint { lat, lng }
+    }
+
+    #[test]
+    fn ferrostar_parses_guidance_for_every_step() {
+        let tiles = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../valinor/valhalla-graphtile/fixtures/andorra-tiles.tar");
+        let router =
+            crate::api::router::OfflineRouter::open(vec![tiles.to_string_lossy().into()], None)
+                .ok()
+                .unwrap();
+        let start = point(42.5078, 1.5211);
+        check_ferrostar_guidance(
+            &router,
+            &[
+                ("auto", start, point(42.5355, 1.583)),
+                ("pedestrian", start, point(42.5099, 1.5357)),
+                ("bicycle", start, point(42.5562, 1.5331)),
+            ],
+        );
+
+        // A roundabout's banner says which way its exit lies.
+        let routes = ferrostar_routes(
+            &router,
+            "auto",
+            "en-US",
+            DistanceUnits::Kilometers,
+            point(42.505, 1.52),
+            point(42.505, 1.515),
+        );
+        check_guidance(&routes, "roundabout");
+        let roundabouts: Vec<_> = routes[0]
+            .steps
+            .iter()
+            .flat_map(|step| &step.visual_instructions)
+            .filter(|banner| banner.primary_content.maneuver_type == Some(ManeuverType::Roundabout))
+            .collect();
+        assert!(!roundabouts.is_empty());
+        for banner in roundabouts {
+            assert!(banner.primary_content.roundabout_exit_degrees.is_some());
+        }
+    }
+
+    /// The same over Seattle, with lanes and exit numbers on the highway,
+    /// from `CARDINAL_SEATTLE_TILES` (street tiles covering Seattle; real data,
+    /// so not in the repository).
+    #[test]
+    #[ignore = "needs CARDINAL_SEATTLE_TILES"]
+    fn ferrostar_parses_guidance_for_every_step_in_seattle() {
+        let tiles = std::env::var("CARDINAL_SEATTLE_TILES").expect("CARDINAL_SEATTLE_TILES");
+        let router = crate::api::router::OfflineRouter::open(vec![tiles], None)
+            .ok()
+            .unwrap();
+        check_ferrostar_guidance(
+            &router,
+            &[
+                ("auto", point(47.7062, -122.3255), point(47.4502, -122.3088)),
+                (
+                    "pedestrian",
+                    point(47.6094, -122.3422),
+                    point(47.6205, -122.3493),
+                ),
+                (
+                    "bicycle",
+                    point(47.6510, -122.3500),
+                    point(47.6553, -122.3035),
+                ),
+            ],
+        );
+
+        let routes = ferrostar_routes(
+            &router,
+            "auto",
+            "en-US",
+            DistanceUnits::Kilometers,
+            point(47.7062, -122.3255),
+            point(47.4502, -122.3088),
+        );
+        let banners: Vec<_> = routes[0]
+            .steps
+            .iter()
+            .flat_map(|step| &step.visual_instructions)
+            .collect();
+        assert!(
+            banners
+                .iter()
+                .any(|banner| !banner.primary_content.exit_numbers.is_empty())
+        );
+        assert!(banners.iter().any(|banner| {
+            banner
+                .sub_content
+                .as_ref()
+                .is_some_and(|sub| sub.lane_info.is_some())
+        }));
     }
 }

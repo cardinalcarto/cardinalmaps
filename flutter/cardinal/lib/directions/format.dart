@@ -1,20 +1,18 @@
 /// Distances and durations, as the directions sheet and the map's callouts show them.
 library;
 
-import 'dart:ui' show Locale;
-
-/// The countries whose road signs are in miles.
-const _milesCountries = {'US', 'GB', 'LR', 'MM'};
-
-/// Whether distances in [locale] are in miles and feet.
-bool usesMiles(Locale locale) => _milesCountries.contains(locale.countryCode);
+import '../units.dart';
 
 /// [meters] for reading: miles from a tenth of one and feet below that, or kilometers from
 /// one and meters below that.
-String formatDistance(double meters, {required bool miles}) {
+///
+/// [units] is [UnitSystem.metric] or [UnitSystem.imperial], already resolved for the
+/// device's region, so that the app's one rule for which regions use miles decides.
+String formatDistance(double meters, {required UnitSystem units}) {
+  assert(units != UnitSystem.locale, 'resolve the units for a locale first');
   String tenths(double value) =>
       value >= 10 ? value.round().toString() : value.toStringAsFixed(1);
-  if (miles) {
+  if (units == UnitSystem.imperial) {
     final inMiles = meters / 1609.344;
     return inMiles >= 0.1
         ? '${tenths(inMiles)} mi'

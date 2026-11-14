@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui' show PlatformDispatcher;
 
 import 'package:http/http.dart' as http;
 import 'package:material_ui/material_ui.dart';
@@ -159,7 +158,8 @@ class OfflineRouteSource implements RouteSource {
     final area = await _need(_area);
     await _checkCovers(area, from, to);
 
-    final locale = PlatformDispatcher.instance.locale;
+    // The binding's dispatcher, as in [UnitSystem.onDevice], so tests can set the locale.
+    final locale = WidgetsBinding.instance.platformDispatcher.locale;
     final language = locale.toLanguageTag();
     final units = switch ((await settings.get(unitSystem)).resolve(locale)) {
       UnitSystem.imperial => DistanceUnits.miles,
