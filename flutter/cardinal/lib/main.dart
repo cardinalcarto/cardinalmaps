@@ -16,6 +16,7 @@ import 'map/overlays.dart';
 import 'offline/downloads/geometry.dart';
 import 'offline/offline_area.dart';
 import 'offline/offline_scope.dart';
+import 'offline/realtime.dart';
 import 'routes.dart';
 import 'store/store.dart';
 import 'ui/theme.dart';
@@ -28,6 +29,8 @@ void main() {
   unawaited(store.prune());
   final map = SparkleMapController();
   final offline = OfflineAreas.open();
+  // Directions and nearby transit share each area's real-time messages.
+  final realtime = AreaRealtimeFeeds();
   runApp(
     StoreScope(
       store: store,
@@ -44,7 +47,7 @@ void main() {
               ),
             ),
           ),
-          transit: OfflineTransitSource(offline.area),
+          transit: OfflineTransitSource(offline.area, realtime),
           location: const GeolocatorSource(),
           child: MapScope(
             controller: map,

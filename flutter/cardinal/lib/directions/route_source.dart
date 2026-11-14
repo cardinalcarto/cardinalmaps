@@ -210,22 +210,14 @@ class OfflineRouteSource implements RouteSource {
 /// [TransitSource] on the device, over the offline area's timetables, with the latest
 /// real-time data its agencies publish when there's a network.
 class OfflineTransitSource implements TransitSource {
-  OfflineTransitSource(this._area, {this.client});
+  OfflineTransitSource(this._area, this._feeds);
 
   final OfflineAreaSource _area;
 
-  /// What real-time messages are fetched with.
-  final http.Client? client;
+  /// The area's real-time feeds, shared with the planner's other askers.
+  final AreaRealtimeFeeds _feeds;
 
-  /// The real-time feeds of the area they were made for.
-  (OfflineArea, RealtimeFeeds)? _feeds;
-
-  RealtimeFeeds _realtime(OfflineArea area) {
-    if (_feeds case (final made, final feeds) when made == area) return feeds;
-    final feeds = RealtimeFeeds(() => area.realtimeSources, client: client);
-    _feeds = (area, feeds);
-    return feeds;
-  }
+  RealtimeFeeds _realtime(OfflineArea area) => _feeds.of(area);
 
   @override
   void prepare() {

@@ -104,4 +104,18 @@ void main() {
     expect(await feeds.fresh(), hasLength(1));
     expect(await feeds.fresh(), isEmpty);
   });
+
+  test('an area has one set of feeds, and a new area new ones', () {
+    OfflineArea area() => OfflineArea(
+      routing: '/nonexistent/routing/r',
+      transitBuild: '/nonexistent/transit/t',
+    );
+    final shared = AreaRealtimeFeeds();
+    final first = area();
+    final feeds = shared.of(first);
+    expect(shared.of(first), same(feeds));
+    final second = area();
+    expect(shared.of(second), isNot(same(feeds)));
+    expect(shared.of(second), same(shared.of(second)));
+  });
 }

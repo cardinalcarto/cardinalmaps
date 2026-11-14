@@ -10,6 +10,29 @@ import 'package:routing/routing.dart';
 
 import 'offline_area.dart';
 
+/// One [RealtimeFeeds] for the current offline area, shared by everything that asks its
+/// transit planner (directions and nearby transit), so they fetch each message once.
+///
+/// The planner keeps what it's given whichever question it came with, so a message one
+/// asker took serves the others too. A new area gets new feeds.
+class AreaRealtimeFeeds {
+  AreaRealtimeFeeds({this.client});
+
+  /// What real-time messages are fetched with.
+  final http.Client? client;
+
+  /// The real-time feeds of the area they were made for.
+  (OfflineArea, RealtimeFeeds)? _feeds;
+
+  /// The real-time feeds of [area].
+  RealtimeFeeds of(OfflineArea area) {
+    if (_feeds case (final made, final feeds) when made == area) return feeds;
+    final feeds = RealtimeFeeds(() => area.realtimeSources, client: client);
+    _feeds = (area, feeds);
+    return feeds;
+  }
+}
+
 /// The latest message of each [RealtimeSource], fetched again once it's [maxAge] old.
 ///
 /// The planner keeps what it was given until it ages out, so each plan only needs the
