@@ -133,11 +133,11 @@ class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
   /// All of the page's content, whose end the sheet never goes past.
   static const _content = #nearbyTransitContent;
 
-  /// Where the sheet opens and the lowest it rests: 30% of the screen.
+  /// Where the sheet opens and the lowest it rests: 40% of the screen.
   ///
   /// Content shorter than that ends below it, and then the end of the content is the
   /// lower anchor and this the upper one: the sheet can't say "whichever is lower".
-  static const _lower = SheetAnchor.fraction(0.3);
+  static const _lower = SheetAnchor.fraction(0.4);
 
   /// The highest the sheet goes: the end of the content, or the full screen if that
   /// comes first.

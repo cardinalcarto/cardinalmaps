@@ -75,7 +75,7 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
 
   /// As the list's: where the sheet opens and the lowest it rests, and the end of the
   /// content.
-  static const _lower = SheetAnchor.fraction(0.3);
+  static const _lower = SheetAnchor.fraction(0.4);
   static const _upper = SheetAnchor.section(_content);
 
   /// As directions fits a route to what the sheet leaves of the map.

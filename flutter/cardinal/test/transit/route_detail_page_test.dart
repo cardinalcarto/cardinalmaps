@@ -213,6 +213,30 @@ void main() {
   }
 
   group('opening', () {
+    testWidgets(
+      'the sheet opens at 40%, and goes up to the end of its content',
+      (tester) async {
+        await openList(tester);
+        await open44(tester);
+        await answerRoute(
+          tester,
+          _detail(
+            [nearbyDepartureJson('a', 10), nearbyDepartureJson('b', 20)],
+            ride: _ride('a', 10, [
+              for (var i = 0; i < 12; i++) i == 0 ? _ballard : 'Stop ${i + 1}',
+            ]),
+          ),
+        );
+        final controller = SheetScaffold.controllerOf(
+          tester.element(find.byType(RouteDetailPage)),
+        );
+        final lower = appScreen.height * 0.4;
+        expect(controller.anchors.first.extent, lower);
+        expect(controller.anchors.last.extent, greaterThan(lower));
+        expect(controller.extent, lower);
+      },
+    );
+
     testWidgets('a row opens on the page it shows, asking for its first '
         'catchable trip', (tester) async {
       await openList(tester);

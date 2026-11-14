@@ -595,8 +595,8 @@ void main() {
   });
 
   group('sheet', () {
-    /// 30% of [appScreen]'s height: the lower anchor.
-    const lower = 240.0;
+    /// 40% of [appScreen]'s height: the lower anchor.
+    const lower = 320.0;
 
     SheetController sheet(WidgetTester tester) =>
         SheetScaffold.controllerOf(tester.element(find.text('Nearby transit')));
@@ -615,7 +615,7 @@ void main() {
       for (var i = 0; i < n; i++) _route('${100 + i}'),
     ];
 
-    testWidgets('a long list opens at 30% and goes up to the full screen', (
+    testWidgets('a long list opens at 40% and goes up to the full screen', (
       tester,
     ) async {
       await open(tester);
@@ -627,23 +627,23 @@ void main() {
       expect(sheet(tester).extent, appScreen.height);
     });
 
-    testWidgets('never rests below 30%', (tester) async {
+    testWidgets('never rests below 40%', (tester) async {
       await open(tester);
       await answer(tester, routes(20));
       await drag(tester, 200);
       expect(sheet(tester).extent, lower);
     });
 
-    testWidgets('with one row, tops out where the content ends', (
+    testWidgets('with a few rows, tops out where the content ends', (
       tester,
     ) async {
       await open(tester);
-      await answer(tester, routes(1));
+      await answer(tester, routes(3));
       final [low, high] = anchors(tester);
-      // One row ends just above 30%.
+      // Three rows end a little above 40%.
       expect(low, lower);
       expect(high, greaterThan(lower));
-      expect(high, lessThan(lower + 20));
+      expect(high, lessThan(lower + 80));
       expect(sheet(tester).extent, lower);
 
       await drag(tester, -600);
@@ -651,12 +651,12 @@ void main() {
     });
 
     testWidgets(
-      'with only a message, the content ends below 30%, which is the top',
+      'with only a message, the content ends below 40%, which is the top',
       (tester) async {
         await open(tester);
         expect(find.text('Finding departures near you…'), findsOneWidget);
-        // The library can't take the lower of 30% and the content's end: the end
-        // becomes the lower anchor, and 30%, past the content, the upper.
+        // The library can't take the lower of 40% and the content's end: the end
+        // becomes the lower anchor, and 40%, past the content, the upper.
         final [end, top] = anchors(tester);
         expect(end, lessThan(lower));
         expect(top, lower);
@@ -669,7 +669,7 @@ void main() {
       },
     );
 
-    testWidgets('rows arriving at 30% leave the sheet there', (tester) async {
+    testWidgets('rows arriving at 40% leave the sheet there', (tester) async {
       await open(tester);
       final extents = <double>[];
       final controller = sheet(tester);
