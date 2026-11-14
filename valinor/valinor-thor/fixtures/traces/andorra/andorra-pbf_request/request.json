@@ -1,0 +1,11 @@
+{
+  "action": "trace_route",
+  "request": null,
+  "http": {
+    "method": "POST",
+    "body_file": "request.bin",
+    "target": "/trace_route",
+    "content_type": "application/x-protobuf"
+  },
+  "pbf_text": "options { action: trace_route costing_type: auto_ format: pbf shape_match: map_snap shape { ll { lat: 42.50906 lng: 1.564332 } } shape { ll { lat: 42.509169 lng: 1.564477 } } shape { ll { lat: 42.509308 lng: 1.5646 } } shape { ll { lat: 42.509448 lng: 1.564661 } } shape { ll { lat: 42.509609 lng: 1.564736 } } shape { ll { lat: 42.509706 lng: 1.564745 } } shape { ll { lat: 42.509866 lng: 1.564753 } } shape { ll { lat: 42.50998 lng: 1.564738 } } shape { ll { lat: 42.510087 lng: 1.564725 } } shape { ll { lat: 42.510222 lng: 1.564709 } } shape { ll { lat: 42.510365 lng: 1.564691 } } shape { ll { lat: 42.51052 lng: 1.564672 } } shape { ll { lat: 42.510674 lng: 1.564652 } } shape { ll { lat: 42.510737 lng: 1.564595 } } shape { ll { lat: 42.510747 lng: 1.564443 } } shape { ll { lat: 42.51077 lng: 1.564257 } } shape { ll { lat: 42.510849 lng: 1.564064 } } shape { ll { lat: 42.510973 lng: 1.56395 } } shape { ll { lat: 42.511084 lng: 1.56382 } } shape { ll { lat: 42.511136 lng: 1.563706 } } shape { ll { lat: 42.511171 lng: 1.563489 } } shape { ll { lat: 42.511169 lng: 1.56332 } } shape { ll { lat: 42.511176 lng: 1.563092 } } shape { ll { lat: 42.511187 lng: 1.562959 } } shape { ll { lat: 42.511207 lng: 1.562826 } } shape { ll { lat: 42.511265 lng: 1.5627 } } shape { ll { lat: 42.5114 lng: 1.562596 } } shape { ll { lat: 42.511485 lng: 1.562538 } } shape { ll { lat: 42.511615 lng: 1.562447 } } shape { ll { lat: 42.511745 lng: 1.562328 } } }"
+}

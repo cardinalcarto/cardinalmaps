@@ -1,0 +1,9 @@
+{
+  "action": "trace_attributes",
+  "request": {
+    "costing": "bicycle",
+    "encoded_polyline": "kt|epAcqfgBh@oFbAaD^gHh@}G|AsGdBgHNaHhCeGHsFp@qGb@}ILcEDaIeBcDAwL`@_FQ_GLyDq@yGTgGD_KgB}BwB_BDkG\\iDS{FA_I_AcE`@sJ{@qHoCcFi@{DiAwBcBuGRsGgBiEkC}D}AyDkAsGsDyFs@yGaB}Ek@kF}@oGWeFqAaEo@kFyBeIuAcF[uI_@mI_AyDiAaFwB}IoB}Cy@gDcEmGw@yCk@sGgCsEy@qJmBaEs@eGAoGcAaHeDiDsCyFkCoD{A_GaAwJ_BoDoCmE{D}CiCaB}DuE}EyD}CcB_DeAcEsDqAqEsAeGwCcIgEoB{Fg@aBcJa@wEPsG~@eD_@oFB_GEeJhAaFUwHl@iHKqGOaGh@{GBaG[eFkAcJ_BcGsBsE}B{DiCkEqBkHsB}DiCgENqG_@{CcCoIiBcImBuEwAwF_BmEuAuG_BoBiDcGqA}EiByFaAcIa@eH",
+    "shape_match": "map_snap",
+    "format": "json"
+  }
+}

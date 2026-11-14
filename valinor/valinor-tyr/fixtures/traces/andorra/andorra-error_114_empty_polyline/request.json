@@ -1,0 +1,7 @@
+{
+  "action": "trace_attributes",
+  "request": {
+    "costing": "auto",
+    "encoded_polyline": ""
+  }
+}

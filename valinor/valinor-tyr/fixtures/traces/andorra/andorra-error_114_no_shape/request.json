@@ -1,0 +1,6 @@
+{
+  "action": "trace_route",
+  "request": {
+    "costing": "auto"
+  }
+}

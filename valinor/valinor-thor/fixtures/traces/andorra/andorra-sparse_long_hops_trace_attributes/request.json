@@ -1,0 +1,29 @@
+{
+  "action": "trace_attributes",
+  "request": {
+    "costing": "pedestrian",
+    "shape_match": "map_snap",
+    "shape": [
+      {
+        "lat": 42.530226,
+        "lon": 1.599143
+      },
+      {
+        "lat": 42.531452,
+        "lon": 1.600619
+      },
+      {
+        "lat": 42.532594,
+        "lon": 1.598969
+      },
+      {
+        "lat": 42.53392,
+        "lon": 1.598247
+      }
+    ],
+    "trace_options": {
+      "max_route_distance_factor": 0,
+      "breakage_distance": 100000
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "action": "trace_attributes",
+  "request": {
+    "costing": "auto",
+    "shape_match": "map_snap",
+    "shape": [
+      {
+        "lat": 42.591285,
+        "lon": 1.4618
+      },
+      {
+        "lat": 42.59098,
+        "lon": 1.461845
+      },
+      {
+        "lat": 42.59081,
+        "lon": 1.461966
+      },
+      {
+        "lat": 42.589813,
+        "lon": 1.461609
+      }
+    ],
+    "trace_options": {
+      "breakage_distance": 600
+    },
+    "format": "json",
+    "units": "miles"
+  }
+}

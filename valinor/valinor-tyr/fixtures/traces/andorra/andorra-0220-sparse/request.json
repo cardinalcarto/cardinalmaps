@@ -1,0 +1,9 @@
+{
+  "action": "trace_attributes",
+  "request": {
+    "costing": "auto",
+    "encoded_polyline": "uaxcpA_uuvAu\\uwEchFwAtfAi`A`~FkdAlLkaB}eC}fEmcF_sCt_GwJrsDvi@fXrf@kgAiuE{pDwb@gkEup@soDvBsF`|I_fDlQqxCdx@{sBjdA~@beHdwBnzFf~AbdG`}BdlE`w@hkGnzDtc@b_DtwDnt@bwFsoChtAadF_bCs|@ca@vkAtvDi}Amu@f]bjCo}Ccz@c`DtnAhh@bdA|wAbjDgm@vnAfaG~Fv`@hM",
+    "shape_match": "map_snap",
+    "format": "json"
+  }
+}

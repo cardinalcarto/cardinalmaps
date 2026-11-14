@@ -1,0 +1,10 @@
+{
+  "action": "trace_route",
+  "request": null,
+  "http": {
+    "method": "POST",
+    "body": "{\"shape\": [",
+    "target": "/trace_route",
+    "content_type": null
+  }
+}

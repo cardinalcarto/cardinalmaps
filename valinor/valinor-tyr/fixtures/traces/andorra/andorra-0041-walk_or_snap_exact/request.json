@@ -1,0 +1,9 @@
+{
+  "action": "trace_route",
+  "request": {
+    "costing": "pedestrian",
+    "encoded_polyline": "kph_pA{n}xAxA|OvB|LpEfKjH|GdEnL|D|LjC~LJjA",
+    "shape_match": "walk_or_snap",
+    "format": "pbf"
+  }
+}

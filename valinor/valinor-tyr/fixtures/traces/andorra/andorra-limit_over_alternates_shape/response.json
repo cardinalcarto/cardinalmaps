@@ -1,0 +1,1 @@
+{"status":400,"body":{"error_code":153,"error":"Too many shape points: (101). The best paths shape limit is 100","status_code":400,"status":"Bad Request"}}

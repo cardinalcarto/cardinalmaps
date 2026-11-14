@@ -1,0 +1,16 @@
+{
+  "action": "trace_attributes",
+  "request": {
+    "costing": "pedestrian",
+    "costing_options": {
+      "pedestrian": {
+        "type": "wheelchair"
+      }
+    },
+    "encoded_polyline": "wywapAsfw|AnDhPgFxYuBrWsE~YeGr[zJfNwApOwDx\\jPfD]sH|H`R`PbX|NtPkC~f@mF~X}@dGuY|UuXz\\cVqQBfXyVaFm_@`AwT~RqG~k@c\\{L}Cz^_P~CkO|HwBn_@aPhXuEzd@mPkBqGjm@iNrUkFfHq\\d]_NfEcTv[sGzHwJbQaGfIwStGqRxWaDnRse@k[aJfIcTvc@gKK",
+    "shape_match": "walk_or_snap",
+    "format": "json",
+    "shape_format": "geojson",
+    "id": "trace-9710"
+  }
+}
