@@ -94,10 +94,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DeviceInfo dco_decode_box_autoadd_device_info(dynamic raw);
 
   @protected
+  double dco_decode_box_autoadd_f_64(dynamic raw);
+
+  @protected
   LngLat dco_decode_box_autoadd_lng_lat(dynamic raw);
 
   @protected
   MapPadding dco_decode_box_autoadd_map_padding(dynamic raw);
+
+  @protected
+  PuckStyleInput dco_decode_box_autoadd_puck_style_input(dynamic raw);
 
   @protected
   ByteRange dco_decode_byte_range(dynamic raw);
@@ -110,6 +116,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DeviceInfo dco_decode_device_info(dynamic raw);
+
+  @protected
+  EaseCurve dco_decode_ease_curve(dynamic raw);
 
   @protected
   double dco_decode_f_32(dynamic raw);
@@ -178,7 +187,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
+  double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
+
+  @protected
   LngLat? dco_decode_opt_box_autoadd_lng_lat(dynamic raw);
+
+  @protected
+  PuckStyleInput dco_decode_puck_style_input(dynamic raw);
 
   @protected
   (String, String) dco_decode_record_string_string(dynamic raw);
@@ -272,10 +287,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DeviceInfo sse_decode_box_autoadd_device_info(SseDeserializer deserializer);
 
   @protected
+  double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
   LngLat sse_decode_box_autoadd_lng_lat(SseDeserializer deserializer);
 
   @protected
   MapPadding sse_decode_box_autoadd_map_padding(SseDeserializer deserializer);
+
+  @protected
+  PuckStyleInput sse_decode_box_autoadd_puck_style_input(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ByteRange sse_decode_byte_range(SseDeserializer deserializer);
@@ -288,6 +311,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DeviceInfo sse_decode_device_info(SseDeserializer deserializer);
+
+  @protected
+  EaseCurve sse_decode_ease_curve(SseDeserializer deserializer);
 
   @protected
   double sse_decode_f_32(SseDeserializer deserializer);
@@ -366,7 +392,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
   LngLat? sse_decode_opt_box_autoadd_lng_lat(SseDeserializer deserializer);
+
+  @protected
+  PuckStyleInput sse_decode_puck_style_input(SseDeserializer deserializer);
 
   @protected
   (String, String) sse_decode_record_string_string(
@@ -477,11 +509,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_lng_lat(LngLat self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_map_padding(
     MapPadding self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_puck_style_input(
+    PuckStyleInput self,
     SseSerializer serializer,
   );
 
@@ -499,6 +540,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_device_info(DeviceInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ease_curve(EaseCurve self, SseSerializer serializer);
 
   @protected
   void sse_encode_f_32(double self, SseSerializer serializer);
@@ -588,8 +632,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_lng_lat(
     LngLat? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_puck_style_input(
+    PuckStyleInput self,
     SseSerializer serializer,
   );
 

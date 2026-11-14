@@ -98,7 +98,7 @@ fn tiles_wanted_for_later_load_and_unwanted_ones_are_dropped() {
     for _ in 0..3 {
         match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
             TileMessage::Loaded(s, t, ..) => outcomes.insert((s, t.id), "loaded"),
-            TileMessage::Empty(t) => outcomes.insert(t, "empty"),
+            TileMessage::Empty(t, _) => outcomes.insert(t, "empty"),
             TileMessage::Cancelled(t) => outcomes.insert(t, "cancelled"),
         };
     }

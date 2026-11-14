@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use sparkle::Style;
 use sparkle::sprite::ImageAtlas;
 use sparkle::style::StyleDiff;
@@ -150,6 +150,27 @@ fn run_headless(
         wait(&mut map, &mut renderer, &mut camera)?;
         shown = (*map.style).clone();
         transitions.apply(&map.style, &mut shown, args.transition_ms, camera.zoom);
+    }
+
+    if let Some((source, file)) = &args.next_geojson {
+        let text = std::fs::read_to_string(file)
+            .with_context(|| format!("--next-geojson {}", file.display()))?;
+        map.set_geojson(source, &serde_json::from_str(&text)?)?;
+        // Drawn before any new tile can be cut, as the frame after the data changes is:
+        // the old data, still all there.
+        map.update_camera(&mut camera);
+        let frame = map.frame(&camera, None);
+        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+        let swapping = path.with_file_name(format!("{stem}-swapping.png"));
+        renderer.screenshot(
+            &shown,
+            &camera,
+            &map.draws(&frame),
+            map.terrain(),
+            &swapping,
+        )?;
+        log::info!("saved {} while cutting the new data", swapping.display());
+        wait(&mut map, &mut renderer, &mut camera)?;
     }
 
     // Let tiles finish fading in.

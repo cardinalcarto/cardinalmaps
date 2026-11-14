@@ -56,6 +56,52 @@ pub struct Padding {
     pub left: f64,
 }
 
+impl std::ops::Add for Padding {
+    type Output = Self;
+
+    /// Both kept clear: say, the app's sheet and room ahead of a followed puck.
+    fn add(self, other: Self) -> Self {
+        Self {
+            top: self.top + other.top,
+            right: self.right + other.right,
+            bottom: self.bottom + other.bottom,
+            left: self.left + other.left,
+        }
+    }
+}
+
+/// What a camera shows and how: `target` (world coordinates) in the middle of the
+/// viewport less some padding, at a zoom, bearing and pitch. Eases and the follow camera
+/// move between framings rather than between camera centers, so the target stays where
+/// the padding puts it on screen however the pitch and bearing change on the way.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Framing {
+    pub target: [f64; 2],
+    pub zoom: f64,
+    /// In degrees, clockwise from north.
+    pub bearing: f64,
+    /// In degrees, from looking straight down.
+    pub pitch: f64,
+}
+
+impl Framing {
+    /// `self` turned into `to` by `k` (0 to 1): the zoom and pitch evenly, the bearing the
+    /// short way round, and the target in a straight line on the map the short way
+    /// around the world.
+    pub fn toward(&self, to: &Self, k: f64) -> Self {
+        let mut end = to.target;
+        end[0] += (self.target[0] - end[0]).round();
+        let turn = (to.bearing - self.bearing + 180.0).rem_euclid(360.0) - 180.0;
+        let lerp = |a: f64, b: f64| a + (b - a) * k;
+        Self {
+            target: [lerp(self.target[0], end[0]), lerp(self.target[1], end[1])],
+            zoom: lerp(self.zoom, to.zoom),
+            bearing: self.bearing + turn * k,
+            pitch: lerp(self.pitch, to.pitch),
+        }
+    }
+}
+
 /// The lowest and highest elevation in a tile, in logical pixels at the camera's zoom.
 pub type ElevationRange<'a> = &'a dyn Fn(TileId) -> Option<(f64, f64)>;
 
@@ -177,6 +223,57 @@ impl Camera {
             self.center[0] - (dx * cos - dy * sin) / size,
             (self.center[1] - (dx * sin + dy * cos) / size).clamp(0.0, 1.0),
         ]
+    }
+
+    /// The middle of the viewport less `padding`, in physical pixels.
+    pub fn anchor(&self, padding: Padding) -> [f64; 2] {
+        let [w, h] = self.logical_size();
+        let x = padding.left + (w - padding.left - padding.right) / 2.0;
+        let y = padding.top + (h - padding.top - padding.bottom) / 2.0;
+        [x * self.pixel_ratio, y * self.pixel_ratio]
+    }
+
+    /// What the camera shows in the middle of the viewport less `padding`: the ground
+    /// there as seen at the camera's pitch, which is [`Self::padded_center`] only when
+    /// looking straight down. Above the horizon, the padded center.
+    pub fn framing(&self, padding: Padding) -> Framing {
+        Framing {
+            target: self
+                .screen_to_world(self.anchor(padding))
+                .unwrap_or_else(|| self.padded_center(padding)),
+            zoom: self.zoom,
+            bearing: self.bearing,
+            pitch: self.pitch,
+        }
+    }
+
+    /// Show `framing`: its zoom, bearing and pitch, with its target on the ground in the
+    /// middle of the viewport less `padding`. Unlike [`Self::center_for`], this holds at
+    /// any pitch, where the padding's offset on screen is foreshortened on the ground.
+    pub fn show(&mut self, framing: &Framing, padding: Padding) {
+        self.zoom = framing.zoom.clamp(0.0, MAX_ZOOM);
+        self.set_bearing(framing.bearing);
+        self.set_pitch(framing.pitch);
+        let target = framing.target;
+        let anchor = self.anchor(padding);
+        // On the plane the ground under a screen point moves with the center, so one
+        // step lands it; the globe bends, so a few more close in.
+        self.center = target;
+        for _ in 0..4 {
+            let Some(shown) = self.screen_to_world(anchor) else {
+                self.center = self.center_for(target, self.zoom, padding);
+                break;
+            };
+            let off = [target[0] - shown[0], target[1] - shown[1]];
+            self.center = [
+                self.center[0] + off[0],
+                (self.center[1] + off[1]).clamp(0.0, 1.0),
+            ];
+            if off[0].hypot(off[1]) * self.world_size() < 1e-3 {
+                break;
+            }
+        }
+        self.center[0] = self.center[0].rem_euclid(1.0);
     }
 
     /// The viewport in logical pixels.
@@ -837,6 +934,79 @@ mod tests {
         };
         c.center = c.center_for(target, c.zoom, padding);
         assert!(close(c.padded_center(padding), target));
+    }
+
+    #[test]
+    fn a_framing_shows_its_target_in_the_middle_of_the_padding_at_any_pitch() {
+        let mut c = camera();
+        let padding = Padding {
+            top: 300.0,
+            right: 0.0,
+            bottom: 100.0,
+            left: 60.0,
+        };
+        let target = lng_lat_to_world(-122.31, 47.61);
+        for (bearing, pitch) in [(0.0, 0.0), (45.0, 60.0), (-170.0, 80.0)] {
+            let framing = Framing {
+                target,
+                zoom: 16.0,
+                bearing,
+                pitch,
+            };
+            c.show(&framing, padding);
+            // The middle of what the padding leaves: x 60 + 740 / 2, y 300 + 200 / 2.
+            let shown = c.screen_to_world([430.0, 400.0]).unwrap();
+            assert!(close(shown, target), "{bearing} {pitch}: {shown:?}");
+            let back = c.framing(padding);
+            assert!(close(back.target, target) && back.pitch == pitch);
+        }
+    }
+
+    #[test]
+    fn looking_straight_down_a_framing_is_center_for() {
+        let mut c = camera();
+        c.set_bearing(30.0);
+        let padding = Padding {
+            top: 40.0,
+            bottom: 250.0,
+            left: 10.0,
+            right: 0.0,
+        };
+        let target = lng_lat_to_world(-122.3, 47.65);
+        let flat = c.center_for(target, 13.0, padding);
+        c.show(
+            &Framing {
+                target,
+                zoom: 13.0,
+                bearing: 30.0,
+                pitch: 0.0,
+            },
+            padding,
+        );
+        assert!(close(c.center, flat), "{:?} {flat:?}", c.center);
+    }
+
+    #[test]
+    fn framings_turn_the_short_way_and_cross_the_antimeridian() {
+        let a = Framing {
+            target: [0.99, 0.5],
+            zoom: 10.0,
+            bearing: 170.0,
+            pitch: 0.0,
+        };
+        let b = Framing {
+            target: [0.01, 0.5],
+            zoom: 12.0,
+            bearing: -170.0,
+            pitch: 60.0,
+        };
+        let half = a.toward(&b, 0.5);
+        assert!(
+            (half.target[0].rem_euclid(1.0) - 0.0).abs() < 1e-12,
+            "{half:?}"
+        );
+        assert!((half.bearing - 180.0).abs() < 1e-12, "{half:?}");
+        assert_eq!((half.zoom, half.pitch), (11.0, 30.0));
     }
 
     #[test]

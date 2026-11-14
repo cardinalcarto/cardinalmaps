@@ -152,7 +152,7 @@ fn only_geojson_sources_take_data() {
 }
 
 #[test]
-fn replaced_data_is_never_drawn_again() {
+fn replaced_data_is_drawn_until_the_new_is_in_and_never_after() {
     let mut f = Fixture::new();
     let pin = json!({
         "type": "FeatureCollection",
@@ -176,7 +176,14 @@ fn replaced_data_is_never_drawn_again() {
             &json!({"type": "FeatureCollection", "features": []}),
         )
         .unwrap();
-    // Before the new tiles arrive, at this zoom or another, nothing draws the old pin.
+    // Until the new tiles are in, the old ones are drawn, so the source doesn't blink.
+    f.map.frame(&f.camera, None);
+    assert_eq!(f.map.query_point(&f.camera, [400.0, 300.0]).len(), 1);
+    assert!(f.map.swapping("selection"));
+    f.settle();
+    assert!(!f.map.swapping("selection"));
+    // Once they are, the old ones are gone at every zoom, even standing in for tiles of
+    // the new data still loading.
     for zoom in [14.0, 13.0, 12.0] {
         f.camera.look_at(-122.33, 47.6, zoom);
         f.map.frame(&f.camera, None);

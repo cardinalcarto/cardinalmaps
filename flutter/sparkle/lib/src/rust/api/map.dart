@@ -8,7 +8,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `of`, `properties_text`, `property_text`, `to_button`, `view`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`, `from`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<SparkleMap>>
 abstract class SparkleMap implements RustOpaqueInterface {
@@ -29,10 +29,40 @@ abstract class SparkleMap implements RustOpaqueInterface {
   /// A double tap: glide in a level around it.
   void doubleTapZoom({required double x, required double y});
 
+  /// Ease to show `lng, lat` in the middle of the view less the padding (at any pitch),
+  /// at `zoom`, and at `bearing` and `pitch` (as they are for `None`), over `duration`
+  /// seconds along `curve`, dropping any subject and following. The bearing turns the
+  /// short way; the pitch stops at the camera's limit (85°). Input that moves the map
+  /// stops it. Draw frames after.
+  void easeTo({
+    required double lng,
+    required double lat,
+    required double zoom,
+    double? bearing,
+    double? pitch,
+    required double duration,
+    required EaseCurve curve,
+  });
+
   /// Fly to show `lng, lat` at `zoom` in the middle of the view less the padding,
   /// zooming out on the way if it's far, and dropping any subject. Input that moves
   /// the map stops it. Draw a frame after.
   void flyTo({required double lng, required double lat, required double zoom});
+
+  /// Follow the puck, frame by frame: keep it in the middle of the view less the
+  /// padding and `padding` on top of it (to put it lower on screen, say), at `zoom` and
+  /// `pitch`, with `bearing` fixed or (`None`) turning with the puck. It eases in from
+  /// where the camera is over `duration` seconds; calling it again while following
+  /// changes the settings the same way. Input that moves the map, [`Self::fly_to`],
+  /// [`Self::ease_to`], [`Self::set_subject`] and [`Self::turn_north`] end it. Fails if
+  /// the puck hasn't been put anywhere yet. Draw frames after.
+  void follow({
+    required double zoom,
+    required double pitch,
+    double? bearing,
+    required MapPadding padding,
+    required double duration,
+  });
 
   /// Draw a frame. Dart must be done with the previous frame's commands.
   FrameOutput frame();
@@ -43,6 +73,10 @@ abstract class SparkleMap implements RustOpaqueInterface {
 
   /// With `--hover x,y`, hover that point. Returns whether a frame should be drawn.
   bool hoverArgument();
+
+  /// Whether the camera is following the puck: [`Self::follow`] started it, and nothing
+  /// has ended it since.
+  bool isFollowing();
 
   /// `key`: a character, or a named key such as `ArrowLeft`.
   bool key({required String key, required bool shift});
@@ -137,6 +171,22 @@ abstract class SparkleMap implements RustOpaqueInterface {
   /// well as the zoom. Returns whether a frame should be drawn.
   bool setPadding({required MapPadding padding});
 
+  /// Put the navigation puck at `lng, lat`, pointing `bearing` degrees clockwise from
+  /// north, gliding there from where it's shown over `duration` seconds: linearly, and
+  /// turning the short way. The first pose, or one with no duration, is taken at once.
+  /// A pose that comes before the glide ends bends it from where it got to. Draw
+  /// frames after.
+  void setPuck({
+    required double lng,
+    required double lat,
+    required double bearing,
+    required double duration,
+  });
+
+  /// Draw the puck as `style` has it. Fails if it names a layer the style lacks. Draw
+  /// a frame after.
+  void setPuckStyle({required PuckStyleInput style});
+
   /// Fly to the bounds (`west > east` crosses the antimeridian), zoomed in no closer
   /// than `max_zoom`, with `margin` logical pixels clear around them, and keep them in
   /// view as the padding changes until input moves the map or [`Self::clear_subject`].
@@ -149,6 +199,13 @@ abstract class SparkleMap implements RustOpaqueInterface {
     required double maxZoom,
     required double margin,
   });
+
+  /// Show or hide the puck (hidden until shown, or set by `--puck`). Returns whether
+  /// a frame should be drawn.
+  bool showPuck({required bool shown});
+
+  /// Stop following the puck, leaving the camera where it is.
+  void stopFollowing();
 
   /// The features of the labels the last click landed on, nearest first. Later calls
   /// return nothing until the next click.
@@ -329,6 +386,9 @@ class DeviceInfo {
           halfFloat == other.halfFloat;
 }
 
+/// How an ease's progress follows time, as CSS's timing functions of the same names.
+enum EaseCurve { linear, ease, easeIn, easeOut, easeInOut }
+
 /// One frame: commands for `executor.dart`, and what the map is doing.
 ///
 /// The commands and their data stay in Rust's memory, where Dart reads them in place
@@ -358,6 +418,10 @@ class FrameOutput {
   final double bearing;
   final double pitch;
 
+  /// The camera is following the puck: see [`SparkleMap::follow`]. Input that moves
+  /// the map ends it, which the next frame tells.
+  final bool following;
+
   const FrameOutput({
     required this.commands,
     required this.uniforms,
@@ -370,6 +434,7 @@ class FrameOutput {
     required this.zoom,
     required this.bearing,
     required this.pitch,
+    required this.following,
   });
 
   @override
@@ -384,7 +449,8 @@ class FrameOutput {
       loading.hashCode ^
       zoom.hashCode ^
       bearing.hashCode ^
-      pitch.hashCode;
+      pitch.hashCode ^
+      following.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -401,7 +467,8 @@ class FrameOutput {
           loading == other.loading &&
           zoom == other.zoom &&
           bearing == other.bearing &&
-          pitch == other.pitch;
+          pitch == other.pitch &&
+          following == other.following;
 }
 
 class LngLat {
@@ -450,6 +517,50 @@ class MapPadding {
           right == other.right &&
           bottom == other.bottom &&
           left == other.left;
+}
+
+/// How the navigation puck, a chevron, looks: see [`SparkleMap::set_puck_style`].
+class PuckStyleInput {
+  /// `0xAARRGGBB`, as Dart's `Color.toARGB32`.
+  final int fill;
+  final int outline;
+
+  /// In logical pixels, inside the chevron's edge; 0 for none.
+  final double outlineWidth;
+
+  /// The chevron's length from tip to tail, in logical pixels.
+  final double size;
+
+  /// The id of the style layer it's drawn under; `None` for over every layer (see
+  /// `sparkle_view::puck::PuckStyle::before_layer` for why that's the default).
+  final String? beforeLayer;
+
+  const PuckStyleInput({
+    required this.fill,
+    required this.outline,
+    required this.outlineWidth,
+    required this.size,
+    this.beforeLayer,
+  });
+
+  @override
+  int get hashCode =>
+      fill.hashCode ^
+      outline.hashCode ^
+      outlineWidth.hashCode ^
+      size.hashCode ^
+      beforeLayer.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PuckStyleInput &&
+          runtimeType == other.runtimeType &&
+          fill == other.fill &&
+          outline == other.outline &&
+          outlineWidth == other.outlineWidth &&
+          size == other.size &&
+          beforeLayer == other.beforeLayer;
 }
 
 /// An image to add to the map's sprite: see [`SparkleMap::add_images`].

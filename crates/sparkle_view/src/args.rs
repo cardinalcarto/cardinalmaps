@@ -46,6 +46,11 @@ usage: sparkle_harness | sparkle_example [tiles.mbtiles | TileJSON URL] [options
   --next-style style.json        with --headless, switch to this style once loaded, letting
                                  paint transitions run for --transition-ms (default 0) before
                                  the screenshot
+  --next-geojson source=path.geojson
+                                 with --headless, replace the data of a geojson source once
+                                 loaded: the frame drawn right then, while the new tiles are
+                                 cut, is saved beside the screenshot as <name>-swapping.png
+  --puck lng,lat,bearing         show the navigation puck there (the Flutter map only)
 
 A style's `terrain` drapes the map over its raster-dem source (give its tiles with
 --tiles id=dem.mbtiles); its `projection` and `sky` are drawn too, e.g. styles/terrain-3d.json
@@ -85,6 +90,10 @@ pub struct Args {
     pub hover: Option<[f64; 2]>,
     pub next_style: Option<PathBuf>,
     pub transition_ms: f64,
+    /// `(source id, path)`
+    pub next_geojson: Option<(String, PathBuf)>,
+    /// `[lng, lat, bearing]`
+    pub puck: Option<[f64; 3]>,
 }
 
 /// `--feature-state source[/layer]:id:{json}`
@@ -149,6 +158,8 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Args> {
         hover: None,
         next_style: None,
         transition_ms: 0.0,
+        next_geojson: None,
+        puck: None,
     };
     let mut it = arguments.into_iter();
     let value = |it: &mut dyn Iterator<Item = String>, flag: &str| {
@@ -219,6 +230,22 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Args> {
             }
             "--next-style" => args.next_style = Some(value(&mut it, "--next-style")?.into()),
             "--transition-ms" => args.transition_ms = value(&mut it, "--transition-ms")?.parse()?,
+            "--next-geojson" => match keyed(value(&mut it, "--next-geojson")?) {
+                (Some(id), path) => args.next_geojson = Some((id, path)),
+                (None, _) => bail!("--next-geojson needs source=path"),
+            },
+            "--puck" => {
+                let v = value(&mut it, "--puck")?;
+                let parts: Vec<f64> = v
+                    .split(',')
+                    .map(str::parse)
+                    .collect::<Result<_, _>>()
+                    .context("--puck needs numbers")?;
+                let [lng, lat, bearing] = parts[..] else {
+                    bail!("--puck needs lng,lat,bearing");
+                };
+                args.puck = Some([lng, lat, bearing]);
+            }
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0);
