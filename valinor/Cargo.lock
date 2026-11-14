@@ -3034,6 +3034,7 @@ dependencies = [
  "valhalla-graphtile",
  "valhalla-proto",
  "valhalla-response",
+ "valinor-meili",
  "valinor-sif",
  "valinor-tyr",
 ]

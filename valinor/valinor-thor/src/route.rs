@@ -16,6 +16,7 @@ use valhalla_proto::{
     Api, CodedDescription, HierarchyLimits, Info, Location, Options, PathEdge as CandidateEdge,
 };
 use valhalla_response::{ErrorCode, ValhallaError};
+use valinor_meili::MapMatcherFactory;
 use valinor_sif::costing_options::costing_name;
 use valinor_sif::{AnyCosting, Costing, UNLIMITED_TRANSITIONS};
 
@@ -1184,19 +1185,32 @@ impl<P: GraphTileProvider> ThorRoute<'_, P> {
     }
 }
 
-/// Mainline's Thor for routes: a configuration and a tile set.
+/// Mainline's Thor for routes and map matching: a configuration, a tile set,
+/// and the map matcher factory made from the configuration's `meili` section.
 ///
 /// It holds nothing per request, so one can serve many threads at once
-/// (given a thread-safe provider); each thread brings its own [`Workspace`].
+/// (given a thread-safe provider); each thread brings its own [`Workspace`]
+/// (and, for map matching, its own [`valinor_meili::Workspace`]).
 pub struct Thor<P> {
     config: ThorConfig,
     provider: P,
+    matcher_factory: MapMatcherFactory,
 }
 
 impl<P: GraphTileProvider> Thor<P> {
     /// Thor over a tile set.
     pub fn new(config: ThorConfig, provider: P) -> Self {
-        Self { config, provider }
+        let matcher_factory = MapMatcherFactory::new(config.meili);
+        Self {
+            config,
+            provider,
+            matcher_factory,
+        }
+    }
+
+    /// The map matcher factory (mainline's `matcher_factory`).
+    pub(crate) fn matcher_factory(&self) -> &MapMatcherFactory {
+        &self.matcher_factory
     }
 
     /// The configuration.

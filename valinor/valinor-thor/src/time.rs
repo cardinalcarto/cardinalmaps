@@ -67,21 +67,63 @@ pub(crate) fn location_time_info<P: GraphTileProvider>(
     location: &mut Location,
     now: Timestamp,
 ) -> Result<TimeInfo, ThorError> {
+    location_time_info_or(provider, location, UTC_TIME_ZONE_INDEX, now)
+}
+
+/// [`location_time_info`] with another time zone for a location whose candidates have none
+/// (mainline's `default_timezone_index`; UTC if it isn't a time zone).
+///
+/// # Errors
+///
+/// As for [`location_time_info`].
+pub(crate) fn location_time_info_or<P: GraphTileProvider>(
+    provider: &P,
+    location: &mut Location,
+    default_tz: u32,
+    now: Timestamp,
+) -> Result<TimeInfo, ThorError> {
     if location.date_time.is_empty() {
         return Ok(TimeInfo::INVALID);
     }
-    let tz_index = location_timezone(provider, location)?;
-    if location.date_time == "current" {
-        let zone = if tz_index == 0 {
-            UTC_TIME_ZONE_INDEX
+    let mut tz_index = location_timezone(provider, location)?;
+    if tz_index == 0 {
+        tz_index = if time_zone(default_tz).is_some() {
+            default_tz
         } else {
-            tz_index
+            UTC_TIME_ZONE_INDEX
         };
-        if let Some(tz) = time_zone(zone) {
-            location.date_time = format_minute(tz, now);
-        }
+    }
+    if location.date_time == "current"
+        && let Some(tz) = time_zone(tz_index)
+    {
+        location.date_time = format_minute(tz, now);
     }
     Ok(TimeInfo::make(&location.date_time, tz_index, now))
+}
+
+/// Seconds since the epoch as a local date and time in a time zone, to the minute
+/// (mainline's `DateTime::seconds_to_date` without the offset), empty for 0 or no time zone.
+pub(crate) fn seconds_to_date(seconds: u64, tz_index: u32) -> String {
+    let Some(tz) = time_zone(tz_index) else {
+        return String::new();
+    };
+    if seconds == 0 {
+        return String::new();
+    }
+    let Some(at) = i64::try_from(seconds)
+        .ok()
+        .and_then(|s| Timestamp::from_second(s).ok())
+    else {
+        return String::new();
+    };
+    format_minute(tz, at)
+}
+
+/// The date and time of a time info (mainline's `TimeInfo::date_time`): its local time,
+/// which counts leap seconds, read as seconds since the epoch, so 27 seconds late
+/// before it is cut to the minute.
+pub(crate) fn time_info_date_time(info: &TimeInfo) -> String {
+    seconds_to_date(info.local_time, info.timezone_index)
 }
 
 /// A location's date and time, UTC offset, and time zone name

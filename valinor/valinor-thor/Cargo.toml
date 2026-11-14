@@ -1,6 +1,6 @@
 [package]
 name = "valinor-thor"
-description = "Valhalla-compatible path search (mainline's Thor): the best paths between correlated locations."
+description = "Valhalla-compatible path search and map matching (mainline's Thor): the best paths between correlated locations, and the paths of GPS traces."
 version = "0.1.0"
 authors.workspace = true
 license.workspace = true
@@ -17,13 +17,16 @@ thiserror = { workspace = true }
 valhalla-graphtile = { workspace = true }
 valhalla-proto = { workspace = true }
 valhalla-response = { workspace = true }
+# Mainline's Meili, which Thor's `trace_route` and `trace_attributes` call.
+valinor-meili = { workspace = true }
 valinor-sif = { workspace = true }
 # Mainline's `AttributesController` is shared with Tyr's serializers, as in mainline;
-# Thor will also call Tyr's `trace_attributes` serializer, as mainline's Thor does.
+# Thor also calls Tyr's `trace_attributes` serializer, as mainline's Thor does.
 valinor-tyr = { workspace = true }
 
 [dev-dependencies]
 base64 = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

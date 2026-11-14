@@ -41,7 +41,7 @@ const TOLERANCE: f64 = 1e-6;
 
 /// A token of a `Debug` dump: a run of word characters (names and numbers), a string,
 /// or one punctuation character.
-fn tokens(text: &str) -> Vec<&str> {
+pub(crate) fn tokens(text: &str) -> Vec<&str> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -75,7 +75,7 @@ fn tokens(text: &str) -> Vec<&str> {
 }
 
 /// A float token's value (integers are compared exactly, so they aren't floats).
-fn float_of(token: &str) -> Option<f64> {
+pub(crate) fn float_of(token: &str) -> Option<f64> {
     let is_float =
         token.contains('.') || token.contains('e') || matches!(token, "NaN" | "inf" | "-inf");
     if !is_float {
@@ -84,12 +84,12 @@ fn float_of(token: &str) -> Option<f64> {
     token.parse().ok()
 }
 
-fn floats_match(a: f64, b: f64) -> bool {
+pub(crate) fn floats_match(a: f64, b: f64) -> bool {
     a == b || (a.is_nan() && b.is_nan()) || (a - b).abs() <= TOLERANCE * a.abs().max(b.abs())
 }
 
 /// The first difference between two dumps, with the field it's in, or `None`.
-fn first_difference(ours: &str, theirs: &str) -> Option<String> {
+pub(crate) fn first_difference(ours: &str, theirs: &str) -> Option<String> {
     let (a, b) = (tokens(ours), tokens(theirs));
     let mut field = "";
     for (i, (x, y)) in a.iter().zip(&b).enumerate() {
@@ -110,7 +110,7 @@ fn first_difference(ours: &str, theirs: &str) -> Option<String> {
 }
 
 /// Where two trips differ (by route, leg, and part of the leg), if they do.
-fn compare_trips(ours: &Trip, theirs: &Trip) -> Option<String> {
+pub(crate) fn compare_trips(ours: &Trip, theirs: &Trip) -> Option<String> {
     if ours.routes.len() != theirs.routes.len() {
         return Some(format!(
             "routes: ours {}, mainline's {}",

@@ -87,6 +87,10 @@ pub enum ThorError {
     /// (mainline's text, from `RemovePathEdges`).
     #[error("Could not find matching edge candidate")]
     MissingPathCandidate,
+    /// The edge walk can't go on where mainline throws (an invalid shape or candidate,
+    /// or a tile the walk needs is missing), with mainline's message.
+    #[error("{0}")]
+    EdgeWalk(&'static str),
     /// An intermediate location's edge index doesn't come after the previous one's,
     /// which means path search didn't set it (mainline's text, from `CopyLocations`).
     #[error("leg_shape_index not set for intermediate location")]
