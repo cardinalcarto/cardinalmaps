@@ -14,7 +14,8 @@ names, buckets and hostnames are placeholders.
   it only pages in index files.
 - **Not needed to serve:** Postgres, the WOF databases, `poi_service`, and the
   POI updater. Those are build-time inputs only.
-- **Data per release:** about 160 GB on disk. The index is ~156 GB, in 143 files.
+- **Data per release:** the index is ~156 GB uncompressed, in 143 files; the
+  image of it is smaller (not yet measured for the planet).
 - **Memory:** about 4 GB is a hard floor (mostly the category models); 16 GB
   leaves room to cache the index.
 - **CPU:** every query is single-threaded and CPU-heavy. The dev index took
@@ -22,19 +23,23 @@ names, buckets and hostnames are placeholders.
 
 ## Decisions
 
-1. **One archive per release.** Publish `releases/geocoder/DATE/geocoder.tar.zst`
-   (index, categories, tagger, and the release's `manifest.json`) as a single
-   multipart upload. `release.json` beside it records the archive's size and
-   SHA-256. Samples measured with zstd -3 put the archive at about 110 GB
-   (`.store` 80%, `.idx` 79%, `.term` 44%). Per-file objects were considered
-   and rejected as more complexity than they're worth. The cost: a failed
-   download restarts from the beginning, once per release.
-2. **Pulled once per release, not on every start.** The index lives on a fly
+1. **One image per release.** `cardinal-publish geocoder` publishes
+   `releases/geocoder/DATE/geocoder.btrfs`, a read-only btrfs image of the
+   index (`index/`), the categorical models (`categories/`) and the query
+   tagger (`tagger.model`), with its files compressed with zstd, which
+   `data_pipeline`'s `build` makes. It goes up as a single multipart upload,
+   and `release.json` beside it records the image's size and SHA-256 and the
+   index's schema version. Per-file objects were considered and rejected as
+   more complexity than they're worth. Since the image is stored as it is,
+   rather than unpacked while it streams in, an interrupted download can
+   resume with range requests.
+2. **Pulled once per release, not on every start.** The image lives on a fly
    volume. A machine's entrypoint checks whether the volume holds the release
-   named by `GEOCODER_RELEASE`. If it doesn't, it streams the archive straight
-   onto the volume (`curl | tee >(sha256sum) | zstd -d | tar -x`, nothing
-   stored twice), checks the hash, and only then starts airmail. A restart reuses
-   what's there.
+   named by `GEOCODER_RELEASE`. If it doesn't, it downloads the image onto the
+   volume, checks its SHA-256 against `release.json`, and only then mounts it
+   read-only (`mount -o loop,ro`) and starts airmail on its `index/`, `categories/` and `tagger.model`. The image
+   stays compressed on the volume, and the kernel decompresses pages as
+   airmail maps them. A restart reuses what's there.
 3. **Blue/green machines, no A/B slots.** Volumes are the main cost, so a
    machine's volume holds one release (~200 GB). A new release gets a new
    machine with a new volume; the old one is stopped once the new one is

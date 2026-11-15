@@ -8,6 +8,9 @@ import (
 
 type DataPipeline = core.DataPipeline
 
+// DataPipelineBtrfsImageOpts contains options for DataPipeline.BtrfsImage
+type DataPipelineBtrfsImageOpts = core.DataPipelineBtrfsImageOpts
+
 // DataPipelineBuildOpts contains options for DataPipeline.Build
 type DataPipelineBuildOpts = core.DataPipelineBuildOpts
 

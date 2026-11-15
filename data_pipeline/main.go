@@ -28,6 +28,10 @@ import (
 // The GDAL that cuts elevation tiles: Ubuntu noble's, matching the pinned Valhalla image's base.
 const routingGdalVersion = "3.8.4+dfsg-3ubuntu3"
 
+// The btrfs-progs that makes release images: Debian trixie's, whose mkfs.btrfs can fill and
+// compress an image from a directory without mounting it (--rootdir with --compress).
+const btrfsProgsVersion = "6.14-1"
+
 const (
 	buildImage        = "maven:3.9-eclipse-temurin-25"
 	runtimeImage      = "eclipse-temurin:25-jre"
@@ -71,10 +75,19 @@ func New(ws *dagger.Workspace) *DataPipeline {
 }
 
 // Builds tiles, the geocoder index and routing tiles from one OSM extract,
-// into a release: a directory holding tiles.mbtiles, index/, routing/ (see
-// RoutingTiles), and the categorical models and query tagger it's given, as
-// categories/ and tagger.model. The steps run one after another, since each
-// can use most of a planet build machine's memory.
+// into a release: a directory holding
+//
+//   - tiles.mbtiles;
+//   - routing/ (see RoutingTiles), and routing.btrfs, an image of the same
+//     tiles.tar and valhalla.json for servers (see BtrfsImage);
+//   - geocoder.btrfs, an image holding everything the geocoder serves: the
+//     index as index/, and the categorical models and query tagger it's
+//     given, as categories/ and tagger.model; and geocoder.json, a copy of
+//     the index's airmail-index.json (its schema version), so the image
+//     needn't be mounted to tell which geocoder reads it.
+//
+// The steps run one after another, since each can use most of a planet build
+// machine's memory.
 // +cache="never"
 func (m *DataPipeline) Build(
 	ctx context.Context,
@@ -142,6 +155,9 @@ func (m *DataPipeline) Build(
 	// RoutingTiles.
 	// +optional
 	gedtmService *dagger.Service,
+	// The zstd level the images are compressed at; see BtrfsImage.
+	// +default=3
+	imageCompressionLevel int,
 ) (*dagger.Directory, error) {
 	patched := osm
 	if databaseUrl != nil {
@@ -181,12 +197,62 @@ func (m *DataPipeline) Build(
 	if err != nil {
 		return nil, err
 	}
+	// valhalla.json names tiles.tar relative to itself, so the image's root
+	// holds both, and Valinor maps the tarball as a whole.
+	routingImage, err := m.BtrfsImage(ctx, routing, imageCompressionLevel)
+	if err != nil {
+		return nil, err
+	}
+	// Everything the geocoder serves, so a server needs only the image.
+	geocoderImage, err := m.BtrfsImage(ctx, dag.Directory().
+		WithDirectory("index", index).
+		WithDirectory("categories", categories).
+		WithFile("tagger.model", tagger), imageCompressionLevel)
+	if err != nil {
+		return nil, err
+	}
 	return dag.Directory().
 		WithFile("tiles.mbtiles", tiles).
-		WithDirectory("index", index).
+		WithFile("geocoder.btrfs", geocoderImage).
+		WithFile("geocoder.json", index.File("airmail-index.json")).
 		WithDirectory("routing", routing).
-		WithDirectory("categories", categories).
-		WithFile("tagger.model", tagger), nil
+		WithFile("routing.btrfs", routingImage), nil
+}
+
+// Packs a directory into a read-only btrfs filesystem image, its files
+// compressed with zstd, for servers to download as one file and mount
+// (mount -o loop,ro): the kernel decompresses pages as they're read, so the
+// files stay memory-mappable while the image, on disk and in transit, is
+// compressed. mkfs.btrfs fills the image from the directory (--rootdir)
+// without mounting anything, so no privileges are needed, and shrinks it to
+// what it holds. Images aren't byte-reproducible: btrfs records when it was
+// made, so compare what they hold, not their hashes.
+func (m *DataPipeline) BtrfsImage(
+	ctx context.Context,
+	// What the image's root directory holds.
+	dir *dagger.Directory,
+	// zstd level, 1 (fastest) to 15 (smallest).
+	// +default=3
+	compressionLevel int,
+) (*dagger.File, error) {
+	if compressionLevel < 1 || compressionLevel > 15 {
+		return nil, fmt.Errorf("compression level %d isn't between 1 and 15", compressionLevel)
+	}
+	ctr, err := dag.Container().
+		From(poiServiceRuntime).
+		WithExec([]string{"sh", "-c", "apt-get update && apt-get install -y --no-install-recommends btrfs-progs=" + btrfsProgsVersion + " && rm -rf /var/lib/apt/lists/*"}).
+		WithMountedDirectory("/rootdir", dir).
+		WithExec([]string{"mkdir", "-p", "/out"}).
+		// mkfs.btrfs needs the file to exist, or it reports that it can't stat it.
+		WithExec([]string{"truncate", "-s", "0", "/out/image.btrfs"}).
+		WithExec([]string{"mkfs.btrfs", "--quiet", "--rootdir", "/rootdir",
+			"--compress", fmt.Sprintf("zstd:%d", compressionLevel), "--shrink", "/out/image.btrfs"}).
+		WithExec([]string{"btrfs", "check", "--readonly", "/out/image.btrfs"}).
+		Sync(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ctr.File("/out/image.btrfs"), nil
 }
 
 // The poi_service executable.

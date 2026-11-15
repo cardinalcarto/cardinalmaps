@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import latest, mapfile, poi, routing, transit
+from . import geocoder, latest, mapfile, poi, routing, transit
 from .common import PublishError, check_date
 from .target import DirTarget, Publisher, State, parse_target
 
@@ -49,6 +49,19 @@ def parser():
     step.add_argument("--date", required=True, help="the release date, YYYY-MM-DD[.N]")
     step.add_argument("--source", help="what the tiles were built from, for release.json (e.g. planet-261005)")
     step.add_argument("--build-commit", help="the Cardinal commit the tiles were built with, for release.json")
+    step.add_argument("--image", type=Path,
+                      help="the build's routing.btrfs, the same tiles as an image for servers, uploaded beside them")
+    step.add_argument("--part-size-mib", type=int, default=128, help="the image's multipart part size (default: 128 MiB)")
+
+    step = steps.add_parser("geocoder", help="publish the geocoder index's btrfs image, for servers")
+    add_target_args(step)
+    step.add_argument("--image", type=Path, required=True, help="the build's geocoder.btrfs")
+    step.add_argument("--metadata", type=Path, required=True,
+                      help="the build's geocoder.json, which gives the index's schema version")
+    step.add_argument("--date", required=True, help="the release date, YYYY-MM-DD[.N]")
+    step.add_argument("--source", help="what the index was built from, for release.json")
+    step.add_argument("--build-commit", help="the Cardinal commit the index was built with, for release.json")
+    step.add_argument("--part-size-mib", type=int, default=128, help="multipart part size (default: 128 MiB)")
 
     step = steps.add_parser("map-convert", help="convert the MBTiles tileset to PMTiles (local only)")
     step.add_argument("--mbtiles", type=Path, required=True)
@@ -131,14 +144,18 @@ def run(args):
     state = State(state_path)
     try:
         jobs = args.jobs
-        if args.step == "map":
+        if args.step in ("map", "geocoder"):
             # Parts are large; a few in flight fill the uplink.
             jobs = min(jobs, 8)
         publisher = Publisher(target, args.prefix, state, jobs, args.dry_run)
         print(f"publishing to {target.describe()} under {args.prefix!r}"
               f"{' (dry run)' if args.dry_run else ''}", file=sys.stderr)
         if args.step == "routing":
-            routing.run(publisher, args.tar.resolve(), check_date(args.date), args.source, args.build_commit)
+            routing.run(publisher, args.tar.resolve(), check_date(args.date), args.source, args.build_commit,
+                        args.image.resolve() if args.image else None, args.part_size_mib << 20)
+        elif args.step == "geocoder":
+            geocoder.run(publisher, args.image.resolve(), args.metadata.resolve(), check_date(args.date),
+                         args.source, args.build_commit, args.part_size_mib << 20)
         elif args.step == "map":
             mapfile.publish(publisher, args.pmtiles.resolve(), check_date(args.date), args.source,
                             args.build_commit, args.part_size_mib << 20)

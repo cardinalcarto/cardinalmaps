@@ -588,3 +588,86 @@ def test_poi_on_s3(tmp_path, s3):
     assert "releases/poi/107/release.json" not in keys and "releases/poi/108/delta.bin.zst" in keys
     assert not any(k.startswith("releases/poi/snapshots/100/") for k in keys)
     assert "releases/poi/snapshots/107/versions.bin.zst" in keys
+
+
+from cardinal_publish import geocoder
+from cardinal_publish.image import SUPERBLOCK_MAGIC, SUPERBLOCK_MAGIC_OFFSET
+
+
+def write_btrfs(path: Path, size=200_000, fill=b"z"):
+    """Enough of a btrfs image for the steps' check: the superblock's magic at 64 KiB."""
+    data = bytearray(fill * size)
+    data[SUPERBLOCK_MAGIC_OFFSET:SUPERBLOCK_MAGIC_OFFSET + len(SUPERBLOCK_MAGIC)] = SUPERBLOCK_MAGIC
+    path.write_bytes(bytes(data))
+    return bytes(data)
+
+
+def test_routing_publishes_its_image_beside_the_loose_tiles(tmp_path):
+    import hashlib
+
+    tar = tmp_path / "tiles.tar"
+    write_tar(tar, SEATTLE)
+    image = tmp_path / "routing.btrfs"
+    data = write_btrfs(image)
+    release = routing.run(dir_publisher(tmp_path), tar, "2026-11-11", None, None, image, 1 << 16)
+    root = tmp_path / "bucket/releases/routing/2026-11-11"
+    assert (root / "routing.btrfs").read_bytes() == data
+    assert release["image"] == {"file": "routing.btrfs", "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    assert (root / "tiles" / tile_name(SEATTLE[0])).exists()
+
+    # A rerun checks the image too, and needs it to.
+    routing.run(dir_publisher(tmp_path), tar, "2026-11-11", None, None, image, 1 << 16)
+    with pytest.raises(PublishError, match="pass --image"):
+        routing.run(dir_publisher(tmp_path), tar, "2026-11-11", None, None)
+    other = tmp_path / "other.btrfs"
+    write_btrfs(other, fill=b"y")
+    with pytest.raises(PublishError, match="next release of the day"):
+        routing.run(dir_publisher(tmp_path), tar, "2026-11-11", None, None, other, 1 << 16)
+    assert (root / "routing.btrfs").read_bytes() == data
+
+
+def test_geocoder_publishes_the_image_with_its_schema_version(tmp_path):
+    image = tmp_path / "geocoder.btrfs"
+    data = write_btrfs(image)
+    metadata = tmp_path / "geocoder.json"
+    metadata.write_text(json.dumps({"schema_version": 7}))
+    release = geocoder.run(dir_publisher(tmp_path), image, metadata, "2026-11-14", "planet-261005", "abc", 1 << 16)
+    root = tmp_path / "bucket/releases/geocoder/2026-11-14"
+    assert (root / "geocoder.btrfs").read_bytes() == data
+    assert release["schema_version"] == 7
+    on_disk = json.loads((root / "release.json").read_text())
+    assert on_disk["image"]["bytes"] == len(data)
+
+    before = {p: p.stat().st_mtime_ns for p in root.rglob("*")}
+    geocoder.run(dir_publisher(tmp_path), image, metadata, "2026-11-14", "planet-261005", "abc", 1 << 16)
+    assert {p: p.stat().st_mtime_ns for p in root.rglob("*")} == before
+
+    other = tmp_path / "other.btrfs"
+    write_btrfs(other, fill=b"y")
+    with pytest.raises(PublishError, match="next release of the day"):
+        geocoder.run(dir_publisher(tmp_path), other, metadata, "2026-11-14", "planet-261005", "abc", 1 << 16)
+
+
+def test_geocoder_refuses_what_isnt_a_btrfs_image(tmp_path):
+    image = tmp_path / "geocoder.btrfs"
+    image.write_bytes(b"x" * 200_000)
+    metadata = tmp_path / "geocoder.json"
+    metadata.write_text(json.dumps({"schema_version": 7}))
+    with pytest.raises(PublishError, match="isn't a btrfs image"):
+        geocoder.run(dir_publisher(tmp_path), image, metadata, "2026-11-14", None, None, 1 << 16)
+    metadata.write_text("{}")
+    with pytest.raises(PublishError, match="schema_version"):
+        geocoder.run(dir_publisher(tmp_path), image, metadata, "2026-11-14", None, None, 1 << 16)
+    assert not (tmp_path / "bucket/releases/geocoder").exists()
+
+
+def test_images_on_s3(tmp_path, s3):
+    tar = tmp_path / "tiles.tar"
+    write_tar(tar, SEATTLE)
+    image = tmp_path / "routing.btrfs"
+    write_btrfs(image, size=12 << 20)
+    publisher = Publisher(s3, "releases", state_at(tmp_path / "state.sqlite"), 4, False)
+    # moto's buckets outlive each test's server, so this uses a date no other test does.
+    routing.run(publisher, tar, "2026-11-20", None, None, image, 5 << 20)
+    body = s3.client.get_object(Bucket="bucket", Key="releases/routing/2026-11-20/routing.btrfs")["Body"].read()
+    assert body == image.read_bytes()

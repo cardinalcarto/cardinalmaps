@@ -54,6 +54,39 @@ func (r *DataPipeline) AppendContours(osm *File, contours *File) *File {
 	}
 }
 
+// DataPipelineBtrfsImageOpts contains options for DataPipeline.BtrfsImage
+type DataPipelineBtrfsImageOpts struct {
+	// zstd level, 1 (fastest) to 15 (smallest).
+	//
+	// Default: 3
+	CompressionLevel int
+}
+
+// Packs a directory into a read-only btrfs filesystem image, its files
+// compressed with zstd, for servers to download as one file and mount
+// (mount -o loop,ro): the kernel decompresses pages as they're read, so the
+// files stay memory-mappable while the image, on disk and in transit, is
+// compressed. mkfs.btrfs fills the image from the directory (--rootdir)
+// without mounting anything, so no privileges are needed, and shrinks it to
+// what it holds. Images aren't byte-reproducible: btrfs records when it was
+// made, so compare what they hold, not their hashes.
+func (r *DataPipeline) BtrfsImage(dir *Directory, opts ...DataPipelineBtrfsImageOpts) *File {
+	assertNotNil("dir", dir)
+	q := r.query.Select("btrfsImage")
+	for i := len(opts) - 1; i >= 0; i-- {
+		// `compressionLevel` optional argument
+		if !querybuilder.IsZeroValue(opts[i].CompressionLevel) {
+			q = q.Arg("compressionLevel", opts[i].CompressionLevel)
+		}
+	}
+	q = q.Arg("dir", dir)
+
+	return &File{
+		query:     q,
+		refetchID: r.refetchID,
+	}
+}
+
 // DataPipelineBuildOpts contains options for DataPipeline.Build
 type DataPipelineBuildOpts struct {
 	// PostgreSQL URL of the poi_service database that gives POIs their
@@ -99,13 +132,27 @@ type DataPipelineBuildOpts struct {
 	// The server GEDTM is read from, if it's served from this machine; see
 	// RoutingTiles.
 	GedtmService *Service
+	// The zstd level the images are compressed at; see BtrfsImage.
+	//
+	// Default: 3
+	ImageCompressionLevel int
 }
 
 // Builds tiles, the geocoder index and routing tiles from one OSM extract,
-// into a release: a directory holding tiles.mbtiles, index/, routing/ (see
-// RoutingTiles), and the categorical models and query tagger it's given, as
-// categories/ and tagger.model. The steps run one after another, since each
-// can use most of a planet build machine's memory.
+// into a release: a directory holding
+//
+//   - tiles.mbtiles;
+//   - routing/ (see RoutingTiles), and routing.btrfs, an image of the same
+//     tiles.tar and valhalla.json for servers (see BtrfsImage);
+//   - geocoder.btrfs, an image holding the geocoder index as index/, and
+//     geocoder.json, a copy of the index's airmail-index.json (its schema
+//     version), so the index needn't be mounted to tell which geocoder
+//     reads it;
+//   - the categorical models and query tagger it's given, as categories/ and
+//     tagger.model.
+//
+// The steps run one after another, since each can use most of a planet build
+// machine's memory.
 func (r *DataPipeline) Build(osm *File, wofDb *File, categories *Directory, tagger *File, opts ...DataPipelineBuildOpts) *Directory {
 	assertNotNil("osm", osm)
 	assertNotNil("wofDb", wofDb)
@@ -172,6 +219,10 @@ func (r *DataPipeline) Build(osm *File, wofDb *File, categories *Directory, tagg
 		// `gedtmService` optional argument
 		if !querybuilder.IsZeroValue(opts[i].GedtmService) {
 			q = q.Arg("gedtmService", opts[i].GedtmService)
+		}
+		// `imageCompressionLevel` optional argument
+		if !querybuilder.IsZeroValue(opts[i].ImageCompressionLevel) {
+			q = q.Arg("imageCompressionLevel", opts[i].ImageCompressionLevel)
 		}
 	}
 	q = q.Arg("osm", osm)

@@ -4,7 +4,7 @@ use log::trace;
 use serde::{Deserialize, Serialize};
 use sqlx::{
     Pool, Sqlite,
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -23,11 +23,15 @@ impl WhosOnFirst {
     pub async fn new(path: &Path) -> Result<Self> {
         trace!("Opening WhosOnFirst database at {:?}", path);
 
+        // Read-only, in whatever journal mode the file has. The indexer never
+        // writes to it, and asking for WAL is a write: every connection of the
+        // pool opens at once, and on a file still in rollback mode, as Who's On
+        // First publishes it, they race to convert it and fail with "database
+        // is locked".
         let opts = SqliteConnectOptions::new()
             .filename(path)
-            .journal_mode(SqliteJournalMode::Wal)
+            .read_only(true)
             .pragma("cache_size", "2000")
-            .pragma("synchronous", "OFF")
             .pragma("temp_store", "MEMORY")
             .pragma("foreign_keys", "OFF")
             .pragma("recursive_triggers", "OFF")
