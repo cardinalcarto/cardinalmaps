@@ -45,39 +45,52 @@ abstract class NavigationLocationSource {
   Stream<NavLocation> fixes(NavigationMode mode);
 }
 
-/// The device's [NavigationLocationSource]: [AndroidNavigationSource] on Android, and
-/// [GeolocatorNavigationSource] elsewhere.
+/// The device's [NavigationLocationSource]: [PlatformNavigationSource] on Android and
+/// iOS, and [GeolocatorNavigationSource] elsewhere.
 NavigationLocationSource deviceNavigationSource() =>
-    defaultTargetPlatform == TargetPlatform.android
-    ? const AndroidNavigationSource()
-    : const GeolocatorNavigationSource();
+    switch (defaultTargetPlatform) {
+      TargetPlatform.android ||
+      TargetPlatform.iOS => const PlatformNavigationSource(),
+      _ => const GeolocatorNavigationSource(),
+    };
 
 /// How often navigation asks for a fix on Android: once a second, as GPS gives them,
-/// which is what Ferrostar's step and arrival distances assume.
+/// which is what Ferrostar's step and arrival distances assume. Core Location has no
+/// interval: it gives fixes as GPS does, about once a second.
 const androidFixInterval = Duration(seconds: 1);
 
-/// [NavigationLocationSource] on Android: navigation's own location updates, from the
-/// app's native code (`NavigationFixes.kt`) on [channel], every [androidFixInterval],
-/// as precise as the device gives them, from the platform's location manager rather
-/// than Google Play services'.
+/// [NavigationLocationSource] on Android and iOS: navigation's own location updates,
+/// from the app's native code on [channel], as precise as the device gives them.
 ///
-/// Not `geolocator`'s: it has a single position stream per app, which the map's
-/// location dot already holds with its own looser settings when navigation starts, and
-/// which it hands to any later caller whatever settings that asks for. Navigation would
-/// get the dot's fixes, every 5 s at best, and they stop with the screen off.
+/// On Android (`NavigationFixes.kt`) they come every [androidFixInterval], from the
+/// platform's location manager rather than Google Play services'. On iOS
+/// (`NavigationFixes.swift`) they come from a Core Location manager of navigation's own,
+/// told the trip's mode, which tunes its filtering, and not paused at a long stop.
 ///
-/// Fixes keep coming with the screen off while the navigation notification's
-/// foreground service runs (`NavigationService.kt`, see `TripNotification`),
-/// from when a trip starts until it ends. With location turned off the stream stays
-/// open, with a [LocationProblem.off] error, and fixes come again once it's on.
-class AndroidNavigationSource implements NavigationLocationSource {
-  const AndroidNavigationSource();
+/// Not `geolocator`'s: it has a single position stream per app, on both platforms,
+/// which the map's location dot already holds with its own looser settings when
+/// navigation starts, and which it hands to any later caller whatever settings that
+/// asks for. Navigation would get the dot's fixes: on Android every 5 s at best, and
+/// they stop with the screen off; on iOS without navigation's accuracy or activity
+/// type, and not allowed in the background.
+///
+/// Fixes keep coming with the screen off: on Android while the navigation
+/// notification's foreground service runs (`NavigationService.kt`, see
+/// `TripNotification`), from when a trip starts until it ends; on iOS with the
+/// `location` background mode, since the trip starts in the foreground. With location
+/// turned off the stream stays open, with a [LocationProblem.off] error, and fixes come
+/// again once it's on.
+class PlatformNavigationSource implements NavigationLocationSource {
+  const PlatformNavigationSource();
 
   static const channel = EventChannel('cardinal/navigation/fixes');
 
   @override
   Stream<NavLocation> fixes(NavigationMode mode) => channel
-      .receiveBroadcastStream({'intervalMs': androidFixInterval.inMilliseconds})
+      .receiveBroadcastStream({
+        'intervalMs': androidFixInterval.inMilliseconds,
+        'mode': mode.name,
+      })
       .map(
         (event) => navLocationFromMap((event as Map).cast<String, Object?>()),
       )
@@ -96,8 +109,9 @@ class AndroidNavigationSource implements NavigationLocationSource {
   };
 }
 
-/// A fix as `NavigationFixes.kt` sends it: what the platform didn't measure is left
-/// out, and 0 accuracies are taken as unknown, as for [navLocation].
+/// A fix as `NavigationFixes.kt` and `NavigationFixes.swift` send it: what the platform
+/// didn't measure is left out, and 0 accuracies are taken as unknown, as for
+/// [navLocation].
 @visibleForTesting
 NavLocation navLocationFromMap(Map<String, Object?> fix) {
   double? measured(String key) {
@@ -120,8 +134,8 @@ NavLocation navLocationFromMap(Map<String, Object?> fix) {
 }
 
 /// [NavigationLocationSource] from `geolocator`, as precise and as often as the device can
-/// give them, kept coming with the screen off: on iOS, and on the desktop. Android has
-/// [AndroidNavigationSource].
+/// give them: on macOS and the Linux desktop. Android and iOS have
+/// [PlatformNavigationSource].
 class GeolocatorNavigationSource implements NavigationLocationSource {
   const GeolocatorNavigationSource();
 
