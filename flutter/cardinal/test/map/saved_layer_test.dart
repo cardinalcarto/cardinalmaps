@@ -10,8 +10,11 @@ import '../fakes/fake_map.dart';
 import '../fakes/fake_place_store.dart';
 import '../fakes/fake_saved_store.dart';
 
-Future<SpriteImageInput> _stubMarker(String? emoji) async => SpriteImageInput(
-  name: markerName(emoji),
+Future<SpriteImageInput> _stubMarker(
+  String? emoji, {
+  required bool dark,
+}) async => SpriteImageInput(
+  name: markerName(emoji, dark: dark),
   pixels: Uint8List(4),
   width: 1,
   height: 1,
@@ -109,7 +112,10 @@ void main() {
     () async {
       await add('poi:1', emoji: '🍕');
       await pumpEventQueue();
-      expect(map.images.map((i) => i.name), [markerName('🍕')]);
+      expect(map.images.map((i) => i.name), [
+        markerName('🍕'),
+        markerName('🍕', dark: true),
+      ]);
       expect(
         map.calls.indexOf('images'),
         lessThan(map.calls.lastIndexOf(savedSource)),
@@ -117,13 +123,15 @@ void main() {
 
       await add('poi:2', emoji: '🍕');
       await pumpEventQueue();
-      expect(map.images, hasLength(1));
+      expect(map.images, hasLength(2));
 
       await add('poi:3');
       await pumpEventQueue();
       expect(map.images.map((i) => i.name), [
         markerName('🍕'),
+        markerName('🍕', dark: true),
         markerName(null),
+        markerName(null, dark: true),
       ]);
     },
   );
@@ -165,6 +173,24 @@ void main() {
     expect(markerName('🍕'), 'saved_marker_1f355');
     expect(markerName('❤️'), 'saved_marker_2764_fe0f');
     expect(markerName('❤'), isNot(markerName('❤️')));
+    expect(markerName('🍕', dark: true), 'saved_marker_1f355_dark');
+  });
+
+  test('a dark style uses the dark markers, with light names', () {
+    final style = <String, Object?>{
+      'sources': <String, Object?>{},
+      'layers': <Object?>[],
+    };
+    addSavedLayers(style, dark: true);
+    final layer = (style['layers'] as List).single as Map;
+    expect((layer['layout'] as Map)['icon-image'], [
+      'concat',
+      ['get', 'icon'],
+      darkMarkerSuffix,
+    ]);
+    final paint = layer['paint'] as Map;
+    expect(paint['text-color'], '#e8eaed');
+    expect(paint['text-halo-color'], '#0f1215');
   });
 
   test('the layer goes on top, using a font the style has', () {
@@ -190,7 +216,9 @@ void main() {
   testWidgets('markers are drawn at the screen\'s density, as a disc', (
     tester,
   ) async {
-    final image = (await tester.runAsync(() => discMarkerPainter(2)('🍕')))!;
+    final image = (await tester.runAsync(
+      () => discMarkerPainter(2)('🍕', dark: false),
+    ))!;
     expect(image.pixelRatio, 2);
     expect(image.width, 68);
     expect(image.height, 68);
@@ -200,5 +228,14 @@ void main() {
     expect(image.pixels.sublist(at, at + 4), [255, 255, 255, 255]);
     // A corner, outside it.
     expect(image.pixels[3], 0);
+  });
+
+  testWidgets('dark markers are a gray disc', (tester) async {
+    final image = (await tester.runAsync(
+      () => discMarkerPainter(2)('🍕', dark: true),
+    ))!;
+    expect(image.name, markerName('🍕', dark: true));
+    final at = (34 + (34 - 24) * 68) * 4;
+    expect(image.pixels.sublist(at, at + 4), [0x3c, 0x40, 0x43, 255]);
   });
 }

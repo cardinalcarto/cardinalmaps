@@ -98,7 +98,7 @@ Future<Map<String, Object?>> styleFor(MapLayers layers) async {
     await rootBundle.loadString('assets/map/$file'),
   ) as Map<String, Object?>;
   setGlobalStateDefaults(style, {'units': layers.units.name});
-  addSavedLayers(style);
+  addSavedLayers(style, dark: layers.dark);
   addAreaLayers(style);
   addRouteLayers(style);
   addSelectionLayers(style);
