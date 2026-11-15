@@ -240,7 +240,7 @@ class _SheetScaffoldState extends State<SheetScaffold>
       if (current != null) _barShown.value = current._barValue;
       if (_transition != null) {
         _transition = null;
-        controller._endTransition(current?.memory ?? current?.initial);
+        controller._endTransition(current?.resting);
       }
       return;
     }
@@ -261,13 +261,14 @@ class _SheetScaffoldState extends State<SheetScaffold>
       final arriving = _active == top && top.memory == null;
       if (!controller.isTransitioning) {
         if (!arriving) {
-          _active?.memory = controller._nearestAnchor;
+          _active?.memory = controller._currentRest;
         } else if (under != null) {
-          under.memory = controller._nearestOf(under.resolved) ?? under.memory;
+          under.memory =
+              controller._restFor(under.resolved, under.ranges) ?? under.memory;
         }
       }
-      top.memory ??= top.initial;
-      under?.memory ??= under.initial;
+      top.memory ??= top.resting;
+      under?.memory ??= under.resting;
       _transition = (
         top: top,
         under: under,
@@ -279,8 +280,8 @@ class _SheetScaffoldState extends State<SheetScaffold>
     _setActive(current ?? top);
 
     // Either page's anchors may not be laid out yet; until they are, hold still.
-    final to = top.resting?.extent;
-    final from = under?.resting?.extent ?? _transition!.extent;
+    final to = top.restingExtent;
+    final from = under?.restingExtent ?? _transition!.extent;
     final route = top.route!;
     final t = route is _SheetPageRoute
         ? route._arrival
@@ -303,11 +304,14 @@ class _SheetScaffoldState extends State<SheetScaffold>
     _controller._setAnchors(
       entry.resolved,
       geometry.maxExtent,
+      ranges: entry.ranges,
       floor: geometry.keyboard,
       draggable: entry.draggable,
     );
-    if (!_controller.hasExtent && entry.resting != null) {
-      _controller._place(entry.resting!);
+    final rest = entry.resting;
+    final at = entry.restingExtent;
+    if (!_controller.hasExtent && rest != null && at != null) {
+      _controller._place(rest, at);
     }
   }
 
@@ -317,7 +321,7 @@ class _SheetScaffoldState extends State<SheetScaffold>
     final current = _entries.lastWhereOrNull(
       (e) => e.route?.isCurrent ?? false,
     );
-    return current?.resting?.extent ?? 0;
+    return current?.restingExtent ?? 0;
   }
 
   @override

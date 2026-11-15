@@ -74,6 +74,15 @@ class _DirectionsPageState extends State<DirectionsPage> {
   /// Where a transit journey's details rest: low enough for the map to show its shape.
   static const _detailsAnchor = SheetAnchor.fraction(0.4);
 
+  /// From the details anchor up, the sheet rests wherever it's let go, with no anchor
+  /// at the top to spring to, and a fling up carries on into scrolling the journey, so
+  /// reading through it is one long scroll.
+  static const _detailsRange = SheetRange(
+    _detailsAnchor,
+    SheetAnchor.full(),
+    carriesIntoScroll: true,
+  );
+
   /// How often "Go in" times count down.
   static const _tick = Duration(seconds: 30);
 
@@ -81,6 +90,13 @@ class _DirectionsPageState extends State<DirectionsPage> {
   static const _summaryAnchor = SheetAnchor.section(
     _summary,
     gravity: double.infinity,
+  );
+
+  /// From just below the summary and its Go button up, as for a journey's details.
+  static const _summaryRange = SheetRange(
+    _summaryAnchor,
+    SheetAnchor.full(),
+    carriesIntoScroll: true,
   );
 
   /// Space kept around the routes, in logical pixels.
@@ -581,14 +597,17 @@ class _DirectionsPageState extends State<DirectionsPage> {
         anchors: editing != null
             ? const [SheetAnchor.full()]
             : journey != null
-            ? const [_detailsAnchor, SheetAnchor.full()]
+            ? const [_detailsAnchor]
             : transit
             ? const [SheetAnchor.full()]
-            : const [
-                SheetAnchor.section(_modes),
-                _summaryAnchor,
-                SheetAnchor.full(),
-              ],
+            : const [SheetAnchor.section(_modes), _summaryAnchor],
+        freeRanges: editing != null
+            ? const []
+            : journey != null
+            ? const [_detailsRange]
+            : transit
+            ? const []
+            : const [_summaryRange],
         initialAnchor: 1,
         // Transit's journeys hold the sheet full until one is picked.
         draggable: editing != null || journey != null || !transit,

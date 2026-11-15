@@ -143,6 +143,10 @@ class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
   /// comes first.
   static const _upper = SheetAnchor.section(_content);
 
+  /// Between the two, the sheet rests wherever it's let go, with no anchor at the top
+  /// to spring to, and a fling up carries on into scrolling the routes.
+  static const _range = SheetRange(_lower, _upper, carriesIntoScroll: true);
+
   NearbyTransitController? _controller;
   late LocationSource _location;
   late SettingsStore _settings;
@@ -385,7 +389,8 @@ class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
     final access = _controller!.rows.sortedBy ?? TransitAccess.walking;
     return SheetContent(
       showsBottomBar: true,
-      anchors: const [_lower, _upper],
+      anchors: const [_lower],
+      freeRanges: const [_range],
       slivers: [
         SliverToBoxAdapter(
           child: SheetSection(

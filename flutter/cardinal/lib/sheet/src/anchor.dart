@@ -148,3 +148,163 @@ List<ResolvedAnchor> _resolveAnchors(
   ];
   return resolved..sort((a, b) => a.extent.compareTo(b.extent));
 }
+
+/// A stretch of the sheet's travel where it comes to rest wherever it's let go, rather
+/// than springing to an anchor.
+///
+/// Its ends are placed as anchors are, but needn't be among the content's
+/// [SheetContent.anchors]: the sheet can be pulled up (or down) as far as a range goes
+/// whether or not an anchor waits there. A fling within the range glides to a stop where
+/// it runs out of speed. One that would carry past an end stops at that end, unless
+/// there are anchors beyond it to catch the fling as usual. No anchor may lie strictly
+/// between the ends.
+@immutable
+class SheetRange {
+  const SheetRange(this.from, this.to, {this.carriesIntoScroll = false});
+
+  /// The anchors at the range's ends, in either order.
+  final SheetAnchor from;
+  final SheetAnchor to;
+
+  /// Whether a fling up the content that would carry the sheet past the range's upper
+  /// end, when that's as high as the sheet goes, glides there and carries on scrolling
+  /// the content with the speed it has left, as if the sheet and its content were one
+  /// long scroll. Otherwise the sheet stops there, and the content stays where it is.
+  final bool carriesIntoScroll;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SheetRange &&
+      other.from == from &&
+      other.to == to &&
+      other.carriesIntoScroll == carriesIntoScroll;
+
+  @override
+  int get hashCode => Object.hash(SheetRange, from, to, carriesIntoScroll);
+
+  @override
+  String toString() => 'SheetRange($from, $to)';
+}
+
+/// A range placed for the current layout, with [lower] at or below [upper].
+@immutable
+class ResolvedRange {
+  const ResolvedRange(
+    this.range,
+    this.lower,
+    this.upper, {
+    this.fromIsUpper = false,
+  });
+
+  final SheetRange range;
+  final double lower;
+  final double upper;
+
+  /// Whether [SheetRange.from] is the upper end, and [SheetRange.to] the lower.
+  final bool fromIsUpper;
+
+  /// Where [end], one of the range's ends, is placed.
+  double extentOf(SheetAnchor end) =>
+      (end == range.from) != fromIsUpper ? lower : upper;
+
+  /// Whether [extent] lies within the range, ends included.
+  bool contains(double extent) =>
+      extent >= lower - _epsilon && extent <= upper + _epsilon;
+
+  /// How far [extent] is from [lower] to [upper], from 0 to 1.
+  double fractionOf(double extent) => upper - lower <= _epsilon
+      ? 0
+      : ((extent - lower) / (upper - lower)).clamp(0.0, 1.0);
+
+  /// The extent [fraction] of the way from [lower] to [upper].
+  double extentAt(double fraction) => lower + (upper - lower) * fraction;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ResolvedRange &&
+      other.range == range &&
+      other.lower == lower &&
+      other.upper == upper &&
+      other.fromIsUpper == fromIsUpper;
+
+  @override
+  int get hashCode => Object.hash(range, lower, upper, fromIsUpper);
+
+  @override
+  String toString() =>
+      'ResolvedRange($range, ${lower.toStringAsFixed(1)}–${upper.toStringAsFixed(1)})';
+}
+
+/// Places [ranges], lowest first, dropping any whose ends can't be placed yet. No anchor
+/// among [anchors], already placed, may lie within one.
+List<ResolvedRange> _resolveRanges(
+  List<SheetRange> ranges,
+  List<ResolvedAnchor> anchors,
+  SheetGeometry geometry,
+  Map<Object, _Span> sections,
+) {
+  final resolved = <ResolvedRange>[];
+  for (final range in ranges) {
+    final from = range.from._resolve(geometry, sections);
+    final to = range.to._resolve(geometry, sections);
+    if (from == null || to == null) continue;
+    final lower = math.min(from, to);
+    final upper = math.max(from, to);
+    assert(
+      !anchors.any(
+        (a) => a.extent > lower + _epsilon && a.extent < upper - _epsilon,
+      ),
+      'No anchor may lie within $range.',
+    );
+    resolved.add(ResolvedRange(range, lower, upper, fromIsUpper: from > to));
+  }
+  return resolved..sort((a, b) => a.lower.compareTo(b.lower));
+}
+
+/// Where the sheet rests: at an anchor, or somewhere within a range.
+@immutable
+sealed class _Rest {
+  const _Rest();
+
+  /// The extent this rest is at among [anchors] and [ranges], or null if they don't
+  /// have it.
+  double? extentIn(List<ResolvedAnchor> anchors, List<ResolvedRange> ranges);
+}
+
+final class _AtAnchor extends _Rest {
+  const _AtAnchor(this.anchor);
+
+  final SheetAnchor anchor;
+
+  @override
+  double? extentIn(List<ResolvedAnchor> anchors, List<ResolvedRange> ranges) =>
+      anchors.firstWhereOrNull((a) => a.anchor == anchor)?.extent;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _AtAnchor && other.anchor == anchor;
+
+  @override
+  int get hashCode => anchor.hashCode;
+}
+
+final class _InRange extends _Rest {
+  const _InRange(this.range, this.fraction);
+
+  final SheetRange range;
+
+  /// How far along the range, from its lower end (0) to its upper end (1), so it keeps
+  /// its place as the range's ends move.
+  final double fraction;
+
+  @override
+  double? extentIn(List<ResolvedAnchor> anchors, List<ResolvedRange> ranges) =>
+      ranges.firstWhereOrNull((r) => r.range == range)?.extentAt(fraction);
+
+  @override
+  bool operator ==(Object other) =>
+      other is _InRange && other.range == range && other.fraction == fraction;
+
+  @override
+  int get hashCode => Object.hash(range, fraction);
+}
