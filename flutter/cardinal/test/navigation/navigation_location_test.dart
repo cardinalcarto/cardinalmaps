@@ -62,7 +62,7 @@ void main() {
     expect(fix.speedAccuracy, isNull);
   });
 
-  group('on Android', () {
+  group('on Android and iOS', () {
     TestWidgetsFlutterBinding.ensureInitialized();
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -75,7 +75,7 @@ void main() {
 
     tearDown(() {
       debugDefaultTargetPlatformOverride = null;
-      messenger.setMockStreamHandler(AndroidNavigationSource.channel, null);
+      messenger.setMockStreamHandler(PlatformNavigationSource.channel, null);
       for (final channel in geolocatorUpdates) {
         messenger.setMockStreamHandler(channel, null);
       }
@@ -83,8 +83,10 @@ void main() {
 
     test("navigation's fixes are its own, not geolocator's", () {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      expect(deviceNavigationSource(), isA<AndroidNavigationSource>());
+      expect(deviceNavigationSource(), isA<PlatformNavigationSource>());
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      expect(deviceNavigationSource(), isA<PlatformNavigationSource>());
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
       expect(deviceNavigationSource(), isA<GeolocatorNavigationSource>());
     });
 
@@ -103,7 +105,7 @@ void main() {
         final navigationListens = <Object?>[];
         MockStreamHandlerEventSink? sink;
         messenger.setMockStreamHandler(
-          AndroidNavigationSource.channel,
+          PlatformNavigationSource.channel,
           MockStreamHandler.inline(
             onListen: (arguments, events) {
               navigationListens.add(arguments);
@@ -123,12 +125,12 @@ void main() {
         expect(geolocatorListens, hasLength(1));
 
         final fixes = <NavLocation>[];
-        final navigation = const AndroidNavigationSource()
+        final navigation = const PlatformNavigationSource()
             .fixes(NavigationMode.driving)
             .listen(fixes.add);
         await pumpEventQueue();
         expect(navigationListens, [
-          {'intervalMs': 1000},
+          {'intervalMs': 1000, 'mode': 'driving'},
         ]);
         // Nothing more asked of geolocator.
         expect(geolocatorListens, hasLength(1));
@@ -150,13 +152,13 @@ void main() {
     test('errors say why fixes stopped', () async {
       MockStreamHandlerEventSink? sink;
       messenger.setMockStreamHandler(
-        AndroidNavigationSource.channel,
+        PlatformNavigationSource.channel,
         MockStreamHandler.inline(
           onListen: (arguments, events) => sink = events,
         ),
       );
       final problems = <LocationProblem>[];
-      final navigation = const AndroidNavigationSource()
+      final navigation = const PlatformNavigationSource()
           .fixes(NavigationMode.walking)
           .listen(
             (_) {},
