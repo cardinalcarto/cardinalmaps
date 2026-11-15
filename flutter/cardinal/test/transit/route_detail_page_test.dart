@@ -274,8 +274,11 @@ void main() {
           tester.element(find.byType(RouteDetailPage)),
         );
         final lower = appScreen.height * 0.4;
-        expect(controller.anchors.first.extent, lower);
-        expect(controller.anchors.last.extent, greaterThan(lower));
+        expect(controller.anchors.single.extent, lower);
+        // Free from there up, with no anchor at the top.
+        final range = controller.ranges.single;
+        expect(range.lower, lower);
+        expect(range.upper, greaterThan(lower));
         expect(controller.extent, lower);
       },
     );

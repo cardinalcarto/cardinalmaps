@@ -9,6 +9,7 @@ class SheetContent extends StatefulWidget {
   const SheetContent({
     super.key,
     required this.anchors,
+    this.freeRanges = const [],
     this.initialAnchor = 0,
     this.showsBottomBar = false,
     this.draggable = true,
@@ -17,6 +18,10 @@ class SheetContent extends StatefulWidget {
 
   /// Where the sheet can rest, in any order.
   final List<SheetAnchor> anchors;
+
+  /// Stretches between pairs of [anchors] where the sheet rests wherever it's let go,
+  /// gliding to a stop after a fling, rather than springing to an anchor.
+  final List<SheetRange> freeRanges;
 
   /// The index into [anchors] the sheet moves to when this content first shows.
   final int initialAnchor;
@@ -67,6 +72,7 @@ class _SheetContentState extends State<SheetContent> {
       ..geometry = _geometry(scope)
       ..physics = scope.controller.physics
       ..anchors = widget.anchors
+      ..freeRanges = widget.freeRanges
       ..initialAnchor = widget.initialAnchor
       ..showsBottomBar = widget.showsBottomBar
       ..draggable = widget.draggable;
@@ -79,6 +85,7 @@ class _SheetContentState extends State<SheetContent> {
     _entry
       ..geometry = _geometry(_SheetScope.of(context))
       ..anchors = widget.anchors
+      ..freeRanges = widget.freeRanges
       ..initialAnchor = widget.initialAnchor
       ..showsBottomBar = widget.showsBottomBar
       ..draggable = widget.draggable;
@@ -105,6 +112,7 @@ class _SheetContentState extends State<SheetContent> {
         entry: _entry,
         geometry: _entry.geometry,
         anchors: widget.anchors,
+        freeRanges: widget.freeRanges,
         physics: _entry.physics,
         child: Scrollable(
           controller: _scroll,
@@ -135,6 +143,7 @@ class _SheetEntry extends ChangeNotifier {
   SheetGeometry? geometry;
   SheetPhysics physics = const SheetPhysics();
   List<SheetAnchor> anchors = const [];
+  List<SheetRange> freeRanges = const [];
   int initialAnchor = 0;
   bool showsBottomBar = false;
   bool draggable = true;
@@ -145,9 +154,10 @@ class _SheetEntry extends ChangeNotifier {
   final Set<_RenderSheetSection> sections = {};
   Map<Object, _Span> spans = const {};
   List<ResolvedAnchor> resolved = const [];
+  List<ResolvedRange> ranges = const [];
 
   /// Where the sheet rested when this page was last current.
-  SheetAnchor? memory;
+  _Rest? memory;
 
   _RenderSheetContent? content;
   bool _notifying = false;
@@ -163,15 +173,34 @@ class _SheetEntry extends ChangeNotifier {
       : resolved.firstWhereOrNull((a) => a.anchor == anchor);
 
   /// Where the sheet rests on this page: where it was left, or the initial anchor.
-  ResolvedAnchor? get resting => resolvedFor(memory ?? initial);
+  _Rest? get resting =>
+      memory ??
+      switch (initial) {
+        final initial? => _AtAnchor(initial),
+        _ => null,
+      };
+
+  /// The extent the sheet rests at on this page, or null if it can't be placed yet.
+  double? get restingExtent => resting?.extentIn(resolved, ranges);
 
   bool get isAnimating => route?.animation?.isAnimating ?? false;
 
-  /// The height the content's viewport takes: what the content shows at the highest anchor.
+  /// The highest the sheet goes on this page: its highest anchor, or the top of a range
+  /// above it.
+  double? get topExtent {
+    final anchor = resolved.lastOrNull?.extent;
+    final range = ranges.map((r) => r.upper).maxOrNull;
+    if (anchor == null || range == null) return anchor ?? range;
+    return math.max(anchor, range);
+  }
+
+  /// The height the content's viewport takes: what the content shows as high as the
+  /// sheet goes.
   double viewportHeight(double full) {
     final geometry = this.geometry;
-    if (resolved.isEmpty || geometry == null) return full;
-    return math.min(full, geometry.contentHeight(resolved.last.extent));
+    final top = topExtent;
+    if (top == null || geometry == null) return full;
+    return math.min(full, geometry.contentHeight(top));
   }
 
   /// Places the anchors for the current sections and geometry.
@@ -179,8 +208,12 @@ class _SheetEntry extends ChangeNotifier {
     final geometry = this.geometry;
     if (geometry == null) return;
     final placed = _resolveAnchors(anchors, geometry, spans, physics);
-    if (listEquals(placed, resolved)) return;
+    final placedRanges = _resolveRanges(freeRanges, placed, geometry, spans);
+    if (listEquals(placed, resolved) && listEquals(placedRanges, ranges)) {
+      return;
+    }
     resolved = placed;
+    ranges = placedRanges;
     _changed();
   }
 
@@ -269,6 +302,7 @@ class _SheetContentLayout extends SingleChildRenderObjectWidget {
     required this.entry,
     required this.geometry,
     required this.anchors,
+    required this.freeRanges,
     required this.physics,
     required super.child,
   });
@@ -276,11 +310,13 @@ class _SheetContentLayout extends SingleChildRenderObjectWidget {
   final _SheetEntry entry;
   final SheetGeometry? geometry;
   final List<SheetAnchor> anchors;
+  final List<SheetRange> freeRanges;
   final SheetPhysics physics;
 
   @override
   _RenderSheetContent createRenderObject(BuildContext context) =>
-      _RenderSheetContent(entry)..config = (geometry, anchors, physics);
+      _RenderSheetContent(entry)
+        ..config = (geometry, anchors, freeRanges, physics);
 
   @override
   void updateRenderObject(
@@ -289,7 +325,7 @@ class _SheetContentLayout extends SingleChildRenderObjectWidget {
   ) {
     renderObject
       ..entry = entry
-      ..config = (geometry, anchors, physics);
+      ..config = (geometry, anchors, freeRanges, physics);
   }
 }
 
@@ -306,13 +342,16 @@ class _RenderSheetContent extends RenderProxyBox {
     markNeedsLayout();
   }
 
-  (SheetGeometry?, List<SheetAnchor>, SheetPhysics)? _config;
-  set config((SheetGeometry?, List<SheetAnchor>, SheetPhysics) value) {
+  (SheetGeometry?, List<SheetAnchor>, List<SheetRange>, SheetPhysics)? _config;
+  set config(
+    (SheetGeometry?, List<SheetAnchor>, List<SheetRange>, SheetPhysics) value,
+  ) {
     final old = _config;
     if (old != null &&
         old.$1 == value.$1 &&
         listEquals(old.$2, value.$2) &&
-        old.$3 == value.$3) {
+        listEquals(old.$3, value.$3) &&
+        old.$4 == value.$4) {
       return;
     }
     _config = value;

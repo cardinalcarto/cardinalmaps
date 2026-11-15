@@ -75,9 +75,14 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
   static const _content = #routeDetailContent;
 
   /// As the list's: where the sheet opens and the lowest it rests, and the end of the
-  /// content.
+  /// content (or the full screen if that comes first), as high as it goes.
   static const _lower = SheetAnchor.fraction(0.4);
   static const _upper = SheetAnchor.section(_content);
+
+  /// Between the two, the sheet rests wherever it's let go, with no anchor at the top
+  /// to spring to, and a fling up carries on into scrolling the stops, so reading
+  /// through the trip is one long scroll.
+  static const _range = SheetRange(_lower, _upper, carriesIntoScroll: true);
 
   /// As directions fits a route to what the sheet leaves of the map.
   static const _margin = 48.0;
@@ -394,7 +399,8 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
     final departures = controller.departures;
     return SheetContent(
       showsBottomBar: true,
-      anchors: const [_lower, _upper],
+      anchors: const [_lower],
+      freeRanges: const [_range],
       slivers: [
         SliverToBoxAdapter(
           child: SheetSection(

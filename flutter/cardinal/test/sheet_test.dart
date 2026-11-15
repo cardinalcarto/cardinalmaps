@@ -62,6 +62,85 @@ void main() {
     });
   });
 
+  group('SheetPhysics.glide', () {
+    const physics = SheetPhysics();
+    const range = SheetRange(SheetAnchor.fraction(0.4), SheetAnchor.full());
+    const ranges = [ResolvedRange(range, 400, 800)];
+    final lower = ResolvedAnchor(
+      const SheetAnchor.fraction(0.4),
+      400,
+      physics.gravity,
+    );
+    final top = ResolvedAnchor(const SheetAnchor.full(), 800, physics.gravity);
+    final both = [lower, top];
+
+    test('a slow release within a range stays where it is', () {
+      expect(physics.glide(both, ranges, 500, 100), 500);
+      expect(physics.glide(both, ranges, 500, -100), 500);
+    });
+
+    test('a fling within a range glides as far as it carries', () {
+      final up = physics.landing(500, 1000);
+      final down = physics.landing(600, -1000);
+      expect(up, inExclusiveRange(500, 800));
+      expect(down, inExclusiveRange(400, 600));
+      expect(physics.glide(both, ranges, 500, 1000), up);
+      expect(physics.glide(both, ranges, 600, -1000), down);
+    });
+
+    test('a fling out past an anchor is for the anchors', () {
+      expect(physics.glide(both, ranges, 700, 1000), isNull);
+      expect(physics.glide(both, ranges, 450, -1000), isNull);
+    });
+
+    test('a fling out past an end with no anchor stops there', () {
+      expect(physics.glide([lower], ranges, 700, 1000), 800);
+      expect(physics.glide([lower], ranges, 450, -1000), isNull);
+    });
+
+    test('outside a range, the anchors decide', () {
+      expect(physics.glide(both, ranges, 300, 0), isNull);
+      expect(physics.glide(both, ranges, 300, 300), isNull);
+    });
+  });
+
+  group('SheetPhysics.coast', () {
+    test("on iOS, slows as UIScrollView's normal deceleration rate", () {
+      const physics = SheetPhysics(platform: TargetPlatform.iOS);
+      // Speed decays by 0.998 a millisecond, so it carries v/-ln(0.135) or so, about
+      // half a second's worth of its starting speed, and loses speed in proportion to
+      // the distance it covers.
+      final k = -math.log(0.135);
+      expect(physics.landing(0, 1000), moreOrLessEquals(1000 / k, epsilon: 1));
+      expect(physics.landing(0, 4000), moreOrLessEquals(4000 / k, epsilon: 1));
+      expect(
+        physics.speedAt(0, 4000, 1000),
+        moreOrLessEquals(4000 - k * 1000, epsilon: 5),
+      );
+    });
+
+    test("elsewhere, as Android's fling", () {
+      const physics = SheetPhysics(platform: TargetPlatform.android);
+      final sim = ClampingScrollSimulation(position: 0, velocity: 3000);
+      expect(physics.landing(0, 3000), moreOrLessEquals(sim.x(100)));
+      expect(physics.landing(100, -3000), moreOrLessEquals(100 - sim.x(100)));
+    });
+
+    test('a fling slows as it goes, and further flings go further', () {
+      for (final platform in [TargetPlatform.iOS, TargetPlatform.android]) {
+        final physics = SheetPhysics(platform: platform);
+        final reach = physics.landing(0, 3000);
+        expect(physics.landing(0, 6000), greaterThan(reach));
+        final a = physics.speedAt(0, 3000, reach / 4);
+        final b = physics.speedAt(0, 3000, reach / 2);
+        expect(a, lessThan(3000));
+        expect(b, lessThan(a));
+      }
+    });
+  });
+
+  group('free ranges', freeRanges);
+
   group('SheetGeometry', () {
     const geometry = SheetGeometry(
       size: _phone,
@@ -551,5 +630,227 @@ void restoration() {
     final route = ModalRoute.of(tester.element(find.byType(SectionsTestPage)))!;
     expect(route.animation!.value, 1);
     expect(sheetOf(tester, SectionsTestPage).isTransitioning, isFalse);
+  });
+}
+
+void freeRanges() {
+  // On the phone, 30% is 240 up and full is 800.
+  const lower = 240.0;
+  const upper = 800.0;
+
+  Future<SheetController> pumpFree(WidgetTester tester) async {
+    final sheet = await _pumpPhone(tester);
+    sheetTestRouter.push('/free');
+    await tester.pumpAndSettle();
+    expect(sheet.restingAt, FreeTestPage.lower);
+    expect(sheet.extent, moreOrLessEquals(lower));
+    return sheet;
+  }
+
+  ScrollPosition scrollOf(WidgetTester tester) => tester
+      .state<ScrollableState>(
+        find
+            .descendant(
+              of: find.byType(FreeTestPage),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      )
+      .position;
+
+  testWidgets('let go slowly, it stays where it was let go', (tester) async {
+    final sheet = await pumpFree(tester);
+    await tester.timedDrag(
+      find.text('Tile 1'),
+      const Offset(0, -200),
+      const Duration(seconds: 2),
+    );
+    final released = sheet.extent;
+    expect(released, greaterThan(lower + 150));
+    await tester.pumpAndSettle();
+    expect(sheet.restingIn, FreeTestPage.range);
+    expect(sheet.restingAt, isNull);
+    expect(sheet.extent, moreOrLessEquals(released, epsilon: 5));
+
+    // And on the way down too.
+    await tester.timedDrag(
+      find.text('Tile 1'),
+      const Offset(0, 100),
+      const Duration(seconds: 1),
+    );
+    final lowered = sheet.extent;
+    await tester.pumpAndSettle();
+    expect(sheet.restingIn, FreeTestPage.range);
+    expect(sheet.extent, moreOrLessEquals(lowered, epsilon: 5));
+    expect(lowered, lessThan(released - 50));
+  });
+
+  testWidgets('a fling glides to a stop, without springing', (tester) async {
+    final sheet = await pumpFree(tester);
+    await tester.fling(find.text('Tile 1'), const Offset(0, -50), 800);
+    final released = sheet.extent;
+    var last = released;
+    for (var i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(
+        sheet.extent,
+        greaterThanOrEqualTo(last - 0.01),
+        reason: 'no bounce',
+      );
+      last = sheet.extent;
+    }
+    await tester.pumpAndSettle();
+    expect(sheet.restingIn, FreeTestPage.range);
+    expect(sheet.extent, greaterThan(released + 20));
+    expect(sheet.extent, lessThan(upper - 100));
+    expect(scrollOf(tester).pixels, 0);
+  });
+
+  testWidgets('a hard fling up carries on into scrolling the content', (
+    tester,
+  ) async {
+    final sheet = await pumpFree(tester);
+    await tester.fling(find.text('Tile 1'), const Offset(0, -100), 4000);
+    await tester.pumpAndSettle();
+    expect(sheet.restingIn, FreeTestPage.range, reason: 'no anchor at the top');
+    expect(sheet.extent, upper);
+    expect(scrollOf(tester).pixels, greaterThan(200));
+  });
+
+  testWidgets('a hard fling up from the handle stops at the top', (
+    tester,
+  ) async {
+    final sheet = await pumpFree(tester);
+    final handle = Offset(_phone.width / 2, _phone.height - lower + 8);
+    await tester.flingFrom(handle, const Offset(0, -100), 4000);
+    await tester.pumpAndSettle();
+    expect(sheet.restingIn, FreeTestPage.range);
+    expect(sheet.extent, upper);
+    expect(scrollOf(tester).pixels, 0);
+  });
+
+  testWidgets('drags up to the top of the range, and scrolls from there', (
+    tester,
+  ) async {
+    final sheet = await pumpFree(tester);
+    await tester.drag(find.text('Tile 1'), const Offset(0, -700));
+    await tester.pumpAndSettle();
+    expect(sheet.extent, upper);
+    expect(sheet.isAtMax, isTrue);
+    expect(scrollOf(tester).pixels, greaterThan(50));
+  });
+
+  testWidgets('a tap on the handle goes to the top, and back', (tester) async {
+    final sheet = await pumpFree(tester);
+    final handle = Offset(_phone.width / 2, _phone.height - lower + 8);
+    await tester.tapAt(handle);
+    await tester.pumpAndSettle();
+    expect(sheet.extent, upper);
+    await tester.tapAt(const Offset(200, 8));
+    await tester.pumpAndSettle();
+    expect(sheet.restingAt, FreeTestPage.lower);
+  });
+
+  testWidgets('a hard fling down runs past the anchor, and comes back', (
+    tester,
+  ) async {
+    final sheet = await pumpFree(tester);
+    sheet.animateTo(const SheetAnchor.full());
+    await tester.pumpAndSettle();
+    expect(sheet.extent, upper);
+
+    final extents = <double>[];
+    void heard() => extents.add(sheet.extent);
+    sheet.addListener(heard);
+    addTearDown(() => sheet.removeListener(heard));
+    await tester.flingFrom(const Offset(200, 12), const Offset(0, 100), 6000);
+    await tester.pumpAndSettle();
+    expect(
+      extents.reduce(math.min),
+      lessThan(lower - 10),
+      reason: 'overshoots',
+    );
+    expect(sheet.restingAt, FreeTestPage.lower);
+    expect(sheet.extent, moreOrLessEquals(lower));
+  });
+
+  testWidgets(
+    'let go slowly near the anchor, it eases in without overshooting',
+    (tester) async {
+      final sheet = await pumpFree(tester);
+      final handle = Offset(_phone.width / 2, _phone.height - lower + 8);
+      final gesture = await tester.startGesture(handle);
+      for (var i = 0; i < 10; i++) {
+        await gesture.moveBy(const Offset(0, 6));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      final extents = <double>[];
+      void heard() => extents.add(sheet.extent);
+      sheet.addListener(heard);
+      addTearDown(() => sheet.removeListener(heard));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(sheet.restingAt, FreeTestPage.lower);
+      for (var i = 1; i < extents.length; i++) {
+        expect(extents[i], greaterThanOrEqualTo(extents[i - 1] - 0.01));
+      }
+    },
+  );
+
+  testWidgets('a fling down out of the range springs to the anchor', (
+    tester,
+  ) async {
+    final sheet = await pumpFree(tester);
+    await tester.timedDrag(
+      find.text('Tile 1'),
+      const Offset(0, -100),
+      const Duration(seconds: 1),
+    );
+    await tester.pumpAndSettle();
+    expect(sheet.restingIn, FreeTestPage.range);
+    await tester.fling(find.text('Tile 1'), const Offset(0, 50), 3000);
+    await tester.pumpAndSettle();
+    expect(sheet.restingAt, FreeTestPage.lower);
+    expect(sheet.extent, moreOrLessEquals(lower));
+  });
+
+  testWidgets('keeps its place in the range as the window changes', (
+    tester,
+  ) async {
+    final sheet = await pumpFree(tester);
+    await tester.timedDrag(
+      find.text('Tile 1'),
+      const Offset(0, -200),
+      const Duration(seconds: 2),
+    );
+    await tester.pumpAndSettle();
+    final fraction = (sheet.extent - lower) / (upper - lower);
+
+    tester.view.physicalSize = const Size(400, 700) * 2;
+    await tester.pumpAndSettle();
+    expect(sheet.restingIn, FreeTestPage.range);
+    expect(
+      sheet.extent,
+      moreOrLessEquals(210 + fraction * (700 - 210), epsilon: 1),
+    );
+  });
+
+  testWidgets('comes back to where it was left in the range', (tester) async {
+    final sheet = await pumpFree(tester);
+    await tester.timedDrag(
+      find.text('Tile 1'),
+      const Offset(0, -200),
+      const Duration(seconds: 2),
+    );
+    await tester.pumpAndSettle();
+    final left = sheet.extent;
+
+    sheetTestRouter.push('/short');
+    await tester.pumpAndSettle();
+    expect(find.byType(ShortTestPage), findsOneWidget);
+    sheetTestRouter.pop();
+    await tester.pumpAndSettle();
+    expect(sheet.restingIn, FreeTestPage.range);
+    expect(sheet.extent, moreOrLessEquals(left, epsilon: 1));
   });
 }

@@ -1613,9 +1613,11 @@ void main() {
     final sheet = SheetScaffold.controllerOf(
       tester.element(find.text('Start Navigation')),
     );
+    // Full is the top of the free range above the summary, not an anchor.
     sheet.animateTo(const SheetAnchor.full());
     await tester.pumpAndSettle();
-    expect(sheet.restingAt, const SheetAnchor.full());
+    expect(sheet.restingIn, isNotNull);
+    expect(sheet.isAtMax, isTrue);
 
     // A short flick: a long drag carries the sheet past the anchor by hand.
     await tester.fling(find.text('Directions'), const Offset(0, 60), 8000);
@@ -1772,10 +1774,15 @@ void main() {
         expect(sheet.isDraggable, isTrue);
         expect(map.subject, isTrue);
 
-        // It can be pulled up to scroll through the journey.
+        // It can be pulled up to scroll through the journey, resting wherever it's
+        // let go on the way: full is the top of its free range, not an anchor.
+        expect(sheet.anchors.map((a) => a.anchor), [
+          const SheetAnchor.fraction(0.4),
+        ]);
         sheet.animateTo(const SheetAnchor.full());
         await tester.pumpAndSettle();
-        expect(sheet.restingAt, const SheetAnchor.full());
+        expect(sheet.restingIn, isNotNull);
+        expect(sheet.isAtMax, isTrue);
       });
 
       testWidgets('back from a journey goes full again, held', (tester) async {
@@ -1804,7 +1811,8 @@ void main() {
         await tester.pumpAndSettle();
         expect(sheet.restingAt, summary);
         expect(sheet.isDraggable, isTrue);
-        expect(sheet.anchors, hasLength(3));
+        expect(sheet.anchors, hasLength(2));
+        expect(sheet.ranges, hasLength(1), reason: 'free from the summary up');
       });
     });
 

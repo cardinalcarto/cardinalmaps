@@ -41,6 +41,22 @@ class _SheetScrollPosition extends ScrollPositionWithSingleContext {
 
   bool get _atTop => pixels <= minScrollExtent;
 
+  bool _disposed = false;
+
+  /// Scrolls on at [velocity] from where a glide of the sheet left off (see
+  /// [SheetRange.carriesIntoScroll]).
+  void _carryOn(double velocity) {
+    if (_disposed || !isActive() || !hasContentDimensions) return;
+    // Not held now, so this is the content's own fling.
+    goBallistic(velocity);
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
   @override
   ScrollHoldController hold(VoidCallback holdCancelCallback) {
     if (isActive()) sheet.hold(holder: this);
@@ -77,7 +93,7 @@ class _SheetScrollPosition extends ScrollPositionWithSingleContext {
     if (isActive() && sheet.isHeldBy(this)) {
       // A positive velocity is the content moving up, as the sheet does when raised.
       if (!sheet.isAtMax || (_atTop && velocity < 0)) {
-        sheet.release(velocity, holder: this);
+        sheet.release(velocity, holder: this, carryOn: _carryOn);
         goIdle();
         return;
       }

@@ -34,6 +34,11 @@ final sheetTestRouter = GoRouter(
                   SheetPage(key: state.pageKey, child: const LongTestPage()),
             ),
             GoRoute(
+              path: 'free',
+              pageBuilder: (context, state) =>
+                  SheetPage(key: state.pageKey, child: const FreeTestPage()),
+            ),
+            GoRoute(
               path: 'input',
               pageBuilder: (context, state) =>
                   SheetPage(key: state.pageKey, child: const InputTestPage()),
@@ -116,6 +121,7 @@ class SectionsTestPage extends StatelessWidget {
                     for (final (label, path) in const [
                       ('Short page', '/short'),
                       ('Long page', '/long'),
+                      ('Free range', '/free'),
                       ('Text input', '/input'),
                       ('Full screen page', '/full'),
                     ])
@@ -243,6 +249,37 @@ class LongTestPage extends StatelessWidget {
   }
 }
 
+/// A free range from 30% to full, with no anchor at full: the sheet rests wherever it's
+/// let go, and a fling up carries on into scrolling the list.
+class FreeTestPage extends StatelessWidget {
+  const FreeTestPage({super.key});
+
+  static const lower = SheetAnchor.fraction(0.3);
+  static const range = SheetRange(
+    lower,
+    SheetAnchor.full(),
+    carriesIntoScroll: true,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return SheetContent(
+      anchors: const [lower],
+      freeRanges: const [range],
+      slivers: const [
+        SliverToBoxAdapter(
+          child: _Header(
+            title: 'Free range',
+            subtitle: 'Rests anywhere above 30%; flings scroll on',
+          ),
+        ),
+        SliverToBoxAdapter(child: _Readout(sections: [])),
+        _NumberedTiles(count: 100),
+      ],
+    );
+  }
+}
+
 /// A text field, for the keyboard.
 class InputTestPage extends StatelessWidget {
   const InputTestPage({super.key});
@@ -358,7 +395,7 @@ class _Readout extends StatelessWidget {
                 '  expansion ${sheet.expansion.toStringAsFixed(2)}'
                 '  ${sheet.geometry.placement.name}',
             'anchors ${controller.anchors.map((a) => a.extent.toStringAsFixed(0)).join(', ')}'
-                '  resting ${controller.restingAt ?? '-'}',
+                '  resting ${controller.restingAt ?? controller.restingIn ?? '-'}',
             for (final id in sections)
               'reveal $id ${sheet.reveal(id).toStringAsFixed(2)}',
           ];

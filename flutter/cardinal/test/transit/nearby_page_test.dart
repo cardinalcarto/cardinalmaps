@@ -705,6 +705,12 @@ void main() {
       for (final a in sheet(tester).anchors) a.extent,
     ];
 
+    /// The free range's ends: from 40% to the end of the content, either way round.
+    List<double> range(WidgetTester tester) {
+      final range = sheet(tester).ranges.single;
+      return [range.lower, range.upper];
+    }
+
     /// Drags the sheet by [dy] from its header, and lets it settle.
     Future<void> drag(WidgetTester tester, double dy) async {
       await tester.drag(find.text('Nearby transit'), Offset(0, dy));
@@ -720,8 +726,19 @@ void main() {
     ) async {
       await open(tester);
       await answer(tester, routes(20));
-      expect(anchors(tester), [lower, appScreen.height]);
+      expect(anchors(tester), [lower]);
+      expect(range(tester), [lower, appScreen.height]);
       expect(sheet(tester).extent, lower);
+
+      // Partway up, it stays where it's let go.
+      await tester.timedDrag(
+        find.text('Nearby transit'),
+        const Offset(0, -200),
+        const Duration(seconds: 2),
+      );
+      await tester.pumpAndSettle();
+      expect(sheet(tester).restingIn, isNotNull);
+      expect(sheet(tester).extent, inExclusiveRange(lower, appScreen.height));
 
       await drag(tester, -600);
       expect(sheet(tester).extent, appScreen.height);
@@ -739,7 +756,8 @@ void main() {
     ) async {
       await open(tester);
       await answer(tester, routes(3));
-      final [low, high] = anchors(tester);
+      expect(anchors(tester), [lower]);
+      final [low, high] = range(tester);
       // Three rows end a little above 40%.
       expect(low, lower);
       expect(high, greaterThan(lower));
@@ -751,13 +769,39 @@ void main() {
     });
 
     testWidgets(
+      'a hard fling up runs past the end of a few rows, and comes back',
+      (tester) async {
+        await open(tester);
+        await answer(tester, routes(3));
+        final [_, high] = range(tester);
+        final controller = sheet(tester);
+        final extents = <double>[];
+        void heard() => extents.add(controller.extent);
+        controller.addListener(heard);
+        addTearDown(() => controller.removeListener(heard));
+
+        // From the drag handle, let go short of the end of the rows.
+        final handle = Offset(
+          appScreen.width / 2,
+          appScreen.height - lower + 8,
+        );
+        await tester.flingFrom(handle, const Offset(0, -50), 3000);
+        await tester.pumpAndSettle();
+        expect(extents.reduce((a, b) => a > b ? a : b), greaterThan(high + 5));
+        expect(controller.extent, moreOrLessEquals(high));
+        expect(controller.restingIn, isNotNull);
+      },
+    );
+
+    testWidgets(
       'with only a message, the content ends below 40%, which is the top',
       (tester) async {
         await open(tester);
         expect(find.text('Finding departures near you…'), findsOneWidget);
         // The library can't take the lower of 40% and the content's end: the end
-        // becomes the lower anchor, and 40%, past the content, the upper.
-        final [end, top] = anchors(tester);
+        // becomes the free range's lower end, and 40%, past the content, its top.
+        expect(anchors(tester), [lower]);
+        final [end, top] = range(tester);
         expect(end, lessThan(lower));
         expect(top, lower);
         expect(sheet(tester).extent, lower);
