@@ -26,8 +26,9 @@ const _discRadius = 14.0;
 const _emojiSize = 17.0;
 
 /// Adds the saved places' source and layer to [style], a MapLibre style, on top of what's
-/// there. Before the layers for the selected place, which stays above them.
-void addSavedLayers(Map<String, Object?> style) {
+/// there. Before the layers for the selected place, which stays above them. A [dark] style
+/// gets the dark markers and light names.
+void addSavedLayers(Map<String, Object?> style, {bool dark = false}) {
   (style['sources'] as Map<String, Object?>)[savedSource] = {
     'type': 'geojson',
     'data': _empty,
@@ -40,7 +41,13 @@ void addSavedLayers(Map<String, Object?> style) {
     'layout': {
       // Earlier in Saved goes first: it wins the room for a name, and it's on top.
       'symbol-sort-key': ['get', 'order'],
-      'icon-image': ['get', 'icon'],
+      'icon-image': dark
+          ? [
+              'concat',
+              ['get', 'icon'],
+              darkMarkerSuffix,
+            ]
+          : ['get', 'icon'],
       'icon-allow-overlap': true,
       'text-field': ['get', 'name'],
       'text-font': _styleFont(layers),
@@ -51,8 +58,8 @@ void addSavedLayers(Map<String, Object?> style) {
       'text-optional': true,
     },
     'paint': {
-      'text-color': '#202124',
-      'text-halo-color': '#ffffff',
+      'text-color': dark ? '#e8eaed' : '#202124',
+      'text-halo-color': dark ? '#0f1215' : '#ffffff',
       'text-halo-width': 1.5,
     },
   });
@@ -73,10 +80,14 @@ List<Object?> _styleFont(List<Object?> layers) {
   return const ['Noto Sans Regular'];
 }
 
-/// The sprite image's name for a marker of [emoji], or the plain marker if null.
-String markerName(String? emoji) => emoji == null
-    ? 'saved_marker'
-    : 'saved_marker_${emoji.runes.map((r) => r.toRadixString(16)).join('_')}';
+/// What a marker's dark version adds to its name.
+const darkMarkerSuffix = '_dark';
+
+/// The sprite image's name for a marker of [emoji], or the plain marker if null, in its
+/// [dark] version or not.
+String markerName(String? emoji, {bool dark = false}) =>
+    '${emoji == null ? 'saved_marker' : 'saved_marker_${emoji.runes.map((r) => r.toRadixString(16)).join('_')}'}'
+    '${dark ? darkMarkerSuffix : ''}';
 
 /// The GeoJSON for what's checked in [tree].
 Map<String, Object?> savedGeoJson(SavedTree tree) => {
@@ -100,8 +111,12 @@ Map<String, Object?> savedGeoJson(SavedTree tree) => {
   ],
 };
 
-/// Draws the marker for [emoji], or the plain one if null, as a sprite image.
-typedef MarkerPainter = Future<SpriteImageInput> Function(String? emoji);
+/// Draws the marker for [emoji], or the plain one if null, as a sprite image, in its
+/// [dark] version or not.
+typedef MarkerPainter = Future<SpriteImageInput> Function(
+  String? emoji, {
+  required bool dark,
+});
 
 /// Keeps the map's saved places in step with the store, and off the map while overlays
 /// are hidden.
@@ -177,9 +192,13 @@ class SavedMapLayer {
         if (!_painted.contains(markerName(place.emoji))) place.emoji,
     };
     if (missing.isNotEmpty) {
-      final images = await Future.wait(missing.map(painter));
+      // Both versions, so either style has them, and a switch between them is instant.
+      final images = await Future.wait([
+        for (final emoji in missing)
+          for (final dark in [false, true]) painter(emoji, dark: dark),
+      ]);
       map.addImages(images);
-      _painted.addAll(images.map((image) => image.name));
+      _painted.addAll(missing.map(markerName));
     }
     // Hidden while the markers were being drawn: the change already queued an empty map.
     if (overlays.shown) map.setGeoJson(savedSource, savedGeoJson(tree));
@@ -187,8 +206,11 @@ class SavedMapLayer {
 }
 
 /// A [MarkerPainter] that draws with the platform's fonts at [pixelRatio]: the emoji, or
-/// a star, on a white disc with a soft shadow.
-MarkerPainter discMarkerPainter(double pixelRatio) => (emoji) async {
+/// a star, on a white disc with a soft shadow, or for [dark], a gray one with a lighter rim
+/// that shows its edge where a shadow wouldn't.
+MarkerPainter discMarkerPainter(
+  double pixelRatio,
+) => (emoji, {required dark}) async {
   final size = (_markerSize * pixelRatio).ceil();
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder)..scale(pixelRatio);
@@ -201,7 +223,20 @@ MarkerPainter discMarkerPainter(double pixelRatio) => (emoji) async {
         ..color = const Color(0x40000000)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.5),
     )
-    ..drawCircle(center, _discRadius, Paint()..color = Colors.white);
+    ..drawCircle(
+      center,
+      _discRadius,
+      Paint()..color = dark ? const Color(0xFF3C4043) : Colors.white,
+    );
+  if (dark) {
+    canvas.drawCircle(
+      center,
+      _discRadius - 0.5,
+      Paint()
+        ..color = const Color(0xFF80868B)
+        ..style = PaintingStyle.stroke,
+    );
+  }
   final painter = TextPainter(
     textDirection: TextDirection.ltr,
     text: TextSpan(
@@ -210,7 +245,9 @@ MarkerPainter discMarkerPainter(double pixelRatio) => (emoji) async {
         fontFamily: emoji == null ? Icons.star.fontFamily : null,
         fontSize: _emojiSize,
         // Emoji keep their colors, but draw with this one's opacity.
-        color: emoji == null ? const Color(0xFFF9AB00) : Colors.black,
+        color: emoji == null
+            ? (dark ? const Color(0xFFFDD663) : const Color(0xFFF9AB00))
+            : Colors.black,
       ),
     ),
   )..layout();
@@ -223,7 +260,7 @@ MarkerPainter discMarkerPainter(double pixelRatio) => (emoji) async {
   final bytes = await image.toByteData();
   image.dispose();
   return SpriteImageInput(
-    name: markerName(emoji),
+    name: markerName(emoji, dark: dark),
     pixels: bytes!.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
     width: size,
     height: size,
