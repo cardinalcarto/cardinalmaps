@@ -2,8 +2,9 @@
 
 `cardinal-publish` uploads a release of Cardinal's data to an S3-compatible
 bucket that clients read over plain HTTPS: the map as one PMTiles archive, the
-Valhalla routing tiles loose, and a transit build with the indexes a phone uses
-to pick feeds. Each kind is released and versioned on its own, and
+Valhalla routing tiles loose for phones and as a btrfs image for servers, the
+geocoder index as a btrfs image for servers, and a transit build with the
+indexes a phone uses to pick feeds. Each kind is released and versioned on its own, and
 `latest.json` names the releases clients should use together.
 
 It runs on the machine that holds the data, not in Dagger: the inputs are
@@ -23,7 +24,11 @@ releases/
     tiles/{0,1,2}/NNN/NNN[/NNN].gph named as in the tarball
     index/L0.json                   for each 4° level 0 tile: [{path, bytes, sha256}]
                                     of every level 0 to 2 tile inside it
-    release.json                    Valhalla build ID, source, commits, counts, index cells
+    routing.btrfs                   the same tiles.tar and valhalla.json in a btrfs image, for servers
+    release.json                    Valhalla build ID, source, commits, counts, index cells, image
+  geocoder/DATE/
+    geocoder.btrfs                  the geocoder's index/, categories/, tagger.model in a btrfs image, for servers
+    release.json                    image size and SHA-256, index schema version, source, commits
   transit/DATE/
     timetables/FEED.timetable
     transfers/MODE.pmtiles          one PMTiles archive per mode: each mode's zoom 14 transfer tiles, as built
@@ -125,10 +130,18 @@ interrupted run with other inputs.
 
 ```sh
 uv run cardinal-publish routing --target s3://BUCKET --access-key-id ID --secret-access-key KEY \
-  --tar routing/tiles.tar --date 2026-11-11 --source planet-261005 --build-commit COMMIT
+  --tar release/routing/tiles.tar --image release/routing.btrfs \
+  --date 2026-11-11 --source planet-261005 --build-commit COMMIT
 ```
 
-reads `tiles.tar` (a `valhalla_build_extract` tarball, as `data_pipeline`'s
+With `--image routing.btrfs` (the image `data_pipeline`'s `build` writes
+beside `routing/`), the release also holds the image, uploaded as one
+resumable multipart upload of 128 MiB parts (`--part-size-mib`) once the
+tiles are up, and `release.json` records its `image` (file, bytes, SHA-256).
+A rerun of a release published with an image needs `--image` too, to check
+it.
+
+The step reads `tiles.tar` (a `valhalla_build_extract` tarball, as `data_pipeline`'s
 `routing-tiles` writes) once in order, without extracting it: every member is
 checked against `index.bin` and its own tile header, hashed, and uploaded. All
 tiles must carry one build ID, which goes into `release.json`. Reading and
@@ -188,6 +201,24 @@ archive goes up as one resumable multipart upload. `release.json` records each
 archive's size, SHA-256, and tile count under `transfer_archives`.
 `--routing-date` must be a published routing release with the build ID the
 transfers were computed on.
+
+### Geocoder
+
+```sh
+uv run cardinal-publish geocoder --target s3://BUCKET --access-key-id ID --secret-access-key KEY \
+  --image release/geocoder.btrfs --metadata release/geocoder.json \
+  --date 2026-11-14 --source planet-261005 --build-commit COMMIT
+```
+
+uploads the geocoder index's btrfs image as one resumable multipart upload,
+checked first for btrfs's superblock. `release.json` records the image's size
+and SHA-256, and the index's schema version from `geocoder.json` (the index's
+`airmail-index.json`, which `build` writes beside the image): a geocoder only
+reads indexes of its own schema, so a server can check before it downloads.
+A server downloads the image and mounts it read-only
+(`mount -o loop,ro geocoder.btrfs DIR`), then serves `DIR/index` with the
+models beside it, `DIR/categories/` and `DIR/tagger.model`. Only
+servers read geocoder releases, so `latest.json` doesn't name them.
 
 ### POI identities
 

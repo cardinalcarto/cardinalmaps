@@ -21,10 +21,19 @@ dagger -m data_pipeline api call build --osm=./region.osm.pbf \
   --database-url=env://DATABASE_URL -o out
 ```
 
-writes a release: `out/tiles.mbtiles`, `out/index/`, `out/routing/`, and the models it's given
-as `out/categories/` and `out/tagger.model`. The steps run one after another,
-since each can use most of a planet build machine's memory. Omit the first
-line if you're using docker instead of podman.
+writes a release:
+
+- `out/tiles.mbtiles`;
+- `out/geocoder.btrfs`, a btrfs image of everything the geocoder serves
+  (see "Images" below): the index as `index/`, and the models it's given as
+  `categories/` and `tagger.model`, with `out/geocoder.json`, the index's
+  `airmail-index.json`, beside it;
+- `out/routing/`, and `out/routing.btrfs`, the same `tiles.tar` and
+  `valhalla.json` as an image;
+
+The steps run one after another, since each can use most of a planet build
+machine's memory. Omit the first line if you're using docker instead of
+podman. `PLANET.md` walks through a planet build from scratch.
 
 - `--categories` and `--tagger` are the categorical search models and the
   query tagger, usually the last release's. How people describe POIs changes
@@ -147,6 +156,32 @@ to credit it; see "Data credit" in `topo_pipeline/README.md`.
 
 Routing tiles read the extract without POI identifiers, so `build` can reuse
 them from the engine's cache when only the POI database has changed.
+
+## Images
+
+Servers get the geocoder index and the routing tiles as read-only btrfs
+filesystem images, whose files are compressed with zstd. Each is one object
+to store in the bucket and to download onto a machine, smaller than its
+files, and mounted as it is (`mount -o loop,ro`). The kernel decompresses
+pages as they're read, so the files can still be memory-mapped.
+
+`btrfs-image --dir=DIR` makes one from any directory, with `mkfs.btrfs
+--rootdir --compress zstd:LEVEL --shrink` (btrfs-progs 6.14, pinned), which
+needs no privileges, and checks it with `btrfs check`. `build` makes two:
+
+- `routing.btrfs` holds `tiles.tar` and `valhalla.json` at its root, so
+  Valinor maps the tarball as a whole. Loose tiles would take one mapping
+  each, and the planet's 209,841 are more than Linux's default
+  `vm.max_map_count`. `routing/` is exported too, since the phone's loose
+  tiles are published from `tiles.tar`, and transit's walks are computed on
+  it.
+- `geocoder.btrfs` holds the index as `index/`, with the categorical models
+  as `categories/` and the query tagger as `tagger.model`, so a server needs
+  only the image. None of them is exported loose.
+
+`--image-compression-level` (1 to 15, default 3) sets the zstd level.
+Images aren't byte-reproducible, since btrfs records when one was made.
+`btrfs restore IMAGE DIR` copies an image's files out without mounting it.
 
 ## Cardinal Topo
 

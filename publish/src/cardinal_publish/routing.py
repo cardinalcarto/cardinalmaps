@@ -4,7 +4,10 @@ The tarball is read once, in order, straight from disk: `index.bin` (its first m
 each tile's ID, offset, and size, and every tile member must agree with it. Each tile is
 published at `tiles/<name in the tar>`, and `index/<level 0 tile>.json` lists, for each 4°
 level 0 tile, every level 0 to 2 tile inside it with its size and SHA-256, so a client can
-fetch an area's tiles and check them. `release.json` is written last, once all of that is up.
+fetch an area's tiles and check them. With `--image`, the release also holds `routing.btrfs`,
+the btrfs image of the same `tiles.tar` and `valhalla.json` that `data_pipeline`'s `build`
+writes for servers, which mount it and map the tarball whole; `release.json` records its size
+and SHA-256. `release.json` is written last, once all of that is up.
 """
 
 import dataclasses
@@ -21,9 +24,11 @@ from .common import (
     publisher_commit,
     release_prefix,
 )
+from .image import publish_image
 from .release import finish_release
 
 INDEX_NAME = "index.bin"
+IMAGE_FILE = "routing.btrfs"
 INDEX_ENTRY = struct.Struct("<QLL")  # offset, tile ID, size (valhalla_build_extract)
 
 # Valhalla's hierarchy: tile size in degrees by level. Level 3 (transit) isn't published.
@@ -127,10 +132,13 @@ def tiles(tar_path: Path, found):
             raise PublishError(f"{tar_path} has {seen} tiles but {INDEX_NAME} lists {len(index)}")
 
 
-def run(publisher, tar_path: Path, date: str, source: str | None, build_commit: str | None):
+def run(publisher, tar_path: Path, date: str, source: str | None, build_commit: str | None,
+        image: Path | None = None, part_size: int = 128 << 20):
     prefix = release_prefix("routing", date)
     if not tar_path.is_file():
         raise PublishError(f"no tarball at {tar_path}")
+    if image is not None and not image.is_file():
+        raise PublishError(f"no image at {image}")
     existing = publisher.get_json(prefix + "release.json")
     if existing:
         print(f"routing {date} is published already; checking it matches, uploading nothing", file=sys.stderr)
@@ -153,6 +161,14 @@ def run(publisher, tar_path: Path, date: str, source: str | None, build_commit: 
         shards.append(Upload.of_json(f"{prefix}index/{cell}.json", entries))
     shard_progress = publisher.sync(iter(shards), remote, f"routing {date} index")
 
+    image_fields, image_changed = None, 0
+    if existing and existing.get("image") and image is None:
+        raise PublishError(f"routing {date} is published with an image; pass --image to check it")
+    if image is not None:
+        image_fields, image_changed = publish_image(
+            publisher, image, prefix + IMAGE_FILE, part_size, existing.get("image") if existing else None
+        )
+
     release = {
         "kind": "routing",
         "date": date,
@@ -166,10 +182,14 @@ def run(publisher, tar_path: Path, date: str, source: str | None, build_commit: 
         "index_cells": sorted(found["cells"]),
         "tarball_bytes": size,
     }
+    if image_fields is not None:
+        release["image"] = image_fields
     expected = {prefix + entry["path"] for entries in found["cells"].values() for entry in entries}
     expected |= {upload.key for upload in shards}
+    if image is not None:
+        expected.add(prefix + IMAGE_FILE)
     finish_release(
         publisher, prefix, release, existing, expected, remote, CACHE_RELEASE_MARKER,
-        changed=progress.uploaded + shard_progress.uploaded,
+        changed=progress.uploaded + shard_progress.uploaded + image_changed,
     )
     return release
