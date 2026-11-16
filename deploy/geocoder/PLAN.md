@@ -14,8 +14,9 @@ names, buckets and hostnames are placeholders.
   it only pages in index files.
 - **Not needed to serve:** Postgres, the WOF databases, `poi_service`, and the
   POI updater. Those are build-time inputs only.
-- **Data per release:** the index is ~156 GB uncompressed, in 143 files; the
-  image of it is smaller (not yet measured for the planet).
+- **Data per release:** one image, `geocoder.btrfs`. The planet image of
+  2026-11-15 is 152 GB. It holds 197 files, among them a 147 GB index, as
+  97.9 GiB of zstd data inside a 141 GiB filesystem (see "Open items").
 - **Memory:** about 4 GB is a hard floor (mostly the category models); 16 GB
   leaves room to cache the index.
 - **CPU:** every query is single-threaded and CPU-heavy. The dev index took
@@ -23,95 +24,110 @@ names, buckets and hostnames are placeholders.
 
 ## Decisions
 
-1. **One image per release.** `cardinal-publish geocoder` publishes
-   `releases/geocoder/DATE/geocoder.btrfs`, a read-only btrfs image of the
-   index (`index/`), the categorical models (`categories/`) and the query
-   tagger (`tagger.model`), with its files compressed with zstd, which
-   `data_pipeline`'s `build` makes. It goes up as a single multipart upload,
-   and `release.json` beside it records the image's size and SHA-256 and the
-   index's schema version. Per-file objects were considered and rejected as
-   more complexity than they're worth. Since the image is stored as it is,
-   rather than unpacked while it streams in, an interrupted download can
-   resume with range requests.
-2. **Pulled once per release, not on every start.** The image lives on a fly
-   volume. A machine's entrypoint checks whether the volume holds the release
-   named by `GEOCODER_RELEASE`. If it doesn't, it downloads the image onto the
-   volume, checks its SHA-256 against `release.json`, and only then mounts it
-   read-only (`mount -o loop,ro`) and starts airmail on its `index/`, `categories/` and `tagger.model`. The image
-   stays compressed on the volume, and the kernel decompresses pages as
-   airmail maps them. A restart reuses what's there.
-3. **Blue/green machines, no A/B slots.** Volumes are the main cost, so a
-   machine's volume holds one release (~200 GB). A new release gets a new
-   machine with a new volume; the old one is stopped once the new one is
-   proven, and destroyed later. Two volumes exist only during a rollout and its
-   grace period.
-4. **Tiles and geocoder release independently.** POI IDs are stable
+1. **One image per release.** `cardinal-publish geocoder` (done) publishes
+   `releases/geocoder/DATE/geocoder.btrfs`, the read-only btrfs image that
+   `data_pipeline`'s `build` makes: the index (`index/`), the categorical
+   models (`categories/`) and the query tagger (`tagger.model`), compressed
+   with zstd. It goes up as a single multipart upload, and `release.json`
+   beside it records the image's size and SHA-256 and the index's schema
+   version. A published release never changes, so a date names exactly one
+   image.
+2. **The release is pinned in `fly.toml`.** `GEOCODER_RELEASE = "DATE"` in
+   `[env]`, committed, so git records which index production serves.
+   Changing the pin and running `fly deploy` is the only way to move a
+   machine to another release.
+3. **The entrypoint makes the volume match the pin, then mounts it.** On every
+   start:
+   1. Fetch `releases/geocoder/$GEOCODER_RELEASE/release.json`. Refuse to
+      start if it's missing or its schema version isn't the one this
+      airmail reads.
+   2. **Hash check:** if the volume holds `geocoder.btrfs`, hash it and
+      compare its size and SHA-256 with `release.json`. On a match, go to
+      step 5.
+   3. **Clear the volume:** delete everything on it except a partial
+      download of this same release (named after the release, so it can be
+      told apart).
+   4. Download the image, resuming any partial download with range
+      requests, check its size and SHA-256 against `release.json`, and only
+      then move it to `geocoder.btrfs`. A mismatch deletes the download and
+      exits non-zero, so the machine fails its checks instead of serving.
+   5. Mount it read-only (`mount -o loop,ro`) and exec airmail on its
+      `index/`, `categories/` and `tagger.model`. The image stays compressed
+      on the volume, and the kernel decompresses pages as airmail maps them.
+4. **Rollouts are fly's rolling deploy, in place.** Machines with volumes can
+   only use the `rolling` strategy (`canary` and `bluegreen` refuse them), and
+   a deploy can't move a machine to a different volume. So each machine
+   restarts on its own volume, one at a time. When the pin changed, the
+   entrypoint clears the volume and refills it from the bucket, and the
+   machine is out of rotation until `/health` passes. fly waits for each
+   machine's checks before starting the next, and a failing machine stops
+   the deploy, leaving the rest on the old release. Consequences:
+   - **No downtime needs at least two machines** in each region that serves
+     traffic. With one, a rollout is an outage lasting the refill.
+   - **The deploy's wait has to outlast a refill:** `--wait-timeout` and the
+     health check's grace period sized from measured volume bandwidth.
+   - **Rollback is the same:** pin the old date and deploy. It downloads the
+     old image again, since the volume holds one release.
+   - **Volumes hold one release**, about 200 GB for the 152 GB image plus
+     room for the partial download that replaces it (which only exists after
+     the old image is deleted).
+5. **Tiles and geocoder release independently.** POI IDs are stable
    (`poi_service`), so there's no pairing check between map and geocoder
    releases. A `/v1/place` 404 says what became of an ID (active, inactive,
    replaced, unknown) from a status file built from the published POI tables
    (`releases/poi/`, see `publish/README.md`). The status file is about 1 GB;
    refreshing it daily replaces it by rename, with no restart
    (`AIRMAIL_POI_STATUS`).
-5. **Load balancing is fly's proxy.** Requests go to the nearest region with a
+6. **Load balancing is fly's proxy.** Requests go to the nearest region with a
    healthy machine, and within a region by request concurrency limits. Airmail
    is CPU-bound, so the limits should be low (start near soft 8 / hard 32).
-   Auto-stop stays off: a cold start re-reads 3 GB of models through the
-   volume's bandwidth cap.
-
-## The rollout script
-
-`deploy/geocoder/rollout` (Python, calling `flyctl … --json`). Every step reads
-its state from fly (machines tagged with metadata `release=DATE`), never from
-local files, so each step can be rerun after a crash.
-
-| Step | What it does |
-|---|---|
-| `plan --app APP --release DATE` | Read-only: what's running, and exactly which machine IDs each step would touch |
-| `start` | Checks that `releases/geocoder/DATE/release.json` exists, creates a volume for the release, and clones the current machine's config with `GEOCODER_RELEASE=DATE`. Touches nothing old. |
-| `verify` | On the NEW machine only: `/health` reports release DATE, and smoke queries return known answers (e.g. a landmark's `poi:` ID, an address's city). An unknown or timed-out answer counts as failure. |
-| `promote` | Refuses unless `verify` passes at that moment. Then **stops** the old machines one at a time, re-checking before each that a healthy machine on DATE remains. |
-| `rollback` | Starts the stopped old machines again, then destroys the new one. |
-| `cleanup` | Run by hand a day or so later: destroys the stopped old machines and their volumes. |
+   Auto-stop stays off: every start hashes the whole image (decision 3).
 
 ### What could take production down, and the safeguard for each
 
 | Failure | Safeguard |
 |---|---|
-| Removing the old machine before the new one works | `promote` requires a passing `verify` at that moment, and only stops machines; destroying happens in `cleanup`. |
-| Selecting the wrong machines | Machines are selected by their `release` tag only. Hard rule: never stop or destroy the last healthy machine. `plan` prints the exact IDs. |
-| The wrong app | `--app` is required, with no default. Changing steps print the plan and require typing the app name to confirm. |
-| A bad index that passes `/health` | Smoke queries with known answers, and the old machine kept stopped until `cleanup`. |
-| A crash partway through | State is read from fly, so a rerun picks up where it stopped. |
-| Two rollouts at once | Steps refuse if machines from more than two releases exist. |
-| fly API errors | Timeouts and retries; an unknown status counts as unhealthy. |
-| Bugs in the script | Every rollout goes to a separate staging app first (one small machine with a Seattle-sized index). Tests use a fake flyctl returning recorded JSON. |
+| A corrupt or wrong image on a volume | The hash check against `release.json` on every start; airmail never sees an image that doesn't match. |
+| A pin naming a release that doesn't exist, or another schema | The entrypoint refuses before touching the volume, so the old image stays and the rolling deploy stops at the first machine. |
+| A bad index that passes `/health` | Every new release goes to a separate staging app first, and is checked there with smoke queries with known answers (a landmark's `poi:` ID, an address's city) before production's pin changes. |
+| All machines refilling at once | `rolling` only, never `immediate`; at least two machines per region. |
+| A refill longer than the deploy waits | The wait timeout and grace period set from measured bandwidth; if exceeded, the deploy stops with the remaining machines still on the old release. |
+| An interrupted download | Resumed by range requests on the next start; only a hash-checked download becomes `geocoder.btrfs`. |
 
-## Work, roughly 2½–3 days
+## Work, roughly 2 days
 
 | Piece | Effort |
 |---|---|
 | Measure first: the planet geocoder in a container limited to 16 GB and 2 CPUs, replaying `airmail/eval/search.tsv` with the app's parameters (prefix and typos on); p50/p99 and queries per second. This sets the machine size. | ½ day |
-| `cardinal-publish geocoder`: tar, zstd and one multipart upload, plus `release.json` with the SHA-256. Credentials on the command line, like the other steps. | ½ day |
-| `deploy/geocoder/`: image, entrypoint, example `fly.toml`, the rollout script with its tests, README with "Adapting it" | 1 day |
+| `deploy/geocoder/`: image, entrypoint (decision 3) with tests against a local bucket (`--target dir:`-style fixtures: match, mismatch, partial download, missing release, wrong schema), example `fly.toml`, smoke-query script, README with "Adapting it" | 1 day |
 | airmail: graceful shutdown on SIGTERM, the release ID in `/health`. Optional: response compression, a limit on concurrent searches. | ½ day |
+
+`cardinal-publish geocoder` is already done.
 
 ## Starting point
 
-- **Sizing:** `performance-2x` with 16 GB, one region, auto-stop off, about $180
-  a month per machine plus the volume (from memory of fly's prices; check
-  them). Two machines in a region for high availability, if wanted.
-- **Volumes:** about 200 GB each, for one release plus headroom. They live on
-  one host and don't replicate, so a failed host means a new machine fills from
-  the bucket, which takes hours.
+- **Sizing:** `performance-2x` with 16 GB, auto-stop off, about $180 a month
+  per machine plus the volume (from memory of fly's prices; check them). Two
+  machines per region, for rollouts without downtime.
+- **Volumes:** about 200 GB each. They live on one host and don't replicate,
+  so a failed host means a new machine fills from the bucket, which takes as
+  long as a rollout's refill.
 
 ## Open items
 
 - **A search failure to check first:** a search against the local planet
   geocoder on :3000 failed with "Connection closed before full header was
   received" (2026-11-12). Not investigated.
-- **Fly facts to verify** before relying on them: the volume size limit, volume
-  bandwidth caps (they set fill time: ~20 min at ~128 MiB/s, hours at
-  ~16 MiB/s), that the proxy doesn't route to machines failing their checks,
-  `fly machine clone` flags, and current prices.
+- **Startup time:** hashing 152 GB on every start takes about 20 minutes at
+  ~128 MiB/s of volume bandwidth, and hours at ~16 MiB/s; a refill adds the
+  download. Measure both on a real volume before choosing timeouts.
+- **Image slack:** `mkfs.btrfs --shrink` left a 141 GiB filesystem for
+  97.9 GiB of data. Shrinking it to fit would cut downloads, hashing and
+  volume size by about a third.
+- **Fly facts to verify** before relying on them: that a rolling deploy keeps
+  each machine's volume (the docs imply it but don't say), that loop mounts
+  work in fly machines, the volume size limit, volume bandwidth, the longest
+  wait `fly deploy` allows, that the proxy doesn't route to machines failing
+  their checks, and current prices.
 - **Licensing:** a public index is a derived database, with ODbL obligations
   for OSM and WOF source licences. Decide how many releases to keep.
