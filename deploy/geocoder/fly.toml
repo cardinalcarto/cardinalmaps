@@ -1,0 +1,60 @@
+# An example geocoder on fly.io: airmail_service serving the geocoder release pinned below,
+# from a btrfs image the entrypoint downloads onto each machine's volume and mounts. See
+# README.md for adapting it, and PLAN.md for why it works this way.
+
+app = "cardinal-geocoder-example"
+primary_region = "sjc"
+
+[build]
+# The cardinal-airmail-flyio image .github/workflows/images.yml publishes for a commit on main.
+# Its airmail must read the pinned release's index schema; the entrypoint refuses otherwise.
+image = "ghcr.io/OWNER/cardinal-airmail-flyio:sha-COMMIT"
+
+[env]
+# The release this app serves. Changing it and deploying is the only way to move to another
+# release; each machine then replaces its image, one at a time.
+GEOCODER_RELEASE = "2026-11-15"
+GEOCODER_RELEASES_URL = "https://BUCKET.t3.storage.dev/releases"
+RUST_LOG = "info"
+
+[mounts]
+# One volume per machine, holding one release's image (currently 152 GB for the planet).
+# Create them with `fly volumes create` (see README.md).
+source = "geocoder_data"
+destination = "/data"
+
+[deploy]
+# Machines with volumes are replaced in place, one at a time; a machine that fails its
+# checks stops the deploy, leaving the rest on the old release.
+strategy = "rolling"
+max_unavailable = 1
+# Long enough for a machine to download and hash a new image. Measure your volumes'
+# bandwidth and set this from it (see README.md).
+wait_timeout = "4h"
+
+[http_service]
+internal_port = 3000
+force_https = true
+# Every start hashes the whole image, so machines stay running.
+auto_stop_machines = "off"
+auto_start_machines = false
+min_machines_running = 1
+
+# Each search is CPU-bound on one core; keep the limits low and let the proxy spread load.
+[http_service.concurrency]
+type = "requests"
+soft_limit = 8
+hard_limit = 32
+
+# /health answers once the index and models are loaded. Until then the proxy sends the
+# machine nothing, and the deploy waits (up to wait_timeout).
+[[http_service.checks]]
+grace_period = "60s"
+interval = "30s"
+method = "GET"
+path = "/health"
+timeout = "5s"
+
+[[vm]]
+size = "shared-cpu-2x"
+memory = "4gb"

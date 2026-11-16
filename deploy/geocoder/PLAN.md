@@ -1,6 +1,6 @@
 # Plan: the geocoder on fly.io
 
-Status: planned, not started. This records what was decided, so the work can pick
+Status: the example deployment is written (README.md, fly.toml, entrypoint.sh), not yet tried on fly.io. This records what was decided, so the work can pick
 up later. Like the rest of `deploy/`, it describes an example deployment: app
 names, buckets and hostnames are placeholders.
 
