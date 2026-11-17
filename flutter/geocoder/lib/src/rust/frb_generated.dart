@@ -950,8 +950,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   OfflineQuery dco_decode_offline_query(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 7)
-      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
     return OfflineQuery(
       text: dco_decode_String(arr[0]),
       lang: dco_decode_opt_String(arr[1]),
@@ -959,7 +959,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       typos: dco_decode_bool(arr[3]),
       focus: dco_decode_opt_list_prim_f_64_strict(arr[4]),
       viewport: dco_decode_opt_list_prim_f_64_strict(arr[5]),
-      limit: dco_decode_u_32(arr[6]),
+      bbox: dco_decode_opt_list_prim_f_64_strict(arr[6]),
+      limit: dco_decode_u_32(arr[7]),
     );
   }
 
@@ -1425,6 +1426,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_typos = sse_decode_bool(deserializer);
     var var_focus = sse_decode_opt_list_prim_f_64_strict(deserializer);
     var var_viewport = sse_decode_opt_list_prim_f_64_strict(deserializer);
+    var var_bbox = sse_decode_opt_list_prim_f_64_strict(deserializer);
     var var_limit = sse_decode_u_32(deserializer);
     return OfflineQuery(
       text: var_text,
@@ -1433,6 +1435,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       typos: var_typos,
       focus: var_focus,
       viewport: var_viewport,
+      bbox: var_bbox,
       limit: var_limit,
     );
   }
@@ -1897,6 +1900,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.typos, serializer);
     sse_encode_opt_list_prim_f_64_strict(self.focus, serializer);
     sse_encode_opt_list_prim_f_64_strict(self.viewport, serializer);
+    sse_encode_opt_list_prim_f_64_strict(self.bbox, serializer);
     sse_encode_u_32(self.limit, serializer);
   }
 

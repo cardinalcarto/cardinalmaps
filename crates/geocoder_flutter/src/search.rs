@@ -31,6 +31,9 @@ pub struct Query {
     pub typos: bool,
     pub focus: Option<[f64; 2]>,
     pub viewport: Option<[f64; 4]>,
+    /// `[west, south, east, north]` results' shapes must intersect (a pointer's shape is its
+    /// center), as the server's `bbox`; west above east crosses the antimeridian.
+    pub bbox: Option<[f64; 4]>,
     pub limit: usize,
 }
 
@@ -90,6 +93,7 @@ impl DeviceIndex {
             limit: query.limit.max(1),
             viewport: query.viewport,
             focus: query.focus,
+            bbox: query.bbox,
             model: self.model.as_ref(),
             ..SearchRequest::default()
         };
