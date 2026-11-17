@@ -12,6 +12,7 @@ import 'package:sparkle/sparkle.dart';
 import 'config.dart';
 import 'directions/route_source.dart';
 import 'geocoder/geocoder.dart';
+import 'geocoder/offline_geocoder.dart';
 import 'l10n/app_localizations.dart';
 import 'map/location.dart';
 import 'map/map.dart';
@@ -85,7 +86,8 @@ void main() {
     StoreScope(
       store: store,
       child: GeocoderScope(
-        geocoder: Geocoder(Uri.parse(geocoderUrl)),
+        online: OnlineGeocoder(Uri.parse(geocoderUrl)),
+        offline: const OfflineGeocoder(),
         child: DirectionsScope(
           routes: routes,
           transit: OfflineTransitSource(offline.area, realtime),

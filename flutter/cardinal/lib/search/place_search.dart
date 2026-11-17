@@ -10,14 +10,31 @@ import '../store/store.dart';
 ///
 /// Requests in flight keep going when the text changes, so results can be a few
 /// characters behind while typing; an answer never replaces a newer one's.
+///
+/// Search goes to [offline], or to [online] while the [searchOnline] setting says so;
+/// when that changes, the text is searched again where it now goes.
 class PlaceSearch extends ChangeNotifier {
-  PlaceSearch(
-    this._geocoder, {
+  PlaceSearch({
+    required this.offline,
+    required this.online,
+    SettingsStore? settings,
     this.lang,
     this.debounce = const Duration(milliseconds: 300),
-  });
+  }) {
+    _watchOnline = settings?.watch(searchOnline).listen((online) {
+      if (online == _online) return;
+      _online = online;
+      _searchAgain();
+    });
+  }
 
-  final Geocoder _geocoder;
+  final Geocoder offline;
+  final Geocoder online;
+  StreamSubscription<bool>? _watchOnline;
+
+  /// Whether search goes [online]: the [searchOnline] setting, offline until it's read.
+  bool get searchesOnline => _online;
+  bool _online = false;
 
   /// The language of queries and results, as a BCP 47 tag.
   final String? lang;
@@ -76,6 +93,15 @@ class PlaceSearch extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Searches the text again, if there is any, as if it had just been typed.
+  void _searchAgain() {
+    if (_text.trim().isEmpty) return;
+    _timer?.cancel();
+    _loading = true;
+    _timer = Timer(debounce, () => _search(_text));
+    notifyListeners();
+  }
+
   /// Search for [text], leaving earlier requests running: for a fast typist, their
   /// answers are the only ones that arrive while typing, a few characters behind.
   Future<void> _search(String text) async {
@@ -83,7 +109,7 @@ class PlaceSearch extends ChangeNotifier {
     List<Place>? results;
     Object? error;
     try {
-      results = await _geocoder.search(
+      results = await (_online ? online : offline).search(
         text,
         focus: focus,
         viewport: viewport,
@@ -107,6 +133,7 @@ class PlaceSearch extends ChangeNotifier {
 
   @override
   void dispose() {
+    _watchOnline?.cancel();
     _timer?.cancel();
     _closed.complete();
     super.dispose();

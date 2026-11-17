@@ -188,8 +188,11 @@ class _DirectionsPageState extends State<DirectionsPage> {
     final scope = DirectionsScope.of(context);
     final store = StoreScope.of(context);
     _settings = store.settings;
+    final geocoders = GeocoderScope.of(context);
     _search = PlaceSearch(
-      GeocoderScope.of(context),
+      offline: geocoders.offline,
+      online: geocoders.online,
+      settings: store.settings,
       lang: PlatformDispatcher.instance.locale.toLanguageTag(),
     );
     final directions = _directions = Directions(

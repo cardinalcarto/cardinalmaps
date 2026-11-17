@@ -109,8 +109,11 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
         .listen((units) {
           if (units != _units) setState(() => _units = units);
         });
+    final geocoders = GeocoderScope.of(context);
     _search ??= PlaceSearch(
-      GeocoderScope.of(context),
+      offline: geocoders.offline,
+      online: geocoders.online,
+      settings: StoreScope.of(context).settings,
       lang: PlatformDispatcher.instance.locale.toLanguageTag(),
     );
   }

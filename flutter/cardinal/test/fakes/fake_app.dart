@@ -31,6 +31,7 @@ import 'package:http/testing.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart' show SpriteImageInput;
 
+import 'fake_geocoder.dart';
 import 'fake_map.dart';
 import 'fake_navigation.dart';
 import 'fake_location.dart';
@@ -83,6 +84,8 @@ Future<GoRouter> pumpFakeApp(
   Future<int> Function()? freeBytes,
   TargetPlatform? platform,
   NavigationController? navigation,
+  Geocoder? online,
+  Geocoder? offline,
 }) async {
   tester.view
     ..physicalSize = appScreen * 2
@@ -117,12 +120,15 @@ Future<GoRouter> pumpFakeApp(
     StoreScope(
       store: store ?? fakeStore(),
       child: GeocoderScope(
-        geocoder: Geocoder(
-          Uri.parse('http://localhost:3000'),
-          client: MockClient(
-            (_) async => http.Response(jsonEncode({'results': []}), 200),
-          ),
-        ),
+        online:
+            online ??
+            OnlineGeocoder(
+              Uri.parse('http://localhost:3000'),
+              client: MockClient(
+                (_) async => http.Response(jsonEncode({'results': []}), 200),
+              ),
+            ),
+        offline: offline ?? FakeGeocoder(),
         child: DirectionsScope(
           routes: routes ?? FakeRoutes(),
           transit: transit ?? FakeTransit(),
@@ -143,6 +149,7 @@ Future<GoRouter> pumpFakeApp(
                   clock: clock ?? DateTime.now,
                   vehicleMarkers: vehicleMarkers ?? fakeVehicleMarkers,
                   child: MaterialApp.router(
+                    debugShowCheckedModeBanner: false,
                     // The app's theme for [platform], or the test's default theme.
                     theme: platform == null
                         ? null
