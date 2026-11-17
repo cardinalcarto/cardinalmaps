@@ -232,9 +232,31 @@ class HousenumberTest extends AbstractLayerTest {
       Map.of("addr:housenumber", "5", "addr:street", "Main Street", "addr:unit", "1", "name", "Named"),
       Map.of("addr:housenumber", "5", "addr:street", "Main Street", "addr:unit", "1")
     ));
-    // the named one goes, and the true duplicates merge into one multipoint
-    assertEquals(1, result.size());
-    assertEquals(null, result.getFirst().tags().get("name"));
+    // the true duplicates merge into one multipoint, drawn; the named one stays for the geocoder, not drawn
+    assertEquals(2, result.size());
+    var drawn = result.stream().filter(f -> f.tags().get("name") == null).toList();
+    assertEquals(1, drawn.size());
+    assertEquals("5", drawn.getFirst().tags().get("housenumber"));
+    var named = result.stream().filter(f -> "Named".equals(f.tags().get("name"))).toList();
+    assertEquals(1, named.size());
+    assertEquals(null, named.getFirst().tags().get("housenumber"));
+    assertEquals("5", named.getFirst().tags().get("addr:housenumber"));
+    assertEquals(null, named.getFirst().tags().get("_search_named"));
+  }
+
+  @Test
+  void testNamedElementsAtOneNumberAllStay() throws GeometryException {
+    // a campus: its buildings share one address, and the geocoder finds each by its name
+    var result = postProcessed(List.of(
+      Map.of("addr:housenumber", "1900", "addr:street", "Campus Drive"),
+      Map.of("addr:housenumber", "1900", "addr:street", "Campus Drive", "name", "Building 43", "building", "yes",
+        "cardinal:importance", "0.1"),
+      Map.of("addr:housenumber", "1900", "addr:street", "Campus Drive", "name", "Building 44", "building", "yes")
+    ));
+    assertEquals(3, result.size());
+    assertEquals(1, result.stream().filter(f -> f.tags().get("housenumber") != null).count());
+    var building = result.stream().filter(f -> "Building 43".equals(f.tags().get("name"))).findFirst().orElseThrow();
+    assertEquals(0.1f, building.tags().get("cardinal:importance"));
   }
 
   @Test

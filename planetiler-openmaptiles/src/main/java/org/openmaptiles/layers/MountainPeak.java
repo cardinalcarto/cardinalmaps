@@ -125,6 +125,7 @@ public class MountainPeak implements
       var feature = features.point(LAYER_NAME)
         .setAttr(Fields.CLASS, element.source().getTag("natural"))
         .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(element.source().tags(), translations))
+        .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(element.source()), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
         .putAttrs(meters != null ? elevationTags(meters) : Map.of())
         .setSortKeyDescending(
           (meters != null ? meters.intValue() : 0) +
@@ -189,6 +190,7 @@ public class MountainPeak implements
       features.pointOnSurface(LAYER_NAME)
         .setAttr(Fields.CLASS, "glacier")
         .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(source.tags(), translations))
+        .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(source), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
         .setMinZoom(10)
         .setBufferPixels(100)
         .setPointLabelGridSizeAndLimit(13, 100, 5);
@@ -200,6 +202,7 @@ public class MountainPeak implements
     features.point(LAYER_NAME)
       .setAttr(Fields.CLASS, clazz)
       .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(source.tags(), translations))
+      .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(source), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
       .putAttrs(meters != null && Math.abs(meters) < 10_000 ? elevationTags(meters) : Map.of())
       .setMinZoom(minZoom)
       .setBufferPixels(100)
@@ -211,6 +214,7 @@ public class MountainPeak implements
       .setAttr(Fields.CLASS, clazz)
       .setAttr(Fields.RANK, nullIfEmpty(source.getString("name")) != null ? 2 : 3)
       .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(source.tags(), translations))
+      .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(source), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
       .setMinZoom(minZoom)
       .setBufferPixels(100);
   }
@@ -225,6 +229,7 @@ public class MountainPeak implements
       .setAttr(Fields.CLASS, clazz)
       .setAttr("mountain_pass", source.hasTag("mountain_pass", "yes") ? 1 : null)
       .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(source.tags(), translations))
+      .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(source), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
       .putAttrs(meters != null && Math.abs(meters) < 10_000 ? elevationTags(meters) : Map.of())
       .setSortKeyDescending((meters != null ? meters.intValue() : 0) +
         (nullIfEmpty(source.getString("name")) != null ? 10_000 : 0))
@@ -244,6 +249,7 @@ public class MountainPeak implements
       .setAttr(Fields.RANK, rank)
       .setAttr("height", nullIfEmpty(element.source().getString("height")))
       .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(element.source().tags(), translations))
+      .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(element.source()), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
       .setSortKey(rank)
       // ridges and cliffs are how you read a mountain, and a named ridge is how you talk about one
       .setMinZoom(element.source().hasTag("natural", "ridge") && nullIfEmpty(element.name()) != null ? 10 : 12)

@@ -199,6 +199,7 @@ public class Waterway implements
         .setBufferPixels(BUFFER_SIZE)
         .setAttr(Fields.CLASS, source.getString("waterway"))
         .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(source.tags(), translations))
+        .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(source), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
         .setMinZoom(13);
     }
   }
@@ -214,6 +215,7 @@ public class Waterway implements
       .setBufferPixels(BUFFER_SIZE)
       .setAttr(Fields.CLASS, element.waterway())
       .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(element.source().tags(), translations))
+      .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(element.source()), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
       .setMinZoom(minzoom)
       // details only at higher zoom levels so that named rivers can be merged more aggressively
       .setAttrWithMinzoom(Fields.BRUNNEL, Utils.brunnel(element.isBridge(), element.isTunnel()), 12)

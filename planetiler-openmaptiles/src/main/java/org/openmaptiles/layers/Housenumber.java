@@ -44,6 +44,7 @@ import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Translations;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -69,8 +70,11 @@ import org.slf4j.LoggerFactory;
  * <p>
  * Beyond OpenMapTiles, each house number carries what the geocoder indexes an address by: every {@code addr:*} tag as
  * tagged, {@code addr:street} from an associated street relation when it isn't tagged, and the Who's On First areas
- * it's in as {@value Poi#ADMIN_PREFIX}{@code <placetype>}, as POIs do. Named elements also carry their names, unless
- * they're in the {@code poi} layer, which has them already: the geocoder makes each named element one POI.
+ * it's in as {@value Poi#ADMIN_PREFIX}{@code <placetype>}, as POIs do. Named elements also carry their names and
+ * {@value Poi#IMPORTANCE_TAG}, unless they're in the {@code poi} layer, which has them already: the geocoder makes each
+ * named element one POI. One house number of a street is drawn once, as OpenMapTiles does (an unnamed element's first),
+ * but a named element that carries its names is kept even when another element at that number is drawn: it stays in the
+ * tile without {@code housenumber}, so it isn't drawn twice, for the geocoder to find by name.
  */
 public class Housenumber implements
   OpenMapTilesSchema.Housenumber,
@@ -88,6 +92,8 @@ public class Housenumber implements
   private static final String TEMP_HAS_NAME = "_has_name";
   private static final Comparator<VectorTile.Feature> BY_TEMP_HAS_NAME = Comparator
     .comparing(i -> (Boolean) i.tags().get(TEMP_HAS_NAME), Boolean::compare);
+  /** Set on a feature carrying its element's names, which the duplicate rule keeps. */
+  private static final String TEMP_SEARCH_NAMED = "_search_named";
   private static final String ADDRESS_PREFIX = "addr:";
   private static final String STREET_TAG = "addr:street";
   private final Stats stats;
@@ -182,26 +188,37 @@ public class Housenumber implements
     }
     feature.setAttr(STREET_TAG, street);
     if (hasName && !isPoi(source)) {
-      feature.putAttrs(OmtLanguageUtils.searchNames(source.tags()));
+      var names = OmtLanguageUtils.searchNames(source.tags());
+      if (!names.isEmpty()) {
+        feature.putAttrs(names)
+          .setAttr(Poi.IMPORTANCE_TAG, Poi.importance(source))
+          .setAttr(TEMP_SEARCH_NAMED, true);
+      }
     }
     Poi.addAdmins(admins, stats, feature, source);
   }
 
   @Override
   public List<VectorTile.Feature> postProcess(int zoom, List<VectorTile.Feature> list) throws GeometryException {
-    // remove duplicate house numbers, features without name tag are prioritized
-    var items = list.stream()
-      .collect(Collectors.groupingBy(f -> f.tags().get(TEMP_PARTITION)))
-      .values().stream()
-      .flatMap(
-        g -> g.stream().min(BY_TEMP_HAS_NAME).stream()
-      )
-      .toList();
+    // remove duplicate house numbers, features without name tag are prioritized; named elements the geocoder finds by
+    // name stay, undrawn
+    List<VectorTile.Feature> items = new ArrayList<>();
+    for (var group : list.stream().collect(Collectors.groupingBy(f -> f.tags().get(TEMP_PARTITION))).values()) {
+      var drawn = group.stream().min(BY_TEMP_HAS_NAME).orElseThrow();
+      items.add(drawn);
+      for (var other : group) {
+        if (other != drawn && other.tags().containsKey(TEMP_SEARCH_NAMED)) {
+          other.tags().remove(Fields.HOUSENUMBER);
+          items.add(other);
+        }
+      }
+    }
 
     // remove temporary attributes
     for (var item : items) {
       item.tags().remove(TEMP_HAS_NAME);
       item.tags().remove(TEMP_PARTITION);
+      item.tags().remove(TEMP_SEARCH_NAMED);
     }
 
     // reduces the size of some heavy z14 tiles with many repeated housenumber values by 60% or more

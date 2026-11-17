@@ -180,6 +180,8 @@ pub struct OfflineQuery {
     pub focus: Option<Vec<f64>>,
     /// `[west, south, east, north]`.
     pub viewport: Option<Vec<f64>>,
+    /// `[west, south, east, north]` results must intersect, as the server's `bbox`.
+    pub bbox: Option<Vec<f64>>,
     pub limit: u32,
 }
 
@@ -233,6 +235,7 @@ impl OfflineIndex {
             typos: query.typos,
             focus: pair(query.focus),
             viewport: quad(query.viewport),
+            bbox: quad(query.bbox),
             limit: query.limit as usize,
         };
         let results = self

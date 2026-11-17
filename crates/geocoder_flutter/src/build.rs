@@ -4,8 +4,9 @@
 //! The app builds a whole index for each change of its regions (see the decisions log's
 //! "Device index lifecycle") into a fresh directory, and swaps it in when it's done.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
+use std::time::Instant;
 
 use airmail::index::{AirmailIndex, AirmailIndexWriter, DocumentBuilder, Storage, WriterOptions};
 use airmail::poi::{Kind, SchemafiedPoi, ToIndexPoi};
@@ -36,6 +37,10 @@ pub struct BuildCounts {
     /// Of them, pointers, and those with a local ID (no other ID finds them).
     pub pointers: u64,
     pub local_ids: u64,
+    /// Documents placed by their point in the areas' boundaries (their tiles don't name their
+    /// areas), and the time that took, in microseconds.
+    pub placed_by_point: u64,
+    pub placing_micros: u64,
 }
 
 /// Turns features into documents and adds them to the writer.
@@ -47,11 +52,6 @@ pub struct IndexSink {
     pub counts: BuildCounts,
     /// The first document that failed to build, if one did.
     error: Option<anyhow::Error>,
-    /// The areas most of each tile's points are in (an index into `area_sets`), for the
-    /// features whose layers don't name theirs: streets, peaks, lakes, parks, airports.
-    tile_areas: TileAreas,
-    area_sets: Vec<Vec<(String, i64)>>,
-    area_set_ids: HashMap<Vec<(String, i64)>, u32>,
 }
 
 impl IndexSink {
@@ -63,39 +63,17 @@ impl IndexSink {
             return None;
         };
         if admins.is_empty() {
-            let tile = tile_of(doc.center.x(), doc.center.y());
-            if let Some(set) = self.tile_areas.get(tile) {
-                let admins = self.area_sets[set as usize].clone();
-                place(&mut doc, &admins, &mut self.wof);
-            }
+            // Streets, peaks, lakes, waterways, parks, airports and POIs without a stable ID:
+            // placed by their point, as Planetiler places the others.
+            let start = Instant::now();
+            let admins = self.wof.admins_at(doc.center);
+            place(&mut doc, &admins, &mut self.wof);
+            self.counts.placed_by_point += 1;
+            self.counts.placing_micros += start.elapsed().as_micros() as u64;
         } else {
             place(&mut doc, &admins, &mut self.wof);
         }
         Some(doc)
-    }
-
-    /// Notes the areas most of a tile's points are in.
-    fn note_tile_areas(&mut self, tile: TileKey, points: &[ExtractedFeature]) {
-        let mut counts: HashMap<&[(String, i64)], usize> = HashMap::new();
-        for p in points.iter().filter(|p| !p.admins.is_empty()) {
-            *counts.entry(p.admins.as_slice()).or_default() += 1;
-        }
-        let Some((most, _)) = counts
-            .into_iter()
-            .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(a.0)))
-        else {
-            return;
-        };
-        let set = match self.area_set_ids.get(most) {
-            Some(&set) => set,
-            None => {
-                let set = u32::try_from(self.area_sets.len()).unwrap_or(u32::MAX);
-                self.area_sets.push(most.to_vec());
-                self.area_set_ids.insert(most.to_vec(), set);
-                set
-            }
-        };
-        self.tile_areas.insert(tile, set);
     }
 
     fn add(&mut self, mut doc: ToIndexPoi) {
@@ -121,36 +99,6 @@ impl IndexSink {
     }
 }
 
-/// Each z14 tile's areas (an index into `IndexSink::area_sets`), by column, then row. Tiles
-/// come in order of column, so the rows of each column are pushed in order and the columns
-/// behind the reading are forgotten (see `FeatureSink::columns_done`).
-#[derive(Debug, Default)]
-struct TileAreas(BTreeMap<u32, Vec<(u32, u32)>>);
-
-impl TileAreas {
-    fn insert(&mut self, tile: TileKey, set: u32) {
-        let rows = self.0.entry(tile.x).or_default();
-        match rows.last() {
-            Some(&(y, _)) if y < tile.y => rows.push((tile.y, set)),
-            None => rows.push((tile.y, set)),
-            _ => match rows.binary_search_by_key(&tile.y, |&(y, _)| y) {
-                Ok(i) => rows[i].1 = set,
-                Err(i) => rows.insert(i, (tile.y, set)),
-            },
-        }
-    }
-
-    fn get(&self, tile: TileKey) -> Option<u32> {
-        let rows = self.0.get(&tile.x)?;
-        let i = rows.binary_search_by_key(&tile.y, |&(y, _)| y).ok()?;
-        Some(rows[i].1)
-    }
-
-    fn forget_before(&mut self, column: u32) {
-        self.0 = self.0.split_off(&column);
-    }
-}
-
 /// The tiles read: a sorted list while they come in order, as they do, and a set for any
 /// that don't.
 #[derive(Debug, Default)]
@@ -171,21 +119,6 @@ impl SeenTiles {
     }
 }
 
-/// The z14 tile a point is in.
-fn tile_of(lng: f64, lat: f64) -> TileKey {
-    let n = f64::from(1u32 << 14);
-    let x = ((lng + 180.0) / 360.0 * n).floor().clamp(0.0, n - 1.0);
-    let lat = lat.to_radians();
-    let y = ((1.0 - (lat.tan() + 1.0 / lat.cos()).ln() / std::f64::consts::PI) / 2.0 * n)
-        .floor()
-        .clamp(0.0, n - 1.0);
-    TileKey {
-        z: 14,
-        x: x as u32,
-        y: y as u32,
-    }
-}
-
 fn kind_slot(kind: Kind) -> usize {
     Kind::ALL.iter().position(|k| *k == kind).unwrap_or(0)
 }
@@ -197,12 +130,7 @@ impl FeatureSink for IndexSink {
         }
     }
 
-    fn columns_done(&mut self, column: u32) {
-        self.tile_areas.forget_before(column);
-    }
-
-    fn tile_points(&mut self, tile: TileKey, points: Vec<ExtractedFeature>) {
-        self.note_tile_areas(tile, &points);
+    fn tile_points(&mut self, _tile: TileKey, points: Vec<ExtractedFeature>) {
         let mut docs: Vec<ToIndexPoi> =
             points.into_iter().filter_map(|f| self.prepare(f)).collect();
         self.counts.duplicate_addresses += drop_duplicate_addresses(&mut docs) as u64;
@@ -276,9 +204,6 @@ impl IndexBuild {
                 postcodes: Postcodes::default(),
                 counts: BuildCounts::default(),
                 error: None,
-                tile_areas: TileAreas::default(),
-                area_sets: Vec::new(),
-                area_set_ids: HashMap::new(),
             },
             seen: SeenTiles::default(),
             options,
@@ -347,12 +272,9 @@ impl IndexBuild {
             writer,
             counts,
             wof,
-            tile_areas,
-            area_sets,
-            area_set_ids,
             ..
         } = sink;
-        drop((wof, tile_areas, area_sets, area_set_ids));
+        drop(wof);
         writer.commit().map_err(BuildError::Index)?;
         if options.merge {
             index
@@ -390,34 +312,149 @@ mod tests {
         assert!(!seen.insert(t(2, 0)));
     }
 
-    #[test]
-    fn tile_areas_by_column_and_row() {
-        let mut areas = TileAreas::default();
-        areas.insert(t(1, 5), 0);
-        areas.insert(t(1, 9), 1);
-        areas.insert(t(1, 7), 2);
-        areas.insert(t(2, 1), 3);
-        areas.insert(t(1, 9), 4);
-        assert_eq!(
-            [t(1, 5), t(1, 7), t(1, 9), t(2, 1), t(2, 2), t(0, 5)].map(|k| areas.get(k)),
-            [Some(0), Some(2), Some(4), Some(3), None, None]
+    /// Lacey, in Washington, in the US, as the service sends them.
+    const WOF: &str = r#"{"places": [
+      {"id": 85633793, "placetype": "country",
+       "names": [["und", "default", false, "United States"]], "ancestors": [], "country": "US",
+       "lang_x_spoken": ["eng"], "geometry": null, "ancestor_only": true},
+      {"id": 85688623, "placetype": "region", "names": [["und", "default", false, "Washington"]],
+       "ancestors": [85633793], "country": "US", "geometry": null, "ancestor_only": true},
+      {"id": 101730337, "placetype": "locality", "names": [["und", "default", false, "Lacey"]],
+       "ancestors": [85688623, 85633793], "country": "US",
+       "geometry": {"type": "Polygon", "coordinates": [[[-122.9, 47.0], [-122.7, 47.0], [-122.7, 47.1], [-122.9, 47.1], [-122.9, 47.0]]]}}
+    ]}"#;
+
+    fn pairs(p: &[(&str, &str)]) -> Vec<(String, String)> {
+        p.iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    }
+
+    fn feature(
+        layer: crate::extract::SourceLayer,
+        id: Option<u64>,
+        name: &str,
+        geometry: geo::Geometry<f64>,
+    ) -> ExtractedFeature {
+        ExtractedFeature {
+            layer,
+            id,
+            tiles: vec![t(2601, 5759)],
+            names: pairs(&[("name", name)]),
+            address: Vec::new(),
+            admins: Vec::new(),
+            importance: None,
+            tags: Vec::new(),
+            geometry,
+        }
+    }
+
+    /// An index of a street (its tile names no areas), a shop whose tile names its areas,
+    /// with the only address of its postcode, and a cafe far away.
+    fn index() -> (tempfile::TempDir, crate::search::DeviceIndex) {
+        use crate::extract::SourceLayer;
+        use geo::{Geometry, LineString, MultiLineString, Point};
+        let dir = tempfile::tempdir().unwrap();
+        let mut wof = WofPlaces::new();
+        wof.add_response(WOF.as_bytes()).unwrap();
+        let options = BuildOptions {
+            heap_bytes: 30_000_000,
+            threads: 1,
+            merge: false,
+        };
+        let mut build = IndexBuild::new(&dir.path().join("index"), wof, options).unwrap();
+        let mut street = feature(
+            SourceLayer::TransportationName,
+            None,
+            "Sleater Kinney Road Southeast",
+            Geometry::MultiLineString(MultiLineString(vec![LineString::from(vec![
+                (-122.836, 47.03),
+                (-122.835, 47.05),
+            ])])),
         );
-        areas.forget_before(2);
-        assert_eq!(areas.get(t(1, 5)), None);
-        assert_eq!(areas.get(t(2, 1)), Some(3));
+        street.tags = pairs(&[("class", "secondary")]);
+        build.sink.feature(street);
+        let mut shop = feature(
+            SourceLayer::Housenumber,
+            Some(64_441_304_931),
+            "Michaels",
+            Geometry::Point(Point::new(-122.8355, 47.0412)),
+        );
+        shop.address = pairs(&[
+            ("addr:housenumber", "701"),
+            ("addr:postcode", "98503-1133"),
+            ("addr:street", "Sleater Kinney Road Southeast"),
+        ]);
+        shop.admins = vec![("locality".to_owned(), 101_730_337)];
+        let cafe = feature(
+            SourceLayer::Poi,
+            None,
+            "Far Cafe",
+            Geometry::Point(Point::new(-122.3, 47.6)),
+        );
+        build.sink.tile_points(t(2601, 5759), vec![shop, cafe]);
+        let counts = build.finish().unwrap();
+        assert_eq!(counts.placed_by_point, 2, "{counts:?}");
+        let index =
+            crate::search::DeviceIndex::open(&dir.path().join("index"), None, None).unwrap();
+        (dir, index)
+    }
+
+    fn search(
+        index: &crate::search::DeviceIndex,
+        text: &str,
+        bbox: Option<[f64; 4]>,
+    ) -> Vec<serde_json::Value> {
+        index
+            .search(&crate::search::Query {
+                text: text.into(),
+                limit: 10,
+                bbox,
+                ..crate::search::Query::default()
+            })
+            .unwrap()
+    }
+
+    fn admin_names(result: &serde_json::Value) -> Vec<&str> {
+        result["admins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|a| a["name"].as_str())
+            .collect()
     }
 
     #[test]
-    fn points_are_in_their_tiles() {
-        // The fixtures' north tile, by Everett.
-        assert_eq!(
-            tile_of(-122.225, 47.97),
-            TileKey {
-                z: 14,
-                x: 2629,
-                y: 5697
-            }
+    fn features_without_areas_are_placed_by_their_point() {
+        let (_dir, index) = index();
+        let street = &search(&index, "Sleater Kinney Road Southeast", None)[0];
+        assert_eq!(street["kind"], "street");
+        // (Results list the areas in the index: Washington and the US are ancestors only.)
+        assert_eq!(admin_names(street), vec!["Lacey"]);
+        assert_eq!(street["country_code"], "US");
+        // Outside every boundary: no areas.
+        let cafe = &search(&index, "Far Cafe", None)[0];
+        assert!(admin_names(cafe).is_empty(), "{cafe}");
+    }
+
+    #[test]
+    fn pois_postcodes_are_postcodes() {
+        let (_dir, index) = index();
+        let results = search(&index, "98503-1133", None);
+        assert!(
+            results
+                .iter()
+                .any(|r| r["kind"] == "postcode" && r["id"] == "postcode:US/98503-1133"),
+            "{results:?}"
         );
-        assert_eq!(tile_of(180.0, -89.0).x, 16383);
+    }
+
+    #[test]
+    fn a_bbox_keeps_only_results_in_it() {
+        let (_dir, index) = index();
+        assert_eq!(search(&index, "Far Cafe", None).len(), 1);
+        assert!(search(&index, "Far Cafe", Some([-122.9, 47.0, -122.7, 47.1])).is_empty());
+        let near = search(&index, "Michaels", Some([-122.9, 47.0, -122.7, 47.1]));
+        assert_eq!(near[0]["name"], "Michaels");
     }
 }

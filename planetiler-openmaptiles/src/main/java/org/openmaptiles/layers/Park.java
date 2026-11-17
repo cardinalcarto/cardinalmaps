@@ -193,6 +193,7 @@ public class Park implements
           .setAttr(Fields.CLASS, clazz)
           .putAttrs(names)
           .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(source.tags(), translations))
+          .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(source), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
           .setPointLabelGridPixelSize(14, 100)
           .setSortKey(SortKey
             .orderByTruesFirst("national_park".equals(clazz))

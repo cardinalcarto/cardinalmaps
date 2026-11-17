@@ -4,26 +4,6 @@ use airmail::osm::is_name_key;
 use airmail::poi::{OsmRef, ToIndexPoi};
 use geo::{Geometry, LineString, MultiLineString, MultiPolygon, Point, Polygon, Simplify, coord};
 
-/// `place` values Who's On First covers as administrative areas, which are
-/// indexed from there instead.
-const ADMIN_PLACES: [&str; 15] = [
-    "borough",
-    "city",
-    "country",
-    "county",
-    "district",
-    "hamlet",
-    "municipality",
-    "neighbourhood",
-    "province",
-    "quarter",
-    "region",
-    "state",
-    "suburb",
-    "town",
-    "village",
-];
-
 /// `highway` values of roads and paths that are found by name as streets,
 /// biggest first.
 const STREET_HIGHWAYS: [&str; 17] = [
@@ -184,17 +164,9 @@ impl OsmPoi {
 
     /// The tags of an element worth indexing, or `None`.
     fn validate_tags(tags: HashMap<&str, &str>) -> Option<HashMap<String, String>> {
-        if tags.is_empty() {
-            return None;
-        }
         // Roads and administrative areas are found through addresses and Who's
         // On First instead. Bus stops are POIs though their key is `highway`.
-        let bus_stop = tags.get("highway") == Some(&"bus_stop");
-        if (tags.contains_key("highway") && !bus_stop)
-            || tags.contains_key("boundary")
-            || tags.contains_key("admin_level")
-            || tags.get("place").is_some_and(|place| ADMIN_PLACES.contains(place))
-        {
+        if !airmail_importance::osm::is_indexed(tags.iter().map(|(k, v)| (*k, *v))) {
             return None;
         }
         Some(tags.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())

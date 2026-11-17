@@ -6,8 +6,9 @@
 //!   offline_serve --index <dir> [--tagger tagger.model] [--categories eng.amcats]
 //!       [--bind 127.0.0.1:3920]
 //!
-//! `/v1/place?id=` looks a result ID up, as the server's does. `/v1/search` takes `q`, `lang`, `prefix`, `typos`, `focus`, `viewport` and `limit` (default 10, as
-//! the server). The device has no `bbox`, `within`, `kind`, `tags` or `location`: they're
+//! `/v1/place?id=` looks a result ID up, as the server's does. `/v1/search` takes `q`,
+//! `lang`, `prefix`, `typos`, `focus`, `viewport`, `bbox` and `limit` (default 10, as the
+//! server). The device has no `within`, `kind`, `tags` or `location`: they're
 //! ignored, and listed in the response's `query.ignored`. `query.search_ms` is the time
 //! the search itself took, without HTTP.
 
@@ -112,6 +113,7 @@ fn search(index: &DeviceIndex, raw: &str) -> Result<Value, String> {
             "limit" => query.limit = value.parse().map_err(|_| "limit")?,
             "focus" => query.focus = Some(numbers(&value)?),
             "viewport" => query.viewport = Some(numbers(&value)?),
+            "bbox" => query.bbox = Some(numbers(&value)?),
             _ => ignored.push(key),
         }
     }
@@ -129,6 +131,7 @@ fn search(index: &DeviceIndex, raw: &str) -> Result<Value, String> {
             "typos": query.typos,
             "focus": query.focus,
             "viewport": query.viewport,
+            "bbox": query.bbox,
             "limit": query.limit,
             "ignored": ignored,
             "search_ms": search_ms,

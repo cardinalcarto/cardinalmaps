@@ -9,7 +9,10 @@ import java.util.Map;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
-/** The layers the geocoder reads besides poi, transportation_name and housenumber carry every name at z14. */
+/**
+ * The layers the geocoder reads besides poi, transportation_name and housenumber carry every name at z14, and (but
+ * place, which the geocoder takes from Who's On First) the importance poi_service tagged.
+ */
 class SearchNamesTest extends AbstractLayerTest {
 
   @ParameterizedTest
@@ -34,7 +37,8 @@ class SearchNamesTest extends AbstractLayerTest {
       "name:fr", "Nommé",
       "alt_name", "Other Name",
       "official_name:en", "Official Name",
-      "name:etymology:wikidata", "Q1"
+      "name:etymology:wikidata", "Q1",
+      "cardinal:importance", "0.25"
     ));
     SourceFeature source = switch (type) {
       case "polygon" -> polygonFeatureWithArea(1e-6, tags);
@@ -53,7 +57,9 @@ class SearchNamesTest extends AbstractLayerTest {
       assertEquals("Other Name", z14.get("alt_name"));
       assertEquals("Official Name", z14.get("official_name:en"));
       assertNull(z14.get("name:etymology:wikidata"));
+      assertEquals(layer.equals("place") ? null : 0.25f, z14.get("cardinal:importance"));
       if (feature.getMinZoom() < 14) {
+        assertNull(feature.getAttrsAtZoom(13).get("cardinal:importance"));
         // the renderer's keys only
         var z13 = feature.getAttrsAtZoom(13);
         assertEquals("Named", z13.get("name"));

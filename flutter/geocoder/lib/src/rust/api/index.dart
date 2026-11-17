@@ -213,6 +213,9 @@ class OfflineQuery {
 
   /// `[west, south, east, north]`.
   final Float64List? viewport;
+
+  /// `[west, south, east, north]` results must intersect, as the server's `bbox`.
+  final Float64List? bbox;
   final int limit;
 
   const OfflineQuery({
@@ -222,6 +225,7 @@ class OfflineQuery {
     required this.typos,
     this.focus,
     this.viewport,
+    this.bbox,
     required this.limit,
   });
 
@@ -233,6 +237,7 @@ class OfflineQuery {
       typos.hashCode ^
       focus.hashCode ^
       viewport.hashCode ^
+      bbox.hashCode ^
       limit.hashCode;
 
   @override
@@ -246,6 +251,7 @@ class OfflineQuery {
           typos == other.typos &&
           focus == other.focus &&
           viewport == other.viewport &&
+          bbox == other.bbox &&
           limit == other.limit;
 }
 

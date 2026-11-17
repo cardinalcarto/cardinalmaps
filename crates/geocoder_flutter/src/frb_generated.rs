@@ -993,6 +993,7 @@ impl SseDecode for crate::api::index::OfflineQuery {
         let mut var_typos = <bool>::sse_decode(deserializer);
         let mut var_focus = <Option<Vec<f64>>>::sse_decode(deserializer);
         let mut var_viewport = <Option<Vec<f64>>>::sse_decode(deserializer);
+        let mut var_bbox = <Option<Vec<f64>>>::sse_decode(deserializer);
         let mut var_limit = <u32>::sse_decode(deserializer);
         return crate::api::index::OfflineQuery {
             text: var_text,
@@ -1001,6 +1002,7 @@ impl SseDecode for crate::api::index::OfflineQuery {
             typos: var_typos,
             focus: var_focus,
             viewport: var_viewport,
+            bbox: var_bbox,
             limit: var_limit,
         };
     }
@@ -1412,6 +1414,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::index::OfflineQuery {
             self.typos.into_into_dart().into_dart(),
             self.focus.into_into_dart().into_dart(),
             self.viewport.into_into_dart().into_dart(),
+            self.bbox.into_into_dart().into_dart(),
             self.limit.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -1748,6 +1751,7 @@ impl SseEncode for crate::api::index::OfflineQuery {
         <bool>::sse_encode(self.typos, serializer);
         <Option<Vec<f64>>>::sse_encode(self.focus, serializer);
         <Option<Vec<f64>>>::sse_encode(self.viewport, serializer);
+        <Option<Vec<f64>>>::sse_encode(self.bbox, serializer);
         <u32>::sse_encode(self.limit, serializer);
     }
 }
