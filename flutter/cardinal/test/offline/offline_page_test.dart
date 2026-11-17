@@ -95,6 +95,21 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
   });
 
+  testWidgets('an area that brought nothing new shows only its date', (
+    tester,
+  ) async {
+    // Drawn inside another area: its tiles were all there already.
+    final downloads = FakeOfflineDownloads()
+      ..emit([fakeRegion(1, name: 'Inner', createdAt: _march, bytesTotal: 0)]);
+    await pumpFakeApp(
+      tester,
+      location: '/offline',
+      downloads: Future.value(downloads),
+    );
+    expect(find.text('Mar 4'), findsOneWidget);
+    expect(find.textContaining('0 KB'), findsNothing);
+  });
+
   testWidgets(
     'tapping an area shows its bounds on the map, until tapped again',
     (tester) async {

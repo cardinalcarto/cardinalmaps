@@ -14,6 +14,7 @@ import 'package:material_ui/material_ui.dart';
 import '../map/iso_639.dart';
 import '../store/store.dart';
 import '../ui/adaptive.dart';
+import '../ui/startup_offers.dart';
 import '../ui/toast.dart';
 import 'downloads/database.dart';
 import 'downloads/engine.dart';
@@ -111,7 +112,8 @@ class GeocoderModelsSheet extends StatelessWidget {
   }
 }
 
-/// Offers the geocoder's models once the first frame is out, if downloads are in this
+/// Offers the geocoder's models once the first frame is out and the startup offers held
+/// in its [StartupOffersScope] (your location's) are answered, if downloads are in this
 /// build, the sheet hasn't been answered before, the models aren't downloaded or on
 /// their way, and the release can be read. Otherwise, and once it's answered, it's just
 /// [child].
@@ -126,6 +128,10 @@ class GeocoderModelsPrompt extends StatefulWidget {
 
 class _GeocoderModelsPromptState extends State<GeocoderModelsPrompt> {
   bool _checked = false;
+
+  /// What's offered at startup before the sheet, such as your location: the sheet
+  /// waits for them to be answered, so it never opens under them.
+  final _offers = StartupOffers();
 
   @override
   void didChangeDependencies() {
@@ -150,12 +156,15 @@ class _GeocoderModelsPromptState extends State<GeocoderModelsPrompt> {
       debugPrint('offline: planning the geocoder models: $e');
       return;
     }
-    if (plan == null || !mounted) return;
+    if (plan == null) return;
+    await _offers.answered();
+    if (!mounted) return;
     await offerGeocoderModels(context, downloads, plan);
   }
 
   @override
-  Widget build(BuildContext context) => widget.child;
+  Widget build(BuildContext context) =>
+      StartupOffersScope(offers: _offers, child: widget.child);
 }
 
 /// The Offline tab's row for the models, under the search toggle: Download until

@@ -16,6 +16,7 @@ import '../navigation/navigation_scope.dart';
 import '../saved/saved_feedback.dart';
 import '../store/store.dart';
 import '../ui/adaptive.dart';
+import '../ui/startup_offers.dart';
 import '../ui/symbols.dart';
 import 'map.dart';
 import 'map_control.dart';
@@ -352,7 +353,13 @@ class _MyLocationButtonState extends State<MyLocationButton> {
     _navigationChanged();
     _lifecycle;
     final settings = StoreScope.of(context).settings;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _offer(settings));
+    // Other startup offers wait until this one, and the permission it asks for, is
+    // answered.
+    final offered = Completer<void>();
+    StartupOffersScope.maybeOf(context)?.hold(offered.future);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _offer(settings).whenComplete(offered.complete),
+    );
   }
 
   /// How long the offer waits for the map to finish drawing, at most: offline, it may

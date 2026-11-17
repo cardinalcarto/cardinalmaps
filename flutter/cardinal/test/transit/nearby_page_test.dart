@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/map/location.dart';
+import 'package:cardinal/offline/offline_area.dart' show NoOfflineTransit;
 import 'package:cardinal/settings/accessibility.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
@@ -287,6 +288,18 @@ void main() {
       findsOneWidget,
     );
     expect(source.asked, isEmpty);
+  });
+
+  testWidgets('says to download an area when the one there has no transit', (
+    tester,
+  ) async {
+    await open(tester);
+    source.asked.single.answer.completeError(const NoOfflineTransit());
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Download an area to see transit near you.'),
+      findsOneWidget,
+    );
   });
 
   group('pages', () {
