@@ -118,8 +118,20 @@ pub const FIELD_ADMIN_IDS: &str = "admin_ids";
 pub const FIELD_WOF_ID: &str = "wof_id";
 /// Cardinal's stable POI identifier, for lookups.
 pub const FIELD_POI_ID: &str = "poi_id";
-/// The OSM element as `type/id`, for lookups.
+/// The OSM element as `type/id`, for lookups; or `local/<id>` for a document
+/// with a [`LOCAL_ID_TAG`].
 pub const FIELD_OSM_ID: &str = "osm_id";
+/// The tag that gives a document with no other ID (no OSM element, POI ID,
+/// Who's On First ID or postcode key) an ID within its own index, a decimal
+/// number, for `AirmailIndex::lookup_local_blocking`. Only the device's index
+/// sets it; the server's never does.
+pub const LOCAL_ID_TAG: &str = "cardinal:local_id";
+
+/// A local ID's term in `FIELD_OSM_ID`, apart from OSM's `node/`, `way/` and
+/// `relation/`.
+fn local_key(id: u64) -> String {
+    format!("local/{id}")
+}
 /// A postcode's key, `<country>/<postcode>` (see `poi::postcode_key`).
 pub const FIELD_POSTCODE_ID: &str = "postcode_id";
 pub const FIELD_S2_COVER: &str = "s2_cover";
@@ -261,6 +273,8 @@ pub struct SearchHit {
     pub pointer: Option<Pointer>,
     pub osm: Option<OsmRef>,
     pub wof: Option<WofPlace>,
+    /// Its ID within its index, from its [`LOCAL_ID_TAG`] (only on the device).
+    pub local_id: Option<u64>,
     /// Who's On First IDs of the areas containing it.
     pub admin_ids: Vec<u64>,
     pub center: Point<f64>,
@@ -276,12 +290,14 @@ impl SearchHit {
     }
 
     /// Sets its tags: Cardinal's `cardinal:*` tags go to `poi` (if there's
-    /// a version) and the rest to `tags`.
+    /// a version) and `local_id`, and the rest to `tags`.
     pub(crate) fn set_tags(&mut self, mut tags: Vec<(String, String)>) {
         let tag = |key: &str| tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
         let poi = tag("cardinal:poi_id").and_then(|id| id.parse().ok()).zip(tag("cardinal:version").and_then(|v| v.parse().ok()));
+        let local_id = tag(LOCAL_ID_TAG).and_then(|id| id.parse().ok());
         tags.retain(|(k, _)| !k.starts_with("cardinal:"));
         self.poi = poi;
+        self.local_id = local_id;
         self.tags = tags;
     }
 }
@@ -598,6 +614,19 @@ impl AirmailIndex {
             PlaceId::Postcode(key) => (FIELD_POSTCODE_ID, Term::from_field_text(self.field(FIELD_POSTCODE_ID), key)),
         };
         trace!("Looking up {id} by {field}");
+        self.lookup_term(term)
+    }
+
+    /// The document whose [`LOCAL_ID_TAG`] is `id` (only in the device's
+    /// index), as `lookup_blocking` finds a place.
+    ///
+    /// # Errors
+    /// If the search fails or the stored document can't be decoded.
+    pub fn lookup_local_blocking(&self, id: u64) -> Result<SearchResults> {
+        self.lookup_term(Term::from_field_text(self.field(FIELD_OSM_ID), &local_key(id)))
+    }
+
+    fn lookup_term(&self, term: Term) -> Result<SearchResults> {
         let searcher = self.searcher()?;
         let query = TermQuery::new(term, IndexRecordOption::Basic);
         // An element is indexed once, but a POI ID could in principle be
@@ -642,6 +671,7 @@ impl AirmailIndex {
             pointer,
             osm,
             wof,
+            local_id: None,
             admin_ids,
             center,
             geometry,
@@ -1041,6 +1071,9 @@ impl DocumentBuilder {
             }
             doc.add_text(self.field(FIELD_OSM_ID), format!("{}/{}", osm.osm_type.as_str(), osm.id));
         }
+        if let Some(local) = poi.tag(LOCAL_ID_TAG).and_then(|v| v.parse::<u64>().ok()) {
+            doc.add_text(self.field(FIELD_OSM_ID), local_key(local));
+        }
         if let Some(poi_id) = poi.poi_id() {
             doc.add_u64(self.field(FIELD_POI_ID), poi_id);
         }
@@ -1175,6 +1208,7 @@ mod test {
             poi: None,
             pointer: None,
             osm: None,
+            local_id: None,
             wof: Some(WofPlace {
                 id,
                 placetype: placetype.into(),

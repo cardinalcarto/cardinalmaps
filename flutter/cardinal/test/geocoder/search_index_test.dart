@@ -210,4 +210,61 @@ void main() {
       hasLength(1),
     );
   });
+
+  test(
+    "regions' tiles come as one sequence in column, then row order",
+    () async {
+      // Two overlapping regions, read three tiles a page.
+      List<(int, int)> region(List<(int, int)> tiles) => tiles;
+      final a = region([
+        (1, 1),
+        (1, 5),
+        (2, 2),
+        (3, 1),
+        (3, 2),
+        (7, 0),
+        (8, 8),
+      ]);
+      final b = region([(0, 9), (2, 2), (2, 3), (9, 0)]);
+      final asked = <(int, int)?>[];
+      Future<List<(int, int)>> Function((int, int)? after) reader(
+        List<(int, int)> tiles,
+      ) => (after) async {
+        asked.add(after);
+        final from = after == null ? 0 : tiles.indexOf(after) + 1;
+        return tiles.skip(from).take(3).toList();
+      };
+      final pages = await tilesInOrder<(int, int)>(
+        [reader(a), reader(b)],
+        x: (t) => t.$1,
+        y: (t) => t.$2,
+        page: 4,
+      ).toList();
+      expect(pages.map((p) => p.length), [4, 4, 3]);
+      expect(pages.expand((p) => p), [
+        (0, 9),
+        (1, 1),
+        (1, 5),
+        (2, 2),
+        (2, 2),
+        (2, 3),
+        (3, 1),
+        (3, 2),
+        (7, 0),
+        (8, 8),
+        (9, 0),
+      ]);
+      // Each region page by page, from where its last page ended.
+      expect(asked, [null, null, (2, 2), (2, 3), (7, 0), (8, 8), (9, 0)]);
+      expect(
+        await tilesInOrder<(int, int)>(
+          [],
+          x: (t) => t.$1,
+          y: (t) => t.$2,
+          page: 4,
+        ).toList(),
+        isEmpty,
+      );
+    },
+  );
 }

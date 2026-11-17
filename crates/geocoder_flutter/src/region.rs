@@ -16,6 +16,10 @@ pub trait FeatureSink {
             self.feature(point);
         }
     }
+
+    /// No feature still to come is in a tile of a column before `column` (z14 x), or has
+    /// its center there: what the sink keeps by tile for those columns can go.
+    fn columns_done(&mut self, _column: u32) {}
 }
 
 impl FeatureSink for Vec<ExtractedFeature> {
@@ -50,18 +54,38 @@ impl FeatureSink for CountingSink {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RegionCounts {
     pub tiles: u64,
+    /// Tiles that came in a column before one read already. From the first, joined
+    /// features are only given out at the end (see [`RegionExtractor`]).
+    pub out_of_order: u64,
     /// The tiles' bytes, as given (gzipped).
     pub bytes: u64,
     pub layers: TileCounts,
     pub merge: MergeCounts,
 }
 
-/// A region's extraction. Points go to the sink as each tile is added; the joined lines and
-/// areas at [`RegionExtractor::finish`].
-#[derive(Debug, Default)]
+/// A region's extraction. Points go to the sink as each tile is added. The joined lines and
+/// areas go to it once no tile still to come can add to them, if tiles come in order of
+/// column (z14 x, as the basemap gives a region's, and the app several regions'), so a big
+/// region's streets aren't all held to the end; the rest at [`RegionExtractor::finish`].
+/// Tiles in another order give the same features, only all at the end.
+#[derive(Debug)]
 pub struct RegionExtractor {
     merger: Merger,
     counts: RegionCounts,
+    /// The last column read, while tiles come in order.
+    column: Option<u32>,
+    ordered: bool,
+}
+
+impl Default for RegionExtractor {
+    fn default() -> Self {
+        Self {
+            merger: Merger::default(),
+            counts: RegionCounts::default(),
+            column: None,
+            ordered: true,
+        }
+    }
 }
 
 impl RegionExtractor {
@@ -82,6 +106,26 @@ impl RegionExtractor {
         sink: &mut impl FeatureSink,
     ) -> Result<(), TileError> {
         let features = extract_tile(tile, data)?;
+        match self.column {
+            Some(column) if tile.x < column => {
+                self.ordered = false;
+                self.counts.out_of_order += 1;
+            }
+            Some(column) if tile.x > column && self.ordered => {
+                for feature in self.merger.finished(tile.x) {
+                    sink.feature(feature);
+                }
+                // A joined feature's center is among its pieces' tiles, give or take the
+                // column of an edge it's on.
+                let first = self
+                    .merger
+                    .first_open_column()
+                    .map_or(tile.x, |c| c.min(tile.x));
+                sink.columns_done(first.saturating_sub(1));
+            }
+            _ => {}
+        }
+        self.column = Some(self.column.map_or(tile.x, |c| c.max(tile.x)));
         self.counts.tiles += 1;
         self.counts.bytes += data.len() as u64;
         self.counts.layers.add(&features.counts);

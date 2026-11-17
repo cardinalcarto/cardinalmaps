@@ -89,14 +89,13 @@ fn a_named_poi() -> (u64, String) {
     extractor
         .add_tile(NORTH, &fixture(NORTH), &mut features)
         .unwrap();
-    let poi = features
+    features
         .iter()
         .filter(|f| f.layer == SourceLayer::Poi && f.id.is_some())
         .filter_map(|f| Some((f.id?, f.name("name")?.to_owned())))
         .filter(|(_, name)| name.split_whitespace().count() >= 2)
         .min()
-        .unwrap();
-    poi
+        .unwrap()
 }
 
 #[test]
@@ -169,4 +168,65 @@ fn streets_and_areas_are_stored_whole() {
             .contains("LineString")
     );
     assert!(street.get("pointer").is_none_or(Value::is_null));
+}
+
+/// Every result opens again by its ID, the way the app's place card fetches a place: a
+/// pointer by `poi:`, a document with no other ID (a POI with neither a stable nor an OSM
+/// ID, a joined street) by its `local:` ID.
+#[test]
+fn every_result_opens_by_its_id() {
+    let dir = build();
+    let index = DeviceIndex::open(&dir.path().join("index"), None, None).unwrap();
+    let mut features = Vec::new();
+    let mut extractor = RegionExtractor::new();
+    for key in [NORTH, SOUTH] {
+        extractor
+            .add_tile(key, &fixture(key), &mut features)
+            .unwrap();
+    }
+    extractor.finish(&mut features);
+    let mut names: Vec<String> = features
+        .iter()
+        .filter_map(|f| f.name("name").map(str::to_owned))
+        .collect();
+    names.sort();
+    names.dedup();
+    let mut prefixes = std::collections::BTreeMap::<String, usize>::new();
+    for name in &names {
+        for result in search(&index, name) {
+            let id = result["id"].as_str().unwrap();
+            let prefix = id.split(':').next().unwrap();
+            assert_ne!(prefix, "point", "{result:#}");
+            *prefixes.entry(prefix.to_owned()).or_default() += 1;
+            let place = index
+                .place(id, None)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{id} doesn't open: {result:#}"));
+            for key in ["id", "kind", "name", "center"] {
+                assert_eq!(place[key], result[key], "{key}: {place:#} {result:#}");
+            }
+            // Search joins a street's nearby pieces into its best one's result, as the
+            // server does; the ID opens that piece.
+            if result["kind"] != "street" {
+                assert_eq!(place["feature"], result["feature"]);
+            }
+            let tags = place["osm"]["tags"].as_object().unwrap();
+            assert!(!tags.contains_key("cardinal:local_id"), "{place:#}");
+        }
+    }
+    assert!(
+        prefixes.get("local").is_some_and(|n| *n > 0),
+        "{prefixes:?}"
+    );
+    assert!(prefixes.get("poi").is_some_and(|n| *n > 0), "{prefixes:?}");
+    // Not IDs of this index.
+    for id in [
+        "local:1",
+        "local:01",
+        "local:+5",
+        "local:",
+        "point:-122.3,47.6",
+    ] {
+        assert!(index.place(id, None).unwrap().is_none(), "{id}");
+    }
 }

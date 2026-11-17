@@ -10,7 +10,8 @@ part 'database.g.dart';
 /// `Place` for what the columns hold.
 @DataClassName('PlaceRow')
 class Places extends Table {
-  /// The geocoder's identifier: `poi:<id>`, `wof:<id>` or `osm:<type>/<id>`.
+  /// The geocoder's identifier: `poi:<id>`, `wof:<id>`, `osm:<type>/<id>`, ... (see
+  /// `Place.id`).
   TextColumn get id => text()();
   TextColumn get kind => text()();
   IntColumn get version => integer().nullable()();
