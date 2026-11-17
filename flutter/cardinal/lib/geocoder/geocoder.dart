@@ -200,3 +200,20 @@ class GeocoderScope extends InheritedWidget {
 /// Whether search goes to the geocoder server rather than the device: the Offline tab's
 /// choice. Only search: the map and directions don't follow it.
 final searchOnline = Setting.flag('search.online', false);
+
+/// What search does when the device finds nothing, as chosen in the search results'
+/// "Nothing offline. Try online?" row; not set until then, and the row asks.
+enum OnlineFallback {
+  /// Search online instead, without asking.
+  always,
+
+  /// Say there are no results, without offering to search online.
+  never,
+}
+
+/// The choice of [OnlineFallback], or null if search should ask. Reset from the
+/// Offline tab.
+final onlineFallback = Setting.optionalChoice(
+  'search.onlineFallback',
+  OnlineFallback.values,
+);

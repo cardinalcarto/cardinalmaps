@@ -1,3 +1,4 @@
+import 'package:cardinal/geocoder/geocoder.dart';
 import 'package:cardinal/map/map.dart';
 import 'package:cardinal/offline/download_page.dart';
 import 'package:cardinal/offline/downloads/database.dart';
@@ -235,5 +236,57 @@ void main() {
     await tester.pumpAndSettle();
     expect(downloads.deleted, [1]);
     expect(find.text('Home'), findsNothing);
+  });
+
+  group('search', () {
+    testWidgets('goes offline until switched online, which is kept', (
+      tester,
+    ) async {
+      final store = fakeStore();
+      await pumpFakeApp(tester, store: store, location: '/offline');
+      final control = tester.widget<SegmentedButton<bool>>(
+        find.byType(SegmentedButton<bool>),
+      );
+      expect(control.selected, {false});
+      expect(await store.settings.get(searchOnline), isFalse);
+
+      await tester.tap(find.text('Online'));
+      await tester.pumpAndSettle();
+      expect(await store.settings.get(searchOnline), isTrue);
+      expect(
+        tester
+            .widget<SegmentedButton<bool>>(find.byType(SegmentedButton<bool>))
+            .selected,
+        {true},
+      );
+
+      await tester.tap(find.text('Offline'));
+      await tester.pumpAndSettle();
+      expect(await store.settings.get(searchOnline), isFalse);
+    });
+
+    testWidgets('shows a fallback once chosen, and Reset asks again', (
+      tester,
+    ) async {
+      final store = fakeStore();
+      await pumpFakeApp(tester, store: store, location: '/offline');
+      expect(find.text('Reset'), findsNothing);
+
+      await store.settings.set(onlineFallback, OnlineFallback.never);
+      await tester.pumpAndSettle();
+      expect(find.text("When nothing's found offline"), findsOneWidget);
+      expect(find.text('Never offer online search'), findsOneWidget);
+
+      await store.settings.set(onlineFallback, OnlineFallback.always);
+      await tester.pumpAndSettle();
+      expect(find.text('Always search online'), findsOneWidget);
+
+      await tester.tap(find.text('Reset'));
+      await tester.pumpAndSettle();
+      expect(await store.settings.get(onlineFallback), isNull);
+      expect(find.text('Reset'), findsNothing);
+      // Switching search back online isn't Reset's to do.
+      expect(await store.settings.get(searchOnline), isFalse);
+    });
   });
 }
