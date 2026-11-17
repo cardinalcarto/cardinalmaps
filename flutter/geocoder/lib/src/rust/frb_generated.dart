@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/extract.dart';
+import 'api/index.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -67,7 +68,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -1485503847;
+  int get rustContentHash => -1557913576;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -79,6 +80,45 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
+  Future<IndexBuildStats> crateApiIndexIndexBuilderAddTiles({
+    required IndexBuilder that,
+    required List<GeocoderTile> tiles,
+  });
+
+  Future<IndexBuilder> crateApiIndexIndexBuilderCreate({
+    required String dir,
+    required List<String> wofFiles,
+    required int heapMb,
+    required int threads,
+  });
+
+  Future<IndexBuildStats> crateApiIndexIndexBuilderFinish({
+    required IndexBuilder that,
+  });
+
+  String crateApiIndexOfflineIndexDir({required OfflineIndex that});
+
+  Future<PlatformInt64> crateApiIndexOfflineIndexDocuments({
+    required OfflineIndex that,
+  });
+
+  Future<OfflineIndex> crateApiIndexOfflineIndexOpen({
+    required String dir,
+    String? tagger,
+    String? categories,
+  });
+
+  Future<String?> crateApiIndexOfflineIndexPlace({
+    required OfflineIndex that,
+    required String id,
+    String? lang,
+  });
+
+  Future<String> crateApiIndexOfflineIndexSearch({
+    required OfflineIndex that,
+    required OfflineQuery query,
+  });
+
   Future<ExtractionStats> crateApiExtractRegionExtractionAddTiles({
     required RegionExtraction that,
     required List<GeocoderTile> tiles,
@@ -89,6 +129,35 @@ abstract class RustLibApi extends BaseApi {
   });
 
   RegionExtraction crateApiExtractRegionExtractionNew();
+
+  Future<PoiFeature?> crateApiIndexPoiFeature({
+    required GeocoderTile tile,
+    required BigInt poiId,
+  });
+
+  List<WofBox> crateApiIndexWofBoxes({
+    required double west,
+    required double south,
+    required double east,
+    required double north,
+    required double side,
+  });
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_IndexBuilder;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_IndexBuilder;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_IndexBuilderPtr;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_OfflineIndex;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_OfflineIndex;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_OfflineIndexPtr;
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_RegionExtraction;
@@ -109,6 +178,295 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
+  Future<IndexBuildStats> crateApiIndexIndexBuilderAddTiles({
+    required IndexBuilder that,
+    required List<GeocoderTile> tiles,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder(
+            that,
+            serializer,
+          );
+          sse_encode_list_geocoder_tile(tiles, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 1,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_index_build_stats,
+          decodeErrorData: sse_decode_index_error,
+        ),
+        constMeta: kCrateApiIndexIndexBuilderAddTilesConstMeta,
+        argValues: [that, tiles],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIndexIndexBuilderAddTilesConstMeta =>
+      const TaskConstMeta(
+        debugName: "IndexBuilder_add_tiles",
+        argNames: ["that", "tiles"],
+      );
+
+  @override
+  Future<IndexBuilder> crateApiIndexIndexBuilderCreate({
+    required String dir,
+    required List<String> wofFiles,
+    required int heapMb,
+    required int threads,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(dir, serializer);
+          sse_encode_list_String(wofFiles, serializer);
+          sse_encode_u_32(heapMb, serializer);
+          sse_encode_u_32(threads, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 2,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder,
+          decodeErrorData: sse_decode_index_error,
+        ),
+        constMeta: kCrateApiIndexIndexBuilderCreateConstMeta,
+        argValues: [dir, wofFiles, heapMb, threads],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIndexIndexBuilderCreateConstMeta =>
+      const TaskConstMeta(
+        debugName: "IndexBuilder_create",
+        argNames: ["dir", "wofFiles", "heapMb", "threads"],
+      );
+
+  @override
+  Future<IndexBuildStats> crateApiIndexIndexBuilderFinish({
+    required IndexBuilder that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 3,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_index_build_stats,
+          decodeErrorData: sse_decode_index_error,
+        ),
+        constMeta: kCrateApiIndexIndexBuilderFinishConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIndexIndexBuilderFinishConstMeta =>
+      const TaskConstMeta(debugName: "IndexBuilder_finish", argNames: ["that"]);
+
+  @override
+  String crateApiIndexOfflineIndexDir({required OfflineIndex that}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiIndexOfflineIndexDirConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIndexOfflineIndexDirConstMeta =>
+      const TaskConstMeta(debugName: "OfflineIndex_dir", argNames: ["that"]);
+
+  @override
+  Future<PlatformInt64> crateApiIndexOfflineIndexDocuments({
+    required OfflineIndex that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: sse_decode_index_error,
+        ),
+        constMeta: kCrateApiIndexOfflineIndexDocumentsConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIndexOfflineIndexDocumentsConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineIndex_documents",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<OfflineIndex> crateApiIndexOfflineIndexOpen({
+    required String dir,
+    String? tagger,
+    String? categories,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(dir, serializer);
+          sse_encode_opt_String(tagger, serializer);
+          sse_encode_opt_String(categories, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex,
+          decodeErrorData: sse_decode_index_error,
+        ),
+        constMeta: kCrateApiIndexOfflineIndexOpenConstMeta,
+        argValues: [dir, tagger, categories],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIndexOfflineIndexOpenConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineIndex_open",
+        argNames: ["dir", "tagger", "categories"],
+      );
+
+  @override
+  Future<String?> crateApiIndexOfflineIndexPlace({
+    required OfflineIndex that,
+    required String id,
+    String? lang,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+            that,
+            serializer,
+          );
+          sse_encode_String(id, serializer);
+          sse_encode_opt_String(lang, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 7,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_String,
+          decodeErrorData: sse_decode_index_error,
+        ),
+        constMeta: kCrateApiIndexOfflineIndexPlaceConstMeta,
+        argValues: [that, id, lang],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIndexOfflineIndexPlaceConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineIndex_place",
+        argNames: ["that", "id", "lang"],
+      );
+
+  @override
+  Future<String> crateApiIndexOfflineIndexSearch({
+    required OfflineIndex that,
+    required OfflineQuery query,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+            that,
+            serializer,
+          );
+          sse_encode_box_autoadd_offline_query(query, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 8,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_index_error,
+        ),
+        constMeta: kCrateApiIndexOfflineIndexSearchConstMeta,
+        argValues: [that, query],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIndexOfflineIndexSearchConstMeta =>
+      const TaskConstMeta(
+        debugName: "OfflineIndex_search",
+        argNames: ["that", "query"],
+      );
+
+  @override
   Future<ExtractionStats> crateApiExtractRegionExtractionAddTiles({
     required RegionExtraction that,
     required List<GeocoderTile> tiles,
@@ -125,7 +483,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 1,
+            funcId: 9,
             port: port_,
           );
         },
@@ -161,7 +519,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 2,
+            funcId: 10,
             port: port_,
           );
         },
@@ -188,7 +546,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -205,6 +563,91 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiExtractRegionExtractionNewConstMeta =>
       const TaskConstMeta(debugName: "RegionExtraction_new", argNames: []);
 
+  @override
+  Future<PoiFeature?> crateApiIndexPoiFeature({
+    required GeocoderTile tile,
+    required BigInt poiId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_box_autoadd_geocoder_tile(tile, serializer);
+          sse_encode_u_64(poiId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 12,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_poi_feature,
+          decodeErrorData: sse_decode_extract_error,
+        ),
+        constMeta: kCrateApiIndexPoiFeatureConstMeta,
+        argValues: [tile, poiId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIndexPoiFeatureConstMeta => const TaskConstMeta(
+    debugName: "poi_feature",
+    argNames: ["tile", "poiId"],
+  );
+
+  @override
+  List<WofBox> crateApiIndexWofBoxes({
+    required double west,
+    required double south,
+    required double east,
+    required double north,
+    required double side,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_f_64(west, serializer);
+          sse_encode_f_64(south, serializer);
+          sse_encode_f_64(east, serializer);
+          sse_encode_f_64(north, serializer);
+          sse_encode_f_64(side, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_wof_box,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiIndexWofBoxesConstMeta,
+        argValues: [west, south, east, north, side],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIndexWofBoxesConstMeta => const TaskConstMeta(
+    debugName: "wof_boxes",
+    argNames: ["west", "south", "east", "north", "side"],
+  );
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_IndexBuilder => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_IndexBuilder => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder;
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_OfflineIndex => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_OfflineIndex => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex;
+
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_RegionExtraction => wire
       .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionExtraction;
@@ -212,6 +655,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RustArcDecrementStrongCountFnType
   get rust_arc_decrement_strong_count_RegionExtraction => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionExtraction;
+
+  @protected
+  IndexBuilder
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return IndexBuilderImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  OfflineIndex
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return OfflineIndexImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
 
   @protected
   RegionExtraction
@@ -223,12 +684,57 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  IndexBuilder
+  dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return IndexBuilderImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   RegionExtraction
   dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionExtraction(
     dynamic raw,
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return RegionExtractionImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  OfflineIndex
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return OfflineIndexImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  Map<String, String> dco_decode_Map_String_String_None(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Map.fromEntries(
+      dco_decode_list_record_string_string(raw)
+          .map((e) => MapEntry(e.$1, e.$2)),
+    );
+  }
+
+  @protected
+  IndexBuilder
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return IndexBuilderImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  OfflineIndex
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return OfflineIndexImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -244,6 +750,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as String;
+  }
+
+  @protected
+  bool dco_decode_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
+  GeocoderTile dco_decode_box_autoadd_geocoder_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_geocoder_tile(raw);
+  }
+
+  @protected
+  OfflineQuery dco_decode_box_autoadd_offline_query(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_offline_query(raw);
+  }
+
+  @protected
+  PoiFeature dco_decode_box_autoadd_poi_feature(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_poi_feature(raw);
   }
 
   @protected
@@ -286,6 +816,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  double dco_decode_f_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
+  }
+
+  @protected
   GeocoderTile dco_decode_geocoder_tile(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -312,6 +848,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  IndexBuildStats dco_decode_index_build_stats(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 14)
+      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
+    return IndexBuildStats(
+      tiles: dco_decode_i_64(arr[0]),
+      repeatedTiles: dco_decode_i_64(arr[1]),
+      bytes: dco_decode_i_64(arr[2]),
+      features: dco_decode_i_64(arr[3]),
+      unindexed: dco_decode_i_64(arr[4]),
+      duplicateAddresses: dco_decode_i_64(arr[5]),
+      pois: dco_decode_i_64(arr[6]),
+      addresses: dco_decode_i_64(arr[7]),
+      admins: dco_decode_i_64(arr[8]),
+      streets: dco_decode_i_64(arr[9]),
+      postcodes: dco_decode_i_64(arr[10]),
+      pointers: dco_decode_i_64(arr[11]),
+      wofPlaces: dco_decode_i_64(arr[12]),
+      wofIndexed: dco_decode_i_64(arr[13]),
+    );
+  }
+
+  @protected
+  IndexError dco_decode_index_error(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return IndexError(
+      kind: dco_decode_index_error_kind(arr[0]),
+      message: dco_decode_String(arr[1]),
+    );
+  }
+
+  @protected
+  IndexErrorKind dco_decode_index_error_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return IndexErrorKind.values[raw as int];
+  }
+
+  @protected
   LayerStats dco_decode_layer_stats(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -327,6 +905,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<String> dco_decode_list_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_String).toList();
+  }
+
+  @protected
   List<GeocoderTile> dco_decode_list_geocoder_tile(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_geocoder_tile).toList();
@@ -339,15 +923,96 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Float64List dco_decode_list_prim_f_64_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as Float64List;
+  }
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
   }
 
   @protected
+  List<(String, String)> dco_decode_list_record_string_string(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_record_string_string).toList();
+  }
+
+  @protected
+  List<WofBox> dco_decode_list_wof_box(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_wof_box).toList();
+  }
+
+  @protected
+  OfflineQuery dco_decode_offline_query(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return OfflineQuery(
+      text: dco_decode_String(arr[0]),
+      lang: dco_decode_opt_String(arr[1]),
+      prefix: dco_decode_bool(arr[2]),
+      typos: dco_decode_bool(arr[3]),
+      focus: dco_decode_opt_list_prim_f_64_strict(arr[4]),
+      viewport: dco_decode_opt_list_prim_f_64_strict(arr[5]),
+      limit: dco_decode_u_32(arr[6]),
+    );
+  }
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  PoiFeature? dco_decode_opt_box_autoadd_poi_feature(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_poi_feature(raw);
+  }
+
+  @protected
+  Float64List? dco_decode_opt_list_prim_f_64_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_list_prim_f_64_strict(raw);
+  }
+
+  @protected
+  PoiFeature dco_decode_poi_feature(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return PoiFeature(
+      layer: dco_decode_String(arr[0]),
+      properties: dco_decode_Map_String_String_None(arr[1]),
+    );
+  }
+
+  @protected
+  (String, String) dco_decode_record_string_string(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2) {
+      throw Exception('Expected 2 elements, got ${arr.length}');
+    }
+    return (dco_decode_String(arr[0]), dco_decode_String(arr[1]));
+  }
+
+  @protected
   int dco_decode_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
+  }
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeU64(raw);
   }
 
   @protected
@@ -369,6 +1034,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  WofBox dco_decode_wof_box(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return WofBox(
+      west: dco_decode_f_64(arr[0]),
+      south: dco_decode_f_64(arr[1]),
+      east: dco_decode_f_64(arr[2]),
+      north: dco_decode_f_64(arr[3]),
+    );
+  }
+
+  @protected
+  IndexBuilder
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return IndexBuilderImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  OfflineIndex
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return OfflineIndexImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   RegionExtraction
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionExtraction(
     SseDeserializer deserializer,
@@ -381,12 +1084,69 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  IndexBuilder
+  sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return IndexBuilderImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   RegionExtraction
   sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionExtraction(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return RegionExtractionImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  OfflineIndex
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return OfflineIndexImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  Map<String, String> sse_decode_Map_String_String_None(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_list_record_string_string(deserializer);
+    return Map.fromEntries(inner.map((e) => MapEntry(e.$1, e.$2)));
+  }
+
+  @protected
+  IndexBuilder
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return IndexBuilderImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  OfflineIndex
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return OfflineIndexImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -409,6 +1169,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_list_prim_u_8_strict(deserializer);
     return utf8.decoder.convert(inner);
+  }
+
+  @protected
+  bool sse_decode_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  GeocoderTile sse_decode_box_autoadd_geocoder_tile(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_geocoder_tile(deserializer));
+  }
+
+  @protected
+  OfflineQuery sse_decode_box_autoadd_offline_query(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_offline_query(deserializer));
+  }
+
+  @protected
+  PoiFeature sse_decode_box_autoadd_poi_feature(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_poi_feature(deserializer));
   }
 
   @protected
@@ -456,6 +1244,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  double sse_decode_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getFloat64();
+  }
+
+  @protected
   GeocoderTile sse_decode_geocoder_tile(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_z = sse_decode_u_8(deserializer);
@@ -478,6 +1272,56 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  IndexBuildStats sse_decode_index_build_stats(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_tiles = sse_decode_i_64(deserializer);
+    var var_repeatedTiles = sse_decode_i_64(deserializer);
+    var var_bytes = sse_decode_i_64(deserializer);
+    var var_features = sse_decode_i_64(deserializer);
+    var var_unindexed = sse_decode_i_64(deserializer);
+    var var_duplicateAddresses = sse_decode_i_64(deserializer);
+    var var_pois = sse_decode_i_64(deserializer);
+    var var_addresses = sse_decode_i_64(deserializer);
+    var var_admins = sse_decode_i_64(deserializer);
+    var var_streets = sse_decode_i_64(deserializer);
+    var var_postcodes = sse_decode_i_64(deserializer);
+    var var_pointers = sse_decode_i_64(deserializer);
+    var var_wofPlaces = sse_decode_i_64(deserializer);
+    var var_wofIndexed = sse_decode_i_64(deserializer);
+    return IndexBuildStats(
+      tiles: var_tiles,
+      repeatedTiles: var_repeatedTiles,
+      bytes: var_bytes,
+      features: var_features,
+      unindexed: var_unindexed,
+      duplicateAddresses: var_duplicateAddresses,
+      pois: var_pois,
+      addresses: var_addresses,
+      admins: var_admins,
+      streets: var_streets,
+      postcodes: var_postcodes,
+      pointers: var_pointers,
+      wofPlaces: var_wofPlaces,
+      wofIndexed: var_wofIndexed,
+    );
+  }
+
+  @protected
+  IndexError sse_decode_index_error(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_kind = sse_decode_index_error_kind(deserializer);
+    var var_message = sse_decode_String(deserializer);
+    return IndexError(kind: var_kind, message: var_message);
+  }
+
+  @protected
+  IndexErrorKind sse_decode_index_error_kind(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return IndexErrorKind.values[inner];
+  }
+
+  @protected
   LayerStats sse_decode_layer_stats(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_layer = sse_decode_String(deserializer);
@@ -492,6 +1336,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       bufferPoints: var_bufferPoints,
       pieces: var_pieces,
     );
+  }
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <String>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -521,6 +1377,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Float64List sse_decode_list_prim_f_64_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getFloat64List(len_);
+  }
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -528,9 +1391,117 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<(String, String)> sse_decode_list_record_string_string(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <(String, String)>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_record_string_string(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<WofBox> sse_decode_list_wof_box(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <WofBox>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_wof_box(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  OfflineQuery sse_decode_offline_query(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_text = sse_decode_String(deserializer);
+    var var_lang = sse_decode_opt_String(deserializer);
+    var var_prefix = sse_decode_bool(deserializer);
+    var var_typos = sse_decode_bool(deserializer);
+    var var_focus = sse_decode_opt_list_prim_f_64_strict(deserializer);
+    var var_viewport = sse_decode_opt_list_prim_f_64_strict(deserializer);
+    var var_limit = sse_decode_u_32(deserializer);
+    return OfflineQuery(
+      text: var_text,
+      lang: var_lang,
+      prefix: var_prefix,
+      typos: var_typos,
+      focus: var_focus,
+      viewport: var_viewport,
+      limit: var_limit,
+    );
+  }
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  PoiFeature? sse_decode_opt_box_autoadd_poi_feature(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_poi_feature(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  Float64List? sse_decode_opt_list_prim_f_64_strict(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_list_prim_f_64_strict(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  PoiFeature sse_decode_poi_feature(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_layer = sse_decode_String(deserializer);
+    var var_properties = sse_decode_Map_String_String_None(deserializer);
+    return PoiFeature(layer: var_layer, properties: var_properties);
+  }
+
+  @protected
+  (String, String) sse_decode_record_string_string(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_field0 = sse_decode_String(deserializer);
+    var var_field1 = sse_decode_String(deserializer);
+    return (var_field0, var_field1);
+  }
+
+  @protected
   int sse_decode_u_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint32();
+  }
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getBigUint64();
   }
 
   @protected
@@ -551,9 +1522,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer) {
+  WofBox sse_decode_wof_box(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getUint8() != 0;
+    var var_west = sse_decode_f_64(deserializer);
+    var var_south = sse_decode_f_64(deserializer);
+    var var_east = sse_decode_f_64(deserializer);
+    var var_north = sse_decode_f_64(deserializer);
+    return WofBox(
+      west: var_west,
+      south: var_south,
+      east: var_east,
+      north: var_north,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder(
+    IndexBuilder self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as IndexBuilderImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+    OfflineIndex self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as OfflineIndexImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
   }
 
   @protected
@@ -571,6 +1577,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder(
+    IndexBuilder self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as IndexBuilderImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionExtraction(
     RegionExtraction self,
     SseSerializer serializer,
@@ -578,6 +1597,57 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as RegionExtractionImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+    OfflineIndex self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as OfflineIndexImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void sse_encode_Map_String_String_None(
+    Map<String, String> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_record_string_string(
+      self.entries.map((e) => (e.key, e.value)).toList(),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIndexBuilder(
+    IndexBuilder self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as IndexBuilderImpl).frbInternalSseEncode(move: null),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerOfflineIndex(
+    OfflineIndex self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as OfflineIndexImpl).frbInternalSseEncode(move: null),
       serializer,
     );
   }
@@ -599,6 +1669,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_String(String self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
+  }
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_geocoder_tile(
+    GeocoderTile self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_geocoder_tile(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_offline_query(
+    OfflineQuery self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_offline_query(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_poi_feature(
+    PoiFeature self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_poi_feature(self, serializer);
   }
 
   @protected
@@ -637,6 +1740,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_f_64(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putFloat64(self);
+  }
+
+  @protected
   void sse_encode_geocoder_tile(GeocoderTile self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_8(self.z, serializer);
@@ -658,6 +1767,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_index_build_stats(
+    IndexBuildStats self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.tiles, serializer);
+    sse_encode_i_64(self.repeatedTiles, serializer);
+    sse_encode_i_64(self.bytes, serializer);
+    sse_encode_i_64(self.features, serializer);
+    sse_encode_i_64(self.unindexed, serializer);
+    sse_encode_i_64(self.duplicateAddresses, serializer);
+    sse_encode_i_64(self.pois, serializer);
+    sse_encode_i_64(self.addresses, serializer);
+    sse_encode_i_64(self.admins, serializer);
+    sse_encode_i_64(self.streets, serializer);
+    sse_encode_i_64(self.postcodes, serializer);
+    sse_encode_i_64(self.pointers, serializer);
+    sse_encode_i_64(self.wofPlaces, serializer);
+    sse_encode_i_64(self.wofIndexed, serializer);
+  }
+
+  @protected
+  void sse_encode_index_error(IndexError self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_index_error_kind(self.kind, serializer);
+    sse_encode_String(self.message, serializer);
+  }
+
+  @protected
+  void sse_encode_index_error_kind(
+    IndexErrorKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_layer_stats(LayerStats self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.layer, serializer);
@@ -665,6 +1812,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_64(self.points, serializer);
     sse_encode_i_64(self.bufferPoints, serializer);
     sse_encode_i_64(self.pieces, serializer);
+  }
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_String(item, serializer);
+    }
   }
 
   @protected
@@ -692,6 +1848,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_prim_f_64_strict(
+    Float64List self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putFloat64List(self);
+  }
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
     SseSerializer serializer,
@@ -702,9 +1868,101 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_record_string_string(
+    List<(String, String)> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_record_string_string(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_wof_box(List<WofBox> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_wof_box(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_offline_query(OfflineQuery self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.text, serializer);
+    sse_encode_opt_String(self.lang, serializer);
+    sse_encode_bool(self.prefix, serializer);
+    sse_encode_bool(self.typos, serializer);
+    sse_encode_opt_list_prim_f_64_strict(self.focus, serializer);
+    sse_encode_opt_list_prim_f_64_strict(self.viewport, serializer);
+    sse_encode_u_32(self.limit, serializer);
+  }
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_poi_feature(
+    PoiFeature? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_poi_feature(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_list_prim_f_64_strict(
+    Float64List? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_list_prim_f_64_strict(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_poi_feature(PoiFeature self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.layer, serializer);
+    sse_encode_Map_String_String_None(self.properties, serializer);
+  }
+
+  @protected
+  void sse_encode_record_string_string(
+    (String, String) self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.$1, serializer);
+    sse_encode_String(self.$2, serializer);
+  }
+
+  @protected
   void sse_encode_u_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint32(self);
+  }
+
+  @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putBigUint64(self);
   }
 
   @protected
@@ -725,10 +1983,82 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_bool(bool self, SseSerializer serializer) {
+  void sse_encode_wof_box(WofBox self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putUint8(self ? 1 : 0);
+    sse_encode_f_64(self.west, serializer);
+    sse_encode_f_64(self.south, serializer);
+    sse_encode_f_64(self.east, serializer);
+    sse_encode_f_64(self.north, serializer);
   }
+}
+
+@sealed
+class IndexBuilderImpl extends RustOpaque implements IndexBuilder {
+  // Not to be used by end users
+  IndexBuilderImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  IndexBuilderImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_IndexBuilder,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_IndexBuilder,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_IndexBuilderPtr,
+  );
+
+  /// Reads a page of tiles; returns what's been made so far.
+  Future<IndexBuildStats> addTiles({required List<GeocoderTile> tiles}) =>
+      RustLib.instance.api.crateApiIndexIndexBuilderAddTiles(
+        that: this,
+        tiles: tiles,
+      );
+
+  /// Adds what's joined across tiles, the postcodes and the areas, and writes the index.
+  /// It can be called once.
+  Future<IndexBuildStats> finish() =>
+      RustLib.instance.api.crateApiIndexIndexBuilderFinish(that: this);
+}
+
+@sealed
+class OfflineIndexImpl extends RustOpaque implements OfflineIndex {
+  // Not to be used by end users
+  OfflineIndexImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  OfflineIndexImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_OfflineIndex,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_OfflineIndex,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_OfflineIndexPtr,
+  );
+
+  /// The directory it's in.
+  String dir() => RustLib.instance.api.crateApiIndexOfflineIndexDir(that: this);
+
+  /// How many documents it has.
+  Future<PlatformInt64> documents() =>
+      RustLib.instance.api.crateApiIndexOfflineIndexDocuments(that: this);
+
+  /// The place with the result ID `id`, as the server's `result` JSON, or `None`.
+  Future<String?> place({required String id, String? lang}) => RustLib
+      .instance
+      .api
+      .crateApiIndexOfflineIndexPlace(that: this, id: id, lang: lang);
+
+  /// Results as the server's `{"results": [...]}` JSON, with `pointer` on pointers.
+  Future<String> search({required OfflineQuery query}) => RustLib.instance.api
+      .crateApiIndexOfflineIndexSearch(that: this, query: query);
 }
 
 @sealed

@@ -347,6 +347,44 @@ pub fn extract_tile(tile: TileKey, data: &[u8]) -> Result<TileFeatures, TileErro
     Ok(out)
 }
 
+/// Every property, as text, of the feature with the stable POI ID `id` in the tile's `poi`
+/// or `geocoder` layer, and the layer; `None` if neither has it. What a search result that's
+/// a pointer shows is read from here.
+///
+/// # Errors
+///
+/// If the bytes don't inflate or don't decode as MLT.
+pub fn poi_properties(
+    tile: TileKey,
+    data: &[u8],
+    id: u64,
+) -> Result<Option<(SourceLayer, Vec<(String, String)>)>, TileError> {
+    let data = inflate(tile, data)?;
+    let mlt = |source| TileError::Mlt { tile, source };
+    let mut decoder = Decoder::default();
+    for layer in Parser::default().parse_layers(&data).map_err(mlt)? {
+        let Layer::Tag01(layer) = layer else { continue };
+        let source = match SourceLayer::from_name(layer.name()) {
+            Some(s @ (SourceLayer::Poi | SourceLayer::Geocoder)) => s,
+            _ => continue,
+        };
+        let layer = layer.decode_all(&mut decoder).map_err(mlt)?;
+        let mut features = layer.iter_features();
+        while let Some(feature) = features.next() {
+            let feature = feature.map_err(mlt)?;
+            if feature.id() != Some(id) {
+                continue;
+            }
+            let properties = feature
+                .iter_properties()
+                .filter_map(|c| Some((c.name().to_string(), text(c.value())?)))
+                .collect();
+            return Ok(Some((source, properties)));
+        }
+    }
+    Ok(None)
+}
+
 fn text(value: PropValueRef<'_>) -> Option<String> {
     Some(match value {
         PropValueRef::Bool(v) => v.to_string(),
