@@ -1,6 +1,6 @@
 use std::{collections::HashMap, error::Error};
 
-use lingua::Language;
+use crate::language::Language;
 use regex::Regex;
 
 lazy_static! {
@@ -143,7 +143,7 @@ pub fn permute_road(road: &str, language: &Language) -> Result<Vec<String>, Box<
 mod test {
     use std::collections::HashSet;
 
-    use lingua::Language;
+    use crate::language::Language;
 
     use crate::substitutions::permute_road;
 

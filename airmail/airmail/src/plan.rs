@@ -15,9 +15,11 @@
 
 use std::collections::{BTreeSet, HashMap, hash_map::Entry};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use airmail_tagger::labels::Tag;
 use anyhow::Result;
+use geo::Rect;
 use log::trace;
 use tantivy::{
     DocAddress, Searcher, Term,
@@ -33,6 +35,7 @@ use crate::index::{
     FIELD_KIND, FIELD_NAME, FIELD_POSTCODE, FIELD_STREET, FIELD_UNIT, SearchHit, SearchRequest, SearchResults, admin_field, area_key,
 };
 use crate::poi::{AdminBand, Kind};
+use crate::within::Within;
 
 // How much is searched.
 /// The readings asked of the tagger, to be grouped.
@@ -300,8 +303,9 @@ fn require(mut clauses: Vec<(Occur, Box<dyn Query>)>, filters: impl IntoIterator
 /// What a search found, with what it's scored so far.
 type Matches = Vec<(f32, DocAddress)>;
 
-/// The best of what `query` matches: its score × `base` × mass × nearness.
-fn ranked(searcher: &Searcher, query: &dyn Query, anchor: Option<Anchor>, base: f64, limit: usize) -> Result<Matches> {
+/// The best of what `query` matches: its score × `base` × mass × nearness;
+/// only what's in `within` if given, checked exactly as it's collected.
+fn ranked(searcher: &Searcher, query: &dyn Query, anchor: Option<Anchor>, base: f64, limit: usize, within: Option<&Arc<Vec<Rect<f64>>>>) -> Result<Matches> {
     let collector = TopDocs::with_limit(limit).tweak_score(move |segment: &tantivy::SegmentReader| {
         let importance = segment.fast_fields().f64(FIELD_IMPORTANCE).ok();
         let center = segment.fast_fields().u64(FIELD_CENTER).ok();
@@ -316,7 +320,10 @@ fn ranked(searcher: &Searcher, query: &dyn Query, anchor: Option<Anchor>, base: 
             (f64::from(score) * base * mass(importance) * near) as f32
         }
     });
-    Ok(searcher.search(query, &collector)?)
+    Ok(match within {
+        Some(rects) => searcher.search(query, &Within::new(rects.clone(), collector))?,
+        None => searcher.search(query, &collector)?,
+    })
 }
 
 /// One search.
@@ -332,6 +339,8 @@ struct Run<'a> {
     view: Option<Anchor>,
     located: Option<Anchor>,
     filters: Vec<Box<dyn Query>>,
+    /// The request's box, which results must be in.
+    bbox: Option<Arc<Vec<Rect<f64>>>>,
     limit: usize,
     retrieved: Vec<Retrieved>,
     categories: Option<QueryCategories>,
@@ -360,6 +369,7 @@ impl<'a> Run<'a> {
             view,
             located: request.location.map(|location| Anchor::new(location, MIN_SCALE_KM)),
             filters: Vec::new(),
+            bbox: request.bbox.map(|bbox| Arc::new(geometry::bbox_rects(bbox))),
             limit: request.limit.max(1),
             retrieved: Vec::new(),
             categories: None,
@@ -456,10 +466,10 @@ impl<'a> Run<'a> {
             if let Some(sought) = &sought {
                 let matching = self.index.all_name_words(&sought.words, sought.unfinished, pass == Pass::Typos);
                 let query = require(vec![(Occur::Must, constant(matching, 1.0))], in_scope());
-                found.push((ranked(&self.searcher, &query, scope.anchor, base, wanted)?, Some(sought.clone())));
+                found.push((ranked(&self.searcher, &query, scope.anchor, base, wanted, self.bbox.as_ref())?, Some(sought.clone())));
             } else if let Some(other) = by_other {
                 let query = require(vec![(Occur::Must, constant(other, 1.0))], in_scope());
-                found.push((ranked(&self.searcher, &query, scope.anchor, base, wanted)?, None));
+                found.push((ranked(&self.searcher, &query, scope.anchor, base, wanted, self.bbox.as_ref())?, None));
             }
             if let Some(by_category) = &by_category {
                 let query = require(vec![(Occur::Must, by_category.box_clone())], in_scope());
@@ -485,13 +495,13 @@ impl<'a> Run<'a> {
                 let Some(surroundings) = anchor.surroundings(factor) else { break };
                 let cells = geometry::query_cells(&geometry::bbox_rects(surroundings));
                 let within = require(vec![(Occur::Must, query.box_clone())], [self.index.covering_query(&cells)]);
-                let found = ranked(&self.searcher, &within, scope.anchor, base, wanted)?;
+                let found = ranked(&self.searcher, &within, scope.anchor, base, wanted, self.bbox.as_ref())?;
                 if found.len() >= self.limit {
                     return Ok(found);
                 }
             }
         }
-        ranked(&self.searcher, query, scope.anchor, base, wanted)
+        ranked(&self.searcher, query, scope.anchor, base, wanted, self.bbox.as_ref())
     }
 
     /// Every word in any field, for a misread query.
@@ -504,7 +514,7 @@ impl<'a> Run<'a> {
         });
         let matching: Box<dyn Query> = Box::new(BooleanQuery::intersection(every_word.collect()));
         let query = require(vec![(Occur::Must, constant(matching, 1.0))], self.filters.iter().map(|f| f.box_clone()));
-        let found = ranked(&self.searcher, &query, self.view.or(self.located), ANY_FIELD_DISCOUNT, self.limit + EXTRA_RESULTS)?;
+        let found = ranked(&self.searcher, &query, self.view.or(self.located), ANY_FIELD_DISCOUNT, self.limit + EXTRA_RESULTS, self.bbox.as_ref())?;
         let none = Rc::new(Vec::new());
         self.retrieved.extend(found.into_iter().map(|(score, address)| Retrieved {
             address,
@@ -532,7 +542,7 @@ impl<'a> Run<'a> {
                 Box::new(TermQuery::new(term, IndexRecordOption::Basic))
             };
             let query = require(vec![(Occur::Must, constant(named, 1.0))], narrowing.iter().map(|q| q.box_clone()));
-            for (score, address) in ranked(&self.searcher, &query, self.view, 1.0, MAX_CANDIDATES)? {
+            for (score, address) in ranked(&self.searcher, &query, self.view, 1.0, MAX_CANDIDATES, None)? {
                 matches.push((f64::from(score) * weight, address, band));
             }
         }
@@ -702,13 +712,23 @@ impl<'a> Run<'a> {
 
     /// What was retrieved, scored in full and ranked.
     fn ranked_results(self) -> Result<SearchResults> {
-        let bbox = self.request.bbox.map(geometry::bbox_rects);
+        // Collecting checked the box already; this checks what's decoded.
+        let bbox = self.bbox.clone();
         let mut hits: HashMap<DocAddress, SearchHit> = HashMap::new();
         let mut best: HashMap<DocAddress, (f32, bool)> = HashMap::new();
         for item in &self.retrieved {
             let hit = match hits.entry(item.address) {
                 Entry::Occupied(hit) => hit.into_mut(),
-                Entry::Vacant(place) => place.insert(self.index.hit(&self.searcher, item.address, 0.0)?),
+                Entry::Vacant(place) => {
+                    let mut hit = self.index.hit(&self.searcher, item.address, 0.0)?;
+                    // A pointer's names are in its tile.
+                    if let (Some(pointer), Some(hydrate)) = (&hit.pointer, self.request.hydrate)
+                        && let Some(tags) = hydrate.tags(pointer)
+                    {
+                        hit.set_tags(tags);
+                    }
+                    place.insert(hit)
+                }
             };
             let hit = &*hit;
             if bbox.as_ref().is_some_and(|rects| !geometry::intersects_any(&hit.geometry, rects)) {

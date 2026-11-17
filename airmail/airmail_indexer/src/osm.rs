@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use airmail::poi::{Kind, OsmRef, ToIndexPoi};
+use airmail::osm::is_name_key;
+use airmail::poi::{OsmRef, ToIndexPoi};
 use geo::{Geometry, LineString, MultiLineString, MultiPolygon, Point, Polygon, Simplify, coord};
 
 /// `place` values Who's On First covers as administrative areas, which are
@@ -22,9 +23,6 @@ const ADMIN_PLACES: [&str; 15] = [
     "town",
     "village",
 ];
-
-/// Name keys a place is searched by, each also with a `:<language>` suffix.
-const NAME_KEYS: [&str; 6] = ["name", "alt_name", "official_name", "short_name", "loc_name", "int_name"];
 
 /// `highway` values of roads and paths that are found by name as streets,
 /// biggest first.
@@ -137,22 +135,12 @@ impl Street {
     /// The street as a document, found by its names, and by them as a road
     /// (`w 26th st` for West 26th Street).
     pub fn index_poi(self) -> Option<ToIndexPoi> {
-        let mut names: Vec<String> = self
-            .tags
-            .iter()
-            .filter(|(k, _)| is_name_key(k))
-            .flat_map(|(_, v)| v.split(';').map(str::trim).filter(|n| !n.is_empty()).map(str::to_string))
-            .collect();
-        names.sort();
-        names.dedup();
-        let road = self.tags.iter().find(|(k, _)| k == "name").map(|(_, v)| v.clone());
         let lines = self
             .lines
             .into_iter()
             .map(|line| line.into_iter().map(|(x, y)| coord! { x: f64::from(x), y: f64::from(y) }).collect::<LineString<f64>>())
             .collect();
-        let mut poi = ToIndexPoi::new(Kind::Street, names, Geometry::MultiLineString(MultiLineString(lines)), self.tags)?;
-        poi.road = road;
+        let mut poi = airmail::osm::street_document(self.tags, Geometry::MultiLineString(MultiLineString(lines)))?;
         poi.osm = Some(self.osm);
         Some(poi)
     }
@@ -223,51 +211,9 @@ fn is_area(tags: &HashMap<String, String>) -> bool {
     airmail_importance::osm::is_area(tags.iter().map(|(k, v)| (k.as_str(), v.as_str())))
 }
 
-/// Whether a tag key is a name the element is searched by.
-fn is_name_key(key: &str) -> bool {
-    let base = key.split(':').next().unwrap_or_default();
-    NAME_KEYS.contains(&base)
-        && key.split(':').count() <= 2
-        && !key.contains("etymology")
-        && !key.contains("pronunciation")
-}
-
 impl From<OsmPoi> for Option<ToIndexPoi> {
     fn from(poi: OsmPoi) -> Option<ToIndexPoi> {
-        let tag = |key: &str| poi.tags.get(key).map(ToString::to_string);
-        let house_number = tag("addr:housenumber");
-        let road = tag("addr:street");
-
-        let mut names = Vec::new();
-        for (key, value) in &poi.tags {
-            if !is_name_key(key) {
-                continue;
-            }
-            for name in value.split(';').map(str::trim).filter(|n| !n.is_empty()) {
-                names.push(name.to_string());
-                // TODO: Remove once we get stemmers again.
-                if name.contains("'s") {
-                    names.push(name.replace("'s", ""));
-                    names.push(name.replace("'s", "s"));
-                }
-            }
-        }
-        names.sort();
-        names.dedup();
-
-        let kind = if !names.is_empty() {
-            Kind::Poi
-        } else if house_number.is_some() && road.is_some() {
-            Kind::Address
-        } else {
-            return None;
-        };
-
-        let mut indexed = ToIndexPoi::new(kind, names, poi.geometry, poi.tags.clone().into_iter().collect())?;
-        indexed.house_number = house_number;
-        indexed.road = road;
-        indexed.unit = tag("addr:unit");
-        indexed.postcode = tag("addr:postcode");
+        let mut indexed = airmail::osm::document(poi.tags.into_iter().collect(), poi.geometry)?;
         indexed.osm = Some(poi.osm);
         Some(indexed)
     }
@@ -276,7 +222,7 @@ impl From<OsmPoi> for Option<ToIndexPoi> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use airmail::poi::OsmType;
+    use airmail::poi::{Kind, OsmType};
 
     const WAY: OsmRef = OsmRef { osm_type: OsmType::Way, id: 1, version: Some(1) };
 

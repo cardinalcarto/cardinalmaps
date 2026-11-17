@@ -14,25 +14,32 @@ pub use airmail_importance::shape::{MAX_VERTICES, area_m2, normalize, representa
 /// The most S2 cells in a shape's covering.
 const MAX_COVER_CELLS: usize = 16;
 
+/// The finest S2 level used in coverings, cells about 150 m across. Finer
+/// cells would make the spatial terms several times larger without making
+/// searches faster; searches check what they find against the box exactly
+/// (see `within`), so a coarse covering costs nothing in precision.
+pub const MAX_COVER_LEVEL: u64 = 16;
+
 /// The coarsest S2 level used in coverings. Cells at lower levels span
 /// continents, and their lat/lng bounds are too loose to refine against.
 const MIN_COVER_LEVEL: u64 = 3;
 
-/// The S2 cells covering a geometry, at most `MAX_COVER_CELLS` of them. A
-/// point is covered by its leaf cell. Other shapes start from a covering of
+/// The S2 cells covering a geometry, at most `MAX_COVER_CELLS` of them, of
+/// levels `MIN_COVER_LEVEL` to `MAX_COVER_LEVEL`. A point is covered by its
+/// cell at `MAX_COVER_LEVEL`. Other shapes start from a covering of
 /// their bounding box, and cells whose bounds don't touch the shape are
 /// dropped while the rest are split while there's room, so the covering can
 /// be larger than the shape but never misses part of it.
 #[must_use]
 pub fn covering(geometry: &Geometry<f64>) -> Vec<CellID> {
     if let Geometry::Point(point) = geometry {
-        return vec![CellID::from(LatLng::from_degrees(point.y(), point.x()))];
+        return vec![CellID::from(LatLng::from_degrees(point.y(), point.x())).parent(MAX_COVER_LEVEL)];
     }
     let Some(bounds) = geometry.bounding_rect() else {
         return vec![];
     };
     let region = s2::rect::Rect::from_degrees(bounds.min().y, bounds.min().x, bounds.max().y, bounds.max().x);
-    let coverer = RegionCoverer { min_level: MIN_COVER_LEVEL as u8, max_level: 30, level_mod: 1, max_cells: 8 };
+    let coverer = RegionCoverer { min_level: MIN_COVER_LEVEL as u8, max_level: MAX_COVER_LEVEL as u8, level_mod: 1, max_cells: 8 };
     let mut cells: Vec<CellID> = coverer
         .covering(&region)
         .0
@@ -42,7 +49,7 @@ pub fn covering(geometry: &Geometry<f64>) -> Vec<CellID> {
     // Split the largest cells first while the covering stays within budget.
     loop {
         cells.sort_by_key(CellID::level);
-        let Some(index) = cells.iter().position(|cell| cell.level() < 30) else {
+        let Some(index) = cells.iter().position(|cell| cell.level() < MAX_COVER_LEVEL) else {
             break;
         };
         let children: Vec<CellID> = cells[index].children().into_iter().filter(|c| touches(geometry, *c)).collect();
@@ -92,10 +99,11 @@ pub fn intersects_any(geometry: &Geometry<f64>, rects: &[Rect<f64>]) -> bool {
     rects.iter().any(|rect| geometry.intersects(rect))
 }
 
-/// S2 cells covering the rects, for querying documents' coverings.
+/// S2 cells covering the rects, for querying documents' coverings. No finer
+/// than coverings are, since finer cells would match nothing more.
 #[must_use]
 pub fn query_cells(rects: &[Rect<f64>]) -> Vec<CellID> {
-    let coverer = RegionCoverer { min_level: 0, max_level: 30, level_mod: 1, max_cells: 16 };
+    let coverer = RegionCoverer { min_level: 0, max_level: MAX_COVER_LEVEL as u8, level_mod: 1, max_cells: 16 };
     let mut cells = Vec::new();
     for rect in rects {
         let region = s2::rect::Rect::from_degrees(rect.min().y, rect.min().x, rect.max().y, rect.max().x);
@@ -168,10 +176,30 @@ mod test {
     }
 
     #[test]
-    fn covering_of_a_point_is_its_leaf_cell() {
-        let cells = covering(&Geometry::Point(Point::new(-122.3, 47.6)));
+    fn covering_of_a_point_is_its_cell_at_the_finest_level() {
+        let point = Point::new(-122.3, 47.6);
+        let cells = covering(&Geometry::Point(point));
         assert_eq!(cells.len(), 1);
-        assert!(cells[0].is_leaf());
+        assert_eq!(cells[0].level(), MAX_COVER_LEVEL);
+        assert!(cells[0].contains(&CellID::from(LatLng::from_degrees(point.y(), point.x()))));
+        assert_eq!(ancestors(cells[0]).len(), MAX_COVER_LEVEL as usize);
+    }
+
+    #[test]
+    fn coverings_are_no_finer_than_the_cap() {
+        // A building-sized square and a short street, both far smaller than a
+        // level-16 cell.
+        let shapes: [Geometry<f64>; 2] = [
+            Geometry::Polygon(circle(-122.3, 47.6, 0.0001, 8)),
+            wkt! { LINESTRING(-122.3000 47.6000, -122.3002 47.6001) }.into(),
+        ];
+        for shape in shapes {
+            let cells = covering(&shape);
+            assert!(!cells.is_empty());
+            assert!(cells.iter().all(|c| (MIN_COVER_LEVEL..=MAX_COVER_LEVEL).contains(&c.level())), "{cells:?}");
+        }
+        let query = query_cells(&bbox_rects([-122.3001, 47.5999, -122.2999, 47.6001]));
+        assert!(query.iter().all(|c| c.level() <= MAX_COVER_LEVEL));
     }
 
     /// Every point of a shape is in some cell of its covering, and the

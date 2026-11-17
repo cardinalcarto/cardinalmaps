@@ -2,16 +2,15 @@ use airmail_importance::osm;
 use airmail::{
     geometry, importance,
     index::{AirmailIndex, AirmailIndexWriter, Document},
+    language::Language,
     poi::{Kind, SchemafiedPoi, ToIndexPoi},
 };
 use anyhow::Result;
 use crossbeam::channel::{Receiver, Sender};
 use futures_util::future::join_all;
-use lingua::{IsoCode639_3, Language};
 use log::{info, trace, warn};
 use std::{
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
 };
 use tokio::{
@@ -278,8 +277,8 @@ impl Importer {
             }
         };
         for lang in &pip_response.admin_langs {
-            if let Ok(iso) = IsoCode639_3::from_str(lang) {
-                poi.languages.push(Language::from_iso_code_639_3(&iso))
+            if let Some(language) = Language::from_iso_639_3(lang) {
+                poi.languages.push(language)
             }
         }
 

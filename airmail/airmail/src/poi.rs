@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, bail};
 use geo::{Geometry, Point};
-use lingua::Language;
+use crate::language::Language;
 use serde::{Deserialize, Serialize};
 
 use crate::categories::iso_639_3;
@@ -288,7 +288,50 @@ pub fn one_per_placetype(mut places: Vec<&WofPlace>) -> Vec<&WofPlace> {
     chosen
 }
 
+/// A map tile, `z/x/y` in the XYZ scheme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TileId {
+    pub z: u8,
+    pub x: u32,
+    pub y: u32,
+}
+
+impl TileId {
+    /// Packed into one number for storage: `z` in the top 8 bits, `x` and
+    /// `y` in 28 bits each, enough for zoom 28.
+    #[must_use]
+    pub fn pack(self) -> u64 {
+        (u64::from(self.z) << 56) | (u64::from(self.x & 0x0fff_ffff) << 28) | u64::from(self.y & 0x0fff_ffff)
+    }
+
+    #[must_use]
+    pub fn unpack(packed: u64) -> Self {
+        Self { z: (packed >> 56) as u8, x: ((packed >> 28) & 0x0fff_ffff) as u32, y: (packed & 0x0fff_ffff) as u32 }
+    }
+}
+
+impl std::fmt::Display for TileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}/{}", self.z, self.x, self.y)
+    }
+}
+
+/// Where the rest of a document stored as a pointer is: the feature with
+/// this stable POI ID in this tile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Pointer {
+    pub poi_id: u64,
+    pub tile: TileId,
+}
+
 /// A document to index.
+///
+/// The indexer makes these from OSM elements (see `osm::document`) and Who's
+/// On First places (see `wof::admin_document`). A phone can make them the
+/// same way from tile features' tags and the WOF service's records, then fill
+/// in what those leave out: `admin_ids` and `admin_names` (see
+/// `wof::containing`), `country_code`, `languages`, `importance`, and for a
+/// feature with a stable ID, its tile (see `set_pointer`).
 #[derive(Debug, Clone)]
 pub struct ToIndexPoi {
     pub kind: Kind,
@@ -321,6 +364,9 @@ pub struct ToIndexPoi {
     pub wof: Option<WofPlace>,
     /// How prominent it is regardless of any query, from 0 to 1.
     pub importance: f64,
+    /// The tile it was read from, for an index that stores documents with a
+    /// stable ID as pointers (see `index::Storage`).
+    pub tile: Option<TileId>,
 }
 
 impl ToIndexPoi {
@@ -348,6 +394,7 @@ impl ToIndexPoi {
             osm: None,
             wof: None,
             importance: 0.0,
+            tile: None,
         })
     }
 
@@ -355,6 +402,19 @@ impl ToIndexPoi {
     #[must_use]
     pub fn tag(&self, key: &str) -> Option<&str> {
         self.tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    /// Its stable POI ID, from its `cardinal:poi_id` tag.
+    #[must_use]
+    pub fn poi_id(&self) -> Option<u64> {
+        self.tag("cardinal:poi_id").and_then(|id| id.parse().ok())
+    }
+
+    /// Gives it a stable POI ID, of the feature it was read from in a tile.
+    pub fn set_pointer(&mut self, pointer: Pointer) {
+        self.tags.retain(|(k, _)| k != "cardinal:poi_id");
+        self.tags.push(("cardinal:poi_id".to_string(), pointer.poi_id.to_string()));
+        self.tile = Some(pointer.tile);
     }
 }
 
@@ -457,6 +517,14 @@ mod test {
 
     fn tags(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn tile_ids_pack() {
+        for tile in [TileId { z: 14, x: 2_624, y: 5_722 }, TileId { z: 0, x: 0, y: 0 }, TileId { z: 28, x: (1 << 28) - 1, y: 7 }] {
+            assert_eq!(TileId::unpack(tile.pack()), tile);
+        }
+        assert_eq!(TileId { z: 14, x: 2_624, y: 5_722 }.to_string(), "14/2624/5722");
     }
 
     #[test]
