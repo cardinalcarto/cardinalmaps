@@ -231,11 +231,12 @@ impl Default for BuildOptions {
 }
 
 /// Threads to build documents on: the cores left beside the one reading tiles and
-/// tantivy's `threads`, at least one.
+/// tantivy's `threads`, at least one and at most six (tantivy's threads are the limit
+/// well before that: on the moto g play, five did a build in 4.9 s, three in 5.2, one 7.2).
 #[must_use]
 pub fn default_builders(threads: usize) -> usize {
     let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-    cores.saturating_sub(threads + 1).max(1)
+    cores.saturating_sub(threads + 1).clamp(1, 6)
 }
 
 /// Why a build failed.
@@ -263,6 +264,8 @@ impl IndexBuild {
     ///
     /// If the index can't be created there.
     pub fn new(dir: &Path, wof: WofPlaces, options: BuildOptions) -> Result<Self, BuildError> {
+        #[cfg(target_os = "android")]
+        crate::allocator::tune();
         let mut index = AirmailIndex::create(dir).map_err(BuildError::Index)?;
         let writer = index
             .writer_with(WriterOptions {
