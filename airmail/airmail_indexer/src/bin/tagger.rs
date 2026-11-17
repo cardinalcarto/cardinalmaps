@@ -6,6 +6,8 @@
 //! tagger eval --index <dir> --model <model> <tsv>
 //! tagger convert <model> <out> [--min-weight W]
 //! tagger calibrate --index <dir> --model <model> --out <model> [--stride N] [--copies N] [--seed N]
+//! tagger score --index <dir> --model <model>... [--tsv <tsv>] [--json <out>]
+//! tagger usage --index <dir> --model <model> --out <tsv> [--every N]
 //! ```
 //!
 //! `convert` rewrites a model in the current format.
@@ -37,6 +39,9 @@ use clap::{Parser, Subcommand};
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
+
+#[path = "tagger/score.rs"]
+mod score;
 
 #[derive(Parser)]
 struct Args {
@@ -98,6 +103,46 @@ enum Command {
         copies: usize,
         #[arg(long, default_value_t = 1)]
         seed: u64,
+    },
+    /// Scores models on the queries held out of training on the indexes
+    /// (give the stride, copies and seed of training), and on hand-labelled
+    /// queries; the first model is the one the others are compared with.
+    Score {
+        #[arg(long, required = true)]
+        index: Vec<PathBuf>,
+        #[arg(long, required = true)]
+        model: Vec<PathBuf>,
+        #[arg(long, default_value_t = 20)]
+        stride: u32,
+        #[arg(long, default_value_t = 2)]
+        copies: usize,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// The most held-out queries of each index.
+        #[arg(long, default_value_t = MAX_HELD_OUT)]
+        max: usize,
+        #[arg(long)]
+        tsv: Option<PathBuf>,
+        #[arg(long)]
+        json: Option<PathBuf>,
+    },
+    /// Counts how often a model's features fire on every `every`th
+    /// training query, for `tagger_prune --usage`.
+    Usage {
+        #[arg(long, required = true)]
+        index: Vec<PathBuf>,
+        #[arg(long)]
+        model: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 20)]
+        stride: u32,
+        #[arg(long, default_value_t = 2)]
+        copies: usize,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        #[arg(long, default_value_t = 16)]
+        every: usize,
     },
     Eval {
         #[arg(long)]
@@ -850,6 +895,10 @@ fn main() -> Result<()> {
         }
         Command::Tag { index, model, typing, focus, query } => tag(index, model, typing, focus, query),
         Command::Eval { index, model, tsv } => eval(index, model, tsv),
+        Command::Score { index, model, stride, copies, seed, max, tsv, json } => {
+            score::score(&index, &model, stride, copies, seed, max, tsv.as_deref(), json.as_deref())
+        }
+        Command::Usage { index, model, out, stride, copies, seed, every } => score::usage(&index, &model, stride, copies, seed, every, &out),
         Command::Calibrate { index, model, out, stride, copies, seed } => {
             let start = Instant::now();
             let (mut model, known) = Model::read(&mut BufReader::new(File::open(model)?))?;

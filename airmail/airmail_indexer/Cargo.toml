@@ -33,12 +33,17 @@ path = "src/bin/categories_export.rs"
 name = "categories_prune"
 path = "src/bin/categories_prune.rs"
 
+[[bin]]
+name = "tagger_prune"
+path = "src/bin/tagger_prune.rs"
+
 [lib]
 name = "airmail_indexer"
 path = "src/lib.rs"
 
 [dependencies]
 airmail_tagger = { path = "../airmail_tagger" }
+fst = "0.4.7"
 rand = "0.9"
 airmail.workspace = true
 airmail_importance.workspace = true
