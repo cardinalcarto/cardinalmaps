@@ -799,3 +799,98 @@ def test_geocoder_models_on_s3_carry_their_sha256(tmp_path, s3):
         assert head["ContentType"] == "application/octet-stream"
     latest.run(publisher, {"geocoder": "2026-11-21"})
     assert json.loads(s3.get("releases/latest.json"))["geocoder"] == "2026-11-21"
+
+
+from cardinal_publish import wof
+
+
+def write_wof(path: Path, filler=0, label="a"):
+    """A SQLite database with the tables wof_service reads, and `filler` bytes of padding."""
+    import sqlite3
+
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        "CREATE TABLE place (source, id, class, type); CREATE TABLE property (source, id, key, value);"
+        "CREATE TABLE name (source, id, lang, tag, abbr, name);"
+        "CREATE TABLE hierarchy (parent_source, parent_id, child_source, child_id, depth, branch);"
+        "CREATE TABLE geometry (source, id, role, geom); CREATE TABLE shard (source, id, role, element, geom);"
+        "CREATE VIRTUAL TABLE idx_geometry_geom USING rtree(pkid, xmin, xmax, ymin, ymax);"
+        "CREATE VIRTUAL TABLE idx_shard_geom USING rtree(pkid, xmin, xmax, ymin, ymax);"
+        "CREATE TABLE filler (data BLOB);"
+    )
+    connection.execute("INSERT INTO place VALUES ('wof', '1', 'common', ?)", (label,))
+    if filler:
+        connection.execute("INSERT INTO filler VALUES (randomblob(?))", (filler,))
+    connection.commit()
+    connection.close()
+    return path.read_bytes()
+
+
+def test_wof_publishes_the_database_and_reruns_cleanly(tmp_path):
+    import hashlib
+
+    database = tmp_path / "whosonfirst-data-admin-latest.spatial.db"
+    data = write_wof(database, filler=300_000)
+    release = wof.run(dir_publisher(tmp_path), database, "2026-11-17", "whosonfirst-data-admin-latest", 1 << 16)
+    bucket = tmp_path / "bucket"
+    root = bucket / "releases/wof/2026-11-17"
+    assert (root / "whosonfirst-data-admin.spatial.db").read_bytes() == data
+    expected = {"file": "whosonfirst-data-admin.spatial.db", "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest()}
+    assert release["database"] == expected
+    on_disk = json.loads((root / "release.json").read_text())
+    assert (on_disk["kind"], on_disk["date"], on_disk["database"]) == ("wof", "2026-11-17", expected)
+    meta = json.loads((bucket / ".meta/releases/wof/2026-11-17/whosonfirst-data-admin.spatial.db.json").read_text())
+    assert (meta["content_type"], meta.get("content_encoding")) == ("application/octet-stream", None)
+    # Nothing names a wof release in latest.json: servers pin one.
+    assert not (bucket / "releases/latest.json").exists()
+
+    before = {p: p.stat().st_mtime_ns for p in root.rglob("*")}
+    wof.run(dir_publisher(tmp_path), database, "2026-11-17", "whosonfirst-data-admin-latest", 1 << 16)
+    assert {p: p.stat().st_mtime_ns for p in root.rglob("*")} == before
+
+    other = tmp_path / "other.spatial.db"
+    write_wof(other, filler=300_000, label="b")
+    with pytest.raises(PublishError, match="next release of the day"):
+        wof.run(dir_publisher(tmp_path), other, "2026-11-17", "whosonfirst-data-admin-latest", 1 << 16)
+    assert {p: p.stat().st_mtime_ns for p in root.rglob("*")} == before
+    wof.run(dir_publisher(tmp_path), other, "2026-11-17.1", "whosonfirst-data-admin-latest", 1 << 16)
+
+
+def test_wof_refuses_what_isnt_a_wof_database(tmp_path):
+    import sqlite3
+
+    database = tmp_path / "wof.spatial.db"
+    with pytest.raises(PublishError, match="no database"):
+        wof.run(dir_publisher(tmp_path), database, "2026-11-17", None, 1 << 16)
+    database.write_bytes(b"BZh91AY&SY" + b"x" * 1000)  # a .bz2 that wasn't decompressed
+    with pytest.raises(PublishError, match="isn't a SQLite database"):
+        wof.run(dir_publisher(tmp_path), database, "2026-11-17", None, 1 << 16)
+    database.unlink()
+    connection = sqlite3.connect(database)
+    connection.execute("CREATE TABLE place (id)")
+    connection.close()
+    with pytest.raises(PublishError, match="has no property, name"):
+        wof.run(dir_publisher(tmp_path), database, "2026-11-17", None, 1 << 16)
+    assert not (tmp_path / "bucket/releases/wof").exists()
+
+
+def test_wof_dry_run_writes_nothing(tmp_path):
+    database = tmp_path / "wof.spatial.db"
+    write_wof(database)
+    release = wof.run(dir_publisher(tmp_path, dry_run=True), database, "2026-11-17", None, 1 << 16)
+    assert release["database"]["bytes"] == database.stat().st_size
+    assert not (tmp_path / "bucket/releases/wof").exists()
+
+
+def test_wof_on_s3_records_the_sha256_of_a_multipart_upload(tmp_path, s3):
+    import hashlib
+
+    database = tmp_path / "wof.spatial.db"
+    data = write_wof(database, filler=12 << 20)
+    publisher = Publisher(s3, "releases", state_at(tmp_path / "state.sqlite"), 4, False)
+    wof.run(publisher, database, "2026-11-22", None, 5 << 20)
+    key = "releases/wof/2026-11-22/whosonfirst-data-admin.spatial.db"
+    assert s3.client.get_object(Bucket="bucket", Key=key)["Body"].read() == data
+    release = json.loads(s3.get("releases/wof/2026-11-22/release.json"))
+    assert release["database"]["sha256"] == hashlib.sha256(data).hexdigest()

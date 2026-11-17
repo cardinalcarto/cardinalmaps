@@ -4,7 +4,7 @@
 bucket that clients read over plain HTTPS: the map as one PMTiles archive, the
 Valhalla routing tiles loose for phones and as a btrfs image for servers, the
 geocoder index as a btrfs image for servers with its models loose for phones,
-and a transit build with the
+the Who's On First database `wof_service` serves, and a transit build with the
 indexes a phone uses to pick feeds. Each kind is released and versioned on its own, and
 `latest.json` names the releases clients should use together.
 
@@ -32,6 +32,9 @@ releases/
     tagger.model                    the query tagger, for phones
     categorical/LANG.amcats         each language's categorical model (LANG is ISO 639-3), for phones
     release.json                    image and models' sizes and SHA-256s, index schema version, source, commits
+  wof/DATE/
+    whosonfirst-data-admin.spatial.db   the WOF admin SpatiaLite database, uncompressed, for wof_service
+    release.json                    its size and SHA-256, source
   transit/DATE/
     timetables/FEED.timetable
     transfers/MODE.pmtiles          one PMTiles archive per mode: each mode's zoom 14 transfer tiles, as built
@@ -88,7 +91,7 @@ the feeds the phone doesn't have. See `feed-index` in
 | `release.json` | `application/json` | none | 5 minutes |
 | `latest.json` | `application/json` | none | 1 minute |
 | `*.pmtiles` | `application/vnd.pmtiles` | none | 1 week |
-| `*.gph`, `*.timetable`, `*.bin`, `*.model`, `*.amcats`, `*.btrfs`, `poi/**.zst` | `application/octet-stream` | none | 1 week |
+| `*.gph`, `*.timetable`, `*.bin`, `*.model`, `*.amcats`, `*.btrfs`, `*.spatial.db`, `poi/**.zst` | `application/octet-stream` | none | 1 week |
 | `poi/snapshots/*/checkpoints.json` | `application/json` | none | 1 week |
 
 JSON that a phone fetches is stored gzipped with `Content-Encoding: gzip`, so
@@ -98,8 +101,8 @@ SHA-256s don't compress). `release.json` and `latest.json` are small and read by
 people too, so they're plain. Transfer tiles are zstd that the app unpacks
 itself, so they don't claim a `Content-Encoding`. Every object sent in a single
 `PUT` also carries `x-amz-meta-sha256`, the SHA-256 of its stored bytes; those
-sent as multipart uploads (PMTiles archives, btrfs images, POI snapshot files of
-256 MiB or more) don't, since they're hashed as they're sent, and their
+sent as multipart uploads (PMTiles archives, btrfs images, the WOF database, POI
+snapshot files of 256 MiB or more) don't, since they're hashed as they're sent, and their
 `release.json` records it instead. A phone reads the geocoder's models' sizes and
 SHA-256s from a `HEAD`, so those always go up in a single `PUT`.
 
@@ -244,6 +247,24 @@ categorical model). A rerun of a complete release needs the parts it was
 published with, to check them. Phones download the models of the release
 `latest.json`'s `geocoder` names (`latest --geocoder DATE`), which must have a
 tagger; servers are pointed at a release by hand and don't read `latest.json`.
+
+### Who's On First
+
+```sh
+uv run cardinal-publish wof --target s3://BUCKET --access-key-id ID --secret-access-key KEY \
+  --database wof/whosonfirst-data-admin-latest.spatial.db --date 2026-11-17 \
+  --source whosonfirst-data-admin-latest
+```
+
+uploads the WOF admin SpatiaLite database `wof_service` serves as
+`whosonfirst-data-admin.spatial.db`, one resumable multipart upload, after
+checking it's a SQLite database with the tables `wof_service` reads. It goes up
+uncompressed (decompress a `.bz2` download first), so a server's download of
+its 34 GB resumes with a range request; `release.json` records its size and
+SHA-256 under `database`. Who's On First's "latest" file changes in place, so
+publish each download as a release of its own date. Phones never download it
+(they ask a `wof_service`), so `latest.json` doesn't name wof releases: a
+server pins one (`WOF_RELEASE`, see `deploy/wof_service/README.md`).
 
 ### POI identities
 

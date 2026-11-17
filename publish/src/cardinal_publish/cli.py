@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import geocoder, latest, mapfile, poi, routing, transit
+from . import geocoder, latest, mapfile, poi, routing, transit, wof
 from .common import PublishError, check_date
 from .target import DirTarget, Publisher, State, parse_target
 
@@ -66,6 +66,15 @@ def parser():
     step.add_argument("--date", required=True, help="the release date, YYYY-MM-DD[.N]")
     step.add_argument("--source", help="what the index was built from, for release.json")
     step.add_argument("--build-commit", help="the Cardinal commit the index was built with, for release.json")
+    step.add_argument("--part-size-mib", type=int, default=128, help="multipart part size (default: 128 MiB)")
+
+    step = steps.add_parser("wof", help="publish the Who's On First admin SpatiaLite database, for wof_service")
+    add_target_args(step)
+    step.add_argument("--database", type=Path, required=True,
+                      help="the uncompressed whosonfirst-data-admin-*.spatial.db")
+    step.add_argument("--date", required=True, help="the release date, YYYY-MM-DD[.N]")
+    step.add_argument("--source", help="which WOF distribution it is, for release.json "
+                                       "(e.g. whosonfirst-data-admin-latest of 2026-11-01)")
     step.add_argument("--part-size-mib", type=int, default=128, help="multipart part size (default: 128 MiB)")
 
     step = steps.add_parser("map-convert", help="convert the MBTiles tileset to PMTiles (local only)")
@@ -149,7 +158,7 @@ def run(args):
     state = State(state_path)
     try:
         jobs = args.jobs
-        if args.step in ("map", "geocoder"):
+        if args.step in ("map", "geocoder", "wof"):
             # Parts are large; a few in flight fill the uplink.
             jobs = min(jobs, 8)
         publisher = Publisher(target, args.prefix, state, jobs, args.dry_run)
@@ -165,6 +174,8 @@ def run(args):
             geocoder.run(publisher, resolved(args.image), resolved(args.metadata), check_date(args.date),
                          args.source, args.build_commit, args.part_size_mib << 20,
                          resolved(args.tagger), resolved(args.categories))
+        elif args.step == "wof":
+            wof.run(publisher, args.database.resolve(), check_date(args.date), args.source, args.part_size_mib << 20)
         elif args.step == "map":
             mapfile.publish(publisher, args.pmtiles.resolve(), check_date(args.date), args.source,
                             args.build_commit, args.part_size_mib << 20)
