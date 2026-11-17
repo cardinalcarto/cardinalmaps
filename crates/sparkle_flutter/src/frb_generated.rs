@@ -41,7 +41,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1338854403;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1855404243;
 
 // Section: executor
 
@@ -2293,6 +2293,46 @@ fn wire__crate__api__offline__basemap_prepare_impl(
         },
     )
 }
+fn wire__crate__api__offline__basemap_read_region_tiles_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "basemap_read_region_tiles",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_region = <i64>::sse_decode(&mut deserializer);
+            let api_zoom = <u8>::sse_decode(&mut deserializer);
+            let api_after =
+                <Option<crate::api::offline::BasemapTileAfter>>::sse_decode(&mut deserializer);
+            let api_limit = <u32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::offline::MapError>((move || {
+                    let output_ok = crate::api::offline::basemap_read_region_tiles(
+                        api_path, api_region, api_zoom, api_after, api_limit,
+                    )?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__offline__basemap_region_tiles_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2322,6 +2362,43 @@ fn wire__crate__api__offline__basemap_region_tiles_impl(
                 transform_result_sse::<_, crate::api::offline::MapError>((move || {
                     let output_ok =
                         crate::api::offline::basemap_region_tiles(api_path, api_region)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__offline__basemap_region_zoom_tiles_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "basemap_region_zoom_tiles",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_region = <i64>::sse_decode(&mut deserializer);
+            let api_zoom = <u8>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::api::offline::MapError>((move || {
+                    let output_ok = crate::api::offline::basemap_region_zoom_tiles(
+                        api_path, api_region, api_zoom,
+                    )?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -2564,6 +2641,31 @@ impl SseDecode for crate::api::map::Address {
     }
 }
 
+impl SseDecode for crate::api::offline::BasemapTile {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_z = <u8>::sse_decode(deserializer);
+        let mut var_x = <u32>::sse_decode(deserializer);
+        let mut var_y = <u32>::sse_decode(deserializer);
+        let mut var_data = <Vec<u8>>::sse_decode(deserializer);
+        return crate::api::offline::BasemapTile {
+            z: var_z,
+            x: var_x,
+            y: var_y,
+            data: var_data,
+        };
+    }
+}
+
+impl SseDecode for crate::api::offline::BasemapTileAfter {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_x = <u32>::sse_decode(deserializer);
+        let mut var_y = <u32>::sse_decode(deserializer);
+        return crate::api::offline::BasemapTileAfter { x: var_x, y: var_y };
+    }
+}
+
 impl SseDecode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2724,6 +2826,18 @@ impl SseDecode for Vec<String> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<String>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::offline::BasemapTile> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::offline::BasemapTile>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -2935,6 +3049,19 @@ impl SseDecode for Option<String> {
     }
 }
 
+impl SseDecode for Option<crate::api::offline::BasemapTileAfter> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::offline::BasemapTileAfter>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<f64> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3071,12 +3198,24 @@ fn pde_ffi_dispatcher_primary_impl(
         42 => wire__crate__api__map__SparkleMap_wake_stream_impl(port, ptr, rust_vec_len, data_len),
         43 => wire__crate__api__offline__basemap_claim_impl(port, ptr, rust_vec_len, data_len),
         44 => wire__crate__api__offline__basemap_prepare_impl(port, ptr, rust_vec_len, data_len),
-        45 => {
+        45 => wire__crate__api__offline__basemap_read_region_tiles_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        46 => {
             wire__crate__api__offline__basemap_region_tiles_impl(port, ptr, rust_vec_len, data_len)
         }
-        46 => wire__crate__api__offline__basemap_release_impl(port, ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__offline__basemap_unpack_impl(port, ptr, rust_vec_len, data_len),
-        48 => wire__crate__api__map__init_app_impl(port, ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__offline__basemap_region_zoom_tiles_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        48 => wire__crate__api__offline__basemap_release_impl(port, ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__offline__basemap_unpack_impl(port, ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__map__init_app_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3126,7 +3265,7 @@ fn pde_ffi_dispatcher_sync_impl(
         39 => wire__crate__api__map__SparkleMap_tile_feature_impl(ptr, rust_vec_len, data_len),
         40 => wire__crate__api__map__SparkleMap_tilt_impl(ptr, rust_vec_len, data_len),
         41 => wire__crate__api__map__SparkleMap_turn_north_impl(ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__offline__map_first_fetch_impl(ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__offline__map_first_fetch_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3176,6 +3315,50 @@ impl flutter_rust_bridge::IntoDart for crate::api::map::Address {
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::map::Address {}
 impl flutter_rust_bridge::IntoIntoDart<crate::api::map::Address> for crate::api::map::Address {
     fn into_into_dart(self) -> crate::api::map::Address {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::offline::BasemapTile {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.z.into_into_dart().into_dart(),
+            self.x.into_into_dart().into_dart(),
+            self.y.into_into_dart().into_dart(),
+            self.data.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::offline::BasemapTile
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::offline::BasemapTile>
+    for crate::api::offline::BasemapTile
+{
+    fn into_into_dart(self) -> crate::api::offline::BasemapTile {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::offline::BasemapTileAfter {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.x.into_into_dart().into_dart(),
+            self.y.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::offline::BasemapTileAfter
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::offline::BasemapTileAfter>
+    for crate::api::offline::BasemapTileAfter
+{
+    fn into_into_dart(self) -> crate::api::offline::BasemapTileAfter {
         self
     }
 }
@@ -3589,6 +3772,24 @@ impl SseEncode for crate::api::map::Address {
     }
 }
 
+impl SseEncode for crate::api::offline::BasemapTile {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u8>::sse_encode(self.z, serializer);
+        <u32>::sse_encode(self.x, serializer);
+        <u32>::sse_encode(self.y, serializer);
+        <Vec<u8>>::sse_encode(self.data, serializer);
+    }
+}
+
+impl SseEncode for crate::api::offline::BasemapTileAfter {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.x, serializer);
+        <u32>::sse_encode(self.y, serializer);
+    }
+}
+
 impl SseEncode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3710,6 +3911,16 @@ impl SseEncode for Vec<String> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <String>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::offline::BasemapTile> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::offline::BasemapTile>::sse_encode(item, serializer);
         }
     }
 }
@@ -3869,6 +4080,16 @@ impl SseEncode for Option<String> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <String>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::offline::BasemapTileAfter> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::offline::BasemapTileAfter>::sse_encode(value, serializer);
         }
     }
 }

@@ -90,7 +90,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Address dco_decode_address(dynamic raw);
 
   @protected
+  BasemapTile dco_decode_basemap_tile(dynamic raw);
+
+  @protected
+  BasemapTileAfter dco_decode_basemap_tile_after(dynamic raw);
+
+  @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  BasemapTileAfter dco_decode_box_autoadd_basemap_tile_after(dynamic raw);
 
   @protected
   DeviceInfo dco_decode_box_autoadd_device_info(dynamic raw);
@@ -141,6 +150,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
+  List<BasemapTile> dco_decode_list_basemap_tile(dynamic raw);
+
+  @protected
   List<ByteRange> dco_decode_list_byte_range(dynamic raw);
 
   @protected
@@ -187,6 +199,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  BasemapTileAfter? dco_decode_opt_box_autoadd_basemap_tile_after(dynamic raw);
 
   @protected
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
@@ -283,7 +298,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Address sse_decode_address(SseDeserializer deserializer);
 
   @protected
+  BasemapTile sse_decode_basemap_tile(SseDeserializer deserializer);
+
+  @protected
+  BasemapTileAfter sse_decode_basemap_tile_after(SseDeserializer deserializer);
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  BasemapTileAfter sse_decode_box_autoadd_basemap_tile_after(
+    SseDeserializer deserializer,
+  );
 
   @protected
   DeviceInfo sse_decode_box_autoadd_device_info(SseDeserializer deserializer);
@@ -334,6 +360,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<BasemapTile> sse_decode_list_basemap_tile(SseDeserializer deserializer);
 
   @protected
   List<ByteRange> sse_decode_list_byte_range(SseDeserializer deserializer);
@@ -392,6 +421,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  BasemapTileAfter? sse_decode_opt_box_autoadd_basemap_tile_after(
+    SseDeserializer deserializer,
+  );
 
   @protected
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
@@ -502,7 +536,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_address(Address self, SseSerializer serializer);
 
   @protected
+  void sse_encode_basemap_tile(BasemapTile self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_basemap_tile_after(
+    BasemapTileAfter self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_basemap_tile_after(
+    BasemapTileAfter self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_device_info(
@@ -563,6 +612,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_basemap_tile(
+    List<BasemapTile> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_byte_range(
@@ -632,6 +687,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_basemap_tile_after(
+    BasemapTileAfter? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
