@@ -2,6 +2,16 @@
 //! weights that move label scores least, and the vocabulary words no
 //! feature needs, then packs what's left (see `airmail_tagger::model`).
 //!
+//! Most features fire rarely, so the best measure of a weight is its
+//! magnitude times how often its feature fires on training queries
+//! (`tagger usage` counts that on a sample of them, with the index the model
+//! was trained on). On the planet model, `--min-impact 10` with usage from
+//! every 16th training query keeps 0.9 of 4.5 million state features and
+//! makes 106 MB into 15.5 MB, with held-out accuracy 93.24% of words and
+//! 85.94% of queries against 93.74% and 86.82%, and 97.5% of held-out
+//! queries labelled exactly as the full model does. `--min-impact 3` makes
+//! 27 MB: 93.38%, 86.24%, 98.2% the same.
+//!
 //! ```text
 //! tagger_prune stats <model>
 //! tagger_prune prune <model> <out> [--min-weight W] [--usage <tsv> [--min-count N] [--min-impact X]]
@@ -31,6 +41,9 @@ struct Args {
 enum Command {
     /// What takes the space: features, weights and their bytes by kind.
     Stats { model: PathBuf },
+    /// How far a model's weights are from another's, for the features both
+    /// have.
+    Compare { a: PathBuf, b: PathBuf },
     /// Writes a smaller model in the packed format.
     Prune {
         model: PathBuf,
@@ -49,8 +62,8 @@ enum Command {
         /// is less than this (with `--usage`).
         #[arg(long, default_value_t = 0.0)]
         min_impact: f32,
-        /// Bits a state weight: 16 (bfloat16), 8 or 4 (codes into a fitted
-        /// table of values).
+        /// Bits a state weight: 16 (bfloat16) or 8 (a signed byte times a
+        /// power of two each row has).
         #[arg(long, default_value_t = 8)]
         bits: u8,
         /// Bits a state-transition weight.
@@ -232,11 +245,37 @@ fn prune(path: &Path, out: &Path, settings: &Settings, usage: Option<&Usage>) ->
     Ok(())
 }
 
+fn compare(a: &Path, b: &Path) -> Result<()> {
+    let ((a, _), (b, _)) = (read(a)?, read(b)?);
+    let ((sa, ta), (sb, tb)) = (a.rows(), b.rows());
+    for (name, x, y) in [("state", sa, sb), ("state-transition", ta, tb)] {
+        let y: HashMap<String, Vec<(u32, f32)>> = y.into_iter().collect();
+        let (mut abs, mut rel) = (Vec::new(), Vec::new());
+        for (f, wx) in &x {
+            let Some(wy) = y.get(f) else { continue };
+            for (c, v) in wx {
+                let other = wy.iter().find(|(d, _)| d == c).map_or(0.0, |(_, w)| *w);
+                abs.push((v - other).abs());
+                rel.push((v - other).abs() / v.abs().max(1e-9));
+            }
+        }
+        abs.sort_by(f32::total_cmp);
+        rel.sort_by(f32::total_cmp);
+        let q = |v: &[f32], p: f64| v.get(((v.len().max(1) - 1) as f64 * p) as usize).copied().unwrap_or(0.0);
+        println!(
+            "{name}: {} weights; |error| at 50/90/99/max: {:.4} {:.4} {:.4} {:.4}; relative {:.4} {:.4} {:.4} {:.4}",
+            abs.len(), q(&abs, 0.5), q(&abs, 0.9), q(&abs, 0.99), q(&abs, 1.0), q(&rel, 0.5), q(&rel, 0.9), q(&rel, 0.99), q(&rel, 1.0)
+        );
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Args::parse().command {
         Command::Stats { model } => stats(&model),
+        Command::Compare { a, b } => compare(&a, &b),
         Command::Prune { model, out, min_weight, usage, min_count, min_impact, bits, transition_bits, keep_vocabulary } => {
-            let (Some(bits), Some(transition_bits)) = (Bits::of(bits), Bits::of(transition_bits)) else { bail!("bits are 16, 8 or 4") };
+            let (Some(bits), Some(transition_bits)) = (Bits::of(bits), Bits::of(transition_bits)) else { bail!("bits are 16 or 8") };
             if usage.is_none() && (min_count > 0.0 || min_impact > 0.0) {
                 bail!("--min-count and --min-impact need --usage");
             }

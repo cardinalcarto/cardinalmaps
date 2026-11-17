@@ -8,8 +8,8 @@
 //! The packed one (`airmtag4`, which `Model::packed` makes, for phones)
 //! keeps each row's columns as a 16-bit bitmap where there are at most 16
 //! columns (the labels), in place of a length and a byte a column, and its
-//! weights as 8- or 4-bit codes into a table of values fitted to them (or
-//! bfloat16 still). Where each row's weights start is counted when it's
+//! weights as signed bytes times a power of two each row has (or bfloat16
+//! still). Where each row's weights start is counted when it's
 //! read, from every 64th row's. Its vocabulary keeps only whether each word
 //! is rare, which is all the features ask of it.
 
@@ -143,10 +143,11 @@ fn sort_rows(rows: &mut Vec<Row>) {
 pub enum Bits {
     /// bfloat16, as the plain format.
     Sixteen,
-    /// A byte, a code into 256 values fitted to the weights.
+    /// A signed byte, times a power of two each row has: within 1/127 of
+    /// the row's largest weight. (A table of 256 values fitted to all the
+    /// weights, and a logarithmic one, both lost a point of accuracy on
+    /// held-out queries; this loses none.)
     Eight,
-    /// Half a byte, a code into 16 values.
-    Four,
 }
 
 impl Bits {
@@ -154,17 +155,15 @@ impl Bits {
         match self {
             Bits::Sixteen => 16,
             Bits::Eight => 8,
-            Bits::Four => 4,
         }
     }
 
-    /// From a number of bits: 16, 8 or 4.
+    /// From a number of bits: 16 or 8.
     #[must_use]
     pub fn of(bits: u8) -> Option<Self> {
         match bits {
             16 => Some(Bits::Sixteen),
             8 => Some(Bits::Eight),
-            4 => Some(Bits::Four),
             _ => None,
         }
     }
@@ -189,10 +188,9 @@ struct Packed {
     /// Each weight's column, without `bitmap`.
     columns: Vec<u8>,
     bits: Bits,
-    /// The values codes stand for.
-    table: Vec<f32>,
-    /// A code for each weight (two a byte, low half first, for `Four`),
-    /// or bfloat16s, little-endian.
+    /// For `Eight`, each row's power of two, plus 128.
+    scales: Vec<u8>,
+    /// Each weight: a signed byte, or a bfloat16, little-endian.
     codes: Vec<u8>,
     /// Where the weights of every `SAMPLE_ROWS`th row start; not stored.
     samples: Vec<u32>,
@@ -202,15 +200,8 @@ impl Packed {
     fn new(mut rows: Vec<Row>, width: usize, bits: Bits) -> Self {
         sort_rows(&mut rows);
         let bitmap = width <= BITMAP_COLUMNS;
-        let all: Vec<f32> = rows.iter().flat_map(|(_, w)| w.iter().map(|(_, v)| *v)).collect();
-        let table = match bits {
-            Bits::Sixteen => Vec::new(),
-            Bits::Eight => codebook(&all, 256),
-            Bits::Four => codebook(&all, 16),
-        };
         let mut builder = MapBuilder::memory();
-        let (mut shapes, mut columns, mut codes) = (Vec::new(), Vec::new(), Vec::new());
-        let mut at = 0usize;
+        let (mut shapes, mut columns, mut codes, mut scales) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (row, (feature, weights)) in rows.iter_mut().enumerate() {
             weights.sort_by_key(|(c, _)| *c);
             weights.dedup_by_key(|(c, _)| *c);
@@ -222,18 +213,26 @@ impl Packed {
                 shapes.push(u8::try_from(weights.len()).expect("rows fit in a byte"));
                 columns.extend(weights.iter().map(|(c, _)| u8::try_from(*c).expect("columns fit in a byte")));
             }
+            let exponent = if bits == Bits::Eight {
+                let max = weights.iter().fold(0f32, |m, (_, w)| m.max(w.abs()));
+                let e = if max > 0.0 { (max / 127.0).log2().ceil().clamp(-128.0, 127.0) as i32 } else { 0 };
+                scales.push(u8::try_from(e + 128).expect("an exponent in range"));
+                e
+            } else {
+                0
+            };
             for (_, w) in weights.iter() {
                 match bits {
+                    Bits::Eight => {
+                        let q = (w / 2f32.powi(exponent)).round().clamp(-127.0, 127.0) as i8;
+                        codes.push(q.to_le_bytes()[0]);
+                    }
                     Bits::Sixteen => codes.extend(to_bf16(*w).to_le_bytes()),
-                    Bits::Eight => codes.push(nearest(&table, *w)),
-                    Bits::Four if at % 2 == 0 => codes.push(nearest(&table, *w)),
-                    Bits::Four => *codes.last_mut().expect("a byte begun") |= nearest(&table, *w) << 4,
                 }
-                at += 1;
             }
         }
         let keys = Map::new(builder.into_inner().expect("an FST in memory")).expect("a valid FST");
-        let mut packed = Self { keys, bitmap, shapes, columns, bits, table, codes, samples: Vec::new() };
+        let mut packed = Self { keys, bitmap, shapes, columns, bits, scales, codes, samples: Vec::new() };
         packed.samples = packed.sample().0;
         packed
     }
@@ -269,10 +268,7 @@ impl Packed {
         write_bytes(out, self.keys.as_fst().as_bytes())?;
         write_bytes(out, &self.shapes)?;
         write_bytes(out, &self.columns)?;
-        write_u32(out, self.table.len() as u32)?;
-        for value in &self.table {
-            out.write_all(&value.to_le_bytes())?;
-        }
+        write_bytes(out, &self.scales)?;
         write_bytes(out, &self.codes)
     }
 
@@ -283,13 +279,9 @@ impl Packed {
         let keys = Map::new(read_bytes(input)?).map_err(invalid)?;
         let shapes = read_bytes(input)?;
         let columns = read_bytes(input)?;
-        let n = read_u32(input)?;
-        if n > 256 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "packed rows: too many codes"));
-        }
-        let table = (0..n).map(|_| Ok(f32::from_le_bytes(read_array(input)?))).collect::<io::Result<Vec<_>>>()?;
+        let scales = read_bytes(input)?;
         let codes = read_bytes(input)?;
-        let mut packed = Self { keys, bitmap: bitmap != 0, shapes, columns, bits, table, codes, samples: Vec::new() };
+        let mut packed = Self { keys, bitmap: bitmap != 0, shapes, columns, bits, scales, codes, samples: Vec::new() };
         packed.check(width)?;
         packed.samples = packed.sample().0;
         Ok(packed)
@@ -320,22 +312,15 @@ impl Packed {
         let bytes = match self.bits {
             Bits::Sixteen => weights * 2,
             Bits::Eight => weights,
-            Bits::Four => weights.div_ceil(2),
         };
+        if self.scales.len() != if self.bits == Bits::Eight { rows } else { 0 } {
+            return bad("scales missing");
+        }
         if bytes != self.codes.len() || (!self.bitmap && weights != self.columns.len()) || (self.bitmap && !self.columns.is_empty()) {
             return bad("weights missing");
         }
         if self.columns.iter().any(|c| usize::from(*c) >= width) {
             return bad("columns out of range");
-        }
-        let missing = |c: u8| usize::from(c) >= self.table.len();
-        let codes_bad = match self.bits {
-            Bits::Sixteen => false,
-            Bits::Eight => self.codes.iter().any(|c| missing(*c)),
-            Bits::Four => self.codes.iter().any(|c| missing(c & 15) || missing(c >> 4)),
-        };
-        if codes_bad {
-            return bad("codes without values");
         }
         Ok(())
     }
@@ -346,11 +331,11 @@ impl Packed {
         self.samples[r / SAMPLE_ROWS] as usize + (base..r).map(|q| self.len_of(q)).sum::<usize>()
     }
 
-    fn value(&self, i: usize) -> f32 {
+    /// Weight `i`, of row `r`.
+    fn value(&self, i: usize, r: usize) -> f32 {
         match self.bits {
+            Bits::Eight => f32::from(i8::from_le_bytes([self.codes[i]])) * 2f32.powi(i32::from(self.scales[r]) - 128),
             Bits::Sixteen => from_bf16(u16::from_le_bytes([self.codes[2 * i], self.codes[2 * i + 1]])),
-            Bits::Eight => self.table[usize::from(self.codes[i])],
-            Bits::Four => self.table[usize::from((self.codes[i / 2] >> (4 * (i % 2))) & 15)],
         }
     }
 
@@ -361,13 +346,13 @@ impl Packed {
             let mut map = self.bitmap_of(r);
             let mut i = start;
             while map != 0 {
-                f(map.trailing_zeros() as usize, self.value(i));
+                f(map.trailing_zeros() as usize, self.value(i, r));
                 map &= map - 1;
                 i += 1;
             }
         } else {
             for i in start..start + self.len_of(r) {
-                f(usize::from(self.columns[i]), self.value(i));
+                f(usize::from(self.columns[i]), self.value(i, r));
             }
         }
     }
@@ -388,60 +373,6 @@ impl Packed {
             self.each(r as usize, |c, w| scores[c] += scale * f64::from(w));
         }
     }
-}
-
-/// `k` values that stand for `values` with least squared error (Lloyd's
-/// algorithm in one dimension, from quantiles), ascending.
-fn codebook(values: &[f32], k: usize) -> Vec<f32> {
-    let mut sorted: Vec<f64> = values.iter().map(|v| f64::from(*v)).collect();
-    sorted.sort_by(f64::total_cmp);
-    if sorted.is_empty() {
-        return vec![0.0];
-    }
-    // Prefix sums, for the mean of any run of sorted values.
-    let mut sums = Vec::with_capacity(sorted.len() + 1);
-    sums.push(0.0);
-    for v in &sorted {
-        sums.push(sums[sums.len() - 1] + v);
-    }
-    let n = sorted.len();
-    let mut centers: Vec<f64> = (0..k).map(|i| sorted[((2 * i + 1) * n / (2 * k)).min(n - 1)]).collect();
-    centers.dedup();
-    for _ in 0..100 {
-        // Each center's values lie between the midpoints to its neighbours.
-        let mut bounds = vec![0];
-        for pair in centers.windows(2) {
-            let mid = f64::midpoint(pair[0], pair[1]);
-            bounds.push(sorted.partition_point(|v| *v < mid));
-        }
-        bounds.push(n);
-        let next: Vec<f64> = (0..centers.len())
-            .map(|i| {
-                let (a, b) = (bounds[i], bounds[i + 1]);
-                if b > a { (sums[b] - sums[a]) / (b - a) as f64 } else { centers[i] }
-            })
-            .collect();
-        let moved = next.iter().zip(&centers).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max);
-        centers = next;
-        centers.dedup();
-        if moved < 1e-7 {
-            break;
-        }
-    }
-    centers.into_iter().map(|c| c as f32).collect()
-}
-
-/// The code of the value nearest `value`, in an ascending table.
-fn nearest(table: &[f32], value: f32) -> u8 {
-    let i = table.partition_point(|t| *t < value);
-    let best = if i == 0 {
-        0
-    } else if i == table.len() || value - table[i - 1] <= table[i] - value {
-        i - 1
-    } else {
-        i
-    };
-    u8::try_from(best).expect("at most 256 codes")
 }
 
 #[derive(Clone)]
@@ -482,7 +413,7 @@ impl Rows {
     fn sizes(&self) -> (usize, usize, usize) {
         match self {
             Rows::Plain(rows) => (rows.keys.as_fst().as_bytes().len(), rows.starts.len() - 1 + rows.columns.len(), rows.values.len() * 2),
-            Rows::Packed(rows) => (rows.keys.as_fst().as_bytes().len(), rows.shapes.len() + rows.columns.len(), rows.codes.len() + rows.table.len() * 4),
+            Rows::Packed(rows) => (rows.keys.as_fst().as_bytes().len(), rows.shapes.len() + rows.columns.len(), rows.codes.len() + rows.scales.len()),
         }
     }
 }
@@ -798,7 +729,7 @@ mod test {
         let mut model = model();
         model.set_scale(0.5);
         let extra = [("seattle".to_string(), 12), ("main".to_string(), 51), ("rare".to_string(), 50)];
-        for bits in [Bits::Sixteen, Bits::Eight, Bits::Four] {
+        for bits in [Bits::Sixteen, Bits::Eight] {
             let packed = model.packed(bits, bits);
             let mut bytes = Vec::new();
             packed.write(&mut bytes, &extra).unwrap();
@@ -807,7 +738,7 @@ mod test {
             assert!(read.is_packed());
             // Only whether a word is rare is kept.
             assert_eq!(extra, vec![("main".to_string(), RARE_WORD_COUNT + 1), ("rare".to_string(), MIN_WORD_COUNT), ("seattle".to_string(), MIN_WORD_COUNT)]);
-            // Three distinct values fit 4 bits exactly.
+            // These weights are exact in a byte times a power of two.
             assert_eq!(read.rows(), model.rows(), "{bits:?}");
             let mut scores = [0.0; 2];
             read.add_state("word|x", &mut scores);
@@ -836,8 +767,12 @@ mod test {
         let (read, _) = Model::read(&mut bytes.as_slice()).unwrap();
         assert_eq!(read.rows(), model.rows());
         let eight = model.packed(Bits::Eight, Bits::Eight);
-        // 21 distinct weights in 256 codes are exact.
-        assert_eq!(eight.rows(), model.rows());
+        // The same columns, the weights within 1/127 of the largest.
+        let (got, want) = (eight.rows().1, model.rows().1);
+        for (g, w) in got[0].1.iter().zip(&want[0].1) {
+            assert_eq!(g.0, w.0);
+            assert!((g.1 - w.1).abs() <= 7.0 / 127.0, "{w:?} came back {g:?}");
+        }
     }
 
     #[test]
@@ -863,17 +798,13 @@ mod test {
     }
 
     #[test]
-    fn codebooks_fit_values() {
-        let values: Vec<f32> = (0..1000).map(|i| ((i * 37) % 1000) as f32 / 100.0 - 5.0).collect();
-        let table = codebook(&values, 16);
-        assert_eq!(table.len(), 16);
-        assert!(table.windows(2).all(|w| w[0] < w[1]));
-        // Uniform values: each code covers a sixteenth of the range.
-        for v in &values {
-            let near = table[usize::from(nearest(&table, *v))];
-            assert!((near - v).abs() <= 10.0 / 32.0 + 0.02, "{v} coded as {near}");
+    fn eight_bit_weights_are_near_their_rows_largest() {
+        let weights = vec![(0, 300.0), (1, -2.5), (2, 0.01), (3, 77.7)];
+        let model = Model::from_rows(vec!["a".into(); 4], vec![("f".into(), weights)], vec![], vec![0.0; 16]);
+        let (got, want) = (model.packed(Bits::Eight, Bits::Eight).rows().0, model.rows().0);
+        for ((_, g), (_, w)) in got[0].1.iter().zip(&want[0].1) {
+            assert!((g - w).abs() <= 300.0 / 127.0, "{w} came back {g}");
         }
-        assert_eq!(codebook(&[2.0, 2.0, 2.0], 4), vec![2.0]);
     }
 
     #[test]
