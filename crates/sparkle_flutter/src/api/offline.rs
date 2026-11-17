@@ -316,6 +316,37 @@ pub fn basemap_read_region_tiles(
         .collect())
 }
 
+/// The tiles `z`/`x`/`y` (from the top) of `keys` that the basemap has, as stored (gzipped),
+/// for reading a few features (the offline geocoder's results). Read only.
+pub fn basemap_read_tiles(
+    path: String,
+    keys: Vec<BasemapTileKey>,
+) -> Result<Vec<BasemapTile>, MapError> {
+    if !Path::new(&path).exists() {
+        return Ok(Vec::new());
+    }
+    let reader = BasemapReader::open(Path::new(&path))?;
+    let mut tiles = Vec::with_capacity(keys.len());
+    for key in keys {
+        if let Some(data) = reader.tile(key.z, key.x, key.y)? {
+            tiles.push(BasemapTile {
+                z: key.z,
+                x: key.x,
+                y: key.y,
+                data,
+            });
+        }
+    }
+    Ok(tiles)
+}
+
+/// A tile, `y` from the top (XYZ).
+pub struct BasemapTileKey {
+    pub z: u8,
+    pub x: u32,
+    pub y: u32,
+}
+
 /// How many tiles `region` holds in the basemap at `zoom`.
 pub fn basemap_region_zoom_tiles(path: String, region: i64, zoom: u8) -> Result<i64, MapError> {
     if !Path::new(&path).exists() {

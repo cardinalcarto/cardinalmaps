@@ -94,6 +94,16 @@ Future<List<BasemapTile>> basemapReadRegionTiles({
   limit: limit,
 );
 
+/// The tiles `z`/`x`/`y` (from the top) of `keys` that the basemap has, as stored (gzipped),
+/// for reading a few features (the offline geocoder's results). Read only.
+Future<List<BasemapTile>> basemapReadTiles({
+  required String path,
+  required List<BasemapTileKey> keys,
+}) => RustLib.instance.api.crateApiOfflineBasemapReadTiles(
+  path: path,
+  keys: keys,
+);
+
 /// How many tiles `region` holds in the basemap at `zoom`.
 Future<PlatformInt64> basemapRegionZoomTiles({
   required String path,
@@ -179,6 +189,27 @@ class BasemapTileAfter {
       identical(this, other) ||
       other is BasemapTileAfter &&
           runtimeType == other.runtimeType &&
+          x == other.x &&
+          y == other.y;
+}
+
+/// A tile, `y` from the top (XYZ).
+class BasemapTileKey {
+  final int z;
+  final int x;
+  final int y;
+
+  const BasemapTileKey({required this.z, required this.x, required this.y});
+
+  @override
+  int get hashCode => z.hashCode ^ x.hashCode ^ y.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BasemapTileKey &&
+          runtimeType == other.runtimeType &&
+          z == other.z &&
           x == other.x &&
           y == other.y;
 }
