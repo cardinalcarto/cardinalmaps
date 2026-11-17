@@ -165,8 +165,9 @@ impl IndexBuilder {
             .inner
             .take()
             .ok_or_else(|| error(IndexErrorKind::Finished, "the build was finished already"))?;
-        let counts = inner.finish()?;
-        Ok(stats(&counts, self.wof))
+        let counts = inner.finish();
+        crate::allocator::release();
+        Ok(stats(&counts?, self.wof))
     }
 }
 
@@ -202,12 +203,14 @@ impl OfflineIndex {
         categories: Option<String>,
     ) -> Result<OfflineIndex, IndexError> {
         let dir = PathBuf::from(dir);
+        crate::allocator::tune();
         let index = DeviceIndex::open(
             &dir,
             tagger.as_deref().map(Path::new),
             categories.as_deref().map(Path::new),
-        )
-        .map_err(|e| error(IndexErrorKind::Storage, format!("{e:#}")))?;
+        );
+        crate::allocator::release();
+        let index = index.map_err(|e| error(IndexErrorKind::Storage, format!("{e:#}")))?;
         Ok(OfflineIndex { index, dir })
     }
 

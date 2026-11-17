@@ -12,28 +12,51 @@
 //! (two copies of SQLite in one process break each other's locks; see `offline_map::mbtiles`),
 //! and its tiles come in from Dart.
 
-#[cfg(target_os = "android")]
 pub(crate) mod allocator {
     //! On Android, bionic's allocator (jemalloc without thread caches) took most of an
     //! index build's time, locking for every allocation of the document threads: mimalloc
     //! for this library's own allocations (the rest of the app keeps the platform's).
+    //! Elsewhere the system allocator is used and these functions do nothing.
 
+    #[cfg(target_os = "android")]
     #[global_allocator]
     static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+    #[cfg(target_os = "android")]
     unsafe extern "C" {
         fn mi_option_set(option: i32, value: std::ffi::c_long);
+        fn mi_collect(force: bool);
     }
 
     /// `mi_option_purge_delay` in mimalloc 3's `mimalloc.h` (the version is pinned).
+    #[cfg(target_os = "android")]
     const PURGE_DELAY: i32 = 15;
 
     /// Gives freed memory back after 10 ms, not mimalloc 3's second: a build frees as it
     /// goes, and its peak RSS on the phone was ~35 MB lower for it, as fast.
     pub fn tune() {
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        // SAFETY: setting an option mimalloc reads as it purges.
-        ONCE.call_once(|| unsafe { mi_option_set(PURGE_DELAY, 10) });
+        #[cfg(target_os = "android")]
+        {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            // SAFETY: setting an option mimalloc reads as it purges.
+            ONCE.call_once(|| unsafe { mi_option_set(PURGE_DELAY, 10) });
+        }
+    }
+
+    /// Gives back now what was freed, once a build is done or the index and its models
+    /// are open.
+    ///
+    /// mimalloc purges freed memory only on its next allocation after the purge delay, and
+    /// after either step this library allocates next to nothing, so the memory stayed
+    /// resident: on the phone, opening the index with its models held ~30 MB more than
+    /// with the system allocator (what loading the models freed), and a finished build
+    /// ~10 MB more than with this.
+    pub fn release() {
+        #[cfg(target_os = "android")]
+        // SAFETY: collects this thread's heap and purges the arenas; no options change.
+        unsafe {
+            mi_collect(true);
+        }
     }
 }
 
