@@ -7,9 +7,10 @@
 //! are left out: the tiles carry every raw name (see the plan's contract 1).
 //!
 //! A tile holds the features in a buffer around it too. A point there belongs to (and is
-//! extracted from) the neighbouring tile, so it is dropped here. Lines and areas are cut at
-//! tile edges instead: their pieces go to [`crate::merge::Merger`], which joins the pieces of
-//! one street (or area) across tiles.
+//! extracted from) the neighbouring tile, so it is dropped here. Lines and areas are clipped
+//! to the tile's own edges likewise (the buffer's part is the neighbour's piece), so the
+//! pieces that go to [`crate::merge::Merger`], which joins the pieces of one street (or area)
+//! across tiles, meet at the edges instead of overlapping.
 
 use std::io::Read;
 
@@ -459,9 +460,13 @@ impl Projection {
     }
 
     fn coord(&self, c: mlt_geo::Coord<i32>) -> Coord<f64> {
+        self.coord_f([f64::from(c.x), f64::from(c.y)])
+    }
+
+    fn coord_f(&self, [tx, ty]: [f64; 2]) -> Coord<f64> {
         let size = f64::from(self.tile.z).exp2();
-        let x = (f64::from(self.tile.x) + f64::from(c.x) / self.extent) / size;
-        let y = (f64::from(self.tile.y) + f64::from(c.y) / self.extent) / size;
+        let x = (f64::from(self.tile.x) + tx / self.extent) / size;
+        let y = (f64::from(self.tile.y) + ty / self.extent) / size;
         let lng = x * 360.0 - 180.0;
         let lat = (std::f64::consts::PI * (1.0 - 2.0 * y))
             .sinh()
@@ -474,51 +479,190 @@ impl Projection {
         Point(self.coord(c))
     }
 
-    fn line(&self, l: &mlt_geo::LineString<i32>) -> geo::LineString<f64> {
-        geo::LineString(l.0.iter().map(|&c| self.coord(c)).collect())
+    fn line(&self, points: &[[f64; 2]]) -> geo::LineString<f64> {
+        geo::LineString(points.iter().map(|&c| self.coord_f(c)).collect())
     }
 
-    fn polygon(&self, p: &mlt_geo::Polygon<i32>) -> geo::Polygon<f64> {
-        geo::Polygon::new(
-            self.line(p.exterior()),
-            p.interiors().iter().map(|r| self.line(r)).collect(),
-        )
+    /// The parts of a line inside the tile itself.
+    fn lines(&self, l: &mlt_geo::LineString<i32>) -> Vec<geo::LineString<f64>> {
+        clip_line(&tile_points(l), self.extent)
+            .iter()
+            .map(|part| self.line(part))
+            .collect()
     }
 
-    /// A line's or an area's geometry, or `None` for an empty or unexpected one.
+    /// The part of an area inside the tile itself, if any.
+    fn polygon(&self, p: &mlt_geo::Polygon<i32>) -> Option<geo::Polygon<f64>> {
+        let ring = |r: &mlt_geo::LineString<i32>| {
+            let clipped = clip_ring(&tile_points(r), self.extent);
+            (clipped.len() >= 3).then(|| self.line(&clipped))
+        };
+        Some(geo::Polygon::new(
+            ring(p.exterior())?,
+            p.interiors().iter().filter_map(ring).collect(),
+        ))
+    }
+
+    /// A line's or an area's geometry, clipped to the tile itself (its buffer is the
+    /// neighbouring tiles', which have the same pieces), or `None` for an empty or
+    /// unexpected one, or one only in the buffer.
     fn geometry(&self, g: &mlt_geo::Geometry<i32>) -> Option<Geometry<f64>> {
-        Some(match g {
-            mlt_geo::Geometry::LineString(l) if l.0.len() >= 2 => {
-                Geometry::LineString(self.line(l))
-            }
+        let lines: Vec<_> = match g {
+            mlt_geo::Geometry::LineString(l) => self.lines(l),
             mlt_geo::Geometry::MultiLineString(ml) => {
-                let lines: Vec<_> =
-                    ml.0.iter()
-                        .filter(|l| l.0.len() >= 2)
-                        .map(|l| self.line(l))
-                        .collect();
-                if lines.is_empty() {
-                    return None;
-                }
-                Geometry::MultiLineString(geo::MultiLineString(lines))
+                ml.0.iter().flat_map(|l| self.lines(l)).collect()
             }
-            mlt_geo::Geometry::Polygon(p) if p.exterior().0.len() >= 3 => {
-                Geometry::Polygon(self.polygon(p))
+            mlt_geo::Geometry::Polygon(p) => {
+                return self.polygon(p).map(Geometry::Polygon);
             }
             mlt_geo::Geometry::MultiPolygon(mp) => {
-                let polygons: Vec<_> =
-                    mp.0.iter()
-                        .filter(|p| p.exterior().0.len() >= 3)
-                        .map(|p| self.polygon(p))
-                        .collect();
+                let polygons: Vec<_> = mp.0.iter().filter_map(|p| self.polygon(p)).collect();
                 if polygons.is_empty() {
                     return None;
                 }
-                Geometry::MultiPolygon(geo::MultiPolygon(polygons))
+                return Some(Geometry::MultiPolygon(geo::MultiPolygon(polygons)));
             }
             _ => return None,
-        })
+        };
+        let mut lines = lines.into_iter();
+        match (lines.next(), lines.len()) {
+            (None, _) => None,
+            (Some(only), 0) => Some(Geometry::LineString(only)),
+            (Some(first), _) => Some(Geometry::MultiLineString(geo::MultiLineString(
+                std::iter::once(first).chain(lines).collect(),
+            ))),
+        }
     }
+}
+
+fn tile_points(l: &mlt_geo::LineString<i32>) -> Vec<[f64; 2]> {
+    l.0.iter()
+        .map(|c| [f64::from(c.x), f64::from(c.y)])
+        .collect()
+}
+
+/// The part of the segment from `a` to `b` inside `[0, extent]` both ways, if any
+/// (Liang–Barsky). An end inside comes back exactly as given.
+fn clip_segment(a: [f64; 2], b: [f64; 2], extent: f64) -> Option<([f64; 2], [f64; 2])> {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+    for axis in 0..2 {
+        for (p, q) in [(-d[axis], a[axis]), (d[axis], extent - a[axis])] {
+            if p == 0.0 {
+                if q < 0.0 {
+                    return None;
+                }
+            } else {
+                let t = q / p;
+                if p < 0.0 {
+                    t0 = t0.max(t);
+                } else {
+                    t1 = t1.min(t);
+                }
+            }
+        }
+    }
+    if t0 > t1 {
+        return None;
+    }
+    let at = |t: f64| {
+        if t <= 0.0 {
+            a
+        } else if t >= 1.0 {
+            b
+        } else {
+            [a[0] + t * d[0], a[1] + t * d[1]]
+        }
+    };
+    Some((at(t0), at(t1)))
+}
+
+/// The parts of a line, in tile coordinates, inside `[0, extent]` both ways: each a line
+/// of at least two distinct points.
+fn clip_line(points: &[[f64; 2]], extent: f64) -> Vec<Vec<[f64; 2]>> {
+    let mut parts = Vec::new();
+    let mut part: Vec<[f64; 2]> = Vec::new();
+    for pair in points.windows(2) {
+        match clip_segment(pair[0], pair[1], extent) {
+            Some((from, to)) if from != to => {
+                if part.last() != Some(&from) {
+                    if part.len() >= 2 {
+                        parts.push(std::mem::take(&mut part));
+                    }
+                    part.clear();
+                    part.push(from);
+                }
+                part.push(to);
+            }
+            Some(_) => {}
+            None => {
+                if part.len() >= 2 {
+                    parts.push(std::mem::take(&mut part));
+                }
+                part.clear();
+            }
+        }
+    }
+    if part.len() >= 2 {
+        parts.push(part);
+    }
+    parts
+}
+
+/// A ring, in tile coordinates, clipped to `[0, extent]` both ways (Sutherland–Hodgman),
+/// closed; fewer than three distinct points if nothing of it is inside.
+fn clip_ring(ring: &[[f64; 2]], extent: f64) -> Vec<[f64; 2]> {
+    let mut points: Vec<[f64; 2]> = ring.to_vec();
+    if points.len() > 1 && points.first() == points.last() {
+        points.pop();
+    }
+    // Each edge of the tile: the axis, whether inside is below the value, and the value.
+    for (axis, below, value) in [
+        (0, false, 0.0),
+        (0, true, extent),
+        (1, false, 0.0),
+        (1, true, extent),
+    ] {
+        if points.is_empty() {
+            break;
+        }
+        let inside = |p: &[f64; 2]| {
+            if below {
+                p[axis] <= value
+            } else {
+                p[axis] >= value
+            }
+        };
+        let cross = |a: [f64; 2], b: [f64; 2]| {
+            let t = (value - a[axis]) / (b[axis] - a[axis]);
+            let mut p = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+            p[axis] = value;
+            p
+        };
+        let input = std::mem::take(&mut points);
+        for (i, &current) in input.iter().enumerate() {
+            let previous = input[(i + input.len() - 1) % input.len()];
+            match (inside(&previous), inside(&current)) {
+                (true, true) => points.push(current),
+                (true, false) => points.push(cross(previous, current)),
+                (false, true) => {
+                    points.push(cross(previous, current));
+                    points.push(current);
+                }
+                (false, false) => {}
+            }
+        }
+    }
+    points.dedup();
+    if points.len() > 1 && points.first() == points.last() {
+        points.pop();
+    }
+    if points.len() < 3 {
+        return Vec::new();
+    }
+    let first = points[0];
+    points.push(first);
+    points
 }
 
 #[cfg(test)]
@@ -553,6 +697,61 @@ mod tests {
         ] {
             assert!(!is_name_key(key), "{key}");
         }
+    }
+
+    #[test]
+    fn lines_are_clipped_to_the_tile() {
+        let e = 100.0;
+        // Out of the buffer, along the tile, out again: the part inside, ends on the edges.
+        assert_eq!(
+            clip_line(
+                &[[-20.0, 50.0], [10.0, 50.0], [90.0, 50.0], [120.0, 50.0]],
+                e
+            ),
+            vec![vec![[0.0, 50.0], [10.0, 50.0], [90.0, 50.0], [100.0, 50.0]]]
+        );
+        // Leaving and coming back: two parts.
+        assert_eq!(
+            clip_line(
+                &[[50.0, 50.0], [50.0, 120.0], [60.0, 120.0], [60.0, 50.0]],
+                e
+            ),
+            vec![
+                vec![[50.0, 50.0], [50.0, 100.0]],
+                vec![[60.0, 100.0], [60.0, 50.0]]
+            ]
+        );
+        // Only in the buffer, or only touching a corner: nothing.
+        assert!(clip_line(&[[-20.0, 50.0], [-5.0, 60.0]], e).is_empty());
+        assert!(clip_line(&[[-10.0, 10.0], [10.0, -10.0]], e).is_empty());
+        // Inside: as it was.
+        let inside = vec![[1.0, 2.0], [3.0, 4.0], [5.0, 4.0]];
+        assert_eq!(clip_line(&inside, e), vec![inside]);
+    }
+
+    #[test]
+    fn rings_are_clipped_to_the_tile() {
+        let e = 100.0;
+        let square = [
+            [80.0, 10.0],
+            [130.0, 10.0],
+            [130.0, 40.0],
+            [80.0, 40.0],
+            [80.0, 10.0],
+        ];
+        let clipped = clip_ring(&square, e);
+        assert_eq!(clipped.first(), clipped.last());
+        let mut corners = clipped[..clipped.len() - 1].to_vec();
+        corners.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(
+            corners,
+            vec![[80.0, 10.0], [80.0, 40.0], [100.0, 10.0], [100.0, 40.0]]
+        );
+        // All in the buffer: nothing.
+        assert!(clip_ring(&[[110.0, 0.0], [120.0, 0.0], [120.0, 10.0]], e).is_empty());
+        // Inside: as it was.
+        let inside = [[1.0, 1.0], [5.0, 1.0], [5.0, 5.0], [1.0, 1.0]];
+        assert_eq!(clip_ring(&inside, e), inside.to_vec());
     }
 
     #[test]

@@ -376,6 +376,20 @@ fn a_regions_features_come_out_once_with_their_attributes() {
         panic!("{:?}", main.geometry)
     };
     assert_eq!(lines.0.len(), 2);
+    // Each tile's piece stops at its edge, the edge between them, so they don't overlap.
+    let edge = 2630.0 / 16384.0 * 360.0 - 180.0;
+    let span = |l: &geo::LineString<f64>| {
+        let xs = l.0.iter().map(|c| c.x);
+        (
+            xs.clone().fold(f64::MAX, f64::min),
+            xs.fold(f64::MIN, f64::max),
+        )
+    };
+    let mut spans: Vec<_> = lines.0.iter().map(span).collect();
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // (Joined shapes are in single precision.)
+    assert!((spans[0].1 - edge).abs() < 1e-5, "{spans:?}");
+    assert!((spans[1].0 - edge).abs() < 1e-5, "{spans:?}");
     // (They're joined because their middles share a cell.)
     assert_eq!(cell(lines.0[0].0[1]), cell(lines.0[1].0[1]));
     // The Main Street kilometres away is another street.
@@ -495,4 +509,38 @@ fn real_tiles() {
             .any(|f| f.layer == SourceLayer::TransportationName && f.tiles == vec![north, south]),
     );
     assert!(features.iter().all(|f| !f.tiles.is_empty()));
+    // Each tile gives only its own part of a line, so a joined street has no segment
+    // twice (as the tiles' buffers would give it).
+    for f in features
+        .iter()
+        .filter(|f| f.layer == SourceLayer::TransportationName)
+    {
+        let mut segments: Vec<[i64; 4]> = Vec::new();
+        let key = |c: Coord<f64>| [(c.x * 1e6).round() as i64, (c.y * 1e6).round() as i64];
+        let lines = match &f.geometry {
+            Geometry::LineString(l) => vec![l.clone()],
+            Geometry::MultiLineString(ml) => ml.0.clone(),
+            other => panic!("{other:?}"),
+        };
+        for line in lines.iter().flat_map(|l| l.lines()) {
+            let (a, b) = (key(line.start), key(line.end));
+            if a != b {
+                segments.push(if a < b {
+                    [a[0], a[1], b[0], b[1]]
+                } else {
+                    [b[0], b[1], a[0], a[1]]
+                });
+            }
+        }
+        let count = segments.len();
+        segments.sort_unstable();
+        segments.dedup();
+        assert_eq!(
+            segments.len(),
+            count,
+            "{:?}: {:?}",
+            f.name("name"),
+            f.geometry
+        );
+    }
 }
