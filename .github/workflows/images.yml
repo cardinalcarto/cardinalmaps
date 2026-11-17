@@ -1,7 +1,7 @@
 # Publishes the images k8s/cardinal runs, tagged sha-<short commit> and main, and
 # cardinal-airmail-flyio, the airmail image of the same commit set up for fly.io
-# (deploy/geocoder). Pin a sha- tag in k8s/cardinal/kustomization.yaml or
-# deploy/geocoder/fly.toml to deploy it.
+# (deploy/geocoder). Pin a sha- tag in k8s/cardinal/kustomization.yaml,
+# deploy/geocoder/fly.toml or deploy/wof_service/fly.toml to deploy it.
 name: Images
 
 on:
@@ -12,6 +12,7 @@ on:
       - poi_service/**
       - airmail/**
       - valinor/**
+      - wof_service/**
       - deploy/geocoder/**
   workflow_dispatch:
 
@@ -36,6 +37,9 @@ jobs:
           - image: cardinal-valinor
             context: valinor
             file: valinor/Containerfile
+          - image: cardinal-wof-service
+            context: wof_service
+            file: wof_service/Dockerfile
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
