@@ -16,23 +16,41 @@ class GeocoderException implements Exception {
   String toString() => 'GeocoderException: $message';
 }
 
-/// Cardinal's geocoder (airmail's `/v1` API; see `airmail_service/openapi.yaml`).
 /// What the map shows, in degrees.
 typedef Viewport = ({double west, double south, double east, double north});
 
-class Geocoder {
-  Geocoder(this.base, {http.Client? client})
+/// Finds places: online ([OnlineGeocoder]) or on the device ([OfflineGeocoder]).
+abstract interface class Geocoder {
+  /// Places matching [query], most relevant first.
+  ///
+  /// [prefix] matches the last word as a prefix, for search as you type; [typos]
+  /// tolerates typos. Results near [focus] rank higher. Completing [abort] cancels the
+  /// search, which then throws [http.RequestAbortedException].
+  Future<List<Place>> search(
+    String query, {
+    LngLat? focus,
+    Viewport? viewport,
+    String? lang,
+    bool prefix = false,
+    bool typos = false,
+    int? limit,
+    Future<void>? abort,
+  });
+
+  /// The place with [id], a result ID such as `poi:97175`, or null if there's none.
+  Future<Place?> place(String id, {String? lang, Future<void>? abort});
+}
+
+/// Cardinal's geocoder server (airmail's `/v1` API; see `airmail_service/openapi.yaml`).
+class OnlineGeocoder implements Geocoder {
+  OnlineGeocoder(this.base, {http.Client? client})
     : _client = client ?? http.Client();
 
   /// Where the API is: requests go to `<base>/v1/...`.
   final Uri base;
   final http.Client _client;
 
-  /// Places matching [query], most relevant first.
-  ///
-  /// [prefix] matches the last word as a prefix, for search as you type; [typos]
-  /// tolerates typos. Results near [focus] rank higher. Completing [abort] cancels the
-  /// request, which then throws [http.RequestAbortedException].
+  @override
   Future<List<Place>> search(
     String query, {
     LngLat? focus,
@@ -60,7 +78,7 @@ class Geocoder {
     ];
   }
 
-  /// The place with [id], a result ID such as `poi:97175`, or null if there's none.
+  @override
   Future<Place?> place(String id, {String? lang, Future<void>? abort}) async {
     try {
       final json = await _get('/v1/place', {'id': id, 'lang': ?lang}, abort);
@@ -152,20 +170,50 @@ Place placeFromResult(Map<String, Object?> result) {
 
 double _double(Object? n) => (n as num).toDouble();
 
-/// Provides the [Geocoder] to the widgets below it.
+/// Provides the geocoders to the widgets below it: search goes to [offline] unless the
+/// [searchOnline] setting sends it to [online].
 class GeocoderScope extends InheritedWidget {
   const GeocoderScope({
     super.key,
-    required this.geocoder,
+    required this.online,
+    required this.offline,
     required super.child,
   });
 
-  final Geocoder geocoder;
+  /// The geocoder server.
+  final Geocoder online;
 
-  static Geocoder of(BuildContext context) =>
-      context.getInheritedWidgetOfExactType<GeocoderScope>()!.geocoder;
+  /// The geocoder on the device, over the offline areas.
+  final Geocoder offline;
+
+  static GeocoderScope of(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<GeocoderScope>()!;
+
+  /// [online] if [searchOnline] is set to it, otherwise [offline].
+  Geocoder chosen({required bool online}) => online ? this.online : offline;
 
   @override
   bool updateShouldNotify(GeocoderScope oldWidget) =>
-      geocoder != oldWidget.geocoder;
+      online != oldWidget.online || offline != oldWidget.offline;
 }
+
+/// Whether search goes to the geocoder server rather than the device: the Offline tab's
+/// choice. Only search: the map and directions don't follow it.
+final searchOnline = Setting.flag('search.online', false);
+
+/// What search does when the device finds nothing, as chosen in the search results'
+/// "Nothing offline. Try online?" row; not set until then, and the row asks.
+enum OnlineFallback {
+  /// Search online instead, without asking.
+  always,
+
+  /// Say there are no results, without offering to search online.
+  never,
+}
+
+/// The choice of [OnlineFallback], or null if search should ask. Reset from the
+/// Offline tab.
+final onlineFallback = Setting.optionalChoice(
+  'search.onlineFallback',
+  OnlineFallback.values,
+);

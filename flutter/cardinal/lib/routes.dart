@@ -11,6 +11,7 @@ import 'map/map_drawing.dart';
 import 'map/overlays.dart';
 import 'navigation/navigation_page.dart';
 import 'offline/download_page.dart';
+import 'offline/geocoder_models.dart';
 import 'offline/offline_page.dart';
 import 'place/place_page.dart';
 import 'saved/saved_page.dart';
@@ -88,16 +89,19 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
     ShellRoute(
       restorationScopeId: 'sheet',
       observers: [sheetPages],
-      builder: (context, state, child) => Scaffold(
-        resizeToAvoidBottomInset: false,
-        body: SheetScaffold(
-          body: CardinalMap(controller: map),
-          floating: const NavigationLayer(
-            child: MapDrawingLayer(child: MapButtons()),
+      // Offline search's models are offered over the map once it's up.
+      builder: (context, state, child) => GeocoderModelsPrompt(
+        child: Scaffold(
+          resizeToAvoidBottomInset: false,
+          body: SheetScaffold(
+            body: CardinalMap(controller: map),
+            floating: const NavigationLayer(
+              child: MapDrawingLayer(child: MapButtons()),
+            ),
+            bottomBar: const AppNavigationBar(),
+            backdrop: sheetGlassOf(context),
+            sheet: child,
           ),
-          bottomBar: const AppNavigationBar(),
-          backdrop: sheetGlassOf(context),
-          sheet: child,
         ),
       ),
       routes: sheetRoutes(),

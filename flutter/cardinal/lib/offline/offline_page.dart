@@ -6,14 +6,17 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
 
+import '../geocoder/geocoder.dart';
 import '../map/map.dart';
 import '../sheet/sheet.dart';
+import '../store/store.dart';
 import '../ui/adaptive.dart';
 import '../ui/symbols.dart';
 import 'downloads/database.dart';
 import 'downloads/engine.dart';
 import 'drawing/area_layer.dart';
 import 'format.dart';
+import 'geocoder_models.dart';
 import 'offline_scope.dart';
 
 /// Where drawing an area to download starts, over the Offline tab.
@@ -212,6 +215,8 @@ class _OfflinePageState extends State<OfflinePage> {
                         ],
                       ),
                     ),
+                  const GeocoderModelsRow(),
+                  const SearchSettingsSection(),
                 ],
               ),
             ),
@@ -314,6 +319,89 @@ class _Unavailable extends StatelessWidget {
               style: theme.textTheme.bodyMedium?.copyWith(color: muted),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Where search goes, offline or online, and, once one is chosen in the search
+/// results, what it does when nothing's found offline, with Reset to be asked again.
+class SearchSettingsSection extends StatefulWidget {
+  const SearchSettingsSection({super.key});
+
+  @override
+  State<SearchSettingsSection> createState() => _SearchSettingsSectionState();
+}
+
+class _SearchSettingsSectionState extends State<SearchSettingsSection> {
+  late SettingsStore _settings;
+  StreamSubscription<bool>? _watchOnline;
+  StreamSubscription<OnlineFallback?>? _watchFallback;
+  bool _online = false;
+  OnlineFallback? _fallback;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _settings = StoreScope.of(context).settings;
+    _watchOnline ??= _settings.watch(searchOnline).listen((online) {
+      if (mounted) setState(() => _online = online);
+    });
+    _watchFallback ??= _settings.watch(onlineFallback).listen((fallback) {
+      if (mounted) setState(() => _fallback = fallback);
+    });
+  }
+
+  @override
+  void dispose() {
+    _watchOnline?.cancel();
+    _watchFallback?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = _fallback;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: AppListSection(
+        children: [
+          AppListTile(
+            leading: Icon(
+              _icon(context, Icons.search, CupertinoIcons.search),
+              color: isCupertinoOf(context)
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            title: const Text('Search'),
+            trailing: AppSegmentedControl<bool>(
+              segments: const {false: Text('Offline'), true: Text('Online')},
+              selected: _online,
+              onChanged: (online) {
+                setState(() => _online = online);
+                unawaited(_settings.set(searchOnline, online));
+              },
+            ),
+          ),
+          if (fallback != null)
+            AppListTile(
+              // The text lines up with Search's.
+              leading: const SizedBox(width: 24),
+              title: Text(switch (fallback) {
+                OnlineFallback.always => 'Always search online',
+                OnlineFallback.never => 'Never offer online search',
+              }),
+              subtitle: const Text("When nothing's found offline"),
+              trailing: AppButton(
+                kind: AppButtonKind.plain,
+                label: 'Reset',
+                onPressed: () {
+                  setState(() => _fallback = null);
+                  unawaited(_settings.set(onlineFallback, null));
+                },
+              ),
+            ),
         ],
       ),
     );

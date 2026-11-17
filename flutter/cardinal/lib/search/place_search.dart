@@ -10,14 +10,89 @@ import '../store/store.dart';
 ///
 /// Requests in flight keep going when the text changes, so results can be a few
 /// characters behind while typing; an answer never replaces a newer one's.
+///
+/// Search goes to [offline], or to [online] while the [searchOnline] setting says so;
+/// when that changes, the text is searched again where it now goes.
+///
+/// When [offline] finds nothing, the [onlineFallback] setting says what's next:
+///
+/// | Fallback | Then |
+/// |---|---|
+/// | not chosen | [offersOnline]: the results ask whether to search online |
+/// | [OnlineFallback.always] | the same text is searched [online], and its results show |
+/// | [OnlineFallback.never] | no results |
+///
+/// [searchOnlineOnce] searches the text online once; the next text goes offline again.
 class PlaceSearch extends ChangeNotifier {
-  PlaceSearch(
-    this._geocoder, {
+  PlaceSearch({
+    required this.offline,
+    required this.online,
+    SettingsStore? settings,
     this.lang,
     this.debounce = const Duration(milliseconds: 300),
-  });
+  }) : _settings = settings {
+    _watchOnline = settings?.watch(searchOnline).listen((online) {
+      if (online == _online) return;
+      _online = online;
+      _searchAgain();
+    });
+    _watchFallback = settings?.watch(onlineFallback).listen((fallback) {
+      if (fallback == _fallback) return;
+      _fallback = fallback;
+      notifyListeners();
+    });
+  }
 
-  final Geocoder _geocoder;
+  final SettingsStore? _settings;
+  StreamSubscription<OnlineFallback?>? _watchFallback;
+
+  /// What search does when [offline] finds nothing: the [onlineFallback] setting.
+  OnlineFallback? get fallback => _fallback;
+  OnlineFallback? _fallback;
+
+  /// Whether [results] came from [online].
+  bool get resultsOnline => _resultsOnline;
+  bool _resultsOnline = false;
+
+  /// Whether to ask if [text] should be searched online: the device found nothing for
+  /// it, and no [fallback] is chosen.
+  bool get offersOnline =>
+      !_online &&
+      _fallback == null &&
+      !_loading &&
+      _error == null &&
+      !_resultsOnline &&
+      _results.isEmpty &&
+      _text.trim().isNotEmpty;
+
+  /// Searches [text] online, now, once: the next text goes where search goes.
+  void searchOnlineOnce() {
+    if (_text.trim().isEmpty) return;
+    _timer?.cancel();
+    _loading = true;
+    notifyListeners();
+    unawaited(_search(_text, forceOnline: true));
+  }
+
+  /// Chooses what search does when the device finds nothing, and stores it. Choosing
+  /// [OnlineFallback.always] searches [text] online now too.
+  void chooseFallback(OnlineFallback fallback) {
+    _fallback = fallback;
+    unawaited(_settings?.set(onlineFallback, fallback));
+    if (fallback == OnlineFallback.always) {
+      searchOnlineOnce();
+    } else {
+      notifyListeners();
+    }
+  }
+
+  final Geocoder offline;
+  final Geocoder online;
+  StreamSubscription<bool>? _watchOnline;
+
+  /// Whether search goes [online]: the [searchOnline] setting, offline until it's read.
+  bool get searchesOnline => _online;
+  bool _online = false;
 
   /// The language of queries and results, as a BCP 47 tag.
   final String? lang;
@@ -67,6 +142,7 @@ class PlaceSearch extends ChangeNotifier {
       // Answers still on their way are for text that's gone.
       _shown = _sent;
       _results = const [];
+      _resultsOnline = false;
       _loading = false;
       _error = null;
     } else {
@@ -76,22 +152,42 @@ class PlaceSearch extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Searches the text again, if there is any, as if it had just been typed.
+  void _searchAgain() {
+    if (_text.trim().isEmpty) return;
+    _timer?.cancel();
+    _loading = true;
+    _timer = Timer(debounce, () => _search(_text));
+    notifyListeners();
+  }
+
   /// Search for [text], leaving earlier requests running: for a fast typist, their
   /// answers are the only ones that arrive while typing, a few characters behind.
-  Future<void> _search(String text) async {
+  ///
+  /// The device's search falls back to [online] if it finds nothing and [fallback] is
+  /// [OnlineFallback.always]; [forceOnline] searches online whatever the setting.
+  Future<void> _search(String text, {bool forceOnline = false}) async {
     final number = ++_sent;
     List<Place>? results;
     Object? error;
+    var fromOnline = _online || forceOnline;
+    Future<List<Place>> find(Geocoder geocoder) => geocoder.search(
+      text,
+      focus: focus,
+      viewport: viewport,
+      lang: lang,
+      prefix: true,
+      typos: true,
+      abort: _closed.future,
+    );
     try {
-      results = await _geocoder.search(
-        text,
-        focus: focus,
-        viewport: viewport,
-        lang: lang,
-        prefix: true,
-        typos: true,
-        abort: _closed.future,
-      );
+      results = await find(fromOnline ? online : offline);
+      if (results.isEmpty &&
+          !fromOnline &&
+          _fallback == OnlineFallback.always) {
+        fromOnline = true;
+        results = await find(online);
+      }
     } on http.RequestAbortedException {
       return;
     } on Object catch (e) {
@@ -100,6 +196,7 @@ class PlaceSearch extends ChangeNotifier {
     if (_closed.isCompleted || number <= _shown) return;
     _shown = number;
     if (results != null) _results = results;
+    _resultsOnline = fromOnline;
     _error = error;
     _loading = _sent > _shown || (_timer?.isActive ?? false);
     notifyListeners();
@@ -107,6 +204,8 @@ class PlaceSearch extends ChangeNotifier {
 
   @override
   void dispose() {
+    _watchOnline?.cancel();
+    _watchFallback?.cancel();
     _timer?.cancel();
     _closed.complete();
     super.dispose();
