@@ -56,6 +56,33 @@ class FakeOfflineDownloads implements OfflineDownloads {
     return started.length;
   }
 
+  /// What [planGeocoderModels] answers with; by default [fakeModelsPlan].
+  Future<GeocoderModelsPlan?> Function(String? language)? onPlanModels;
+
+  /// The languages the geocoder's models were planned for, in order.
+  final plannedModels = <String?>[];
+
+  /// The geocoder model plans started, in order.
+  final startedModels = <GeocoderModelsPlan>[];
+
+  @override
+  Future<GeocoderModelsPlan?> planGeocoderModels(String? language) async {
+    plannedModels.add(language);
+    return (onPlanModels ?? (_) async => fakeModelsPlan())(language);
+  }
+
+  @override
+  Future<int> startGeocoderModels(GeocoderModelsPlan plan) async {
+    startedModels.add(plan);
+    return 100;
+  }
+
+  @override
+  Stream<RegionProgress?> watchGeocoderModels() => watch().map(
+    (regions) =>
+        regions.where((r) => r.kind == RegionKind.geocoderModels).lastOrNull,
+  );
+
   @override
   Future<void> retry(int region) async => retried.add(region);
 
@@ -162,6 +189,30 @@ OfflinePlan fakeAreaPlan(
   mapHeader: null,
   present: const {},
 );
+
+/// The geocoder's models: a tagger of 106 MB and English categories of 55 MB.
+GeocoderModelsPlan fakeModelsPlan({bool categories = true}) =>
+    GeocoderModelsPlan(
+      release: '2026-11-16',
+      tagger: const PlannedFile(
+        kind: ReleaseKind.geocoder,
+        release: '2026-11-16',
+        path: 'tagger.model',
+        installPath: 'geocoder/2026-11-16/tagger.model',
+        bytes: 105736607,
+        sha256: 'a',
+      ),
+      categories: categories
+          ? const PlannedFile(
+              kind: ReleaseKind.geocoder,
+              release: '2026-11-16',
+              path: 'categorical/eng.amcats',
+              installPath: 'geocoder/2026-11-16/categorical/eng.amcats',
+              bytes: 55242842,
+              sha256: 'b',
+            )
+          : null,
+    );
 
 /// A region as the Offline tab sees it.
 RegionProgress fakeRegion(

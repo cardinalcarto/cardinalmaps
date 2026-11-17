@@ -12,6 +12,7 @@ const routingDate = '2026-11-11';
 const transitDate = '2026-11-11';
 const mapDate = '2026-11-11';
 const buildId = 57897;
+const geocoderDate = '2026-11-16';
 
 /// Downtown Seattle.
 final downtown = GeoPolygon(const [
@@ -132,7 +133,12 @@ class FakeRelease {
       'map': mapDate,
       'routing': routingDate,
       'transit': transitDate,
+      'geocoder': geocoderDate,
     }, gzipped: false);
+
+    // The geocoder's models: the tagger, and English categories only.
+    await put('geocoder/$geocoderDate/tagger.model', bytes(3000));
+    await put('geocoder/$geocoderDate/categorical/eng.amcats', bytes(2000));
 
     // Routing: index shards by level 0 cell.
     final shards = <int, List<Map<String, Object?>>>{};

@@ -1,5 +1,7 @@
 // Screenshots of the offline geocoder's screens, for review: see `render.dart`.
 import 'package:cardinal/geocoder/geocoder.dart';
+import 'package:cardinal/offline/downloads/database.dart';
+import 'package:cardinal/offline/geocoder_models.dart';
 import 'package:cardinal/search/search_sheet.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -95,5 +97,50 @@ void main() {
     await _search(tester, 'space needle');
     await tester.tap(find.text('Never'));
     await screenshot(tester, '3c-search-never');
+  });
+
+  testWidgets('4 startup sheet', (tester) async {
+    await pumpFakeApp(
+      tester,
+      platform: TargetPlatform.android,
+      downloads: Future.value(FakeOfflineDownloads()),
+      offerModels: true,
+    );
+    await screenshot(tester, '4a-startup-sheet');
+  });
+
+  testWidgets('4 offline tab, models', (tester) async {
+    final store = fakeStore();
+    await store.settings.set(geocoderModelsOffered, true);
+    final downloads = FakeOfflineDownloads()
+      ..emit([
+        fakeRegion(1, name: 'Seattle', createdAt: DateTime(2026, 11, 3)),
+      ]);
+    await pumpFakeApp(
+      tester,
+      store: store,
+      platform: TargetPlatform.android,
+      location: '/offline',
+      downloads: Future.value(downloads),
+    );
+    await screenshot(tester, '4b-offline-tab-models-not-downloaded');
+
+    downloads.emit([
+      fakeRegion(1, name: 'Seattle', createdAt: DateTime(2026, 11, 3)),
+      fakeRegion(
+        2,
+        kind: RegionKind.geocoderModels,
+        state: RegionState.downloading,
+        bytesDone: 80 * 1000 * 1000,
+        bytesTotal: 161 * 1000 * 1000,
+      ),
+    ]);
+    await screenshot(tester, '4c-offline-tab-models-downloading');
+
+    downloads.emit([
+      fakeRegion(1, name: 'Seattle', createdAt: DateTime(2026, 11, 3)),
+      fakeRegion(2, kind: RegionKind.geocoderModels, state: RegionState.failed),
+    ]);
+    await screenshot(tester, '4d-offline-tab-models-failed');
   });
 }

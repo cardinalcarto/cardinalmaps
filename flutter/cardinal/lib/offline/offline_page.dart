@@ -16,6 +16,7 @@ import 'downloads/database.dart';
 import 'downloads/engine.dart';
 import 'drawing/area_layer.dart';
 import 'format.dart';
+import 'geocoder_models.dart';
 import 'offline_scope.dart';
 
 /// Where drawing an area to download starts, over the Offline tab.
@@ -214,6 +215,7 @@ class _OfflinePageState extends State<OfflinePage> {
                         ],
                       ),
                     ),
+                  const GeocoderModelsRow(),
                   const SearchSettingsSection(),
                 ],
               ),

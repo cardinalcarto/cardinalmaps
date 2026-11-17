@@ -15,6 +15,7 @@ import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/navigation/navigation_page.dart';
 import 'package:cardinal/navigation/navigation_scope.dart';
 import 'package:cardinal/offline/downloads/engine.dart';
+import 'package:cardinal/offline/geocoder_models.dart';
 import 'package:cardinal/offline/offline_scope.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
@@ -86,6 +87,7 @@ Future<GoRouter> pumpFakeApp(
   NavigationController? navigation,
   Geocoder? online,
   Geocoder? offline,
+  bool offerModels = false,
 }) async {
   tester.view
     ..physicalSize = appScreen * 2
@@ -98,19 +100,23 @@ Future<GoRouter> pumpFakeApp(
     routes: [
       ShellRoute(
         observers: [sheetPages],
-        builder: (context, state, child) => Scaffold(
-          resizeToAvoidBottomInset: false,
-          body: SheetScaffold(
-            body: const SizedBox.expand(),
-            floating: const NavigationLayer(
-              child: MapDrawingLayer(child: SizedBox.shrink()),
+        builder: (context, state, child) {
+          final scaffold = Scaffold(
+            resizeToAvoidBottomInset: false,
+            body: SheetScaffold(
+              body: const SizedBox.expand(),
+              floating: const NavigationLayer(
+                child: MapDrawingLayer(child: SizedBox.shrink()),
+              ),
+              bottomBar: const AppNavigationBar(),
+              bottomBarHeight: appBarHeight,
+              backdrop: sheetGlassOf(context),
+              sheet: child,
             ),
-            bottomBar: const AppNavigationBar(),
-            bottomBarHeight: appBarHeight,
-            backdrop: sheetGlassOf(context),
-            sheet: child,
-          ),
-        ),
+          );
+          // As the app offers them, if the test wants the offer.
+          return offerModels ? GeocoderModelsPrompt(child: scaffold) : scaffold;
+        },
         routes: sheetRoutes(),
       ),
     ],

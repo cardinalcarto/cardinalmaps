@@ -85,6 +85,22 @@ class Bucket {
     }
   }
 
+  /// An object's size and the SHA-256 the bucket records for it (`x-amz-meta-sha256`),
+  /// from a `HEAD`; null if there's no such object.
+  Future<({int bytes, String? sha256})?> head(String key) async {
+    final response = await _send(key, method: 'HEAD');
+    await _body(key, response);
+    if (response.statusCode == HttpStatus.notFound) return null;
+    if (response.statusCode != HttpStatus.ok) {
+      throw BucketError(key, response.statusCode);
+    }
+    final length = int.tryParse(
+      response.headers.value(HttpHeaders.contentLengthHeader) ?? '',
+    );
+    if (length == null) throw BucketError(key, response.statusCode, 'no size');
+    return (bytes: length, sha256: response.headers.value('x-amz-meta-sha256'));
+  }
+
   /// [length] bytes of an object from [start], with `If-Match: ifMatch` if given.
   Future<RangeBytes> range(
     String key,
