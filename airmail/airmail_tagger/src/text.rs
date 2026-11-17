@@ -70,6 +70,20 @@ fn fold_letter(c: char) -> Option<&'static str> {
 /// apostrophes, which join a word rather than split it (`mcdonalds`).
 #[must_use]
 pub fn fold(text: &str) -> String {
+    if text.is_ascii() {
+        // Normalization leaves ASCII as it is, and its only letters that fold are the
+        // apostrophes: the same result, without the normalizers' work.
+        return text
+            .bytes()
+            .filter(|b| !matches!(b, b'\'' | b'`'))
+            .map(|b| char::from(b.to_ascii_lowercase()))
+            .collect();
+    }
+    fold_any(text)
+}
+
+/// [`fold`] of any text, ASCII or not.
+fn fold_any(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut base_folds = false;
     for c in text.nfkd() {
@@ -136,6 +150,51 @@ pub fn apostrophe_variant(text: &str) -> Option<String> {
 /// a word of its own.
 #[must_use]
 pub fn words(text: &str) -> Vec<(usize, &str)> {
+    if text.is_ascii() {
+        return AsciiWords::new(text).collect();
+    }
+    words_any(text)
+}
+
+/// The [`words`] of ASCII text, one by one. Every ASCII character is a grapheme of its own
+/// (but "\r\n", which isn't a word either) and none is unspaced: words are runs of letters
+/// and digits.
+#[derive(Clone, Debug)]
+pub struct AsciiWords<'a> {
+    text: &'a str,
+    next: usize,
+}
+
+impl<'a> AsciiWords<'a> {
+    /// The words of `text`, which must be ASCII.
+    #[must_use]
+    pub fn new(text: &'a str) -> Self {
+        debug_assert!(text.is_ascii());
+        Self { text, next: 0 }
+    }
+}
+
+impl<'a> Iterator for AsciiWords<'a> {
+    type Item = (usize, &'a str);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let bytes = self.text.as_bytes();
+        loop {
+            let start = self.next + bytes[self.next..].iter().position(u8::is_ascii_alphanumeric)?;
+            let end = bytes[start..]
+                .iter()
+                .position(|b| !b.is_ascii_alphanumeric())
+                .map_or(bytes.len(), |n| start + n);
+            self.next = end;
+            if end - start <= MAX_WORD_BYTES {
+                return Some((start, &self.text[start..end]));
+            }
+        }
+    }
+}
+
+/// [`words`] of any text, ASCII or not.
+fn words_any(text: &str) -> Vec<(usize, &str)> {
     let mut words = Vec::new();
     let mut start: Option<usize> = None;
     for (i, grapheme) in text.grapheme_indices(true) {
@@ -165,6 +224,29 @@ mod test {
 
     fn word_list(text: &str) -> Vec<&str> {
         words(text).into_iter().map(|(_, w)| w).collect()
+    }
+
+    #[test]
+    fn ascii_takes_a_shortcut_to_the_same_result() {
+        let mut texts: Vec<String> = (0u8..128).map(|b| char::from(b).to_string()).collect();
+        texts.extend(
+            [
+                "McDonald's Rd\r\nNE", "1530 Post Alley", "  a--b__c  ", "Rue de l'Arsenal, 40",
+                "`back`ticks`", "ALL CAPS 54TH", "\t\ttabs\x7f\x00nul", "",
+            ]
+            .map(str::to_string),
+        );
+        // Every pair of ASCII characters, around letters.
+        for a in 0u8..128 {
+            for b in 0u8..128 {
+                texts.push(format!("x{}{}Y", char::from(a), char::from(b)));
+            }
+        }
+        texts.push("a".repeat(65) + " b " + &"c".repeat(64));
+        for text in &texts {
+            assert_eq!(fold(text), fold_any(text), "{text:?}");
+            assert_eq!(words(text), words_any(text), "{text:?}");
+        }
     }
 
     #[test]

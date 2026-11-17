@@ -22,7 +22,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use geocoder_flutter::build::{BuildOptions, IndexBuild};
+use geocoder_flutter::build::{BuildOptions, IndexBuild, default_builders};
 use geocoder_flutter::extract::TileKey;
 use geocoder_flutter::search::{DeviceIndex, Query};
 use geocoder_flutter::wof::{WofPlaces, boxes};
@@ -48,7 +48,10 @@ unsafe impl GlobalAlloc for Counting {
     }
 }
 
-#[global_allocator]
+// Not on Android, where the library's mimalloc is the allocator (and the heap isn't
+// counted): run there through adb for the phone's numbers.
+#[cfg_attr(not(target_os = "android"), global_allocator)]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 static ALLOCATOR: Counting = Counting;
 
 fn peak_heap_mb() -> usize {
@@ -163,6 +166,9 @@ fn build(mut args: Args) {
     let out = PathBuf::from(args.take("--out").expect("--out"));
     let heap_mb: usize = args.take("--heap-mb").map_or(64, |v| v.parse().unwrap());
     let threads: usize = args.take("--threads").map_or(2, |v| v.parse().unwrap());
+    let builders: usize = args
+        .take("--builders")
+        .map_or_else(|| default_builders(threads), |v| v.parse().unwrap());
     let merge = !args.flag("--no-merge");
     assert!(!out.exists(), "{} exists", out.display());
 
@@ -187,6 +193,7 @@ fn build(mut args: Args) {
     let options = BuildOptions {
         heap_bytes: heap_mb * 1_000_000,
         threads,
+        builders,
         merge,
     };
     let mut build = IndexBuild::new(&out, wof, options).unwrap();

@@ -28,7 +28,7 @@ use crate::cuisine;
 #[cfg(feature = "tokio")]
 use crate::error::AirmailError;
 use crate::geometry;
-use crate::poi::{AdminBand, Kind, OsmRef, PlaceId, Pointer, SchemafiedPoi, TileId, WofPlace};
+use crate::poi::{AdminBand, Kind, OsmRef, PlaceId, Pointer, SchemafiedPoi, TileId, ToIndexPoi, WofPlace};
 
 /// The version of the index's schema and of what its fields hold. Readers
 /// refuse indexes of other versions.
@@ -923,6 +923,86 @@ fn indexed_tags(tags: &[(String, String)]) -> BTreeSet<String> {
     terms
 }
 
+/// A name's forms, as [`name_forms`] gives them, with the `name_exact` key of
+/// each exact one.
+pub struct NameForms {
+    exact: Vec<String>,
+    other: Vec<String>,
+    exact_keys: Vec<String>,
+}
+
+impl NameForms {
+    fn of(name: &str) -> Self {
+        let (exact, other) = name_forms(name);
+        let exact_keys = exact.iter().map(|form| name_key(form)).collect();
+        Self { exact, other, exact_keys }
+    }
+}
+
+/// The forms of a document's roads (see `SchemafiedPoi`): every form of each,
+/// and the `name_exact` keys of their exact forms, which name a street.
+pub struct RoadForms {
+    forms: BTreeSet<String>,
+    exact_keys: BTreeSet<String>,
+}
+
+impl RoadForms {
+    fn of(roads: &[String], forms: &mut dyn FnMut(&str) -> Arc<NameForms>) -> Self {
+        let mut all = BTreeSet::new();
+        let mut exact_keys = BTreeSet::new();
+        for road in roads {
+            let road_forms = forms(road);
+            exact_keys.extend(road_forms.exact_keys.iter().cloned());
+            all.extend(road_forms.exact.iter().chain(&road_forms.other).cloned());
+        }
+        Self { forms: all, exact_keys }
+    }
+}
+
+/// The most names, or roads, a [`FormsCache`] holds; it starts over when full.
+const FORMS_CACHE_ENTRIES: usize = 1 << 10;
+
+/// The forms of names and roads that many documents share, for
+/// [`DocumentBuilder::document_cached`]: a region's addresses have a few
+/// thousand streets and areas between them.
+#[derive(Default)]
+pub struct FormsCache {
+    names: HashMap<String, Arc<NameForms>>,
+    roads: HashMap<(String, Vec<crate::language::Language>), Arc<RoadForms>>,
+}
+
+impl FormsCache {
+    fn name(&mut self, name: &str) -> Arc<NameForms> {
+        if let Some(forms) = self.names.get(name) {
+            return forms.clone();
+        }
+        if self.names.len() >= FORMS_CACHE_ENTRIES {
+            self.names.clear();
+        }
+        let forms = Arc::new(NameForms::of(name));
+        self.names.insert(name.to_string(), forms.clone());
+        forms
+    }
+
+    /// The forms of a POI's road, in its languages (see `SchemafiedPoi`).
+    fn roads(&mut self, poi: &ToIndexPoi) -> Arc<RoadForms> {
+        let Some(road) = &poi.road else {
+            return Arc::new(RoadForms { forms: BTreeSet::new(), exact_keys: BTreeSet::new() });
+        };
+        let key = (road.clone(), poi.languages.clone());
+        if let Some(forms) = self.roads.get(&key) {
+            return forms.clone();
+        }
+        if self.roads.len() >= FORMS_CACHE_ENTRIES {
+            self.roads.clear();
+        }
+        let roads = crate::poi::road_forms(road, &poi.languages);
+        let forms = Arc::new(RoadForms::of(&roads, &mut |name| self.name(name)));
+        self.roads.insert(key, forms.clone());
+        forms
+    }
+}
+
 /// A document of the index, as `DocumentBuilder` makes it.
 pub type Document = TantivyDocument;
 
@@ -957,7 +1037,29 @@ impl DocumentBuilder {
     /// has a stable POI ID and the storage is `Storage::Pointers`) but has no
     /// tile.
     pub fn document(&self, schemafied: SchemafiedPoi, source: &str) -> Result<TantivyDocument> {
-        let poi = &schemafied.poi;
+        let forms = &mut |name: &str| Arc::new(NameForms::of(name));
+        let roads = RoadForms::of(&schemafied.roads, forms);
+        self.build(&schemafied.poi, &schemafied.names, &roads, forms, source)
+    }
+
+    /// The same document as `document`'s, with the forms of names and roads
+    /// that documents share (streets, areas) worked out once for many of them.
+    ///
+    /// # Errors
+    /// As `document`.
+    pub fn document_cached(&self, poi: ToIndexPoi, source: &str, cache: &mut FormsCache) -> Result<TantivyDocument> {
+        let roads = cache.roads(&poi);
+        self.build(&poi, &poi.names, &roads, &mut |name| cache.name(name), source)
+    }
+
+    fn build(
+        &self,
+        poi: &ToIndexPoi,
+        names: &[String],
+        roads: &RoadForms,
+        forms: &mut dyn FnMut(&str) -> Arc<NameForms>,
+        source: &str,
+    ) -> Result<TantivyDocument> {
         let pointer = match (self.storage, poi.poi_id()) {
             (Storage::Pointers, Some(poi_id)) => {
                 let tile = poi.tile.with_context(|| format!("POI {poi_id} is stored as a pointer, but has no tile"))?;
@@ -969,37 +1071,30 @@ impl DocumentBuilder {
         let mut exact = BTreeSet::new();
         // Every form a name is in, for the gazetteer.
         let mut all_forms = BTreeSet::new();
-        for name in &schemafied.names {
-            let (exact_forms, other_forms) = name_forms(name);
-            for form in exact_forms {
-                exact.insert(self.exact_key(&form));
+        for name in names {
+            let name_forms = forms(name);
+            for (form, key) in name_forms.exact.iter().zip(&name_forms.exact_keys) {
+                exact.insert(key.clone());
                 all_forms.insert(form.clone());
                 doc.add_text(self.field(FIELD_NAME), form);
             }
-            for form in other_forms {
+            for form in &name_forms.other {
                 all_forms.insert(form.clone());
                 doc.add_text(self.field(FIELD_NAME), form);
             }
         }
         for name in &poi.variant_names {
-            let (exact_forms, other_forms) = name_forms(name);
-            for form in exact_forms.into_iter().chain(other_forms) {
+            let name_forms = forms(name);
+            for form in name_forms.exact.iter().chain(&name_forms.other) {
                 doc.add_text(self.field(FIELD_NAME), form);
             }
         }
-        let mut street_forms = BTreeSet::new();
-        for road in &schemafied.roads {
-            let (exact_forms, other_forms) = name_forms(road);
-            // A street is named by its road's forms too: `pike st` is
-            // exactly Pike Street.
-            if poi.kind == Kind::Street {
-                for form in &exact_forms {
-                    exact.insert(self.exact_key(form));
-                }
-            }
-            street_forms.extend(exact_forms.into_iter().chain(other_forms));
+        // A street is named by its road's forms too: `pike st` is exactly
+        // Pike Street.
+        if poi.kind == Kind::Street {
+            exact.extend(roads.exact_keys.iter().cloned());
         }
-        for form in street_forms {
+        for form in &roads.forms {
             doc.add_text(self.field(FIELD_STREET), form);
         }
         for key in &exact {
@@ -1028,8 +1123,8 @@ impl DocumentBuilder {
         }
         let mut admin_forms = BTreeSet::new();
         for (band, name) in &poi.admin_names {
-            let (exact_forms, other_forms) = name_forms(name);
-            admin_forms.extend(exact_forms.into_iter().chain(other_forms).map(|form| (*band, form)));
+            let name_forms = forms(name);
+            admin_forms.extend(name_forms.exact.iter().chain(&name_forms.other).map(|form| (*band, form.clone())));
         }
         for (band, form) in admin_forms {
             doc.add_text(self.field(admin_field(band)), form);
@@ -1269,4 +1364,38 @@ mod test {
         assert_eq!(terms.into_iter().collect::<Vec<_>>(), vec!["diet:vegan=yes", "diet:vegetarian=only"]);
     }
 
+    #[test]
+    fn cached_documents_are_the_same() {
+        use crate::language::Language;
+        let builder = DocumentBuilder { schema: AirmailIndex::schema(), storage: Storage::Full };
+        let at = Geometry::Point(Point::new(-122.3405, 47.6097));
+        let mut docs = Vec::new();
+        for (street, number, kind) in [
+            ("Fremont Ave N", "3401", Kind::Address),
+            ("Fremont Ave N", "3405", Kind::Address),
+            ("Fremont Ave N", "", Kind::Street),
+            ("Ackermannstraße", "1", Kind::Address),
+            ("Rue de l'Arsenal", "40", Kind::Address),
+            ("Ленинский проспект", "2", Kind::Address),
+        ] {
+            let names = if kind == Kind::Street { vec![street.to_string()] } else { Vec::new() };
+            let mut doc = ToIndexPoi::new(kind, names, at.clone(), Vec::new()).unwrap();
+            doc.road = Some(street.to_string());
+            doc.house_number = (!number.is_empty()).then(|| number.to_string());
+            doc.languages = vec![Language::English, Language::French];
+            doc.admin_names =
+                vec![(AdminBand::Locality, "Seattle".into()), (AdminBand::Neighbourhood, "Fremont".into())];
+            doc.variant_names = vec!["Müllerstraße".into()];
+            doc.country_code = Some("US".into());
+            docs.push(doc);
+        }
+        // Twice, for the cached forms.
+        docs.extend(docs.clone());
+        let mut cache = FormsCache::default();
+        for doc in docs {
+            let plain = builder.document(SchemafiedPoi::from(doc.clone()), "test").unwrap();
+            let cached = builder.document_cached(doc, "test", &mut cache).unwrap();
+            assert_eq!(format!("{plain:?}"), format!("{cached:?}"));
+        }
+    }
 }

@@ -25,6 +25,13 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
 
+# Android's allocator (bionic's jemalloc, without thread caches) takes most of an index
+# build's time, and more with the document threads contending for it.
+[target.'cfg(target_os = "android")'.dependencies]
+# Pinned: `allocator::tune` names an option by its number in this version.
+mimalloc = { version = "=0.1.52", default-features = false }
+libmimalloc-sys = { version = "=0.1.49", default-features = false }
+
 # Tests and the desktop examples read MBTiles files directly: one SQLite in those processes.
 [dev-dependencies]
 offline_map = { version = "0.1.0", path = "../offline_map", default-features = false, features = ["mbtiles"] }

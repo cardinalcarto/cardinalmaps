@@ -131,6 +131,7 @@ impl IndexBuilder {
         let options = BuildOptions {
             heap_bytes: heap_mb as usize * 1_000_000,
             threads: threads.max(1) as usize,
+            builders: crate::build::default_builders(threads.max(1) as usize),
             merge: true,
         };
         let inner = IndexBuild::new(Path::new(&dir), wof, options)?;

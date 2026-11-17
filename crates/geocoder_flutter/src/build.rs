@@ -8,12 +8,13 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
-use airmail::index::{AirmailIndex, AirmailIndexWriter, DocumentBuilder, Storage, WriterOptions};
-use airmail::poi::{Kind, SchemafiedPoi, ToIndexPoi};
+use airmail::index::{AirmailIndex, AirmailIndexWriter, Storage, WriterOptions};
+use airmail::poi::{Kind, ToIndexPoi};
 use airmail::postcodes::Postcodes;
 
 use crate::documents::{document, drop_duplicate_addresses, give_local_id, place};
 use crate::extract::{ExtractedFeature, TileError, TileKey};
+use crate::pool::DocumentPool;
 use crate::region::{FeatureSink, RegionExtractor};
 use crate::wof::WofPlaces;
 
@@ -46,7 +47,8 @@ pub struct BuildCounts {
 /// Turns features into documents and adds them to the writer.
 pub struct IndexSink {
     writer: AirmailIndexWriter,
-    builder: DocumentBuilder,
+    /// Builds the documents, on threads of its own.
+    pool: DocumentPool,
     wof: WofPlaces,
     postcodes: Postcodes,
     pub counts: BuildCounts,
@@ -82,19 +84,12 @@ impl IndexSink {
         }
         let local = give_local_id(&mut doc);
         self.postcodes.add(&doc);
-        let kind = doc.kind;
-        let pointer = doc.tile.is_some() && doc.poi_id().is_some();
-        let result = self
-            .builder
-            .document(SchemafiedPoi::from(doc), SOURCE)
-            .and_then(|d| self.writer.add_document(d));
-        match result {
-            Ok(()) => {
-                self.counts.documents[kind_slot(kind)] += 1;
-                self.counts.pointers += u64::from(pointer);
-                self.counts.local_ids += u64::from(local);
-            }
-            Err(e) => self.error = Some(e),
+        // Counted as it goes to the pool; if a document fails, the build does.
+        self.counts.documents[kind_slot(doc.kind)] += 1;
+        self.counts.pointers += u64::from(doc.tile.is_some() && doc.poi_id().is_some());
+        self.counts.local_ids += u64::from(local);
+        if let Err(e) = self.pool.add(doc, &self.writer) {
+            self.error = Some(e);
         }
     }
 }
@@ -146,6 +141,8 @@ pub struct BuildOptions {
     /// Tantivy's indexing memory, shared by its threads (at least 15 MB each).
     pub heap_bytes: usize,
     pub threads: usize,
+    /// Threads building documents, besides the one reading tiles and tantivy's.
+    pub builders: usize,
     /// Whether to merge the index into one segment at the end, which makes searches faster.
     pub merge: bool,
 }
@@ -155,9 +152,19 @@ impl Default for BuildOptions {
         Self {
             heap_bytes: 64_000_000,
             threads: 2,
+            builders: default_builders(2),
             merge: true,
         }
     }
+}
+
+/// Threads to build documents on: the cores left beside the one reading tiles and
+/// tantivy's `threads`, at least one and at most six (tantivy's threads are the limit
+/// well before that: on the moto g play, five did a build in 4.9 s, three in 5.2, one 7.2).
+#[must_use]
+pub fn default_builders(threads: usize) -> usize {
+    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    cores.saturating_sub(threads + 1).clamp(1, 6)
 }
 
 /// Why a build failed.
@@ -185,6 +192,8 @@ impl IndexBuild {
     ///
     /// If the index can't be created there.
     pub fn new(dir: &Path, wof: WofPlaces, options: BuildOptions) -> Result<Self, BuildError> {
+        #[cfg(target_os = "android")]
+        crate::allocator::tune();
         let mut index = AirmailIndex::create(dir).map_err(BuildError::Index)?;
         let writer = index
             .writer_with(WriterOptions {
@@ -193,13 +202,13 @@ impl IndexBuild {
                 storage: Storage::Pointers,
             })
             .map_err(BuildError::Index)?;
-        let builder = writer.document_builder();
+        let pool = DocumentPool::new(&writer.document_builder(), SOURCE, options.builders);
         Ok(Self {
             index,
             extractor: RegionExtractor::new(),
             sink: IndexSink {
                 writer,
-                builder,
+                pool,
                 wof,
                 postcodes: Postcodes::default(),
                 counts: BuildCounts::default(),
@@ -270,11 +279,13 @@ impl IndexBuild {
         drop(seen);
         let IndexSink {
             writer,
+            pool,
             counts,
             wof,
             ..
         } = sink;
         drop(wof);
+        pool.finish(&writer).map_err(BuildError::Index)?;
         writer.commit().map_err(BuildError::Index)?;
         if options.merge {
             index
@@ -360,6 +371,7 @@ mod tests {
         let options = BuildOptions {
             heap_bytes: 30_000_000,
             threads: 1,
+            builders: 1,
             merge: false,
         };
         let mut build = IndexBuild::new(&dir.path().join("index"), wof, options).unwrap();

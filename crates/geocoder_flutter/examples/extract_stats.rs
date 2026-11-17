@@ -58,7 +58,9 @@ unsafe impl GlobalAlloc for Counting {
     }
 }
 
-#[global_allocator]
+// Not on Android, where the library's mimalloc is the allocator.
+#[cfg_attr(not(target_os = "android"), global_allocator)]
+#[cfg_attr(target_os = "android", allow(dead_code))]
 static ALLOCATOR: Counting = Counting;
 
 fn heap_mb() -> (usize, usize) {

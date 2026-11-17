@@ -12,12 +12,38 @@
 //! (two copies of SQLite in one process break each other's locks; see `offline_map::mbtiles`),
 //! and its tiles come in from Dart.
 
+#[cfg(target_os = "android")]
+pub(crate) mod allocator {
+    //! On Android, bionic's allocator (jemalloc without thread caches) took most of an
+    //! index build's time, locking for every allocation of the document threads: mimalloc
+    //! for this library's own allocations (the rest of the app keeps the platform's).
+
+    #[global_allocator]
+    static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+    unsafe extern "C" {
+        fn mi_option_set(option: i32, value: std::ffi::c_long);
+    }
+
+    /// `mi_option_purge_delay` in mimalloc 3's `mimalloc.h` (the version is pinned).
+    const PURGE_DELAY: i32 = 15;
+
+    /// Gives freed memory back after 10 ms, not mimalloc 3's second: a build frees as it
+    /// goes, and its peak RSS on the phone was ~35 MB lower for it, as fast.
+    pub fn tune() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        // SAFETY: setting an option mimalloc reads as it purges.
+        ONCE.call_once(|| unsafe { mi_option_set(PURGE_DELAY, 10) });
+    }
+}
+
 pub mod api;
 pub mod build;
 pub mod documents;
 pub mod extract;
 mod frb_generated;
 pub mod merge;
+pub mod pool;
 pub mod region;
 pub mod search;
 pub mod wof;
