@@ -63,7 +63,7 @@ class SearchIndex implements RegionIndexer {
     required this.wofUrl,
     http.Client? client,
     IndexBuildRunner? build,
-    List<WofBox> Function(GeoRectBox box)? boxes,
+    FutureOr<List<WofBox>> Function(GeoRectBox box)? boxes,
   }) : _client = client ?? http.Client(),
        _build = build ?? buildInIsolate,
        _boxes = boxes ?? _wofBoxes;
@@ -75,7 +75,7 @@ class SearchIndex implements RegionIndexer {
   final String wofUrl;
   final http.Client _client;
   final IndexBuildRunner _build;
-  final List<WofBox> Function(GeoRectBox box) _boxes;
+  final FutureOr<List<WofBox>> Function(GeoRectBox box) _boxes;
 
   /// The index to search, or null while there's none.
   final current = ValueNotifier<SearchIndexFiles?>(null);
@@ -195,7 +195,7 @@ class SearchIndex implements RegionIndexer {
     await _deleteDir(dir.path);
     await dir.create(recursive: true);
     final b = region.bounds;
-    final boxes = _boxes((
+    final boxes = await _boxes((
       west: b.west,
       south: b.south,
       east: b.east,
@@ -294,13 +294,18 @@ class SearchIndex implements RegionIndexer {
 /// A bounding box, in degrees.
 typedef GeoRectBox = ({double west, double south, double east, double north});
 
-List<WofBox> _wofBoxes(GeoRectBox b) => wofBoxes(
-  west: b.west,
-  south: b.south,
-  east: b.east,
-  north: b.north,
-  side: wofBoxDegrees,
-);
+/// Splits in Rust, so the bridge must be up on this (the UI) isolate first: the index
+/// build initializes it only in its own isolate.
+Future<List<WofBox>> _wofBoxes(GeoRectBox b) async {
+  await initGeocoder();
+  return wofBoxes(
+    west: b.west,
+    south: b.south,
+    east: b.east,
+    north: b.north,
+    side: wofBoxDegrees,
+  );
+}
 
 /// Tantivy's indexing memory for a build, in MB, and its threads.
 const _heapMb = 64;
