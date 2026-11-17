@@ -86,14 +86,32 @@ struct Group {
     /// Sorted.
     tiles: Vec<TileKey>,
     id: Option<u64>,
+    /// The last tile column (z14 x) a piece of it can come from: the pieces' middles are in
+    /// its cell, and a piece's middle is in its own tile.
+    last_column: u32,
 }
+
+/// What groups pieces into one feature: the layer, the label, the S2 cell of the middle.
+type Key = (SourceLayer, String, u64);
 
 /// Joins pieces of lines and areas across tiles.
 #[derive(Debug, Default)]
 pub struct Merger {
     /// Boxed, so the table's spare capacity costs a pointer a slot, not a group.
-    groups: HashMap<(SourceLayer, String, u64), Box<Group>>,
+    groups: HashMap<Key, Box<Group>>,
     counts: MergeCounts,
+}
+
+/// The last z14 tile column that has a part of the S2 cell `cell`, give or take one for the
+/// edge between columns; `u32::MAX` for a cell across the antimeridian.
+fn last_column(cell: s2::cellid::CellID) -> u32 {
+    let bound = s2::cell::Cell::from(cell).rect_bound();
+    if bound.lng.is_inverted() || bound.lng.is_full() {
+        return u32::MAX;
+    }
+    let n = f64::from(1u32 << 14);
+    let column = ((bound.lng.hi.to_degrees() + 180.0) / 360.0 * n).floor();
+    (column.clamp(0.0, n - 1.0) as u32).saturating_add(1)
 }
 
 impl Merger {
@@ -120,8 +138,7 @@ impl Merger {
             return;
         };
         let cell = s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(middle.y, middle.x))
-            .parent(CELL_LEVEL)
-            .0;
+            .parent(CELL_LEVEL);
         let tile = piece.tiles[0];
         let order = (rank(&piece), tile, index);
         piece.geometry = Geometry::GeometryCollection(geo::GeometryCollection(Vec::new()));
@@ -131,7 +148,7 @@ impl Merger {
         piece.address.shrink_to_fit();
         piece.admins.shrink_to_fit();
         let id = piece.id;
-        let group = match self.groups.entry((piece.layer, label, cell)) {
+        let group = match self.groups.entry((piece.layer, label, cell.0)) {
             Entry::Occupied(entry) => {
                 let group = entry.into_mut();
                 if order < group.best.0 {
@@ -147,6 +164,7 @@ impl Merger {
                     parts: Vec::new(),
                     tiles: Vec::new(),
                     id,
+                    last_column: last_column(cell),
                 }))
             }
         };
@@ -172,13 +190,44 @@ impl Merger {
         };
     }
 
-    /// The joined features, in a stable order (by layer, name, then cell).
-    #[must_use]
-    pub fn finish(self) -> Vec<ExtractedFeature> {
-        let mut groups: Vec<_> = self.groups.into_iter().collect();
-        groups.sort_by(|a, b| a.0.cmp(&b.0));
-        groups.into_iter().map(|(_, g)| g.into_feature()).collect()
+    /// The features no piece can be added to any more once tiles of column `column` (z14
+    /// x) and after are all that's left to add, in a stable order (by layer, name, then
+    /// cell). For a region read in order of column, they can be given out as it's read
+    /// rather than all held to the end.
+    pub fn finished(&mut self, column: u32) -> impl Iterator<Item = ExtractedFeature> + use<> {
+        let done: Vec<Key> = self
+            .groups
+            .iter()
+            .filter(|(_, g)| g.last_column < column)
+            .map(|(k, _)| k.clone())
+            .collect();
+        let groups: Vec<_> = done
+            .into_iter()
+            .filter_map(|k| self.groups.remove_entry(&k))
+            .collect();
+        sorted_features(groups)
     }
+
+    /// The first tile column (z14 x) any piece of a feature not finished yet came from.
+    #[must_use]
+    pub fn first_open_column(&self) -> Option<u32> {
+        // A group's tiles are sorted, by column first.
+        self.groups
+            .values()
+            .filter_map(|g| g.tiles.first())
+            .map(|t| t.x)
+            .min()
+    }
+
+    /// The joined features, in a stable order (by layer, name, then cell), made one by one.
+    pub fn finish(self) -> impl Iterator<Item = ExtractedFeature> {
+        sorted_features(self.groups.into_iter().collect())
+    }
+}
+
+fn sorted_features(mut groups: Vec<(Key, Box<Group>)>) -> impl Iterator<Item = ExtractedFeature> {
+    groups.sort_by(|a, b| a.0.cmp(&b.0));
+    groups.into_iter().map(|(_, g)| g.into_feature())
 }
 
 impl Group {

@@ -16,8 +16,10 @@
 //! `build` prints time, peak RSS, documents and the index's size; `search` prints each
 //! query's time and results. The MBTiles file is opened read only.
 
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use geocoder_flutter::build::{BuildOptions, IndexBuild};
@@ -25,6 +27,33 @@ use geocoder_flutter::extract::TileKey;
 use geocoder_flutter::search::{DeviceIndex, Query};
 use geocoder_flutter::wof::{WofPlaces, boxes};
 use offline_map::mbtiles::BasemapReader;
+
+/// Counts the heap in use, to tell what the build holds from the index's mapped files and
+/// what the allocator keeps.
+struct Counting;
+
+static HEAP: AtomicUsize = AtomicUsize::new(0);
+static PEAK_HEAP: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let now = HEAP.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+        PEAK_HEAP.fetch_max(now, Ordering::Relaxed);
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        HEAP.fetch_sub(layout.size(), Ordering::Relaxed);
+        unsafe { System.dealloc(ptr, layout) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: Counting = Counting;
+
+fn peak_heap_mb() -> usize {
+    PEAK_HEAP.load(Ordering::Relaxed) / 1_000_000
+}
 
 fn peak_rss_mb() -> u64 {
     let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
@@ -182,11 +211,13 @@ fn build(mut args: Args) {
     }
     let read = start.elapsed();
     let read_rss = peak_rss_mb();
+    let read_heap = peak_heap_mb();
     let counts = build.finish().unwrap();
     let total = start.elapsed();
     println!(
         "tiles: {} ({:.1} MB gzipped, {} repeated); {:.1} s reading and indexing, {:.1} s in all \
-         (joining, areas, postcodes, commit{}); peak RSS {read_rss} MB while reading, {} MB in all",
+         (joining, areas, postcodes, commit{}); peak RSS {read_rss} MB while reading, {} MB in all; \
+         peak heap {read_heap} MB while reading, {} MB in all",
         counts.tiles,
         counts.bytes as f64 / 1e6,
         counts.repeated_tiles,
@@ -194,11 +225,12 @@ fn build(mut args: Args) {
         total.as_secs_f64(),
         if merge { ", merge" } else { "" },
         peak_rss_mb(),
+        peak_heap_mb(),
     );
     let d = counts.documents;
     println!(
         "features: {} ({} not indexed, {} duplicate addresses dropped); documents: {} \
-         (poi {}, address {}, admin {}, street {}, postcode {}; {} pointers)",
+         (poi {}, address {}, admin {}, street {}, postcode {}; {} pointers, {} local IDs)",
         counts.features,
         counts.unindexed,
         counts.duplicate_addresses,
@@ -209,6 +241,7 @@ fn build(mut args: Args) {
         d[3],
         d[4],
         counts.pointers,
+        counts.local_ids,
     );
     println!(
         "index: {:.1} MB at {}",

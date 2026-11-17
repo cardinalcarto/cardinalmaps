@@ -5,6 +5,11 @@
 //! A pointer result (a POI with a stable ID) has its names, center, importance and areas,
 //! and says where its feature is (`pointer`: its POI ID and z14 tile); the app reads the
 //! rest from the tile. Every other result comes with what it stored.
+//!
+//! Every result's ID opens it again ([`DeviceIndex::place`]): `poi:`, `wof:`, `osm:` and
+//! `postcode:` as on the server, and `local:<n>` for a document with none of those (a
+//! street joined from tile pieces, a POI with neither a stable nor an OSM ID), which only
+//! this index (or a rebuild of it from the same features) knows.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -102,16 +107,29 @@ impl DeviceIndex {
     ///
     /// If the lookup fails.
     pub fn place(&self, id: &str, lang: Option<&str>) -> Result<Option<Value>> {
-        let Ok(id) = PlaceId::parse(id) else {
-            return Ok(None);
+        let results = if let Some(local) = id.strip_prefix(LOCAL_PREFIX) {
+            // Only the form results give (no `+1` or `01`).
+            match local.parse::<u64>() {
+                Ok(n) if n.to_string() == local => self.index.lookup_local_blocking(n)?,
+                _ => return Ok(None),
+            }
+        } else {
+            let Ok(id) = PlaceId::parse(id) else {
+                return Ok(None);
+            };
+            self.index.lookup_blocking(&id)?
         };
-        let results = self.index.lookup_blocking(&id)?;
         Ok(results
             .hits
             .first()
             .map(|hit| result_json(hit, &results.admins, lang)))
     }
 }
+
+/// How a result ID with a document's [] starts: `local:<id>`, an ID that
+/// finds the document again in this index (and in a rebuild of it from the same features),
+/// but not in any other geocoder.
+pub const LOCAL_PREFIX: &str = "local:";
 
 /// Rounds degrees to 7 decimal places, about a centimeter.
 fn round(degrees: f64) -> f64 {
@@ -210,13 +228,14 @@ fn result_json(hit: &SearchHit, admins: &HashMap<u64, WofPlace>, lang: Option<&s
         format!("wof:{}", wof.id)
     } else if let Some(osm) = &hit.osm {
         format!("osm:{}/{}", osm.osm_type.as_str(), osm.id)
+    } else if let Some(local) = hit.local_id {
+        format!("{LOCAL_PREFIX}{local}")
     } else if let (Kind::Postcode, Some(country), Some(code)) =
         (hit.kind, &country_code, hit.tag("postal_code"))
     {
         PlaceId::Postcode(postcode_key(country, code)).to_string()
     } else {
-        // A POI of the tiles with neither a stable ID nor an OSM element: found only by
-        // search, so it's named by where it is.
+        // Not from this crate's builds, which give every document an ID that finds it.
         format!("point:{},{}", round(hit.center.x()), round(hit.center.y()))
     };
     let admins: Vec<Value> = containing

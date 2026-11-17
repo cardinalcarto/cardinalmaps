@@ -231,6 +231,16 @@ void main() {
       expect(await geocoder.place('poi:1'), isNull);
     });
 
+    test("doesn't ask the server for the device's own IDs", () async {
+      final geocoder = OnlineGeocoder(
+        Uri.parse('http://localhost:3000'),
+        client: MockClient((request) async => fail('asked $request')),
+      );
+      expect(await geocoder.place('local:123'), isNull);
+      expect(isLocalPlaceId('local:123'), isTrue);
+      expect(isLocalPlaceId('osm:way/12'), isFalse);
+    });
+
     test('reports problems', () {
       final geocoder = OnlineGeocoder(
         Uri.parse('http://localhost:3000'),

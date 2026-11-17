@@ -148,7 +148,10 @@ class Place {
   });
 
   /// The geocoder's identifier: `poi:<id>` for POIs with a stable identifier, `wof:<id>`
-  /// for administrative areas, and `osm:<type>/<id>` otherwise.
+  /// for administrative areas, `postcode:<country>/<code>` for postcodes, and
+  /// `osm:<type>/<id>` otherwise; or, from offline search, `local:<n>` for what has none
+  /// of those (see `isLocalPlaceId`). A saved place keeps what was stored of it, so one
+  /// with a `local:` ID still shows after the device's index is rebuilt without it.
   final String id;
 
   /// `poi`, `address` or `admin`, as the geocoder says. Open: others may appear.
