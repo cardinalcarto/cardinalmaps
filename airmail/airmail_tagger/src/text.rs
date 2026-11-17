@@ -151,24 +151,46 @@ pub fn apostrophe_variant(text: &str) -> Option<String> {
 #[must_use]
 pub fn words(text: &str) -> Vec<(usize, &str)> {
     if text.is_ascii() {
-        // Every ASCII character is a grapheme of its own (but "\r\n", which isn't a word
-        // either) and none is unspaced: runs of letters and digits.
-        let mut words = Vec::new();
-        let mut start: Option<usize> = None;
-        for (i, b) in text.bytes().enumerate() {
-            if b.is_ascii_alphanumeric() {
-                start.get_or_insert(i);
-            } else if let Some(s) = start.take() {
-                words.push((s, &text[s..i]));
-            }
-        }
-        if let Some(s) = start {
-            words.push((s, &text[s..]));
-        }
-        words.retain(|(_, w)| w.len() <= MAX_WORD_BYTES);
-        return words;
+        return AsciiWords::new(text).collect();
     }
     words_any(text)
+}
+
+/// The [`words`] of ASCII text, one by one. Every ASCII character is a grapheme of its own
+/// (but "\r\n", which isn't a word either) and none is unspaced: words are runs of letters
+/// and digits.
+#[derive(Clone, Debug)]
+pub struct AsciiWords<'a> {
+    text: &'a str,
+    next: usize,
+}
+
+impl<'a> AsciiWords<'a> {
+    /// The words of `text`, which must be ASCII.
+    #[must_use]
+    pub fn new(text: &'a str) -> Self {
+        debug_assert!(text.is_ascii());
+        Self { text, next: 0 }
+    }
+}
+
+impl<'a> Iterator for AsciiWords<'a> {
+    type Item = (usize, &'a str);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let bytes = self.text.as_bytes();
+        loop {
+            let start = self.next + bytes[self.next..].iter().position(u8::is_ascii_alphanumeric)?;
+            let end = bytes[start..]
+                .iter()
+                .position(|b| !b.is_ascii_alphanumeric())
+                .map_or(bytes.len(), |n| start + n);
+            self.next = end;
+            if end - start <= MAX_WORD_BYTES {
+                return Some((start, &self.text[start..end]));
+            }
+        }
+    }
 }
 
 /// [`words`] of any text, ASCII or not.
