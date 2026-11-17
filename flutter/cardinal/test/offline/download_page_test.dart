@@ -359,6 +359,21 @@ void main() {
     expect(_enabled(tester, 'Download'), isTrue);
   });
 
+  testWidgets('inside areas already downloaded, page 1 says so and lets it '
+      'download', (tester) async {
+    await startDrawing(tester);
+    downloads.onPlan = (p) async =>
+        fakeAreaPlan(p, routingBytes: 0, mapBytes: 0);
+    await _lasso(tester);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Maps and directions for this area are already downloaded.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('0 KB', findRichText: true), findsNothing);
+    expect(_enabled(tester, 'Download'), isTrue);
+  });
+
   testWidgets('with no transit to choose, Download starts the area with its '
       'name, and the Offline tab shows it', (tester) async {
     await startDrawing(tester);

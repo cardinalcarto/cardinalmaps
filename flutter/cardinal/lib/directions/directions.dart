@@ -7,6 +7,7 @@ import 'package:routing/routing.dart';
 
 import '../geocoder/address.dart';
 import '../map/location.dart';
+import '../offline/offline_area.dart' show NoOfflineTransit;
 import '../store/store.dart';
 import 'route_source.dart';
 import 'transit_plan.dart';
@@ -343,6 +344,9 @@ class Directions extends ChangeNotifier {
       problem = RouteProblem.outsideArea;
     } on NoOfflineArea {
       problem = RouteProblem.noOfflineArea;
+    } on NoOfflineTransit {
+      // An area without timetables plans no journeys.
+      problem = RouteProblem.noRoute;
     } on TransitPlanError catch (e) {
       debugPrint('directions: $e');
       problem = e.kind == 'no_street_nearby'

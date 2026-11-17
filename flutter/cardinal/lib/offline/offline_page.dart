@@ -455,8 +455,9 @@ class _AreaRow extends StatelessWidget {
         true,
       ),
       RegionState.installing => ('Finishing…', null, true),
+      // An area inside others brought nothing of its own: no size to show.
       RegionState.ready => (
-        '${formatBytes(area.bytesTotal)} · $date',
+        area.bytesTotal > 0 ? '${formatBytes(area.bytesTotal)} · $date' : date,
         1,
         false,
       ),

@@ -1,9 +1,14 @@
+import 'dart:async';
+
+import 'package:cardinal/map/location.dart';
 import 'package:cardinal/offline/downloads/database.dart';
 import 'package:cardinal/offline/geocoder_models.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:geolocator/geolocator.dart' show LocationPermission;
 
 import '../fakes/fake_app.dart';
 import '../fakes/fake_downloads.dart';
+import '../fakes/fake_location.dart';
 
 const _title = 'Search offline';
 
@@ -131,6 +136,48 @@ void main() {
       expect(await store.settings.get(geocoderModelsOffered), isFalse);
     });
 
+    testWidgets('waits for your location to be offered and the permission '
+        'answered', (tester) async {
+      final permission = Completer<LocationPermission>();
+      final location = _AskingLocation(permission.future);
+      await pumpFakeApp(
+        tester,
+        downloads: Future.value(FakeOfflineDownloads()),
+        offerModels: true,
+        locationButton: true,
+        locationSource: location,
+      );
+      expect(find.text('Enable location?'), findsOneWidget);
+      expect(find.text(_title), findsNothing);
+
+      // The system asks next.
+      await tester.tap(find.text('Yes'));
+      await tester.pumpAndSettle();
+      expect(location.asked, 1);
+      expect(find.text(_title), findsNothing);
+
+      permission.complete(LocationPermission.whileInUse);
+      await tester.pumpAndSettle();
+      expect(find.text(_title), findsOneWidget);
+    });
+
+    testWidgets('comes at once when your location was offered before', (
+      tester,
+    ) async {
+      final store = fakeStore();
+      await store.settings.set(locationOffered, true);
+      await pumpFakeApp(
+        tester,
+        store: store,
+        downloads: Future.value(FakeOfflineDownloads()),
+        offerModels: true,
+        locationButton: true,
+        locationSource: FakeLocation(permission: LocationPermission.denied),
+      );
+      expect(find.text('Enable location?'), findsNothing);
+      expect(find.text(_title), findsOneWidget);
+    });
+
     testWidgets("isn't shown in a build without downloads", (tester) async {
       await pumpFakeApp(tester, offerModels: true);
       expect(find.text(_title), findsNothing);
@@ -216,4 +263,18 @@ void main() {
       await tester.pumpAndSettle();
     });
   });
+}
+
+/// Location not yet allowed, whose permission request the system answers with
+/// [answer].
+class _AskingLocation extends FakeLocation {
+  _AskingLocation(this.answer) : super(permission: LocationPermission.denied);
+
+  final Future<LocationPermission> answer;
+
+  @override
+  Future<LocationPermission> requestPermission() async {
+    asked++;
+    return permission = await answer;
+  }
 }

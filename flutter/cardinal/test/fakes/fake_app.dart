@@ -88,7 +88,9 @@ Future<GoRouter> pumpFakeApp(
   Geocoder? online,
   Geocoder? offline,
   bool offerModels = false,
+  bool locationButton = false,
 }) async {
+  final here = locationSource ?? FakeLocation();
   tester.view
     ..physicalSize = appScreen * 2
     ..devicePixelRatio = 2
@@ -105,8 +107,13 @@ Future<GoRouter> pumpFakeApp(
             resizeToAvoidBottomInset: false,
             body: SheetScaffold(
               body: const SizedBox.expand(),
-              floating: const NavigationLayer(
-                child: MapDrawingLayer(child: SizedBox.shrink()),
+              floating: NavigationLayer(
+                child: MapDrawingLayer(
+                  // With its offer of your location at startup, if the test wants it.
+                  child: locationButton
+                      ? MyLocationButton(source: here)
+                      : const SizedBox.shrink(),
+                ),
               ),
               bottomBar: const AppNavigationBar(),
               bottomBarHeight: appBarHeight,
@@ -138,7 +145,7 @@ Future<GoRouter> pumpFakeApp(
         child: DirectionsScope(
           routes: routes ?? FakeRoutes(),
           transit: transit ?? FakeTransit(),
-          location: locationSource ?? FakeLocation(),
+          location: here,
           child: MapScope(
             controller: map ?? FakeMap(),
             overlays: overlays ?? MapOverlays(),

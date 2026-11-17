@@ -324,7 +324,7 @@ class OfflineTransitSource implements TransitSource {
     unawaited(() async {
       try {
         final area = await _area();
-        if (area == null) return;
+        if (area == null || !area.hasTransit) return;
         await Future.wait([area.transit, _realtime(area).prefetch()]);
       } on Object catch (e) {
         debugPrint('transit: $e');

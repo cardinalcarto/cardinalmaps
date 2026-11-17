@@ -1,6 +1,7 @@
 import 'package:cardinal/geocoder/geocoder.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/store/store.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../fakes/fake_app.dart';
@@ -60,4 +61,26 @@ void main() {
     );
     expect(find.text('Place not found'), findsOneWidget);
   });
+
+  testWidgets('a place the geocoder answers with at once still shows', (
+    tester,
+  ) async {
+    // Its answer is stored before the card's first read of the store arrives.
+    await pumpFakeApp(
+      tester,
+      offline: _AtOnceGeocoder([_street]),
+      location: placeLocation(_street.id),
+    );
+    expect(find.text('Aurora Avenue North'), findsOneWidget);
+  });
+}
+
+/// A geocoder whose places are there at once, with no wait between asking and the
+/// answer.
+class _AtOnceGeocoder extends FakeGeocoder {
+  _AtOnceGeocoder(super.results);
+
+  @override
+  Future<Place?> place(String id, {String? lang, Future<void>? abort}) =>
+      SynchronousFuture(results.where((p) => p.id == id).firstOrNull);
 }

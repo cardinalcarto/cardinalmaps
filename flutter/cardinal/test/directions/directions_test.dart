@@ -2,6 +2,7 @@ import 'package:cardinal/directions/directions.dart';
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/map/location.dart';
+import 'package:cardinal/offline/offline_area.dart' show NoOfflineTransit;
 import 'package:cardinal/store/store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
@@ -209,6 +210,15 @@ void main() {
       transit.asked.single.answer.completeError(const NoOfflineArea());
       await pumpEventQueue();
       expect(directions.problem, RouteProblem.noOfflineArea);
+      expect(directions.plan, isNull);
+    });
+
+    test('an offline area without transit finds no journeys', () async {
+      bothEnds();
+      directions.setMode(TravelMode.transit);
+      transit.asked.single.answer.completeError(const NoOfflineTransit());
+      await pumpEventQueue();
+      expect(directions.problem, RouteProblem.noRoute);
       expect(directions.plan, isNull);
     });
 
