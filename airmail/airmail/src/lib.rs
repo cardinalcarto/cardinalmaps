@@ -13,6 +13,7 @@ pub mod gazetteer;
 pub mod geometry;
 pub mod importance;
 pub mod index;
+pub mod language;
 pub mod plan;
 pub mod poi;
 pub mod spelling;

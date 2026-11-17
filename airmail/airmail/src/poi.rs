@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, bail};
 use geo::{Geometry, Point};
-use lingua::Language;
+use crate::language::Language;
 use serde::{Deserialize, Serialize};
 
 use crate::categories::iso_639_3;

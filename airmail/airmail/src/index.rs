@@ -20,10 +20,12 @@ use tantivy::{
         IndexRecordOption, NumericOptions, OwnedValue, Schema, TextFieldIndexing, TextOptions,
     },
 };
+#[cfg(feature = "tokio")]
 use tokio::task::spawn_blocking;
 
 use crate::categories::{self, CategoryModel, QueryCategories};
 use crate::cuisine;
+#[cfg(feature = "tokio")]
 use crate::error::AirmailError;
 use crate::geometry;
 use crate::poi::{AdminBand, Kind, OsmRef, PlaceId, SchemafiedPoi, WofPlace};
@@ -31,6 +33,26 @@ use crate::poi::{AdminBand, Kind, OsmRef, PlaceId, SchemafiedPoi, WofPlace};
 /// The version of the index's schema and of what its fields hold. Readers
 /// refuse indexes of other versions.
 pub const SCHEMA_VERSION: u32 = 8;
+
+/// The indexing memory of `AirmailIndex::writer`, in bytes.
+pub const DEFAULT_WRITER_HEAP: usize = 2_000_000_000;
+
+/// How much a writer may use.
+#[derive(Debug, Clone, Copy)]
+pub struct WriterOptions {
+    /// Indexing memory in bytes, shared by the threads: segments are written
+    /// out as it fills.
+    pub heap_bytes: usize,
+    /// Indexing threads, or `None` for tantivy's choice (one per core, up to
+    /// eight).
+    pub threads: Option<usize>,
+}
+
+impl Default for WriterOptions {
+    fn default() -> Self {
+        Self { heap_bytes: DEFAULT_WRITER_HEAP, threads: None }
+    }
+}
 
 /// Records `SCHEMA_VERSION` in the index directory.
 const VERSION_FILE: &str = "airmail-index.json";
@@ -360,17 +382,58 @@ impl AirmailIndex {
         self
     }
 
+    /// A writer with `DEFAULT_WRITER_HEAP` bytes of indexing memory and
+    /// tantivy's choice of threads, as the indexer uses.
     pub fn writer(&mut self) -> Result<AirmailIndexWriter> {
-        let tantivy_writer = self.tantivy_index.writer::<TantivyDocument>(2_000_000_000)?;
+        self.writer_with(WriterOptions::default())
+    }
+
+    /// A writer with `options`' memory and threads, for building small
+    /// indexes in little memory, as on a phone.
+    ///
+    /// # Errors
+    /// If another writer has the index, or the memory is too little for the
+    /// threads (tantivy needs at least 15 MB for each).
+    pub fn writer_with(&mut self, options: WriterOptions) -> Result<AirmailIndexWriter> {
+        let tantivy_writer = match options.threads {
+            Some(threads) => self.tantivy_index.writer_with_num_threads::<TantivyDocument>(threads, options.heap_bytes)?,
+            None => self.tantivy_index.writer::<TantivyDocument>(options.heap_bytes)?,
+        };
         Ok(AirmailIndexWriter { tantivy_writer, schema: self.tantivy_index.schema() })
     }
 
+    /// Merges every segment into one.
     pub async fn merge(&mut self) -> Result<()> {
         let ids = self.tantivy_index.searchable_segment_ids()?;
-        self.tantivy_index.writer::<TantivyDocument>(2_000_000_000)?.merge(&ids).await?;
+        self.tantivy_index.writer::<TantivyDocument>(DEFAULT_WRITER_HEAP)?.merge(&ids).await?;
         Ok(())
     }
 
+    /// Merges every segment into one, on this thread, with a writer of
+    /// `options`.
+    ///
+    /// # Errors
+    /// If another writer has the index or merging fails.
+    pub fn merge_blocking(&mut self, options: WriterOptions) -> Result<()> {
+        let ids = self.tantivy_index.searchable_segment_ids()?;
+        if ids.len() < 2 {
+            return Ok(());
+        }
+        let mut writer = self.writer_with(options)?.tantivy_writer;
+        writer.merge(&ids).wait()?;
+        writer.wait_merging_threads()?;
+        Ok(())
+    }
+
+    /// How many documents the index has.
+    ///
+    /// # Errors
+    /// If the index can't be read.
+    pub fn num_docs_blocking(&self) -> Result<u64> {
+        Ok(self.searcher()?.num_docs())
+    }
+
+    #[cfg(feature = "tokio")]
     pub async fn num_docs(&self) -> Result<u64> {
         let index = self.tantivy_index.clone();
         let count = spawn_blocking(move || index.reader().ok().map(|reader| reader.searcher().num_docs()));
@@ -458,12 +521,22 @@ impl AirmailIndex {
     }
 
     /// The place with this ID, with the administrative areas it's in, or no
-    /// hits if there's none. Its score is 0.
+    /// hits if there's none. Its score is 0. Runs on tokio's blocking pool.
     ///
     /// # Errors
     /// If the search fails or the stored document can't be decoded.
+    #[cfg(feature = "tokio")]
     pub async fn lookup(&self, id: PlaceId) -> Result<SearchResults> {
-        let (field, term) = match &id {
+        let index = self.clone();
+        spawn_blocking(move || index.lookup_blocking(&id)).await?
+    }
+
+    /// `lookup`, on this thread.
+    ///
+    /// # Errors
+    /// If the search fails or the stored document can't be decoded.
+    pub fn lookup_blocking(&self, id: &PlaceId) -> Result<SearchResults> {
+        let (field, term) = match id {
             PlaceId::Poi(id) => (FIELD_POI_ID, Term::from_field_u64(self.field(FIELD_POI_ID), *id)),
             PlaceId::Wof(id) => (FIELD_WOF_ID, Term::from_field_u64(self.field(FIELD_WOF_ID), *id)),
             PlaceId::Osm(osm_type, id) => {
@@ -472,20 +545,16 @@ impl AirmailIndex {
             PlaceId::Postcode(key) => (FIELD_POSTCODE_ID, Term::from_field_text(self.field(FIELD_POSTCODE_ID), key)),
         };
         trace!("Looking up {id} by {field}");
-        let index = self.clone();
-        spawn_blocking(move || -> Result<SearchResults> {
-            let searcher = index.searcher()?;
-            let query = TermQuery::new(term, IndexRecordOption::Basic);
-            // An element is indexed once, but a POI ID could in principle be
-            // on more than one; the first is as good as any.
-            let Some((_, address)) = searcher.search(&query, &TopDocs::with_limit(1).order_by_score())?.into_iter().next() else {
-                return Ok(SearchResults::default());
-            };
-            let hit = index.hit(&searcher, address, 0.0)?;
-            let admins = index.admins(&searcher, &hit.admin_ids.iter().copied().collect())?;
-            Ok(SearchResults { hits: vec![hit], admins, categories: None })
-        })
-        .await?
+        let searcher = self.searcher()?;
+        let query = TermQuery::new(term, IndexRecordOption::Basic);
+        // An element is indexed once, but a POI ID could in principle be
+        // on more than one; the first is as good as any.
+        let Some((_, address)) = searcher.search(&query, &TopDocs::with_limit(1).order_by_score())?.into_iter().next() else {
+            return Ok(SearchResults::default());
+        };
+        let hit = self.hit(&searcher, address, 0.0)?;
+        let admins = self.admins(&searcher, &hit.admin_ids.iter().copied().collect())?;
+        Ok(SearchResults { hits: vec![hit], admins, categories: None })
     }
 
     pub(crate) fn hit(&self, searcher: &Searcher, address: DocAddress, score: f32) -> Result<SearchHit> {
