@@ -6,6 +6,11 @@
 //! responses: as a place in the box (with its simplified boundary) in some, and as an
 //! `ancestor_only` place (no geometry) in others. It's indexed if any response had it in
 //! its box, with the geometry that response gave.
+//!
+//! Features whose tiles don't name their areas (streets, peaks, lakes, waterways) are placed
+//! by their representative point in the places' simplified boundaries
+//! ([`WofPlaces::admins_at`]), with Planetiler's rule for choosing one area of a placetype
+//! (`WofAdmins.java`), then expanded through ancestors like the tiles' areas.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -13,7 +18,9 @@ use std::sync::Arc;
 use airmail::language::Language;
 use airmail::poi::{AdminBand, ToIndexPoi, iso_country_code};
 use airmail::wof::{WofName, WofRecord, admin_document, containing, country};
-use geo::{Coord, Geometry, LineString, MultiPolygon, Point, Polygon};
+use geo::{
+    BoundingRect, Coord, Geometry, Intersects, LineString, MultiPolygon, Point, Polygon, Rect,
+};
 use serde::Deserialize;
 
 /// The boxes to fetch a region's places in, `[west, south, east, north]`: its bounding box
@@ -95,6 +102,86 @@ pub struct Areas {
     pub street_languages: Vec<Language>,
 }
 
+/// The placetypes a point is placed in, smallest first, as Planetiler's `WofAdmins` gives
+/// tiles' `cardinal:admin:*`.
+pub const PLACETYPES: [&str; 12] = [
+    "microhood",
+    "neighbourhood",
+    "macrohood",
+    "borough",
+    "locality",
+    "localadmin",
+    "county",
+    "macrocounty",
+    "region",
+    "macroregion",
+    "dependency",
+    "country",
+];
+
+/// Placetypes where the largest area containing a point is the one it's in (the city of an
+/// address, where WOF's localities include neighbourhoods); the smallest otherwise.
+const LARGEST_WINS: [&str; 2] = ["locality", "localadmin"];
+
+/// The side of a cell of [`Boundaries`]' grid, in degrees.
+const GRID_DEGREES: f64 = 0.5;
+
+/// Boundaries covering more cells than this are checked for every point instead.
+const GRID_MAX_CELLS: usize = 256;
+
+/// The boundaries of the places with one, for finding what contains a point: each in the
+/// grid cells its bounds cover, or in `large` if they're many.
+#[derive(Default)]
+struct Boundaries {
+    /// (id, placetype index, bounds' area in square degrees, bounds).
+    places: Vec<(u64, usize, f64, Rect<f64>)>,
+    cells: HashMap<(i32, i32), Vec<u32>>,
+    large: Vec<u32>,
+}
+
+fn grid_cell(c: Coord<f64>) -> (i32, i32) {
+    (
+        (c.x / GRID_DEGREES).floor() as i32,
+        (c.y / GRID_DEGREES).floor() as i32,
+    )
+}
+
+impl Boundaries {
+    fn new(records: &HashMap<u64, WofRecord>, in_box: &BTreeSet<u64>) -> Self {
+        let mut out = Boundaries::default();
+        for id in in_box {
+            let Some(record) = records.get(id) else {
+                continue;
+            };
+            let Some(placetype) = PLACETYPES.iter().position(|p| *p == record.placetype) else {
+                continue;
+            };
+            let Some(bounds) = record
+                .boundary
+                .as_ref()
+                .and_then(BoundingRect::bounding_rect)
+            else {
+                continue;
+            };
+            let at = u32::try_from(out.places.len()).unwrap_or(u32::MAX);
+            out.places
+                .push((*id, placetype, bounds.width() * bounds.height(), bounds));
+            let (min, max) = (grid_cell(bounds.min()), grid_cell(bounds.max()));
+            let cells = (max.0 - min.0 + 1) as usize * (max.1 - min.1 + 1) as usize;
+            if cells > GRID_MAX_CELLS {
+                out.large.push(at);
+                continue;
+            }
+            for x in min.0..=max.0 {
+                for y in min.1..=max.1 {
+                    out.cells.entry((x, y)).or_default().push(at);
+                }
+            }
+        }
+        out
+    }
+}
+
 /// The Who's On First places of the regions being indexed.
 #[derive(Default)]
 pub struct WofPlaces {
@@ -103,6 +190,8 @@ pub struct WofPlaces {
     in_box: BTreeSet<u64>,
     /// [`WofPlaces::areas`] by the tile's areas, which many features share.
     memo: HashMap<Vec<(String, i64)>, Arc<Areas>>,
+    /// Made when first needed, after the responses are added.
+    boundaries: Option<Boundaries>,
 }
 
 impl WofPlaces {
@@ -134,7 +223,60 @@ impl WofPlaces {
             self.records.insert(place.id, record(place));
         }
         self.memo.clear();
+        self.boundaries = None;
         Ok(count)
+    }
+
+    /// The area of each placetype ([`PLACETYPES`]) whose simplified boundary contains
+    /// `point`, as `(placetype, WOF ID)` sorted by placetype like a tile's
+    /// `cardinal:admin:*`: of several, the largest for localities and local admins and
+    /// otherwise the smallest (by their bounds), ties to the lower ID, as Planetiler chooses.
+    /// For [`WofPlaces::areas`], which adds their ancestors.
+    pub fn admins_at(&mut self, point: Point<f64>) -> Vec<(String, i64)> {
+        if self.boundaries.is_none() {
+            self.boundaries = Some(Boundaries::new(&self.records, &self.in_box));
+        }
+        let Some(boundaries) = &self.boundaries else {
+            return Vec::new();
+        };
+        // The best place of each placetype: (bounds' area, id).
+        let mut best: [Option<(f64, u64)>; PLACETYPES.len()] = [None; PLACETYPES.len()];
+        let cell = boundaries.cells.get(&grid_cell(point.0));
+        for &at in cell.into_iter().flatten().chain(&boundaries.large) {
+            let (id, placetype, size, bounds) = boundaries.places[at as usize];
+            if !bounds.intersects(&point) {
+                continue;
+            }
+            let better = match best[placetype] {
+                None => true,
+                Some((best_size, best_id)) if best_size == size => id < best_id,
+                Some((best_size, _)) if LARGEST_WINS.contains(&PLACETYPES[placetype]) => {
+                    size > best_size
+                }
+                Some((best_size, _)) => size < best_size,
+            };
+            if !better {
+                continue;
+            }
+            let inside = self
+                .records
+                .get(&id)
+                .and_then(|r| r.boundary.as_ref())
+                .is_some_and(|b| b.intersects(&point));
+            if inside {
+                best[placetype] = Some((size, id));
+            }
+        }
+        let mut out: Vec<(String, i64)> = best
+            .iter()
+            .zip(PLACETYPES)
+            .filter_map(|(b, placetype)| {
+                let (_, id) = (*b)?;
+                Some((placetype.to_owned(), i64::try_from(id).ok()?))
+            })
+            .collect();
+        out.sort();
+        out
     }
 
     /// How many places are known, and how many of them are indexed.
@@ -383,6 +525,58 @@ mod tests {
         ));
         // A tile area that isn't known still counts.
         assert_eq!(places.areas(&[("county".into(), 5)]).ids, vec![5]);
+    }
+
+    #[test]
+    fn points_are_placed_in_the_boundaries_containing_them() {
+        let square = |w: f64, s: f64, e: f64, n: f64| {
+            format!(
+                r#"{{"type": "Polygon", "coordinates": [[[{w}, {s}], [{e}, {s}], [{e}, {n}], [{w}, {n}], [{w}, {s}]]]}}"#
+            )
+        };
+        let place = |id: u64, placetype: &str, geometry: String| {
+            format!(
+                r#"{{"id": {id}, "placetype": "{placetype}", "names": [["und", "default", false, "P{id}"]],
+                "ancestors": [85633793], "country": "US", "geometry": {geometry}, "ancestor_only": false}}"#
+            )
+        };
+        let json = format!(
+            r#"{{"places": [{}, {}, {}, {}, {}, {}]}}"#,
+            // A country far bigger than the grid's limit.
+            place(85633793, "country", square(-125.0, 25.0, -66.0, 49.0)),
+            place(1, "county", square(-123.0, 47.0, -121.0, 48.0)),
+            // Two localities: the larger wins.
+            place(2, "locality", square(-122.5, 47.4, -122.2, 47.8)),
+            place(3, "locality", square(-122.4, 47.5, -122.3, 47.7)),
+            // Two neighbourhoods: the smaller wins.
+            place(4, "neighbourhood", square(-122.36, 47.6, -122.3, 47.65)),
+            place(5, "neighbourhood", square(-122.34, 47.61, -122.32, 47.63)),
+        );
+        let mut places = WofPlaces::new();
+        places.add_response(json.as_bytes()).unwrap();
+        let ids =
+            |admins: Vec<(String, i64)>| admins.into_iter().map(|(_, id)| id).collect::<Vec<_>>();
+        // Sorted by placetype: country, county, locality, neighbourhood.
+        assert_eq!(
+            ids(places.admins_at(Point::new(-122.33, 47.62))),
+            vec![85633793, 1, 2, 5]
+        );
+        assert_eq!(
+            ids(places.admins_at(Point::new(-122.35, 47.64))),
+            vec![85633793, 1, 2, 4]
+        );
+        assert_eq!(
+            ids(places.admins_at(Point::new(-121.5, 47.2))),
+            vec![85633793, 1]
+        );
+        assert_eq!(
+            ids(places.admins_at(Point::new(-100.0, 40.0))),
+            vec![85633793]
+        );
+        assert!(places.admins_at(Point::new(10.0, 50.0)).is_empty());
+        // Then expanded like tiles' areas.
+        let at = places.admins_at(Point::new(-122.33, 47.62));
+        assert!(places.areas(&at).ids.contains(&85633793));
     }
 
     #[test]

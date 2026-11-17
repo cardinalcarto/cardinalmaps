@@ -244,6 +244,11 @@ fn build(mut args: Args) {
         counts.local_ids,
     );
     println!(
+        "placed by point in WOF boundaries: {} documents in {:.2} s",
+        counts.placed_by_point,
+        counts.placing_micros as f64 / 1e6,
+    );
+    println!(
         "index: {:.1} MB at {}",
         dir_bytes(&out) as f64 / 1e6,
         out.display()
@@ -288,6 +293,7 @@ fn search(mut args: Args) {
             typos: false,
             focus,
             viewport: None,
+            bbox: None,
             limit,
         };
         let mut times = Vec::with_capacity(repeat);
