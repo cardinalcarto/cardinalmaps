@@ -409,6 +409,51 @@ fn a_regions_features_come_out_once_with_their_attributes() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Read in order of column, a street or area comes out once the tiles have passed every
+/// column it could have pieces in, not only at the end.
+#[test]
+fn joined_features_come_out_once_the_tiles_have_passed_them() {
+    let tiles = [(WEST, west_tile()), (EAST, east_tile()), (FAR, far_tile())];
+    let joined = |features: &[ExtractedFeature]| -> Vec<u64> {
+        let mut ids: Vec<u64> = features
+            .iter()
+            .filter(|f| matches!(f.layer, SourceLayer::TransportationName | SourceLayer::Park))
+            .filter_map(|f| f.id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    };
+    let mut extractor = RegionExtractor::new();
+    let mut read = Vec::new();
+    for (key, tile) in &tiles {
+        extractor.add_tile(*key, tile, &mut read).unwrap();
+    }
+    // Main Street and the park, of the west and east tiles, are finished by the far tile
+    // (kilometres east); the far tile's street isn't until the end.
+    assert_eq!(joined(&read), vec![5, 11]);
+    let mut at_end = Vec::new();
+    let counts = extractor.finish(&mut at_end);
+    assert_eq!(joined(&at_end), vec![3]);
+    assert_eq!(counts.out_of_order, 0);
+
+    // Out of order: the same features, all at the end.
+    let mut extractor = RegionExtractor::new();
+    let mut read_unordered = Vec::new();
+    for i in [2, 0, 1] {
+        let (key, tile) = &tiles[i];
+        extractor.add_tile(*key, tile, &mut read_unordered).unwrap();
+    }
+    assert!(joined(&read_unordered).is_empty());
+    let counts = extractor.finish(&mut read_unordered);
+    assert_eq!(counts.out_of_order, 2);
+    assert_eq!(joined(&read_unordered), vec![3, 5, 11]);
+    let key = |f: &ExtractedFeature| (f.layer, f.id, f.tiles.clone());
+    read.extend(at_end);
+    read.sort_by_key(key);
+    read_unordered.sort_by_key(key);
+    assert_eq!(read, read_unordered);
+}
+
 #[test]
 fn the_order_tiles_come_in_doesnt_matter() {
     let dir = scratch("order");

@@ -324,29 +324,83 @@ Future<String> buildIndex(IndexBuildJob job) async {
     heapMb: _heapMb,
     threads: _threads,
   );
-  for (final region in job.regions) {
-    sparkle.BasemapTileAfter? after;
-    while (true) {
-      final page = await sparkle.basemapReadRegionTiles(
-        path: job.basemap,
-        region: region,
-        zoom: 14,
-        after: after,
-        limit: _page,
-      );
-      if (page.isEmpty) break;
-      after = sparkle.BasemapTileAfter(x: page.last.x, y: page.last.y);
-      await builder.addTiles(
-        tiles: [
-          for (final t in page)
-            GeocoderTile(z: t.z, x: t.x, y: t.y, data: t.data),
-        ],
-      );
-    }
+  final pages = tilesInOrder<sparkle.BasemapTile>(
+    [
+      for (final region in job.regions)
+        (sparkle.BasemapTile? after) => sparkle.basemapReadRegionTiles(
+          path: job.basemap,
+          region: region,
+          zoom: 14,
+          after: after == null
+              ? null
+              : sparkle.BasemapTileAfter(x: after.x, y: after.y),
+          limit: _page,
+        ),
+    ],
+    x: (t) => t.x,
+    y: (t) => t.y,
+    page: _page,
+  );
+  await for (final page in pages) {
+    await builder.addTiles(
+      tiles: [
+        for (final t in page)
+          GeocoderTile(z: t.z, x: t.x, y: t.y, data: t.data),
+      ],
+    );
   }
   final s = await builder.finish();
   return '${s.tiles} tiles (${s.repeatedTiles} repeated), ${s.features} features, '
       '${s.pois} POIs (${s.pointers} pointers), ${s.addresses} addresses, '
       '${s.streets} streets, ${s.admins} areas, ${s.postcodes} postcodes; '
       '${s.wofPlaces} WOF places';
+}
+
+/// The tiles of several regions, each read page by page in order of column then row
+/// ([read] gives the page after a tile, or the first after null), as one sequence in
+/// that order, in pages of at most [page]. The index build needs that order to finish
+/// each street once the tiles have passed it, rather than hold them all. A tile two
+/// regions share comes from each, one after the other (the build skips the second).
+Stream<List<T>> tilesInOrder<T>(
+  List<Future<List<T>> Function(T? after)> read, {
+  required int Function(T) x,
+  required int Function(T) y,
+  required int page,
+}) async* {
+  final buffers = [for (final _ in read) <T>[]];
+  final next = [for (final _ in read) 0];
+  final done = [for (final _ in read) false];
+  // Whether region [i] has a tile to give, reading its next page if it needs to.
+  Future<bool> ready(int i) async {
+    if (next[i] < buffers[i].length) return true;
+    if (done[i]) return false;
+    final more = await read[i](buffers[i].lastOrNull);
+    if (more.isEmpty) {
+      done[i] = true;
+      return false;
+    }
+    buffers[i] = more;
+    next[i] = 0;
+    return true;
+  }
+
+  bool before(T a, T b) => x(a) < x(b) || (x(a) == x(b) && y(a) < y(b));
+  var out = <T>[];
+  while (true) {
+    int? best;
+    for (var i = 0; i < read.length; i++) {
+      if (!await ready(i)) continue;
+      if (best == null ||
+          before(buffers[i][next[i]], buffers[best][next[best]])) {
+        best = i;
+      }
+    }
+    if (best == null) break;
+    out.add(buffers[best][next[best]++]);
+    if (out.length >= page) {
+      yield out;
+      out = <T>[];
+    }
+  }
+  if (out.isNotEmpty) yield out;
 }

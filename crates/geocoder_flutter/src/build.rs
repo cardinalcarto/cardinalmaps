@@ -4,7 +4,7 @@
 //! The app builds a whole index for each change of its regions (see the decisions log's
 //! "Device index lifecycle") into a fresh directory, and swaps it in when it's done.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use airmail::index::{AirmailIndex, AirmailIndexWriter, DocumentBuilder, Storage, WriterOptions};
@@ -49,7 +49,7 @@ pub struct IndexSink {
     error: Option<anyhow::Error>,
     /// The areas most of each tile's points are in (an index into `area_sets`), for the
     /// features whose layers don't name theirs: streets, peaks, lakes, parks, airports.
-    tile_areas: HashMap<TileKey, u32>,
+    tile_areas: TileAreas,
     area_sets: Vec<Vec<(String, i64)>>,
     area_set_ids: HashMap<Vec<(String, i64)>, u32>,
 }
@@ -64,7 +64,7 @@ impl IndexSink {
         };
         if admins.is_empty() {
             let tile = tile_of(doc.center.x(), doc.center.y());
-            if let Some(&set) = self.tile_areas.get(&tile) {
+            if let Some(set) = self.tile_areas.get(tile) {
                 let admins = self.area_sets[set as usize].clone();
                 place(&mut doc, &admins, &mut self.wof);
             }
@@ -121,6 +121,56 @@ impl IndexSink {
     }
 }
 
+/// Each z14 tile's areas (an index into `IndexSink::area_sets`), by column, then row. Tiles
+/// come in order of column, so the rows of each column are pushed in order and the columns
+/// behind the reading are forgotten (see `FeatureSink::columns_done`).
+#[derive(Debug, Default)]
+struct TileAreas(BTreeMap<u32, Vec<(u32, u32)>>);
+
+impl TileAreas {
+    fn insert(&mut self, tile: TileKey, set: u32) {
+        let rows = self.0.entry(tile.x).or_default();
+        match rows.last() {
+            Some(&(y, _)) if y < tile.y => rows.push((tile.y, set)),
+            None => rows.push((tile.y, set)),
+            _ => match rows.binary_search_by_key(&tile.y, |&(y, _)| y) {
+                Ok(i) => rows[i].1 = set,
+                Err(i) => rows.insert(i, (tile.y, set)),
+            },
+        }
+    }
+
+    fn get(&self, tile: TileKey) -> Option<u32> {
+        let rows = self.0.get(&tile.x)?;
+        let i = rows.binary_search_by_key(&tile.y, |&(y, _)| y).ok()?;
+        Some(rows[i].1)
+    }
+
+    fn forget_before(&mut self, column: u32) {
+        self.0 = self.0.split_off(&column);
+    }
+}
+
+/// The tiles read: a sorted list while they come in order, as they do, and a set for any
+/// that don't.
+#[derive(Debug, Default)]
+struct SeenTiles {
+    ordered: Vec<u64>,
+    other: HashSet<u64>,
+}
+
+impl SeenTiles {
+    /// Notes a tile; false if it was read already.
+    fn insert(&mut self, tile: TileKey) -> bool {
+        let key = (u64::from(tile.z) << 56) | (u64::from(tile.x) << 28) | u64::from(tile.y);
+        if self.ordered.last().is_none_or(|&last| last < key) {
+            self.ordered.push(key);
+            return true;
+        }
+        self.ordered.binary_search(&key).is_err() && self.other.insert(key)
+    }
+}
+
 /// The z14 tile a point is in.
 fn tile_of(lng: f64, lat: f64) -> TileKey {
     let n = f64::from(1u32 << 14);
@@ -145,6 +195,10 @@ impl FeatureSink for IndexSink {
         if let Some(doc) = self.prepare(feature) {
             self.add(doc);
         }
+    }
+
+    fn columns_done(&mut self, column: u32) {
+        self.tile_areas.forget_before(column);
     }
 
     fn tile_points(&mut self, tile: TileKey, points: Vec<ExtractedFeature>) {
@@ -192,7 +246,7 @@ pub struct IndexBuild {
     index: AirmailIndex,
     extractor: RegionExtractor,
     sink: IndexSink,
-    seen: HashSet<TileKey>,
+    seen: SeenTiles,
     options: BuildOptions,
 }
 
@@ -222,16 +276,18 @@ impl IndexBuild {
                 postcodes: Postcodes::default(),
                 counts: BuildCounts::default(),
                 error: None,
-                tile_areas: HashMap::new(),
+                tile_areas: TileAreas::default(),
                 area_sets: Vec::new(),
                 area_set_ids: HashMap::new(),
             },
-            seen: HashSet::new(),
+            seen: SeenTiles::default(),
             options,
         })
     }
 
-    /// Reads a tile (gzipped or not). A tile read already is skipped.
+    /// Reads a tile (gzipped or not). A tile read already is skipped. Tiles in order of column
+    /// (x), over all the regions, let the build finish each street as soon as it has passed
+    /// it rather than hold them all to the end; any order gives the same features.
     ///
     /// # Errors
     ///
@@ -277,12 +333,31 @@ impl IndexBuild {
             self.sink.add(doc);
         }
         self.check()?;
-        let IndexSink { writer, counts, .. } = self.sink;
+        // Only the writer is still needed: what was kept for reading goes before the commit
+        // and the merge, which take the most memory.
+        let Self {
+            mut index,
+            sink,
+            options,
+            seen,
+            extractor: _,
+        } = self;
+        drop(seen);
+        let IndexSink {
+            writer,
+            counts,
+            wof,
+            tile_areas,
+            area_sets,
+            area_set_ids,
+            ..
+        } = sink;
+        drop((wof, tile_areas, area_sets, area_set_ids));
         writer.commit().map_err(BuildError::Index)?;
-        if self.options.merge {
-            self.index
+        if options.merge {
+            index
                 .merge_blocking(WriterOptions {
-                    heap_bytes: self.options.heap_bytes,
+                    heap_bytes: options.heap_bytes,
                     threads: Some(1),
                     storage: Storage::Pointers,
                 })
@@ -295,6 +370,42 @@ impl IndexBuild {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn t(x: u32, y: u32) -> TileKey {
+        TileKey { z: 14, x, y }
+    }
+
+    #[test]
+    fn tiles_are_seen_once_in_any_order() {
+        let mut seen = SeenTiles::default();
+        assert!(seen.insert(t(1, 5)));
+        assert!(seen.insert(t(1, 7)));
+        assert!(!seen.insert(t(1, 7)));
+        assert!(seen.insert(t(2, 0)));
+        // Out of order.
+        assert!(!seen.insert(t(1, 5)));
+        assert!(seen.insert(t(1, 6)));
+        assert!(!seen.insert(t(1, 6)));
+        assert!(seen.insert(t(3, 1)));
+        assert!(!seen.insert(t(2, 0)));
+    }
+
+    #[test]
+    fn tile_areas_by_column_and_row() {
+        let mut areas = TileAreas::default();
+        areas.insert(t(1, 5), 0);
+        areas.insert(t(1, 9), 1);
+        areas.insert(t(1, 7), 2);
+        areas.insert(t(2, 1), 3);
+        areas.insert(t(1, 9), 4);
+        assert_eq!(
+            [t(1, 5), t(1, 7), t(1, 9), t(2, 1), t(2, 2), t(0, 5)].map(|k| areas.get(k)),
+            [Some(0), Some(2), Some(4), Some(3), None, None]
+        );
+        areas.forget_before(2);
+        assert_eq!(areas.get(t(1, 5)), None);
+        assert_eq!(areas.get(t(2, 1)), Some(3));
+    }
 
     #[test]
     fn points_are_in_their_tiles() {
