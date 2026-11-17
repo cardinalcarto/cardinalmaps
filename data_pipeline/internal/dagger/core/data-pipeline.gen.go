@@ -144,12 +144,11 @@ type DataPipelineBuildOpts struct {
 //   - tiles.mbtiles;
 //   - routing/ (see RoutingTiles), and routing.btrfs, an image of the same
 //     tiles.tar and valhalla.json for servers (see BtrfsImage);
-//   - geocoder.btrfs, an image holding the geocoder index as index/, and
-//     geocoder.json, a copy of the index's airmail-index.json (its schema
-//     version), so the index needn't be mounted to tell which geocoder
-//     reads it;
-//   - the categorical models and query tagger it's given, as categories/ and
-//     tagger.model.
+//   - geocoder.btrfs, an image holding everything the geocoder serves: the
+//     index as index/, and the categorical models and query tagger it's
+//     given, as categories/ and tagger.model; and geocoder.json, a copy of
+//     the index's airmail-index.json (its schema version), so the image
+//     needn't be mounted to tell which geocoder reads it.
 //
 // The steps run one after another, since each can use most of a planet build
 // machine's memory.
@@ -466,11 +465,17 @@ type DataPipelinePatchOpts struct {
 	// tcp://localhost:5432 for one on this machine. It's reachable at host
 	// "database", so use that in --database-url.
 	Database *Service
+	// QRank (qrank.csv.gz from https://qrank.wmcloud.org), which ranks POIs
+	// with Wikidata entities by their articles' page views. Without it,
+	// having an entity counts the same for every POI.
+	Qrank *File
 }
 
 // Copies an OSM extract, tagging every POI version that the poi_service
 // database knows with its stable identifier (cardinal:poi_id) and OSM
-// version (cardinal:version).
+// version (cardinal:version), and every POI with its importance as airmail
+// ranks it (cardinal:importance). Importance depends on POIs' shapes, so this
+// adds node locations to the extract's ways first; see LocationsOnWays.
 func (r *DataPipeline) Patch(osm *File, databaseUrl *Secret, opts ...DataPipelinePatchOpts) *File {
 	assertNotNil("osm", osm)
 	assertNotNil("databaseUrl", databaseUrl)
@@ -479,6 +484,10 @@ func (r *DataPipeline) Patch(osm *File, databaseUrl *Secret, opts ...DataPipelin
 		// `database` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Database) {
 			q = q.Arg("database", opts[i].Database)
+		}
+		// `qrank` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Qrank) {
+			q = q.Arg("qrank", opts[i].Qrank)
 		}
 	}
 	q = q.Arg("osm", osm)
@@ -516,7 +525,8 @@ func (r *DataPipeline) Planetiler(opts ...DataPipelinePlanetilerOpts) *Container
 	}
 }
 
-// The poi_service executable.
+// The poi_service executable. It shares airmail's importance code, so that
+// crate sits beside it as in the repository.
 func (r *DataPipeline) PoiService() *File {
 	q := r.query.Select("poiService")
 
@@ -631,6 +641,8 @@ type DataPipelineTilesOpts struct {
 	// Who's On First SpatiaLite database covering the extract, to give POIs
 	// the areas they're in.
 	WofDb *File
+	// QRank, for POIs' importance; see Patch.
+	Qrank *File
 }
 
 // Builds an MLT mbtiles tileset from a local OSM extract.
@@ -661,6 +673,10 @@ func (r *DataPipeline) Tiles(osm *File, opts ...DataPipelineTilesOpts) *File {
 		// `wofDb` optional argument
 		if !querybuilder.IsZeroValue(opts[i].WofDb) {
 			q = q.Arg("wofDb", opts[i].WofDb)
+		}
+		// `qrank` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Qrank) {
+			q = q.Arg("qrank", opts[i].Qrank)
 		}
 	}
 	q = q.Arg("osm", osm)
