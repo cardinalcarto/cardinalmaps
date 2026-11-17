@@ -22,6 +22,10 @@ name = "tagger"
 path = "src/bin/tagger.rs"
 
 [[bin]]
+name = "spatial_bench"
+path = "src/bin/spatial_bench.rs"
+
+[[bin]]
 name = "categories_export"
 path = "src/bin/categories_export.rs"
 

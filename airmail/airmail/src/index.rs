@@ -30,7 +30,7 @@ use crate::poi::{AdminBand, Kind, OsmRef, PlaceId, SchemafiedPoi, WofPlace};
 
 /// The version of the index's schema and of what its fields hold. Readers
 /// refuse indexes of other versions.
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
 
 /// Records `SCHEMA_VERSION` in the index directory.
 const VERSION_FILE: &str = "airmail-index.json";
@@ -81,6 +81,9 @@ pub const FIELD_OSM: &str = "osm";
 pub const FIELD_WOF: &str = "wof";
 pub const FIELD_TAGS: &str = "tags";
 pub const FIELD_CENTER: &str = "center";
+/// 1 if a document's shape is its center, so that whether it's in a box can
+/// be told from its `center` fast field without reading it; else 0.
+pub const FIELD_IS_POINT: &str = "is_point";
 pub const FIELD_GEOMETRY: &str = "geometry";
 pub const FIELD_IMPORTANCE: &str = "importance";
 
@@ -282,6 +285,7 @@ impl AirmailIndex {
         schema_builder.add_json_field(FIELD_TAGS, STORED);
         // Fast for ranking by distance from a focus point.
         schema_builder.add_u64_field(FIELD_CENTER, FAST | STORED);
+        schema_builder.add_u64_field(FIELD_IS_POINT, FAST);
         schema_builder.add_bytes_field(FIELD_GEOMETRY, STORED);
         schema_builder.add_f64_field(FIELD_IMPORTANCE, FAST | STORED);
         schema_builder.build()
@@ -906,6 +910,7 @@ impl DocumentBuilder {
         }
         let center = s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(poi.center.y(), poi.center.x()));
         doc.add_u64(self.field(FIELD_CENTER), center.0);
+        doc.add_u64(self.field(FIELD_IS_POINT), u64::from(matches!(poi.geometry, Geometry::Point(_))));
         doc.add_bytes(self.field(FIELD_GEOMETRY), &geometry::to_wkb(&poi.geometry)?);
         let mut ancestors = BTreeSet::new();
         for cell in geometry::covering(&poi.geometry) {

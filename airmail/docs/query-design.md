@@ -36,7 +36,7 @@ The tagger's existing Near tag and its dictionaries of phrases like `near me` ar
 | Containing areas' IDs | `admin_ids` | One term lookup, and unambiguous |
 | OSM tags, cuisine, diet | `indexed_tag` | One term lookup |
 | Kind, band, country | `kind`, `placetype`, `country_code` | One term lookup |
-| Location | `center` (fast), `s2_cover` | Per-document read; cell terms |
+| Location | `center` and `is_point` (fast), `s2_cover` (cells of level 16, about 150 m, at most) | Per-document read; cell terms. A `bbox` is checked exactly while matches are collected: by `center` for points, by the stored shape for others whose center is outside |
 | Prominence | `importance` (fast) | Per-document read |
 
 `importance` already folds in QRank, Wikidata and shape area for POIs, population for areas, road class for streets, and a discount for transit stops. It's on one scale: an ordinary POI at about 0.08, and the Eiffel Tower around 0.45 by the formula.

@@ -54,6 +54,7 @@ dependencies = [
  "serde_yaml",
  "tantivy",
  "tantivy-fst",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "unicode-normalization",
