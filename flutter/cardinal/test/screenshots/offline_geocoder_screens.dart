@@ -70,4 +70,30 @@ void main() {
     );
     await screenshot(tester, '2c-offline-tab-fallback-always');
   });
+
+  testWidgets('3 nothing offline', (tester) async {
+    await pumpFakeApp(
+      tester,
+      platform: TargetPlatform.android,
+      offline: FakeGeocoder(),
+      online: FakeGeocoder([_needle]),
+    );
+    await _search(tester, 'space needle');
+    await screenshot(tester, '3a-search-nothing-offline');
+
+    await tester.tap(find.text('Search online'));
+    await screenshot(tester, '3b-search-online-once');
+  });
+
+  testWidgets('3 nothing offline, never', (tester) async {
+    await pumpFakeApp(
+      tester,
+      platform: TargetPlatform.android,
+      offline: FakeGeocoder(),
+      online: FakeGeocoder([_needle]),
+    );
+    await _search(tester, 'space needle');
+    await tester.tap(find.text('Never'));
+    await screenshot(tester, '3c-search-never');
+  });
 }
