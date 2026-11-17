@@ -28,7 +28,7 @@ use crate::cuisine;
 #[cfg(feature = "tokio")]
 use crate::error::AirmailError;
 use crate::geometry;
-use crate::poi::{AdminBand, Kind, OsmRef, PlaceId, SchemafiedPoi, WofPlace};
+use crate::poi::{AdminBand, Kind, OsmRef, PlaceId, Pointer, SchemafiedPoi, TileId, WofPlace};
 
 /// The version of the index's schema and of what its fields hold. Readers
 /// refuse indexes of other versions.
@@ -46,12 +46,37 @@ pub struct WriterOptions {
     /// Indexing threads, or `None` for tantivy's choice (one per core, up to
     /// eight).
     pub threads: Option<usize>,
+    /// What documents store.
+    pub storage: Storage,
 }
 
 impl Default for WriterOptions {
     fn default() -> Self {
-        Self { heap_bytes: DEFAULT_WRITER_HEAP, threads: None }
+        Self { heap_bytes: DEFAULT_WRITER_HEAP, threads: None, storage: Storage::Full }
     }
+}
+
+/// What documents store for results. Either way, they're indexed alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Storage {
+    /// Everything results show: tags, shape, the OSM element, the Who's On
+    /// First place. What the server's index stores, for clients that have
+    /// nothing else.
+    #[default]
+    Full,
+    /// For a document with a stable POI ID, only its kind, the ID and the
+    /// tile it was read from (see `poi::Pointer`), its center, importance,
+    /// source and areas' IDs; its tags and shape are in the tile. Others
+    /// store everything. For a phone's index of the tiles it has.
+    Pointers,
+}
+
+/// Fills in what a search can't rank pointer documents well without: their
+/// tags, for their names (how much of a name a query is) and diets.
+pub trait Hydrate {
+    /// The tags of the feature a pointer points to, or `None` if it can't be
+    /// read; ranking then goes without them.
+    fn tags(&self, pointer: &Pointer) -> Option<Vec<(String, String)>>;
 }
 
 /// Records `SCHEMA_VERSION` in the index directory.
@@ -103,11 +128,16 @@ pub const FIELD_OSM: &str = "osm";
 pub const FIELD_WOF: &str = "wof";
 pub const FIELD_TAGS: &str = "tags";
 pub const FIELD_CENTER: &str = "center";
-/// 1 if a document's shape is its center, so that whether it's in a box can
-/// be told from its `center` fast field without reading it; else 0.
+/// 1 if a document's shape is its center (a point, or a pointer document,
+/// whose shape isn't stored), so that whether it's in a box can be told from
+/// its `center` fast field without reading it; else 0.
 pub const FIELD_IS_POINT: &str = "is_point";
 pub const FIELD_GEOMETRY: &str = "geometry";
 pub const FIELD_IMPORTANCE: &str = "importance";
+/// A pointer document's stable POI ID and tile (`TileId::pack`); see
+/// `Storage::Pointers`.
+pub const FIELD_POINTER_POI_ID: &str = "pointer_poi_id";
+pub const FIELD_POINTER_TILE: &str = "pointer_tile";
 
 /// The field with the names of a document's areas in `band`.
 #[must_use]
@@ -207,6 +237,9 @@ pub struct SearchRequest<'a> {
     pub location: Option<[f64; 2]>,
     /// Reads what kind of place words suggest.
     pub model: Option<&'a CategoryModel>,
+    /// Reads pointer documents' tags, for ranking them as if they were
+    /// stored (see `Storage::Pointers`).
+    pub hydrate: Option<&'a dyn Hydrate>,
 }
 
 /// A search result.
@@ -215,9 +248,15 @@ pub struct SearchHit {
     pub score: f32,
     pub kind: Kind,
     /// OSM tags, without Cardinal's `cardinal:*` tags, which are in `poi`.
+    /// A pointer document's, if the search was given `Hydrate`, else none.
     pub tags: Vec<(String, String)>,
-    /// Cardinal's stable identifier and the OSM version it was indexed at.
+    /// Cardinal's stable identifier and the OSM version it was indexed at,
+    /// from its tags.
     pub poi: Option<(u64, u32)>,
+    /// For a pointer document, where the rest of it is: its stable POI ID
+    /// and its tile. It has no OSM element or Who's On First place, and its
+    /// shape is its center.
+    pub pointer: Option<Pointer>,
     pub osm: Option<OsmRef>,
     pub wof: Option<WofPlace>,
     /// Who's On First IDs of the areas containing it.
@@ -232,6 +271,16 @@ impl SearchHit {
     #[must_use]
     pub fn tag(&self, key: &str) -> Option<&str> {
         self.tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    /// Sets its tags: Cardinal's `cardinal:*` tags go to `poi` (if there's
+    /// a version) and the rest to `tags`.
+    pub(crate) fn set_tags(&mut self, mut tags: Vec<(String, String)>) {
+        let tag = |key: &str| tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+        let poi = tag("cardinal:poi_id").and_then(|id| id.parse().ok()).zip(tag("cardinal:version").and_then(|v| v.parse().ok()));
+        tags.retain(|(k, _)| !k.starts_with("cardinal:"));
+        self.poi = poi;
+        self.tags = tags;
     }
 }
 
@@ -310,6 +359,8 @@ impl AirmailIndex {
         schema_builder.add_u64_field(FIELD_IS_POINT, FAST);
         schema_builder.add_bytes_field(FIELD_GEOMETRY, STORED);
         schema_builder.add_f64_field(FIELD_IMPORTANCE, FAST | STORED);
+        schema_builder.add_u64_field(FIELD_POINTER_POI_ID, STORED);
+        schema_builder.add_u64_field(FIELD_POINTER_TILE, STORED);
         schema_builder.build()
     }
 
@@ -388,8 +439,8 @@ impl AirmailIndex {
         self.writer_with(WriterOptions::default())
     }
 
-    /// A writer with `options`' memory and threads, for building small
-    /// indexes in little memory, as on a phone.
+    /// A writer with `options`' memory, threads and storage, for building
+    /// small indexes in little memory, as on a phone.
     ///
     /// # Errors
     /// If another writer has the index, or the memory is too little for the
@@ -399,7 +450,7 @@ impl AirmailIndex {
             Some(threads) => self.tantivy_index.writer_with_num_threads::<TantivyDocument>(threads, options.heap_bytes)?,
             None => self.tantivy_index.writer::<TantivyDocument>(options.heap_bytes)?,
         };
-        Ok(AirmailIndexWriter { tantivy_writer, schema: self.tantivy_index.schema() })
+        Ok(AirmailIndexWriter { tantivy_writer, schema: self.tantivy_index.schema(), storage: options.storage })
     }
 
     /// Merges every segment into one.
@@ -560,38 +611,42 @@ impl AirmailIndex {
     pub(crate) fn hit(&self, searcher: &Searcher, address: DocAddress, score: f32) -> Result<SearchHit> {
         let doc: TantivyDocument = searcher.doc(address)?;
         let text = |field: &str| doc.get_first(self.field(field)).and_then(|v| v.as_str()).map(str::to_string);
+        let number = |field: &str| doc.get_first(self.field(field)).and_then(|v| v.as_u64());
         let kind = text(FIELD_KIND).as_deref().and_then(Kind::parse).context("document without a kind")?;
-        let mut tags: Vec<(String, String)> = doc
+        let tags: Vec<(String, String)> = doc
             .get_first(self.field(FIELD_TAGS))
             .and_then(|v| v.as_object())
             .map(|object| object.map(|(k, v)| (k.to_string(), v.as_str().unwrap_or_default().to_string())).collect())
             .unwrap_or_default();
-        let tag = |key: &str| tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
-        let poi = tag("cardinal:poi_id")
-            .and_then(|id| id.parse().ok())
-            .zip(tag("cardinal:version").and_then(|v| v.parse().ok()));
-        tags.retain(|(k, _)| !k.starts_with("cardinal:"));
         let osm = text(FIELD_OSM).map(|s| OsmRef::decode(&s)).transpose()?;
         let wof = text(FIELD_WOF).map(|s| serde_json::from_str::<WofPlace>(&s)).transpose()?;
         let admin_ids = doc.get_all(self.field(FIELD_ADMIN_IDS)).filter_map(|v| v.as_u64()).collect();
-        let center = doc.get_first(self.field(FIELD_CENTER)).and_then(|v| v.as_u64()).context("document without a center")?;
+        let center = number(FIELD_CENTER).context("document without a center")?;
         let center = s2::latlng::LatLng::from(s2::cellid::CellID(center));
-        let geometry = doc
-            .get_first(self.field(FIELD_GEOMETRY))
-            .and_then(|v| v.as_bytes())
-            .context("document without a geometry")?;
-        Ok(SearchHit {
+        let center = Point::new(center.lng.deg(), center.lat.deg());
+        let pointer = number(FIELD_POINTER_POI_ID)
+            .zip(number(FIELD_POINTER_TILE))
+            .map(|(poi_id, tile)| Pointer { poi_id, tile: TileId::unpack(tile) });
+        let geometry = match doc.get_first(self.field(FIELD_GEOMETRY)).and_then(|v| v.as_bytes()) {
+            Some(wkb) => geometry::from_wkb(wkb)?,
+            None if pointer.is_some() => Geometry::Point(center),
+            None => bail!("document without a geometry"),
+        };
+        let mut hit = SearchHit {
             score,
             kind,
-            tags,
-            poi,
+            tags: Vec::new(),
+            poi: None,
+            pointer,
             osm,
             wof,
             admin_ids,
-            center: Point::new(center.lng.deg(), center.lat.deg()),
-            geometry: geometry::from_wkb(geometry)?,
+            center,
+            geometry,
             importance: doc.get_first(self.field(FIELD_IMPORTANCE)).and_then(|v| v.as_f64()).unwrap_or(0.0),
-        })
+        };
+        hit.set_tags(tags);
+        Ok(hit)
     }
 
     /// The Who's On First places with these IDs that are in the index.
@@ -844,6 +899,7 @@ pub type Document = TantivyDocument;
 #[derive(Clone)]
 pub struct DocumentBuilder {
     schema: Schema,
+    storage: Storage,
 }
 
 impl DocumentBuilder {
@@ -856,9 +912,27 @@ impl DocumentBuilder {
         name_key(name)
     }
 
+    /// What this builder's documents store.
+    #[must_use]
+    pub fn storage(&self) -> Storage {
+        self.storage
+    }
+
     /// The document for a POI.
+    ///
+    /// # Errors
+    /// If its shape can't be encoded, or it's to be stored as a pointer (it
+    /// has a stable POI ID and the storage is `Storage::Pointers`) but has no
+    /// tile.
     pub fn document(&self, schemafied: SchemafiedPoi, source: &str) -> Result<TantivyDocument> {
         let poi = &schemafied.poi;
+        let pointer = match (self.storage, poi.poi_id()) {
+            (Storage::Pointers, Some(poi_id)) => {
+                let tile = poi.tile.with_context(|| format!("POI {poi_id} is stored as a pointer, but has no tile"))?;
+                Some(Pointer { poi_id, tile })
+            }
+            _ => None,
+        };
         let mut doc = TantivyDocument::default();
         let mut exact = BTreeSet::new();
         // Every form a name is in, for the gazetteer.
@@ -957,18 +1031,28 @@ impl DocumentBuilder {
         for id in &poi.admin_ids {
             doc.add_u64(self.field(FIELD_ADMIN_IDS), *id);
         }
+        // A pointer stores only what search needs; the rest is in its tile.
+        let stored = pointer.is_none();
         if let Some(osm) = &poi.osm {
-            doc.add_text(self.field(FIELD_OSM), osm.encode());
+            if stored {
+                doc.add_text(self.field(FIELD_OSM), osm.encode());
+            }
             doc.add_text(self.field(FIELD_OSM_ID), format!("{}/{}", osm.osm_type.as_str(), osm.id));
         }
-        if let Some(poi_id) = poi.tag("cardinal:poi_id").and_then(|id| id.parse::<u64>().ok()) {
+        if let Some(poi_id) = poi.poi_id() {
             doc.add_u64(self.field(FIELD_POI_ID), poi_id);
+        }
+        if let Some(pointer) = pointer {
+            doc.add_u64(self.field(FIELD_POINTER_POI_ID), pointer.poi_id);
+            doc.add_u64(self.field(FIELD_POINTER_TILE), pointer.tile.pack());
         }
         if let Some(wof) = &poi.wof {
             doc.add_u64(self.field(FIELD_WOF_ID), wof.id);
-            doc.add_text(self.field(FIELD_WOF), serde_json::to_string(wof)?);
+            if stored {
+                doc.add_text(self.field(FIELD_WOF), serde_json::to_string(wof)?);
+            }
         }
-        if !poi.tags.is_empty() {
+        if stored && !poi.tags.is_empty() {
             doc.add_object(
                 self.field(FIELD_TAGS),
                 poi.tags
@@ -979,8 +1063,10 @@ impl DocumentBuilder {
         }
         let center = s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(poi.center.y(), poi.center.x()));
         doc.add_u64(self.field(FIELD_CENTER), center.0);
-        doc.add_u64(self.field(FIELD_IS_POINT), u64::from(matches!(poi.geometry, Geometry::Point(_))));
-        doc.add_bytes(self.field(FIELD_GEOMETRY), &geometry::to_wkb(&poi.geometry)?);
+        doc.add_u64(self.field(FIELD_IS_POINT), u64::from(!stored || matches!(poi.geometry, Geometry::Point(_))));
+        if stored {
+            doc.add_bytes(self.field(FIELD_GEOMETRY), &geometry::to_wkb(&poi.geometry)?);
+        }
         let mut ancestors = BTreeSet::new();
         for cell in geometry::covering(&poi.geometry) {
             doc.add_u64(self.field(FIELD_S2_COVER), cell.0);
@@ -997,6 +1083,7 @@ impl DocumentBuilder {
 pub struct AirmailIndexWriter {
     tantivy_writer: tantivy::IndexWriter,
     schema: Schema,
+    storage: Storage,
 }
 
 impl AirmailIndexWriter {
@@ -1004,10 +1091,11 @@ impl AirmailIndexWriter {
         self.schema.get_field(name).expect("schema field")
     }
 
-    /// Builds documents for this writer, on any thread.
+    /// Builds documents for this writer, on any thread, stored as the
+    /// writer's options say.
     #[must_use]
     pub fn document_builder(&self) -> DocumentBuilder {
-        DocumentBuilder { schema: self.schema.clone() }
+        DocumentBuilder { schema: self.schema.clone(), storage: self.storage }
     }
 
     /// Adds a document from `document_builder`.
@@ -1081,6 +1169,7 @@ mod test {
             kind: Kind::Admin,
             tags: Vec::new(),
             poi: None,
+            pointer: None,
             osm: None,
             wof: Some(WofPlace {
                 id,

@@ -166,12 +166,12 @@ impl WhosOnFirst {
     /// (`default`, `preferred`, `variant`, `colloquial`).
     pub async fn names(&self, id: u64) -> Result<Vec<WofName>> {
         let id: i64 = id.try_into()?;
-        Ok(sqlx::query_as::<_, WofName>(
-            "SELECT lang, tag, abbr, name FROM main.name WHERE source = 'wof' AND id = ?1",
-        )
-        .bind(id)
-        .fetch_all(&self.pool)
-        .await?)
+        let rows: Vec<(String, String, bool, String)> =
+            sqlx::query_as("SELECT lang, tag, abbr, name FROM main.name WHERE source = 'wof' AND id = ?1")
+                .bind(id)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().map(|(lang, tag, abbr, name)| WofName { lang, tag, abbr, name }).collect())
     }
 
     /// A place's placetype, if it's in the database.
@@ -301,27 +301,7 @@ pub struct ConcisePipResponse {
     pub r#type: String,
 }
 
-/// One of a place's names.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
-pub struct WofName {
-    /// ISO 639-3, or `und` for the default name.
-    pub lang: String,
-    /// `default`, `preferred`, `variant` or `colloquial`.
-    pub tag: String,
-    /// Whether it's an abbreviation.
-    pub abbr: bool,
-    pub name: String,
-}
-
-impl WofName {
-    /// Whether the place is searched by this name. Colloquial names are
-    /// nicknames, like Seattle's "Coffee Capital of the World", that would
-    /// make every place there match their words.
-    #[must_use]
-    pub fn is_searchable(&self) -> bool {
-        self.tag != "colloquial"
-    }
-}
+pub use airmail::wof::WofName;
 
 #[derive(Debug, Clone, Deserialize, sqlx::FromRow)]
 pub struct PipPlaceName {

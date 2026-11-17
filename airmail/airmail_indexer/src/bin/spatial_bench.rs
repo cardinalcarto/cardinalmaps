@@ -96,7 +96,9 @@ fn bbox(lon: f64, lat: f64, size_m: f64) -> [f64; 4] {
 
 /// What identifies a result across indexes of the same data.
 fn id(hit: &SearchHit) -> String {
-    if let Some(osm) = &hit.osm {
+    if let Some(pointer) = &hit.pointer {
+        format!("poi:{}", pointer.poi_id)
+    } else if let Some(osm) = &hit.osm {
         format!("osm:{}/{}", osm.osm_type.as_str(), osm.id)
     } else if let Some(wof) = &hit.wof {
         format!("wof:{}", wof.id)

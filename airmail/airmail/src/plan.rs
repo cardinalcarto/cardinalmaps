@@ -719,7 +719,16 @@ impl<'a> Run<'a> {
         for item in &self.retrieved {
             let hit = match hits.entry(item.address) {
                 Entry::Occupied(hit) => hit.into_mut(),
-                Entry::Vacant(place) => place.insert(self.index.hit(&self.searcher, item.address, 0.0)?),
+                Entry::Vacant(place) => {
+                    let mut hit = self.index.hit(&self.searcher, item.address, 0.0)?;
+                    // A pointer's names are in its tile.
+                    if let (Some(pointer), Some(hydrate)) = (&hit.pointer, self.request.hydrate)
+                        && let Some(tags) = hydrate.tags(pointer)
+                    {
+                        hit.set_tags(tags);
+                    }
+                    place.insert(hit)
+                }
             };
             let hit = &*hit;
             if bbox.as_ref().is_some_and(|rects| !geometry::intersects_any(&hit.geometry, rects)) {

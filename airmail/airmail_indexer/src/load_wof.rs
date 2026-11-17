@@ -1,47 +1,42 @@
 //! Indexes Who's On First places as administrative areas.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use airmail::{
-    importance,
     index::AirmailIndexWriter,
-    poi::{AdminBand, Kind, SchemafiedPoi, ToIndexPoi, WofPlace, is_containing_admin, iso_country_code},
+    poi::{SchemafiedPoi, ToIndexPoi},
+    wof::{WofRecord, admin_document, country, place},
 };
 use anyhow::Result;
 use futures_util::{StreamExt, stream};
 use geo::Geometry;
 use log::{info, warn};
 
-use crate::COUNTRIES;
-use crate::wof::{WhosOnFirst, WofName};
-
-/// What indexing a place needs of a place containing it.
-struct Ancestor {
-    placetype: String,
-    names: Vec<WofName>,
-    importance: f64,
-}
+use crate::wof::WhosOnFirst;
 
 /// Ancestors and spoken languages of places that contain others, which many
 /// places share.
 #[derive(Default)]
 struct Memo {
-    ancestors: Mutex<HashMap<u64, Arc<Ancestor>>>,
+    /// With their placetypes, names and populations.
+    ancestors: Mutex<HashMap<u64, Arc<WofRecord>>>,
     languages: Mutex<HashMap<u64, Arc<Vec<String>>>>,
 }
 
 impl Memo {
-    async fn ancestor(&self, wof: &WhosOnFirst, id: u64) -> Result<Arc<Ancestor>> {
+    async fn ancestor(&self, wof: &WhosOnFirst, id: u64) -> Result<Arc<WofRecord>> {
         if let Some(ancestor) = self.ancestors.lock().unwrap().get(&id) {
             return Ok(ancestor.clone());
         }
-        let placetype = wof.placetype(id).await?.unwrap_or_default();
         let properties = wof.properties(id, &["wof:population", "wof:population_rank"]).await?;
-        let ancestor = Arc::new(Ancestor {
-            importance: importance::admin_importance(&placetype, population(&properties), population_rank(&properties)),
-            placetype,
+        let ancestor = Arc::new(WofRecord {
+            id,
+            placetype: wof.placetype(id).await?.unwrap_or_default(),
             names: wof.names(id).await?,
+            population: population(&properties),
+            population_rank: population_rank(&properties),
+            ..WofRecord::default()
         });
         self.ancestors.lock().unwrap().insert(id, ancestor.clone());
         Ok(ancestor)
@@ -96,7 +91,8 @@ pub async fn load_wof(wof: &WhosOnFirst, writer: &mut AirmailIndexWriter) -> Res
     Ok(count)
 }
 
-/// A place as a document, or `None` if it has no name or no location.
+/// A place as a document, or `None` if it has no name or no location (see
+/// `airmail::wof::admin_document`).
 async fn admin(wof: &WhosOnFirst, memo: &Memo, id: u64, placetype: String) -> Result<Option<ToIndexPoi>> {
     let names = wof.names(id).await?;
     if place(id, &placetype, &names, None, None).is_none() {
@@ -106,75 +102,37 @@ async fn admin(wof: &WhosOnFirst, memo: &Memo, id: u64, placetype: String) -> Re
     // SpatiaLite databases have `wof:country` as `alpha2`.
     let properties = wof.properties(id, &["wof:population", "wof:population_rank", "alpha2", "wof:country"]).await?;
     let mut geometries = wof.geometries(id).await?;
-
-    // Its shape if it has one, else its label point.
     let label = ["label_position", "reversegeo_position", "centroid"]
         .into_iter()
         .find_map(|role| match geometries.get(role) {
             Some(Geometry::Point(point)) => Some(*point),
             _ => None,
         });
-    let shape = geometries.remove("boundary").or_else(|| label.map(Geometry::Point));
-    let Some(shape) = shape else {
+    let boundary = geometries.remove("boundary");
+    if boundary.is_none() && label.is_none() {
         return Ok(None);
-    };
-
-    // It's searched by the names of the places containing it in the
-    // languages spoken there, English, and their default names.
-    let country = std::iter::once(&id).chain(&ancestors).find(|a| COUNTRIES.contains(*a)).copied();
-    let languages = match country {
+    }
+    let languages = match country(std::iter::once(&id).chain(&ancestors)) {
         Some(country) => memo.languages(wof, country).await?,
         None => Arc::new(Vec::new()),
     };
-    let mut admin_names = BTreeSet::new();
-    let mut containing = Vec::new();
-    let mut city_importance: f64 = 0.0;
-    for id in &ancestors {
-        let ancestor = memo.ancestor(wof, *id).await?;
-        if !is_containing_admin(&ancestor.placetype) {
-            continue;
-        }
-        containing.push(*id);
-        if ancestor.placetype == "locality" {
-            city_importance = city_importance.max(ancestor.importance);
-        }
-        let Some(band) = AdminBand::of(&ancestor.placetype) else { continue };
-        for name in &ancestor.names {
-            if name.is_searchable() && (name.lang == "und" || name.lang == "eng" || languages.contains(&name.lang)) {
-                admin_names.insert((band, name.name.clone()));
-            }
-        }
+    let mut known = HashMap::new();
+    for ancestor in &ancestors {
+        known.insert(*ancestor, memo.ancestor(wof, *ancestor).await?);
     }
-
-    // Variant names (often historical) find a place, but aren't its name.
-    let searchable = |variant: bool| -> BTreeSet<String> {
-        names.iter().filter(|n| n.is_searchable() && (n.tag == "variant") == variant).map(|n| n.name.clone()).collect()
+    let record = WofRecord {
+        id,
+        placetype,
+        names,
+        ancestors,
+        population: population(&properties),
+        population_rank: population_rank(&properties),
+        country: properties.get("alpha2").or_else(|| properties.get("wof:country")).cloned(),
+        languages: Vec::new(),
+        label,
+        boundary,
     };
-    let mut own = searchable(false);
-    let mut variants: Vec<String> = searchable(true).into_iter().filter(|n| !own.contains(n)).collect();
-    if own.is_empty() {
-        // A place known only by variants is known by them.
-        own.extend(variants.drain(..));
-    }
-    let size = airmail::geometry::bbox(&shape).map_or(0.0, |[west, south, east, north]| (east - west) * (north - south));
-    let Some(mut doc) = ToIndexPoi::new(Kind::Admin, own.into_iter().collect(), shape, Vec::new()) else {
-        return Ok(None);
-    };
-    doc.variant_names = variants;
-    if let Some(label) = label {
-        doc.center = label;
-    }
-    doc.importance = importance::admin_importance(&placetype, population(&properties), population_rank(&properties));
-    if importance::is_neighbourhood(&placetype) {
-        doc.importance = importance::neighbourhood_importance(doc.importance, city_importance);
-    }
-    doc.admin_ids = containing;
-    doc.admin_names = admin_names.into_iter().collect();
-    let population = population(&properties);
-    let country = properties.get("alpha2").or_else(|| properties.get("wof:country")).and_then(|c| iso_country_code(c));
-    doc.country_code = country.clone();
-    doc.wof = place(id, &placetype, &names, population, country).map(|place| WofPlace { size, ..place });
-    Ok(Some(doc))
+    Ok(admin_document(&record, |ancestor| known.get(&ancestor).map(|a| &**a), &languages))
 }
 
 /// A place's `wof:population`, which Who's On First sometimes writes as a decimal.
@@ -184,68 +142,4 @@ fn population(properties: &HashMap<String, String>) -> Option<u64> {
 
 fn population_rank(properties: &HashMap<String, String>) -> Option<u32> {
     properties.get("wof:population_rank").and_then(|r| r.parse().ok())
-}
-
-/// What results show of a place, from its names, or `None` if it has none.
-fn place(id: u64, placetype: &str, names: &[WofName], population: Option<u64>, country: Option<String>) -> Option<WofPlace> {
-    let full = || names.iter().filter(|n| !n.abbr);
-    let default_name = full()
-        .find(|n| n.lang == "und" && n.tag == "default")
-        .or_else(|| full().find(|n| n.lang == "eng" && n.tag == "preferred"))
-        .or_else(|| full().next())?
-        .name
-        .clone();
-    let mut preferred = BTreeMap::new();
-    for name in full().filter(|n| n.tag == "preferred") {
-        preferred.entry(name.lang.clone()).or_insert_with(|| name.name.clone());
-    }
-    let abbreviation = names
-        .iter()
-        .filter(|n| n.abbr)
-        .min_by_key(|n| match n.lang.as_str() {
-            "eng" => 0,
-            "und" => 1,
-            _ => 2,
-        })
-        .map(|n| n.name.clone());
-    Some(WofPlace {
-        id,
-        placetype: placetype.to_string(),
-        population,
-        default_name,
-        names: preferred,
-        abbreviation,
-        country,
-        size: 0.0,
-    })
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    fn name(lang: &str, tag: &str, abbr: bool, name: &str) -> WofName {
-        WofName { lang: lang.into(), tag: tag.into(), abbr, name: name.into() }
-    }
-
-    #[test]
-    fn place_picks_default_preferred_and_abbreviation() {
-        let names = [
-            name("und", "default", false, "Zürich"),
-            name("und", "default", true, "ZH"),
-            name("eng", "preferred", false, "Zurich"),
-            name("eng", "variant", false, "ZRH"),
-            name("deu", "preferred", false, "Zürich"),
-        ];
-        let place = place(85682309, "region", &names, Some(1_500_000), Some("CH".into())).unwrap();
-        assert_eq!(place.default_name, "Zürich");
-        assert_eq!(place.names.get("eng").map(String::as_str), Some("Zurich"));
-        assert_eq!(place.abbreviation.as_deref(), Some("ZH"));
-        assert!(!place.names.values().any(|n| n == "ZRH"));
-    }
-
-    #[test]
-    fn place_needs_a_name() {
-        assert!(place(1, "locality", &[], None, None).is_none());
-    }
 }

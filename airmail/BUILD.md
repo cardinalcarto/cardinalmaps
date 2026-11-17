@@ -86,7 +86,7 @@ A model stores its features in an FST, with 16-bit weights, so it can be read wi
 
 ## On phones
 
-The `airmail` crate (search, `DocumentBuilder`, the writer, categorical inference) and `airmail_tagger` build for Android and iOS with `airmail`'s default features off, which drops tokio and tantivy's columnar zstd (a C dependency no field uses). Without `tokio`, use `lookup_blocking` and `num_docs_blocking`; `AirmailIndex::writer_with` takes the indexing memory and threads.
+The `airmail` crate (search, `DocumentBuilder`, the writer, categorical inference) and `airmail_tagger` build for Android and iOS with `airmail`'s default features off, which drops tokio and tantivy's columnar zstd (a C dependency no field uses). Without `tokio`, use `lookup_blocking` and `num_docs_blocking`; `AirmailIndex::writer_with` takes the indexing memory and threads, and `Storage::Pointers`, with which a document with a stable POI ID stores only a pointer to the tile feature it came from (`SearchHit::pointer`). Documents are made from tile features' tags with `airmail::osm::document` and `street_document`, from Who's On First records with `airmail::wof::admin_document`, and postcodes with `airmail::postcodes::Postcodes`, as the indexer does.
 
 ```bash
 cargo check -p airmail -p airmail_tagger --no-default-features --target aarch64-linux-android
