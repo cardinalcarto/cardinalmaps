@@ -22,6 +22,7 @@ import java.util.stream.Stream;
 import org.openmaptiles.addons.ExtraLayers;
 import org.openmaptiles.generated.OpenMapTilesSchema;
 import org.openmaptiles.generated.Tables;
+import org.openmaptiles.layers.Geocoder;
 import org.openmaptiles.layers.Housenumber;
 import org.openmaptiles.layers.Poi;
 import org.openmaptiles.layers.Transportation;
@@ -58,6 +59,8 @@ public class OpenMapTilesProfile extends ForwardingProfile {
   private final MultiExpression.Index<RowDispatch> osmMappings;
   /** Index variant that filters out any table only used by layers that implement IgnoreWikidata class. */
   private final MultiExpression.Index<Boolean> wikidataMappings;
+  /** The geocoder layer, which runs after the rest, or null if it isn't being built. */
+  private Geocoder geocoderLayer;
 
   public OpenMapTilesProfile(Planetiler runner) {
     this(runner.translations(), runner.config(), runner.stats());
@@ -86,6 +89,13 @@ public class OpenMapTilesProfile extends ForwardingProfile {
         housenumber.useAssociatedStreets(streets);
         housenumber.useAdmins(poiLayer.admins());
         needsStreets |= caresAboutLayer(layer);
+      } else if (layer instanceof Geocoder geocoder) {
+        geocoder.useAssociatedStreets(streets);
+        geocoder.useAdmins(poiLayer.admins());
+        if (caresAboutLayer(layer)) {
+          needsStreets = true;
+          geocoderLayer = geocoder;
+        }
       }
     }
     if (needsStreets) {
@@ -166,6 +176,15 @@ public class OpenMapTilesProfile extends ForwardingProfile {
   @Override
   public Map<String, List<String>> dependsOnLayer() {
     return Map.of("transportation_name", List.of("transportation"));
+  }
+
+  @Override
+  public void processFeature(SourceFeature sourceFeature, FeatureCollector features) {
+    super.processFeature(sourceFeature, features);
+    // special-case: the geocoder layer takes what other layers didn't, so it goes last
+    if (geocoderLayer != null && Geocoder.reads(sourceFeature)) {
+      geocoderLayer.processAfterOtherLayers(sourceFeature, features);
+    }
   }
 
   /** Returns the imposm3 table row constructors that match an input element's tags. */
