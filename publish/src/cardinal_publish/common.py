@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-KINDS = ("map", "routing", "transit")
+KINDS = ("map", "routing", "transit", "geocoder")
 
 # A release is named by its date; a second release on one day is `.1`, then `.2`.
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}(\.[1-9]\d*)?$")
