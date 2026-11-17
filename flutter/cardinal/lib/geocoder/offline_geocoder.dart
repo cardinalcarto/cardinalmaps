@@ -201,8 +201,10 @@ class OfflineGeocoder implements Geocoder, OfflineListener {
   }) async {
     var aborted = false;
     unawaited(abort?.then((_) => aborted = true));
+    final watch = Stopwatch()..start();
     final searcher = await _searcher();
     if (searcher == null) return const [];
+    final opened = watch.elapsedMicroseconds;
     final basemap = _open!.files.basemap;
     final json = await searcher.search(
       rust.OfflineQuery(
@@ -231,7 +233,13 @@ class OfflineGeocoder implements Geocoder, OfflineListener {
               as List<Object?>)
         r as Map<String, Object?>,
     ];
+    final searched = watch.elapsedMicroseconds;
     final places = await _hydrate(results, basemap, lang);
+    debugPrint(
+      'cardinal-timing: offline search "$query" ${results.length} results: '
+      'open ${opened ~/ 1000} ms, search ${(searched - opened) / 1000} ms, '
+      'hydrate ${(watch.elapsedMicroseconds - searched) / 1000} ms',
+    );
     if (aborted) throw http.RequestAbortedException();
     return places;
   }
