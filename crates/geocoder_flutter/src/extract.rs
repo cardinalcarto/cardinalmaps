@@ -31,10 +31,12 @@ pub enum SourceLayer {
     WaterName,
     Park,
     AerodromeLabel,
+    /// Rivers, streams, canals, ditches, dams: named lines.
+    Waterway,
 }
 
 impl SourceLayer {
-    pub const ALL: [SourceLayer; 8] = [
+    pub const ALL: [SourceLayer; 9] = [
         Self::Poi,
         Self::Housenumber,
         Self::TransportationName,
@@ -43,6 +45,7 @@ impl SourceLayer {
         Self::WaterName,
         Self::Park,
         Self::AerodromeLabel,
+        Self::Waterway,
     ];
 
     /// The layer of the tiles with this name, if the index reads it.
@@ -57,6 +60,7 @@ impl SourceLayer {
             "water_name" => Self::WaterName,
             "park" => Self::Park,
             "aerodrome_label" => Self::AerodromeLabel,
+            "waterway" => Self::Waterway,
             _ => return None,
         })
     }
@@ -73,6 +77,7 @@ impl SourceLayer {
             Self::WaterName => "water_name",
             Self::Park => "park",
             Self::AerodromeLabel => "aerodrome_label",
+            Self::Waterway => "waterway",
         }
     }
 }
@@ -192,22 +197,25 @@ pub enum TileError {
     },
 }
 
+/// How many layers the index reads.
+pub const LAYERS: usize = SourceLayer::ALL.len();
+
 /// What reading a tile found, layer by layer (indexed as [`SourceLayer::ALL`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TileCounts {
     /// Features in the layers read, buffer included.
-    pub features: [u64; 8],
+    pub features: [u64; LAYERS],
     /// Points kept (each point of a multipoint counts).
-    pub points: [u64; 8],
+    pub points: [u64; LAYERS],
     /// Points dropped because they're in the buffer, outside the tile.
-    pub buffer_points: [u64; 8],
+    pub buffer_points: [u64; LAYERS],
     /// Pieces of lines and areas, for the merger.
-    pub pieces: [u64; 8],
+    pub pieces: [u64; LAYERS],
 }
 
 impl TileCounts {
     pub fn add(&mut self, other: &TileCounts) {
-        for i in 0..8 {
+        for i in 0..LAYERS {
             self.features[i] += other.features[i];
             self.points[i] += other.points[i];
             self.buffer_points[i] += other.buffer_points[i];

@@ -17,7 +17,7 @@ use crate::wof::WofPlaces;
 
 /// What tiles add to a feature that isn't one of its OSM tags (the app's `_notTags`, and
 /// the layers' other OpenMapTiles attributes). Not stored or indexed.
-const NOT_TAGS: [&str; 11] = [
+const NOT_TAGS: [&str; 13] = [
     "class",
     "subclass",
     "rank",
@@ -29,6 +29,8 @@ const NOT_TAGS: [&str; 11] = [
     "intermittent",
     "ele_ft",
     "housenumber",
+    "brunnel",
+    "seasonal",
 ];
 
 /// The layers whose feature IDs are stable POI IDs.
@@ -97,6 +99,14 @@ fn label_category(layer: SourceLayer, class: Option<&str>) -> Option<(&'static s
         (SourceLayer::Park, Some("nature_reserve")) => ("leisure", "nature_reserve"),
         (SourceLayer::Park, Some("national_park")) => ("boundary", "national_park"),
         (SourceLayer::Park, Some("protected_area")) => ("boundary", "protected_area"),
+        (SourceLayer::Waterway, Some("river")) => ("waterway", "river"),
+        (SourceLayer::Waterway, Some("stream")) => ("waterway", "stream"),
+        (SourceLayer::Waterway, Some("canal")) => ("waterway", "canal"),
+        (SourceLayer::Waterway, Some("drain")) => ("waterway", "drain"),
+        (SourceLayer::Waterway, Some("ditch")) => ("waterway", "ditch"),
+        (SourceLayer::Waterway, Some("dam")) => ("waterway", "dam"),
+        (SourceLayer::Waterway, Some("weir")) => ("waterway", "weir"),
+        (SourceLayer::Waterway, Some("rapids")) => ("waterway", "rapids"),
         _ => return None,
     })
 }
@@ -368,6 +378,36 @@ mod tests {
         let doc = document(f).unwrap();
         assert_eq!(doc.tag("aeroway"), Some("aerodrome"));
         assert_eq!(doc.tag("iata"), Some("SEK"));
+    }
+
+    #[test]
+    fn named_waterways_are_pois_with_their_waterway_tag() {
+        let mut f = feature(
+            SourceLayer::Waterway,
+            Some(3_016_910_002),
+            &[("name", "Salzer Creek")],
+        );
+        f.tags = pairs(&[
+            ("brunnel", "tunnel"),
+            ("class", "stream"),
+            ("intermittent", "0"),
+        ]);
+        f.importance = Some(0.11);
+        f.geometry = Geometry::LineString(LineString::from(vec![(-122.9, 46.6), (-122.8, 46.65)]));
+        let doc = document(f).unwrap();
+        assert_eq!(doc.kind, Kind::Poi);
+        assert_eq!(doc.names, vec!["Salzer Creek"]);
+        assert_eq!(doc.tag("waterway"), Some("stream"));
+        assert_eq!(doc.tag("brunnel"), None);
+        assert!((doc.importance - 0.11).abs() < 1e-9);
+        assert_eq!(
+            doc.osm.map(|o| (o.osm_type, o.id)),
+            Some((OsmType::Way, 301_691_000))
+        );
+        assert_eq!(
+            SourceLayer::from_name("waterway"),
+            Some(SourceLayer::Waterway)
+        );
     }
 
     #[test]
