@@ -102,6 +102,69 @@ abstract interface class OfflineListener {
   });
 }
 
+/// A ready region, as offline search indexes it: its map tiles in the basemap, and the
+/// Who's On First areas over [bounds].
+@immutable
+class IndexRegion {
+  const IndexRegion({required this.id, required this.bounds});
+
+  final int id;
+  final GeoRect bounds;
+
+  @override
+  bool operator ==(Object other) =>
+      other is IndexRegion && other.id == id && other.bounds == bounds;
+
+  @override
+  int get hashCode => Object.hash(id, bounds);
+
+  @override
+  String toString() => 'IndexRegion($id)';
+}
+
+/// What offline search's index is built from: the ready regions of the pinned map
+/// release, whose tiles are in [basemap].
+@immutable
+class IndexSources {
+  const IndexSources({
+    required this.mapRelease,
+    required this.basemap,
+    required this.regions,
+  });
+
+  static const none = IndexSources(
+    mapRelease: null,
+    basemap: null,
+    regions: [],
+  );
+
+  final String? mapRelease;
+  final String? basemap;
+
+  /// By ID.
+  final List<IndexRegion> regions;
+
+  @override
+  bool operator ==(Object other) =>
+      other is IndexSources &&
+      other.mapRelease == mapRelease &&
+      other.basemap == basemap &&
+      listEquals(other.regions, regions);
+
+  @override
+  int get hashCode => Object.hash(mapRelease, basemap, Object.hashAll(regions));
+
+  @override
+  String toString() => 'IndexSources($mapRelease, $regions)';
+}
+
+/// Offline search's index, told whenever the ready regions may have changed: a region
+/// was installed or deleted, or the app started. It builds in the background; the
+/// downloads don't wait for it.
+abstract interface class RegionIndexer {
+  void regionsChanged(IndexSources sources);
+}
+
 /// Thrown by [OfflineDownloads.start] when a plan no longer fits what's on the device.
 class StalePlan implements Exception {
   const StalePlan(this.message);
@@ -135,8 +198,12 @@ class OfflineDownloads {
     this.native = const RustOfflineNative(),
     this.maxAttempts = 3,
     this.maxQueued = 200,
+    this.indexer,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
+
+  /// Offline search's index, told when regions become ready or go.
+  final RegionIndexer? indexer;
 
   final OfflineDatabase db;
 
@@ -232,7 +299,71 @@ class OfflineDownloads {
         await _delete(region);
       }
       await _pump();
+      // An index build the app stopped in, or regions that changed while it was away.
+      await _indexChanged();
     });
+  }
+
+  /// What offline search's index is built from now: the ready regions of the pinned map
+  /// release.
+  Future<IndexSources> indexSources() async {
+    final map = (await pinned())[ReleaseKind.map]?.date;
+    if (map == null) return IndexSources.none;
+    final rows =
+        await (db.select(db.regions)
+              ..where(
+                (r) =>
+                    r.state.equalsValue(RegionState.ready) &
+                    r.kind.equalsValue(RegionKind.explicit) &
+                    r.mapRelease.equals(map),
+              )
+              ..orderBy([(r) => OrderingTerm.asc(r.id)]))
+            .get();
+    return IndexSources(
+      mapRelease: map,
+      basemap: basemapPath(map),
+      regions: [
+        for (final r in rows)
+          if (r.polygon case final polygon?)
+            IndexRegion(
+              id: r.id,
+              bounds: GeoPolygon.fromJson(jsonDecode(polygon) as List<Object?>)
+                  .bounds,
+            ),
+      ],
+    );
+  }
+
+  Future<void> _indexChanged() async {
+    final indexer = this.indexer;
+    if (indexer == null) return;
+    try {
+      indexer.regionsChanged(await indexSources());
+    } on Object catch (e) {
+      debugPrint('offline: telling search the regions changed failed: $e');
+    }
+  }
+
+  /// The geocoder's installed models, once their region is ready: `tagger.model` and the
+  /// `categorical/<lang>.amcats` downloaded with it, as paths; nulls otherwise.
+  Future<({String? tagger, String? categories})> geocoderModelFiles() async {
+    final region =
+        await (db.select(db.regions)..where(
+              (r) =>
+                  r.kind.equalsValue(RegionKind.geocoderModels) &
+                  r.state.equalsValue(RegionState.ready),
+            ))
+            .getSingleOrNull();
+    if (region == null) return (tagger: null, categories: null);
+    final files = await _regionFiles(region.id);
+    String? path(bool Function(String) matches) => files
+        .where((f) => f.state == FileState.installed && matches(f.installPath))
+        .map((f) => '$root/${f.installPath}')
+        .firstOrNull;
+    return (
+      tagger: path((p) => p.endsWith('/tagger.model')),
+      categories: path((p) => p.endsWith('.amcats')),
+    );
   }
 
   /// Picks up work a previous run left between states. Files and ranges the
@@ -1402,6 +1533,8 @@ class OfflineDownloads {
     }
     await _setRegion(region.id, RegionState.ready);
     await _notify(feedsChanged: feeds.isNotEmpty);
+    // Its tiles are in: offline search indexes them (and fetches its areas) next.
+    if (region.kind == RegionKind.explicit) await _indexChanged();
   }
 
   /// Writes `transit/<release>/transfers/manifest.json`: the shared fields (less
@@ -1562,6 +1695,7 @@ class OfflineDownloads {
       await (db.delete(db.regions)..where((r) => r.id.equals(region.id))).go();
     });
     await _notify(feedsChanged: hadFeeds.isNotEmpty, filesRemoved: true);
+    if (region.kind == RegionKind.explicit) await _indexChanged();
   }
 
   // On-demand files.

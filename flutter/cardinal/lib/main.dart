@@ -82,12 +82,20 @@ void main() {
   // Directions and nearby transit share each area's real-time messages.
   final realtime = AreaRealtimeFeeds();
   final nearby = OfflineNearbySource(offline.area, realtime);
+  final offlineGeocoder = OfflineGeocoder(
+    index: offline.search,
+    models: () async =>
+        await (await offline.downloads)?.geocoderModelFiles() ??
+        (tagger: null, categories: null),
+  );
+  // It opens again with the models once they're downloaded.
+  unawaited(offline.downloads.then((d) => d?.addListener(offlineGeocoder)));
   runApp(
     StoreScope(
       store: store,
       child: GeocoderScope(
         online: OnlineGeocoder(Uri.parse(geocoderUrl)),
-        offline: const OfflineGeocoder(),
+        offline: offlineGeocoder,
         child: DirectionsScope(
           routes: routes,
           transit: OfflineTransitSource(offline.area, realtime),

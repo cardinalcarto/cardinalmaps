@@ -21,6 +21,8 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   flutter_tts: ^4.2.5
+  geocoder:
+    path: ../geocoder
   geolocator: ^14.1.2
   go_router: ^18.1.1
   http: ^1.6.0
