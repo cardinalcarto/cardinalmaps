@@ -9,7 +9,8 @@
 //! unchanged; others are decoded, retagged and recompressed. Existing
 //! `cardinal:poi_id`, `cardinal:version` and `cardinal:importance` tags are
 //! replaced, so a file can be patched again. A POI gets `cardinal:importance`
-//! whether or not its version has an identifier.
+//! whether or not its version has an identifier, and so does every other
+//! element that [`wants_importance`] (identifiers are only ever for POIs).
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -24,10 +25,11 @@ use sqlx::PgPool;
 
 use crate::db::Checkpoint;
 use crate::identity::VersionRow;
-use crate::importance::{IMPORTANCE_TAG, Importances};
+use crate::importance::{IMPORTANCE_TAG, Importances, wants_importance};
 use crate::osm::OsmType;
 use crate::pbf::{DenseNodes, PrimitiveBlock, RawBlob};
 use crate::rules::{is_poi, is_poi_key, is_poi_value_key};
+use airmail_importance::osm::is_name_key;
 
 pub const POI_ID_TAG: &str = "cardinal:poi_id";
 /// The element's OSM version. Each poi_id belongs to a single element, so this
@@ -195,7 +197,8 @@ struct PoiVersion {
 #[derive(Clone, Copy, PartialEq)]
 enum KeyKind {
     Other,
-    /// A key that can make an element a POI, so its tags need checking.
+    /// A key that can make an element a POI or give it an importance (a
+    /// name), so its tags need checking.
     Candidate,
     /// A tag this module adds, which is removed before retagging.
     Added,
@@ -221,14 +224,17 @@ impl Retagger<'_> {
         self.kinds.get(sid as usize).copied().unwrap_or(KeyKind::Other)
     }
 
-    /// True if the tags given by key and value string indices are a POI's.
-    /// Only elements with a candidate key need checking.
-    fn is_poi(&self, tags: impl Iterator<Item = (u32, u32)> + Clone) -> bool {
+    /// Whether the tags given by key and value string indices are a POI's,
+    /// and whether they get an importance ([`wants_importance`]). Only
+    /// elements with a candidate key need checking.
+    fn classify(&self, osm_type: OsmType, tags: impl Iterator<Item = (u32, u32)> + Clone) -> (bool, bool) {
         if !tags.clone().any(|(k, _)| self.kind(k) == KeyKind::Candidate) {
-            return false;
+            return (false, false);
         }
         let string = |i: u32| self.strings.get(i as usize).and_then(|s| std::str::from_utf8(s).ok()).unwrap_or("");
-        is_poi(tags.map(|(k, v)| (string(k), string(v))))
+        let tags = tags.map(move |(k, v)| (string(k), string(v)));
+        let poi = is_poi(tags.clone());
+        (poi, poi || wants_importance(osm_type, tags))
     }
 
     /// The index of `s` in the string table, adding it if it's not there.
@@ -265,18 +271,26 @@ impl Retagger<'_> {
     }
 
     /// What's known about an element, if it's a POI version with an
-    /// identifier or importance.
-    fn poi(&mut self, osm_type: OsmType, id: i64, version: Option<i32>, is_poi: bool) -> Result<Option<PoiVersion>> {
-        if !is_poi {
+    /// identifier, or an element version with an importance. Only POIs have
+    /// identifiers.
+    fn poi(
+        &mut self,
+        osm_type: OsmType,
+        id: i64,
+        version: Option<i32>,
+        (is_poi, wants_importance): (bool, bool),
+    ) -> Result<Option<PoiVersion>> {
+        if !is_poi && !wants_importance {
             return Ok(None);
         }
         let Some(version) = version.filter(|&v| v > 0) else {
             bail!("{} {id} has no version; the input must include element metadata", osm_type.as_str());
         };
-        let poi_id = self.ids.get(osm_type, id, version);
-        match poi_id {
-            Some(_) => self.stats.tagged[osm_type as usize] += 1,
-            None => self.stats.unknown[osm_type as usize] += 1,
+        let poi_id = if is_poi { self.ids.get(osm_type, id, version) } else { None };
+        match (is_poi, poi_id) {
+            (true, Some(_)) => self.stats.tagged[osm_type as usize] += 1,
+            (true, None) => self.stats.unknown[osm_type as usize] += 1,
+            (false, _) => {}
         }
         let importance = self.importances.get(osm_type, id, version);
         if importance.is_some() {
@@ -299,8 +313,8 @@ impl Retagger<'_> {
         if had_tag {
             (*keys, *vals) = keys.iter().zip(vals.iter()).filter(|&(&k, _)| self.kind(k) != KeyKind::Added).unzip();
         }
-        let is_poi = self.is_poi(keys.iter().copied().zip(vals.iter().copied()));
-        let poi = self.poi(osm_type, id, version, is_poi)?;
+        let class = self.classify(osm_type, keys.iter().copied().zip(vals.iter().copied()));
+        let poi = self.poi(osm_type, id, version, class)?;
         if let Some(poi) = poi {
             for (k, v) in self.tags(poi) {
                 keys.push(k);
@@ -334,8 +348,8 @@ impl Retagger<'_> {
             pos += 1;
             let version = dense.denseinfo.as_ref().and_then(|info| info.version.get(i).copied());
             let tags = keys_vals[start..].as_chunks::<2>().0.iter().map(|&[k, v]| (k as u32, v as u32));
-            let is_poi = self.is_poi(tags);
-            if let Some(poi) = self.poi(OsmType::Node, id, version, is_poi)? {
+            let class = self.classify(OsmType::Node, tags);
+            if let Some(poi) = self.poi(OsmType::Node, id, version, class)? {
                 for (k, v) in self.tags(poi) {
                     keys_vals.extend([k as i32, v as i32]);
                 }
@@ -359,7 +373,7 @@ fn patch_block(block: &mut PrimitiveBlock, ids: &PoiIds, importances: &Importanc
         .iter()
         .map(|s| match std::str::from_utf8(s) {
             Ok(POI_ID_TAG | VERSION_TAG | IMPORTANCE_TAG) => KeyKind::Added,
-            Ok(key) if is_poi_key(key) || is_poi_value_key(key) => KeyKind::Candidate,
+            Ok(key) if is_poi_key(key) || is_poi_value_key(key) || is_name_key(key) => KeyKind::Candidate,
             _ => KeyKind::Other,
         })
         .collect();
@@ -491,6 +505,58 @@ mod tests {
         let before = block.clone();
         patch_block(&mut block, &ids, &importances, &mut Stats::default()).unwrap();
         assert_eq!(block, before);
+    }
+
+    #[test]
+    fn tags_importance_of_named_elements_that_arent_pois() {
+        // A stream named only in English and a named bridge: not POIs, so no
+        // identifier even if one were known, but airmail indexes them, so
+        // they get their importance. A named road gets neither.
+        let mut block = PrimitiveBlock {
+            stringtable: strings(&[
+                "",
+                "name:en",
+                "Salzer Creek",
+                "waterway",
+                "stream",
+                "name",
+                "B",
+                "bridge",
+                "yes",
+                "highway",
+                "primary",
+            ]),
+            primitivegroup: vec![PrimitiveGroup {
+                ways: [(1, vec![1, 3], vec![2, 4]), (2, vec![5, 7], vec![6, 8]), (3, vec![5, 9], vec![6, 10])]
+                    .map(|(id, keys, vals)| Way {
+                        id,
+                        keys,
+                        vals,
+                        info: Some(Info { version: Some(1), ..Default::default() }),
+                        ..Default::default()
+                    })
+                    .to_vec(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let ids = PoiIds { by_type: [vec![], vec![(1, 1, 100), (2, 1, 101)], vec![]] };
+        let importances = Importances::from_entries(vec![
+            (OsmType::Way, 1, 1, 0.2),
+            (OsmType::Way, 2, 1, 0.1),
+            (OsmType::Way, 3, 1, 0.3),
+        ]);
+        let mut stats = Stats::default();
+        assert!(patch_block(&mut block, &ids, &importances, &mut stats).unwrap());
+        let s = |i: u32| String::from_utf8(block.stringtable.s[i as usize].clone()).unwrap();
+        let ways = &block.primitivegroup[0].ways;
+        let added = |way: &Way| -> Vec<(String, String)> {
+            way.keys.iter().zip(&way.vals).skip(2).map(|(&k, &v)| (s(k), s(v))).collect()
+        };
+        assert_eq!(added(&ways[0]), vec![(IMPORTANCE_TAG.to_string(), "0.2".to_string())]);
+        assert_eq!(added(&ways[1]), vec![(IMPORTANCE_TAG.to_string(), "0.1".to_string())]);
+        assert!(added(&ways[2]).is_empty());
+        assert_eq!((stats.tagged, stats.unknown, stats.importance), ([0, 0, 0], [0, 0, 0], [0, 2, 0]));
     }
 
     #[test]

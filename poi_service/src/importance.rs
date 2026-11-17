@@ -10,7 +10,10 @@
 //! multipolygon relation's is assembled from its member ways, as the indexer
 //! does; other relations, like points and lines, have no area. Every element
 //! that's a POI by [`is_poi`] gets an importance, whether or not airmail would
-//! index it.
+//! index it, and so does every element airmail's indexer makes a POI document
+//! of though it isn't one by [`is_poi`] (a named building or stream, say):
+//! see [`wants_importance`]. The phone's index reads it from the tiles for
+//! all of them, as the server computes it for all of them.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -26,6 +29,22 @@ use rayon::prelude::*;
 use crate::osm::OsmType;
 use crate::rules::is_poi;
 
+/// Whether an element of this type with these tags gets an importance: a POI
+/// by [`is_poi`], or an element airmail's indexer makes a POI document of
+/// (named, not a road, boundary or administrative place; a relation must be a
+/// named multipolygon, the only relations the indexer reads as places).
+pub fn wants_importance<'a>(osm_type: OsmType, tags: impl Iterator<Item = (&'a str, &'a str)> + Clone) -> bool {
+    if is_poi(tags.clone()) {
+        return true;
+    }
+    match osm_type {
+        OsmType::Relation => {
+            is_multipolygon(tags.clone()) && tags.clone().any(|(k, _)| k == "name") && osm::is_indexed_poi(tags)
+        }
+        OsmType::Node | OsmType::Way => osm::is_indexed_poi(tags),
+    }
+}
+
 pub const IMPORTANCE_TAG: &str = "cardinal:importance";
 
 /// What `osmium add-locations-to-ways` marks a file with.
@@ -38,7 +57,8 @@ const BLOBS_PER_CHUNK: usize = 256;
 /// (OSM's precision) to halve what multipolygons' member ways take.
 type Locations = Vec<(i32, i32)>;
 
-/// Every POI's importance, sorted for lookup.
+/// The importance of every element that [`wants_importance`], sorted for
+/// lookup.
 #[derive(Default)]
 pub struct Importances {
     /// (osm_id, version, importance) for nodes, ways and relations.
@@ -46,8 +66,8 @@ pub struct Importances {
 }
 
 impl Importances {
-    /// Computes the importance of every POI in `path`, which must have node
-    /// locations on its ways.
+    /// Computes the importance of every element in `path` that
+    /// [`wants_importance`], which must have node locations on its ways.
     pub fn compute(path: &Path, qrank: Option<&QRank>) -> Result<Importances> {
         require_locations_on_ways(path)?;
         tracing::info!("finding the ways multipolygon POIs need in {}", path.display());
@@ -175,7 +195,7 @@ fn needed_ways(block: &PrimitiveBlock) -> Vec<i64> {
     let mut needed = Vec::new();
     for group in block.groups() {
         for relation in group.relations() {
-            if is_multipolygon(relation.tags()) && is_poi(relation.tags()) {
+            if is_multipolygon(relation.tags()) && wants_importance(OsmType::Relation, relation.tags()) {
                 needed.extend(relation.members().filter(|m| m.member_type == RelMemberType::Way).map(|m| m.member_id));
             }
         }
@@ -204,11 +224,11 @@ fn nodes_and_ways(
     let (mut pois, mut ways, mut has_relations) = (Vec::new(), Vec::new(), false);
     for element in block.elements() {
         match element {
-            Element::DenseNode(node) if is_poi(node.tags()) => {
+            Element::DenseNode(node) if wants_importance(OsmType::Node, node.tags()) => {
                 let version = version(OsmType::Node, node.id(), node.info().map(|i| i.version()))?;
                 pois.push((OsmType::Node, node.id(), version, importance(node.tags(), 0.0, qrank)));
             }
-            Element::Node(node) if is_poi(node.tags()) => {
+            Element::Node(node) if wants_importance(OsmType::Node, node.tags()) => {
                 let version = version(OsmType::Node, node.id(), node.info().version())?;
                 pois.push((OsmType::Node, node.id(), version, importance(node.tags(), 0.0, qrank)));
             }
@@ -220,7 +240,7 @@ fn nodes_and_ways(
                         .collect::<Result<_>>()?;
                     ways.push((way.id(), locations));
                 }
-                if !is_poi(way.tags()) {
+                if !wants_importance(OsmType::Way, way.tags()) {
                     continue;
                 }
                 let version = version(OsmType::Way, way.id(), way.info().version())?;
@@ -258,7 +278,7 @@ fn relations(
     let mut pois = Vec::new();
     for group in block.groups() {
         for relation in group.relations() {
-            if !is_poi(relation.tags()) {
+            if !wants_importance(OsmType::Relation, relation.tags()) {
                 continue;
             }
             let version = version(OsmType::Relation, relation.id(), relation.info().version())?;
@@ -453,6 +473,24 @@ mod tests {
         assert!(big_park > 100.0 * park);
         let big_park = expected(PoiSignals { area_m2: big_park, ..Default::default() });
         assert_eq!(importances.get(OsmType::Relation, 20, 3), big_park);
+    }
+
+    #[test]
+    fn importance_for_pois_and_what_airmail_indexes_as_pois() {
+        let wants = |osm_type, tags: &[(&str, &str)]| wants_importance(osm_type, tags.iter().copied());
+        // POIs, named or not.
+        assert!(wants(OsmType::Node, &[("amenity", "cafe"), ("name", "Uno")]));
+        assert!(wants(OsmType::Node, &[("amenity", "bench")]));
+        // Named, indexed by airmail, not POIs.
+        assert!(wants(OsmType::Way, &[("waterway", "stream"), ("name:en", "Salzer Creek")]));
+        assert!(wants(OsmType::Node, &[("name", "Main Gate"), ("addr:housenumber", "3600")]));
+        assert!(wants(OsmType::Relation, &[("type", "multipolygon"), ("name", "Lake"), ("water", "lake")]));
+        // Not indexed as POIs: roads, unnamed addresses, relations that aren't
+        // named multipolygons.
+        assert!(!wants(OsmType::Way, &[("highway", "primary"), ("name", "Aurora Avenue North")]));
+        assert!(!wants(OsmType::Node, &[("addr:housenumber", "1"), ("addr:street", "Main Street")]));
+        assert!(!wants(OsmType::Relation, &[("type", "route"), ("name", "Route 7")]));
+        assert!(!wants(OsmType::Relation, &[("type", "multipolygon"), ("alt_name", "Lake"), ("water", "lake")]));
     }
 
     #[test]

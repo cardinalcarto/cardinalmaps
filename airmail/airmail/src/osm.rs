@@ -5,15 +5,7 @@ use geo::Geometry;
 
 use crate::poi::{Kind, ToIndexPoi};
 
-/// Name keys a place is searched by, each also with a `:<language>` suffix.
-pub const NAME_KEYS: [&str; 6] = ["name", "alt_name", "official_name", "short_name", "loc_name", "int_name"];
-
-/// Whether a tag key is a name the element is searched by.
-#[must_use]
-pub fn is_name_key(key: &str) -> bool {
-    let base = key.split(':').next().unwrap_or_default();
-    NAME_KEYS.contains(&base) && key.split(':').count() <= 2 && !key.contains("etymology") && !key.contains("pronunciation")
-}
+pub use airmail_importance::osm::{NAME_KEYS, is_name_key};
 
 /// The values of name tags, split on `;`.
 fn name_values(tags: &[(String, String)]) -> impl Iterator<Item = &str> {
