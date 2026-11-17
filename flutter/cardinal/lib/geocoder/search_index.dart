@@ -314,51 +314,128 @@ const _threads = 2;
 /// Tiles read from the basemap at once.
 const _page = 256;
 
-/// Builds an index in a background isolate, so the UI isolate isn't busy with the tiles'
-/// bytes: they're read through sparkle's SQLite and handed to the geocoder there.
-Future<String> buildInIsolate(IndexBuildJob job) =>
-    Isolate.run(() => buildIndex(job), debugName: 'search index');
-
-/// Builds an index on this isolate.
-Future<String> buildIndex(IndexBuildJob job) async {
+/// Builds an index in a background isolate, so the UI isolate isn't busy with indexing.
+///
+/// The tiles are read here, on the UI isolate (sparkle reads them on its own threads),
+/// and handed to the build isolate a page at a time, which only uses the geocoder. On
+/// Android, calling sparkle from a second isolate left the UI isolate's later sparkle
+/// calls unanswered once that isolate had exited (the call ran, its result never
+/// arrived), so offline search's first hydration after a build hung until a restart.
+Future<String> buildInIsolate(IndexBuildJob job) async {
   await sparkle.initSparkle();
-  await initGeocoder();
-  final builder = await IndexBuilder.create(
-    dir: job.dir,
-    wofFiles: job.wofFiles,
-    heapMb: _heapMb,
-    threads: _threads,
+  final port = ReceivePort();
+  final messages = StreamIterator<Object?>(port);
+  final isolate = await Isolate.spawn(
+    _buildEntry,
+    (job: job, port: port.sendPort),
+    debugName: 'search index',
+    onError: port.sendPort,
+    onExit: port.sendPort,
   );
-  final pages = tilesInOrder<sparkle.BasemapTile>(
-    [
-      for (final region in job.regions)
-        (sparkle.BasemapTile? after) => sparkle.basemapReadRegionTiles(
-          path: job.basemap,
-          region: region,
-          zoom: 14,
-          after: after == null
-              ? null
-              : sparkle.BasemapTileAfter(x: after.x, y: after.y),
-          limit: _page,
-        ),
-    ],
-    x: (t) => t.x,
-    y: (t) => t.y,
-    page: _page,
-  );
-  await for (final page in pages) {
-    await builder.addTiles(
-      tiles: [
-        for (final t in page)
-          GeocoderTile(z: t.z, x: t.x, y: t.y, data: t.data),
-      ],
-    );
+  // The isolate's next message: its port, `true` once it took a page, its summary
+  // when done; an uncaught error comes as [error, stack], and its exit as null.
+  Future<Object?> next() async {
+    if (!await messages.moveNext()) {
+      throw StateError('search index: no isolate');
+    }
+    return messages.current;
   }
-  final s = await builder.finish();
-  return '${s.tiles} tiles (${s.repeatedTiles} repeated), ${s.features} features, '
+
+  Never failed(Object? message) => throw StateError(
+    'search index build failed: ${message is List ? message.first : 'exited'}',
+  );
+  try {
+    final first = await next();
+    if (first is! SendPort) failed(first);
+    await for (final page in _pages(job)) {
+      first.send([
+        for (final t in page)
+          (t.z, t.x, t.y, TransferableTypedData.fromList([t.data])),
+      ]);
+      // One page in flight at a time, so the tiles' bytes aren't all held at once.
+      final taken = await next();
+      if (taken != true) failed(taken);
+    }
+    first.send(null);
+    final summary = await next();
+    if (summary is! String) failed(summary);
+    return summary;
+  } finally {
+    isolate.kill();
+    await messages.cancel();
+    port.close();
+  }
+}
+
+/// The z14 tiles of the job's regions, read through sparkle, in the order
+/// [tilesInOrder] gives.
+Stream<List<sparkle.BasemapTile>> _pages(IndexBuildJob job) =>
+    tilesInOrder<sparkle.BasemapTile>(
+      [
+        for (final region in job.regions)
+          (sparkle.BasemapTile? after) => sparkle.basemapReadRegionTiles(
+            path: job.basemap,
+            region: region,
+            zoom: 14,
+            after: after == null
+                ? null
+                : sparkle.BasemapTileAfter(x: after.x, y: after.y),
+            limit: _page,
+          ),
+      ],
+      x: (t) => t.x,
+      y: (t) => t.y,
+      page: _page,
+    );
+
+/// The build isolate: sends its port, adds each page of tiles it's sent (answering
+/// `true`) until null, then sends the summary.
+Future<void> _buildEntry(({IndexBuildJob job, SendPort port}) args) async {
+  final pages = ReceivePort();
+  args.port.send(pages.sendPort);
+  final incoming = StreamIterator<Object?>(pages);
+  try {
+    await initGeocoder();
+    final job = args.job;
+    final builder = await IndexBuilder.create(
+      dir: job.dir,
+      wofFiles: job.wofFiles,
+      heapMb: _heapMb,
+      threads: _threads,
+    );
+    while (await incoming.moveNext()) {
+      final page = incoming.current;
+      if (page is! List) break;
+      await builder.addTiles(
+        tiles: [
+          for (final tile in page)
+            if (tile case (
+              final int z,
+              final int x,
+              final int y,
+              final TransferableTypedData data,
+            ))
+              GeocoderTile(
+                z: z,
+                x: x,
+                y: y,
+                data: data.materialize().asUint8List(),
+              ),
+        ],
+      );
+      args.port.send(true);
+    }
+    final s = await builder.finish();
+    args.port.send(
+      '${s.tiles} tiles (${s.repeatedTiles} repeated), ${s.features} features, '
       '${s.pois} POIs (${s.pointers} pointers), ${s.addresses} addresses, '
       '${s.streets} streets, ${s.admins} areas, ${s.postcodes} postcodes; '
-      '${s.wofPlaces} WOF places';
+      '${s.wofPlaces} WOF places',
+    );
+  } finally {
+    await incoming.cancel();
+    pages.close();
+  }
 }
 
 /// The tiles of several regions, each read page by page in order of column then row
