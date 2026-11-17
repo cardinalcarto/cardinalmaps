@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+airmail_importance.workspace = true
 airmail_tagger = { path = "../airmail_tagger" }
 rand = "0.9"
 anyhow.workspace = true
@@ -13,7 +14,6 @@ geo.workspace = true
 geozero = { version = "0.15.1", default-features = false, features = ["with-geo", "with-wkb"] }
 itertools = "0.15.0"
 lazy_static.workspace = true
-lingua.workspace = true
 log.workspace = true
 regex = "1.13.1"
 serde_yaml = "0.9.34"
@@ -21,14 +21,26 @@ s2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 isolang = "2.4.0"
-tantivy = "0.27.0"
+# Without columnar zstd, which needs a C compiler for the target and which no
+# field of the index uses (it compresses string fast fields); `zstd` adds it.
+tantivy = { version = "0.27.0", default-features = false, features = ["mmap", "stopwords", "lz4-compression", "stemmer"] }
 tantivy-fst = "0.5.0"
 levenshtein_automata = "0.2.1"
 thiserror.workspace = true
-tokio.workspace = true
+# Only for `spawn_blocking` in the async lookups (feature `tokio`).
+tokio = { version = "1.54.1", features = ["rt"], optional = true }
 unicode-segmentation = "1.13.3"
 unicode-normalization = "0.1.26"
 unicode-script = "0.5.8"
 
 [features]
+# What the service and indexer use. A device build turns default features off.
+default = ["tokio", "zstd"]
+# Async `lookup` and `num_docs`, run on tokio's blocking pool.
+tokio = ["dep:tokio"]
+# Tantivy's columnar zstd compression, as server indexes have always been built.
+zstd = ["tantivy/columnar-zstd-compression"]
 invasive_logging = []
+
+[dev-dependencies]
+tempfile = "3.27.0"

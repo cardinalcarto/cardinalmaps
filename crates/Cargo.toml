@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = ["offline_map", "routing_flutter", "sparkle", "sparkle_flutter", "sparkle_harness", "sparkle_view"]
+members = ["geocoder_flutter", "offline_map", "routing_flutter", "sparkle", "sparkle_flutter", "sparkle_harness", "sparkle_view"]

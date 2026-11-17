@@ -54,7 +54,8 @@ podman. `PLANET.md` walks through a planet build from scratch.
   database is replaced.
 - `--qrank=./qrank.csv.gz` ranks POIs with Wikidata entities by their
   Wikipedia articles' page views, from [QRank](https://qrank.wmcloud.org).
-  Without it, having an entity counts the same for every POI.
+  Without it, having an entity counts the same for every POI. The patch uses
+  it too, for the `cardinal:importance` it tags POIs with for the tiles.
 - `--pip-tree=false` uses SpatiaLite lookups instead of an in-memory polygon
   tree, which is slower for the planet but avoids the tree's ~10GB of memory.
 

@@ -11,7 +11,7 @@ use std::path::Path;
 use flutter_rust_bridge::frb;
 use offline_map::Error;
 use offline_map::cover::Polygon;
-use offline_map::mbtiles::Basemap;
+use offline_map::mbtiles::{Basemap, BasemapReader};
 use offline_map::plan::{
     GAP_BYTES, MAX_CHUNK_BYTES, decode_chunk_tiles, decode_tile_keys, encode_chunk_tiles,
     encode_tile_keys,
@@ -265,5 +265,94 @@ pub fn basemap_region_tiles(path: String, region: i64) -> Result<i64, MapError> 
     }
     Ok(signed(
         Basemap::open(Path::new(&path))?.region_tiles(region)?,
+    ))
+}
+
+/// One of the basemap's tiles: its bytes as stored (gzipped), and `y` from the top (XYZ).
+pub struct BasemapTile {
+    pub z: u8,
+    pub x: u32,
+    pub y: u32,
+    pub data: Vec<u8>,
+}
+
+/// Where a page of a region's tiles starts: after the tile at `x`/`y` (the last page's last).
+pub struct BasemapTileAfter {
+    pub x: u32,
+    pub y: u32,
+}
+
+/// A page of `region`'s tiles at `zoom`, at most `limit`, in order of `x` then `y`, after
+/// `after`; an empty page means there are no more.
+///
+/// For the offline geocoder (the `geocoder` plugin), which indexes a region's tiles: it reads
+/// them through this library's SQLite, which writes the basemap, since a second copy of
+/// SQLite in the process would break the writer's locks (see `offline_map::mbtiles`). The
+/// pages go to the geocoder's library from Dart.
+pub fn basemap_read_region_tiles(
+    path: String,
+    region: i64,
+    zoom: u8,
+    after: Option<BasemapTileAfter>,
+    limit: u32,
+) -> Result<Vec<BasemapTile>, MapError> {
+    if !Path::new(&path).exists() {
+        return Ok(Vec::new());
+    }
+    let tiles = BasemapReader::open(Path::new(&path))?.region_tiles(
+        region,
+        zoom,
+        after.map(|a| (a.x, a.y)),
+        limit,
+    )?;
+    Ok(tiles
+        .into_iter()
+        .map(|t| BasemapTile {
+            z: t.z,
+            x: t.x,
+            y: t.y,
+            data: t.data,
+        })
+        .collect())
+}
+
+/// The tiles `z`/`x`/`y` (from the top) of `keys` that the basemap has, as stored (gzipped),
+/// for reading a few features (the offline geocoder's results). Read only.
+pub fn basemap_read_tiles(
+    path: String,
+    keys: Vec<BasemapTileKey>,
+) -> Result<Vec<BasemapTile>, MapError> {
+    if !Path::new(&path).exists() {
+        return Ok(Vec::new());
+    }
+    let reader = BasemapReader::open(Path::new(&path))?;
+    let mut tiles = Vec::with_capacity(keys.len());
+    for key in keys {
+        if let Some(data) = reader.tile(key.z, key.x, key.y)? {
+            tiles.push(BasemapTile {
+                z: key.z,
+                x: key.x,
+                y: key.y,
+                data,
+            });
+        }
+    }
+    Ok(tiles)
+}
+
+/// A tile, `y` from the top (XYZ).
+pub struct BasemapTileKey {
+    pub z: u8,
+    pub x: u32,
+    pub y: u32,
+}
+
+/// How many tiles `region` holds in the basemap at `zoom`.
+pub fn basemap_region_zoom_tiles(path: String, region: i64, zoom: u8) -> Result<i64, MapError> {
+    if !Path::new(&path).exists() {
+        return Ok(0);
+    }
+    Ok(signed(
+        BasemapReader::open(Path::new(&path))?.region_tile_count(region, zoom)?,
     ))
 }

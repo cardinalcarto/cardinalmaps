@@ -5,6 +5,7 @@ import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Translations;
 import java.util.List;
 import org.openmaptiles.Layer;
+import org.openmaptiles.layers.Geocoder;
 
 /**
  * Registry of extra custom layers that you can add to the openmaptiles schema.
@@ -19,7 +20,8 @@ public class ExtraLayers {
       new Route(config),
       new Piste(config),
       LandmarkLine.landmarks(config),
-      LandmarkLine.barriers(config)
+      LandmarkLine.barriers(config),
+      new Geocoder(stats)
     );
   }
 }

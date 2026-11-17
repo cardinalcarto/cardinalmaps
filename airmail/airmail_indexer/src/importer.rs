@@ -1,16 +1,16 @@
+use airmail_importance::osm;
 use airmail::{
     geometry, importance,
     index::{AirmailIndex, AirmailIndexWriter, Document},
+    language::Language,
     poi::{Kind, SchemafiedPoi, ToIndexPoi},
 };
 use anyhow::Result;
 use crossbeam::channel::{Receiver, Sender};
 use futures_util::future::join_all;
-use lingua::{IsoCode639_3, Language};
 use log::{info, trace, warn};
 use std::{
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
 };
 use tokio::{
@@ -146,7 +146,11 @@ impl ImporterBuilder {
             None
         };
 
-        let qrank = self.qrank_path.map(|path| QRank::load(&path)).transpose()?.map(Arc::new);
+        let qrank = self.qrank_path.map(|path| QRank::load(&path)).transpose()?;
+        if let Some(qrank) = &qrank {
+            info!("Loaded QRank for {} Wikidata entities", qrank.len());
+        }
+        let qrank = qrank.map(Arc::new);
 
         Importer::new(admin_cache, wof_db, pip_tree, qrank).await
     }
@@ -268,18 +272,13 @@ impl Importer {
             Kind::Postcode => importance::POSTCODE_IMPORTANCE,
             Kind::Street => importance::street_importance(poi.tag("highway")),
             _ => {
-                let wikidata = poi.tag("wikidata");
-                importance::poi_importance(importance::PoiSignals {
-                    has_wikidata: wikidata.is_some(),
-                    qrank: wikidata.zip(qrank).and_then(|(id, qrank)| qrank.get(id)),
-                    area_m2: geometry::area_m2(&poi.geometry),
-                    transit_stop: importance::is_transit_stop(&poi.tags),
-                })
+                let tags = poi.tags.iter().map(|(k, v)| (k.as_str(), v.as_str()));
+                importance::poi_importance(osm::poi_signals(tags, geometry::area_m2(&poi.geometry), qrank))
             }
         };
         for lang in &pip_response.admin_langs {
-            if let Ok(iso) = IsoCode639_3::from_str(lang) {
-                poi.languages.push(Language::from_iso_code_639_3(&iso))
+            if let Some(language) = Language::from_iso_639_3(lang) {
+                poi.languages.push(language)
             }
         }
 

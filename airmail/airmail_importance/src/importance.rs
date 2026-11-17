@@ -112,14 +112,16 @@ pub fn street_importance(highway: Option<&str>) -> f64 {
 /// Whether OSM tags describe a transit stop or platform.
 #[must_use]
 pub fn is_transit_stop(tags: &[(String, String)]) -> bool {
-    tags.iter().any(|(k, v)| {
-        matches!(
-            (k.as_str(), v.as_str()),
-            ("highway", "bus_stop")
-                | ("public_transport", "platform" | "stop_position")
-                | ("railway", "platform" | "tram_stop")
-        )
-    })
+    tags.iter().any(|(k, v)| is_transit_stop_tag(k, v))
+}
+
+/// Whether an OSM tag marks a transit stop or platform.
+#[must_use]
+pub fn is_transit_stop_tag(key: &str, value: &str) -> bool {
+    matches!(
+        (key, value),
+        ("highway", "bus_stop") | ("public_transport", "platform" | "stop_position") | ("railway", "platform" | "tram_stop")
+    )
 }
 
 /// A Wikidata ID such as `Q60` as a number.

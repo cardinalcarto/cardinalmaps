@@ -671,3 +671,226 @@ def test_images_on_s3(tmp_path, s3):
     routing.run(publisher, tar, "2026-11-20", None, None, image, 5 << 20)
     body = s3.client.get_object(Bucket="bucket", Key="releases/routing/2026-11-20/routing.btrfs")["Body"].read()
     assert body == image.read_bytes()
+
+
+def write_models(root: Path, languages=("eng", "deu"), fill=b"m"):
+    """A build's tagger.model and categories/ of LANG.amcats, each with its own bytes."""
+    tagger = root / "tagger.model"
+    tagger.write_bytes(b"tagger" + fill * 3000)
+    categories = root / "categories"
+    categories.mkdir(exist_ok=True)
+    for i, language in enumerate(languages):
+        (categories / f"{language}.amcats").write_bytes(language.encode() + fill * (1000 + i))
+    return tagger, categories
+
+
+def test_geocoder_publishes_phone_models_loose_beside_the_image(tmp_path):
+    import hashlib
+
+    image = tmp_path / "geocoder.btrfs"
+    write_btrfs(image)
+    metadata = tmp_path / "geocoder.json"
+    metadata.write_text(json.dumps({"schema_version": 8}))
+    tagger, categories = write_models(tmp_path)
+
+    def run(**overrides):
+        args = {"image": image, "metadata": metadata, "tagger": tagger, "categories": categories, **overrides}
+        return geocoder.run(dir_publisher(tmp_path), args["image"], args["metadata"], "2026-11-14", "planet",
+                            "abc", 1 << 16, args["tagger"], args["categories"])
+
+    release = run()
+    bucket = tmp_path / "bucket"
+    root = bucket / "releases/geocoder/2026-11-14"
+    for key, path in (("tagger.model", tagger), ("categorical/eng.amcats", categories / "eng.amcats"),
+                      ("categorical/deu.amcats", categories / "deu.amcats")):
+        assert (root / key).read_bytes() == path.read_bytes()
+        meta = json.loads((bucket / ".meta/releases/geocoder/2026-11-14" / (key + ".json")).read_text())
+        assert meta["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        assert meta["content_type"] == "application/octet-stream" and meta["content_encoding"] is None
+    assert release["tagger"] == {"file": "tagger.model", "bytes": tagger.stat().st_size,
+                                 "sha256": hashlib.sha256(tagger.read_bytes()).hexdigest()}
+    assert sorted(release["categorical"]) == ["deu", "eng"]
+    assert release["categorical"]["eng"]["file"] == "categorical/eng.amcats"
+    assert release["schema_version"] == 8 and release["image"]["file"] == "geocoder.btrfs"
+    assert json.loads((root / "release.json").read_text())["categorical"] == release["categorical"]
+
+    # A rerun only checks, and needs the models to.
+    before = {p: p.stat().st_mtime_ns for p in root.rglob("*")}
+    run()
+    assert {p: p.stat().st_mtime_ns for p in root.rglob("*")} == before
+    with pytest.raises(PublishError, match="pass --tagger"):
+        run(tagger=None, categories=None)
+    with pytest.raises(PublishError, match="pass --image"):
+        run(image=None, metadata=None)
+    (categories / "eng.amcats").write_bytes(b"retrained")
+    with pytest.raises(PublishError, match="next release of the day"):
+        run()
+    (categories / "fra.amcats").write_bytes(b"new language")
+    with pytest.raises(PublishError, match="next release of the day"):
+        run()
+    assert {p: p.stat().st_mtime_ns for p in root.rglob("*")} == before
+
+
+def test_geocoder_models_alone_and_their_checks(tmp_path):
+    tagger, categories = write_models(tmp_path)
+    publisher = dir_publisher(tmp_path)
+    with pytest.raises(PublishError, match="needs --image and --metadata, or --tagger"):
+        geocoder.run(publisher, None, None, "2026-11-14", None, None, 1 << 16)
+    with pytest.raises(PublishError, match="--categories needs --tagger"):
+        geocoder.run(publisher, None, None, "2026-11-14", None, None, 1 << 16, None, categories)
+    with pytest.raises(PublishError, match="go together"):
+        geocoder.run(publisher, tmp_path / "geocoder.btrfs", None, "2026-11-14", None, None, 1 << 16, tagger)
+    (categories / "README").write_text("not a model")
+    with pytest.raises(PublishError, match="isn't a categorical model"):
+        geocoder.run(publisher, None, None, "2026-11-14", None, None, 1 << 16, tagger, categories)
+    (categories / "README").unlink()
+    assert not (tmp_path / "bucket/releases/geocoder").exists()
+
+    # The tagger alone is a release a phone can use, without categorical models.
+    release = geocoder.run(publisher, None, None, "2026-11-14", None, None, 1 << 16, tagger)
+    assert release["categorical"] == {} and "image" not in release
+    root = tmp_path / "bucket/releases/geocoder/2026-11-14"
+    assert sorted(p.name for p in root.iterdir()) == ["release.json", "tagger.model"]
+
+
+def test_geocoder_dry_run_writes_nothing(tmp_path):
+    tagger, categories = write_models(tmp_path)
+    release = geocoder.run(dir_publisher(tmp_path, dry_run=True), None, None, "2026-11-14", None, None, 1 << 16,
+                           tagger, categories)
+    assert sorted(release["categorical"]) == ["deu", "eng"]
+    assert not (tmp_path / "bucket").exists()
+
+
+def test_latest_names_a_geocoder_release_with_models_and_keeps_the_other_keys(tmp_path):
+    publisher = dir_publisher(tmp_path)
+    fake_release(publisher, "map", "2026-11-11")
+    fake_release(publisher, "poi", "101")
+    latest.run(publisher, {"map": "2026-11-11", "poi": "101"})
+    image = tmp_path / "geocoder.btrfs"
+    write_btrfs(image)
+    metadata = tmp_path / "geocoder.json"
+    metadata.write_text(json.dumps({"schema_version": 8}))
+    geocoder.run(publisher, image, metadata, "2026-11-14", None, None, 1 << 16)
+    with pytest.raises(PublishError, match="no phone models"):
+        latest.run(publisher, {"geocoder": "2026-11-14"})
+    with pytest.raises(PublishError, match="isn't published"):
+        latest.run(publisher, {"geocoder": "2026-11-15"})
+    tagger, categories = write_models(tmp_path)
+    geocoder.run(publisher, image, metadata, "2026-11-14.1", None, None, 1 << 16, tagger, categories)
+    expected = {"map": "2026-11-11", "poi": 101, "geocoder": "2026-11-14.1"}
+    assert latest.run(publisher, {"geocoder": "2026-11-14.1"}) == expected
+    assert json.loads((tmp_path / "bucket/releases/latest.json").read_text()) == expected
+    # Naming another kind later keeps the geocoder.
+    fake_release(publisher, "map", "2026-11-12")
+    assert latest.run(publisher, {"map": "2026-11-12"})["geocoder"] == "2026-11-14.1"
+
+
+def test_geocoder_models_on_s3_carry_their_sha256(tmp_path, s3):
+    import hashlib
+
+    tagger, categories = write_models(tmp_path)
+    publisher = Publisher(s3, "releases", state_at(tmp_path / "state.sqlite"), 4, False)
+    # moto's buckets outlive each test's server, so this uses a date no other test does.
+    geocoder.run(publisher, None, None, "2026-11-21", None, None, 5 << 20, tagger, categories)
+    for key, path in (("tagger.model", tagger), ("categorical/eng.amcats", categories / "eng.amcats")):
+        head = s3.client.head_object(Bucket="bucket", Key=f"releases/geocoder/2026-11-21/{key}")
+        assert head["ContentLength"] == path.stat().st_size
+        assert head["Metadata"]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        assert head["ContentType"] == "application/octet-stream"
+    latest.run(publisher, {"geocoder": "2026-11-21"})
+    assert json.loads(s3.get("releases/latest.json"))["geocoder"] == "2026-11-21"
+
+
+from cardinal_publish import wof
+
+
+def write_wof(path: Path, filler=0, label="a"):
+    """A SQLite database with the tables wof_service reads, and `filler` bytes of padding."""
+    import sqlite3
+
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        "CREATE TABLE place (source, id, class, type); CREATE TABLE property (source, id, key, value);"
+        "CREATE TABLE name (source, id, lang, tag, abbr, name);"
+        "CREATE TABLE hierarchy (parent_source, parent_id, child_source, child_id, depth, branch);"
+        "CREATE TABLE geometry (source, id, role, geom); CREATE TABLE shard (source, id, role, element, geom);"
+        "CREATE VIRTUAL TABLE idx_geometry_geom USING rtree(pkid, xmin, xmax, ymin, ymax);"
+        "CREATE VIRTUAL TABLE idx_shard_geom USING rtree(pkid, xmin, xmax, ymin, ymax);"
+        "CREATE TABLE filler (data BLOB);"
+    )
+    connection.execute("INSERT INTO place VALUES ('wof', '1', 'common', ?)", (label,))
+    if filler:
+        connection.execute("INSERT INTO filler VALUES (randomblob(?))", (filler,))
+    connection.commit()
+    connection.close()
+    return path.read_bytes()
+
+
+def test_wof_publishes_the_database_and_reruns_cleanly(tmp_path):
+    import hashlib
+
+    database = tmp_path / "whosonfirst-data-admin-latest.spatial.db"
+    data = write_wof(database, filler=300_000)
+    release = wof.run(dir_publisher(tmp_path), database, "2026-11-17", "whosonfirst-data-admin-latest", 1 << 16)
+    bucket = tmp_path / "bucket"
+    root = bucket / "releases/wof/2026-11-17"
+    assert (root / "whosonfirst-data-admin.spatial.db").read_bytes() == data
+    expected = {"file": "whosonfirst-data-admin.spatial.db", "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest()}
+    assert release["database"] == expected
+    on_disk = json.loads((root / "release.json").read_text())
+    assert (on_disk["kind"], on_disk["date"], on_disk["database"]) == ("wof", "2026-11-17", expected)
+    meta = json.loads((bucket / ".meta/releases/wof/2026-11-17/whosonfirst-data-admin.spatial.db.json").read_text())
+    assert (meta["content_type"], meta.get("content_encoding")) == ("application/octet-stream", None)
+    # Nothing names a wof release in latest.json: servers pin one.
+    assert not (bucket / "releases/latest.json").exists()
+
+    before = {p: p.stat().st_mtime_ns for p in root.rglob("*")}
+    wof.run(dir_publisher(tmp_path), database, "2026-11-17", "whosonfirst-data-admin-latest", 1 << 16)
+    assert {p: p.stat().st_mtime_ns for p in root.rglob("*")} == before
+
+    other = tmp_path / "other.spatial.db"
+    write_wof(other, filler=300_000, label="b")
+    with pytest.raises(PublishError, match="next release of the day"):
+        wof.run(dir_publisher(tmp_path), other, "2026-11-17", "whosonfirst-data-admin-latest", 1 << 16)
+    assert {p: p.stat().st_mtime_ns for p in root.rglob("*")} == before
+    wof.run(dir_publisher(tmp_path), other, "2026-11-17.1", "whosonfirst-data-admin-latest", 1 << 16)
+
+
+def test_wof_refuses_what_isnt_a_wof_database(tmp_path):
+    import sqlite3
+
+    database = tmp_path / "wof.spatial.db"
+    with pytest.raises(PublishError, match="no database"):
+        wof.run(dir_publisher(tmp_path), database, "2026-11-17", None, 1 << 16)
+    database.write_bytes(b"BZh91AY&SY" + b"x" * 1000)  # a .bz2 that wasn't decompressed
+    with pytest.raises(PublishError, match="isn't a SQLite database"):
+        wof.run(dir_publisher(tmp_path), database, "2026-11-17", None, 1 << 16)
+    database.unlink()
+    connection = sqlite3.connect(database)
+    connection.execute("CREATE TABLE place (id)")
+    connection.close()
+    with pytest.raises(PublishError, match="has no property, name"):
+        wof.run(dir_publisher(tmp_path), database, "2026-11-17", None, 1 << 16)
+    assert not (tmp_path / "bucket/releases/wof").exists()
+
+
+def test_wof_dry_run_writes_nothing(tmp_path):
+    database = tmp_path / "wof.spatial.db"
+    write_wof(database)
+    release = wof.run(dir_publisher(tmp_path, dry_run=True), database, "2026-11-17", None, 1 << 16)
+    assert release["database"]["bytes"] == database.stat().st_size
+    assert not (tmp_path / "bucket/releases/wof").exists()
+
+
+def test_wof_on_s3_records_the_sha256_of_a_multipart_upload(tmp_path, s3):
+    import hashlib
+
+    database = tmp_path / "wof.spatial.db"
+    data = write_wof(database, filler=12 << 20)
+    publisher = Publisher(s3, "releases", state_at(tmp_path / "state.sqlite"), 4, False)
+    wof.run(publisher, database, "2026-11-22", None, 5 << 20)
+    key = "releases/wof/2026-11-22/whosonfirst-data-admin.spatial.db"
+    assert s3.client.get_object(Bucket="bucket", Key=key)["Body"].read() == data
+    release = json.loads(s3.get("releases/wof/2026-11-22/release.json"))
+    assert release["database"]["sha256"] == hashlib.sha256(data).hexdigest()

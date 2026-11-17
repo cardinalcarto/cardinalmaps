@@ -58,6 +58,30 @@ class RegionProgress {
       '${error == null ? '' : ', $error'})';
 }
 
+/// What downloading the geocoder's models takes ([OfflineDownloads.planGeocoderModels]).
+@immutable
+class GeocoderModelsPlan {
+  const GeocoderModelsPlan({
+    required this.release,
+    required this.tagger,
+    required this.categories,
+  });
+
+  /// The geocoder release, as in `geocoder/<date>/`.
+  final String release;
+
+  /// `tagger.model`, which reads addresses and place names in a query.
+  final PlannedFile tagger;
+
+  /// `categorical/<lang>.amcats` for the device's language, which finds places by
+  /// what they are ("coffee"); null if the release has none for it.
+  final PlannedFile? categories;
+
+  List<PlannedFile> get files => [tagger, ?categories];
+
+  int get bytes => files.fold(0, (sum, f) => sum + (f.bytes ?? 0));
+}
+
 /// The offline area's releases once a region is ready, for opening the router.
 typedef ReadyReleases = ({
   String routing,
@@ -76,6 +100,69 @@ abstract interface class OfflineListener {
     required bool feedsChanged,
     bool filesRemoved = false,
   });
+}
+
+/// A ready region, as offline search indexes it: its map tiles in the basemap, and the
+/// Who's On First areas over [bounds].
+@immutable
+class IndexRegion {
+  const IndexRegion({required this.id, required this.bounds});
+
+  final int id;
+  final GeoRect bounds;
+
+  @override
+  bool operator ==(Object other) =>
+      other is IndexRegion && other.id == id && other.bounds == bounds;
+
+  @override
+  int get hashCode => Object.hash(id, bounds);
+
+  @override
+  String toString() => 'IndexRegion($id)';
+}
+
+/// What offline search's index is built from: the ready regions of the pinned map
+/// release, whose tiles are in [basemap].
+@immutable
+class IndexSources {
+  const IndexSources({
+    required this.mapRelease,
+    required this.basemap,
+    required this.regions,
+  });
+
+  static const none = IndexSources(
+    mapRelease: null,
+    basemap: null,
+    regions: [],
+  );
+
+  final String? mapRelease;
+  final String? basemap;
+
+  /// By ID.
+  final List<IndexRegion> regions;
+
+  @override
+  bool operator ==(Object other) =>
+      other is IndexSources &&
+      other.mapRelease == mapRelease &&
+      other.basemap == basemap &&
+      listEquals(other.regions, regions);
+
+  @override
+  int get hashCode => Object.hash(mapRelease, basemap, Object.hashAll(regions));
+
+  @override
+  String toString() => 'IndexSources($mapRelease, $regions)';
+}
+
+/// Offline search's index, told whenever the ready regions may have changed: a region
+/// was installed or deleted, or the app started. It builds in the background; the
+/// downloads don't wait for it.
+abstract interface class RegionIndexer {
+  void regionsChanged(IndexSources sources);
 }
 
 /// Thrown by [OfflineDownloads.start] when a plan no longer fits what's on the device.
@@ -111,8 +198,12 @@ class OfflineDownloads {
     this.native = const RustOfflineNative(),
     this.maxAttempts = 3,
     this.maxQueued = 200,
+    this.indexer,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
+
+  /// Offline search's index, told when regions become ready or go.
+  final RegionIndexer? indexer;
 
   final OfflineDatabase db;
 
@@ -208,7 +299,71 @@ class OfflineDownloads {
         await _delete(region);
       }
       await _pump();
+      // An index build the app stopped in, or regions that changed while it was away.
+      await _indexChanged();
     });
+  }
+
+  /// What offline search's index is built from now: the ready regions of the pinned map
+  /// release.
+  Future<IndexSources> indexSources() async {
+    final map = (await pinned())[ReleaseKind.map]?.date;
+    if (map == null) return IndexSources.none;
+    final rows =
+        await (db.select(db.regions)
+              ..where(
+                (r) =>
+                    r.state.equalsValue(RegionState.ready) &
+                    r.kind.equalsValue(RegionKind.explicit) &
+                    r.mapRelease.equals(map),
+              )
+              ..orderBy([(r) => OrderingTerm.asc(r.id)]))
+            .get();
+    return IndexSources(
+      mapRelease: map,
+      basemap: basemapPath(map),
+      regions: [
+        for (final r in rows)
+          if (r.polygon case final polygon?)
+            IndexRegion(
+              id: r.id,
+              bounds: GeoPolygon.fromJson(jsonDecode(polygon) as List<Object?>)
+                  .bounds,
+            ),
+      ],
+    );
+  }
+
+  Future<void> _indexChanged() async {
+    final indexer = this.indexer;
+    if (indexer == null) return;
+    try {
+      indexer.regionsChanged(await indexSources());
+    } on Object catch (e) {
+      debugPrint('offline: telling search the regions changed failed: $e');
+    }
+  }
+
+  /// The geocoder's installed models, once their region is ready: `tagger.model` and the
+  /// `categorical/<lang>.amcats` downloaded with it, as paths; nulls otherwise.
+  Future<({String? tagger, String? categories})> geocoderModelFiles() async {
+    final region =
+        await (db.select(db.regions)..where(
+              (r) =>
+                  r.kind.equalsValue(RegionKind.geocoderModels) &
+                  r.state.equalsValue(RegionState.ready),
+            ))
+            .getSingleOrNull();
+    if (region == null) return (tagger: null, categories: null);
+    final files = await _regionFiles(region.id);
+    String? path(bool Function(String) matches) => files
+        .where((f) => f.state == FileState.installed && matches(f.installPath))
+        .map((f) => '$root/${f.installPath}')
+        .firstOrNull;
+    return (
+      tagger: path((p) => p.endsWith('/tagger.model')),
+      categories: path((p) => p.endsWith('.amcats')),
+    );
   }
 
   /// Picks up work a previous run left between states. Files and ranges the
@@ -298,7 +453,11 @@ class OfflineDownloads {
   Future<ReadyReleases?> readyReleases() async {
     final ready =
         await (db.select(db.regions)
-              ..where((r) => r.state.equalsValue(RegionState.ready))
+              ..where(
+                (r) =>
+                    r.state.equalsValue(RegionState.ready) &
+                    r.kind.equalsValue(RegionKind.geocoderModels).not(),
+              )
               ..limit(1))
             .getSingleOrNull();
     if (ready == null) return null;
@@ -419,6 +578,136 @@ class OfflineDownloads {
   Future<Map<String, String>> archiveEtags() async => {
     for (final row in await db.select(db.archives).get()) row.path: row.etag,
   };
+
+  // The geocoder's models.
+
+  /// What downloading the geocoder's models takes: `tagger.model` and, if the release
+  /// has one for [language] (ISO 639-3, such as `eng`), `categorical/<language>.amcats`,
+  /// with their sizes. From the pinned geocoder release, or else `latest.json`'s
+  /// (pinned when the download starts). Null if there's no geocoder release or it has
+  /// no tagger. Reads the bucket (`latest.json` and a `HEAD` per file) and downloads
+  /// nothing.
+  Future<GeocoderModelsPlan?> planGeocoderModels(String? language) async {
+    var release = (await pinned())[ReleaseKind.geocoder]?.date;
+    if (release == null) {
+      final json = await bucket.json('latest.json') as Map<String, Object?>;
+      release = json['geocoder'] as String?;
+    }
+    if (release == null) return null;
+    Future<PlannedFile?> file(String path) async {
+      final head = await bucket.head('geocoder/$release/$path');
+      if (head == null) return null;
+      if (head.sha256 == null) {
+        throw BucketError('geocoder/$release/$path', null, 'no SHA-256');
+      }
+      return PlannedFile(
+        kind: ReleaseKind.geocoder,
+        release: release!,
+        path: path,
+        installPath: 'geocoder/$release/$path',
+        bytes: head.bytes,
+        sha256: head.sha256,
+      );
+    }
+
+    final tagger = await file('tagger.model');
+    if (tagger == null) return null;
+    final categories = language == null
+        ? null
+        : await file('categorical/$language.amcats');
+    return GeocoderModelsPlan(
+      release: release,
+      tagger: tagger,
+      categories: categories,
+    );
+  }
+
+  /// Downloads [plan]'s models as the geocoder's region, and returns its ID: the one
+  /// there already, unless it failed (retry it instead) or is going. Pins the plan's
+  /// geocoder release if none is pinned; throws [StalePlan] if another one is.
+  Future<int> startGeocoderModels(GeocoderModelsPlan plan) =>
+      _serially(() async {
+        final now = _clock();
+        final id = await db.transaction(() async {
+          final existing =
+              await (db.select(db.regions)..where(
+                    (r) =>
+                        r.kind.equalsValue(RegionKind.geocoderModels) &
+                        r.state.equalsValue(RegionState.deleting).not(),
+                  ))
+                  .getSingleOrNull();
+          if (existing != null) return existing.id;
+          final pinned = (await this.pinned())[ReleaseKind.geocoder];
+          if (pinned == null) {
+            await db
+                .into(db.releases)
+                .insert(
+                  ReleasesCompanion.insert(
+                    kind: ReleaseKind.geocoder,
+                    date: plan.release,
+                    pinnedAt: now,
+                  ),
+                );
+          } else if (pinned.date != plan.release) {
+            throw const StalePlan('the pinned releases changed; plan again');
+          }
+          final id = await db
+              .into(db.regions)
+              .insert(
+                RegionsCompanion.insert(
+                  kind: RegionKind.geocoderModels,
+                  state: RegionState.planned,
+                  createdAt: now,
+                  updatedAt: now,
+                ),
+              );
+          for (final f in plan.files) {
+            await db
+                .into(db.files)
+                .insert(
+                  FilesCompanion.insert(
+                    kind: f.kind,
+                    release: f.release,
+                    path: f.path,
+                    installPath: f.installPath,
+                    bytes: Value(f.bytes),
+                    expectedSha256: Value(f.sha256),
+                    state: FileState.pending,
+                  ),
+                  mode: InsertMode.insertOrIgnore,
+                );
+            final row =
+                await (db.select(db.files)..where(
+                      (x) =>
+                          x.kind.equalsValue(f.kind) &
+                          x.release.equals(f.release) &
+                          x.path.equals(f.path),
+                    ))
+                    .getSingle();
+            await db
+                .into(db.regionFiles)
+                .insert(
+                  RegionFilesCompanion.insert(regionId: id, fileId: row.id),
+                );
+          }
+          return id;
+        });
+        final region = await (db.select(
+          db.regions,
+        )..where((r) => r.id.equals(id))).getSingle();
+        if (region.state == RegionState.planned) {
+          await _setRegion(id, RegionState.downloading);
+          await _pump();
+        }
+        return id;
+      });
+
+  /// The geocoder's models region and its progress, as it changes; null while there's
+  /// none.
+  Stream<RegionProgress?> watchGeocoderModels() => watch().map(
+    (regions) =>
+        regions.where((r) => r.kind == RegionKind.geocoderModels).lastOrNull,
+  );
 
   // Starting.
 
@@ -1244,6 +1533,8 @@ class OfflineDownloads {
     }
     await _setRegion(region.id, RegionState.ready);
     await _notify(feedsChanged: feeds.isNotEmpty);
+    // Its tiles are in: offline search indexes them (and fetches its areas) next.
+    if (region.kind == RegionKind.explicit) await _indexChanged();
   }
 
   /// Writes `transit/<release>/transfers/manifest.json`: the shared fields (less
@@ -1404,6 +1695,7 @@ class OfflineDownloads {
       await (db.delete(db.regions)..where((r) => r.id.equals(region.id))).go();
     });
     await _notify(feedsChanged: hadFeeds.isNotEmpty, filesRemoved: true);
+    if (region.kind == RegionKind.explicit) await _indexChanged();
   }
 
   // On-demand files.
@@ -1436,7 +1728,10 @@ class OfflineDownloads {
                         ),
                       ])..where(
                         explicitRefs.fileId.equalsExp(f.id) &
-                            explicit.kind.equalsValue(RegionKind.explicit),
+                            // Areas and the geocoder's models keep theirs.
+                            explicit.kind
+                                .equalsValue(RegionKind.onDemand)
+                                .not(),
                       ),
                     ),
               )

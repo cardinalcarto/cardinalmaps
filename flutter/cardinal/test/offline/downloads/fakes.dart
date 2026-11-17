@@ -435,3 +435,11 @@ class RecordingListener implements OfflineListener {
     removals.add(filesRemoved);
   }
 }
+
+/// Records the regions offline search was told of.
+class RecordingIndexer implements RegionIndexer {
+  final told = <IndexSources>[];
+
+  @override
+  void regionsChanged(IndexSources sources) => told.add(sources);
+}

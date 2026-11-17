@@ -73,6 +73,48 @@ Future<PlatformInt64> basemapRegionTiles({
   region: region,
 );
 
+/// A page of `region`'s tiles at `zoom`, at most `limit`, in order of `x` then `y`, after
+/// `after`; an empty page means there are no more.
+///
+/// For the offline geocoder (the `geocoder` plugin), which indexes a region's tiles: it reads
+/// them through this library's SQLite, which writes the basemap, since a second copy of
+/// SQLite in the process would break the writer's locks (see `offline_map::mbtiles`). The
+/// pages go to the geocoder's library from Dart.
+Future<List<BasemapTile>> basemapReadRegionTiles({
+  required String path,
+  required PlatformInt64 region,
+  required int zoom,
+  BasemapTileAfter? after,
+  required int limit,
+}) => RustLib.instance.api.crateApiOfflineBasemapReadRegionTiles(
+  path: path,
+  region: region,
+  zoom: zoom,
+  after: after,
+  limit: limit,
+);
+
+/// The tiles `z`/`x`/`y` (from the top) of `keys` that the basemap has, as stored (gzipped),
+/// for reading a few features (the offline geocoder's results). Read only.
+Future<List<BasemapTile>> basemapReadTiles({
+  required String path,
+  required List<BasemapTileKey> keys,
+}) => RustLib.instance.api.crateApiOfflineBasemapReadTiles(
+  path: path,
+  keys: keys,
+);
+
+/// How many tiles `region` holds in the basemap at `zoom`.
+Future<PlatformInt64> basemapRegionZoomTiles({
+  required String path,
+  required PlatformInt64 region,
+  required int zoom,
+}) => RustLib.instance.api.crateApiOfflineBasemapRegionZoomTiles(
+  path: path,
+  region: region,
+  zoom: zoom,
+);
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<MapPlanner>>
 abstract class MapPlanner implements RustOpaqueInterface {
   /// Adds a leaf directory fetched from `offset`.
@@ -102,6 +144,74 @@ abstract class MapPlanner implements RustOpaqueInterface {
     minZoom: minZoom,
     maxZoom: maxZoom,
   );
+}
+
+/// One of the basemap's tiles: its bytes as stored (gzipped), and `y` from the top (XYZ).
+class BasemapTile {
+  final int z;
+  final int x;
+  final int y;
+  final Uint8List data;
+
+  const BasemapTile({
+    required this.z,
+    required this.x,
+    required this.y,
+    required this.data,
+  });
+
+  @override
+  int get hashCode => z.hashCode ^ x.hashCode ^ y.hashCode ^ data.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BasemapTile &&
+          runtimeType == other.runtimeType &&
+          z == other.z &&
+          x == other.x &&
+          y == other.y &&
+          data == other.data;
+}
+
+/// Where a page of a region's tiles starts: after the tile at `x`/`y` (the last page's last).
+class BasemapTileAfter {
+  final int x;
+  final int y;
+
+  const BasemapTileAfter({required this.x, required this.y});
+
+  @override
+  int get hashCode => x.hashCode ^ y.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BasemapTileAfter &&
+          runtimeType == other.runtimeType &&
+          x == other.x &&
+          y == other.y;
+}
+
+/// A tile, `y` from the top (XYZ).
+class BasemapTileKey {
+  final int z;
+  final int x;
+  final int y;
+
+  const BasemapTileKey({required this.z, required this.x, required this.y});
+
+  @override
+  int get hashCode => z.hashCode ^ x.hashCode ^ y.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BasemapTileKey &&
+          runtimeType == other.runtimeType &&
+          z == other.z &&
+          x == other.x &&
+          y == other.y;
 }
 
 /// A byte range of the archive.

@@ -137,7 +137,8 @@ class OpenMapTilesTest {
     assertFeatureNear(mbtiles, "housenumber", Map.of(
       "housenumber", "27"
     ), 7.42117, 43.73652, 14, 14);
-    assertNumFeatures("housenumber", Map.of(), 14, 231, Point.class);
+    // 7 of them named elements kept for the geocoder beside a drawn feature at their number
+    assertNumFeatures("housenumber", Map.of(), 14, 238, Point.class);
   }
 
   @Test
@@ -209,7 +210,8 @@ class OpenMapTilesTest {
     assertNumFeatures("transportation_name", Map.of(
       "name", "Boulevard du Larvotto",
       "class", "primary"
-    ), 14, 9, LineString.class);
+    // 2 ways of it also have alt_name=Tunnel IM2S, which z14 keeps for the geocoder, so they merge apart
+    ), 14, 11, LineString.class);
   }
 
   @Test

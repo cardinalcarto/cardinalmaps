@@ -233,7 +233,13 @@ class SizeStep extends StatelessWidget {
         children: [
           Text('Download this area?', style: theme.textTheme.headlineSmall),
           const SizedBox(height: 8),
-          if (fits)
+          // Inside areas already downloaded: nothing new to fetch.
+          if (fits && bytes == 0)
+            Text(
+              'Maps and directions for this area are already downloaded.',
+              style: body,
+            )
+          else if (fits)
             Text.rich(
               TextSpan(
                 children: [

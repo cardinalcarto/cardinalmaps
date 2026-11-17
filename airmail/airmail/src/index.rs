@@ -20,17 +20,65 @@ use tantivy::{
         IndexRecordOption, NumericOptions, OwnedValue, Schema, TextFieldIndexing, TextOptions,
     },
 };
+#[cfg(feature = "tokio")]
 use tokio::task::spawn_blocking;
 
 use crate::categories::{self, CategoryModel, QueryCategories};
 use crate::cuisine;
+#[cfg(feature = "tokio")]
 use crate::error::AirmailError;
 use crate::geometry;
-use crate::poi::{AdminBand, Kind, OsmRef, PlaceId, SchemafiedPoi, WofPlace};
+use crate::poi::{AdminBand, Kind, OsmRef, PlaceId, Pointer, SchemafiedPoi, TileId, ToIndexPoi, WofPlace};
 
 /// The version of the index's schema and of what its fields hold. Readers
 /// refuse indexes of other versions.
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
+
+/// The indexing memory of `AirmailIndex::writer`, in bytes.
+pub const DEFAULT_WRITER_HEAP: usize = 2_000_000_000;
+
+/// How much a writer may use.
+#[derive(Debug, Clone, Copy)]
+pub struct WriterOptions {
+    /// Indexing memory in bytes, shared by the threads: segments are written
+    /// out as it fills.
+    pub heap_bytes: usize,
+    /// Indexing threads, or `None` for tantivy's choice (one per core, up to
+    /// eight).
+    pub threads: Option<usize>,
+    /// What documents store.
+    pub storage: Storage,
+}
+
+impl Default for WriterOptions {
+    fn default() -> Self {
+        Self { heap_bytes: DEFAULT_WRITER_HEAP, threads: None, storage: Storage::Full }
+    }
+}
+
+/// What documents store for results. Either way, they're indexed alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Storage {
+    /// Everything results show: tags, shape, the OSM element, the Who's On
+    /// First place. What the server's index stores, for clients that have
+    /// nothing else.
+    #[default]
+    Full,
+    /// For a document with a stable POI ID, only its kind, the ID and the
+    /// tile it was read from (see `poi::Pointer`), its name tags (which
+    /// ranking reads), its center, importance, source and areas' IDs; its
+    /// other tags and its shape are in the tile. Others store everything.
+    /// For a phone's index of the tiles it has.
+    Pointers,
+}
+
+/// Fills in what a search can't rank pointer documents well without: their
+/// tags, for their names (how much of a name a query is) and diets.
+pub trait Hydrate {
+    /// The tags of the feature a pointer points to, or `None` if it can't be
+    /// read; ranking then goes without them.
+    fn tags(&self, pointer: &Pointer) -> Option<Vec<(String, String)>>;
+}
 
 /// Records `SCHEMA_VERSION` in the index directory.
 const VERSION_FILE: &str = "airmail-index.json";
@@ -70,8 +118,20 @@ pub const FIELD_ADMIN_IDS: &str = "admin_ids";
 pub const FIELD_WOF_ID: &str = "wof_id";
 /// Cardinal's stable POI identifier, for lookups.
 pub const FIELD_POI_ID: &str = "poi_id";
-/// The OSM element as `type/id`, for lookups.
+/// The OSM element as `type/id`, for lookups; or `local/<id>` for a document
+/// with a [`LOCAL_ID_TAG`].
 pub const FIELD_OSM_ID: &str = "osm_id";
+/// The tag that gives a document with no other ID (no OSM element, POI ID,
+/// Who's On First ID or postcode key) an ID within its own index, a decimal
+/// number, for `AirmailIndex::lookup_local_blocking`. Only the device's index
+/// sets it; the server's never does.
+pub const LOCAL_ID_TAG: &str = "cardinal:local_id";
+
+/// A local ID's term in `FIELD_OSM_ID`, apart from OSM's `node/`, `way/` and
+/// `relation/`.
+fn local_key(id: u64) -> String {
+    format!("local/{id}")
+}
 /// A postcode's key, `<country>/<postcode>` (see `poi::postcode_key`).
 pub const FIELD_POSTCODE_ID: &str = "postcode_id";
 pub const FIELD_S2_COVER: &str = "s2_cover";
@@ -81,8 +141,16 @@ pub const FIELD_OSM: &str = "osm";
 pub const FIELD_WOF: &str = "wof";
 pub const FIELD_TAGS: &str = "tags";
 pub const FIELD_CENTER: &str = "center";
+/// 1 if a document's shape is its center (a point, or a pointer document,
+/// whose shape isn't stored), so that whether it's in a box can be told from
+/// its `center` fast field without reading it; else 0.
+pub const FIELD_IS_POINT: &str = "is_point";
 pub const FIELD_GEOMETRY: &str = "geometry";
 pub const FIELD_IMPORTANCE: &str = "importance";
+/// A pointer document's stable POI ID and tile (`TileId::pack`); see
+/// `Storage::Pointers`.
+pub const FIELD_POINTER_POI_ID: &str = "pointer_poi_id";
+pub const FIELD_POINTER_TILE: &str = "pointer_tile";
 
 /// The field with the names of a document's areas in `band`.
 #[must_use]
@@ -182,6 +250,9 @@ pub struct SearchRequest<'a> {
     pub location: Option<[f64; 2]>,
     /// Reads what kind of place words suggest.
     pub model: Option<&'a CategoryModel>,
+    /// Reads pointer documents' tags, for ranking them as if they were
+    /// stored (see `Storage::Pointers`).
+    pub hydrate: Option<&'a dyn Hydrate>,
 }
 
 /// A search result.
@@ -190,11 +261,20 @@ pub struct SearchHit {
     pub score: f32,
     pub kind: Kind,
     /// OSM tags, without Cardinal's `cardinal:*` tags, which are in `poi`.
+    /// A pointer document's names, or all its tags if the search was given
+    /// `Hydrate`.
     pub tags: Vec<(String, String)>,
-    /// Cardinal's stable identifier and the OSM version it was indexed at.
+    /// Cardinal's stable identifier and the OSM version it was indexed at,
+    /// from its tags.
     pub poi: Option<(u64, u32)>,
+    /// For a pointer document, where the rest of it is: its stable POI ID
+    /// and its tile. It has no OSM element or Who's On First place, and its
+    /// shape is its center.
+    pub pointer: Option<Pointer>,
     pub osm: Option<OsmRef>,
     pub wof: Option<WofPlace>,
+    /// Its ID within its index, from its [`LOCAL_ID_TAG`] (only on the device).
+    pub local_id: Option<u64>,
     /// Who's On First IDs of the areas containing it.
     pub admin_ids: Vec<u64>,
     pub center: Point<f64>,
@@ -207,6 +287,18 @@ impl SearchHit {
     #[must_use]
     pub fn tag(&self, key: &str) -> Option<&str> {
         self.tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    /// Sets its tags: Cardinal's `cardinal:*` tags go to `poi` (if there's
+    /// a version) and `local_id`, and the rest to `tags`.
+    pub(crate) fn set_tags(&mut self, mut tags: Vec<(String, String)>) {
+        let tag = |key: &str| tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+        let poi = tag("cardinal:poi_id").and_then(|id| id.parse().ok()).zip(tag("cardinal:version").and_then(|v| v.parse().ok()));
+        let local_id = tag(LOCAL_ID_TAG).and_then(|id| id.parse().ok());
+        tags.retain(|(k, _)| !k.starts_with("cardinal:"));
+        self.poi = poi;
+        self.local_id = local_id;
+        self.tags = tags;
     }
 }
 
@@ -282,8 +374,11 @@ impl AirmailIndex {
         schema_builder.add_json_field(FIELD_TAGS, STORED);
         // Fast for ranking by distance from a focus point.
         schema_builder.add_u64_field(FIELD_CENTER, FAST | STORED);
+        schema_builder.add_u64_field(FIELD_IS_POINT, FAST);
         schema_builder.add_bytes_field(FIELD_GEOMETRY, STORED);
         schema_builder.add_f64_field(FIELD_IMPORTANCE, FAST | STORED);
+        schema_builder.add_u64_field(FIELD_POINTER_POI_ID, STORED);
+        schema_builder.add_u64_field(FIELD_POINTER_TILE, STORED);
         schema_builder.build()
     }
 
@@ -356,17 +451,58 @@ impl AirmailIndex {
         self
     }
 
+    /// A writer with `DEFAULT_WRITER_HEAP` bytes of indexing memory and
+    /// tantivy's choice of threads, as the indexer uses.
     pub fn writer(&mut self) -> Result<AirmailIndexWriter> {
-        let tantivy_writer = self.tantivy_index.writer::<TantivyDocument>(2_000_000_000)?;
-        Ok(AirmailIndexWriter { tantivy_writer, schema: self.tantivy_index.schema() })
+        self.writer_with(WriterOptions::default())
     }
 
+    /// A writer with `options`' memory, threads and storage, for building
+    /// small indexes in little memory, as on a phone.
+    ///
+    /// # Errors
+    /// If another writer has the index, or the memory is too little for the
+    /// threads (tantivy needs at least 15 MB for each).
+    pub fn writer_with(&mut self, options: WriterOptions) -> Result<AirmailIndexWriter> {
+        let tantivy_writer = match options.threads {
+            Some(threads) => self.tantivy_index.writer_with_num_threads::<TantivyDocument>(threads, options.heap_bytes)?,
+            None => self.tantivy_index.writer::<TantivyDocument>(options.heap_bytes)?,
+        };
+        Ok(AirmailIndexWriter { tantivy_writer, schema: self.tantivy_index.schema(), storage: options.storage })
+    }
+
+    /// Merges every segment into one.
     pub async fn merge(&mut self) -> Result<()> {
         let ids = self.tantivy_index.searchable_segment_ids()?;
-        self.tantivy_index.writer::<TantivyDocument>(2_000_000_000)?.merge(&ids).await?;
+        self.tantivy_index.writer::<TantivyDocument>(DEFAULT_WRITER_HEAP)?.merge(&ids).await?;
         Ok(())
     }
 
+    /// Merges every segment into one, on this thread, with a writer of
+    /// `options`.
+    ///
+    /// # Errors
+    /// If another writer has the index or merging fails.
+    pub fn merge_blocking(&mut self, options: WriterOptions) -> Result<()> {
+        let ids = self.tantivy_index.searchable_segment_ids()?;
+        if ids.len() < 2 {
+            return Ok(());
+        }
+        let mut writer = self.writer_with(options)?.tantivy_writer;
+        writer.merge(&ids).wait()?;
+        writer.wait_merging_threads()?;
+        Ok(())
+    }
+
+    /// How many documents the index has.
+    ///
+    /// # Errors
+    /// If the index can't be read.
+    pub fn num_docs_blocking(&self) -> Result<u64> {
+        Ok(self.searcher()?.num_docs())
+    }
+
+    #[cfg(feature = "tokio")]
     pub async fn num_docs(&self) -> Result<u64> {
         let index = self.tantivy_index.clone();
         let count = spawn_blocking(move || index.reader().ok().map(|reader| reader.searcher().num_docs()));
@@ -454,12 +590,22 @@ impl AirmailIndex {
     }
 
     /// The place with this ID, with the administrative areas it's in, or no
-    /// hits if there's none. Its score is 0.
+    /// hits if there's none. Its score is 0. Runs on tokio's blocking pool.
     ///
     /// # Errors
     /// If the search fails or the stored document can't be decoded.
+    #[cfg(feature = "tokio")]
     pub async fn lookup(&self, id: PlaceId) -> Result<SearchResults> {
-        let (field, term) = match &id {
+        let index = self.clone();
+        spawn_blocking(move || index.lookup_blocking(&id)).await?
+    }
+
+    /// `lookup`, on this thread.
+    ///
+    /// # Errors
+    /// If the search fails or the stored document can't be decoded.
+    pub fn lookup_blocking(&self, id: &PlaceId) -> Result<SearchResults> {
+        let (field, term) = match id {
             PlaceId::Poi(id) => (FIELD_POI_ID, Term::from_field_u64(self.field(FIELD_POI_ID), *id)),
             PlaceId::Wof(id) => (FIELD_WOF_ID, Term::from_field_u64(self.field(FIELD_WOF_ID), *id)),
             PlaceId::Osm(osm_type, id) => {
@@ -468,57 +614,71 @@ impl AirmailIndex {
             PlaceId::Postcode(key) => (FIELD_POSTCODE_ID, Term::from_field_text(self.field(FIELD_POSTCODE_ID), key)),
         };
         trace!("Looking up {id} by {field}");
-        let index = self.clone();
-        spawn_blocking(move || -> Result<SearchResults> {
-            let searcher = index.searcher()?;
-            let query = TermQuery::new(term, IndexRecordOption::Basic);
-            // An element is indexed once, but a POI ID could in principle be
-            // on more than one; the first is as good as any.
-            let Some((_, address)) = searcher.search(&query, &TopDocs::with_limit(1).order_by_score())?.into_iter().next() else {
-                return Ok(SearchResults::default());
-            };
-            let hit = index.hit(&searcher, address, 0.0)?;
-            let admins = index.admins(&searcher, &hit.admin_ids.iter().copied().collect())?;
-            Ok(SearchResults { hits: vec![hit], admins, categories: None })
-        })
-        .await?
+        self.lookup_term(term)
+    }
+
+    /// The document whose [`LOCAL_ID_TAG`] is `id` (only in the device's
+    /// index), as `lookup_blocking` finds a place.
+    ///
+    /// # Errors
+    /// If the search fails or the stored document can't be decoded.
+    pub fn lookup_local_blocking(&self, id: u64) -> Result<SearchResults> {
+        self.lookup_term(Term::from_field_text(self.field(FIELD_OSM_ID), &local_key(id)))
+    }
+
+    fn lookup_term(&self, term: Term) -> Result<SearchResults> {
+        let searcher = self.searcher()?;
+        let query = TermQuery::new(term, IndexRecordOption::Basic);
+        // An element is indexed once, but a POI ID could in principle be
+        // on more than one; the first is as good as any.
+        let Some((_, address)) = searcher.search(&query, &TopDocs::with_limit(1).order_by_score())?.into_iter().next() else {
+            return Ok(SearchResults::default());
+        };
+        let hit = self.hit(&searcher, address, 0.0)?;
+        let admins = self.admins(&searcher, &hit.admin_ids.iter().copied().collect())?;
+        Ok(SearchResults { hits: vec![hit], admins, categories: None })
     }
 
     pub(crate) fn hit(&self, searcher: &Searcher, address: DocAddress, score: f32) -> Result<SearchHit> {
         let doc: TantivyDocument = searcher.doc(address)?;
         let text = |field: &str| doc.get_first(self.field(field)).and_then(|v| v.as_str()).map(str::to_string);
+        let number = |field: &str| doc.get_first(self.field(field)).and_then(|v| v.as_u64());
         let kind = text(FIELD_KIND).as_deref().and_then(Kind::parse).context("document without a kind")?;
-        let mut tags: Vec<(String, String)> = doc
+        let tags: Vec<(String, String)> = doc
             .get_first(self.field(FIELD_TAGS))
             .and_then(|v| v.as_object())
             .map(|object| object.map(|(k, v)| (k.to_string(), v.as_str().unwrap_or_default().to_string())).collect())
             .unwrap_or_default();
-        let tag = |key: &str| tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
-        let poi = tag("cardinal:poi_id")
-            .and_then(|id| id.parse().ok())
-            .zip(tag("cardinal:version").and_then(|v| v.parse().ok()));
-        tags.retain(|(k, _)| !k.starts_with("cardinal:"));
         let osm = text(FIELD_OSM).map(|s| OsmRef::decode(&s)).transpose()?;
         let wof = text(FIELD_WOF).map(|s| serde_json::from_str::<WofPlace>(&s)).transpose()?;
         let admin_ids = doc.get_all(self.field(FIELD_ADMIN_IDS)).filter_map(|v| v.as_u64()).collect();
-        let center = doc.get_first(self.field(FIELD_CENTER)).and_then(|v| v.as_u64()).context("document without a center")?;
+        let center = number(FIELD_CENTER).context("document without a center")?;
         let center = s2::latlng::LatLng::from(s2::cellid::CellID(center));
-        let geometry = doc
-            .get_first(self.field(FIELD_GEOMETRY))
-            .and_then(|v| v.as_bytes())
-            .context("document without a geometry")?;
-        Ok(SearchHit {
+        let center = Point::new(center.lng.deg(), center.lat.deg());
+        let pointer = number(FIELD_POINTER_POI_ID)
+            .zip(number(FIELD_POINTER_TILE))
+            .map(|(poi_id, tile)| Pointer { poi_id, tile: TileId::unpack(tile) });
+        let geometry = match doc.get_first(self.field(FIELD_GEOMETRY)).and_then(|v| v.as_bytes()) {
+            Some(wkb) => geometry::from_wkb(wkb)?,
+            None if pointer.is_some() => Geometry::Point(center),
+            None => bail!("document without a geometry"),
+        };
+        let mut hit = SearchHit {
             score,
             kind,
-            tags,
-            poi,
+            tags: Vec::new(),
+            poi: None,
+            pointer,
             osm,
             wof,
+            local_id: None,
             admin_ids,
-            center: Point::new(center.lng.deg(), center.lat.deg()),
-            geometry: geometry::from_wkb(geometry)?,
+            center,
+            geometry,
             importance: doc.get_first(self.field(FIELD_IMPORTANCE)).and_then(|v| v.as_f64()).unwrap_or(0.0),
-        })
+        };
+        hit.set_tags(tags);
+        Ok(hit)
     }
 
     /// The Who's On First places with these IDs that are in the index.
@@ -763,6 +923,86 @@ fn indexed_tags(tags: &[(String, String)]) -> BTreeSet<String> {
     terms
 }
 
+/// A name's forms, as [`name_forms`] gives them, with the `name_exact` key of
+/// each exact one.
+pub struct NameForms {
+    exact: Vec<String>,
+    other: Vec<String>,
+    exact_keys: Vec<String>,
+}
+
+impl NameForms {
+    fn of(name: &str) -> Self {
+        let (exact, other) = name_forms(name);
+        let exact_keys = exact.iter().map(|form| name_key(form)).collect();
+        Self { exact, other, exact_keys }
+    }
+}
+
+/// The forms of a document's roads (see `SchemafiedPoi`): every form of each,
+/// and the `name_exact` keys of their exact forms, which name a street.
+pub struct RoadForms {
+    forms: BTreeSet<String>,
+    exact_keys: BTreeSet<String>,
+}
+
+impl RoadForms {
+    fn of(roads: &[String], forms: &mut dyn FnMut(&str) -> Arc<NameForms>) -> Self {
+        let mut all = BTreeSet::new();
+        let mut exact_keys = BTreeSet::new();
+        for road in roads {
+            let road_forms = forms(road);
+            exact_keys.extend(road_forms.exact_keys.iter().cloned());
+            all.extend(road_forms.exact.iter().chain(&road_forms.other).cloned());
+        }
+        Self { forms: all, exact_keys }
+    }
+}
+
+/// The most names, or roads, a [`FormsCache`] holds; it starts over when full.
+const FORMS_CACHE_ENTRIES: usize = 1 << 10;
+
+/// The forms of names and roads that many documents share, for
+/// [`DocumentBuilder::document_cached`]: a region's addresses have a few
+/// thousand streets and areas between them.
+#[derive(Default)]
+pub struct FormsCache {
+    names: HashMap<String, Arc<NameForms>>,
+    roads: HashMap<(String, Vec<crate::language::Language>), Arc<RoadForms>>,
+}
+
+impl FormsCache {
+    fn name(&mut self, name: &str) -> Arc<NameForms> {
+        if let Some(forms) = self.names.get(name) {
+            return forms.clone();
+        }
+        if self.names.len() >= FORMS_CACHE_ENTRIES {
+            self.names.clear();
+        }
+        let forms = Arc::new(NameForms::of(name));
+        self.names.insert(name.to_string(), forms.clone());
+        forms
+    }
+
+    /// The forms of a POI's road, in its languages (see `SchemafiedPoi`).
+    fn roads(&mut self, poi: &ToIndexPoi) -> Arc<RoadForms> {
+        let Some(road) = &poi.road else {
+            return Arc::new(RoadForms { forms: BTreeSet::new(), exact_keys: BTreeSet::new() });
+        };
+        let key = (road.clone(), poi.languages.clone());
+        if let Some(forms) = self.roads.get(&key) {
+            return forms.clone();
+        }
+        if self.roads.len() >= FORMS_CACHE_ENTRIES {
+            self.roads.clear();
+        }
+        let roads = crate::poi::road_forms(road, &poi.languages);
+        let forms = Arc::new(RoadForms::of(&roads, &mut |name| self.name(name)));
+        self.roads.insert(key, forms.clone());
+        forms
+    }
+}
+
 /// A document of the index, as `DocumentBuilder` makes it.
 pub type Document = TantivyDocument;
 
@@ -771,6 +1011,7 @@ pub type Document = TantivyDocument;
 #[derive(Clone)]
 pub struct DocumentBuilder {
     schema: Schema,
+    storage: Storage,
 }
 
 impl DocumentBuilder {
@@ -783,44 +1024,77 @@ impl DocumentBuilder {
         name_key(name)
     }
 
+    /// What this builder's documents store.
+    #[must_use]
+    pub fn storage(&self) -> Storage {
+        self.storage
+    }
+
     /// The document for a POI.
+    ///
+    /// # Errors
+    /// If its shape can't be encoded, or it's to be stored as a pointer (it
+    /// has a stable POI ID and the storage is `Storage::Pointers`) but has no
+    /// tile.
     pub fn document(&self, schemafied: SchemafiedPoi, source: &str) -> Result<TantivyDocument> {
-        let poi = &schemafied.poi;
+        let forms = &mut |name: &str| Arc::new(NameForms::of(name));
+        let roads = RoadForms::of(&schemafied.roads, forms);
+        self.build(&schemafied.poi, &schemafied.names, &roads, forms, source)
+    }
+
+    /// The same document as `document`'s, with the forms of names and roads
+    /// that documents share (streets, areas) worked out once for many of them.
+    ///
+    /// # Errors
+    /// As `document`.
+    pub fn document_cached(&self, poi: ToIndexPoi, source: &str, cache: &mut FormsCache) -> Result<TantivyDocument> {
+        let roads = cache.roads(&poi);
+        self.build(&poi, &poi.names, &roads, &mut |name| cache.name(name), source)
+    }
+
+    fn build(
+        &self,
+        poi: &ToIndexPoi,
+        names: &[String],
+        roads: &RoadForms,
+        forms: &mut dyn FnMut(&str) -> Arc<NameForms>,
+        source: &str,
+    ) -> Result<TantivyDocument> {
+        let pointer = match (self.storage, poi.poi_id()) {
+            (Storage::Pointers, Some(poi_id)) => {
+                let tile = poi.tile.with_context(|| format!("POI {poi_id} is stored as a pointer, but has no tile"))?;
+                Some(Pointer { poi_id, tile })
+            }
+            _ => None,
+        };
         let mut doc = TantivyDocument::default();
         let mut exact = BTreeSet::new();
         // Every form a name is in, for the gazetteer.
         let mut all_forms = BTreeSet::new();
-        for name in &schemafied.names {
-            let (exact_forms, other_forms) = name_forms(name);
-            for form in exact_forms {
-                exact.insert(self.exact_key(&form));
+        for name in names {
+            let name_forms = forms(name);
+            for (form, key) in name_forms.exact.iter().zip(&name_forms.exact_keys) {
+                exact.insert(key.clone());
                 all_forms.insert(form.clone());
                 doc.add_text(self.field(FIELD_NAME), form);
             }
-            for form in other_forms {
+            for form in &name_forms.other {
                 all_forms.insert(form.clone());
                 doc.add_text(self.field(FIELD_NAME), form);
             }
         }
         for name in &poi.variant_names {
-            let (exact_forms, other_forms) = name_forms(name);
-            for form in exact_forms.into_iter().chain(other_forms) {
+            let name_forms = forms(name);
+            for form in name_forms.exact.iter().chain(&name_forms.other) {
                 doc.add_text(self.field(FIELD_NAME), form);
             }
         }
-        let mut street_forms = BTreeSet::new();
-        for road in &schemafied.roads {
-            let (exact_forms, other_forms) = name_forms(road);
-            // A street is named by its road's forms too: `pike st` is
-            // exactly Pike Street.
-            if poi.kind == Kind::Street {
-                for form in &exact_forms {
-                    exact.insert(self.exact_key(form));
-                }
-            }
-            street_forms.extend(exact_forms.into_iter().chain(other_forms));
+        // A street is named by its road's forms too: `pike st` is exactly
+        // Pike Street.
+        if poi.kind == Kind::Street {
+            exact.extend(roads.exact_keys.iter().cloned());
         }
-        for form in street_forms {
+        for form in &roads.forms {
             doc.add_text(self.field(FIELD_STREET), form);
         }
         for key in &exact {
@@ -849,8 +1123,8 @@ impl DocumentBuilder {
         }
         let mut admin_forms = BTreeSet::new();
         for (band, name) in &poi.admin_names {
-            let (exact_forms, other_forms) = name_forms(name);
-            admin_forms.extend(exact_forms.into_iter().chain(other_forms).map(|form| (*band, form)));
+            let name_forms = forms(name);
+            admin_forms.extend(name_forms.exact.iter().chain(&name_forms.other).map(|form| (*band, form.clone())));
         }
         for (band, form) in admin_forms {
             doc.add_text(self.field(admin_field(band)), form);
@@ -884,29 +1158,47 @@ impl DocumentBuilder {
         for id in &poi.admin_ids {
             doc.add_u64(self.field(FIELD_ADMIN_IDS), *id);
         }
+        // A pointer stores only what search needs; the rest is in its tile.
+        let stored = pointer.is_none();
         if let Some(osm) = &poi.osm {
-            doc.add_text(self.field(FIELD_OSM), osm.encode());
+            if stored {
+                doc.add_text(self.field(FIELD_OSM), osm.encode());
+            }
             doc.add_text(self.field(FIELD_OSM_ID), format!("{}/{}", osm.osm_type.as_str(), osm.id));
         }
-        if let Some(poi_id) = poi.tag("cardinal:poi_id").and_then(|id| id.parse::<u64>().ok()) {
+        if let Some(local) = poi.tag(LOCAL_ID_TAG).and_then(|v| v.parse::<u64>().ok()) {
+            doc.add_text(self.field(FIELD_OSM_ID), local_key(local));
+        }
+        if let Some(poi_id) = poi.poi_id() {
             doc.add_u64(self.field(FIELD_POI_ID), poi_id);
+        }
+        if let Some(pointer) = pointer {
+            doc.add_u64(self.field(FIELD_POINTER_POI_ID), pointer.poi_id);
+            doc.add_u64(self.field(FIELD_POINTER_TILE), pointer.tile.pack());
         }
         if let Some(wof) = &poi.wof {
             doc.add_u64(self.field(FIELD_WOF_ID), wof.id);
-            doc.add_text(self.field(FIELD_WOF), serde_json::to_string(wof)?);
+            if stored {
+                doc.add_text(self.field(FIELD_WOF), serde_json::to_string(wof)?);
+            }
         }
-        if !poi.tags.is_empty() {
-            doc.add_object(
-                self.field(FIELD_TAGS),
-                poi.tags
-                    .iter()
-                    .map(|(k, v)| (k.clone(), OwnedValue::Str(v.clone())))
-                    .collect::<BTreeMap<String, OwnedValue>>(),
-            );
+        // A pointer keeps its names, which ranking reads (how much of a name a
+        // query is); its other tags are in its tile.
+        let kept: BTreeMap<String, OwnedValue> = poi
+            .tags
+            .iter()
+            .filter(|(k, _)| stored || crate::osm::is_name_key(k))
+            .map(|(k, v)| (k.clone(), OwnedValue::Str(v.clone())))
+            .collect();
+        if !kept.is_empty() {
+            doc.add_object(self.field(FIELD_TAGS), kept);
         }
         let center = s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(poi.center.y(), poi.center.x()));
         doc.add_u64(self.field(FIELD_CENTER), center.0);
-        doc.add_bytes(self.field(FIELD_GEOMETRY), &geometry::to_wkb(&poi.geometry)?);
+        doc.add_u64(self.field(FIELD_IS_POINT), u64::from(!stored || matches!(poi.geometry, Geometry::Point(_))));
+        if stored {
+            doc.add_bytes(self.field(FIELD_GEOMETRY), &geometry::to_wkb(&poi.geometry)?);
+        }
         let mut ancestors = BTreeSet::new();
         for cell in geometry::covering(&poi.geometry) {
             doc.add_u64(self.field(FIELD_S2_COVER), cell.0);
@@ -923,6 +1215,7 @@ impl DocumentBuilder {
 pub struct AirmailIndexWriter {
     tantivy_writer: tantivy::IndexWriter,
     schema: Schema,
+    storage: Storage,
 }
 
 impl AirmailIndexWriter {
@@ -930,10 +1223,11 @@ impl AirmailIndexWriter {
         self.schema.get_field(name).expect("schema field")
     }
 
-    /// Builds documents for this writer, on any thread.
+    /// Builds documents for this writer, on any thread, stored as the
+    /// writer's options say.
     #[must_use]
     pub fn document_builder(&self) -> DocumentBuilder {
-        DocumentBuilder { schema: self.schema.clone() }
+        DocumentBuilder { schema: self.schema.clone(), storage: self.storage }
     }
 
     /// Adds a document from `document_builder`.
@@ -1007,7 +1301,9 @@ mod test {
             kind: Kind::Admin,
             tags: Vec::new(),
             poi: None,
+            pointer: None,
             osm: None,
+            local_id: None,
             wof: Some(WofPlace {
                 id,
                 placetype: placetype.into(),
@@ -1068,4 +1364,38 @@ mod test {
         assert_eq!(terms.into_iter().collect::<Vec<_>>(), vec!["diet:vegan=yes", "diet:vegetarian=only"]);
     }
 
+    #[test]
+    fn cached_documents_are_the_same() {
+        use crate::language::Language;
+        let builder = DocumentBuilder { schema: AirmailIndex::schema(), storage: Storage::Full };
+        let at = Geometry::Point(Point::new(-122.3405, 47.6097));
+        let mut docs = Vec::new();
+        for (street, number, kind) in [
+            ("Fremont Ave N", "3401", Kind::Address),
+            ("Fremont Ave N", "3405", Kind::Address),
+            ("Fremont Ave N", "", Kind::Street),
+            ("Ackermannstraße", "1", Kind::Address),
+            ("Rue de l'Arsenal", "40", Kind::Address),
+            ("Ленинский проспект", "2", Kind::Address),
+        ] {
+            let names = if kind == Kind::Street { vec![street.to_string()] } else { Vec::new() };
+            let mut doc = ToIndexPoi::new(kind, names, at.clone(), Vec::new()).unwrap();
+            doc.road = Some(street.to_string());
+            doc.house_number = (!number.is_empty()).then(|| number.to_string());
+            doc.languages = vec![Language::English, Language::French];
+            doc.admin_names =
+                vec![(AdminBand::Locality, "Seattle".into()), (AdminBand::Neighbourhood, "Fremont".into())];
+            doc.variant_names = vec!["Müllerstraße".into()];
+            doc.country_code = Some("US".into());
+            docs.push(doc);
+        }
+        // Twice, for the cached forms.
+        docs.extend(docs.clone());
+        let mut cache = FormsCache::default();
+        for doc in docs {
+            let plain = builder.document(SchemafiedPoi::from(doc.clone()), "test").unwrap();
+            let cached = builder.document_cached(doc, "test", &mut cache).unwrap();
+            assert_eq!(format!("{plain:?}"), format!("{cached:?}"));
+        }
+    }
 }

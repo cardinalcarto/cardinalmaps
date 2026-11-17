@@ -3,6 +3,10 @@
 The app downloads one release of each kind, so `latest.json` must never pair a transit
 release with routing tiles other than the ones its walks were computed on.
 
+`geocoder` names the release whose models a phone's offline search downloads, so it must
+have them (a tagger, at least); it pairs with any map release, since the phone indexes the
+map's own tiles.
+
 `poi` names a POI identity checkpoint by its replication sequence. Identifiers are stable, so
 it pairs with any map or geocoder release and isn't checked against them.
 """
@@ -38,6 +42,12 @@ def run(publisher, wanted):
         if release is None:
             raise PublishError(f"{kind} release {date} isn't published (no {kind}/{date}/release.json)")
         releases[kind] = release
+    geocoder = releases.get("geocoder")
+    if geocoder and not geocoder.get("tagger"):
+        raise PublishError(
+            f"geocoder {latest['geocoder']} has no phone models (no tagger.model); "
+            "publish it with --tagger and --categories, or name another release"
+        )
     transit, routing = releases.get("transit"), releases.get("routing")
     if transit and not routing:
         raise PublishError("latest.json can't name a transit release without a routing release")

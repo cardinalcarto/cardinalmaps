@@ -14,6 +14,7 @@ import '../directions/transit_details.dart' show RouteBadge;
 import '../directions/transit_plan.dart';
 import '../directions/transit_sheet.dart' show accessIcon, clock, liveColor;
 import '../map/location.dart';
+import '../offline/offline_area.dart' show NoOfflineTransit;
 import '../routes.dart';
 import '../settings/accessibility.dart';
 import '../sheet/sheet.dart';
@@ -338,6 +339,9 @@ class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
     } on OutsideOfflineArea {
       failed = _Note.outside;
     } on NoOfflineArea {
+      failed = _Note.noArea;
+    } on NoOfflineTransit {
+      // An area without timetables: one with transit is what to download.
       failed = _Note.noArea;
     } on Object catch (e) {
       debugPrint('nearby transit: $e');

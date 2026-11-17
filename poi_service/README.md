@@ -88,6 +88,27 @@ are copied unchanged. The input must include element metadata, and POIs whose
 version the database hasn't seen (for example, if the input is newer than the
 database) are counted and left without an identifier.
 
+Given the same extract with node locations on its ways (`osmium
+add-locations-to-ways --keep-member-nodes`), `patch` also tags every POI with
+its importance, as airmail's geocoder ranks it, and can write a patched copy
+of that file too, which is what airmail's indexer reads:
+
+```sh
+cargo run --release -- patch --input planet.osm.pbf --output planet-ids.osm.pbf \
+    --locations planet-low.osm.pbf --locations-output planet-low-ids.osm.pbf \
+    --qrank qrank.csv.gz
+```
+
+`cardinal:importance=<0 to 1>` (four decimal places) goes on every POI,
+whether or not its version has an identifier. It's computed with airmail's own
+code, the `airmail_importance` crate in `airmail/`, from the POI's Wikidata
+entity and its [QRank](https://qrank.wmcloud.org), the geodesic area of its
+shape as airmail stores it, and whether it's a transit stop. A way is an area
+if it's closed and its tags say so; a multipolygon relation is assembled from
+its member ways like airmail's indexer does, holding their locations in memory
+(8 bytes a node); other relations have no area. Without `--qrank`, having a
+Wikidata entity counts the same for every POI.
+
 `checkpoint` prints the latest checkpoint's sequence and checksum. They change
 whenever the identifiers `patch` would add can, so builds use them to tell
 whether an earlier patched file is still current.
@@ -234,7 +255,9 @@ against both.
 ## Container image
 
 `Dockerfile` builds the `cardinal-poi-service` image, which
-`.github/workflows/images.yml` publishes on pushes to `main`. See
+`.github/workflows/images.yml` publishes on pushes to `main`. It needs
+`../airmail/airmail_importance` as the build context `airmail_importance`
+(`docker build --build-context airmail_importance=../airmail/airmail_importance .`). See
 `k8s/README.md` for an example deployment.
 
 ## Tests

@@ -82,6 +82,17 @@ A model stores its features in an FST, with 16-bit weights, so it can be read wi
 - `python3 -I eval/search_eval.py http://127.0.0.1:3000 [--region wa] [--jobs N]` scores a running service against the ranking cases in `eval/search.tsv`. It understands the legacy `/search` API too, so a change can be compared against the version before it.
 - `python3 -I eval/pelias_acceptance.py http://127.0.0.1:3000 path/to/acceptance-tests [--failures] [--jobs N]` runs [Pelias's acceptance tests](https://github.com/pelias/acceptance-tests) (clone them first) against `/v1/search`, translating their inputs and expectations; its docstring lists the approximations. They're worldwide, so they mean most against a planet index.
 
+- `cargo run --release --bin spatial_bench -- sample|run|compare ...` searches sampled queries in boxes of several sizes and compares two indexes' results and latencies (see its doc comment).
+
+## On phones
+
+The `airmail` crate (search, `DocumentBuilder`, the writer, categorical inference) and `airmail_tagger` build for Android and iOS with `airmail`'s default features off, which drops tokio and tantivy's columnar zstd (a C dependency no field uses). Without `tokio`, use `lookup_blocking` and `num_docs_blocking`; `AirmailIndex::writer_with` takes the indexing memory and threads, and `Storage::Pointers`, with which a document with a stable POI ID stores only a pointer to the tile feature it came from (`SearchHit::pointer`). Documents are made from tile features' tags with `airmail::osm::document` and `street_document`, from Who's On First records with `airmail::wof::admin_document`, and postcodes with `airmail::postcodes::Postcodes`, as the indexer does.
+
+```bash
+cargo check -p airmail -p airmail_tagger --no-default-features --target aarch64-linux-android
+cargo check -p airmail -p airmail_tagger --no-default-features --target aarch64-apple-ios
+```
+
 ## Containers
 
 `Dockerfile` builds the service and `airmail_indexer/Dockerfile` builds the indexer. `docker-compose.yaml` wires both to `./data`; see the README for the commands.

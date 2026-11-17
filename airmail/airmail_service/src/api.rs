@@ -336,6 +336,7 @@ fn run_search(params: &SearchParams, state: &AppState) -> anyhow::Result<Value> 
         focus: params.focus,
         location: params.location,
         model,
+        hydrate: None,
     };
     let results = state.index.search(&request)?;
     Ok(search_response(params, &results, model))

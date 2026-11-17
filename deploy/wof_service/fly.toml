@@ -1,0 +1,69 @@
+# An example Who's On First place service on fly.io: wof_service answering bbox queries from
+# the WOF release pinned below, a SpatiaLite database the entrypoint downloads onto each
+# machine's volume. See README.md for adapting it.
+
+app = "cardinal-wof-example"
+primary_region = "sjc"
+
+[build]
+# The cardinal-wof-service-flyio image .github/workflows/images.yml publishes for a commit on main.
+image = "ghcr.io/OWNER/cardinal-wof-service-flyio:sha-COMMIT"
+
+[env]
+# The release this app serves, published with `cardinal-publish wof`. Changing it and deploying
+# is the only way to move to another release; each machine then replaces its database, one at
+# a time.
+WOF_RELEASE = "2026-11-17"
+WOF_RELEASES_URL = "https://BUCKET.t3.storage.dev/releases"
+# Request limits; see wof_service/README.md. A Washington-state bbox is 28 square degrees and
+# about 4,700 places.
+WOF_MAX_AREA = "100"
+WOF_MAX_PLACES = "50000"
+WOF_TIMEOUT = "30"
+RUST_LOG = "info"
+
+[mounts]
+# One volume per machine, holding one release's database (about 34 GB in 2026); the entrypoint
+# deletes the old one before downloading the next. Create them with `fly volumes create` (see
+# README.md).
+source = "wof_data"
+destination = "/data"
+
+[deploy]
+strategy = "rolling"
+max_unavailable = 1
+# Long enough for a machine to download and hash a new release's database (34 GB: about 10
+# minutes at 100 MB/s, an hour at 10 MB/s) with retries. Measure your volumes' bandwidth and
+# set this from it (see README.md).
+wait_timeout = "3h"
+
+[http_service]
+internal_port = 3000
+force_https = true
+# Requests are bursty (a phone downloading a region), and a stopped machine starts in seconds
+# with its volume intact: a start checks the database's size and recorded SHA-256, and doesn't
+# hash it again.
+auto_stop_machines = "stop"
+auto_start_machines = true
+min_machines_running = 1
+
+# Each request reads SQLite and simplifies shapes on one core; the service also queues
+# requests beyond WOF_CONCURRENCY (default: the CPU count) itself.
+[http_service.concurrency]
+type = "requests"
+soft_limit = 8
+hard_limit = 32
+
+# /health answers once the database is open, which is right away when the volume holds it.
+[[http_service.checks]]
+grace_period = "30s"
+interval = "30s"
+method = "GET"
+path = "/health"
+timeout = "5s"
+
+[[vm]]
+# A large response (50,000 places) is held in memory while it's written; the rest of the
+# memory caches the database's pages.
+size = "shared-cpu-2x"
+memory = "2gb"

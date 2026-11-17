@@ -5,7 +5,10 @@ import 'package:path_provider/path_provider.dart';
 part 'database.g.dart';
 
 /// The kinds of release, as `latest.json` names them.
-enum ReleaseKind { map, routing, transit }
+///
+/// `geocoder` is the geocoder's models (`tagger.model`, `categorical/<lang>.amcats`),
+/// pinned on their own when they're first downloaded ([RegionKind.geocoderModels]).
+enum ReleaseKind { map, routing, transit, geocoder }
 
 /// What a region is for.
 enum RegionKind {
@@ -15,6 +18,10 @@ enum RegionKind {
   /// The built-in region of routing tiles fetched as routes need them (no polygon). Files
   /// only it holds are evicted, least recently used first, when space is needed.
   onDemand,
+
+  /// The geocoder's models for offline search (no polygon), downloaded once. Never
+  /// evicted.
+  geocoderModels,
 }
 
 /// Where a region is in its life:

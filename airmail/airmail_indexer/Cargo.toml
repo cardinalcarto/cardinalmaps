@@ -22,8 +22,20 @@ name = "tagger"
 path = "src/bin/tagger.rs"
 
 [[bin]]
+name = "spatial_bench"
+path = "src/bin/spatial_bench.rs"
+
+[[bin]]
 name = "categories_export"
 path = "src/bin/categories_export.rs"
+
+[[bin]]
+name = "categories_prune"
+path = "src/bin/categories_prune.rs"
+
+[[bin]]
+name = "tagger_prune"
+path = "src/bin/tagger_prune.rs"
 
 [lib]
 name = "airmail_indexer"
@@ -31,8 +43,10 @@ path = "src/lib.rs"
 
 [dependencies]
 airmail_tagger = { path = "../airmail_tagger" }
+fst = "0.4.7"
 rand = "0.9"
 airmail.workspace = true
+airmail_importance.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 flate2 = "1.1.10"
@@ -43,7 +57,6 @@ futures-util.workspace = true
 geo.workspace = true
 geo-types = { version = "0.7.20", features = ["serde", "use-rstar_0_12"] }
 geozero = { version = "0.15.1", default-features = false, features = ["with-geo", "with-wkb"] }
-lingua.workspace = true
 log.workspace = true
 num_cpus = "1.17.0"
 osmpbf = "0.3.8"

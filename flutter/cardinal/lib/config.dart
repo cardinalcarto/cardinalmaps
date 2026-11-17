@@ -10,6 +10,11 @@ const tilesUrl = String.fromEnvironment('CARDINAL_TILES_URL');
 /// Where the geocoder's API is: requests go to `<url>/v1/...`.
 const geocoderUrl = String.fromEnvironment('CARDINAL_GEOCODER_URL');
 
+/// Where the Who's On First service is (`wof_service/`): requests go to `<url>/v1/places`.
+/// Offline search fetches the areas of each downloaded region from it, once, when the
+/// region is ready. Empty means offline search has no areas (no cities, no "in Seattle").
+const wofUrl = String.fromEnvironment('CARDINAL_WOF_URL');
+
 /// Where offline releases are published: the bucket's `releases/` over HTTPS, holding
 /// `latest.json` (see `publish/README.md`). Empty means no downloads.
 const releasesUrl = String.fromEnvironment('CARDINAL_RELEASES_URL');

@@ -70,6 +70,62 @@ class PoiTest extends AbstractLayerTest {
   }
 
   @Test
+  void testImportance() {
+    assertFeatures(14, List.of(Map.of("cardinal:importance", 0.25f)),
+      process(pointFeature(Map.of("amenity", "cafe", "name", "Ritual", "cardinal:importance", "0.25"))));
+    for (var tags : List.<Map<String, Object>>of(Map.of(), Map.of("cardinal:importance", "high"),
+      Map.of("cardinal:importance", "NaN"))) {
+      var withTags = new HashMap<>(tags);
+      withTags.putAll(Map.of("amenity", "cafe", "name", "Ritual"));
+      assertFeatures(14, List.of(Map.of("cardinal:importance", "<null>")), process(pointFeature(withTags)));
+    }
+    // on backcountry POIs too
+    assertFeatures(14, List.of(Map.of("cardinal:importance", 0.5f)),
+      process(pointFeature(Map.of("natural", "spring", "name", "Spring", "cardinal:importance", "0.5"))));
+  }
+
+  @Test
+  void testNamesForGeocoderOnlyAtZ14() {
+    var features = process(pointFeature(Map.of(
+      "railway", "station",
+      "name", "Central",
+      "name:fr", "Centrale",
+      "alt_name", "Central Station",
+      "short_name:en", "CS",
+      "loc_name", "The Hub",
+      "int_name", "Central International"
+    )));
+    assertFeatures(14, List.of(Map.of(
+      "name", "Central",
+      "name:fr", "Centrale",
+      "alt_name", "Central Station",
+      "short_name:en", "CS",
+      "loc_name", "The Hub",
+      "int_name", "Central International",
+      "name_int", "Central International"
+    )), features);
+    assertFeatures(12, List.of(Map.of(
+      "name", "Central",
+      "name:fr", "<null>",
+      "alt_name", "<null>",
+      "short_name:en", "<null>",
+      "loc_name", "<null>",
+      "int_name", "<null>",
+      "name_int", "Central International"
+    )), features);
+  }
+
+  @Test
+  void testAssociatedStreetOnNodePoi() {
+    profile.preprocessOsmRelation(new OsmElement.Relation(9,
+      new HashMap<>(Map.of("type", "associatedStreet", "name", "Rue de la Paix")),
+      List.of(new OsmElement.Relation.Member(OsmElement.Type.NODE, 123, "house"))));
+    assertFeatures(14, List.of(Map.of("addr:street", "Rue de la Paix")), process(cafeWithOsmId(Map.of())));
+    assertFeatures(14, List.of(Map.of("addr:street", "Valencia St")),
+      process(cafeWithOsmId(Map.of("addr:street", "Valencia St"))));
+  }
+
+  @Test
   void testFenwayPark() {
     assertFeatures(7, List.of(Map.of(
       "_layer", "poi",

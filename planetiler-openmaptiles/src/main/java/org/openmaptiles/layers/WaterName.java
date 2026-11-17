@@ -207,7 +207,8 @@ public class WaterName implements
       }
       features.point(LAYER_NAME)
         .setBufferPixels(BUFFER_SIZE)
-        .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+        .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(source.tags(), translations))
+        .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(source), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
         .setAttr(Fields.CLASS, clazz)
         .setAttr(Fields.INTERMITTENT, element.isIntermittent() ? 1 : 0)
         .setMinZoom(minZoom);
@@ -257,7 +258,8 @@ public class WaterName implements
     output
       .setAttr(Fields.CLASS, clazz)
       .setBufferPixels(BUFFER_SIZE)
-      .putAttrs(OmtLanguageUtils.getNames(element.source().tags(), translations))
+      .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(element.source().tags(), translations))
+      .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(element.source()), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
       .setAttr(Fields.INTERMITTENT, element.isIntermittent() ? 1 : 0)
       .setMinZoom(minzoom);
     return output;

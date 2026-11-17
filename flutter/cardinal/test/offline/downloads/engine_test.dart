@@ -1085,4 +1085,148 @@ void main() {
       5721,
     ));
   });
+
+  group('offline search', () {
+    late RecordingIndexer indexer;
+
+    setUp(() async {
+      await engine.close();
+      indexer = RecordingIndexer();
+      engine = OfflineDownloads(
+        db: db,
+        root: root,
+        bucket: Bucket(Uri.parse(server.releasesUrl)),
+        transfers: transfers,
+        native: native,
+        indexer: indexer,
+      );
+      await engine.open();
+    });
+
+    test('is told the ready regions when one is installed or deleted, and on start', () async {
+      // Opening tells it there's nothing yet.
+      expect(indexer.told.single, IndexSources.none);
+      final first = await download(capitolHill, feeds: {metro});
+      expect(indexer.told.last.mapRelease, mapDate);
+      expect(indexer.told.last.basemap, engine.basemapPath(mapDate));
+      expect(indexer.told.last.regions.single.id, first);
+      expect(indexer.told.last.regions.single.bounds, capitolHill.bounds);
+      final second = await download(downtown);
+      expect(indexer.told.last.regions.map((r) => r.id), [first, second]);
+
+      await engine.delete(first);
+      expect(indexer.told.last.regions.map((r) => r.id), [second]);
+
+      // A restart tells it again, so a build the app stopped in runs again.
+      await engine.close();
+      final count = indexer.told.length;
+      engine = OfflineDownloads(
+        db: db,
+        root: root,
+        bucket: Bucket(Uri.parse(server.releasesUrl)),
+        transfers: transfers,
+        native: native,
+        indexer: indexer,
+      );
+      await engine.open();
+      expect(indexer.told.length, count + 1);
+      expect(indexer.told.last.regions.map((r) => r.id), [second]);
+    });
+
+    test('the models are not a region to index, but are found', () async {
+      expect(await engine.geocoderModelFiles(), (
+        tagger: null,
+        categories: null,
+      ));
+      final models = (await engine.planGeocoderModels('eng'))!;
+      await engine.startGeocoderModels(models);
+      await settle();
+      expect(indexer.told, [IndexSources.none]);
+      expect(
+        (await engine.geocoderModelFiles()).tagger,
+        '$root/geocoder/$geocoderDate/tagger.model',
+      );
+      expect(
+        (await engine.geocoderModelFiles()).categories,
+        '$root/geocoder/$geocoderDate/categorical/eng.amcats',
+      );
+    });
+  });
+
+  group("the geocoder's models", () {
+    test(
+      "a plan has the tagger and the language's categories, with sizes",
+      () async {
+        final plan = (await engine.planGeocoderModels('eng'))!;
+        expect(plan.release, geocoderDate);
+        expect(plan.tagger.path, 'tagger.model');
+        expect(plan.tagger.bytes, 3000);
+        expect(plan.tagger.sha256, hasLength(64));
+        expect(plan.categories!.path, 'categorical/eng.amcats');
+        expect(
+          plan.categories!.installPath,
+          'geocoder/$geocoderDate/categorical/eng.amcats',
+        );
+        expect(plan.bytes, 5000);
+        // Nothing's pinned by planning.
+        expect((await engine.pinned())[ReleaseKind.geocoder], isNull);
+      },
+    );
+
+    test('a language without categories gets the tagger alone', () async {
+      final plan = (await engine.planGeocoderModels('kli'))!;
+      expect(plan.categories, isNull);
+      expect(plan.files.map((f) => f.path), ['tagger.model']);
+      expect((await engine.planGeocoderModels(null))!.categories, isNull);
+    });
+
+    test('no geocoder release, no plan', () async {
+      await release.publishOtherTransit('2026-11-12');
+      expect(await engine.planGeocoderModels('eng'), isNull);
+    });
+
+    test('download, check and install, pinning the release, once', () async {
+      final plan = (await engine.planGeocoderModels('eng'))!;
+      final id = await engine.startGeocoderModels(plan);
+      await settle();
+      final progress = await region(id);
+      expect(progress.kind, RegionKind.geocoderModels);
+      expect(progress.state, RegionState.ready);
+      expect(progress.bytesDone, 5000);
+      expect(
+        File('$root/geocoder/$geocoderDate/tagger.model').lengthSync(),
+        3000,
+      );
+      expect(
+        File('$root/geocoder/$geocoderDate/categorical/eng.amcats')
+            .existsSync(),
+        isTrue,
+      );
+      expect((await engine.pinned())[ReleaseKind.geocoder]!.date, geocoderDate);
+      expect(await engine.watchGeocoderModels().first, isNotNull);
+      // Starting again is the same region.
+      expect(await engine.startGeocoderModels(plan), id);
+      // They don't make an offline area for directions.
+      expect(await engine.readyReleases(), isNull);
+      // And on-demand eviction leaves them.
+      await engine.evictOnDemand(1 << 30);
+      expect(
+        File('$root/geocoder/$geocoderDate/tagger.model').existsSync(),
+        isTrue,
+      );
+    });
+
+    test('a bad file fails the region, and retry downloads it again', () async {
+      final plan = (await engine.planGeocoderModels('eng'))!;
+      server.corrupt.add('geocoder/$geocoderDate/tagger.model');
+      final id = await engine.startGeocoderModels(plan);
+      await settle();
+      expect((await region(id)).state, RegionState.failed);
+
+      server.corrupt.clear();
+      await engine.retry(id);
+      await settle();
+      expect((await region(id)).state, RegionState.ready);
+    });
+  });
 }

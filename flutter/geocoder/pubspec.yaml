@@ -1,0 +1,32 @@
+name: geocoder
+description: "The offline geocoder on the device: reads a region's map tiles for the phone's search index, in process through flutter_rust_bridge."
+version: 0.0.1
+publish_to: none
+
+environment:
+  sdk: ^3.13.7
+  flutter: '>=3.47.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_rust_bridge: 2.13.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        ffiPlugin: true
+      ios:
+        ffiPlugin: true
+      linux:
+        ffiPlugin: true
+      macos:
+        ffiPlugin: true
+      windows:
+        ffiPlugin: true

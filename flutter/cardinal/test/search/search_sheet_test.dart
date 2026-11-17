@@ -20,6 +20,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../fakes/fake_geocoder.dart';
 import '../fakes/fake_location.dart';
 import '../fakes/fake_map.dart';
 import '../fakes/fake_place_store.dart';
@@ -44,7 +45,9 @@ Future<Store> _pumpApp(
     places: places,
     saved: FakeSavedStore(places),
   );
-  final geocoder = Geocoder(
+  // These search the geocoder server; see the offline tests for the device's.
+  await store.settings.set(searchOnline, true);
+  final geocoder = OnlineGeocoder(
     Uri.parse('http://localhost:3000'),
     client: MockClient((request) async {
       asked?.add(request.url);
@@ -95,7 +98,8 @@ Future<Store> _pumpApp(
     StoreScope(
       store: store,
       child: GeocoderScope(
-        geocoder: geocoder,
+        online: geocoder,
+        offline: FakeGeocoder(),
         child: DirectionsScope(
           routes: FakeRoutes(),
           transit: FakeTransit(),

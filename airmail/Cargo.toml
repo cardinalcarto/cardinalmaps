@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["airmail", "airmail_indexer", "airmail_service", "airmail_tagger"]
+members = ["airmail", "airmail_importance", "airmail_indexer", "airmail_service", "airmail_tagger"]
 
 [workspace.package]
 edition = "2024"
@@ -8,33 +8,13 @@ rust-version = "1.94"
 
 [workspace.dependencies]
 airmail = { path = "airmail" }
+airmail_importance = { path = "airmail_importance" }
 anyhow = "1.0.104"
 deunicode = "1.6.2"
 env_logger = "0.11.11"
 futures-util = "0.3.34"
 geo = "0.33.1"
 lazy_static = "1.5.1"
-lingua = { version = "1.8.0", default-features = false, features = [
-    "english",
-    "chinese",
-    "catalan",
-    "arabic",
-    "danish",
-    "dutch",
-    "finnish",
-    "french",
-    "german",
-    "greek",
-    "hungarian",
-    "italian",
-    "portuguese",
-    "romanian",
-    "russian",
-    "spanish",
-    "swedish",
-    "tamil",
-    "turkish",
-] }
 log = "0.4.35"
 s2 = "0.2.0"
 serde = { version = "1.0.229", features = ["derive"] }

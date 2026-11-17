@@ -192,7 +192,7 @@ class OfflineNearbySource implements NearbyTransitSource {
     unawaited(() async {
       try {
         final area = await _area();
-        if (area == null) return;
+        if (area == null || !area.hasTransit) return;
         await area.transit;
       } on Object catch (e) {
         debugPrint('nearby transit: $e');

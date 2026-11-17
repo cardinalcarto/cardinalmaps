@@ -23,12 +23,23 @@ class FakePlaceStore implements PlaceStore {
   @override
   Future<Place?> get(String id) async => _places[id];
 
+  /// The place now, then again at each change. It hears changes from the moment it's
+  /// listened to, as the database's query does: a put made before the first value
+  /// arrives still comes through.
   @override
-  Stream<Place?> watch(String id) async* {
-    yield _places[id];
-    yield* _changes.stream
-        .where((changed) => changed == id)
-        .map((_) => _places[id]);
+  Stream<Place?> watch(String id) {
+    StreamSubscription<String>? changes;
+    late final StreamController<Place?> controller;
+    controller = StreamController<Place?>(
+      onListen: () {
+        controller.add(_places[id]);
+        changes = _changes.stream
+            .where((changed) => changed == id)
+            .listen((_) => controller.add(_places[id]));
+      },
+      onCancel: () => changes?.cancel(),
+    );
+    return controller.stream;
   }
 
   @override

@@ -6,7 +6,7 @@ use anyhow::Result;
 use futures_util::future::join_all;
 use serde::Deserialize;
 
-use airmail::poi::{AdminBand, is_containing_admin};
+use airmail::poi::AdminBand;
 
 use crate::{
     COUNTRIES,
@@ -121,23 +121,8 @@ pub(crate) async fn query_pip(
         response.admin_langs = languages(country_id, wof_db).await.to_vec();
     }
 
-    let infos = join_all(admin_ids.iter().map(|id| admin_info(*id, wof_db))).await;
-    let mut admin_names = BTreeSet::new();
-    for (id, info) in admin_ids.iter().zip(infos) {
-        let info = info?;
-        if !is_containing_admin(&info.placetype) {
-            continue;
-        }
-        response.admin_ids.push(*id);
-        let Some(band) = AdminBand::of(&info.placetype) else { continue };
-        for name in &info.names {
-            if name.is_searchable()
-                && (name.lang == "und" || name.lang == "eng" || response.admin_langs.contains(&name.lang))
-            {
-                admin_names.insert((band, name.name.clone()));
-            }
-        }
-    }
-    response.admin_names = admin_names.into_iter().collect();
+    let infos = join_all(admin_ids.iter().map(|id| admin_info(*id, wof_db))).await.into_iter().collect::<Result<Vec<_>>>()?;
+    let areas = admin_ids.iter().zip(&infos).map(|(id, info)| (*id, info.placetype.as_str(), info.names.as_slice()));
+    (response.admin_ids, response.admin_names) = airmail::wof::containing(areas, &response.admin_langs);
     Ok(response)
 }

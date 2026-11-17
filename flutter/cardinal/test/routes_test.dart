@@ -48,7 +48,12 @@ void main() {
     expect(router.canPop(), isFalse);
   });
 
-  for (final id in ['poi:97175', 'wof:101730401', 'osm:way/12903132']) {
+  for (final id in [
+    'poi:97175',
+    'wof:101730401',
+    'osm:way/12903132',
+    'local:7083948262915487',
+  ]) {
     testWidgets('the place route gets back $id', (tester) async {
       String? routed;
       final router = GoRouter(

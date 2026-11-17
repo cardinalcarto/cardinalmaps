@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y clang pkg-config libzstd-dev libsqlite3
 
 WORKDIR /usr/src/airmail
 COPY ./airmail ./airmail
+COPY ./airmail_importance ./airmail_importance
 COPY ./airmail_indexer ./airmail_indexer
 COPY ./airmail_service ./airmail_service
 COPY ./airmail_tagger ./airmail_tagger

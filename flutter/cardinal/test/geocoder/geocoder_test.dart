@@ -182,7 +182,7 @@ void main() {
   group('Geocoder', () {
     test('searches with the given options', () async {
       late Uri asked;
-      final geocoder = Geocoder(
+      final geocoder = OnlineGeocoder(
         Uri.parse('https://example.org/geocoder/'),
         client: MockClient((request) async {
           asked = request.url;
@@ -214,7 +214,7 @@ void main() {
     });
 
     test('looks up a place by ID, or finds none', () async {
-      final geocoder = Geocoder(
+      final geocoder = OnlineGeocoder(
         Uri.parse('http://localhost:3000'),
         client: MockClient((request) async {
           expect(request.url.path, '/v1/place');
@@ -231,8 +231,18 @@ void main() {
       expect(await geocoder.place('poi:1'), isNull);
     });
 
+    test("doesn't ask the server for the device's own IDs", () async {
+      final geocoder = OnlineGeocoder(
+        Uri.parse('http://localhost:3000'),
+        client: MockClient((request) async => fail('asked $request')),
+      );
+      expect(await geocoder.place('local:123'), isNull);
+      expect(isLocalPlaceId('local:123'), isTrue);
+      expect(isLocalPlaceId('osm:way/12'), isFalse);
+    });
+
     test('reports problems', () {
-      final geocoder = Geocoder(
+      final geocoder = OnlineGeocoder(
         Uri.parse('http://localhost:3000'),
         client: MockClient(
           (_) async => http.Response('{"detail": "q is empty"}', 400),

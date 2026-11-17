@@ -15,6 +15,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:routing/routing.dart';
 
 import '../config.dart';
+import '../geocoder/search_index.dart';
 import 'downloads/bucket.dart';
 import 'downloads/database.dart';
 import 'downloads/engine.dart';
@@ -32,7 +33,7 @@ import 'downloads/transfers.dart';
 class OfflineArea implements OfflineListener {
   OfflineArea({
     required this.routing,
-    required this.transitBuild,
+    this.transitBuild,
     this.valhallaBuildId,
     @visibleForTesting Future<OfflineRouter> Function()? openRouter,
     @visibleForTesting Future<OfflineTransit> Function()? openTransit,
@@ -42,8 +43,12 @@ class OfflineArea implements OfflineListener {
   /// The routing release's directory, `routing/<date>`.
   final String routing;
 
-  /// The transit release's directory, `transit/<date>`.
-  final String transitBuild;
+  /// The transit release's directory, `transit/<date>`, or null if no transit release
+  /// is pinned: no region took any feeds, so the area has no timetables.
+  final String? transitBuild;
+
+  /// Whether the area has transit: a transit release with timetables.
+  bool get hasTransit => transitBuild != null;
 
   /// The routing release's Valhalla build, when known: the router then opens with no
   /// tiles yet, and refuses tiles of another build.
@@ -82,26 +87,30 @@ class OfflineArea implements OfflineListener {
   /// transfer tables. Prefer [useTransit].
   ///
   /// The build's manifest lists every feed it was built with; the area holds only some
-  /// of their timetables, and those are the feeds it loads.
+  /// of their timetables, and those are the feeds it loads. Without [hasTransit], it
+  /// throws [NoOfflineTransit].
   Future<OfflineTransit> get transit => (_transit ??= _openedTransit()).value;
   _Opened<OfflineTransit>? _transit;
 
   _Opened<OfflineTransit> _openedTransit() =>
       _Opened(_openTransit(), free: (t) => t.isDisposed ? null : t.dispose());
 
-  Future<OfflineTransit> _openTransit() =>
-      _openTransitWith?.call() ??
-      _timed('transit open', () async {
-        await initRouting();
-        final feeds = await _feeds();
-        debugPrint('offline: transit feeds ${feeds.join(', ')}');
-        return OfflineTransit.open(
-          build: transitBuild,
-          feeds: feeds,
-          tileSets: [_tiles],
-          expectedBuildId: valhallaBuildId,
-        );
-      });
+  Future<OfflineTransit> _openTransit() async {
+    final build = transitBuild;
+    if (build == null) throw const NoOfflineTransit();
+    return _openTransitWith?.call() ??
+        _timed('transit open', () async {
+          await initRouting();
+          final feeds = await _feeds();
+          debugPrint('offline: transit feeds ${feeds.join(', ')}');
+          return OfflineTransit.open(
+            build: build,
+            feeds: feeds,
+            tileSets: [_tiles],
+            expectedBuildId: valhallaBuildId,
+          );
+        });
+  }
 
   /// Runs [work] with the transit planner, as [useRouter] does with the router.
   Future<R> useTransit<R>(Future<R> Function(OfflineTransit transit) work) =>
@@ -123,6 +132,8 @@ class OfflineArea implements OfflineListener {
   /// The feeds the manifest lists whose timetables are in the area, by ID. (A build put
   /// in place by hand lists every feed it was built with; downloads list only theirs.)
   Future<List<String>> _feeds() async {
+    final transitBuild = this.transitBuild;
+    if (transitBuild == null) return const [];
     final manifest = File('$transitBuild/transfers/manifest.json');
     final listed =
         jsonDecode(await manifest.readAsString()) as Map<String, Object?>;
@@ -180,6 +191,8 @@ class OfflineArea implements OfflineListener {
   /// The GTFS-RT messages of the area's feeds, as `realtime.json` lists them. It lists
   /// every feed of the release; the area's are those whose timetables it holds.
   Future<List<RealtimeSource>> get realtimeSources => _realtime ??= () async {
+    final transitBuild = this.transitBuild;
+    if (transitBuild == null) return const <RealtimeSource>[];
     final file = File('$transitBuild/realtime.json');
     if (!await file.exists()) return const <RealtimeSource>[];
     final json = jsonDecode(await file.readAsString()) as Map<String, Object?>;
@@ -210,6 +223,14 @@ class OfflineArea implements OfflineListener {
 }
 
 /// A router or transit planner being opened or open, and how many calls use it.
+/// The offline area has no transit: no region took any feeds.
+class NoOfflineTransit implements Exception {
+  const NoOfflineTransit();
+
+  @override
+  String toString() => 'NoOfflineTransit';
+}
+
 class _Opened<T extends Object> {
   _Opened(this.value, {required this.free});
 
@@ -268,28 +289,49 @@ class RealtimeSource {
 /// map. The area appears once a region is ready, so it is looked for on each use until
 /// then.
 class OfflineAreas {
-  OfflineAreas(this.downloads);
+  OfflineAreas(this.downloads, {Future<SearchIndex?>? search})
+    : search = search ?? Future.value();
 
   /// Downloads, opened (null if this build has no [releasesUrl]).
   final Future<OfflineDownloads?> downloads;
 
+  /// Offline search's index, kept in step with the ready regions by [downloads]. Null
+  /// if the offline folder can't be found.
+  final Future<SearchIndex?> search;
+
   /// Starts downloads on the app's database and folder: handling downloads that ended
-  /// while the app was away, and finishing deletions.
-  factory OfflineAreas.open() => OfflineAreas(() async {
-    if (releasesUrl.isEmpty) return null;
-    final downloads = OfflineDownloads(
-      db: OfflineDatabase.open(),
-      root: await offlineFolder(),
-      bucket: Bucket(Uri.parse(releasesUrl)),
-      transfers: BackgroundTransfers(),
-    );
-    try {
-      await downloads.open();
-    } on Object catch (e) {
-      debugPrint('offline: downloads did not open: $e');
-    }
-    return downloads;
-  }());
+  /// while the app was away, and finishing deletions; and offline search's index.
+  factory OfflineAreas.open() {
+    final search = () async {
+      try {
+        final index = SearchIndex(
+          root: '${await offlineFolder()}/search',
+          wofUrl: wofUrl,
+        );
+        await index.load();
+        return index;
+      } on Object catch (e) {
+        debugPrint('offline: search index did not open: $e');
+        return null;
+      }
+    }();
+    return OfflineAreas(() async {
+      if (releasesUrl.isEmpty) return null;
+      final downloads = OfflineDownloads(
+        db: OfflineDatabase.open(),
+        root: await offlineFolder(),
+        bucket: Bucket(Uri.parse(releasesUrl)),
+        transfers: BackgroundTransfers(),
+        indexer: await search,
+      );
+      try {
+        await downloads.open();
+      } on Object catch (e) {
+        debugPrint('offline: downloads did not open: $e');
+      }
+      return downloads;
+    }(), search: search);
+  }
 
   OfflineArea? _area;
 
@@ -331,7 +373,10 @@ Future<OfflineArea?> configuredOfflineArea(OfflineDownloads? downloads) async {
   if (releases == null) return null;
   final area = OfflineArea(
     routing: '$root/routing/${releases.routing}',
-    transitBuild: '$root/transit/${releases.transit ?? '-'}',
+    transitBuild: switch (releases.transit) {
+      final transit? => '$root/transit/$transit',
+      null => null,
+    },
     valhallaBuildId: releases.valhallaBuildId,
   );
   downloads!.addListener(area);

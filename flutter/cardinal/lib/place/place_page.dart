@@ -141,9 +141,15 @@ class _PlacePageState extends State<PlacePage> with RouteAware {
   Future<void> _fetch() async {
     if (_fetched) return;
     _fetched = true;
-    final places = StoreScope.of(context).places;
+    final store = StoreScope.of(context);
+    final places = store.places;
+    final geocoders = GeocoderScope.of(context);
     try {
-      final place = await GeocoderScope.of(context).place(widget.id);
+      // From where search goes: the place's ID is the one search found it by. Only the
+      // device has its own IDs.
+      final online =
+          await store.settings.get(searchOnline) && !isLocalPlaceId(widget.id);
+      final place = await geocoders.chosen(online: online).place(widget.id);
       if (place != null) {
         await places.put(place);
         return;

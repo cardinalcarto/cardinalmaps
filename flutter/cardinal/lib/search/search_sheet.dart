@@ -109,8 +109,11 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
         .listen((units) {
           if (units != _units) setState(() => _units = units);
         });
+    final geocoders = GeocoderScope.of(context);
     _search ??= PlaceSearch(
-      GeocoderScope.of(context),
+      offline: geocoders.offline,
+      online: geocoders.online,
+      settings: StoreScope.of(context).settings,
       lang: PlatformDispatcher.instance.locale.toLanguageTag(),
     );
   }
@@ -472,6 +475,8 @@ class _Results extends StatelessWidget {
     final results = search.results;
     final message = switch (search) {
       PlaceSearch(error: final error?) => 'Search failed: $error',
+      // The device found nothing: the results ask whether to search online.
+      PlaceSearch(offersOnline: true) => null,
       PlaceSearch(loading: false, results: [], text: final text)
           when text.trim().isNotEmpty =>
         'No results',
@@ -488,6 +493,8 @@ class _Results extends StatelessWidget {
               child: search.loading ? const LinearProgressIndicator() : null,
             ),
           ),
+        if (search.offersOnline)
+          SliverToBoxAdapter(child: _TryOnline(search: search)),
         if (message != null)
           SliverToBoxAdapter(
             child: Padding(
@@ -532,6 +539,56 @@ class _Results extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// The device found nothing: asks whether to search online, this once, always, or
+/// never (see [PlaceSearch]).
+class _TryOnline extends StatelessWidget {
+  const _TryOnline({required this.search});
+
+  final PlaceSearch search;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 12, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Nothing offline. Try online?',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 4),
+          // Wrapping, for large text.
+          Wrap(
+            spacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              AppButton(
+                kind: AppButtonKind.tinted,
+                label: 'Search online',
+                onPressed: search.searchOnlineOnce,
+              ),
+              AppButton(
+                kind: AppButtonKind.plain,
+                label: 'Always',
+                onPressed: () => search.chooseFallback(OnlineFallback.always),
+              ),
+              AppButton(
+                kind: AppButtonKind.plain,
+                label: 'Never',
+                onPressed: () => search.chooseFallback(OnlineFallback.never),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

@@ -155,7 +155,8 @@ public class Waterway implements
       synchronized (riverRelationLengths) {
         riverRelationLengths.put(relation.id(), new AtomicDouble());
       }
-      return List.of(new WaterwayRelation(relation.id(), OmtLanguageUtils.getNames(relation.tags(), translations)));
+      return List.of(
+        new WaterwayRelation(relation.id(), OmtLanguageUtils.getNamesWithSearchNames(relation.tags(), translations)));
     }
     return null;
   }
@@ -197,7 +198,8 @@ public class Waterway implements
       features.line(LAYER_NAME)
         .setBufferPixels(BUFFER_SIZE)
         .setAttr(Fields.CLASS, source.getString("waterway"))
-        .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+        .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(source.tags(), translations))
+        .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(source), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
         .setMinZoom(13);
     }
   }
@@ -212,7 +214,8 @@ public class Waterway implements
     features.line(LAYER_NAME)
       .setBufferPixels(BUFFER_SIZE)
       .setAttr(Fields.CLASS, element.waterway())
-      .putAttrs(OmtLanguageUtils.getNames(element.source().tags(), translations))
+      .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(element.source().tags(), translations))
+      .setAttrWithMinzoom(Poi.IMPORTANCE_TAG, Poi.importance(element.source()), OmtLanguageUtils.SEARCH_NAMES_MINZOOM)
       .setMinZoom(minzoom)
       // details only at higher zoom levels so that named rivers can be merged more aggressively
       .setAttrWithMinzoom(Fields.BRUNNEL, Utils.brunnel(element.isBridge(), element.isTunnel()), 12)
