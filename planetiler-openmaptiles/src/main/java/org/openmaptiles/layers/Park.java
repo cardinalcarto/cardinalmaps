@@ -50,13 +50,13 @@ import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.geo.GeometryType;
+import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.SortKey;
 import com.onthegomap.planetiler.util.Translations;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import com.onthegomap.planetiler.reader.SourceFeature;
 import org.openmaptiles.OpenMapTilesProfile;
 import org.openmaptiles.generated.OpenMapTilesSchema;
 import org.openmaptiles.generated.Tables;
@@ -192,7 +192,7 @@ public class Park implements
         features.pointOnSurface(LAYER_NAME).setBufferPixels(256)
           .setAttr(Fields.CLASS, clazz)
           .putAttrs(names)
-          .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+          .putAttrs(OmtLanguageUtils.getNamesWithSearchNames(source.tags(), translations))
           .setPointLabelGridPixelSize(14, 100)
           .setSortKey(SortKey
             .orderByTruesFirst("national_park".equals(clazz))

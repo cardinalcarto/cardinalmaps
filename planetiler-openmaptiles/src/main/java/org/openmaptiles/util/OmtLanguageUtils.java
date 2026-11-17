@@ -41,6 +41,7 @@ import static org.openmaptiles.util.Utils.coalesce;
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.util.LanguageUtils;
 import com.onthegomap.planetiler.util.Translations;
+import com.onthegomap.planetiler.util.ZoomFunction;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -90,14 +91,19 @@ public class OmtLanguageUtils {
    */
   public static FeatureCollector.Feature putNames(FeatureCollector.Feature feature, Map<String, Object> tags,
     Translations translations) {
+    return feature.putAttrs(getNamesWithSearchNames(tags, translations));
+  }
+
+  /**
+   * The names {@link #getNames(Map, Translations)} gives, and the rest of the {@link #searchNames(Map) search names} as
+   * values only from {@value #SEARCH_NAMES_MINZOOM}, for {@link FeatureCollector.Feature#putAttrs(Map)}.
+   */
+  public static Map<String, Object> getNamesWithSearchNames(Map<String, Object> tags, Translations translations) {
     Map<String, Object> names = getNames(tags, translations);
-    feature.putAttrs(names);
     for (var entry : searchNames(tags).entrySet()) {
-      if (!names.containsKey(entry.getKey())) {
-        feature.setAttrWithMinzoom(entry.getKey(), entry.getValue(), SEARCH_NAMES_MINZOOM);
-      }
+      names.putIfAbsent(entry.getKey(), ZoomFunction.minZoom(SEARCH_NAMES_MINZOOM, entry.getValue()));
     }
-    return feature;
+    return names;
   }
 
   /**
