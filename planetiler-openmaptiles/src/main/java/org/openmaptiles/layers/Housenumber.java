@@ -82,6 +82,9 @@ public class Housenumber implements
   private static final String DISPLAY_SEPARATOR = "–";
   private static final Pattern NO_CONVERSION_PATTERN = Pattern.compile("[^0-9;]");
   private static final String TEMP_PARTITION = "_partition";
+  private static final String UNIT_TAG = "addr:unit";
+  /** Keeps number 5 unit 1 apart from number 51 in a partition. */
+  private static final String UNIT_SEPARATOR = "\u001f";
   private static final String TEMP_HAS_NAME = "_has_name";
   private static final Comparator<VectorTile.Feature> BY_TEMP_HAS_NAME = Comparator
     .comparing(i -> (Boolean) i.tags().get(TEMP_HAS_NAME), Boolean::compare);
@@ -158,9 +161,12 @@ public class Housenumber implements
 
     SourceFeature source = element.source();
     String street = streets.streetOf(source);
+    // units at one number are different addresses for the geocoder
+    String unit = source.getString(UNIT_TAG);
     String partition = Utils.coalesce(street, "")
       .concat(Utils.coalesce(element.blockNumber(), ""))
-      .concat(housenumber);
+      .concat(housenumber)
+      .concat(unit == null || unit.isEmpty() ? "" : UNIT_SEPARATOR + unit);
     Boolean hasName = element.hasName() == null ? Boolean.FALSE : !element.hasName().isEmpty();
 
     var feature = features.centroidIfConvex(LAYER_NAME)

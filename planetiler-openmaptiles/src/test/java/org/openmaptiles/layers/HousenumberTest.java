@@ -188,7 +188,7 @@ class HousenumberTest extends AbstractLayerTest {
       "addr:unit", "B",
       "addr:postcode", "98101",
       "addr:city", "Seattle",
-      "_partition", "Main Street1–3"
+      "_partition", "Main Street1–3\u001fB"
     )), process(pointFeature(Map.of(
       "addr:housenumber", "1;3",
       "addr:street", "Main Street",
@@ -196,6 +196,45 @@ class HousenumberTest extends AbstractLayerTest {
       "addr:postcode", "98101",
       "addr:city", "Seattle"
     ))));
+  }
+
+  /** The z14 housenumber features of elements with these tags, after the layer's post-processing. */
+  private List<com.onthegomap.planetiler.VectorTile.Feature> postProcessed(List<Map<String, Object>> elements)
+    throws GeometryException {
+    List<com.onthegomap.planetiler.VectorTile.Feature> features = new java.util.ArrayList<>();
+    for (var tags : elements) {
+      for (var feature : process(pointFeature(tags))) {
+        features.add(pointFeature(Housenumber.LAYER_NAME, feature.getAttrsAtZoom(14), 1));
+      }
+    }
+    return profile.postProcessLayerFeatures(Housenumber.LAYER_NAME, 14, features);
+  }
+
+  @Test
+  void testUnitsAreDifferentAddresses() throws GeometryException {
+    var result = postProcessed(List.of(
+      Map.of("addr:housenumber", "5", "addr:street", "Main Street", "addr:unit", "1"),
+      Map.of("addr:housenumber", "5", "addr:street", "Main Street", "addr:unit", "2"),
+      Map.of("addr:housenumber", "5", "addr:street", "Main Street"),
+      Map.of("addr:housenumber", "51", "addr:street", "Main Street")
+    ));
+    assertEquals(4, result.size());
+    assertEquals(java.util.Set.of("1", "2", "<none>"), result.stream()
+      .filter(f -> "5".equals(f.tags().get("housenumber")))
+      .map(f -> String.valueOf(java.util.Objects.requireNonNullElse(f.tags().get("addr:unit"), "<none>")))
+      .collect(java.util.stream.Collectors.toSet()));
+  }
+
+  @Test
+  void testSameUnitStillDeduplicated() throws GeometryException {
+    var result = postProcessed(List.of(
+      Map.of("addr:housenumber", "5", "addr:street", "Main Street", "addr:unit", "1"),
+      Map.of("addr:housenumber", "5", "addr:street", "Main Street", "addr:unit", "1", "name", "Named"),
+      Map.of("addr:housenumber", "5", "addr:street", "Main Street", "addr:unit", "1")
+    ));
+    // the named one goes, and the true duplicates merge into one multipoint
+    assertEquals(1, result.size());
+    assertEquals(null, result.getFirst().tags().get("name"));
   }
 
   @Test
