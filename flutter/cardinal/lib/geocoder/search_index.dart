@@ -15,7 +15,6 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:geocoder/geocoder.dart';
@@ -63,9 +62,9 @@ class SearchIndex implements RegionIndexer {
     required this.wofUrl,
     http.Client? client,
     IndexBuildRunner? build,
-    List<WofBox> Function(GeoRectBox box)? boxes,
+    FutureOr<List<WofBox>> Function(GeoRectBox box)? boxes,
   }) : _client = client ?? http.Client(),
-       _build = build ?? buildInIsolate,
+       _build = build ?? buildIndex,
        _boxes = boxes ?? _wofBoxes;
 
   /// `<offline folder>/search`.
@@ -75,7 +74,7 @@ class SearchIndex implements RegionIndexer {
   final String wofUrl;
   final http.Client _client;
   final IndexBuildRunner _build;
-  final List<WofBox> Function(GeoRectBox box) _boxes;
+  final FutureOr<List<WofBox>> Function(GeoRectBox box) _boxes;
 
   /// The index to search, or null while there's none.
   final current = ValueNotifier<SearchIndexFiles?>(null);
@@ -195,7 +194,7 @@ class SearchIndex implements RegionIndexer {
     await _deleteDir(dir.path);
     await dir.create(recursive: true);
     final b = region.bounds;
-    final boxes = _boxes((
+    final boxes = await _boxes((
       west: b.west,
       south: b.south,
       east: b.east,
@@ -294,13 +293,18 @@ class SearchIndex implements RegionIndexer {
 /// A bounding box, in degrees.
 typedef GeoRectBox = ({double west, double south, double east, double north});
 
-List<WofBox> _wofBoxes(GeoRectBox b) => wofBoxes(
-  west: b.west,
-  south: b.south,
-  east: b.east,
-  north: b.north,
-  side: wofBoxDegrees,
-);
+/// Splits in Rust, so the bridge must be up first: areas are fetched before any build
+/// or search has initialized it.
+Future<List<WofBox>> _wofBoxes(GeoRectBox b) async {
+  await initGeocoder();
+  return wofBoxes(
+    west: b.west,
+    south: b.south,
+    east: b.east,
+    north: b.north,
+    side: wofBoxDegrees,
+  );
+}
 
 /// Tantivy's indexing memory for a build, in MB, and its threads.
 const _heapMb = 64;
@@ -309,12 +313,14 @@ const _threads = 2;
 /// Tiles read from the basemap at once.
 const _page = 256;
 
-/// Builds an index in a background isolate, so the UI isolate isn't busy with the tiles'
-/// bytes: they're read through sparkle's SQLite and handed to the geocoder there.
-Future<String> buildInIsolate(IndexBuildJob job) =>
-    Isolate.run(() => buildIndex(job), debugName: 'search index');
-
-/// Builds an index on this isolate.
+/// Builds an index, on this isolate: the work is in Rust, on the bridges' own threads,
+/// so the UI isolate only passes pages of tiles from sparkle to the geocoder.
+///
+/// Not in a second isolate: flutter_rust_bridge (2.13) counts isolates per Rust library
+/// but watches for their shutdown once per isolate, through whichever library that
+/// isolate initialized first. When a second isolate that initialized a library exits,
+/// that library can count its last isolate gone and drop every later reply to the UI
+/// isolate: on the phone, offline search hung after each index build until a restart.
 Future<String> buildIndex(IndexBuildJob job) async {
   await sparkle.initSparkle();
   await initGeocoder();

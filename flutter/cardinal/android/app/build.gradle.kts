@@ -4,6 +4,11 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// For a test install beside the real app, with its own data:
+// `flutter build apk --profile --android-project-arg=cardinalAppIdSuffix=.offlinetest`
+// installs as com.cardinalcarto.cardinal.offlinetest. Without it, the build is unchanged.
+val appIdSuffix = (project.findProperty("cardinalAppIdSuffix") as String?) ?: ""
+
 android {
     namespace = "com.cardinalcarto.cardinal"
     compileSdk = flutter.compileSdkVersion
@@ -16,7 +21,9 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.cardinalcarto.cardinal"
+        applicationId = "com.cardinalcarto.cardinal" + appIdSuffix
+        // The launcher label says which install is which.
+        manifestPlaceholders["appLabel"] = "cardinal" + appIdSuffix
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
