@@ -65,7 +65,9 @@ fn pointers_store_only_where_the_feature_is() {
     let hit = &hits[0];
     assert_eq!(hit.kind, Kind::Poi);
     assert_eq!(hit.pointer, Some(Pointer { poi_id: 7, tile: TILE }));
-    assert!(hit.tags.is_empty() && hit.osm.is_none() && hit.wof.is_none() && hit.poi.is_none());
+    // Its names, for ranking, and nothing else of its tags.
+    assert_eq!(hit.tags, tags(&[("name", "Corner Cafe")]));
+    assert!(hit.osm.is_none() && hit.wof.is_none() && hit.poi.is_none());
     assert_eq!(hit.geometry, Geometry::Point(hit.center));
     assert!((hit.center.x() + 122.34).abs() < 1e-6 && (hit.center.y() - 47.61).abs() < 1e-6);
     assert_eq!(hit.admin_ids, vec![SEATTLE]);
@@ -127,10 +129,10 @@ impl Hydrate for Tiles {
     }
 }
 
-/// Without its names, a pointer can't tell how much of them a query is, so
-/// the longer name of a stored document outranks its exact one.
+/// A pointer stores its names, so it ranks by how much of them a query is:
+/// its exact name outranks a stored document's longer one, hydrated or not.
 #[test]
-fn hydrated_pointers_rank_by_their_names() {
+fn pointers_rank_by_their_names() {
     let at = Geometry::Point(Point::new(-122.34, 47.61));
     let docs = vec![poi("Pike Market", at.clone(), Some(7)), poi("Pike Market Garage", at, None)];
     let (_dir, index) = build(docs, Storage::Pointers);
@@ -139,7 +141,7 @@ fn hydrated_pointers_rank_by_their_names() {
         assert_eq!(hits.len(), 2);
         hits.into_iter().next().unwrap()
     };
-    assert!(first(None).pointer.is_none());
+    assert_eq!(first(None).pointer.map(|p| p.poi_id), Some(7));
     let tiles = Tiles(vec![(7, tags(&[("amenity", "cafe"), ("name", "Pike Market"), ("cardinal:poi_id", "7")]))]);
     let hit = first(Some(&tiles));
     assert_eq!(hit.pointer.map(|p| p.poi_id), Some(7));
