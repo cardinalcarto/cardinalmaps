@@ -231,3 +231,61 @@ fn every_result_opens_by_its_id() {
         assert!(index.place(id, None).unwrap().is_none(), "{id}");
     }
 }
+
+/// The app's path through the bridge: a build, then opening the index and searching it.
+/// Both steps give the allocator's freed memory back on the way out, on errors too.
+#[test]
+fn the_bridge_builds_opens_and_searches() {
+    use geocoder_flutter::api::extract::GeocoderTile;
+    use geocoder_flutter::api::index::{IndexBuilder, IndexErrorKind, OfflineIndex, OfflineQuery};
+
+    let dir = tempfile::tempdir().unwrap();
+    let wof = dir.path().join("wof.json");
+    std::fs::write(&wof, WOF).unwrap();
+    let index_dir = dir.path().join("index").to_string_lossy().into_owned();
+    let mut build = IndexBuilder::create(
+        index_dir.clone(),
+        vec![wof.to_string_lossy().into_owned()],
+        30,
+        1,
+    )
+    .unwrap();
+    let tiles = [NORTH, SOUTH].map(|key| GeocoderTile {
+        z: key.z,
+        x: key.x,
+        y: key.y,
+        data: fixture(key),
+    });
+    build.add_tiles(tiles.into()).unwrap();
+    let stats = build.finish().unwrap();
+    assert_eq!(stats.tiles, 2);
+    let again = build.finish().err().unwrap();
+    assert!(matches!(again.kind, IndexErrorKind::Finished), "{again:?}");
+
+    let index = OfflineIndex::open(index_dir, None, None).unwrap();
+    let results = index
+        .search(OfflineQuery {
+            text: "seattle".into(),
+            lang: None,
+            prefix: false,
+            typos: false,
+            focus: None,
+            viewport: None,
+            bbox: None,
+            limit: 5,
+        })
+        .unwrap();
+    assert!(results.contains("\"Seattle\""), "{results}");
+
+    let missing = OfflineIndex::open(
+        dir.path().join("none").to_string_lossy().into_owned(),
+        None,
+        None,
+    )
+    .err()
+    .unwrap();
+    assert!(
+        matches!(missing.kind, IndexErrorKind::Storage),
+        "{missing:?}"
+    );
+}

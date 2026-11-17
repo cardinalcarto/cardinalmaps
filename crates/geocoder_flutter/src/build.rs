@@ -192,7 +192,6 @@ impl IndexBuild {
     ///
     /// If the index can't be created there.
     pub fn new(dir: &Path, wof: WofPlaces, options: BuildOptions) -> Result<Self, BuildError> {
-        #[cfg(target_os = "android")]
         crate::allocator::tune();
         let mut index = AirmailIndex::create(dir).map_err(BuildError::Index)?;
         let writer = index
