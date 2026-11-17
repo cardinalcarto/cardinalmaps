@@ -429,18 +429,22 @@ pub struct SchemafiedPoi {
 
 impl From<ToIndexPoi> for SchemafiedPoi {
     fn from(poi: ToIndexPoi) -> Self {
-        let mut roads = Vec::new();
-        if let Some(road) = &poi.road {
-            // As written, whatever its permutations (which are transliterated).
-            roads.push(road.clone());
-            for lang in &poi.languages {
-                roads.extend(permute_road(road, lang).unwrap_or_else(|_| vec![road.clone()]));
-            }
-        }
-        roads.sort();
-        roads.dedup();
+        let roads = poi.road.as_deref().map(|road| road_forms(road, &poi.languages)).unwrap_or_default();
         Self { names: poi.names.clone(), roads, poi }
     }
+}
+
+/// A road's name as written and its permutations in `languages` (which are
+/// transliterated), sorted, as `SchemafiedPoi::roads` has them.
+pub(crate) fn road_forms(road: &str, languages: &[Language]) -> Vec<String> {
+    // As written, whatever its permutations.
+    let mut roads = vec![road.to_string()];
+    for lang in languages {
+        roads.extend(permute_road(road, lang).unwrap_or_else(|_| vec![road.to_string()]));
+    }
+    roads.sort();
+    roads.dedup();
+    roads
 }
 
 /// The placetypes of administrative areas, grouped the way queries name

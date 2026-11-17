@@ -7,8 +7,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
-use airmail::index::{AirmailIndex, AirmailIndexWriter, DocumentBuilder, Storage, WriterOptions};
-use airmail::poi::{Kind, SchemafiedPoi, ToIndexPoi};
+use airmail::index::{
+    AirmailIndex, AirmailIndexWriter, DocumentBuilder, FormsCache, Storage, WriterOptions,
+};
+use airmail::poi::{Kind, ToIndexPoi};
 use airmail::postcodes::Postcodes;
 
 use crate::documents::{document, drop_duplicate_addresses, give_local_id, place};
@@ -42,6 +44,8 @@ pub struct BuildCounts {
 pub struct IndexSink {
     writer: AirmailIndexWriter,
     builder: DocumentBuilder,
+    /// The forms of the streets' and areas' names, which most documents share.
+    forms: FormsCache,
     wof: WofPlaces,
     postcodes: Postcodes,
     pub counts: BuildCounts,
@@ -108,7 +112,7 @@ impl IndexSink {
         let pointer = doc.tile.is_some() && doc.poi_id().is_some();
         let result = self
             .builder
-            .document(SchemafiedPoi::from(doc), SOURCE)
+            .document_cached(doc, SOURCE, &mut self.forms)
             .and_then(|d| self.writer.add_document(d));
         match result {
             Ok(()) => {
@@ -272,6 +276,7 @@ impl IndexBuild {
             sink: IndexSink {
                 writer,
                 builder,
+                forms: FormsCache::default(),
                 wof,
                 postcodes: Postcodes::default(),
                 counts: BuildCounts::default(),
