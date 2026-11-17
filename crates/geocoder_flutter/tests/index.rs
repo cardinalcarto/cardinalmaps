@@ -54,6 +54,7 @@ fn build() -> tempfile::TempDir {
     let options = BuildOptions {
         heap_bytes: 30_000_000,
         threads: 1,
+        builders: 2,
         merge: true,
     };
     let mut build = IndexBuild::new(&dir.path().join("index"), wof, options).unwrap();

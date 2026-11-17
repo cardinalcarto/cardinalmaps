@@ -22,7 +22,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use geocoder_flutter::build::{BuildOptions, IndexBuild};
+use geocoder_flutter::build::{BuildOptions, IndexBuild, default_builders};
 use geocoder_flutter::extract::TileKey;
 use geocoder_flutter::search::{DeviceIndex, Query};
 use geocoder_flutter::wof::{WofPlaces, boxes};
@@ -163,6 +163,9 @@ fn build(mut args: Args) {
     let out = PathBuf::from(args.take("--out").expect("--out"));
     let heap_mb: usize = args.take("--heap-mb").map_or(64, |v| v.parse().unwrap());
     let threads: usize = args.take("--threads").map_or(2, |v| v.parse().unwrap());
+    let builders: usize = args
+        .take("--builders")
+        .map_or_else(|| default_builders(threads), |v| v.parse().unwrap());
     let merge = !args.flag("--no-merge");
     assert!(!out.exists(), "{} exists", out.display());
 
@@ -187,6 +190,7 @@ fn build(mut args: Args) {
     let options = BuildOptions {
         heap_bytes: heap_mb * 1_000_000,
         threads,
+        builders,
         merge,
     };
     let mut build = IndexBuild::new(&out, wof, options).unwrap();

@@ -18,6 +18,7 @@ pub mod documents;
 pub mod extract;
 mod frb_generated;
 pub mod merge;
+pub mod pool;
 pub mod region;
 pub mod search;
 pub mod wof;
