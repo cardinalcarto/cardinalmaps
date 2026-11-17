@@ -10,14 +10,18 @@
 //!
 //! The file is in WAL mode, so the map reads it while a download writes it. It must be
 //! written through the same SQLite library that sparkle reads it with: two copies of SQLite
-//! in one process don't see each other's POSIX locks.
+//! in one process don't see each other's POSIX locks. That holds for reading too: a copy
+//! that only reads still takes and drops locks on the file and its `-shm`, and closing its
+//! file descriptor drops the other copy's locks. So whatever else reads the basemap in the
+//! app (the offline geocoder, which indexes a region's tiles) reads it with
+//! [`BasemapReader`] through the library that writes it, not with a SQLite of its own.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 use crate::Error;
 use crate::plan::{ChunkTile, PlannedTile};
@@ -349,5 +353,159 @@ impl Basemap {
             .conn
             .query_row("SELECT count(*) FROM tiles", [], |row| row.get(0))?;
         Ok(count.try_into().unwrap_or(0))
+    }
+}
+
+/// One stored tile, as [`BasemapReader`] reads it: the bytes are as stored (gzipped when the
+/// metadata's `compression` says so), and `y` counts from the top (XYZ), not the bottom.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredTile {
+    pub z: u8,
+    pub x: u32,
+    pub y: u32,
+    pub data: Vec<u8>,
+}
+
+/// The offline map file, open only for reading, while a download or a region's deletion may
+/// be writing it through a [`Basemap`] (in WAL mode, readers see whole transactions only).
+pub struct BasemapReader {
+    conn: Connection,
+}
+
+impl BasemapReader {
+    /// Opens an existing basemap for reading. It doesn't create the file.
+    ///
+    /// # Errors
+    ///
+    /// If it can't be opened.
+    pub fn open(path: &Path) -> Result<Self, Error> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        Ok(Self { conn })
+    }
+
+    /// The tiles of `region` at `zoom`, in order of column, then row from the top, starting
+    /// after `after` (the `(x, y)` of the last page's last tile), at most `limit` of them.
+    /// Reading a region page by page keeps each read short, so it doesn't hold up a
+    /// checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// If the database can't be read.
+    pub fn region_tiles(
+        &self,
+        region: i64,
+        zoom: u8,
+        after: Option<(u32, u32)>,
+        limit: u32,
+    ) -> Result<Vec<StoredTile>, Error> {
+        // Rows count from the bottom, so (column, row descending) is (x, y) from the top.
+        let (column, row) = match after {
+            Some((x, y)) => (i64::from(x), i64::from(tms_row(zoom, y))),
+            None => (-1, i64::MAX),
+        };
+        let mut statement = self.conn.prepare_cached(
+            "SELECT t.tile_column, t.tile_row, t.tile_data
+             FROM tile_regions r
+             JOIN tiles t USING (zoom_level, tile_column, tile_row)
+             WHERE r.region = ?1 AND r.zoom_level = ?2
+               AND (r.tile_column > ?3 OR (r.tile_column = ?3 AND r.tile_row < ?4))
+             ORDER BY r.tile_column, r.tile_row DESC
+             LIMIT ?5",
+        )?;
+        let rows = statement.query_map(params![region, zoom, column, row, limit], |row| {
+            Ok((
+                row.get::<_, u32>(0)?,
+                row.get::<_, u32>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        let mut tiles = Vec::new();
+        for row in rows {
+            let (x, tms, data) = row?;
+            tiles.push(StoredTile {
+                z: zoom,
+                x,
+                y: tms_row(zoom, tms),
+                data,
+            });
+        }
+        Ok(tiles)
+    }
+
+    /// Every tile at `zoom`, whichever regions hold it, paged as [`Self::region_tiles`] is.
+    /// It reads any MBTiles, also one without `tile_regions` (a release's, on the desktop).
+    ///
+    /// # Errors
+    ///
+    /// If the database can't be read.
+    pub fn zoom_tiles(
+        &self,
+        zoom: u8,
+        after: Option<(u32, u32)>,
+        limit: u32,
+    ) -> Result<Vec<StoredTile>, Error> {
+        let (column, row) = match after {
+            Some((x, y)) => (i64::from(x), i64::from(tms_row(zoom, y))),
+            None => (-1, i64::MAX),
+        };
+        let mut statement = self.conn.prepare_cached(
+            "SELECT tile_column, tile_row, tile_data FROM tiles
+             WHERE zoom_level = ?1
+               AND (tile_column > ?2 OR (tile_column = ?2 AND tile_row < ?3))
+             ORDER BY tile_column, tile_row DESC
+             LIMIT ?4",
+        )?;
+        let rows = statement.query_map(params![zoom, column, row, limit], |row| {
+            Ok((
+                row.get::<_, u32>(0)?,
+                row.get::<_, u32>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        let mut tiles = Vec::new();
+        for row in rows {
+            let (x, tms, data) = row?;
+            tiles.push(StoredTile {
+                z: zoom,
+                x,
+                y: tms_row(zoom, tms),
+                data,
+            });
+        }
+        Ok(tiles)
+    }
+
+    /// How many tiles `region` holds at `zoom`.
+    ///
+    /// # Errors
+    ///
+    /// If the database can't be read.
+    pub fn region_tile_count(&self, region: i64, zoom: u8) -> Result<u64, Error> {
+        let count: i64 = self.conn.query_row(
+            "SELECT count(*) FROM tile_regions WHERE region = ?1 AND zoom_level = ?2",
+            params![region, zoom],
+            |row| row.get(0),
+        )?;
+        Ok(count.try_into().unwrap_or(0))
+    }
+
+    /// The tile at `z`/`x`/`y` (from the top), as stored, or `None` if the file lacks it.
+    ///
+    /// # Errors
+    ///
+    /// If the database can't be read.
+    pub fn tile(&self, z: u8, x: u32, y: u32) -> Result<Option<Vec<u8>>, Error> {
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT tile_data FROM tiles
+                 WHERE zoom_level = ?1 AND tile_column = ?2 AND tile_row = ?3",
+            )?
+            .query_row(params![z, x, tms_row(z, y)], |row| row.get(0))
+            .optional()?)
     }
 }

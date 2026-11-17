@@ -70,7 +70,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -1338854403;
+  int get rustContentHash => -1855404243;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -324,9 +324,23 @@ abstract class RustLibApi extends BaseApi {
     required String name,
   });
 
+  Future<List<BasemapTile>> crateApiOfflineBasemapReadRegionTiles({
+    required String path,
+    required PlatformInt64 region,
+    required int zoom,
+    BasemapTileAfter? after,
+    required int limit,
+  });
+
   Future<PlatformInt64> crateApiOfflineBasemapRegionTiles({
     required String path,
     required PlatformInt64 region,
+  });
+
+  Future<PlatformInt64> crateApiOfflineBasemapRegionZoomTiles({
+    required String path,
+    required PlatformInt64 region,
+    required int zoom,
   });
 
   Future<PlatformInt64> crateApiOfflineBasemapRelease({
@@ -1950,6 +1964,47 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<List<BasemapTile>> crateApiOfflineBasemapReadRegionTiles({
+    required String path,
+    required PlatformInt64 region,
+    required int zoom,
+    BasemapTileAfter? after,
+    required int limit,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          sse_encode_i_64(region, serializer);
+          sse_encode_u_8(zoom, serializer);
+          sse_encode_opt_box_autoadd_basemap_tile_after(after, serializer);
+          sse_encode_u_32(limit, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 45,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_basemap_tile,
+          decodeErrorData: sse_decode_map_error,
+        ),
+        constMeta: kCrateApiOfflineBasemapReadRegionTilesConstMeta,
+        argValues: [path, region, zoom, after, limit],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineBasemapReadRegionTilesConstMeta =>
+      const TaskConstMeta(
+        debugName: "basemap_read_region_tiles",
+        argNames: ["path", "region", "zoom", "after", "limit"],
+      );
+
+  @override
   Future<PlatformInt64> crateApiOfflineBasemapRegionTiles({
     required String path,
     required PlatformInt64 region,
@@ -1963,7 +2018,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 45,
+            funcId: 46,
             port: port_,
           );
         },
@@ -1985,6 +2040,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<PlatformInt64> crateApiOfflineBasemapRegionZoomTiles({
+    required String path,
+    required PlatformInt64 region,
+    required int zoom,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          sse_encode_i_64(region, serializer);
+          sse_encode_u_8(zoom, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 47,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_64,
+          decodeErrorData: sse_decode_map_error,
+        ),
+        constMeta: kCrateApiOfflineBasemapRegionZoomTilesConstMeta,
+        argValues: [path, region, zoom],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiOfflineBasemapRegionZoomTilesConstMeta =>
+      const TaskConstMeta(
+        debugName: "basemap_region_zoom_tiles",
+        argNames: ["path", "region", "zoom"],
+      );
+
+  @override
   Future<PlatformInt64> crateApiOfflineBasemapRelease({
     required String path,
     required PlatformInt64 region,
@@ -1998,7 +2090,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 46,
+            funcId: 48,
             port: port_,
           );
         },
@@ -2039,7 +2131,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 47,
+            funcId: 49,
             port: port_,
           );
         },
@@ -2069,7 +2161,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 48,
+            funcId: 50,
             port: port_,
           );
         },
@@ -2093,7 +2185,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 49)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 51)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
@@ -2228,9 +2320,41 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  BasemapTile dco_decode_basemap_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return BasemapTile(
+      z: dco_decode_u_8(arr[0]),
+      x: dco_decode_u_32(arr[1]),
+      y: dco_decode_u_32(arr[2]),
+      data: dco_decode_list_prim_u_8_strict(arr[3]),
+    );
+  }
+
+  @protected
+  BasemapTileAfter dco_decode_basemap_tile_after(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return BasemapTileAfter(
+      x: dco_decode_u_32(arr[0]),
+      y: dco_decode_u_32(arr[1]),
+    );
+  }
+
+  @protected
   bool dco_decode_bool(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as bool;
+  }
+
+  @protected
+  BasemapTileAfter dco_decode_box_autoadd_basemap_tile_after(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_basemap_tile_after(raw);
   }
 
   @protected
@@ -2381,6 +2505,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<BasemapTile> dco_decode_list_basemap_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_basemap_tile).toList();
+  }
+
+  @protected
   List<ByteRange> dco_decode_list_byte_range(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_byte_range).toList();
@@ -2510,6 +2640,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   String? dco_decode_opt_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  BasemapTileAfter? dco_decode_opt_box_autoadd_basemap_tile_after(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_basemap_tile_after(raw);
   }
 
   @protected
@@ -2734,9 +2870,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  BasemapTile sse_decode_basemap_tile(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_z = sse_decode_u_8(deserializer);
+    var var_x = sse_decode_u_32(deserializer);
+    var var_y = sse_decode_u_32(deserializer);
+    var var_data = sse_decode_list_prim_u_8_strict(deserializer);
+    return BasemapTile(z: var_z, x: var_x, y: var_y, data: var_data);
+  }
+
+  @protected
+  BasemapTileAfter sse_decode_basemap_tile_after(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_x = sse_decode_u_32(deserializer);
+    var var_y = sse_decode_u_32(deserializer);
+    return BasemapTileAfter(x: var_x, y: var_y);
+  }
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  BasemapTileAfter sse_decode_box_autoadd_basemap_tile_after(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_basemap_tile_after(deserializer));
   }
 
   @protected
@@ -2904,6 +3066,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <String>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<BasemapTile> sse_decode_list_basemap_tile(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <BasemapTile>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_basemap_tile(deserializer));
     }
     return ans_;
   }
@@ -3095,6 +3269,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  BasemapTileAfter? sse_decode_opt_box_autoadd_basemap_tile_after(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_basemap_tile_after(deserializer));
     } else {
       return null;
     }
@@ -3354,9 +3541,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_basemap_tile(BasemapTile self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_8(self.z, serializer);
+    sse_encode_u_32(self.x, serializer);
+    sse_encode_u_32(self.y, serializer);
+    sse_encode_list_prim_u_8_strict(self.data, serializer);
+  }
+
+  @protected
+  void sse_encode_basemap_tile_after(
+    BasemapTileAfter self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.x, serializer);
+    sse_encode_u_32(self.y, serializer);
+  }
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_basemap_tile_after(
+    BasemapTileAfter self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_basemap_tile_after(self, serializer);
   }
 
   @protected
@@ -3493,6 +3708,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_String(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_basemap_tile(
+    List<BasemapTile> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_basemap_tile(item, serializer);
     }
   }
 
@@ -3660,6 +3887,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_basemap_tile_after(
+    BasemapTileAfter? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_basemap_tile_after(self, serializer);
     }
   }
 

@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use offline_map::cover::{Polygon, cover};
-use offline_map::mbtiles::Basemap;
+use offline_map::mbtiles::{Basemap, BasemapReader};
 use offline_map::plan::{GAP_BYTES, MAX_CHUNK_BYTES, MapPlanner, PlannedTile, chunks};
 use offline_map::pmtiles::{Compression, FIRST_FETCH, Header, tile_id};
 use sparkle::TileId;
@@ -358,6 +358,63 @@ fn overlapping_regions_share_tiles_until_both_are_deleted() {
     }
     assert_eq!(basemap.release(2).unwrap(), east_tiles.len() as u64);
     assert_eq!(basemap.tile_count().unwrap(), 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_regions_tiles_read_back_page_by_page() {
+    let tiles = seattle_tiles();
+    let bytes = archive(&tiles, None);
+    let dir = scratch("pages");
+    let path = dir.join("basemap.mbtiles");
+    let mut basemap = Basemap::open(&path).unwrap();
+    let (planned, _) = plan(&bytes, &downtown());
+    install(&mut basemap, &bytes, &planned, 7);
+    let reader = BasemapReader::open(&path).unwrap();
+    let mut want: Vec<(u32, u32)> = planned
+        .iter()
+        .filter(|t| t.z == 14)
+        .map(|t| (t.x, t.y))
+        .collect();
+    want.sort_unstable();
+    want.dedup();
+    assert_eq!(reader.region_tile_count(7, 14).unwrap(), want.len() as u64);
+    assert_eq!(reader.region_tile_count(8, 14).unwrap(), 0);
+    // Pages of 3 (while the writer is still open) give every tile once, in (x, y) order.
+    let mut got = Vec::new();
+    let mut after = None;
+    loop {
+        let page = reader.region_tiles(7, 14, after, 3).unwrap();
+        let Some(last) = page.last() else { break };
+        after = Some((last.x, last.y));
+        for t in page {
+            let wanted = tiles
+                .iter()
+                .find(|(z, x, y, _)| (*z, *x, *y) == (14, t.x, t.y))
+                .unwrap();
+            let mut raw = Vec::new();
+            std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&t.data[..]), &mut raw)
+                .unwrap();
+            assert_eq!(raw, wanted.3);
+            got.push((t.x, t.y));
+        }
+    }
+    assert_eq!(got, want);
+    // Without a region, the same tiles (no other region is installed).
+    let mut all = Vec::new();
+    let mut after = None;
+    loop {
+        let page = reader.zoom_tiles(14, after, 5).unwrap();
+        let Some(last) = page.last() else { break };
+        after = Some((last.x, last.y));
+        all.extend(page.iter().map(|t| (t.x, t.y)));
+    }
+    assert_eq!(all, want);
+    let (x, y) = want[0];
+    assert!(reader.tile(14, x, y).unwrap().is_some());
+    assert!(reader.tile(14, 0, 0).unwrap().is_none());
+    // A reader doesn't create a file.
+    assert!(BasemapReader::open(&dir.join("absent.mbtiles")).is_err());
     let _ = std::fs::remove_dir_all(dir);
 }
 
