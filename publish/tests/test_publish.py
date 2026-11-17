@@ -671,3 +671,131 @@ def test_images_on_s3(tmp_path, s3):
     routing.run(publisher, tar, "2026-11-20", None, None, image, 5 << 20)
     body = s3.client.get_object(Bucket="bucket", Key="releases/routing/2026-11-20/routing.btrfs")["Body"].read()
     assert body == image.read_bytes()
+
+
+def write_models(root: Path, languages=("eng", "deu"), fill=b"m"):
+    """A build's tagger.model and categories/ of LANG.amcats, each with its own bytes."""
+    tagger = root / "tagger.model"
+    tagger.write_bytes(b"tagger" + fill * 3000)
+    categories = root / "categories"
+    categories.mkdir(exist_ok=True)
+    for i, language in enumerate(languages):
+        (categories / f"{language}.amcats").write_bytes(language.encode() + fill * (1000 + i))
+    return tagger, categories
+
+
+def test_geocoder_publishes_phone_models_loose_beside_the_image(tmp_path):
+    import hashlib
+
+    image = tmp_path / "geocoder.btrfs"
+    write_btrfs(image)
+    metadata = tmp_path / "geocoder.json"
+    metadata.write_text(json.dumps({"schema_version": 8}))
+    tagger, categories = write_models(tmp_path)
+
+    def run(**overrides):
+        args = {"image": image, "metadata": metadata, "tagger": tagger, "categories": categories, **overrides}
+        return geocoder.run(dir_publisher(tmp_path), args["image"], args["metadata"], "2026-11-14", "planet",
+                            "abc", 1 << 16, args["tagger"], args["categories"])
+
+    release = run()
+    bucket = tmp_path / "bucket"
+    root = bucket / "releases/geocoder/2026-11-14"
+    for key, path in (("tagger.model", tagger), ("categorical/eng.amcats", categories / "eng.amcats"),
+                      ("categorical/deu.amcats", categories / "deu.amcats")):
+        assert (root / key).read_bytes() == path.read_bytes()
+        meta = json.loads((bucket / ".meta/releases/geocoder/2026-11-14" / (key + ".json")).read_text())
+        assert meta["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        assert meta["content_type"] == "application/octet-stream" and meta["content_encoding"] is None
+    assert release["tagger"] == {"file": "tagger.model", "bytes": tagger.stat().st_size,
+                                 "sha256": hashlib.sha256(tagger.read_bytes()).hexdigest()}
+    assert sorted(release["categorical"]) == ["deu", "eng"]
+    assert release["categorical"]["eng"]["file"] == "categorical/eng.amcats"
+    assert release["schema_version"] == 8 and release["image"]["file"] == "geocoder.btrfs"
+    assert json.loads((root / "release.json").read_text())["categorical"] == release["categorical"]
+
+    # A rerun only checks, and needs the models to.
+    before = {p: p.stat().st_mtime_ns for p in root.rglob("*")}
+    run()
+    assert {p: p.stat().st_mtime_ns for p in root.rglob("*")} == before
+    with pytest.raises(PublishError, match="pass --tagger"):
+        run(tagger=None, categories=None)
+    with pytest.raises(PublishError, match="pass --image"):
+        run(image=None, metadata=None)
+    (categories / "eng.amcats").write_bytes(b"retrained")
+    with pytest.raises(PublishError, match="next release of the day"):
+        run()
+    (categories / "fra.amcats").write_bytes(b"new language")
+    with pytest.raises(PublishError, match="next release of the day"):
+        run()
+    assert {p: p.stat().st_mtime_ns for p in root.rglob("*")} == before
+
+
+def test_geocoder_models_alone_and_their_checks(tmp_path):
+    tagger, categories = write_models(tmp_path)
+    publisher = dir_publisher(tmp_path)
+    with pytest.raises(PublishError, match="needs --image and --metadata, or --tagger"):
+        geocoder.run(publisher, None, None, "2026-11-14", None, None, 1 << 16)
+    with pytest.raises(PublishError, match="--categories needs --tagger"):
+        geocoder.run(publisher, None, None, "2026-11-14", None, None, 1 << 16, None, categories)
+    with pytest.raises(PublishError, match="go together"):
+        geocoder.run(publisher, tmp_path / "geocoder.btrfs", None, "2026-11-14", None, None, 1 << 16, tagger)
+    (categories / "README").write_text("not a model")
+    with pytest.raises(PublishError, match="isn't a categorical model"):
+        geocoder.run(publisher, None, None, "2026-11-14", None, None, 1 << 16, tagger, categories)
+    (categories / "README").unlink()
+    assert not (tmp_path / "bucket/releases/geocoder").exists()
+
+    # The tagger alone is a release a phone can use, without categorical models.
+    release = geocoder.run(publisher, None, None, "2026-11-14", None, None, 1 << 16, tagger)
+    assert release["categorical"] == {} and "image" not in release
+    root = tmp_path / "bucket/releases/geocoder/2026-11-14"
+    assert sorted(p.name for p in root.iterdir()) == ["release.json", "tagger.model"]
+
+
+def test_geocoder_dry_run_writes_nothing(tmp_path):
+    tagger, categories = write_models(tmp_path)
+    release = geocoder.run(dir_publisher(tmp_path, dry_run=True), None, None, "2026-11-14", None, None, 1 << 16,
+                           tagger, categories)
+    assert sorted(release["categorical"]) == ["deu", "eng"]
+    assert not (tmp_path / "bucket").exists()
+
+
+def test_latest_names_a_geocoder_release_with_models_and_keeps_the_other_keys(tmp_path):
+    publisher = dir_publisher(tmp_path)
+    fake_release(publisher, "map", "2026-11-11")
+    fake_release(publisher, "poi", "101")
+    latest.run(publisher, {"map": "2026-11-11", "poi": "101"})
+    image = tmp_path / "geocoder.btrfs"
+    write_btrfs(image)
+    metadata = tmp_path / "geocoder.json"
+    metadata.write_text(json.dumps({"schema_version": 8}))
+    geocoder.run(publisher, image, metadata, "2026-11-14", None, None, 1 << 16)
+    with pytest.raises(PublishError, match="no phone models"):
+        latest.run(publisher, {"geocoder": "2026-11-14"})
+    with pytest.raises(PublishError, match="isn't published"):
+        latest.run(publisher, {"geocoder": "2026-11-15"})
+    tagger, categories = write_models(tmp_path)
+    geocoder.run(publisher, image, metadata, "2026-11-14.1", None, None, 1 << 16, tagger, categories)
+    expected = {"map": "2026-11-11", "poi": 101, "geocoder": "2026-11-14.1"}
+    assert latest.run(publisher, {"geocoder": "2026-11-14.1"}) == expected
+    assert json.loads((tmp_path / "bucket/releases/latest.json").read_text()) == expected
+    # Naming another kind later keeps the geocoder.
+    fake_release(publisher, "map", "2026-11-12")
+    assert latest.run(publisher, {"map": "2026-11-12"})["geocoder"] == "2026-11-14.1"
+
+
+def test_geocoder_models_on_s3_carry_their_sha256(tmp_path, s3):
+    import hashlib
+
+    tagger, categories = write_models(tmp_path)
+    publisher = Publisher(s3, "releases", state_at(tmp_path / "state.sqlite"), 4, False)
+    # moto's buckets outlive each test's server, so this uses a date no other test does.
+    geocoder.run(publisher, None, None, "2026-11-21", None, None, 5 << 20, tagger, categories)
+    for key, path in (("tagger.model", tagger), ("categorical/eng.amcats", categories / "eng.amcats")):
+        head = s3.client.head_object(Bucket="bucket", Key=f"releases/geocoder/2026-11-21/{key}")
+        assert head["ContentLength"] == path.stat().st_size
+        assert head["Metadata"]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        assert head["ContentType"] == "application/octet-stream"
+    latest.run(publisher, {"geocoder": "2026-11-21"})
+    assert json.loads(s3.get("releases/latest.json"))["geocoder"] == "2026-11-21"

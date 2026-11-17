@@ -53,11 +53,16 @@ def parser():
                       help="the build's routing.btrfs, the same tiles as an image for servers, uploaded beside them")
     step.add_argument("--part-size-mib", type=int, default=128, help="the image's multipart part size (default: 128 MiB)")
 
-    step = steps.add_parser("geocoder", help="publish the geocoder index's btrfs image, for servers")
+    step = steps.add_parser("geocoder",
+                            help="publish the geocoder index's btrfs image, for servers, and its models, for phones")
     add_target_args(step)
-    step.add_argument("--image", type=Path, required=True, help="the build's geocoder.btrfs")
-    step.add_argument("--metadata", type=Path, required=True,
-                      help="the build's geocoder.json, which gives the index's schema version")
+    step.add_argument("--image", type=Path, help="the build's geocoder.btrfs")
+    step.add_argument("--metadata", type=Path,
+                      help="the build's geocoder.json, which gives the index's schema version (with --image)")
+    step.add_argument("--tagger", type=Path, help="the tagger.model build was given, uploaded loose for phones")
+    step.add_argument("--categories", type=Path,
+                      help="the categories/ directory of LANG.amcats build was given, uploaded loose for phones "
+                           "(with --tagger)")
     step.add_argument("--date", required=True, help="the release date, YYYY-MM-DD[.N]")
     step.add_argument("--source", help="what the index was built from, for release.json")
     step.add_argument("--build-commit", help="the Cardinal commit the index was built with, for release.json")
@@ -113,7 +118,7 @@ def parser():
 
     step = steps.add_parser("latest", help="point latest.json at releases, checking they fit together")
     add_target_args(step)
-    for kind in ("map", "routing", "transit"):
+    for kind in ("map", "routing", "transit", "geocoder"):
         step.add_argument(f"--{kind}", help=f"the {kind} release (default: keep the current one)")
     step.add_argument("--poi", help="the POI identity checkpoint, a replication sequence (default: keep the current one)")
     return top
@@ -154,8 +159,12 @@ def run(args):
             routing.run(publisher, args.tar.resolve(), check_date(args.date), args.source, args.build_commit,
                         args.image.resolve() if args.image else None, args.part_size_mib << 20)
         elif args.step == "geocoder":
-            geocoder.run(publisher, args.image.resolve(), args.metadata.resolve(), check_date(args.date),
-                         args.source, args.build_commit, args.part_size_mib << 20)
+            def resolved(path):
+                return path.resolve() if path else None
+
+            geocoder.run(publisher, resolved(args.image), resolved(args.metadata), check_date(args.date),
+                         args.source, args.build_commit, args.part_size_mib << 20,
+                         resolved(args.tagger), resolved(args.categories))
         elif args.step == "map":
             mapfile.publish(publisher, args.pmtiles.resolve(), check_date(args.date), args.source,
                             args.build_commit, args.part_size_mib << 20)
@@ -168,7 +177,10 @@ def run(args):
         elif args.step == "poi-prune":
             poi.prune(publisher, args.keep_days)
         elif args.step == "latest":
-            latest.run(publisher, {"map": args.map, "routing": args.routing, "transit": args.transit, "poi": args.poi})
+            latest.run(publisher, {
+                "map": args.map, "routing": args.routing, "transit": args.transit, "geocoder": args.geocoder,
+                "poi": args.poi,
+            })
     finally:
         state.close()
 
