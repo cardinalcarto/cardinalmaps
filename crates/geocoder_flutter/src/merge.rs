@@ -1,10 +1,15 @@
 //! Joining the pieces of lines and areas that tiles cut at their edges.
 //!
-//! Pieces with the same name, lowercased, whose middles are in the same S2 cell of level 12
-//! (a few kilometres across) are one feature, as airmail's indexer joins a street's OSM ways
-//! (`airmail_indexer/src/osm.rs`). Streets come from `transportation_name`; areas and lines of
-//! the other layers (parks, named water, the `geocoder` layer's buildings and landuse) are
-//! joined the same way, within their own layer.
+//! Streets come from `transportation_name`, whose pieces have no OSM element of their own
+//! (Planetiler merges a street's ways): pieces with the same name, lowercased, whose middles
+//! are in the same S2 cell of level 12 (a few kilometres across) are one street, as airmail's
+//! indexer joins a street's OSM ways (`airmail_indexer/src/osm.rs`).
+//!
+//! The other layers' pieces (parks, protected areas, named water and waterways, buildings) are
+//! pieces of one OSM element each, which their ID says: the pieces with one ID are that
+//! element, one feature, as the server indexes it, however many cells it covers. A park's
+//! label point, which has the names its outline lacks, joins its outline too. Pieces without
+//! an ID fall back to the name and cell.
 //!
 //! The result doesn't depend on the order tiles are added in: the joined feature takes the
 //! attributes of its best piece (for streets the biggest road class, then the first tile),
@@ -26,6 +31,12 @@ pub const MAX_POINTS: usize = 1000;
 
 /// How much pieces are simplified, in degrees (about 5 m), as airmail's streets are.
 pub const SIMPLIFY_DEGREES: f64 = 0.00005;
+
+/// How many z14 tile columns (about 25 km in Washington) past the last piece of an element
+/// the tiles must be before it's finished. A line's or a polygon's pieces are in a run of
+/// columns without gaps (but where a tile drops a sliver), so a few would do; a multipolygon's
+/// parts can be farther apart, and parts farther than this become features of their own.
+pub const ELEMENT_GAP_COLUMNS: u32 = 16;
 
 /// `transportation_name` classes, biggest first: a street's attributes come from its piece of
 /// the biggest class, as airmail takes a street's tags from its biggest way.
@@ -86,13 +97,28 @@ struct Group {
     /// Sorted.
     tiles: Vec<TileKey>,
     id: Option<u64>,
-    /// The last tile column (z14 x) a piece of it can come from: the pieces' middles are in
-    /// its cell, and a piece's middle is in its own tile.
+    /// The highest importance a piece has.
+    importance: Option<f64>,
+    /// A label point's position, the shape if no piece has another.
+    point: Option<Coord<f64>>,
+    /// For a street, the last tile column (z14 x) a piece of it can come from: the pieces'
+    /// middles are in its cell, and a piece's middle is in its own tile. For an element,
+    /// the last column a piece came from, plus [`ELEMENT_GAP_COLUMNS`].
     last_column: u32,
 }
 
-/// What groups pieces into one feature: the layer, the label, the S2 cell of the middle.
-type Key = (SourceLayer, String, u64);
+/// What groups pieces into one feature: the layer and an OSM element's ID, or for pieces
+/// without one, the label and the S2 cell of the middle.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Key {
+    Element(SourceLayer, u64),
+    Named(SourceLayer, String, u64),
+}
+
+/// Whether a layer's pieces are joined by their ID: every layer's but streets'.
+fn joins_by_id(layer: SourceLayer) -> bool {
+    layer != SourceLayer::TransportationName
+}
 
 /// Joins pieces of lines and areas across tiles.
 #[derive(Debug, Default)]
@@ -125,7 +151,8 @@ impl Merger {
         &self.counts
     }
 
-    /// Adds the piece that's `index`th among its tile's pieces.
+    /// Adds the piece that's `index`th among its tile's pieces. A point (a park's label)
+    /// joins its element's pieces, or is the feature's shape if it has no others.
     pub fn add(&mut self, mut piece: ExtractedFeature, index: u32) {
         self.counts.pieces += 1;
         let Some(label) = label(&piece) else {
@@ -137,9 +164,20 @@ impl Merger {
             self.counts.unnamed += 1;
             return;
         };
-        let cell = s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(middle.y, middle.x))
-            .parent(CELL_LEVEL);
+        let point = matches!(piece.geometry, Geometry::Point(_)).then_some(middle);
         let tile = piece.tiles[0];
+        let (key, last) = match piece.id {
+            Some(id) if joins_by_id(piece.layer) => (
+                Key::Element(piece.layer, id),
+                tile.x.saturating_add(ELEMENT_GAP_COLUMNS),
+            ),
+            _ => {
+                let cell =
+                    s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(middle.y, middle.x))
+                        .parent(CELL_LEVEL);
+                (Key::Named(piece.layer, label, cell.0), last_column(cell))
+            }
+        };
         let order = (rank(&piece), tile, index);
         piece.geometry = Geometry::GeometryCollection(geo::GeometryCollection(Vec::new()));
         let names = std::mem::take(&mut piece.names);
@@ -148,12 +186,14 @@ impl Merger {
         piece.address.shrink_to_fit();
         piece.admins.shrink_to_fit();
         let id = piece.id;
-        let group = match self.groups.entry((piece.layer, label, cell.0)) {
+        let importance = piece.importance;
+        let group = match self.groups.entry(key) {
             Entry::Occupied(entry) => {
                 let group = entry.into_mut();
                 if order < group.best.0 {
                     group.best = (order, piece);
                 }
+                group.last_column = group.last_column.max(last);
                 group
             }
             Entry::Vacant(entry) => {
@@ -164,10 +204,19 @@ impl Merger {
                     parts: Vec::new(),
                     tiles: Vec::new(),
                     id,
-                    last_column: last_column(cell),
+                    importance: None,
+                    point: None,
+                    last_column: last,
                 }))
             }
         };
+        group.importance = match (group.importance, importance) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+        if group.point.is_none() {
+            group.point = point;
+        }
         for (key, value) in names {
             match group.names.binary_search_by(|(k, _, _)| k.cmp(&key)) {
                 Ok(i) if group.names[i].1 <= order => {}
@@ -251,6 +300,7 @@ impl Group {
     fn into_feature(self) -> ExtractedFeature {
         let mut feature = self.best.1;
         feature.id = self.id;
+        feature.importance = self.importance;
         feature.tiles = self.tiles;
         feature.names = self.names.into_iter().map(|(k, _, v)| (k, v)).collect();
         let (mut lines, mut polygons) = (Vec::new(), Vec::new());
@@ -266,6 +316,9 @@ impl Group {
             }
         }
         feature.geometry = match (lines.is_empty(), polygons.is_empty()) {
+            (true, true) if self.point.is_some() => {
+                Geometry::Point(geo::Point(self.point.unwrap_or_default()))
+            }
             (false, true) => Geometry::MultiLineString(MultiLineString(lines)),
             (true, false) => Geometry::MultiPolygon(MultiPolygon(polygons)),
             _ => Geometry::GeometryCollection(geo::GeometryCollection(
@@ -325,6 +378,7 @@ fn rank(piece: &ExtractedFeature) -> usize {
 /// its bounds for an area.
 fn middle(geometry: &Geometry<f64>) -> Option<Coord<f64>> {
     match geometry {
+        Geometry::Point(p) => Some(p.0),
         Geometry::LineString(l) => l.0.get(l.0.len() / 2).copied(),
         Geometry::MultiLineString(ml) => {
             let count: usize = ml.0.iter().map(|l| l.0.len()).sum();
@@ -363,5 +417,155 @@ fn parts(geometry: &Geometry<f64>) -> Vec<Part> {
         Geometry::Polygon(p) => polygon(p).into_iter().collect(),
         Geometry::MultiPolygon(mp) => mp.0.iter().filter_map(polygon).collect(),
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use geo::{LineString, Point, Polygon};
+
+    fn piece(
+        layer: SourceLayer,
+        id: Option<u64>,
+        name: &str,
+        x: u32,
+        geometry: Geometry<f64>,
+    ) -> ExtractedFeature {
+        ExtractedFeature {
+            layer,
+            id,
+            tiles: vec![TileKey { z: 14, x, y: 5700 }],
+            names: vec![("name".to_owned(), name.to_owned())],
+            address: Vec::new(),
+            admins: Vec::new(),
+            importance: None,
+            tags: Vec::new(),
+            geometry,
+        }
+    }
+
+    fn square(lon: f64) -> Geometry<f64> {
+        Geometry::Polygon(Polygon::new(
+            LineString::from(vec![
+                (lon, 46.8),
+                (lon + 0.01, 46.8),
+                (lon + 0.01, 46.81),
+                (lon, 46.81),
+                (lon, 46.8),
+            ]),
+            vec![],
+        ))
+    }
+
+    fn column(lon: f64) -> u32 {
+        ((lon + 180.0) / 360.0 * 16384.0) as u32
+    }
+
+    #[test]
+    fn an_elements_pieces_are_one_feature_across_cells() {
+        // A wilderness's pieces, tens of kilometres apart (many level-12 cells), with its ID.
+        let mut merger = Merger::new();
+        for (i, lon) in [-121.9, -121.8, -121.7, -121.6].into_iter().enumerate() {
+            let p = piece(
+                SourceLayer::Park,
+                Some(72),
+                "Mount Rainier Wilderness",
+                column(lon),
+                square(lon),
+            );
+            merger.add(p, i as u32);
+        }
+        // Without an ID, by name and cell: two cells, two features.
+        for (i, lon) in [-121.9, -121.6].into_iter().enumerate() {
+            merger.add(
+                piece(
+                    SourceLayer::Park,
+                    None,
+                    "Nameless Woods",
+                    column(lon),
+                    square(lon),
+                ),
+                i as u32,
+            );
+        }
+        // Streets join by name and cell even with IDs.
+        for (i, lon) in [-121.9, -121.6].into_iter().enumerate() {
+            let line =
+                Geometry::LineString(LineString::from(vec![(lon, 46.8), (lon + 0.001, 46.8)]));
+            merger.add(
+                piece(
+                    SourceLayer::TransportationName,
+                    Some(9),
+                    "Main Street",
+                    column(lon),
+                    line,
+                ),
+                i as u32,
+            );
+        }
+        let features: Vec<_> = merger.finish().collect();
+        let count = |layer, name: &str| {
+            features
+                .iter()
+                .filter(|f| f.layer == layer && f.name("name") == Some(name))
+                .count()
+        };
+        assert_eq!(count(SourceLayer::Park, "Mount Rainier Wilderness"), 1);
+        assert_eq!(count(SourceLayer::Park, "Nameless Woods"), 2);
+        assert_eq!(count(SourceLayer::TransportationName, "Main Street"), 2);
+        let wilderness = features.iter().find(|f| f.id == Some(72)).unwrap();
+        assert!(matches!(&wilderness.geometry, Geometry::MultiPolygon(mp) if mp.0.len() == 4));
+        assert_eq!(wilderness.tiles.len(), 4);
+    }
+
+    #[test]
+    fn an_element_is_finished_once_the_tiles_are_well_past_it() {
+        let mut merger = Merger::new();
+        let x = column(-121.9);
+        merger.add(
+            piece(
+                SourceLayer::Waterway,
+                Some(5),
+                "Salzer Creek",
+                x,
+                square(-121.9),
+            ),
+            0,
+        );
+        assert_eq!(merger.finished(x + ELEMENT_GAP_COLUMNS).count(), 0);
+        merger.add(
+            piece(
+                SourceLayer::Waterway,
+                Some(5),
+                "Salzer Creek",
+                x + 3,
+                square(-121.85),
+            ),
+            0,
+        );
+        assert_eq!(merger.finished(x + ELEMENT_GAP_COLUMNS + 1).count(), 0);
+        assert_eq!(merger.finished(x + 3 + ELEMENT_GAP_COLUMNS + 1).count(), 1);
+    }
+
+    #[test]
+    fn a_label_point_alone_is_its_features_shape() {
+        let mut merger = Merger::new();
+        let mut label = piece(
+            SourceLayer::Park,
+            Some(8),
+            "Tiny Park",
+            100,
+            Geometry::Point(Point::new(-122.3, 47.6)),
+        );
+        label.importance = Some(0.2);
+        merger.add(label, 0);
+        let features: Vec<_> = merger.finish().collect();
+        assert_eq!(features.len(), 1);
+        assert_eq!(
+            features[0].geometry,
+            Geometry::Point(Point::new(-122.3, 47.6))
+        );
+        assert_eq!(features[0].importance, Some(0.2));
     }
 }

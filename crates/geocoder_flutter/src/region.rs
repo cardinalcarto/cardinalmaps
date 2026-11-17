@@ -1,7 +1,7 @@
 //! Reading a whole region: its z14 tiles one after another, then the features joined across
 //! them.
 
-use crate::extract::{ExtractedFeature, TileCounts, TileError, TileKey, extract_tile};
+use crate::extract::{ExtractedFeature, SourceLayer, TileCounts, TileError, TileKey, extract_tile};
 use crate::merge::{MergeCounts, Merger};
 
 /// Where extracted features go: the index's documents ([`crate::build::IndexSink`]), or a
@@ -129,8 +129,13 @@ impl RegionExtractor {
         self.counts.tiles += 1;
         self.counts.bytes += data.len() as u64;
         self.counts.layers.add(&features.counts);
-        sink.tile_points(tile, features.points);
-        for (index, piece) in features.pieces.into_iter().enumerate() {
+        // A park's label point (with the names its outline lacks) joins its outline.
+        let (labels, points): (Vec<_>, Vec<_>) = features
+            .points
+            .into_iter()
+            .partition(|p| p.layer == SourceLayer::Park && p.id.is_some());
+        sink.tile_points(tile, points);
+        for (index, piece) in features.pieces.into_iter().chain(labels).enumerate() {
             self.merger
                 .add(piece, u32::try_from(index).unwrap_or(u32::MAX));
         }

@@ -152,11 +152,24 @@ fn west_tile() -> Vec<u8> {
         ),
         layer(
             "park",
-            vec![(
-                Some(11),
-                Shape::Ring(vec![(3900, 3900), (4196, 3900), (4196, 4000), (3900, 4000)]),
-                vec![("name", s("Green Park")), ("class", s("park"))],
-            )],
+            vec![
+                (
+                    Some(11),
+                    Shape::Ring(vec![(3900, 3900), (4196, 3900), (4196, 4000), (3900, 4000)]),
+                    vec![("name", s("Green Park")), ("class", s("park"))],
+                ),
+                // Its label point, with every name and the importance.
+                (
+                    Some(11),
+                    Shape::Point(3950, 3950),
+                    vec![
+                        ("name", s("Green Park")),
+                        ("alt_name", s("Parque Verde")),
+                        ("class", s("park")),
+                        ("cardinal:importance", PropValueRef::F64(0.3)),
+                    ],
+                ),
+            ],
         ),
         // A layer the index doesn't read.
         layer(
@@ -400,9 +413,13 @@ fn a_regions_features_come_out_once_with_their_attributes() {
         cell(lines.0[0].0[1])
     );
 
+    // The park's outline pieces and its label point are one park, with the label's names
+    // and importance.
     let park = find(&features, SourceLayer::Park, 11);
     assert_eq!(park.tiles, vec![WEST, EAST]);
     assert!(matches!(&park.geometry, Geometry::MultiPolygon(mp) if mp.0.len() == 2));
+    assert_eq!(park.name("alt_name"), Some("Parque Verde"));
+    assert_eq!(park.importance, Some(0.3));
 
     // Nothing else: the unread layer and the unnamed street are left out.
     assert_eq!(features.len(), 6, "{features:#?}");
@@ -428,12 +445,13 @@ fn joined_features_come_out_once_the_tiles_have_passed_them() {
     for (key, tile) in &tiles {
         extractor.add_tile(*key, tile, &mut read).unwrap();
     }
-    // Main Street and the park, of the west and east tiles, are finished by the far tile
-    // (kilometres east); the far tile's street isn't until the end.
-    assert_eq!(joined(&read), vec![5, 11]);
+    // Main Street, of the west and east tiles, is finished by the far tile (kilometres east);
+    // the far tile's street isn't until the end, nor is the park, an OSM element whose parts
+    // may be farther apart (`ELEMENT_GAP_COLUMNS`).
+    assert_eq!(joined(&read), vec![5]);
     let mut at_end = Vec::new();
     let counts = extractor.finish(&mut at_end);
-    assert_eq!(joined(&at_end), vec![3]);
+    assert_eq!(joined(&at_end), vec![3, 11]);
     assert_eq!(counts.out_of_order, 0);
 
     // Out of order: the same features, all at the end.
