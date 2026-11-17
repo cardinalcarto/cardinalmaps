@@ -25,6 +25,10 @@ path = "src/bin/tagger.rs"
 name = "categories_export"
 path = "src/bin/categories_export.rs"
 
+[[bin]]
+name = "categories_prune"
+path = "src/bin/categories_prune.rs"
+
 [lib]
 name = "airmail_indexer"
 path = "src/lib.rs"

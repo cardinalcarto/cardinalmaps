@@ -53,6 +53,35 @@ uv run categories-evaluate data/ch-deu.amcats data/work-ch-deu
 `eval/queries.<language>.tsv` are small hand-written query sets;
 `categories-evaluate` scores a model against the one for its language.
 
+## Pruning for phones
+
+`categories_prune` (in `airmail_indexer`) shrinks trained models, a file or a
+directory of them, for download to phones:
+
+```bash
+../target/release/categories_prune models/ models-phone/
+```
+
+- A head with fewer labels than dimensions (always `diet`, sometimes
+  `cuisine`) is stored in label-score space: each row becomes `output · row`
+  and the output matrix the identity. This changes nothing but the
+  re-quantization; on its own it keeps the file at version 1.
+- Each head then keeps a fraction of its feature rows (`--keep-categories`,
+  `--keep-cuisine`, `--keep-diet`; defaults 0.8, 0.6 and 0.1). Pruned rows
+  are zero: their features still count in fastText's average but add
+  nothing. Rows are ranked by how far they move label scores (the norm of
+  `output · row`, centred for softmax) times the square root of how often
+  queries use them. The model estimates that itself, so no corpus or region
+  is involved: fastText sorts its dictionary by training count, so word `r`
+  gets weight 1/(r + 1), shared by the rows it looks up.
+- Pruned files are version 2: each head lists `kept_rows`, and its data starts
+  with a bitmap of the stored rows.
+
+With the defaults, English goes from 55 MB to 29 MB and Hebrew from 42 MB to
+19 MB, with held-out top-1 accuracy within 0.1 points of the full model. The
+categories head is the one that matters: below about 0.6 of its rows,
+accuracy drops.
+
 ## Keeping Rust and Python in step
 
 `tags.py` (`POI_KEYS`, `POI_TAGS`, `UNINFORMATIVE_VALUES`, `normalize`) and
