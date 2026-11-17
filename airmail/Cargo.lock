@@ -84,6 +84,7 @@ dependencies = [
  "deunicode",
  "env_logger",
  "flate2",
+ "fst",
  "futures-util",
  "geo",
  "geo-types",
