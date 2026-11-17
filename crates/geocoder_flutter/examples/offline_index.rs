@@ -198,7 +198,7 @@ fn build(mut args: Args) {
     let d = counts.documents;
     println!(
         "features: {} ({} not indexed, {} duplicate addresses dropped); documents: {} \
-         (poi {}, address {}, admin {}, street {}, postcode {}; {} pointers)",
+         (poi {}, address {}, admin {}, street {}, postcode {}; {} pointers, {} local IDs)",
         counts.features,
         counts.unindexed,
         counts.duplicate_addresses,
@@ -209,6 +209,7 @@ fn build(mut args: Args) {
         d[3],
         d[4],
         counts.pointers,
+        counts.local_ids,
     );
     println!(
         "index: {:.1} MB at {}",

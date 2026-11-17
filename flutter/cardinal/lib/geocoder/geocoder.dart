@@ -41,6 +41,12 @@ abstract interface class Geocoder {
   Future<Place?> place(String id, {String? lang, Future<void>? abort});
 }
 
+/// Whether [id] is a `local:<n>` ID, which only the device's index gives (to a street
+/// joined from map tiles, or a POI with neither a stable nor an OSM ID) and only it can
+/// find. It's a hash of what the index stored, so after the index is rebuilt it finds
+/// the same place or nothing, never another.
+bool isLocalPlaceId(String id) => id.startsWith('local:');
+
 /// Cardinal's geocoder server (airmail's `/v1` API; see `airmail_service/openapi.yaml`).
 class OnlineGeocoder implements Geocoder {
   OnlineGeocoder(this.base, {http.Client? client})
@@ -80,6 +86,8 @@ class OnlineGeocoder implements Geocoder {
 
   @override
   Future<Place?> place(String id, {String? lang, Future<void>? abort}) async {
+    // The server doesn't know the device's IDs.
+    if (isLocalPlaceId(id)) return null;
     try {
       final json = await _get('/v1/place', {'id': id, 'lang': ?lang}, abort);
       return placeFromResult(json['result'] as _Json);

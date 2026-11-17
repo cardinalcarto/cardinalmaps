@@ -11,7 +11,7 @@ use airmail::index::{AirmailIndex, AirmailIndexWriter, DocumentBuilder, Storage,
 use airmail::poi::{Kind, SchemafiedPoi, ToIndexPoi};
 use airmail::postcodes::Postcodes;
 
-use crate::documents::{document, drop_duplicate_addresses, place};
+use crate::documents::{document, drop_duplicate_addresses, give_local_id, place};
 use crate::extract::{ExtractedFeature, TileError, TileKey};
 use crate::region::{FeatureSink, RegionExtractor};
 use crate::wof::WofPlaces;
@@ -33,8 +33,9 @@ pub struct BuildCounts {
     pub duplicate_addresses: u64,
     /// Documents by [`Kind`] (as `Kind::ALL`).
     pub documents: [u64; 5],
-    /// Of them, pointers.
+    /// Of them, pointers, and those with a local ID (no other ID finds them).
     pub pointers: u64,
+    pub local_ids: u64,
 }
 
 /// Turns features into documents and adds them to the writer.
@@ -97,10 +98,11 @@ impl IndexSink {
         self.tile_areas.insert(tile, set);
     }
 
-    fn add(&mut self, doc: ToIndexPoi) {
+    fn add(&mut self, mut doc: ToIndexPoi) {
         if self.error.is_some() {
             return;
         }
+        let local = give_local_id(&mut doc);
         self.postcodes.add(&doc);
         let kind = doc.kind;
         let pointer = doc.tile.is_some() && doc.poi_id().is_some();
@@ -112,6 +114,7 @@ impl IndexSink {
             Ok(()) => {
                 self.counts.documents[kind_slot(kind)] += 1;
                 self.counts.pointers += u64::from(pointer);
+                self.counts.local_ids += u64::from(local);
             }
             Err(e) => self.error = Some(e),
         }

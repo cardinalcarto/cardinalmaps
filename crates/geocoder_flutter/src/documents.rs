@@ -7,9 +7,10 @@
 //! Every other feature is stored whole, as on the server.
 
 use airmail::importance;
+pub use airmail::index::LOCAL_ID_TAG;
 use airmail::poi::{Kind, OsmRef, OsmType, Pointer, TileId, ToIndexPoi};
 use airmail_importance::osm as importance_osm;
-use geo::Geometry;
+use geo::{CoordsIter, Geometry};
 
 use crate::extract::{ExtractedFeature, SourceLayer, TileKey};
 use crate::wof::WofPlaces;
@@ -181,6 +182,65 @@ pub fn place(doc: &mut ToIndexPoi, tile_admins: &[(String, i64)], wof: &mut WofP
     doc.languages.clone_from(&areas.street_languages);
 }
 
+/// Whether a document has an ID that finds it again (`poi:`, `wof:`, `osm:`, `postcode:`).
+fn has_place_id(doc: &ToIndexPoi) -> bool {
+    doc.poi_id().is_some()
+        || doc.wof.is_some()
+        || doc.osm.is_some()
+        || doc.tag("cardinal:postcode_id").is_some()
+}
+
+/// The ID within the index of a document with no other ID (a street joined from tile
+/// pieces, a POI without a stable or OSM ID): a hash of its kind, center and tags, so a
+/// rebuild of the index from the same features gives it the same ID, and a different
+/// document almost surely a different one. Never for one that has another ID.
+#[must_use]
+pub fn local_id(doc: &ToIndexPoi) -> u64 {
+    // FNV-1a, which doesn't change between Rust versions as `DefaultHasher` may.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |bytes: &[u8]| {
+        for b in bytes {
+            hash ^= u64::from(*b);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+        // A separator, so ("ab", "c") isn't ("a", "bc").
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    };
+    eat(doc.kind.as_str().as_bytes());
+    // Its center and shape to about a centimetre, as results round them. (Two pieces of a
+    // street can share a center.)
+    let mut degrees = |c: geo::Coord<f64>| {
+        for d in [c.x, c.y] {
+            eat(&((d * 1e7).round() as i64).to_le_bytes());
+        }
+    };
+    degrees(doc.center.0);
+    for c in doc.geometry.coords_iter() {
+        degrees(c);
+    }
+    let mut tags: Vec<&(String, String)> =
+        doc.tags.iter().filter(|(k, _)| k != LOCAL_ID_TAG).collect();
+    tags.sort();
+    for (k, v) in tags {
+        eat(k.as_bytes());
+        eat(v.as_bytes());
+    }
+    // Positive as a signed 64-bit integer too.
+    hash >> 1
+}
+
+/// Gives a document with no other ID its [`local_id`], as its [`LOCAL_ID_TAG`], so that a
+/// result can be opened again from the index. Returns whether it did.
+pub fn give_local_id(doc: &mut ToIndexPoi) -> bool {
+    if has_place_id(doc) || doc.tag(LOCAL_ID_TAG).is_some() {
+        return false;
+    }
+    let id = local_id(doc);
+    doc.tags.push((LOCAL_ID_TAG.to_owned(), id.to_string()));
+    true
+}
+
 /// The key of an address for the duplicate rule: its house number and street, folded.
 #[must_use]
 pub fn address_key(doc: &ToIndexPoi) -> Option<(String, String)> {
@@ -308,6 +368,32 @@ mod tests {
         let doc = document(f).unwrap();
         assert_eq!(doc.tag("aeroway"), Some("aerodrome"));
         assert_eq!(doc.tag("iata"), Some("SEK"));
+    }
+
+    #[test]
+    fn only_documents_without_other_ids_get_local_ids() {
+        let mut pointer = document(feature(SourceLayer::Poi, Some(42), &[("name", "A")])).unwrap();
+        assert!(!give_local_id(&mut pointer));
+        let mut osm = document(feature(SourceLayer::Park, Some(72), &[("name", "P")])).unwrap();
+        assert!(!give_local_id(&mut osm));
+        assert_eq!(osm.tag(LOCAL_ID_TAG), None);
+
+        let cafe = || document(feature(SourceLayer::Poi, None, &[("name", "Cafe Uno")])).unwrap();
+        let mut a = cafe();
+        assert!(give_local_id(&mut a));
+        assert!(!give_local_id(&mut a), "once");
+        let id = a.tag(LOCAL_ID_TAG).unwrap().to_owned();
+        assert_eq!(id, local_id(&cafe()).to_string());
+        assert!(id.parse::<i64>().is_ok());
+        // Built again from the same feature: the same ID. Anything different: another.
+        let mut b = cafe();
+        give_local_id(&mut b);
+        assert_eq!(b.tag(LOCAL_ID_TAG), Some(id.as_str()));
+        let mut moved = feature(SourceLayer::Poi, None, &[("name", "Cafe Uno")]);
+        moved.geometry = Geometry::Point(Point::new(-122.3, 47.600_001));
+        assert_ne!(local_id(&document(moved).unwrap()).to_string(), id);
+        let renamed = document(feature(SourceLayer::Poi, None, &[("name", "Cafe Dos")])).unwrap();
+        assert_ne!(local_id(&renamed).to_string(), id);
     }
 
     #[test]

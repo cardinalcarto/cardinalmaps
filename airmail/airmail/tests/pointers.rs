@@ -148,3 +148,23 @@ fn pointers_rank_by_their_names() {
     assert_eq!(hit.tag("name"), Some("Pike Market"));
     assert_eq!(hit.tag("cardinal:poi_id"), None);
 }
+
+/// A document with no ID of its own (a street joined from tile pieces) is found again by
+/// its local ID, stored whole.
+#[test]
+fn local_ids_find_documents_without_other_ids() {
+    let street = Geometry::LineString(LineString::from(vec![(-122.35, 47.62), (-122.34, 47.63)]));
+    let mut doc = airmail::osm::street_document(tags(&[("name", "Aurora Avenue North"), ("highway", "trunk")]), street).unwrap();
+    doc.tags.push((airmail::index::LOCAL_ID_TAG.to_string(), "1234567890123".to_string()));
+    let (_dir, index) = build(vec![in_seattle(doc), address()], Storage::Pointers);
+    let found = index.lookup_local_blocking(1_234_567_890_123).unwrap();
+    assert_eq!(found.hits.len(), 1);
+    assert_eq!(found.hits[0].kind, Kind::Street);
+    assert_eq!(found.hits[0].tag("name"), Some("Aurora Avenue North"));
+    assert_eq!(found.hits[0].local_id, Some(1_234_567_890_123));
+    assert_eq!(found.hits[0].tag(airmail::index::LOCAL_ID_TAG), None);
+    assert!(!matches!(found.hits[0].geometry, Geometry::Point(_)));
+    assert!(index.lookup_local_blocking(1).unwrap().hits.is_empty());
+    // It isn't an OSM element.
+    assert!(index.lookup_blocking(&PlaceId::Osm(OsmType::Node, 1_234_567_890_123)).unwrap().hits.is_empty());
+}
