@@ -159,10 +159,17 @@ func (m *DataPipeline) Build(
 	// +default=3
 	imageCompressionLevel int,
 ) (*dagger.Directory, error) {
-	patched := osm
+	// The geocoder reads the extract with node locations on its ways, which
+	// the patch also needs for POIs' importance, so it patches both copies.
+	patched, located := osm, (*dagger.File)(nil)
 	if databaseUrl != nil {
 		var err error
-		if patched, err = m.Patch(ctx, osm, databaseUrl, database); err != nil {
+		if patched, located, err = m.patch(ctx, osm, databaseUrl, database, qrank); err != nil {
+			return nil, err
+		}
+	} else {
+		var err error
+		if located, err = m.LocationsOnWays(ctx, osm); err != nil {
 			return nil, err
 		}
 	}
@@ -187,7 +194,7 @@ func (m *DataPipeline) Build(
 	if err != nil {
 		return nil, err
 	}
-	index, err := m.index(ctx, patched, wofDb, pipTree, qrank)
+	index, err := m.index(ctx, located, wofDb, pipTree, qrank)
 	if err != nil {
 		return nil, err
 	}
@@ -255,14 +262,16 @@ func (m *DataPipeline) BtrfsImage(
 	return ctr.File("/out/image.btrfs"), nil
 }
 
-// The poi_service executable.
+// The poi_service executable. It shares airmail's importance code, so that
+// crate sits beside it as in the repository.
 func (m *DataPipeline) PoiService() *dagger.File {
 	return dag.Container().
 		From(rustImage).
-		WithDirectory("/src", m.PoiServiceSource).
+		WithDirectory("/src/poi_service", m.PoiServiceSource).
+		WithDirectory("/src/airmail/airmail_importance", m.AirmailSource.Directory("airmail_importance")).
 		WithMountedCache("/usr/local/cargo/registry", dag.CacheVolume("poi-service-cargo-registry")).
-		WithMountedCache("/src/target", dag.CacheVolume("poi-service-target")).
-		WithWorkdir("/src").
+		WithMountedCache("/src/poi_service/target", dag.CacheVolume("poi-service-target")).
+		WithWorkdir("/src/poi_service").
 		WithExec([]string{"cargo", "build", "--release", "--locked"}).
 		WithExec([]string{"cp", "target/release/poi_service", "/poi_service"}).
 		File("/poi_service")
@@ -270,7 +279,9 @@ func (m *DataPipeline) PoiService() *dagger.File {
 
 // Copies an OSM extract, tagging every POI version that the poi_service
 // database knows with its stable identifier (cardinal:poi_id) and OSM
-// version (cardinal:version).
+// version (cardinal:version), and every POI with its importance as airmail
+// ranks it (cardinal:importance). Importance depends on POIs' shapes, so this
+// adds node locations to the extract's ways first; see LocationsOnWays.
 // +cache="never"
 func (m *DataPipeline) Patch(
 	ctx context.Context,
@@ -283,7 +294,29 @@ func (m *DataPipeline) Patch(
 	// "database", so use that in --database-url.
 	// +optional
 	database *dagger.Service,
+	// QRank (qrank.csv.gz from https://qrank.wmcloud.org), which ranks POIs
+	// with Wikidata entities by their articles' page views. Without it,
+	// having an entity counts the same for every POI.
+	// +optional
+	qrank *dagger.File,
 ) (*dagger.File, error) {
+	patched, _, err := m.patch(ctx, osm, databaseUrl, database, qrank)
+	return patched, err
+}
+
+// Patches the extract as Patch does, returning it and a patched copy with
+// node locations on its ways, as the geocoder index reads it.
+func (m *DataPipeline) patch(
+	ctx context.Context,
+	osm *dagger.File,
+	databaseUrl *dagger.Secret,
+	database *dagger.Service,
+	qrank *dagger.File,
+) (*dagger.File, *dagger.File, error) {
+	located, err := m.LocationsOnWays(ctx, osm)
+	if err != nil {
+		return nil, nil, err
+	}
 	ctr := dag.Container().
 		From(poiServiceRuntime).
 		WithFile("/usr/local/bin/poi_service", m.PoiService()).
@@ -299,18 +332,27 @@ func (m *DataPipeline) Patch(
 		WithExec([]string{"poi_service", "checkpoint"}).
 		Stdout(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	ctr, err = ctr.
+	cmd := []string{"poi_service", "patch",
+		"--input=/input/input.osm.pbf", "--output=/out/output.osm.pbf",
+		"--locations=/input/locations.osm.pbf", "--locations-output=/out/locations.osm.pbf"}
+	ctr = ctr.
 		WithEnvVariable("POI_SERVICE_CHECKPOINT", strings.TrimSpace(checkpoint)).
 		WithMountedFile("/input/input.osm.pbf", osm).
+		WithMountedFile("/input/locations.osm.pbf", located)
+	if qrank != nil {
+		ctr = ctr.WithMountedFile("/input/qrank.csv.gz", qrank)
+		cmd = append(cmd, "--qrank=/input/qrank.csv.gz")
+	}
+	ctr, err = ctr.
 		WithExec([]string{"mkdir", "-p", "/out"}).
-		WithExec([]string{"poi_service", "patch", "--input=/input/input.osm.pbf", "--output=/out/output.osm.pbf"}).
+		WithExec(cmd).
 		Sync(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return ctr.File("/out/output.osm.pbf"), nil
+	return ctr.File("/out/output.osm.pbf"), ctr.File("/out/locations.osm.pbf"), nil
 }
 
 // The planetiler-openmaptiles fork's executable jar with dependencies.
@@ -374,10 +416,13 @@ func (m *DataPipeline) Tiles(
 	// the areas they're in.
 	// +optional
 	wofDb *dagger.File,
+	// QRank, for POIs' importance; see Patch.
+	// +optional
+	qrank *dagger.File,
 ) (*dagger.File, error) {
 	if databaseUrl != nil {
 		var err error
-		if osm, err = m.Patch(ctx, osm, databaseUrl, database); err != nil {
+		if osm, err = m.Patch(ctx, osm, databaseUrl, database, qrank); err != nil {
 			return nil, err
 		}
 	}
@@ -659,17 +704,22 @@ func (m *DataPipeline) Index(
 	// +optional
 	qrank *dagger.File,
 ) (*dagger.Directory, error) {
+	var located *dagger.File
+	var err error
 	if databaseUrl != nil {
-		var err error
-		if osm, err = m.Patch(ctx, osm, databaseUrl, database); err != nil {
-			return nil, err
-		}
+		_, located, err = m.patch(ctx, osm, databaseUrl, database, qrank)
+	} else {
+		located, err = m.LocationsOnWays(ctx, osm)
 	}
-	return m.index(ctx, osm, wofDb, pipTree, qrank)
+	if err != nil {
+		return nil, err
+	}
+	return m.index(ctx, located, wofDb, pipTree, qrank)
 }
 
-// Indexes the extract's POIs and addresses, then every administrative area
-// in the Who's On First database.
+// Indexes the POIs and addresses of an extract with node locations on its
+// ways (see LocationsOnWays), then every administrative area in the Who's
+// On First database.
 func (m *DataPipeline) index(ctx context.Context, osm *dagger.File, wofDb *dagger.File, pipTree bool, qrank *dagger.File) (*dagger.Directory, error) {
 	ctr, flags, err := m.withWof(ctx, m.AirmailIndexer(), wofDb, pipTree)
 	if err != nil {
@@ -680,10 +730,6 @@ func (m *DataPipeline) index(ctx context.Context, osm *dagger.File, wofDb *dagge
 		flags = append(flags, "--qrank=/input/qrank.csv.gz")
 	}
 	indexer := append([]string{"indexer", "--index=/out/index"}, flags...)
-	osm, err = m.LocationsOnWays(ctx, osm)
-	if err != nil {
-		return nil, err
-	}
 	ctr, err = ctr.
 		WithMountedFile("/input/input.osm.pbf", osm).
 		WithExec([]string{"mkdir", "-p", "/out/index"}).

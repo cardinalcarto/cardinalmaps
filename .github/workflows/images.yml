@@ -28,6 +28,8 @@ jobs:
           - image: cardinal-poi-service
             context: poi_service
             file: poi_service/Dockerfile
+            # It shares airmail's importance code.
+            build-contexts: airmail_importance=airmail/airmail_importance
           - image: cardinal-airmail
             context: airmail
             file: airmail/Dockerfile
@@ -53,6 +55,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
+          build-contexts: ${{ matrix.build-contexts }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

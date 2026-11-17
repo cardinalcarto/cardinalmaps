@@ -6,7 +6,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use flate2::read::GzDecoder;
-use log::info;
+
+use crate::importance::wikidata_number;
 
 /// Each entity's QRank, sorted by entity number, so a lookup is a binary
 /// search over 16 bytes per entity.
@@ -21,12 +22,11 @@ impl QRank {
         let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
         let reader: Box<dyn Read> =
             if path.extension().is_some_and(|e| e == "gz") { Box::new(GzDecoder::new(file)) } else { Box::new(file) };
-        let ranks = Self::parse(BufReader::new(reader)).with_context(|| format!("reading {}", path.display()))?;
-        info!("Loaded QRank for {} Wikidata entities", ranks.ranks.len());
-        Ok(ranks)
+        Self::parse(BufReader::new(reader)).with_context(|| format!("reading {}", path.display()))
     }
 
-    fn parse(reader: impl BufRead) -> Result<Self> {
+    /// Reads the CSV from `reader`.
+    pub fn parse(reader: impl BufRead) -> Result<Self> {
         let mut lines = reader.lines();
         let header = lines.next().transpose()?;
         if header.as_deref().map(str::trim) != Some("Entity,QRank") {
@@ -38,7 +38,7 @@ impl QRank {
             let Some((entity, rank)) = line.split_once(',') else {
                 continue;
             };
-            if let (Some(entity), Ok(rank)) = (airmail::importance::wikidata_number(entity), rank.trim().parse()) {
+            if let (Some(entity), Ok(rank)) = (wikidata_number(entity), rank.trim().parse()) {
                 ranks.push((entity, rank));
             }
         }
@@ -47,10 +47,21 @@ impl QRank {
         Ok(Self { ranks })
     }
 
+    /// How many entities have a QRank.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.ranks.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.ranks.is_empty()
+    }
+
     /// The QRank of a Wikidata ID such as `Q60`.
     #[must_use]
     pub fn get(&self, wikidata: &str) -> Option<u64> {
-        let entity = airmail::importance::wikidata_number(wikidata)?;
+        let entity = wikidata_number(wikidata)?;
         let i = self.ranks.binary_search_by_key(&entity, |(e, _)| *e).ok()?;
         Some(self.ranks[i].1)
     }

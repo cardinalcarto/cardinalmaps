@@ -293,6 +293,12 @@ The build never queries the database for each POI. Instead, its first step,
    - `cardinal:version`, the OSM version, so clients can tell whether
      cached data is stale.
 
+   It also tags every POI with `cardinal:importance`, as airmail ranks it
+   (from QRank, given `--qrank`, and the POI's area). Areas need node
+   locations, so osmium adds them to the extract's ways first (as for the
+   geocoder index), and the patch writes a patched copy of that file too,
+   which the index reads.
+
 The patched extract then feeds:
 
 - **the tiles:** `Poi.java` in `planetiler-openmaptiles/` reads the tags;
@@ -573,9 +579,10 @@ The steps run one at a time, since each can use most of the machine:
    `--waterway_z12_streams`).
 3. **Tiles:** the `planetiler-openmaptiles` fork writes `tiles.mbtiles`, as
    gzipped MLT tiles. POIs get the areas they're in from Who's On First.
-4. **Geocoder index:** osmium adds node locations to ways (its node index
-   goes on disk for the planet), then airmail's indexer loads the POIs and
-   addresses, then every Who's On First area. It writes `index/`.
+4. **Geocoder index:** airmail's indexer loads the POIs and addresses from
+   the patched copy with node locations on its ways that step 1 wrote (osmium
+   adds them before the patch; its node index goes on disk for the planet),
+   then every Who's On First area. It writes `index/`.
 5. **Routing tiles:** mainline Valhalla (the image pinned in
    `valinor/tools/oracle/valhalla-image`) builds graph tiles from the
    **unpatched** planet, with pedestrian areas, bounding circles,

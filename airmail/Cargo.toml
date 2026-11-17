@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["airmail", "airmail_indexer", "airmail_service", "airmail_tagger"]
+members = ["airmail", "airmail_importance", "airmail_indexer", "airmail_service", "airmail_tagger"]
 
 [workspace.package]
 edition = "2024"
@@ -8,6 +8,7 @@ rust-version = "1.94"
 
 [workspace.dependencies]
 airmail = { path = "airmail" }
+airmail_importance = { path = "airmail_importance" }
 anyhow = "1.0.104"
 deunicode = "1.6.2"
 env_logger = "0.11.11"

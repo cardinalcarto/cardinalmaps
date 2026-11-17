@@ -1,18 +1,20 @@
 //! Adding POI identifiers to an `.osm.pbf` file as `cardinal:poi_id` tags,
-//! with `cardinal:version` tags giving the element's OSM version.
+//! with `cardinal:version` tags giving the element's OSM version, and given
+//! their [`Importances`], every POI's importance as `cardinal:importance`.
 //!
 //! Every known (type, id, version) is loaded into memory first, from
 //! PostgreSQL or from published releases, so neither is involved while the
 //! file is rewritten; both give the same identifiers, so the same output. An element gets the tags if its
 //! exact version is in `poi_versions`. Blocks without any are copied
 //! unchanged; others are decoded, retagged and recompressed. Existing
-//! `cardinal:poi_id` and `cardinal:version` tags are replaced, so a file can be
-//! patched again.
+//! `cardinal:poi_id`, `cardinal:version` and `cardinal:importance` tags are
+//! replaced, so a file can be patched again. A POI gets `cardinal:importance`
+//! whether or not its version has an identifier.
 
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use futures_util::TryStreamExt;
@@ -22,6 +24,7 @@ use sqlx::PgPool;
 
 use crate::db::Checkpoint;
 use crate::identity::VersionRow;
+use crate::importance::{IMPORTANCE_TAG, Importances};
 use crate::osm::OsmType;
 use crate::pbf::{DenseNodes, PrimitiveBlock, RawBlob};
 use crate::rules::{is_poi, is_poi_key, is_poi_value_key};
@@ -89,6 +92,8 @@ struct Stats {
     tagged: [u64; 3],
     /// POIs whose version has no known identifier, by type.
     unknown: [u64; 3],
+    /// Elements tagged with their importance, by type.
+    importance: [u64; 3],
 }
 
 impl Stats {
@@ -97,13 +102,21 @@ impl Stats {
         for i in 0..3 {
             self.tagged[i] += other.tagged[i];
             self.unknown[i] += other.unknown[i];
+            self.importance[i] += other.importance[i];
         }
     }
 }
 
-/// Patches `input` with identifiers known as of `checkpoint`.
-pub async fn patch(ids: PoiIds, checkpoint: Option<Checkpoint>, input: &Path, output: &Path) -> Result<()> {
-    if let Some(checkpoint) = checkpoint {
+/// Patches each `(input, output)` file with identifiers known as of
+/// `checkpoint` and, if given, importances. The files are copies of the same
+/// extract, such as one with node locations on its ways and one without.
+pub async fn patch(
+    ids: PoiIds,
+    checkpoint: Option<Checkpoint>,
+    importances: Option<Importances>,
+    files: Vec<(PathBuf, PathBuf)>,
+) -> Result<()> {
+    if let (Some(checkpoint), Some((input, _))) = (checkpoint, files.first()) {
         let input_timestamp = crate::bootstrap::replication_timestamp(input)?;
         tracing::info!("identifiers are at {}; input is at {input_timestamp}", checkpoint.timestamp);
         if input_timestamp > checkpoint.timestamp {
@@ -111,17 +124,26 @@ pub async fn patch(ids: PoiIds, checkpoint: Option<Checkpoint>, input: &Path, ou
         }
     }
     tracing::info!("loaded {} POI versions", ids.len());
-    let (input, output) = (input.to_owned(), output.to_owned());
-    let stats = tokio::task::spawn_blocking(move || patch_file(&ids, &input, &output)).await??;
-    let types = ["nodes", "ways", "relations"];
-    for (i, name) in types.iter().enumerate() {
-        tracing::info!("{name}: {} tagged, {} POIs without a known identifier", stats.tagged[i], stats.unknown[i]);
+    let importances = importances.unwrap_or_default();
+    for (input, output) in files {
+        let (ids, importances) = (&ids, &importances);
+        let stats = tokio::task::block_in_place(|| patch_file(ids, importances, &input, &output))?;
+        tracing::info!("patched {}", input.display());
+        let types = ["nodes", "ways", "relations"];
+        for (i, name) in types.iter().enumerate() {
+            tracing::info!(
+                "{name}: {} tagged, {} POIs without a known identifier, {} with an importance",
+                stats.tagged[i],
+                stats.unknown[i],
+                stats.importance[i]
+            );
+        }
+        tracing::info!("rewrote {} blobs", stats.rewritten_blobs);
     }
-    tracing::info!("rewrote {} blobs", stats.rewritten_blobs);
     Ok(())
 }
 
-fn patch_file(ids: &PoiIds, input: &Path, output: &Path) -> Result<Stats> {
+fn patch_file(ids: &PoiIds, importances: &Importances, input: &Path, output: &Path) -> Result<Stats> {
     let mut reader =
         BufReader::with_capacity(1 << 20, File::open(input).with_context(|| format!("opening {}", input.display()))?);
     let partial = output.with_extension("partial");
@@ -137,7 +159,7 @@ fn patch_file(ids: &PoiIds, input: &Path, output: &Path) -> Result<Stats> {
         if chunk.is_empty() {
             break;
         }
-        let patched = chunk.par_iter().map(|blob| patch_blob(blob, ids)).collect::<Result<Vec<_>>>()?;
+        let patched = chunk.par_iter().map(|blob| patch_blob(blob, ids, importances)).collect::<Result<Vec<_>>>()?;
         for (blob, (patched, blob_stats)) in chunk.iter().zip(patched) {
             stats.add(&blob_stats);
             patched.as_ref().unwrap_or(blob).write(&mut writer)?;
@@ -148,24 +170,25 @@ fn patch_file(ids: &PoiIds, input: &Path, output: &Path) -> Result<Stats> {
     Ok(stats)
 }
 
-fn patch_blob(blob: &RawBlob, ids: &PoiIds) -> Result<(Option<RawBlob>, Stats)> {
+fn patch_blob(blob: &RawBlob, ids: &PoiIds, importances: &Importances) -> Result<(Option<RawBlob>, Stats)> {
     if blob.header.r#type != "OSMData" {
         return Ok((None, Stats::default()));
     }
     let mut block = PrimitiveBlock::decode(&blob.decompress()?[..]).context("decoding a block")?;
     let mut stats = Stats::default();
-    if !patch_block(&mut block, ids, &mut stats)? {
+    if !patch_block(&mut block, ids, importances, &mut stats)? {
         return Ok((None, stats));
     }
     stats.rewritten_blobs = 1;
     Ok((Some(blob.with_contents(&block.encode_to_vec())?), stats))
 }
 
-/// A POI version's identifier.
+/// What's known about a POI version.
 #[derive(Clone, Copy)]
 struct PoiVersion {
-    poi_id: i64,
+    poi_id: Option<i64>,
     version: i32,
+    importance: Option<f64>,
 }
 
 /// What a string in a block's string table means as a tag key.
@@ -181,6 +204,7 @@ enum KeyKind {
 /// Retags the elements of one block.
 struct Retagger<'a> {
     ids: &'a PoiIds,
+    importances: &'a Importances,
     stats: &'a mut Stats,
     /// The block's string table, what each string means as a key, and (once
     /// needed) each string's index.
@@ -224,14 +248,24 @@ impl Retagger<'_> {
     }
 
     /// The (key, value) string indices of the tags for a POI version.
-    fn tags(&mut self, poi: PoiVersion) -> [(u32, u32); 2] {
-        [
-            (self.string_index(POI_ID_TAG.as_bytes()), self.string_index(poi.poi_id.to_string().as_bytes())),
-            (self.string_index(VERSION_TAG.as_bytes()), self.string_index(poi.version.to_string().as_bytes())),
-        ]
+    fn tags(&mut self, poi: PoiVersion) -> Vec<(u32, u32)> {
+        let mut tags = Vec::with_capacity(3);
+        if let Some(poi_id) = poi.poi_id {
+            tags.push((self.string_index(POI_ID_TAG.as_bytes()), self.string_index(poi_id.to_string().as_bytes())));
+            tags.push((
+                self.string_index(VERSION_TAG.as_bytes()),
+                self.string_index(poi.version.to_string().as_bytes()),
+            ));
+        }
+        if let Some(importance) = poi.importance {
+            let value = crate::importance::format(importance);
+            tags.push((self.string_index(IMPORTANCE_TAG.as_bytes()), self.string_index(value.as_bytes())));
+        }
+        tags
     }
 
-    /// The identifier and version of an element, if it's a POI version we know.
+    /// What's known about an element, if it's a POI version with an
+    /// identifier or importance.
     fn poi(&mut self, osm_type: OsmType, id: i64, version: Option<i32>, is_poi: bool) -> Result<Option<PoiVersion>> {
         if !is_poi {
             return Ok(None);
@@ -244,7 +278,11 @@ impl Retagger<'_> {
             Some(_) => self.stats.tagged[osm_type as usize] += 1,
             None => self.stats.unknown[osm_type as usize] += 1,
         }
-        Ok(poi_id.map(|poi_id| PoiVersion { poi_id, version }))
+        let importance = self.importances.get(osm_type, id, version);
+        if importance.is_some() {
+            self.stats.importance[osm_type as usize] += 1;
+        }
+        Ok((poi_id.is_some() || importance.is_some()).then_some(PoiVersion { poi_id, version, importance }))
     }
 
     /// Retags an element with parallel key and value lists, returning whether
@@ -314,19 +352,20 @@ impl Retagger<'_> {
 
 /// Tags the block's POIs with their identifiers, returning whether anything
 /// changed.
-fn patch_block(block: &mut PrimitiveBlock, ids: &PoiIds, stats: &mut Stats) -> Result<bool> {
+fn patch_block(block: &mut PrimitiveBlock, ids: &PoiIds, importances: &Importances, stats: &mut Stats) -> Result<bool> {
     let PrimitiveBlock { stringtable, primitivegroup, .. } = block;
     let kinds = stringtable
         .s
         .iter()
         .map(|s| match std::str::from_utf8(s) {
-            Ok(POI_ID_TAG | VERSION_TAG) => KeyKind::Added,
+            Ok(POI_ID_TAG | VERSION_TAG | IMPORTANCE_TAG) => KeyKind::Added,
             Ok(key) if is_poi_key(key) || is_poi_value_key(key) => KeyKind::Candidate,
             _ => KeyKind::Other,
         })
         .collect();
     let mut retagger = Retagger {
         ids,
+        importances,
         stats,
         strings: &stringtable.s,
         kinds,
@@ -393,7 +432,7 @@ mod tests {
         };
         let ids = PoiIds { by_type: [vec![(1, 3, 100)], vec![(10, 2, 200)], vec![]] };
         let mut stats = Stats::default();
-        assert!(patch_block(&mut block, &ids, &mut stats).unwrap());
+        assert!(patch_block(&mut block, &ids, &Importances::default(), &mut stats).unwrap());
 
         let table: Vec<_> = block.stringtable.s.iter().map(|s| String::from_utf8_lossy(s).into_owned()).collect();
         let expected = ["", "name", "X", "shop", "bakery", POI_ID_TAG, "7", VERSION_TAG, "9", "200", "2", "100", "3"];
@@ -405,7 +444,52 @@ mod tests {
 
         // Patching again changes nothing but reports the same tags.
         let before = block.clone();
-        patch_block(&mut block, &ids, &mut Stats::default()).unwrap();
+        patch_block(&mut block, &ids, &Importances::default(), &mut Stats::default()).unwrap();
+        assert_eq!(block, before);
+    }
+
+    #[test]
+    fn tags_importance_with_or_without_an_identifier() {
+        let mut block = PrimitiveBlock {
+            stringtable: strings(&["", "name", "X", "shop", "bakery", IMPORTANCE_TAG, "0.5"]),
+            primitivegroup: vec![PrimitiveGroup {
+                ways: (1..=3)
+                    .map(|id| Way {
+                        id,
+                        keys: if id == 3 { vec![1, 3, 5] } else { vec![1, 3] },
+                        vals: if id == 3 { vec![2, 4, 6] } else { vec![2, 4] },
+                        info: Some(Info { version: Some(1), ..Default::default() }),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        // Way 1 has an identifier and an importance, way 2 only an importance,
+        // and way 3 a stale importance tag and none now.
+        let ids = PoiIds { by_type: [vec![], vec![(1, 1, 100)], vec![]] };
+        let importances = Importances::from_entries(vec![(OsmType::Way, 1, 1, 0.123456), (OsmType::Way, 2, 1, 0.08)]);
+        let mut stats = Stats::default();
+        assert!(patch_block(&mut block, &ids, &importances, &mut stats).unwrap());
+        let tags = |way: &Way| -> Vec<(String, String)> {
+            let s = |i: u32| String::from_utf8(block.stringtable.s[i as usize].clone()).unwrap();
+            way.keys.iter().zip(&way.vals).map(|(&k, &v)| (s(k), s(v))).collect()
+        };
+        let ways = &block.primitivegroup[0].ways;
+        let tag = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let base = vec![tag("name", "X"), tag("shop", "bakery")];
+        let with = |extra: &[(String, String)]| [base.clone(), extra.to_vec()].concat();
+        assert_eq!(
+            tags(&ways[0]),
+            with(&[tag(POI_ID_TAG, "100"), tag(VERSION_TAG, "1"), tag(IMPORTANCE_TAG, "0.1235")])
+        );
+        assert_eq!(tags(&ways[1]), with(&[tag(IMPORTANCE_TAG, "0.08")]));
+        assert_eq!(tags(&ways[2]), base);
+        assert_eq!((stats.tagged, stats.unknown, stats.importance), ([0, 1, 0], [0, 2, 0], [0, 2, 0]));
+
+        let before = block.clone();
+        patch_block(&mut block, &ids, &importances, &mut Stats::default()).unwrap();
         assert_eq!(block, before);
     }
 
@@ -429,7 +513,7 @@ mod tests {
         };
         let ids = PoiIds { by_type: [vec![], vec![(1, 1, 100), (2, 1, 200)], vec![]] };
         let mut stats = Stats::default();
-        patch_block(&mut block, &ids, &mut stats).unwrap();
+        patch_block(&mut block, &ids, &Importances::default(), &mut stats).unwrap();
         // Only the bus stop is a POI, so the residential road isn't tagged
         // even though (contrived here) its version has an identifier.
         let ways = &block.primitivegroup[0].ways;

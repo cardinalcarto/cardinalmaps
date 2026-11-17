@@ -220,16 +220,7 @@ impl OsmPoi {
 /// Whether a closed way with these tags is an area rather than a ring-shaped
 /// line, following the usual OSM conventions.
 fn is_area(tags: &HashMap<String, String>) -> bool {
-    match tags.get("area").map(String::as_str) {
-        Some("yes") => return true,
-        Some("no") => return false,
-        _ => {}
-    }
-    let linear = |key: &str, values: &[&str]| tags.get(key).is_some_and(|v| values.contains(&v.as_str()));
-    !(tags.contains_key("barrier")
-        || tags.contains_key("route")
-        || linear("natural", &["coastline", "cliff", "ridge", "arete", "tree_row"])
-        || (tags.contains_key("waterway") && !linear("waterway", &["riverbank", "dock", "boatyard"])))
+    airmail_importance::osm::is_area(tags.iter().map(|(k, v)| (k.as_str(), v.as_str())))
 }
 
 /// Whether a tag key is a name the element is searched by.
