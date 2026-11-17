@@ -35,7 +35,6 @@ See https://github.com/openmaptiles/openmaptiles/blob/master/LICENSE.md for deta
 */
 package org.openmaptiles.layers;
 
-import static com.onthegomap.planetiler.util.MemoryEstimator.CLASS_HEADER_BYTES;
 import static java.util.Map.entry;
 import static org.openmaptiles.util.Utils.coalesce;
 import static org.openmaptiles.util.Utils.nullIfEmpty;
@@ -54,11 +53,7 @@ import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.geo.TileCoord;
 import com.onthegomap.planetiler.reader.SimpleFeature;
 import com.onthegomap.planetiler.reader.SourceFeature;
-import com.onthegomap.planetiler.reader.osm.OsmElement;
-import com.onthegomap.planetiler.reader.osm.OsmReader;
-import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 import com.onthegomap.planetiler.stats.Stats;
-import com.onthegomap.planetiler.util.MemoryEstimator;
 import com.onthegomap.planetiler.util.Parse;
 import com.onthegomap.planetiler.util.Translations;
 import java.nio.file.Path;
@@ -67,7 +62,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Consumer;
@@ -75,6 +69,7 @@ import org.locationtech.jts.geom.Point;
 import org.openmaptiles.OpenMapTilesProfile;
 import org.openmaptiles.generated.OpenMapTilesSchema;
 import org.openmaptiles.generated.Tables;
+import org.openmaptiles.util.AssociatedStreets;
 import org.openmaptiles.util.OmtLanguageUtils;
 import org.openmaptiles.util.WofAdmins;
 import org.slf4j.Logger;
@@ -94,7 +89,6 @@ public class Poi implements
   Tables.OsmPoiPolygon.Handler,
   ForwardingProfile.LayerPostProcessor,
   ForwardingProfile.TilePostProcessor,
-  ForwardingProfile.OsmRelationPreprocessor,
   ForwardingProfile.FinishHandler {
 
   /*
@@ -105,6 +99,8 @@ public class Poi implements
   private static final Logger LOGGER = LoggerFactory.getLogger(Poi.class);
   static final String POI_ID_TAG = "cardinal:poi_id";
   static final String CARDINAL_VERSION = "cardinal:version";
+  /** A POI's importance for search, from 0 to 1, which poi_service's {@code patch} command adds. */
+  static final String IMPORTANCE_TAG = "cardinal:importance";
   /** The attribute of a POI holding the ID of the Who's On First area of a placetype it's in, after this prefix. */
   static final String ADMIN_PREFIX = "cardinal:admin:";
   /**
@@ -153,14 +149,25 @@ public class Poi implements
   private final Map<String, List<Tables.OsmPoiPoint>> aggStops = new HashMap<>();
   /** The areas POIs are in, or null if there's no Who's On First database to tell. */
   private final WofAdmins admins;
+  private AssociatedStreets streets = new AssociatedStreets();
 
   public Poi(Translations translations, PlanetilerConfig config, Stats stats) {
     this.classMapping = FieldMappings.Class.index();
     this.translations = translations;
     this.stats = stats;
     String wofDb = config.arguments().getString("wof_db",
-      "Who's On First SpatiaLite database, to give POIs the areas they're in", "");
+      "Who's On First SpatiaLite database, to give POIs and house numbers the areas they're in", "");
     this.admins = wofDb.isEmpty() ? null : new WofAdmins(Path.of(wofDb));
+  }
+
+  /** The areas POIs are in, which {@link Housenumber} shares, or null if there's no Who's On First database. */
+  public WofAdmins admins() {
+    return admins;
+  }
+
+  /** Uses {@code streets}, which the profile shares between layers and registers to see relations, for addresses. */
+  public void useAssociatedStreets(AssociatedStreets streets) {
+    this.streets = streets;
   }
 
   static int poiClassRank(String clazz) {
@@ -189,18 +196,6 @@ public class Poi implements
   @Override
   public void release() {
     aggStops.clear();
-  }
-
-  @Override
-  public List<OsmRelationInfo> preprocessOsmRelation(OsmElement.Relation relation) {
-    if (relation.hasTag("type", "associatedStreet") || relation.hasTag("type", "street")) {
-      String name = relation.getString("name");
-      if (name == null || name.isBlank()) {
-        return null;
-      }
-      return List.of(new PoiRelationInfo(relation.id(), name));
-    }
-    return null;
   }
 
   @Override
@@ -317,10 +312,11 @@ public class Poi implements
       feature = features.centroid(LAYER_NAME);
     }
     String name = nullIfEmpty(source.getString("name"));
+    OmtLanguageUtils.putNames(feature, source.tags(), translations);
     feature.setBufferPixels(BUFFER_SIZE)
       .setAttr(Fields.CLASS, kind.clazz())
       .setAttr(Fields.SUBCLASS, kind.subclass())
-      .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
+      .setAttr(IMPORTANCE_TAG, importance(source))
       .setPointLabelGridPixelSize(14, 64)
       .setSortKey(Backcountry.priority(kind.subclass()) + (name == null ? 2000 : 0))
       .setMinZoom(kind.minZoom());
@@ -350,18 +346,7 @@ public class Poi implements
       rawSubclass = "halt";
     }
 
-    String street = element.source().hasTag("addr:street") ? element.source().getTag("addr:street").toString() : null;
-    List<OsmReader.RelationMember<PoiRelationInfo>> relationInfo = element.source().relationInfo(
-        PoiRelationInfo.class);
-    if (street == null || street.isBlank()) {
-      for (OsmReader.RelationMember<PoiRelationInfo> relation : relationInfo) {
-        String associatedStreet = relation.relation().street();
-        if (associatedStreet != null && !associatedStreet.isBlank()) {
-          street = associatedStreet;
-          break;
-        }
-      }
-    }
+    String street = streets.streetOf(element.source());
 
     // ATM names fall back to operator, or else network
     String name = element.name();
@@ -415,10 +400,11 @@ public class Poi implements
       .setAttr(Fields.INDOOR, element.indoor() ? 1 : null)
       .setAttr(Fields.AGG_STOP, aggStop)
       .setAttr(streetTag, street) // Special-case for associated streets.
-      .putAttrs(OmtLanguageUtils.getNames(element.source().tags(), translations))
+      .setAttr(IMPORTANCE_TAG, importance(element.source()))
       .setPointLabelGridPixelSize(14, 64)
       .setSortKey(rankOrder)
       .setMinZoom(minzoom);
+    OmtLanguageUtils.putNames(feature, element.source().tags(), translations);
     if (backcountryMinZoom != null) {
       Backcountry.limitWhenThin(feature, minzoom);
     }
@@ -446,7 +432,9 @@ public class Poi implements
       }
     }
 
-    final List<String> includedTags = List.of("amenity", "shop", "emergency", "craft", "healthcare", "office", "tourism", "natural", "cuisine", "phone", "website", "wikidata", "brand", "building", "wheelchair", "elevator", "opening_hours", "access");
+    final List<String> includedTags =
+      List.of("amenity", "shop", "emergency", "craft", "healthcare", "office", "tourism", "natural", "cuisine", "phone",
+        "website", "wikidata", "brand", "building", "wheelchair", "elevator", "opening_hours", "access");
     final List<String> includedTagPrefixes = List.of("diet:", "brand:", "toilets:");
     for (String key : includedTags) {
       feature.setAttr(key, source.getTag(key));
@@ -461,8 +449,22 @@ public class Poi implements
     }
   }
 
+  /** The importance {@code poi_service} gave a POI, or null if it gave none. */
+  static Float importance(SourceFeature source) {
+    Double importance = Parse.parseDoubleOrNull(source.getTag(IMPORTANCE_TAG));
+    return importance == null || !Double.isFinite(importance) ? null : importance.floatValue();
+  }
+
   /** The areas a POI is in, for its place card. Only POIs with IDs have cards. */
   private void addAdmins(FeatureCollector.Feature feature, SourceFeature source) {
+    addAdmins(admins, stats, feature, source);
+  }
+
+  /**
+   * Gives {@code feature} the ID of the area of each placetype that the center of {@code source} is in, as
+   * {@value #ADMIN_PREFIX}{@code <placetype>}, unless {@code admins} is null.
+   */
+  static void addAdmins(WofAdmins admins, Stats stats, FeatureCollector.Feature feature, SourceFeature source) {
     if (admins == null) {
       return;
     }
@@ -486,7 +488,7 @@ public class Poi implements
     for (VectorTile.Feature poi : pois) {
       for (String placetype : WofAdmins.PLACETYPES) {
         if (!WofAdmins.NAMED_IN_APP.contains(placetype) &&
-          poi.tags().get(ADMIN_PREFIX + placetype) instanceof Number id) {
+          poi.tags().get(ADMIN_PREFIX + placetype)instanceof Number id) {
           ids.add(id.longValue());
         }
       }
@@ -527,13 +529,5 @@ public class Poi implements
       }
     }
     return items;
-  }
-
-  private record PoiRelationInfo(long id, String street) implements OsmRelationInfo {
-
-    @Override
-    public long estimateMemoryUsageBytes() {
-      return CLASS_HEADER_BYTES + MemoryEstimator.estimateSizeLong(id);
-    }
   }
 }

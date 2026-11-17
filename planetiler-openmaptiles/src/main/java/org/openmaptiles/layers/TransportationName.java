@@ -50,6 +50,7 @@ import com.onthegomap.planetiler.ForwardingProfile;
 import com.onthegomap.planetiler.VectorTile;
 import com.onthegomap.planetiler.collection.Hppc;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
+import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Parse;
@@ -62,7 +63,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
-import com.onthegomap.planetiler.reader.SourceFeature;
 import org.openmaptiles.OpenMapTilesProfile;
 import org.openmaptiles.generated.OpenMapTilesSchema;
 import org.openmaptiles.generated.Tables;
@@ -197,9 +197,8 @@ public class TransportationName implements
         String subclass = FieldValues.SUBCLASS_JUNCTION;
         String ref = element.ref();
 
-        features.point(LAYER_NAME)
+        OmtLanguageUtils.putNames(features.point(LAYER_NAME), element.source().tags(), translations)
           .setBufferPixels(BUFFER_SIZE)
-          .putAttrs(OmtLanguageUtils.getNames(element.source().tags(), translations))
           .setAttr(Fields.REF, ref)
           .setAttr(Fields.REF_LENGTH, ref != null ? ref.length() : null)
           .setAttr(Fields.CLASS, highwayClass(cls.highwayValue, null, null, null))
@@ -255,24 +254,24 @@ public class TransportationName implements
       return;
     }
 
-    FeatureCollector.Feature feature = features.line(LAYER_NAME)
-      .setBufferPixels(BUFFER_SIZE)
-      .setBufferPixelOverrides(MIN_LENGTH)
-      // TODO abbreviate road names - can't port osml10n because it is AGPL
-      .putAttrs(OmtLanguageUtils.getNames(element.source().tags(), translations))
-      .setAttr(Fields.REF, ref)
-      .setAttr(Fields.REF_LENGTH, ref != null ? ref.length() : null)
-      .setAttr(Fields.NETWORK,
-        firstRelationWithNetwork != null ? firstRelationWithNetwork.networkType().name :
-          // a ref on a trail doesn't make it a road
-          !nullOrEmpty(ref) && !isPathOrTrack(baseClass) ? "road" : null)
-      .setAttr(Fields.CLASS, highwayClass)
-      .setAttr(Fields.SUBCLASS, highwaySubclass(highwayClass, null, highway))
-      // lets a style avoid labelling trails that aren't official as if they were; left out on the rest, for merging
-      .setAttr(Transportation.TRAIL, unofficialTrail(element, relations))
-      .setMinPixelSize(0)
-      .setSortKey(element.zOrder())
-      .setMinZoom(minzoom);
+    FeatureCollector.Feature feature =
+      OmtLanguageUtils.putNames(features.line(LAYER_NAME), element.source().tags(), translations)
+        .setBufferPixels(BUFFER_SIZE)
+        .setBufferPixelOverrides(MIN_LENGTH)
+        // TODO abbreviate road names - can't port osml10n because it is AGPL
+        .setAttr(Fields.REF, ref)
+        .setAttr(Fields.REF_LENGTH, ref != null ? ref.length() : null)
+        .setAttr(Fields.NETWORK,
+          firstRelationWithNetwork != null ? firstRelationWithNetwork.networkType().name :
+            // a ref on a trail doesn't make it a road
+            !nullOrEmpty(ref) && !isPathOrTrack(baseClass) ? "road" : null)
+        .setAttr(Fields.CLASS, highwayClass)
+        .setAttr(Fields.SUBCLASS, highwaySubclass(highwayClass, null, highway))
+        // lets a style avoid labelling trails that aren't official as if they were; left out on the rest, for merging
+        .setAttr(Transportation.TRAIL, unofficialTrail(element, relations))
+        .setMinPixelSize(0)
+        .setSortKey(element.zOrder())
+        .setMinZoom(minzoom);
 
     // populate route_1_<something>, route_2_<something>, ... route_n_<something> tags and remove duplicates
     Set<String> routes = new HashSet<>();
@@ -319,10 +318,9 @@ public class TransportationName implements
   @Override
   public void process(Tables.OsmAerialwayLinestring element, FeatureCollector features) {
     if (!nullOrEmpty(element.name())) {
-      features.line(LAYER_NAME)
+      OmtLanguageUtils.putNames(features.line(LAYER_NAME), element.source().tags(), translations)
         .setBufferPixels(BUFFER_SIZE)
         .setBufferPixelOverrides(MIN_LENGTH)
-        .putAttrs(OmtLanguageUtils.getNames(element.source().tags(), translations))
         .setAttr(Fields.CLASS, "aerialway")
         .setAttr(Fields.SUBCLASS, element.aerialway())
         .setMinPixelSize(0)
@@ -334,10 +332,9 @@ public class TransportationName implements
   @Override
   public void process(Tables.OsmShipwayLinestring element, FeatureCollector features) {
     if (!nullOrEmpty(element.name())) {
-      features.line(LAYER_NAME)
+      OmtLanguageUtils.putNames(features.line(LAYER_NAME), element.source().tags(), translations)
         .setBufferPixels(BUFFER_SIZE)
         .setBufferPixelOverrides(MIN_LENGTH)
-        .putAttrs(OmtLanguageUtils.getNames(element.source().tags(), translations))
         .setAttr(Fields.CLASS, element.shipway())
         .setMinPixelSize(0)
         .setSortKey(element.zOrder())
@@ -382,10 +379,9 @@ public class TransportationName implements
   public void processAllOsm(SourceFeature source, FeatureCollector features) {
     if (source.canBeLine() && source.hasTag("highway", "via_ferrata", "ladder") &&
       nullIfEmpty(source.getString("name")) != null) {
-      features.line(LAYER_NAME)
+      OmtLanguageUtils.putNames(features.line(LAYER_NAME), source.tags(), translations)
         .setBufferPixels(BUFFER_SIZE)
         .setBufferPixelOverrides(MIN_LENGTH)
-        .putAttrs(OmtLanguageUtils.getNames(source.tags(), translations))
         .setAttr(Fields.CLASS, FieldValues.CLASS_PATH)
         .setAttr(Fields.SUBCLASS, source.getString("highway"))
         .setMinPixelSize(0)

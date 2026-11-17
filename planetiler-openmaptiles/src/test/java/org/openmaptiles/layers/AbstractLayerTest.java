@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.TestUtils;
 import com.onthegomap.planetiler.VectorTile;
+import com.onthegomap.planetiler.config.Arguments;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
@@ -37,8 +38,16 @@ public abstract class AbstractLayerTest {
     .addFallbackTranslationProvider(wikidataTranslations);
 
   final PlanetilerConfig params = PlanetilerConfig.defaults();
-  final OpenMapTilesProfile profile = new OpenMapTilesProfile(translations, PlanetilerConfig.defaults(),
-    Stats.inMemory());
+  final OpenMapTilesProfile profile = new OpenMapTilesProfile(translations, profileConfig(), Stats.inMemory());
+
+  /**
+   * The config of {@link #profile}, which leaves out the geocoder layer: it takes what the other layers don't, so their
+   * tests see only what they make.
+   */
+  PlanetilerConfig profileConfig() {
+    return PlanetilerConfig.from(Arguments.of("exclude_layers", Geocoder.LAYER_NAME));
+  }
+
   final Stats stats = Stats.inMemory();
   final FeatureCollector.Factory featureCollectorFactory = new FeatureCollector.Factory(params, stats);
 

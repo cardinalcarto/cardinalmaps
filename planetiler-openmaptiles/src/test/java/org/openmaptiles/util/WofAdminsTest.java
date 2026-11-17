@@ -20,7 +20,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class WofAdminsTest {
+public class WofAdminsTest {
 
   /** A SpatiaLite polygon blob from rings of x, y pairs. */
   private static byte[] polygon(double[]... rings) {
@@ -58,11 +58,13 @@ class WofAdminsTest {
   }
 
   private static void add(Connection db, long id, String type, byte[] shard, double[] bounds) throws SQLException {
-    try (PreparedStatement place = db.prepareStatement("INSERT INTO place VALUES ('wof', ?, 'admin', ?)");
+    try (
+      PreparedStatement place = db.prepareStatement("INSERT INTO place VALUES ('wof', ?, 'admin', ?)");
       PreparedStatement s = db.prepareStatement(
         "INSERT INTO shard (source, id, role, element, geom) VALUES ('wof', ?, 'boundary', 0, ?)");
       PreparedStatement r = db.prepareStatement("INSERT INTO idx_shard_geom VALUES (last_insert_rowid(), ?, ?, ?, ?)");
-      PreparedStatement g = db.prepareStatement("INSERT INTO geometry VALUES ('wof', ?, 'envelope', ?)")) {
+      PreparedStatement g = db.prepareStatement("INSERT INTO geometry VALUES ('wof', ?, 'envelope', ?)")
+    ) {
       place.setString(1, Long.toString(id));
       place.setString(2, type);
       place.execute();
@@ -80,7 +82,8 @@ class WofAdminsTest {
     }
   }
 
-  private static WofAdmins database(Path dir) throws SQLException {
+  /** A small database of areas in {@code dir}: see the tests for what is where. */
+  public static WofAdmins database(Path dir) throws SQLException {
     Path path = dir.resolve("wof.db");
     try (Connection db = DriverManager.getConnection("jdbc:sqlite:" + path); Statement s = db.createStatement()) {
       s.execute("CREATE TABLE place (source TEXT, id TEXT, class TEXT, type TEXT)");
@@ -127,10 +130,12 @@ class WofAdminsTest {
   @Test
   void pointsAreLookedUpFromTheRTree(@TempDir Path dir) throws SQLException {
     database(dir).close();
-    try (Connection db = DriverManager.getConnection("jdbc:sqlite:" + dir.resolve("wof.db"));
+    try (
+      Connection db = DriverManager.getConnection("jdbc:sqlite:" + dir.resolve("wof.db"));
       Statement s = db.createStatement();
       // With an index like the real database's, which the planner would otherwise be drawn to.
-      ResultSet plan = executePlan(s)) {
+      ResultSet plan = executePlan(s)
+    ) {
       assertTrue(plan.next());
       String first = plan.getString("detail");
       assertTrue(first.contains("VIRTUAL TABLE"), first);

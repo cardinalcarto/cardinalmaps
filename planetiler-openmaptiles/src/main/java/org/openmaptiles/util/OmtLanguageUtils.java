@@ -38,10 +38,13 @@ package org.openmaptiles.util;
 import static com.onthegomap.planetiler.util.LanguageUtils.*;
 import static org.openmaptiles.util.Utils.coalesce;
 
+import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.util.LanguageUtils;
 import com.onthegomap.planetiler.util.Translations;
+import com.onthegomap.planetiler.util.ZoomFunction;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -52,6 +55,57 @@ import java.util.stream.Stream;
  * <a href="https://github.com/openmaptiles/openmaptiles-tools/blob/master/sql/zzz_language.sql">openmaptiles-tools</a>.
  */
 public class OmtLanguageUtils {
+  /** The zoom from which features carry {@link #searchNames(Map)}: only the z14 tiles the geocoder reads. */
+  public static final int SEARCH_NAMES_MINZOOM = 14;
+  private static final Set<String> SEARCH_NAME_KEYS =
+    Set.of("name", "alt_name", "official_name", "short_name", "loc_name", "int_name");
+
+  /**
+   * Whether a tag is a name the geocoder finds an element by, with airmail's indexer's rule: one of
+   * {@link #SEARCH_NAME_KEYS}, optionally followed by one {@code :suffix} such as a language, but no etymology or
+   * pronunciation.
+   */
+  public static boolean isSearchName(String key) {
+    int colon = key.indexOf(':');
+    String base = colon < 0 ? key : key.substring(0, colon);
+    return SEARCH_NAME_KEYS.contains(base) &&
+      (colon < 0 || key.indexOf(':', colon + 1) < 0) &&
+      !key.contains("etymology") &&
+      !key.contains("pronunciation");
+  }
+
+  /** Every {@link #isSearchName search name} of an element, by its OSM key, as tagged. */
+  public static Map<String, Object> searchNames(Map<String, Object> tags) {
+    Map<String, Object> result = new HashMap<>();
+    for (var entry : tags.entrySet()) {
+      if (isSearchName(entry.getKey())) {
+        putIfNotEmpty(result, entry.getKey(), string(entry.getValue()));
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Puts the names {@link #getNames(Map, Translations)} gives on {@code feature}, and from
+   * {@value #SEARCH_NAMES_MINZOOM} the rest of its {@link #searchNames(Map) search names}, so lower zooms don't grow.
+   */
+  public static FeatureCollector.Feature putNames(FeatureCollector.Feature feature, Map<String, Object> tags,
+    Translations translations) {
+    return feature.putAttrs(getNamesWithSearchNames(tags, translations));
+  }
+
+  /**
+   * The names {@link #getNames(Map, Translations)} gives, and the rest of the {@link #searchNames(Map) search names} as
+   * values only from {@value #SEARCH_NAMES_MINZOOM}, for {@link FeatureCollector.Feature#putAttrs(Map)}.
+   */
+  public static Map<String, Object> getNamesWithSearchNames(Map<String, Object> tags, Translations translations) {
+    Map<String, Object> names = getNames(tags, translations);
+    for (var entry : searchNames(tags).entrySet()) {
+      names.putIfAbsent(entry.getKey(), ZoomFunction.minZoom(SEARCH_NAMES_MINZOOM, entry.getValue()));
+    }
+    return names;
+  }
+
   /**
    * Returns a map with default name attributes (name, name_en, name_de, name:latin, name:nonlatin, name_int) that every
    * element should have, derived from name, int_name, name:en, and name:de tags on the input element.

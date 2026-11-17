@@ -22,8 +22,12 @@ import java.util.stream.Stream;
 import org.openmaptiles.addons.ExtraLayers;
 import org.openmaptiles.generated.OpenMapTilesSchema;
 import org.openmaptiles.generated.Tables;
+import org.openmaptiles.layers.Geocoder;
+import org.openmaptiles.layers.Housenumber;
+import org.openmaptiles.layers.Poi;
 import org.openmaptiles.layers.Transportation;
 import org.openmaptiles.layers.TransportationName;
+import org.openmaptiles.util.AssociatedStreets;
 
 /**
  * Delegates the logic for generating a map to individual implementations in the {@code layers} package.
@@ -55,6 +59,8 @@ public class OpenMapTilesProfile extends ForwardingProfile {
   private final MultiExpression.Index<RowDispatch> osmMappings;
   /** Index variant that filters out any table only used by layers that implement IgnoreWikidata class. */
   private final MultiExpression.Index<Boolean> wikidataMappings;
+  /** The geocoder layer, which runs after the rest, or null if it isn't being built. */
+  private Geocoder geocoderLayer;
 
   public OpenMapTilesProfile(Planetiler runner) {
     this(runner.translations(), runner.config(), runner.stats());
@@ -70,6 +76,31 @@ public class OpenMapTilesProfile extends ForwardingProfile {
     var omtLayers = OpenMapTilesSchema.createInstances(translations, config, stats);
     var extraLayers = ExtraLayers.create(translations, config, stats);
     var allLayers = Stream.concat(omtLayers.stream(), extraLayers.stream()).toList();
+
+    // special-case: poi and housenumber share associated streets and the Who's On First areas
+    AssociatedStreets streets = new AssociatedStreets();
+    boolean needsStreets = false;
+    Poi poiLayer = allLayers.stream().filter(Poi.class::isInstance).map(Poi.class::cast).findFirst().orElseThrow();
+    for (Layer layer : allLayers) {
+      if (layer instanceof Poi poi) {
+        poi.useAssociatedStreets(streets);
+        needsStreets |= caresAboutLayer(layer);
+      } else if (layer instanceof Housenumber housenumber) {
+        housenumber.useAssociatedStreets(streets);
+        housenumber.useAdmins(poiLayer.admins());
+        needsStreets |= caresAboutLayer(layer);
+      } else if (layer instanceof Geocoder geocoder) {
+        geocoder.useAssociatedStreets(streets);
+        geocoder.useAdmins(poiLayer.admins());
+        if (caresAboutLayer(layer)) {
+          needsStreets = true;
+          geocoderLayer = geocoder;
+        }
+      }
+    }
+    if (needsStreets) {
+      registerHandler(streets);
+    }
     for (Layer layer : allLayers) {
       if (caresAboutLayer(layer)) {
         layers.add(layer);
@@ -145,6 +176,15 @@ public class OpenMapTilesProfile extends ForwardingProfile {
   @Override
   public Map<String, List<String>> dependsOnLayer() {
     return Map.of("transportation_name", List.of("transportation"));
+  }
+
+  @Override
+  public void processFeature(SourceFeature sourceFeature, FeatureCollector features) {
+    super.processFeature(sourceFeature, features);
+    // special-case: the geocoder layer takes what other layers didn't, so it goes last
+    if (geocoderLayer != null && Geocoder.reads(sourceFeature)) {
+      geocoderLayer.processAfterOtherLayers(sourceFeature, features);
+    }
   }
 
   /** Returns the imposm3 table row constructors that match an input element's tags. */
