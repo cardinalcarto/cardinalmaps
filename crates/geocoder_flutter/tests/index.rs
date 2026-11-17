@@ -89,14 +89,13 @@ fn a_named_poi() -> (u64, String) {
     extractor
         .add_tile(NORTH, &fixture(NORTH), &mut features)
         .unwrap();
-    let poi = features
+    features
         .iter()
         .filter(|f| f.layer == SourceLayer::Poi && f.id.is_some())
         .filter_map(|f| Some((f.id?, f.name("name")?.to_owned())))
         .filter(|(_, name)| name.split_whitespace().count() >= 2)
         .min()
-        .unwrap();
-    poi
+        .unwrap()
 }
 
 #[test]

@@ -348,6 +348,9 @@ pub fn extract_tile(tile: TileKey, data: &[u8]) -> Result<TileFeatures, TileErro
     Ok(out)
 }
 
+/// A POI feature's layer and its properties, as text.
+pub type PoiProperties = (SourceLayer, Vec<(String, String)>);
+
 /// Every property, as text, of the feature with the stable POI ID `id` in the tile's `poi`
 /// or `geocoder` layer, and the layer; `None` if neither has it. What a search result that's
 /// a pointer shows is read from here.
@@ -359,7 +362,7 @@ pub fn poi_properties(
     tile: TileKey,
     data: &[u8],
     id: u64,
-) -> Result<Option<(SourceLayer, Vec<(String, String)>)>, TileError> {
+) -> Result<Option<PoiProperties>, TileError> {
     let data = inflate(tile, data)?;
     let mlt = |source| TileError::Mlt { tile, source };
     let mut decoder = Decoder::default();

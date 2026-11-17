@@ -257,7 +257,7 @@ fn geometry(json: &serde_json::Value) -> Option<Geometry<f64>> {
         "MultiPolygon" => {
             let polygons: Vec<Polygon<f64>> =
                 coordinates.as_array()?.iter().filter_map(polygon).collect();
-            (!polygons.is_empty()).then(|| Geometry::MultiPolygon(MultiPolygon(polygons)))
+            (!polygons.is_empty()).then_some(Geometry::MultiPolygon(MultiPolygon(polygons)))
         }
         _ => None,
     }
@@ -281,7 +281,7 @@ fn ring(json: &serde_json::Value) -> Option<LineString<f64>> {
             })
         })
         .collect();
-    (coords.len() >= 4).then(|| LineString(coords))
+    (coords.len() >= 4).then_some(LineString(coords))
 }
 
 #[cfg(test)]
