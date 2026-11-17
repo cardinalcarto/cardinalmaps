@@ -33,6 +33,7 @@ path = "src/lib.rs"
 airmail_tagger = { path = "../airmail_tagger" }
 rand = "0.9"
 airmail.workspace = true
+airmail_importance.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 flate2 = "1.1.10"

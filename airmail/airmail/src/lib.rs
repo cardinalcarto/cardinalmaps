@@ -11,7 +11,7 @@ pub mod cuisine;
 pub mod error;
 pub mod gazetteer;
 pub mod geometry;
-pub mod importance;
+pub use airmail_importance::importance;
 pub mod index;
 pub mod plan;
 pub mod poi;

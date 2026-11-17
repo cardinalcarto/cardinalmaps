@@ -3,7 +3,9 @@
 //!
 //!     poi_service bootstrap --planet planet-261005.osm.pbf
 //!     poi_service update --follow
-//!     poi_service patch --input planet.osm.pbf --output planet-with-ids.osm.pbf
+//!     poi_service patch --input planet.osm.pbf --output planet-with-ids.osm.pbf \
+//!         --locations planet-low.osm.pbf --locations-output planet-low-with-ids.osm.pbf \
+//!         --qrank qrank.csv.gz
 //!     poi_service checkpoint
 //!     poi_service covers --input extract.osm.pbf
 //!     poi_service export --staging poi-staging
@@ -20,6 +22,7 @@ mod export;
 mod fetch;
 mod identity;
 mod import;
+mod importance;
 mod osm;
 mod patch;
 mod pbf;
@@ -76,12 +79,26 @@ enum Command {
     },
     /// Copy an .osm.pbf file, tagging every POI version with a known
     /// identifier with `cardinal:poi_id` and its OSM version with
-    /// `cardinal:version`.
+    /// `cardinal:version`, and given `--locations`, every POI with its
+    /// importance as airmail ranks it, as `cardinal:importance`.
     Patch {
         #[arg(long)]
         input: PathBuf,
         #[arg(long)]
         output: PathBuf,
+        /// The same extract with node locations on its ways (`osmium
+        /// add-locations-to-ways`), for POIs' shapes, which their importance
+        /// depends on.
+        #[arg(long)]
+        locations: Option<PathBuf>,
+        /// Also write a patched copy of `--locations` here.
+        #[arg(long, requires = "locations")]
+        locations_output: Option<PathBuf>,
+        /// QRank (`qrank.csv.gz` from https://qrank.wmcloud.org), which
+        /// ranks POIs with Wikidata entities by their articles' page views.
+        /// Without it, having an entity counts the same for every POI.
+        #[arg(long, requires = "locations")]
+        qrank: Option<PathBuf>,
         /// Read identifiers from published releases in this directory (as
         /// `fetch` or `export` writes them) instead of the database. The
         /// output is the same.
@@ -163,10 +180,12 @@ async fn main() -> Result<()> {
         db::connect(url).await
     };
     match cli.command {
-        Command::Patch { input, output, releases: Some(releases), sequence } => {
+        Command::Patch { input, output, locations, locations_output, qrank, releases: Some(releases), sequence } => {
             let releases = Releases::new(&releases);
             let (ids, checkpoint) = tokio::task::block_in_place(|| import::load_ids(&releases, sequence))?;
-            patch::patch(ids, Some(checkpoint), &input, &output).await
+            let importances = load_importances(locations.as_deref(), qrank.as_deref())?;
+            patch::patch(ids, Some(checkpoint), importances, patch_files(input, output, locations, locations_output))
+                .await
         }
         Command::Covers { input, releases: Some(releases) } => {
             covers(&input, &import::latest_checkpoint(&Releases::new(&releases))?)
@@ -199,10 +218,11 @@ async fn database_command(pool: &PgPool, command: Command) -> Result<()> {
         Command::Update { follow, poll_seconds, max_diffs } => {
             update(pool, follow, Duration::from_secs(poll_seconds), max_diffs.unwrap_or(usize::MAX)).await
         }
-        Command::Patch { input, output, .. } => {
+        Command::Patch { input, output, locations, locations_output, qrank, .. } => {
             let checkpoint = db::latest_checkpoint(pool).await?;
             let ids = patch::PoiIds::load(pool).await?;
-            patch::patch(ids, checkpoint, &input, &output).await
+            let importances = load_importances(locations.as_deref(), qrank.as_deref())?;
+            patch::patch(ids, checkpoint, importances, patch_files(input, output, locations, locations_output)).await
         }
         Command::Checkpoint => {
             let checkpoint = db::latest_checkpoint(pool).await?.context("no checkpoint")?;
@@ -212,6 +232,40 @@ async fn database_command(pool: &PgPool, command: Command) -> Result<()> {
         Command::Covers { input, .. } => covers(&input, &db::latest_checkpoint(pool).await?.context("no checkpoint")?),
         _ => unreachable!("handled in main"),
     }
+}
+
+/// Every POI's importance in `locations`, if given.
+fn load_importances(
+    locations: Option<&std::path::Path>,
+    qrank: Option<&std::path::Path>,
+) -> Result<Option<importance::Importances>> {
+    let Some(locations) = locations else {
+        return Ok(None);
+    };
+    tokio::task::block_in_place(|| {
+        let qrank = qrank.map(airmail_importance::qrank::QRank::load).transpose()?;
+        if let Some(qrank) = &qrank {
+            tracing::info!("loaded QRank for {} Wikidata entities", qrank.len());
+        }
+        let importances = importance::Importances::compute(locations, qrank.as_ref())?;
+        tracing::info!("computed the importance of {} POIs", importances.len());
+        Ok(Some(importances))
+    })
+}
+
+/// The files `patch` writes: `output` from `input`, and `locations_output`
+/// from `locations` if asked for.
+fn patch_files(
+    input: PathBuf,
+    output: PathBuf,
+    locations: Option<PathBuf>,
+    locations_output: Option<PathBuf>,
+) -> Vec<(PathBuf, PathBuf)> {
+    let mut files = vec![(input, output)];
+    if let (Some(locations), Some(locations_output)) = (locations, locations_output) {
+        files.push((locations, locations_output));
+    }
+    files
 }
 
 /// Prints the file's timestamp and the checkpoint's sequence and timestamp,

@@ -1,3 +1,4 @@
+use airmail_importance::osm;
 use airmail::{
     geometry, importance,
     index::{AirmailIndex, AirmailIndexWriter, Document},
@@ -146,7 +147,11 @@ impl ImporterBuilder {
             None
         };
 
-        let qrank = self.qrank_path.map(|path| QRank::load(&path)).transpose()?.map(Arc::new);
+        let qrank = self.qrank_path.map(|path| QRank::load(&path)).transpose()?;
+        if let Some(qrank) = &qrank {
+            info!("Loaded QRank for {} Wikidata entities", qrank.len());
+        }
+        let qrank = qrank.map(Arc::new);
 
         Importer::new(admin_cache, wof_db, pip_tree, qrank).await
     }
@@ -268,13 +273,8 @@ impl Importer {
             Kind::Postcode => importance::POSTCODE_IMPORTANCE,
             Kind::Street => importance::street_importance(poi.tag("highway")),
             _ => {
-                let wikidata = poi.tag("wikidata");
-                importance::poi_importance(importance::PoiSignals {
-                    has_wikidata: wikidata.is_some(),
-                    qrank: wikidata.zip(qrank).and_then(|(id, qrank)| qrank.get(id)),
-                    area_m2: geometry::area_m2(&poi.geometry),
-                    transit_stop: importance::is_transit_stop(&poi.tags),
-                })
+                let tags = poi.tags.iter().map(|(k, v)| (k.as_str(), v.as_str()));
+                importance::poi_importance(osm::poi_signals(tags, geometry::area_m2(&poi.geometry), qrank))
             }
         };
         for lang in &pip_response.admin_langs {

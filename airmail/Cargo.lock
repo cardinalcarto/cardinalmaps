@@ -35,6 +35,7 @@ dependencies = [
 name = "airmail"
 version = "0.1.0"
 dependencies = [
+ "airmail_importance",
  "airmail_tagger",
  "anyhow",
  "deunicode",
@@ -62,10 +63,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "airmail_importance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "geo",
+]
+
+[[package]]
 name = "airmail_indexer"
 version = "0.1.0"
 dependencies = [
  "airmail",
+ "airmail_importance",
  "airmail_tagger",
  "anyhow",
  "clap",

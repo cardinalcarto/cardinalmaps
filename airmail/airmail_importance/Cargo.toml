@@ -1,0 +1,13 @@
+[package]
+name = "airmail_importance"
+version = "0.1.0"
+description = "How prominent a place is, as airmail ranks it, for airmail and poi_service"
+# Not inherited from the airmail workspace, since poi_service builds this
+# crate without it.
+edition = "2024"
+rust-version = "1.94"
+
+[dependencies]
+anyhow = "1.0.104"
+flate2 = "1.1.10"
+geo = "0.33.1"
