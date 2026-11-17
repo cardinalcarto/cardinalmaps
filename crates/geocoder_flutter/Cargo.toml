@@ -3,7 +3,7 @@ name = "geocoder_flutter"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
-description = "The offline geocoder on the device: reads a region's z14 map tiles into features for the phone's airmail index, through flutter_rust_bridge."
+description = "The offline geocoder on the device: builds the phone's airmail index from its z14 map tiles and Who's On First places, and searches it, through flutter_rust_bridge."
 
 [lib]
 crate-type = ["cdylib", "staticlib", "lib"]
@@ -11,16 +11,24 @@ crate-type = ["cdylib", "staticlib", "lib"]
 # No SQLite here, bundled or not: the basemap is read through sparkle_flutter's SQLite, which
 # writes it (see offline_map::mbtiles), and its tiles come in from Dart.
 [dependencies]
+# The phone's part of airmail: documents, the index and search, without tokio or zstd.
+airmail = { path = "../../airmail/airmail", default-features = false }
+airmail_importance = { path = "../../airmail/airmail_importance" }
+airmail_tagger = { path = "../../airmail/airmail_tagger" }
+anyhow = "1.0.104"
 flate2 = "1.1.10"
 flutter_rust_bridge = "=2.13.0"
 geo = { version = "0.33.1", default-features = false }
 mlt-core = "0.22.0"
 s2 = "0.2.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 thiserror = "2.0.21"
 
-# Tests and the desktop example read MBTiles files directly: one SQLite in those processes.
+# Tests and the desktop examples read MBTiles files directly: one SQLite in those processes.
 [dev-dependencies]
 offline_map = { version = "0.1.0", path = "../offline_map", default-features = false, features = ["mbtiles"] }
+tempfile = "3.27.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

@@ -1086,6 +1086,73 @@ void main() {
     ));
   });
 
+  group('offline search', () {
+    late RecordingIndexer indexer;
+
+    setUp(() async {
+      await engine.close();
+      indexer = RecordingIndexer();
+      engine = OfflineDownloads(
+        db: db,
+        root: root,
+        bucket: Bucket(Uri.parse(server.releasesUrl)),
+        transfers: transfers,
+        native: native,
+        indexer: indexer,
+      );
+      await engine.open();
+    });
+
+    test('is told the ready regions when one is installed or deleted, and on start', () async {
+      // Opening tells it there's nothing yet.
+      expect(indexer.told.single, IndexSources.none);
+      final first = await download(capitolHill, feeds: {metro});
+      expect(indexer.told.last.mapRelease, mapDate);
+      expect(indexer.told.last.basemap, engine.basemapPath(mapDate));
+      expect(indexer.told.last.regions.single.id, first);
+      expect(indexer.told.last.regions.single.bounds, capitolHill.bounds);
+      final second = await download(downtown);
+      expect(indexer.told.last.regions.map((r) => r.id), [first, second]);
+
+      await engine.delete(first);
+      expect(indexer.told.last.regions.map((r) => r.id), [second]);
+
+      // A restart tells it again, so a build the app stopped in runs again.
+      await engine.close();
+      final count = indexer.told.length;
+      engine = OfflineDownloads(
+        db: db,
+        root: root,
+        bucket: Bucket(Uri.parse(server.releasesUrl)),
+        transfers: transfers,
+        native: native,
+        indexer: indexer,
+      );
+      await engine.open();
+      expect(indexer.told.length, count + 1);
+      expect(indexer.told.last.regions.map((r) => r.id), [second]);
+    });
+
+    test('the models are not a region to index, but are found', () async {
+      expect(await engine.geocoderModelFiles(), (
+        tagger: null,
+        categories: null,
+      ));
+      final models = (await engine.planGeocoderModels('eng'))!;
+      await engine.startGeocoderModels(models);
+      await settle();
+      expect(indexer.told, [IndexSources.none]);
+      expect(
+        (await engine.geocoderModelFiles()).tagger,
+        '$root/geocoder/$geocoderDate/tagger.model',
+      );
+      expect(
+        (await engine.geocoderModelFiles()).categories,
+        '$root/geocoder/$geocoderDate/categorical/eng.amcats',
+      );
+    });
+  });
+
   group("the geocoder's models", () {
     test(
       "a plan has the tagger and the language's categories, with sizes",

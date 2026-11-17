@@ -13,6 +13,7 @@ export 'src/rust/api/offline.dart'
     show
         BasemapTile,
         BasemapTileAfter,
+        BasemapTileKey,
         ByteRange,
         MapChunkPlan,
         MapError,
@@ -23,6 +24,7 @@ export 'src/rust/api/offline.dart'
         basemapClaim,
         basemapPrepare,
         basemapReadRegionTiles,
+        basemapReadTiles,
         basemapRegionTiles,
         basemapRegionZoomTiles,
         basemapRelease,

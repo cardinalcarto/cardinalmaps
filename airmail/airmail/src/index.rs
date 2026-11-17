@@ -65,9 +65,10 @@ pub enum Storage {
     #[default]
     Full,
     /// For a document with a stable POI ID, only its kind, the ID and the
-    /// tile it was read from (see `poi::Pointer`), its center, importance,
-    /// source and areas' IDs; its tags and shape are in the tile. Others
-    /// store everything. For a phone's index of the tiles it has.
+    /// tile it was read from (see `poi::Pointer`), its name tags (which
+    /// ranking reads), its center, importance, source and areas' IDs; its
+    /// other tags and its shape are in the tile. Others store everything.
+    /// For a phone's index of the tiles it has.
     Pointers,
 }
 
@@ -248,7 +249,8 @@ pub struct SearchHit {
     pub score: f32,
     pub kind: Kind,
     /// OSM tags, without Cardinal's `cardinal:*` tags, which are in `poi`.
-    /// A pointer document's, if the search was given `Hydrate`, else none.
+    /// A pointer document's names, or all its tags if the search was given
+    /// `Hydrate`.
     pub tags: Vec<(String, String)>,
     /// Cardinal's stable identifier and the OSM version it was indexed at,
     /// from its tags.
@@ -1052,14 +1054,16 @@ impl DocumentBuilder {
                 doc.add_text(self.field(FIELD_WOF), serde_json::to_string(wof)?);
             }
         }
-        if stored && !poi.tags.is_empty() {
-            doc.add_object(
-                self.field(FIELD_TAGS),
-                poi.tags
-                    .iter()
-                    .map(|(k, v)| (k.clone(), OwnedValue::Str(v.clone())))
-                    .collect::<BTreeMap<String, OwnedValue>>(),
-            );
+        // A pointer keeps its names, which ranking reads (how much of a name a
+        // query is); its other tags are in its tile.
+        let kept: BTreeMap<String, OwnedValue> = poi
+            .tags
+            .iter()
+            .filter(|(k, _)| stored || crate::osm::is_name_key(k))
+            .map(|(k, v)| (k.clone(), OwnedValue::Str(v.clone())))
+            .collect();
+        if !kept.is_empty() {
+            doc.add_object(self.field(FIELD_TAGS), kept);
         }
         let center = s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(poi.center.y(), poi.center.x()));
         doc.add_u64(self.field(FIELD_CENTER), center.0);

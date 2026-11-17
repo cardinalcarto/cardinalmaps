@@ -15,6 +15,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:routing/routing.dart';
 
 import '../config.dart';
+import '../geocoder/search_index.dart';
 import 'downloads/bucket.dart';
 import 'downloads/database.dart';
 import 'downloads/engine.dart';
@@ -268,28 +269,49 @@ class RealtimeSource {
 /// map. The area appears once a region is ready, so it is looked for on each use until
 /// then.
 class OfflineAreas {
-  OfflineAreas(this.downloads);
+  OfflineAreas(this.downloads, {Future<SearchIndex?>? search})
+    : search = search ?? Future.value();
 
   /// Downloads, opened (null if this build has no [releasesUrl]).
   final Future<OfflineDownloads?> downloads;
 
+  /// Offline search's index, kept in step with the ready regions by [downloads]. Null
+  /// if the offline folder can't be found.
+  final Future<SearchIndex?> search;
+
   /// Starts downloads on the app's database and folder: handling downloads that ended
-  /// while the app was away, and finishing deletions.
-  factory OfflineAreas.open() => OfflineAreas(() async {
-    if (releasesUrl.isEmpty) return null;
-    final downloads = OfflineDownloads(
-      db: OfflineDatabase.open(),
-      root: await offlineFolder(),
-      bucket: Bucket(Uri.parse(releasesUrl)),
-      transfers: BackgroundTransfers(),
-    );
-    try {
-      await downloads.open();
-    } on Object catch (e) {
-      debugPrint('offline: downloads did not open: $e');
-    }
-    return downloads;
-  }());
+  /// while the app was away, and finishing deletions; and offline search's index.
+  factory OfflineAreas.open() {
+    final search = () async {
+      try {
+        final index = SearchIndex(
+          root: '${await offlineFolder()}/search',
+          wofUrl: wofUrl,
+        );
+        await index.load();
+        return index;
+      } on Object catch (e) {
+        debugPrint('offline: search index did not open: $e');
+        return null;
+      }
+    }();
+    return OfflineAreas(() async {
+      if (releasesUrl.isEmpty) return null;
+      final downloads = OfflineDownloads(
+        db: OfflineDatabase.open(),
+        root: await offlineFolder(),
+        bucket: Bucket(Uri.parse(releasesUrl)),
+        transfers: BackgroundTransfers(),
+        indexer: await search,
+      );
+      try {
+        await downloads.open();
+      } on Object catch (e) {
+        debugPrint('offline: downloads did not open: $e');
+      }
+      return downloads;
+    }(), search: search);
+  }
 
   OfflineArea? _area;
 

@@ -4,9 +4,18 @@
 use crate::extract::{ExtractedFeature, TileCounts, TileError, TileKey, extract_tile};
 use crate::merge::{MergeCounts, Merger};
 
-/// Where extracted features go: airmail's document builder, once it's plugged in.
+/// Where extracted features go: the index's documents ([`crate::build::IndexSink`]), or a
+/// count of them.
 pub trait FeatureSink {
     fn feature(&mut self, feature: ExtractedFeature);
+
+    /// A tile's points, all at once (each tile's in turn), for rules between the features
+    /// of one tile. Gives each to [`FeatureSink::feature`] unless overridden.
+    fn tile_points(&mut self, _tile: TileKey, points: Vec<ExtractedFeature>) {
+        for point in points {
+            self.feature(point);
+        }
+    }
 }
 
 impl FeatureSink for Vec<ExtractedFeature> {
@@ -15,7 +24,7 @@ impl FeatureSink for Vec<ExtractedFeature> {
     }
 }
 
-/// Counts the features that would be indexed (until the document builder is plugged in).
+/// Counts the features that would be indexed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CountingSink {
     pub features: u64,
@@ -76,9 +85,7 @@ impl RegionExtractor {
         self.counts.tiles += 1;
         self.counts.bytes += data.len() as u64;
         self.counts.layers.add(&features.counts);
-        for point in features.points {
-            sink.feature(point);
-        }
+        sink.tile_points(tile, features.points);
         for (index, piece) in features.pieces.into_iter().enumerate() {
             self.merger
                 .add(piece, u32::try_from(index).unwrap_or(u32::MAX));

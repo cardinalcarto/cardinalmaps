@@ -94,6 +94,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BasemapTileAfter dco_decode_basemap_tile_after(dynamic raw);
 
   @protected
+  BasemapTileKey dco_decode_basemap_tile_key(dynamic raw);
+
+  @protected
   bool dco_decode_bool(dynamic raw);
 
   @protected
@@ -149,6 +152,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<BasemapTile> dco_decode_list_basemap_tile(dynamic raw);
+
+  @protected
+  List<BasemapTileKey> dco_decode_list_basemap_tile_key(dynamic raw);
 
   @protected
   List<ByteRange> dco_decode_list_byte_range(dynamic raw);
@@ -302,6 +308,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BasemapTileAfter sse_decode_basemap_tile_after(SseDeserializer deserializer);
 
   @protected
+  BasemapTileKey sse_decode_basemap_tile_key(SseDeserializer deserializer);
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
@@ -361,6 +370,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<BasemapTile> sse_decode_list_basemap_tile(SseDeserializer deserializer);
+
+  @protected
+  List<BasemapTileKey> sse_decode_list_basemap_tile_key(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<ByteRange> sse_decode_list_byte_range(SseDeserializer deserializer);
@@ -543,6 +557,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_basemap_tile_key(
+    BasemapTileKey self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
@@ -614,6 +634,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_basemap_tile(
     List<BasemapTile> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_basemap_tile_key(
+    List<BasemapTileKey> self,
     SseSerializer serializer,
   );
 
