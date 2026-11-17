@@ -1,0 +1,4 @@
+# The build context is the repository's root; send only what Dockerfile copies. BuildKit
+# reads this file because it sits beside the Dockerfile with the same name.
+*
+!deploy/wof_service/entrypoint.sh

@@ -16,7 +16,12 @@ Options (also as environment variables): `--db` (`WOF_DB`), `--bind`
 (`WOF_BIND`, default `127.0.0.1:3000`), and the limits below. The database is
 opened immutable: nothing may write to it while the service runs.
 
-`deploy/wof_service` is an example deployment on fly.io.
+The `Dockerfile` builds an image that runs `wof_service` directly
+(`.github/workflows/images.yml` publishes it as `cardinal-wof-service`); mount
+the database into it and set `WOF_DB`. `deploy/wof_service` is an example
+deployment on fly.io, whose image (`cardinal-wof-service-flyio`) adds an
+entrypoint that downloads a published release of the database onto the
+machine's volume first.
 
 ## API
 
