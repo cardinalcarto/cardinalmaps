@@ -4,8 +4,9 @@
 //! The model is trained by `airmail/categorical` (fastText, three heads) and
 //! exported to a single file. Inference here reproduces fastText's supervised
 //! prediction exactly, apart from the 8-bit quantization of input embeddings.
+//! [`CategoryModel::pruned`] makes smaller models for phones.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -112,19 +113,26 @@ pub fn normalize(text: &str) -> String {
         .join(" ")
 }
 
-#[derive(Debug, Deserialize)]
+/// The file's JSON header.
+///
+/// Version 1 stores every input row. Version 2 adds `kept_rows` to a head:
+/// its data then starts with a bitmap of which of the `words + bucket` rows
+/// are stored (`ceil(rows / 64)` little-endian u64s, bit `i % 64` of word
+/// `i / 64`), followed by only those rows. A row that isn't stored is a zero
+/// vector: its feature still counts in the average, but adds nothing.
+#[derive(Debug, Serialize, Deserialize)]
 struct Header {
     version: u32,
     /// ISO 639-3 code of the language the model understands.
     language: String,
     head_order: Vec<String>,
-    heads: HashMap<String, HeadHeader>,
+    heads: BTreeMap<String, HeadHeader>,
     food_categories: Vec<String>,
     diets: Vec<String>,
     thresholds: Thresholds,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct HeadHeader {
     dim: usize,
     minn: usize,
@@ -134,23 +142,67 @@ struct HeadHeader {
     loss: Loss,
     words: Vec<String>,
     labels: Vec<String>,
+    /// Version 2: how many input rows are stored, when not all of them are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kept_rows: Option<usize>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Loss {
     Softmax,
     Ova,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct Thresholds {
     categories: f32,
     cuisine: f32,
     diet: f32,
 }
 
+/// Which input rows a pruned head stores: a bitmap over all `words + bucket`
+/// rows, with the number of set bits before each 64-bit word.
+#[derive(Clone)]
+struct RowMap {
+    bits: Vec<u64>,
+    ranks: Vec<u32>,
+}
+
+impl RowMap {
+    fn new(bits: Vec<u64>) -> Self {
+        let mut ranks = Vec::with_capacity(bits.len());
+        let mut total = 0u32;
+        for word in &bits {
+            ranks.push(total);
+            total += word.count_ones();
+        }
+        Self { bits, ranks }
+    }
+
+    fn from_kept(kept: &[bool]) -> Self {
+        let mut bits = vec![0u64; kept.len().div_ceil(64)];
+        for (i, _) in kept.iter().enumerate().filter(|(_, k)| **k) {
+            bits[i / 64] |= 1 << (i % 64);
+        }
+        Self::new(bits)
+    }
+
+    fn len(&self) -> usize {
+        self.bits.iter().map(|w| w.count_ones() as usize).sum()
+    }
+
+    /// The stored row index of feature row `id`, if it is stored.
+    fn get(&self, id: usize) -> Option<usize> {
+        let word = self.bits[id / 64];
+        let bit = 1u64 << (id % 64);
+        (word & bit != 0)
+            .then(|| self.ranks[id / 64] as usize + (word & (bit - 1)).count_ones() as usize)
+    }
+}
+
 /// One fastText supervised model.
+#[derive(Clone)]
 struct Head {
     dim: usize,
     minn: usize,
@@ -158,13 +210,52 @@ struct Head {
     bucket: usize,
     word_ngrams: usize,
     loss: Loss,
+    words: Vec<String>,
     word_ids: HashMap<String, usize>,
     labels: Vec<String>,
-    /// `(words + bucket) x dim`, each row scaled by `scales`.
+    /// The stored rows, if not all `words + bucket` of them are.
+    kept: Option<RowMap>,
+    /// `stored rows x dim`, each row scaled by `scales`.
     input: Vec<i8>,
     scales: Vec<f32>,
     /// `labels x dim`.
     output: Vec<f32>,
+}
+
+/// How to shrink one head.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PruneHead {
+    /// Store rows as label scores when there are fewer labels than
+    /// dimensions. Exact apart from re-quantizing.
+    pub fold: bool,
+    /// Fraction of all `words + bucket` rows to keep, those that move label
+    /// scores most; the rest become zero vectors. 1 keeps every row.
+    pub keep: f64,
+}
+
+/// How to shrink a model; see [`CategoryModel::pruned`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Prune {
+    pub categories: PruneHead,
+    pub cuisine: PruneHead,
+    pub diet: PruneHead,
+}
+
+/// Symmetric 8-bit quantization of one row, as `categories-train` exports.
+fn quantize_row(row: &[f32]) -> (Vec<i8>, f32) {
+    let scale = row.iter().fold(0f32, |m, x| m.max(x.abs())) / 127.0;
+    #[allow(clippy::cast_possible_truncation)]
+    let q = row
+        .iter()
+        .map(|x| {
+            if scale > 0.0 {
+                (x / scale).round().clamp(-127.0, 127.0) as i8
+            } else {
+                0
+            }
+        })
+        .collect();
+    (q, scale)
 }
 
 /// fastText's FNV-1a variant, which sign-extends each byte.
@@ -181,7 +272,19 @@ fn fasttext_hash(text: &str) -> u32 {
 
 impl Head {
     fn nwords(&self) -> usize {
-        self.word_ids.len()
+        self.words.len()
+    }
+
+    /// All feature rows, stored or not.
+    fn rows(&self) -> usize {
+        self.words.len() + self.bucket
+    }
+
+    fn stored_row(&self, id: usize) -> Option<usize> {
+        match &self.kept {
+            None => Some(id),
+            Some(kept) => kept.get(id),
+        }
     }
 
     /// Bucket rows for the character n-grams of `<token>`, as fastText's
@@ -249,6 +352,9 @@ impl Head {
         let ids = self.features(text);
         let mut hidden = vec![0f32; self.dim];
         for &id in &ids {
+            let Some(id) = self.stored_row(id) else {
+                continue;
+            };
             let row = &self.input[id * self.dim..(id + 1) * self.dim];
             let scale = self.scales[id];
             for (h, &q) in hidden.iter_mut().zip(row) {
@@ -274,6 +380,120 @@ impl Head {
                 exps.iter().map(|e| e / total).collect()
             }
         }
+    }
+
+    /// Stored row `i`, dequantized.
+    fn row(&self, i: usize) -> impl Iterator<Item = f32> + '_ {
+        let scale = self.scales[i];
+        self.input[i * self.dim..(i + 1) * self.dim]
+            .iter()
+            .map(move |&q| f32::from(q) * scale)
+    }
+
+    /// What stored row `i` adds to the label scores, `output · row`, centred
+    /// for softmax (where adding the same amount to every score changes
+    /// nothing).
+    fn contribution(&self, i: usize) -> Vec<f32> {
+        let row: Vec<f32> = self.row(i).collect();
+        let mut scores: Vec<f32> = self
+            .output
+            .chunks_exact(self.dim)
+            .map(|w| w.iter().zip(&row).map(|(a, b)| a * b).sum())
+            .collect();
+        if self.loss == Loss::Softmax {
+            #[allow(clippy::cast_precision_loss)]
+            let mean = scores.iter().sum::<f32>() / scores.len() as f32;
+            scores.iter_mut().for_each(|s| *s -= mean);
+        }
+        scores
+    }
+
+    fn pruned(&self, prune: &PruneHead) -> Self {
+        let mut head = self.clone();
+        let stored = self.input.len() / self.dim;
+        if prune.fold && self.labels.len() < self.dim {
+            // Scores are linear in the hidden vector, so rows can live in
+            // score space: `output · row` with an identity output matrix.
+            let labels = self.labels.len();
+            let mut input = Vec::with_capacity(stored * labels);
+            let mut scales = Vec::with_capacity(stored);
+            for i in 0..stored {
+                let row: Vec<f32> = self.row(i).collect();
+                let folded: Vec<f32> = self
+                    .output
+                    .chunks_exact(self.dim)
+                    .map(|w| w.iter().zip(&row).map(|(a, b)| a * b).sum())
+                    .collect();
+                let (q, scale) = quantize_row(&folded);
+                input.extend(q);
+                scales.push(scale);
+            }
+            head.dim = labels;
+            head.input = input;
+            head.scales = scales;
+            head.output = (0..labels * labels)
+                .map(|i| if i / labels == i % labels { 1.0 } else { 0.0 })
+                .collect();
+        }
+        if prune.keep >= 1.0 {
+            return head;
+        }
+
+        let stored_ids: Vec<usize> = (0..self.rows())
+            .filter(|&id| self.stored_row(id).is_some())
+            .collect();
+        // A row matters if it moves label scores and if queries use it. How
+        // often is estimated from the model alone, so it isn't tied to any
+        // one region: fastText sorts the dictionary by training count, so
+        // word `r` gets a Zipf weight 1/(r + 1), shared by every row that
+        // word alone looks up (itself, its n-grams, its bigram with `</s>`).
+        // Rows no dictionary word uses (most word pairs) get the weight of
+        // the rarest word.
+        let mut usage = vec![0f64; self.rows()];
+        for (rank, word) in self.words.iter().enumerate().skip(1) {
+            #[allow(clippy::cast_precision_loss)]
+            let weight = 1.0 / (rank + 1) as f64;
+            for id in self.features(word) {
+                usage[id] += weight;
+            }
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let floor = 1.0 / self.words.len().max(1) as f64;
+        let importance: Vec<f64> = (0..stored)
+            .map(|i| {
+                let norm = head
+                    .contribution(i)
+                    .iter()
+                    .map(|c| f64::from(*c).powi(2))
+                    .sum::<f64>()
+                    .sqrt();
+                (usage[stored_ids[i]] + floor).sqrt() * norm
+            })
+            .collect();
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        let k = ((prune.keep * self.rows() as f64).round() as usize).min(stored);
+        let mut order: Vec<usize> = (0..stored).collect();
+        order.sort_by(|&a, &b| importance[b].total_cmp(&importance[a]).then(a.cmp(&b)));
+        let mut keep_stored = vec![false; stored];
+        order[..k].iter().for_each(|&i| keep_stored[i] = true);
+
+        let mut kept = vec![false; self.rows()];
+        let (mut input, mut scales) = (Vec::new(), Vec::new());
+        for (i, &id) in stored_ids.iter().enumerate() {
+            if keep_stored[i] {
+                kept[id] = true;
+                input.extend_from_slice(&head.input[i * head.dim..(i + 1) * head.dim]);
+                scales.push(head.scales[i]);
+            }
+        }
+        head.kept = Some(RowMap::from_kept(&kept));
+        head.input = input;
+        head.scales = scales;
+        head
     }
 
     fn labelled(&self, text: &str) -> Vec<(String, f32)> {
@@ -349,7 +569,6 @@ impl QueryCategories {
     pub fn is_empty(&self) -> bool {
         self.categories.is_empty() && self.cuisines.is_empty() && self.diets.is_empty()
     }
-
 }
 
 pub struct CategoryModel {
@@ -375,13 +594,13 @@ impl CategoryModel {
             "not a categories model"
         );
         let header_len = u32::from_le_bytes(bytes[8..12].try_into()?) as usize;
-        let header: Header = serde_json::from_slice(
+        let mut header: Header = serde_json::from_slice(
             bytes
                 .get(12..12 + header_len)
                 .context("truncated model header")?,
         )?;
         ensure!(
-            header.version == 1,
+            matches!(header.version, 1 | 2),
             "unsupported model version {}",
             header.version
         );
@@ -391,7 +610,7 @@ impl CategoryModel {
         for name in &header.head_order {
             let h = header
                 .heads
-                .get(name)
+                .remove(name)
                 .with_context(|| format!("missing head {name}"))?;
             let rows = h.words.len() + h.bucket;
             let take = |rest: &mut &[u8], n: usize| -> Result<Vec<u8>> {
@@ -400,8 +619,28 @@ impl CategoryModel {
                 *rest = tail;
                 Ok(head.to_vec())
             };
+            let kept = match h.kept_rows {
+                None => None,
+                Some(n) => {
+                    ensure!(header.version >= 2, "kept_rows in a version 1 model");
+                    let bits: Vec<u64> = take(&mut rest, rows.div_ceil(64) * 8)?
+                        .as_chunks::<8>()
+                        .0
+                        .iter()
+                        .map(|c| u64::from_le_bytes(*c))
+                        .collect();
+                    let kept = RowMap::new(bits);
+                    ensure!(
+                        kept.len() == n,
+                        "{name}: bitmap has {} rows, header {n}",
+                        kept.len()
+                    );
+                    Some(kept)
+                }
+            };
+            let stored = h.kept_rows.unwrap_or(rows);
             #[allow(clippy::cast_possible_wrap)]
-            let input = take(&mut rest, rows * h.dim)?
+            let input = take(&mut rest, stored * h.dim)?
                 .into_iter()
                 .map(|b| b as i8)
                 .collect();
@@ -412,7 +651,7 @@ impl CategoryModel {
                     .map(|c| f32::from_le_bytes(*c))
                     .collect()
             };
-            let scales = floats(take(&mut rest, rows * 4)?);
+            let scales = floats(take(&mut rest, stored * 4)?);
             let output = floats(take(&mut rest, h.labels.len() * h.dim * 4)?);
             heads.insert(
                 name.clone(),
@@ -429,7 +668,9 @@ impl CategoryModel {
                         .enumerate()
                         .map(|(i, w)| (w.clone(), i))
                         .collect(),
-                    labels: h.labels.clone(),
+                    words: h.words,
+                    labels: h.labels,
+                    kept,
                     input,
                     scales,
                     output,
@@ -466,6 +707,92 @@ impl CategoryModel {
     #[must_use]
     pub fn language(&self) -> &str {
         &self.language
+    }
+
+    fn heads(&self) -> [(&'static str, &Head); 3] {
+        [
+            ("categories", &self.categories),
+            ("cuisine", &self.cuisine),
+            ("diet", &self.diet),
+        ]
+    }
+
+    /// The model as a file `from_bytes` reads: version 1 if every head stores
+    /// all its rows, so older readers can still load it, else version 2.
+    ///
+    /// # Panics
+    ///
+    /// If the header is over 4 GB.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let pruned = self.heads().iter().any(|(_, h)| h.kept.is_some());
+        let header = Header {
+            version: if pruned { 2 } else { 1 },
+            language: self.language.clone(),
+            head_order: self.heads().iter().map(|(n, _)| (*n).to_string()).collect(),
+            heads: self
+                .heads()
+                .iter()
+                .map(|(name, h)| {
+                    let header = HeadHeader {
+                        dim: h.dim,
+                        minn: h.minn,
+                        maxn: h.maxn,
+                        bucket: h.bucket,
+                        word_ngrams: h.word_ngrams,
+                        loss: h.loss,
+                        words: h.words.clone(),
+                        labels: h.labels.clone(),
+                        kept_rows: h.kept.as_ref().map(RowMap::len),
+                    };
+                    ((*name).to_string(), header)
+                })
+                .collect(),
+            food_categories: self.food_categories.iter().cloned().collect(),
+            diets: self.diets.clone(),
+            thresholds: self.thresholds,
+        };
+        let json = serde_json::to_vec(&header).expect("header serializes");
+        let mut out = MAGIC.to_vec();
+        out.extend(
+            u32::try_from(json.len())
+                .expect("header fits")
+                .to_le_bytes(),
+        );
+        out.extend(json);
+        for (_, h) in self.heads() {
+            if let Some(kept) = &h.kept {
+                kept.bits.iter().for_each(|w| out.extend(w.to_le_bytes()));
+            }
+            #[allow(clippy::cast_sign_loss)]
+            out.extend(h.input.iter().map(|&q| q as u8));
+            h.scales.iter().for_each(|s| out.extend(s.to_le_bytes()));
+            h.output.iter().for_each(|w| out.extend(w.to_le_bytes()));
+        }
+        out
+    }
+
+    /// A smaller model for devices; see [`Prune`].
+    #[must_use]
+    pub fn pruned(&self, prune: &Prune) -> Self {
+        Self {
+            language: self.language.clone(),
+            categories: self.categories.pruned(&prune.categories),
+            cuisine: self.cuisine.pruned(&prune.cuisine),
+            diet: self.diet.pruned(&prune.diet),
+            food_categories: self.food_categories.clone(),
+            diets: self.diets.clone(),
+            thresholds: self.thresholds,
+        }
+    }
+
+    /// Sizes of each head: (name, stored rows, all rows, dim).
+    #[must_use]
+    pub fn head_sizes(&self) -> Vec<(&'static str, usize, usize, usize)> {
+        self.heads()
+            .iter()
+            .map(|(n, h)| (*n, h.input.len() / h.dim, h.rows(), h.dim))
+            .collect()
     }
 
     /// Raw per-head label probabilities for `query`, for parity tests and debugging.
@@ -622,6 +949,72 @@ mod test {
             &CategoryModel::open(Path::new(&model)).unwrap(),
             &std::fs::read_to_string(fixtures).unwrap(),
         );
+    }
+
+    fn prune(fold: bool, keep: f64) -> Prune {
+        let head = PruneHead { fold, keep };
+        Prune {
+            categories: head,
+            cuisine: head,
+            diet: head,
+        }
+    }
+
+    #[test]
+    fn test_unpruned_round_trip_is_version_1() {
+        let model = CategoryModel::from_bytes(MODEL).unwrap();
+        let bytes = model.pruned(&prune(false, 1.0)).to_bytes();
+        assert!(String::from_utf8_lossy(&bytes).contains("\"version\":1"));
+        let again = CategoryModel::from_bytes(&bytes).unwrap();
+        for query in ["restaurant", "vegan pizza", "xyz"] {
+            assert_eq!(
+                model.head_probabilities(query),
+                again.head_probabilities(query)
+            );
+        }
+    }
+
+    #[test]
+    fn test_folding_keeps_predictions() {
+        let model = CategoryModel::from_bytes(MODEL).unwrap();
+        let folded =
+            CategoryModel::from_bytes(&model.pruned(&prune(true, 1.0)).to_bytes()).unwrap();
+        // The tiny model's diet head has fewer labels than dimensions.
+        assert_eq!(folded.diet.dim, folded.diet.labels.len());
+        assert_matches_fixtures(&folded, FIXTURES);
+    }
+
+    #[test]
+    fn test_pruned_round_trip() {
+        let model = CategoryModel::from_bytes(MODEL).unwrap();
+        let pruned = model.pruned(&prune(true, 0.5));
+        let bytes = pruned.to_bytes();
+        let again = CategoryModel::from_bytes(&bytes).unwrap();
+        assert_eq!(again.to_bytes(), bytes);
+        for (_, stored, rows, _) in again.head_sizes() {
+            assert_eq!(stored, (rows as f64 * 0.5).round() as usize);
+        }
+        for query in ["restaurant", "vegan pizza", "Bäckerei"] {
+            assert_eq!(
+                pruned.head_probabilities(query),
+                again.head_probabilities(query)
+            );
+        }
+        // Pruning a pruned model keeps a subset of its rows.
+        let smaller = again.pruned(&prune(true, 0.25));
+        for (_, stored, rows, _) in smaller.head_sizes() {
+            assert_eq!(stored, (rows as f64 * 0.25).round() as usize);
+        }
+    }
+
+    #[test]
+    fn test_row_map() {
+        let kept: Vec<bool> = (0..200).map(|i| i % 3 == 0).collect();
+        let map = RowMap::from_kept(&kept);
+        assert_eq!(map.len(), 67);
+        for (i, k) in kept.iter().enumerate() {
+            assert_eq!(map.get(i), k.then_some(i / 3));
+        }
     }
 
     fn assert_matches_fixtures(model: &CategoryModel, fixtures: &str) {
