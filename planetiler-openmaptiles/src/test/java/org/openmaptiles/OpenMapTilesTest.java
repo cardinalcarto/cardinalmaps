@@ -209,7 +209,8 @@ class OpenMapTilesTest {
     assertNumFeatures("transportation_name", Map.of(
       "name", "Boulevard du Larvotto",
       "class", "primary"
-    ), 14, 9, LineString.class);
+    // 2 ways of it also have alt_name=Tunnel IM2S, which z14 keeps for the geocoder, so they merge apart
+    ), 14, 11, LineString.class);
   }
 
   @Test

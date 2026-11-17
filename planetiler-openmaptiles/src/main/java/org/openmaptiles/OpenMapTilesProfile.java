@@ -22,8 +22,11 @@ import java.util.stream.Stream;
 import org.openmaptiles.addons.ExtraLayers;
 import org.openmaptiles.generated.OpenMapTilesSchema;
 import org.openmaptiles.generated.Tables;
+import org.openmaptiles.layers.Housenumber;
+import org.openmaptiles.layers.Poi;
 import org.openmaptiles.layers.Transportation;
 import org.openmaptiles.layers.TransportationName;
+import org.openmaptiles.util.AssociatedStreets;
 
 /**
  * Delegates the logic for generating a map to individual implementations in the {@code layers} package.
@@ -70,6 +73,24 @@ public class OpenMapTilesProfile extends ForwardingProfile {
     var omtLayers = OpenMapTilesSchema.createInstances(translations, config, stats);
     var extraLayers = ExtraLayers.create(translations, config, stats);
     var allLayers = Stream.concat(omtLayers.stream(), extraLayers.stream()).toList();
+
+    // special-case: poi and housenumber share associated streets and the Who's On First areas
+    AssociatedStreets streets = new AssociatedStreets();
+    boolean needsStreets = false;
+    Poi poiLayer = allLayers.stream().filter(Poi.class::isInstance).map(Poi.class::cast).findFirst().orElseThrow();
+    for (Layer layer : allLayers) {
+      if (layer instanceof Poi poi) {
+        poi.useAssociatedStreets(streets);
+        needsStreets |= caresAboutLayer(layer);
+      } else if (layer instanceof Housenumber housenumber) {
+        housenumber.useAssociatedStreets(streets);
+        housenumber.useAdmins(poiLayer.admins());
+        needsStreets |= caresAboutLayer(layer);
+      }
+    }
+    if (needsStreets) {
+      registerHandler(streets);
+    }
     for (Layer layer : allLayers) {
       if (caresAboutLayer(layer)) {
         layers.add(layer);

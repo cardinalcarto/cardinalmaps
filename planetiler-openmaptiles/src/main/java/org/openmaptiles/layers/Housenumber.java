@@ -41,6 +41,7 @@ import com.onthegomap.planetiler.ForwardingProfile;
 import com.onthegomap.planetiler.VectorTile;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeometryException;
+import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Translations;
 import java.util.Arrays;
@@ -52,7 +53,10 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.openmaptiles.generated.OpenMapTilesSchema;
 import org.openmaptiles.generated.Tables;
+import org.openmaptiles.util.AssociatedStreets;
+import org.openmaptiles.util.OmtLanguageUtils;
 import org.openmaptiles.util.Utils;
+import org.openmaptiles.util.WofAdmins;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,6 +66,11 @@ import org.slf4j.LoggerFactory;
  * This class is ported to Java from
  * <a href="https://github.com/openmaptiles/openmaptiles/tree/master/layers/housenumber">OpenMapTiles housenumber sql
  * files</a>.
+ * <p>
+ * Beyond OpenMapTiles, each house number carries what the geocoder indexes an address by: every {@code addr:*} tag as
+ * tagged, {@code addr:street} from an associated street relation when it isn't tagged, and the Who's On First areas
+ * it's in as {@value Poi#ADMIN_PREFIX}{@code <placetype>}, as POIs do. Named elements also carry their names, unless
+ * they're in the {@code poi} layer, which has them already: the geocoder makes each named element one POI.
  */
 public class Housenumber implements
   OpenMapTilesSchema.Housenumber,
@@ -76,10 +85,30 @@ public class Housenumber implements
   private static final String TEMP_HAS_NAME = "_has_name";
   private static final Comparator<VectorTile.Feature> BY_TEMP_HAS_NAME = Comparator
     .comparing(i -> (Boolean) i.tags().get(TEMP_HAS_NAME), Boolean::compare);
+  private static final String ADDRESS_PREFIX = "addr:";
+  private static final String STREET_TAG = "addr:street";
   private final Stats stats;
+  private AssociatedStreets streets = new AssociatedStreets();
+  private WofAdmins admins;
 
   public Housenumber(Translations translations, PlanetilerConfig config, Stats stats) {
     this.stats = stats;
+  }
+
+  /** Uses {@code streets}, which the profile shares between layers and registers to see relations, for addresses. */
+  public void useAssociatedStreets(AssociatedStreets streets) {
+    this.streets = streets;
+  }
+
+  /** Gives house numbers the areas they're in from {@code admins}, the instance {@link Poi} uses, if not null. */
+  public void useAdmins(WofAdmins admins) {
+    this.admins = admins;
+  }
+
+  /** Whether the {@code poi} layer takes an element, as {@link Poi#processAllOsm} decides. */
+  private static boolean isPoi(SourceFeature source) {
+    return Tables.OsmPoiPoint.MAPPING.evaluate(source) || Tables.OsmPoiPolygon.MAPPING.evaluate(source) ||
+      Backcountry.kindOf(source) != null;
   }
 
   private static String displayHousenumberNonumeric(List<String> numbers) {
@@ -127,17 +156,29 @@ public class Housenumber implements
       housenumber = element.housenumber();
     }
 
-    String partition = Utils.coalesce(element.street(), "")
+    SourceFeature source = element.source();
+    String street = streets.streetOf(source);
+    String partition = Utils.coalesce(street, "")
       .concat(Utils.coalesce(element.blockNumber(), ""))
       .concat(housenumber);
     Boolean hasName = element.hasName() == null ? Boolean.FALSE : !element.hasName().isEmpty();
 
-    features.centroidIfConvex(LAYER_NAME)
+    var feature = features.centroidIfConvex(LAYER_NAME)
       .setBufferPixels(BUFFER_SIZE)
       .setAttr(Fields.HOUSENUMBER, housenumber)
       .setAttr(TEMP_PARTITION, partition)
       .setAttr(TEMP_HAS_NAME, hasName)
       .setMinZoom(14);
+    for (var tag : source.tags().entrySet()) {
+      if (tag.getKey().startsWith(ADDRESS_PREFIX)) {
+        feature.setAttr(tag.getKey(), tag.getValue());
+      }
+    }
+    feature.setAttr(STREET_TAG, street);
+    if (hasName && !isPoi(source)) {
+      feature.putAttrs(OmtLanguageUtils.searchNames(source.tags()));
+    }
+    Poi.addAdmins(admins, stats, feature, source);
   }
 
   @Override

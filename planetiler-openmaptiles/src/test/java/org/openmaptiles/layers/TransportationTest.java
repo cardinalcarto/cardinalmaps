@@ -1804,6 +1804,44 @@ class TransportationTest extends AbstractLayerTest {
   @Test
   void testMergesDisconnectedRoadNameFeatures() throws GeometryException {
     testMergesLinestrings(Map.of("class", "motorway"), TransportationName.LAYER_NAME, 10, 14);
+    // with the names the geocoder reads, the same names still merge
+    testMergesLinestrings(Map.of("class", "minor", "name", "Main Street", "alt_name", "Old Road", "name:fr",
+      "Rue Principale"), TransportationName.LAYER_NAME, 10, 14);
+  }
+
+  @Test
+  void testRoadNamesForGeocoderOnlyAtZ14() {
+    var features = process(lineFeature(Map.of(
+      "highway", "primary",
+      "name", "Main Street",
+      "name:en", "Main Street",
+      "name:fr", "Rue Principale",
+      "alt_name", "Old Road;Route 1",
+      "official_name", "Main Street North",
+      "old_name", "Mill Road",
+      "name:etymology:wikidata", "Q1"
+    )));
+    Map<String, Object> z14 = Map.of(
+      "_layer", "transportation_name",
+      "name", "Main Street",
+      "name:en", "Main Street",
+      "name_en", "Main Street",
+      "name:fr", "Rue Principale",
+      "alt_name", "Old Road;Route 1",
+      "official_name", "Main Street North",
+      "old_name", "<null>",
+      "name:etymology:wikidata", "<null>"
+    );
+    assertFeatures(14, List.of(Map.of("_layer", "transportation"), z14), features);
+    // lower zooms keep only what the style reads
+    assertFeatures(13, List.of(Map.of("_layer", "transportation"), Map.of(
+      "_layer", "transportation_name",
+      "name", "Main Street",
+      "name:en", "Main Street",
+      "name:fr", "<null>",
+      "alt_name", "<null>",
+      "official_name", "<null>"
+    )), features);
   }
 
   @Test
