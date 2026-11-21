@@ -57,8 +57,9 @@ move the tabs when one is tapped there.
 - **Driving's speed profile.** Height is the router's expected speed along the route,
   and the fill takes the road type's tone, so there is no separate bar. It's drawn as
   steps with rounded corners and fillets (3 px, less where a step is smaller), and no
-  turn ticks. A tolled stretch has "Toll" written on it; if the stretch is too narrow
-  for the word, the caption says "Tolls" instead. These are expected speeds, not
+  turn ticks. A tolled stretch has "Toll" written on it (from step 7 on; see "Data the
+  rows need"); if the stretch is too narrow for the word, the caption says "Tolls"
+  instead. These are expected speeds, not
   traffic, and nothing on the row should suggest they're live.
 - **Cycling and walking** draw the elevation profile along the route, with the tone bar
   under it.
@@ -220,37 +221,51 @@ What the library does today (`lib/sheet/src/`):
 - The first rest must be an anchor (`initialAnchor`), and no anchor may lie inside a
   free range.
 
-Recommended: two additions to the library, both general.
+Built (step 1), as general additions to the library:
 
-1. **A page footer.** `SheetContent.footer`: a widget the library lays out at the bottom
-   of the window, inside the page so it comes and goes with it. Its measured height
-   joins `bottomInset` for that page. The buttons go here. Section anchors and the end
-   of the scroll then clear the buttons with no other change.
-2. **A held child.** `SheetContent.held`: one widget plus the id of a slot in the
-   content. The library draws it over the content at the slot's position, kept between
-   the content's top and the footer's top. The slot in the list is an empty box of the
-   same height. The position is computed at paint time from the scroll offset and the
-   sheet's extent, so following a drag costs no build or layout.
-   - It is one widget at every height, so the graph and a scrub in progress are
-     literally continuous. The alternative, a second copy of the row shown only while
-     docked, has to swap two widgets mid-drag at exactly the same pixels.
-   - Which row is held changes only when the selection changes, which is a discrete
-     moment that already animates.
-   - It sits inside the page's `Scrollable`, so a vertical drag on it moves the sheet or
-     scrolls like any other content.
-   - **Anchor rule:** an anchor adds the held child's height to its inset when the slot
-     starts at or below the line the anchor shows down to, because the child is then
-     docked at that rest. Both of this page's anchors qualify. An anchor below the slot
-     would not, so the rule is safe for other pages.
-3. **Two small ones.** `SheetAnchor.footer()`, resting with no content showing above
-   the footer and held child (the lowest anchor). And a first rest inside a free range,
-   given as "showing down to section X", for the opening height.
+- **`SheetContent.footer`.** A widget the library keeps at the bottom of the window (or
+  of the wide-window column), inside the page so it comes and goes with it. Its height
+  joins that page's bottom inset, so section anchors and the end of the scroll clear it
+  with no other change. The buttons go here.
+- **`SheetSlot(id, child)` and `SheetContent.held`.** Every row sits in a slot, and the
+  page says which slot is held. A held slot's child is painted over the content at the
+  slot's position, kept between the content's top and the footer's top; the slot keeps
+  its place and size in the list. The child stays the slot's child, so its state and a
+  scrub in progress carry on. Following a drag or a scroll builds, lays out and paints
+  nothing.
+- **Changing which slot is held** animates (200 ms, ease out). Each hold has a strength:
+  the outgoing child's eases to nothing, so a docked row slides back to its place, and
+  the incoming child's eases to full, so a row below the buttons rises from behind
+  them. When the incoming child would come to rest where the outgoing one is painted,
+  they cross-fade in place instead.
+- **`SheetSlot.displacementOf(context)`** tells the child how far it's painted from its
+  slot, for the docked shadow.
+- **Anchor rule.** A section anchor adds the held slot's height when that slot starts at
+  or below the line the anchor shows down to, because the child is then docked at that
+  rest. Both of this page's anchors qualify. An anchor below the slot doesn't.
+- **`SheetAnchor.footer()`** rests with only the handle, the held child and the footer
+  showing: the lowest anchor.
+- **`initialSection` and `initialMaxFraction`** open the sheet inside a free range,
+  showing down to a section but no higher than a fraction of the window.
 
-This page then declares: anchors `footer()` and `section(modes)`; one free range from
-`section(modes)` to `full()`; the buttons as footer; the selected row as held child.
+This page declares: anchors `footer()` and `section(modes)`; one free range from
+`section(modes)` to `full()`; the buttons as footer; every row in a slot, the selected
+one held.
+
+What the page has to respect:
+
+- A slot must be built to be held, so rows can't sit in a lazily built list.
+- A held child whose slot is removed in the same frame just vanishes. Rows that
+  cross-fade between modes need slots that stay, or a fade of the page's own.
+- `held` going to or from nothing moves the anchors by the row's height, so a
+  placeholder row always holds the dock.
+- The held child is painted outside any clip or opacity its list ancestors apply.
+
+Not verified: screen-reader semantics for a child held at the top while its slot is
+scrolled far out of view.
 
 Naming: `SheetPlacement.docked` already means the wide-window column, so the library
-terms should be "footer" and "held", not "dock".
+says "footer", "slot" and "held", not "dock".
 
 ### When an anchor moves
 
@@ -296,8 +311,8 @@ run the same `valinor_router::Router`.
 
 | Row needs | Today | Where |
 |---|---|---|
-| Street names and lengths, for naming | In the OSRM steps (`name`, `ref`, `distance`), not yet passed to Dart | `osrm/legs.rs`; `DirectionsStep` has only instruction, distance, duration |
-| Tolls, ferry, freeway | No route-level flag in OSRM output. Each step intersection has `classes` (toll, motorway, ferry), so the flags can be OR'd from those | `osrm/intersections.rs` |
+| Street names and lengths, for naming | Built (step 2): `DirectionsStep.roadName`, and `DirectionsRoute.roadNames` named in Rust across the routes returned together | `crates/routing_flutter/src/route_details.rs` |
+| Tolls, ferry, freeway | Built (step 2): `hasToll`, `hasFerry`, `hasMotorway`, from the step intersections' `classes` | `route_details.rs` |
 | Road type, bike infrastructure, surface per edge | Not in either route format. Only `trace_attributes` has them (`road_class`, `use`, `cycle_lane`, `bicycle_network`, `surface`) | `tyr/trace_attributes.rs`; on the device, `OfflineRouter::trace_attributes` |
 | Elevation along the route | Valhalla JSON has `elevation_interval`. The OSRM output has none. `/height` isn't implemented | `tyr/valhalla.rs` |
 | Elevation in the tiles | Only in tiles built with `--gedtm`. Whether the published regions have it isn't known | `data_pipeline/README.md` |
@@ -315,9 +330,23 @@ samples, read by the app's own pass over the response. One request, and a row is
 complete when it arrives. A second `trace_attributes` request per route was the
 alternative and isn't needed.
 
-Driving's speed profile is available today: the OSRM annotation has per-segment speed
-and duration, and intersection `classes` mark motorway and toll. That gives two tones,
-freeway and everything else. The third tone needs the runs above.
+Driving's speed profile is built (step 2): `DirectionsRoute.runs`, stretches with
+duration, distance, speed and whether each is motorway, tolled or a ferry, merged to tens
+per route (23 to 34 on real routes). That gives two tones, freeway and everything else.
+The third tone needs the runs above. The runs' total time differs from the route's
+duration by up to 0.2%, so the graph sizes itself from the runs' own total.
+
+What the response gives for names, and its limits:
+
+- A freeway is `I 5 North` with no street name; a state route is `SR 99` with no
+  direction. In the United States an Interstate is written `I-5 North`. `WA-99` isn't
+  possible: the response carries the country, not the state.
+- A road with a name and a number is called by its name, as the people who drive it
+  call it. Only a road with no name, usually a freeway, goes by its number. A named
+  stretch of a numbered freeway therefore takes its name.
+- Valinor marks a whole maneuver as tolled if any part of it is, so a tolled stretch
+  would be drawn too long. The "Toll" label on the profile is therefore not drawn until
+  the per-stretch runs exist (step 7); until then the caption says "Tolls".
 
 Elevation in the published tiles: the routing release the app's releases URL points at
 (2026-11-11) records build commit `65f8974`, the commit of the planet build that was run

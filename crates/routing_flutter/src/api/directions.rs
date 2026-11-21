@@ -843,8 +843,11 @@ mod tests {
                 None,
             ]
         );
-        // A street with a number goes by the number.
-        assert_eq!(routes[2].steps[7].road_name.as_deref(), Some("SR 519"));
+        // A street with a number still goes by its name.
+        assert_eq!(
+            routes[2].steps[7].road_name.as_deref(),
+            Some("Edgar Martinez Drive South")
+        );
 
         // In the United States, the Interstate is written as it's signed.
         for route in body["routes"].as_array_mut().unwrap() {
@@ -861,7 +864,7 @@ mod tests {
         );
         assert_eq!(routes[0].steps[5].road_name.as_deref(), Some("I-5 North"));
 
-        // Andorra's main roads are numbered, under a different street name in each town.
+        // Andorra's main road goes by its number, where it has no street name.
         let routes = parse_fixture(ANDORRA_CROSS_COUNTRY);
         assert_eq!(names(&routes), [["CG-2"]]);
     }

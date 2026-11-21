@@ -36,12 +36,12 @@ impl RoadClasses {
     }
 }
 
-/// What a driver calls the road a step is on, from the step's `name` and `ref`: the route
-/// number if it has one, else the street's name, else nothing.
+/// What a driver calls the road a step is on, from the step's `name` and `ref`: the
+/// street's name if it has one, else its route number, else nothing.
 ///
-/// The route number comes first because it's what stays the same along a signed route
-/// while the street's name changes from town to town, and a motorway usually has nothing
-/// else. Each of the two can list several, `; `-separated, and the first is taken.
+/// The street's name comes first because it's what people who drive a numbered street
+/// call it, and what its signs say; a motorway usually has only a number. Each of the two
+/// can list several, `; `-separated, and the first is taken.
 ///
 /// Valhalla writes route numbers as OpenStreetMap tags them, so an Interstate is
 /// `I 5 North`, with the direction where the data has one. In the United States
@@ -54,13 +54,14 @@ pub(crate) fn road_name(name: &str, refs: Option<&str>, in_united_states: bool) 
             .find(|item| !item.is_empty())
             .map(str::to_owned)
     };
-    if let Some(number) = refs.and_then(first) {
-        return Some(match interstate_number(&number) {
-            Some(rest) if in_united_states => format!("I-{rest}"),
-            _ => number,
-        });
+    if let Some(name) = first(name) {
+        return Some(name);
     }
-    first(name)
+    let number = refs.and_then(first)?;
+    Some(match interstate_number(&number) {
+        Some(rest) if in_united_states => format!("I-{rest}"),
+        _ => number,
+    })
 }
 
 /// What follows `I ` in an Interstate's route number as OpenStreetMap tags it (`5 North`
@@ -424,13 +425,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_road_is_called_by_its_number_before_its_name() {
+    fn a_road_is_called_by_its_name_before_its_number() {
         // A motorway has only a number.
         assert_eq!(road_name("", Some("SR 99"), true).as_deref(), Some("SR 99"));
-        // A street with a number is the number, which the next town's street shares.
+        // A street with a number is still the street.
         assert_eq!(
             road_name("Avinguda de Tarragona", Some("CG-1"), false).as_deref(),
-            Some("CG-1")
+            Some("Avinguda de Tarragona")
         );
         assert_eq!(
             road_name("Rainier Avenue South", None, true).as_deref(),
@@ -438,17 +439,17 @@ mod tests {
         );
         // The first of several.
         assert_eq!(
-            road_name("Main Street; High Street", None, true).as_deref(),
+            road_name("Main Street; High Street", Some("US 2"), true).as_deref(),
             Some("Main Street")
         );
         assert_eq!(
-            road_name("Main Street", Some("US 2; SR 9"), true).as_deref(),
+            road_name("", Some("US 2; SR 9"), true).as_deref(),
             Some("US 2")
         );
-        // An empty number is no number.
+        // An empty name is no name.
         assert_eq!(
-            road_name("Main Street", Some(""), true).as_deref(),
-            Some("Main Street")
+            road_name(" ; ", Some("SR 513"), true).as_deref(),
+            Some("SR 513")
         );
         assert_eq!(road_name("", None, true), None);
         assert_eq!(road_name("", Some(" ; "), false), None);
