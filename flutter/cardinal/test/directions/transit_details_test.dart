@@ -376,12 +376,12 @@ void main() {
       matching: tile(time),
     );
 
-    /// Taps that tile, scrolled to.
+    /// Taps that tile, scrolled to, and lets the rows settle.
     Future<void> choose(WidgetTester tester, int leg, String time) async {
       await tester.ensureVisible(rideTile(leg, time));
       await tester.pumpAndSettle();
       await tester.tap(rideTile(leg, time));
-      await tester.pump();
+      await tester.pumpAndSettle();
     }
 
     bool selected(WidgetTester tester, int leg, String time) =>
@@ -454,6 +454,46 @@ void main() {
         await choose(tester, 1, '5:40 PM');
         expect(find.text('1 stop before'), findsNWidgets(4));
         expect(find.text('Stop A to Stop B, between'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a row appearing above the departures chosen in grows in, and they stay put',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(400, 800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await itinerary(tester, connectionsJourney(), header: true);
+        // A 7 that reaches Link just as it leaves: no wait for it.
+        await choose(tester, 1, '5:43 PM');
+        // The row and, inside it, what it says.
+        final wait = find.byKey(const ValueKey(('wait', 3)));
+        expect(wait, findsNothing);
+
+        final link = find.byKey(const ValueKey(('departures', 3)));
+        await tester.ensureVisible(rideTile(3, '6:03 PM'));
+        await tester.pumpAndSettle();
+        final top = tester.getTopLeft(link).dy;
+        await tester.tap(rideTile(3, '6:03 PM'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        // Growing in above, while the tiles stay under the finger.
+        final half = tester.getSize(wait.first).height;
+        expect(tester.getTopLeft(link).dy, moreOrLessEquals(top, epsilon: 0.5));
+        await tester.pumpAndSettle();
+        final full = tester.getSize(wait.first).height;
+        expect(find.text('Wait 8 min'), findsOneWidget);
+        expect(half, inExclusiveRange(0, full));
+        expect(tester.getTopLeft(link).dy, moreOrLessEquals(top, epsilon: 0.5));
+
+        // And going again as it came.
+        await tester.tap(rideTile(3, '5:55 PM'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(tester.getSize(wait.first).height, inExclusiveRange(0, full));
+        expect(tester.getTopLeft(link).dy, moreOrLessEquals(top, epsilon: 0.5));
+        await tester.pumpAndSettle();
+        expect(wait, findsNothing);
+        expect(tester.getTopLeft(link).dy, moreOrLessEquals(top, epsilon: 0.5));
       },
     );
 

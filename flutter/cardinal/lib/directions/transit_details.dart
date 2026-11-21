@@ -11,6 +11,7 @@ import 'package:material_ui/material_ui.dart';
 import '../units.dart';
 import '../transit/countdown.dart';
 import '../transit/nearby_page.dart' show CountdownNumber, countdownMinutes;
+import 'animated_rows.dart';
 import 'connections.dart';
 import 'format.dart';
 import 'transit_plan.dart';
@@ -507,14 +508,36 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
     );
   }
 
+  /// Each ride's departures row, by leg, to hold in place while the rows above it
+  /// change with a choice made in it.
+  final _anchors = <int, GlobalKey>{};
+
+  /// The departures row the rider last chose in, while the rows settle.
+  GlobalKey? _anchor;
+  Timer? _settle;
+
+  /// Holds ride [leg]'s departures where they are on screen while the rows change.
+  void _hold(int leg) {
+    _settle?.cancel();
+    setState(() => _anchor = _anchors[leg]);
+    _settle = Timer(rowDuration + const Duration(milliseconds: 100), () {
+      if (mounted) setState(() => _anchor = null);
+    });
+  }
+
+  @override
+  void dispose() {
+    _settle?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final rows = _rows(context);
     return SliverPadding(
       padding: const EdgeInsets.only(bottom: 16),
-      sliver: SliverList.builder(
-        itemCount: rows.length,
-        itemBuilder: (context, i) => rows[i],
+      sliver: AnchoredSliver(
+        anchor: _anchor,
+        child: AnimatedRows(rows: _rows(context)),
       ),
     );
   }
@@ -536,6 +559,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
 
     rows.add(
       _RailRow(
+        key: const ValueKey('start'),
         rail: _Rail(marker: _Marker.end, below: connector(legs.firstOrNull)),
         child: _EndText(
           name: widget.start,
@@ -577,6 +601,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
           if (change || wait >= 60) {
             rows.add(
               _RailRow(
+                key: ValueKey(('wait', i)),
                 rail: const _Rail.through(_Line.thin),
                 child: _WaitText(
                   change: change ? leg.boarding.stop.name : null,
@@ -590,7 +615,10 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
               context,
               i,
               choice,
-              onSelect: (departure) => widget.onSelect(index, departure),
+              onSelect: (departure) {
+                _hold(i);
+                widget.onSelect(index, departure);
+              },
               above: change || wait >= 60 ? _Line.thin : before,
               below: connector(next),
             ),
@@ -600,6 +628,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
 
     rows.add(
       _RailRow(
+        key: const ValueKey('end'),
         rail: _Rail(marker: _Marker.end, above: connector(legs.lastOrNull)),
         child: _EndText(
           name: widget.destination,
@@ -647,6 +676,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
 
     rows.add(
       _RailRow(
+        key: ValueKey(('title', index)),
         rail: _Rail(
           above: above,
           below: _Line.bar,
@@ -666,6 +696,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
     );
     rows.add(
       _RailRow(
+        key: ValueKey(('boarding', index)),
         rail: _Rail(
           above: _Line.bar,
           below: _Line.bar,
@@ -685,13 +716,17 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
     if (choice.connection != RideConnection.unknown) {
       rows.add(
         _RailRow(
+          key: ValueKey(('departuresRow', index)),
           rail: _Rail.through(_Line.bar, color: first),
-          child: DepartureRange(
-            key: ValueKey(('departures', index)),
-            choice: choice,
-            access: widget.access,
-            now: widget.now,
-            onSelect: onSelect,
+          child: KeyedSubtree(
+            key: _anchors.putIfAbsent(index, GlobalKey.new),
+            child: DepartureRange(
+              key: ValueKey(('departures', index)),
+              choice: choice,
+              access: widget.access,
+              now: widget.now,
+              onSelect: onSelect,
+            ),
           ),
         ),
       );
@@ -715,6 +750,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         );
         rows.add(
           _RailRow(
+            key: ValueKey(('stops', index, s)),
             rail: _Rail.through(_Line.bar, color: color),
             onTap: () => setState(() {
               if (!_expanded.remove(key)) _expanded.add(key);
@@ -727,9 +763,10 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
           ),
         );
         if (open) {
-          for (final visit in between) {
+          for (final (k, visit) in between.indexed) {
             rows.add(
               _RailRow(
+                key: ValueKey(('between', index, s, k, visit.stop.id)),
                 rail: _Rail(
                   above: _Line.bar,
                   below: _Line.bar,
@@ -753,6 +790,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         final nextColor = colorOf(nextSegment);
         rows.add(
           _RailRow(
+            key: ValueKey(('seat', index, s)),
             rail: _Rail(
               above: _Line.bar,
               below: _Line.bar,
@@ -772,6 +810,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
     }
     rows.add(
       _RailRow(
+        key: ValueKey(('alighting', index)),
         rail: _Rail(
           above: _Line.bar,
           below: below,
