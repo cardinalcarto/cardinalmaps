@@ -1,7 +1,7 @@
 # Directions as an alternate picker
 
 Status: design agreed 2026-11-20. Being built on `directions-picker` in the order at the
-end of this document; steps 1 to 3 are done. Mockups (invented trip and numbers):
+end of this document; steps 1 to 4 and 7 are done, with step 7's data drawn in the rows. Mockups (invented trip and numbers):
 https://claude.ai/artifact/LbDfkfMsy2JBsvkoBvJTk3
 
 ## Goal
@@ -359,61 +359,43 @@ anchors and still lowers, so the rules are the same:
 
 ## Data the rows need
 
-Surveyed 2026-11-20. The fact that shapes everything: the app never sees Valhalla's own
-JSON. Ferrostar's adapter asks for `"format": "osrm"`, so on the server and on the
-device the app parses Valinor's OSRM output (`valinor/valinor-tyr/src/tyr/osrm/`). Both
-run the same `valinor_router::Router`.
+All of it is built. The app parses Valinor's OSRM-format output (Ferrostar asks for
+`"format": "osrm"`), on the server and on the device alike, and reads what Ferrostar
+drops in a pass of its own (`crates/routing_flutter/src/route_details.rs`).
 
-| Row needs | Today | Where |
-|---|---|---|
-| Street names and lengths, for naming | Built (step 2): `DirectionsStep.roadName`, and `DirectionsRoute.roadNames` named in Rust across the routes returned together | `crates/routing_flutter/src/route_details.rs` |
-| Tolls, ferry, freeway | Built (step 2): `hasToll`, `hasFerry`, `hasMotorway`, from the step intersections' `classes` | `route_details.rs` |
-| Road type, bike infrastructure, surface per edge | Not in either route format. Only `trace_attributes` has them (`road_class`, `use`, `cycle_lane`, `bicycle_network`, `surface`) | `tyr/trace_attributes.rs`; on the device, `OfflineRouter::trace_attributes` |
-| Elevation along the route | Valhalla JSON has `elevation_interval`. The OSRM output has none. `/height` isn't implemented | `tyr/valhalla.rs` |
-| Elevation in the tiles | Only in tiles built with `--gedtm`. Whether the published regions have it isn't known | `data_pipeline/README.md` |
-| Transit position at a time | Every stop of a ride has times and coordinates, and the leg has a shape, but no index from stops into the shape. Walks have a shape and a duration; Dart doesn't parse the duration yet | `valinor-transit-plan/src/response/mod.rs`, `transit_plan.dart` |
+| Row needs | Where it comes from |
+|---|---|
+| Road names, and the route's name | Each step's `name` and `ref`; named in Rust across the routes returned together |
+| Tolls, ferry, freeway | The step intersections' `classes`, or the runs below when present |
+| Speed profile | Valinor's runs when present; otherwise the OSRM annotation joined to intersection classes |
+| Road type, bike and foot infrastructure, the true tolled stretch | Valinor's `valinor_details.runs`, per edge |
+| Elevation, climb and descent | Valinor's `valinor_details.elevation`, sampled every 30 m for cycling and walking |
+| Each step's maneuver, for the Steps arrows | The OSRM step's `maneuver` |
+| Transit position at a time | Each ride's stops with times and coordinates, snapped onto the leg's shape |
 
-Where to add it: `DirectionsAdapter::parse` in `crates/routing_flutter` already makes
-its own pass over the raw response beside Ferrostar's, for speed-limit signs. Names and
-flags can be read there with no change to Valinor.
-
-Decided: road types and elevation come on the route itself. Valinor's response schema
-may change as needed, provided Ferrostar still parses it. In practice that means added
-fields on the OSRM route that Ferrostar ignores, the way `speedLimitSign` already
-works: a per-route list of runs (duration, road type, bike infrastructure) and elevation
-samples, read by the app's own pass over the response. One request, and a row is
-complete when it arrives. A second `trace_attributes` request per route was the
-alternative and isn't needed.
-
-Driving's speed profile is built (step 2): `DirectionsRoute.runs`, stretches with
-duration, distance, speed and whether each is motorway, tolled or a ferry, merged to tens
-per route (23 to 34 on real routes). That gives two tones, freeway and everything else.
-The third tone needs the runs above. The runs' total time differs from the route's
-duration by up to 0.2%, so the graph sizes itself from the runs' own total.
+Valinor's part is an extension asked for by `valinor_leg_details: true` (schema in
+`valinor/docs/osrm-leg-details.md`). Without the option the response is unchanged, and
+Ferrostar parses it either way. A router that doesn't send it still works: the app reads
+routes from the annotation and classes, with two tones, no elevation and no "Toll" label
+on the profile.
 
 What the response gives for names, and its limits:
 
 - A freeway is `I 5 North` with no street name; a state route is `SR 99` with no
   direction. In the United States an Interstate is written `I-5 North`. `WA-99` isn't
   possible: the response carries the country, not the state.
-- A road with a name and a number is called by its name, as the people who drive it
-  call it. Only a road with no name, usually a freeway, goes by its number. A named
-  stretch of a numbered freeway therefore takes its name.
-- Valinor marks a whole maneuver as tolled if any part of it is, so a tolled stretch
-  would be drawn too long. The "Toll" label on the profile is therefore not drawn until
-  the per-stretch runs exist (step 7); until then the caption says "Tolls".
+- A road with a name and a number is called by its name. Only a road with no name,
+  usually a freeway, goes by its number.
+- Valinor's standard output marks a whole maneuver as tolled if any part of it is, as
+  Valhalla does. The runs carry the true stretch, and "Toll" is written on the profile
+  only from those.
+- Sidewalks mapped as their own ways arrive as footways, the same as park paths, so a
+  walk's share of "path" can't be trusted. Captions make no share-based claim for
+  walking.
 
-Elevation in the published tiles: the routing release the app's releases URL points at
-(2026-11-11) records build commit `65f8974`, the commit of the planet build that was run
-with GEDTM elevation and checked against the DEM. So the published tiles should have
-elevation. This is inferred from the matching commit; no published tile was inspected.
-
-Rows must still work without elevation: when a tile has none, the band is left empty and
-the caption omits climb.
-
-For transit scrubbing, the app snaps each stop onto the leg's shape once, then places
-the marker by time between consecutive stops. Walks interpolate along their shape by
-time.
+Not yet checked against real planet tiles: the routing tiles are no longer on the build
+machine, so this was tested on Valhalla's captured Seattle trips and on Andorra test
+tiles with elevation.
 
 ## iOS
 
@@ -443,16 +425,18 @@ Not designed yet: transit and cycling rows on iOS, and right-to-left layout.
    freeway, speed runs. Done.
 3. The picker for street modes: trip card, tabs with parallel planning, rows, selection
    and docking, large text. Done. Transit keeps its old list under the new header.
-4. Steps restyled, and Trip details as a pushed page.
+4. Steps restyled, and Trip details as a pushed page. Done.
 5. Transit rows in the new shape: tap selects, a docked row, a Trip details button.
 6. Scrubbing and the map marker.
 7. Valinor's added route fields: road-type runs and elevation, for the cycling and
-   walking bands, driving's third tone and the "Toll" label.
+   walking bands, driving's third tone and the "Toll" label. Done, and drawn in the
+   rows, with the legend and the arrows on Steps.
 
 Until step 5, switching between a street mode and transit at the header height moves
 the sheet by a row and the buttons, since transit has neither yet.
 
 ## Still open
 
-1. **The third driving tone** waits on the route runs from Valinor; until then the
-   profile has two.
+1. The new fields haven't been checked against real planet tiles (see "Data the rows
+   need").
+2. iOS has never been run with any of this.
