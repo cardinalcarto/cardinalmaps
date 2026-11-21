@@ -189,6 +189,26 @@ the nearer one, so the trip card is never left half covered.
 It opens in the free range showing the header and the first three rows, or all of them
 if there are fewer, capped at about 60% of the window.
 
+### Flings
+
+The header anchor is a waypoint between "only the docked row" and the list, not a guard:
+
+- A fling stops there only if it's slower than 2400 px/s by the time it arrives
+  (`DirectionsPage.headerGravity`, tuned by feel on the phone). A harder one carries on
+  in the same motion: down to the lowest anchor, or up into the free range, where it
+  rests wherever its momentum runs out.
+- The old directions page stopped every fling at its summary anchor, and the first build
+  of this page inherited that, which made every trip between the lowest height and the
+  list two swipes.
+- The lowest anchor holds at the sheet library's default.
+
+The sheet library can report what it did with each release: a build made with
+`--dart-define=CARDINAL_SHEET_LOG=true` writes one `SHEET release …` line to the log per
+release, with the speed it received, the finger's own speed, the anchors and their
+gravities, the rule that decided, and where the sheet went (`adb logcat -s flutter`).
+Real swipes on the dev phone were mostly 1000 to 2500 px/s at release and lost a third
+or more of that before reaching an anchor.
+
 ### Docking
 
 One rule: **the selected row is never below the top of the buttons.** (Except where
