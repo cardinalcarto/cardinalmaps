@@ -136,6 +136,22 @@ abstract class TransitSource {
     required TransitAccess access,
     Future<void>? abort,
   });
+
+  /// The departures of every route between the two stops [query] names, around its
+  /// time, in order of departure: what a plan getting to and from stops by [access]
+  /// lists on a ride between them, for a ride no plan has any more. Each says its own
+  /// route, headsign and service day, and none is [RideDeparture.suggested]. Two stops
+  /// nothing runs between are an empty list.
+  ///
+  /// Throws as [plan] does: a stop that isn't there is a [TransitPlanError] of kind
+  /// `unknown_stop` (or `unknown_feed`), and a time no timetable covers
+  /// `date_not_covered`. Throws [TransitDeparturesUnsupported] if the source can't be
+  /// asked this at all, so the asker can make do with what it has.
+  Future<List<RideDeparture>> departures({
+    required DeparturesQuery query,
+    required TransitAccess access,
+    Future<void>? abort,
+  });
 }
 
 /// One of a ride's departures, by what the plan gave of the ride and of it: the feed
@@ -160,6 +176,49 @@ Map<String, Object?> rideRequest(RideQuery query, TransitAccess access) => {
   'departure': query.departure.millisecondsSinceEpoch ~/ 1000,
   'mode': access.mode,
 };
+
+/// The departures between a ride's two stops, by what the plan gave of the ride: the
+/// feed of its stops, and its boarding and alighting stops.
+///
+/// Up to [before] of them leave the boarding stop before [around] and up to [after] at
+/// [around] or later (the router's two and six when null, at most ten each, and not
+/// both zero), none more than an hour before it or two hours after. One that leaves
+/// before the rider can be at the stop, at [ready], is [RideDeparture.missed]; none is
+/// when that's null.
+typedef DeparturesQuery = ({
+  String feed,
+  String boardStopId,
+  String alightStopId,
+  DateTime around,
+  int? before,
+  int? after,
+  DateTime? ready,
+});
+
+/// The router's request for [query], getting to and from stops by [access].
+Map<String, Object?> departuresRequest(
+  DeparturesQuery query,
+  TransitAccess access,
+) => {
+  'feed': query.feed,
+  'board_stop_id': query.boardStopId,
+  'alight_stop_id': query.alightStopId,
+  'around': query.around.millisecondsSinceEpoch ~/ 1000,
+  'departures_before': ?query.before,
+  'departures_after': ?query.after,
+  if (query.ready case final ready?)
+    'ready': ready.millisecondsSinceEpoch ~/ 1000,
+  'mode': access.mode,
+};
+
+/// The transit router can't list the departures between two stops: it's older than
+/// the question (`POST /transit/departures`).
+class TransitDeparturesUnsupported implements Exception {
+  const TransitDeparturesUnsupported();
+
+  @override
+  String toString() => 'TransitDeparturesUnsupported';
+}
 
 /// Why a transit plan, or another question to the transit router, failed.
 class TransitPlanError implements Exception {
@@ -442,6 +501,43 @@ class OfflineTransitSource implements TransitSource {
     );
     return TransitLeg.decodeRide(transitAnswer(response));
   }
+
+  @override
+  Future<List<RideDeparture>> departures({
+    required DeparturesQuery query,
+    required TransitAccess access,
+    Future<void>? abort,
+  }) async {
+    final cancel = TransitCancel();
+    unawaited(abort?.then((_) => cancel.cancel()));
+    return abortable(_departures(query, access, cancel), abort);
+  }
+
+  Future<List<RideDeparture>> _departures(
+    DeparturesQuery query,
+    TransitAccess access,
+    TransitCancel cancel,
+  ) async {
+    final area = await needOfflineArea(_area);
+    await area.transit;
+    // What has arrived since the last question, without waiting for more, as for a
+    // ride: plans are what fetch.
+    final feeds = _realtime(area).arrived().feeds;
+    final request = utf8.encode(jsonEncode(departuresRequest(query, access)));
+    final watch = Stopwatch()..start();
+    final response = await area.useTransit(
+      (transit) =>
+          transit.departures(request: request, feeds: feeds, cancel: cancel),
+    );
+    debugPrint(
+      'cardinal-timing: transit departures ${access.mode} '
+      '${watch.elapsedMilliseconds} ms (${response.status}, '
+      '${feeds.length} new real-time messages)',
+    );
+    return RideDeparture.decodeLookup(
+      departuresAnswer(response.status, response.body),
+    );
+  }
 }
 
 /// The body of the transit router's [response]: throws [http.RequestAbortedException]
@@ -457,6 +553,31 @@ List<int> transitAnswer(TransitResponse response) {
     );
   }
   return response.body;
+}
+
+/// The [body] of the transit router's answer to a departures lookup, which came with
+/// [status], from the device or a server: throws as [transitAnswer] does, and
+/// [TransitDeparturesUnsupported] if the router doesn't know the question.
+///
+/// A router that knows it says why it can't answer (`{"error": …, "kind": …}`), also
+/// when what's missing is a feed, a stop or a date, which are 404s too. A 404 that
+/// doesn't is the path's own: nothing answers there.
+List<int> departuresAnswer(int status, List<int> body) {
+  if (status == 499) throw http.RequestAbortedException();
+  if (status == 200) return body;
+  Object? error;
+  try {
+    error = jsonDecode(utf8.decode(body));
+  } on FormatException {
+    // Not the router's words: a 404 page, or nothing.
+  }
+  final kind = error is Map<String, Object?> ? error['kind'] : null;
+  if (kind is! String) {
+    if (status == 404) throw const TransitDeparturesUnsupported();
+    throw TransitPlanError('failed', 'status $status');
+  }
+  final message = (error as Map<String, Object?>)['error'];
+  throw TransitPlanError(kind, message is String ? message : 'status $status');
 }
 
 /// Provides what directions need to the widgets below it.

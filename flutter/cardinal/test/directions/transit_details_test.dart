@@ -22,9 +22,18 @@ class _Chained extends StatefulWidget {
     required this.build,
     this.legs,
     this.plan,
+    this.now,
+    this.newer,
   });
 
   final Journey journey;
+
+  /// A newer plan's journeys, none of them [journey], whose departures the chain
+  /// takes up ([ConnectionChain.refresh]) when they're given or change.
+  final List<Journey>? newer;
+
+  /// The time the first ride's departures are made as, if they're made by the clock.
+  final DateTime? now;
   final DepartureLegs? legs;
   final TransitPlan? plan;
   final Widget Function(
@@ -39,13 +48,25 @@ class _Chained extends StatefulWidget {
 }
 
 class _ChainedState extends State<_Chained> {
-  late var _chain = ConnectionChain(widget.journey);
+  late var _chain = ConnectionChain(widget.journey, now: widget.now);
 
   @override
   void initState() {
     super.initState();
     widget.legs?.addListener(_arrived);
     _follow();
+  }
+
+  @override
+  void didUpdateWidget(_Chained oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The clock moved on: the choices as it has them.
+    final now = widget.now;
+    if (now != null && now != oldWidget.now) _chain = _chain.at(now);
+    final newer = widget.newer;
+    if (newer != null && !identical(newer, oldWidget.newer)) {
+      _chain = _chain.refresh(newer);
+    }
   }
 
   void _arrived() => setState(() {});
@@ -339,6 +360,8 @@ void main() {
       bool header = false,
       DepartureLegs? legs,
       TransitPlan? plan,
+      DateTime? now,
+      List<Journey>? newer,
     }) => tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -346,6 +369,8 @@ void main() {
             journey: journey,
             legs: legs,
             plan: plan,
+            now: now,
+            newer: newer,
             build: (chain, select, fetched) => CustomScrollView(
               slivers: [
                 if (header)
@@ -459,6 +484,269 @@ void main() {
       expect(find.text(', wait 1 min'), findsOneWidget);
     });
 
+    group('a wait row with nothing to wait for', () {
+      /// The wait rows, by the index of the ride's leg.
+      Finder waitRow(int leg) => find.byKey(ValueKey(('wait', leg))).last;
+
+      /// The row of the departures of the ride that's leg [leg].
+      Finder departuresRow(int leg) =>
+          find.byKey(ValueKey(('departures', leg))).last;
+
+      /// Every text in [row] that says nothing is kept from screen readers.
+      void saysNothingAloud(Finder row) {
+        final empty = find.descendant(
+          of: row,
+          matching: find.byWidgetPredicate((w) => w is Text && w.data == ''),
+        );
+        for (final text in empty.evaluate()) {
+          expect(
+            find.ancestor(
+              of: find.byWidget(text.widget),
+              matching: find.byWidgetPredicate(
+                (w) => w is ExcludeSemantics && w.excluding,
+              ),
+            ),
+            findsWidgets,
+          );
+        }
+      }
+
+      for (final scale in [1.0, 2.5]) {
+        testWidgets('at ${scale}x, goes blank as the first ride\'s departures '
+            'go, cross-fading, the same height, and never comes or goes', (
+          tester,
+        ) async {
+          tester.platformDispatcher.textScaleFactorTestValue = scale;
+          addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+          await tester.binding.setSurfaceSize(const Size(400, 4000));
+          addTearDown(() => tester.binding.setSurfaceSize(null));
+          await itinerary(tester, journey, now: at(0));
+          expect(find.text('Wait 5 min'), findsOneWidget);
+          expect(find.text('Wait 1 min'), findsOneWidget);
+          final rows = {
+            for (final leg in [1, 3]) leg: tester.getRect(waitRow(leg)),
+          };
+          final tiles = tester.getRect(departuresRow(1));
+          final stops = {
+            for (final key in [('boarding', 1), ('alighting', 1)])
+              key: tester.getSize(find.byKey(ValueKey(key)).last),
+          };
+
+          // A departure missed by the clock: the rows stay as they are.
+          await itinerary(tester, journey, now: at(301));
+          await tester.pumpAndSettle();
+          expect(waitRow(1), findsOneWidget);
+          expect(waitRow(3), findsOneWidget);
+
+          // Every departure gone: the first ride has no connection, and Link's is
+          // unknown. Each row fades to nothing, where it was.
+          await itinerary(tester, journey, now: at(1741));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 80));
+          final fading = tester
+              .widgetList<FadeTransition>(
+                find.ancestor(
+                  of: find.text('Wait 5 min'),
+                  matching: find.byType(FadeTransition),
+                ),
+              )
+              .fold(1.0, (shown, fade) => shown * fade.opacity.value);
+          expect(fading, inExclusiveRange(0, 1));
+          await tester.pumpAndSettle();
+          for (final leg in [1, 3]) {
+            // Where the rows below the first ride's tiles are moves with what's
+            // said under them, but none is shorter or taller.
+            expect(
+              tester.getSize(waitRow(leg)),
+              rows[leg]!.size,
+              reason: 'leg $leg',
+            );
+            saysNothingAloud(waitRow(leg));
+          }
+          expect(tester.getRect(waitRow(1)), rows[1]);
+          // The first ride's stops, with no times, are as tall as with them, so its
+          // tiles are where they were.
+          for (final key in stops.keys) {
+            expect(
+              tester.getSize(find.byKey(ValueKey(key)).last),
+              stops[key],
+              reason: '$key',
+            );
+          }
+          expect(tester.getRect(departuresRow(1)).topLeft, tiles.topLeft);
+          expect(find.textContaining(RegExp(r'^Wait ')), findsNothing);
+          expect(find.text('No wait'), findsNothing);
+          expect(find.byIcon(Icons.hourglass_empty), findsNothing);
+          expect(tester.takeException(), isNull);
+        });
+      }
+
+      testWidgets('a change still says where, but not the wait', (
+        tester,
+      ) async {
+        await tester.binding.setSurfaceSize(const Size(400, 2400));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final json = fakePlanJson();
+        final legs =
+            ((json['journeys']! as List).single as Map)['legs']! as List;
+        legs.removeAt(2);
+        final linkStops = (legs[2] as Map)['stops']! as List;
+        (linkStops.first as Map)['name'] = 'Westlake Station';
+        final changing = TransitPlan.fromJson(json).journeys.single;
+        await itinerary(tester, changing, now: at(0));
+        final row = tester.getRect(waitRow(2));
+        expect(find.text(', wait 1 min'), findsOneWidget);
+        await itinerary(tester, changing, now: at(1741));
+        await tester.pumpAndSettle();
+        expect(find.text('Change at Westlake Station'), findsOneWidget);
+        expect(find.byIcon(Icons.sync_alt), findsOneWidget);
+        expect(find.text(', wait 1 min'), findsNothing);
+        expect(tester.getSize(waitRow(2)), row.size);
+        saysNothingAloud(waitRow(2));
+      });
+
+      for (final scale in [1.0, 2.5]) {
+        testWidgets(
+          'at ${scale}x, a ride whose departures can\'t be made keeps '
+          'its row, blank, and the rides after theirs, its tiles where they '
+          'were',
+          (tester) async {
+            tester.platformDispatcher.textScaleFactorTestValue = scale;
+            addTearDown(
+              tester.platformDispatcher.clearTextScaleFactorTestValue,
+            );
+            await tester.binding.setSurfaceSize(const Size(400, 8000));
+            addTearDown(() => tester.binding.setSurfaceSize(null));
+            // The 31 at 18:00 reaches Stop B too late for any of Link's.
+            await itinerary(tester, connectionsJourney());
+            final rows = {
+              for (final leg in [1, 3, 5, 7]) leg: tester.getRect(waitRow(leg)),
+            };
+            final boarding = tester.getSize(
+              find.byKey(const ValueKey(('boarding', 3))).last,
+            );
+            final tilesBelowWait =
+                tester.getRect(departuresRow(3)).top -
+                tester.getRect(waitRow(3)).top;
+            expect(find.text('No wait'), findsNothing);
+            final later = find.descendant(
+              of: find.byKey(const ValueKey(('departures', 1))),
+              matching: tile('6:00 PM'),
+            );
+            await tester.ensureVisible(later);
+            await tester.pumpAndSettle();
+            await tester.tap(later);
+            await tester.pumpAndSettle();
+            expect(find.byType(NoConnection), findsOneWidget);
+            // Link's boarding stop, with no time, is as tall as with one, and its tiles
+            // stay where they were, under rows that didn't change height.
+            expect(
+              tester.getSize(find.byKey(const ValueKey(('boarding', 3))).last),
+              boarding,
+            );
+            expect(
+              tester.getRect(departuresRow(3)).top -
+                  tester.getRect(waitRow(3)).top,
+              tilesBelowWait,
+            );
+            for (final leg in [1, 3, 5, 7]) {
+              expect(waitRow(leg), findsOneWidget, reason: 'leg $leg');
+              expect(
+                tester.getSize(waitRow(leg)),
+                rows[leg]!.size,
+                reason: 'leg $leg',
+              );
+            }
+            // The 2's row: nothing to say.
+            expect(
+              find.descendant(of: waitRow(7), matching: find.byType(Icon)),
+              findsNothing,
+            );
+          },
+        );
+      }
+    });
+
+    group('at large text, a ride\'s title', () {
+      const long =
+          'Rainier Beach by way of Martin Luther King Jr Way South and '
+          'Henderson Street';
+
+      /// [connectionsPlanJson]'s journey, its 7 at 17:51 headed for [long] if
+      /// [longer].
+      Journey journeyWith({required bool longer}) {
+        final json = connectionsPlanJson();
+        final legs =
+            ((json['journeys']! as List).single as Map)['legs'] as List;
+        for (final d
+            in ((legs[1] as Map)['departures'] as List)
+                .cast<Map<String, Object?>>()) {
+          if (longer && d['trip_id'] == '7-2') d['headsign'] = long;
+        }
+        return TransitPlan.fromJson(json).journeys.single;
+      }
+
+      Future<void> large(WidgetTester tester) async {
+        tester.platformDispatcher.textScaleFactorTestValue = 2.5;
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        await tester.binding.setSurfaceSize(const Size(400, 8000));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+      }
+
+      Rect title(WidgetTester tester) =>
+          tester.getRect(find.byKey(const ValueKey(('title', 1))).last);
+      Rect tiles(WidgetTester tester) =>
+          tester.getRect(find.byKey(const ValueKey(('departures', 1))).last);
+
+      testWidgets('keeps the room of a headsign a newer list drops', (
+        tester,
+      ) async {
+        await large(tester);
+        final journey = journeyWith(longer: true);
+        await itinerary(tester, journey);
+        final (height, top) = (title(tester).height, tiles(tester).top);
+        await itinerary(tester, journey, newer: [journeyWith(longer: false)]);
+        await tester.pumpAndSettle();
+        // The list has it no longer, but its room is kept.
+        expect(
+          tester
+              .widget<ConnectionTile>(find.byType(ConnectionTile).at(4))
+              .departure
+              .headsign,
+          isNot(long),
+        );
+        expect(title(tester).height, height);
+        expect(tiles(tester).top, top);
+      });
+
+      testWidgets('makes room for a longer one a newer list brings, as it\'s '
+          'shown, so choosing it moves nothing', (tester) async {
+        await large(tester);
+        final journey = journeyWith(longer: false);
+        await itinerary(tester, journey);
+        final height = title(tester).height;
+        await itinerary(tester, journey, newer: [journeyWith(longer: true)]);
+        await tester.pumpAndSettle();
+        expect(title(tester).height, greaterThan(height));
+        final top = tiles(tester).top;
+        final grown = title(tester).height;
+        final seven = find.descendant(
+          of: find.byKey(const ValueKey(('departures', 1))),
+          matching: tile('5:51 PM'),
+        );
+        await tester.ensureVisible(seven);
+        await tester.pumpAndSettle();
+        final at = tester.getTopLeft(seven);
+        await tester.tap(seven);
+        await tester.pumpAndSettle();
+        expect(find.text(long), findsOneWidget);
+        expect(title(tester).height, grown);
+        // The tiles may scroll sideways to center it, but nothing moves them down.
+        expect(tester.getTopLeft(seven).dy, at.dy);
+        expect(tiles(tester).top, top);
+      });
+    });
+
     testWidgets('a wheelchair rider\'s street legs are named for it', (
       tester,
     ) async {
@@ -476,6 +764,102 @@ void main() {
       );
       expect(find.textContaining('Wheelchair 5 min'), findsOneWidget);
       expect(find.textContaining('Go '), findsNothing);
+    });
+
+    group('every departure of the first ride gone', () {
+      Future<void> gone(
+        WidgetTester tester,
+        Journey journey,
+        int seconds,
+      ) async {
+        await tester.binding.setSurfaceSize(const Size(400, 2400));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await itinerary(tester, journey, header: true, now: at(seconds));
+      }
+
+      void saysNoTimes(WidgetTester tester) {
+        expect(find.textContaining('Go in'), findsNothing);
+        expect(find.textContaining('Go now'), findsNothing);
+        // But for the room kept for the widest times, at 10:00.
+        expect(
+          find.textContaining(RegExp(r'^(Leave|Arrive) (?!10:00)')),
+          findsNothing,
+        );
+        expect(find.text('No connection'), findsNothing);
+        // The first ride's tiles are each missed, or don't run.
+        final tiles = tester.widgetList<ConnectionTile>(
+          find.descendant(
+            of: find.byKey(const ValueKey(('departures', 1))),
+            matching: find.byType(ConnectionTile),
+          ),
+        );
+        expect(tiles, isNotEmpty);
+        expect(tiles.map((t) => t.catchable), everyElement(isFalse));
+        expect(tiles.map((t) => t.selected), everyElement(isFalse));
+        // The rides after have no departures, and no times.
+        expect(find.byKey(const ValueKey(('departuresRow', 3))), findsNothing);
+        expect(tester.takeException(), isNull);
+      }
+
+      testWidgets('after the day\'s last, says there are no more today', (
+        tester,
+      ) async {
+        await gone(tester, journey, 1741);
+        expect(find.text('No departures left'), findsOneWidget);
+        expect(
+          find.textContaining('Last left 6:04 PM · ', findRichText: true),
+          findsOneWidget,
+        );
+        expect(find.text('No more departures today'), findsOneWidget);
+        expect(
+          find.text(
+            'The last one between these stops left at 6:04 PM. Go back to '
+            'see other trips.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Missed'), findsNWidgets(5));
+        expect(find.text('Canceled'), findsOneWidget);
+        saysNoTimes(tester);
+      });
+
+      testWidgets('with no more listed, says none are left', (tester) async {
+        final json = fakePlanJson();
+        final legs =
+            ((json['journeys']! as List).single as Map)['legs']! as List;
+        // The last listed isn't the day's last.
+        (((legs[1] as Map)['departures']! as List).last as Map).remove(
+          'last_of_day',
+        );
+        await gone(tester, TransitPlan.fromJson(json).journeys.single, 1741);
+        expect(find.text('No departures left'), findsNWidgets(2));
+        expect(
+          find.textContaining('Last left 6:04 PM · ', findRichText: true),
+          findsOneWidget,
+        );
+        expect(
+          find.text(
+            "You can't make any of these departures. Go back to see other "
+            'trips.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('No more departures today'), findsNothing);
+        saysNoTimes(tester);
+      });
+
+      testWidgets('until then, a departure the clock passes is missed', (
+        tester,
+      ) async {
+        await gone(tester, journey, 301);
+        expect(
+          tester.widget<ConnectionTile>(tile('5:40 PM')).catchable,
+          isFalse,
+        );
+        expect(tester.widget<ConnectionTile>(tile('5:52 PM')).selected, isTrue);
+        expect(find.text('No departures left'), findsNothing);
+        expect(find.text('Leave 5:42 PM'), findsOneWidget);
+      });
     });
 
     /// The tile at [time] among the departures of the ride that's leg [leg].
@@ -626,13 +1010,13 @@ void main() {
       /// above it move or change height as its stops grow in below.
       Future<void> arrives(String trip, int leg) async {
         final row = find.byKey(ValueKey(('departures', leg)));
-        Rect title() =>
+        Rect title(tester) =>
             tester.getRect(find.byKey(ValueKey(('title', leg))).first);
         Rect boarding() =>
             tester.getRect(find.byKey(ValueKey(('boarding', leg))).first);
         await tester.ensureVisible(row);
         await tester.pumpAndSettle();
-        final at = (tester.getTopLeft(row), title(), boarding());
+        final at = (tester.getTopLeft(row), title(tester), boarding());
         final question = transit.rides.singleWhere(
           (q) => q.query.tripId == trip && !q.aborted,
         );
@@ -648,11 +1032,11 @@ void main() {
           ),
         );
         await tester.pump();
-        expect((tester.getTopLeft(row), title(), boarding()), at);
+        expect((tester.getTopLeft(row), title(tester), boarding()), at);
         await tester.pump(const Duration(milliseconds: 120));
-        expect((tester.getTopLeft(row), title(), boarding()), at);
+        expect((tester.getTopLeft(row), title(tester), boarding()), at);
         await tester.pumpAndSettle();
-        expect((tester.getTopLeft(row), title(), boarding()), at);
+        expect((tester.getTopLeft(row), title(tester), boarding()), at);
         expect(
           find.descendant(
             of: find.byKey(ValueKey(('stops', leg, 0))).first,

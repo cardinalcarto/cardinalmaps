@@ -581,7 +581,17 @@ class _JourneySlotState extends State<_JourneySlot>
   @override
   void didUpdateWidget(_JourneySlot oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.leaving && !oldWidget.leaving) _present.reverse();
+    if (!widget.leaving || oldWidget.leaving) return;
+    if (_present.value > 0) {
+      _present.reverse();
+      return;
+    }
+    // It never grew in (a page over this one stops its animations), so there's
+    // nothing to shrink, and reversing would say it's gone at once, while the rows
+    // are being built: it goes after this frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.leaving) widget.onGone();
+    });
   }
 
   @override

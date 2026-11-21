@@ -29,11 +29,15 @@ const _figures = [FontFeature.tabularFigures()];
 /// leaves and arrives, how many transfers it has and how long it's on the streets; its
 /// timeline; and a divider, but on iOS.
 ///
+/// With every departure of the first ride gone ([ConnectionChain.gone]), it says so in
+/// place of when to go, with no duration, and when the last of them left in place of
+/// its times.
+///
 /// It's as tall whatever the choices, so nothing below it moves when one is made: when
 /// to go and how long it takes have a line each, and shrink to fit it rather than wrap;
-/// the line of times keeps the room the widest times, or no connection, would take, and
-/// wraps as it needs. At the roomier text sizes (see [isRoomyText]) when to go and how
-/// long it takes are stacked.
+/// the line of times keeps the room the widest times, or no connection, or when the
+/// last left, would take, and wraps as it needs. At the roomier text sizes (see
+/// [isRoomyText]) when to go and how long it takes are stacked.
 class JourneyHeader extends StatelessWidget {
   const JourneyHeader({
     super.key,
@@ -57,6 +61,12 @@ class JourneyHeader extends StatelessWidget {
     final offset = journeyUtcOffset(journey);
     final arrival = chain.arrival;
     final duration = chain.duration;
+    final gone = chain.gone;
+    final first = chain.rides.firstOrNull;
+    // When the last of the first ride's departures left.
+    final lastLeft = gone
+        ? first!.lastRunning?.departure ?? first.ride.departure
+        : null;
     final title = text.titleLarge?.copyWith(fontWeight: FontWeight.w700);
     final muted = text.bodyMedium?.copyWith(
       color: scheme.onSurfaceVariant,
@@ -85,14 +95,21 @@ class JourneyHeader extends StatelessWidget {
     // Cross-fades when the time to leave changes with a choice, not as it counts
     // down.
     final goIn = FadeSwap(
-      value: chain.departure,
-      child: GoIn(
-        journey: journey,
-        now: now,
-        leave: chain.departure,
-        live: chain.rides.firstOrNull?.realtime,
-        style: title,
-      ),
+      value: gone ? null : chain.departure,
+      child: gone
+          ? Text(
+              'No departures left',
+              style: title?.copyWith(color: scheme.error),
+              maxLines: 1,
+              softWrap: false,
+            )
+          : GoIn(
+              journey: journey,
+              now: now,
+              leave: chain.departure,
+              live: first?.realtime,
+              style: title,
+            ),
     );
     final facts = [
       switch (journey.transfers) {
@@ -120,13 +137,14 @@ class JourneyHeader extends StatelessWidget {
       TimeOfDay(hour: hour, minute: 0),
       alwaysUse24HourFormat: h24,
     );
-    // The room the widest times take, or no connection, so a choice never changes
-    // how many lines this takes.
+    // The room the widest times take, or no connection, or when the last left, so a
+    // choice, or the clock, never changes how many lines this takes.
     final reserved = [
       for (final from in const [10, 22]) ...[
         for (final to in const [10, 22])
           (text: '${widest(from)} – ${widest(to)}', connects: true),
         (text: '${widest(from)} – no connection', connects: false),
+        (text: 'Last left ${widest(from)}', connects: false),
       ],
     ];
     final times = Stack(
@@ -145,15 +163,16 @@ class JourneyHeader extends StatelessWidget {
             ),
           ),
         FadeSwap(
-          value: (chain.departure, arrival),
+          value: (chain.departure, arrival, lastLeft),
           alignment: AlignmentDirectional.topStart,
           child: Text.rich(
-            line(
-              arrival == null
-                  ? '$leaves – no connection'
-                  : '$leaves – ${clock(context, arrival, utcOffset: offset)}',
-              connects: arrival != null,
-            ),
+            line(switch ((lastLeft, arrival)) {
+              (final last?, _) =>
+                'Last left ${clock(context, last, utcOffset: offset)}',
+              (null, null) => '$leaves – no connection',
+              (null, final arrival?) =>
+                '$leaves – ${clock(context, arrival, utcOffset: offset)}',
+            }, connects: arrival != null),
             style: muted,
           ),
         ),
@@ -186,9 +205,10 @@ class JourneyHeader extends StatelessWidget {
         children: [
           // One line, whatever the choices, so nothing below it moves: when to go
           // and how long it takes each shrink to fit their share rather than wrap.
+          // Both are lines of one size, so they sit on one baseline at full size;
+          // they aren't aligned by it, as one shrunk to fit ("No departures left")
+          // has its baseline higher, and would push the row taller.
           Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
             children: [
               Expanded(
                 flex: 3,
@@ -761,19 +781,48 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
   /// changes, while the leg taken has that trip.
   final _expanded = <(int, int)>{};
 
+  /// Whether each ride, by its index in the journey's legs, has a row for its wait
+  /// before it, as first decided: a newer list of its departures, or a newer plan of
+  /// the journey, could decide otherwise, and the row would come or go above them.
+  final _waits = <int, bool>{};
+
+  /// The room each ride's title keeps, by its index in the journey's legs, for the
+  /// opening: see [_TitleRoom].
+  final _titles = <int, _TitleRoom>{};
+
   /// The leg of the departure ride [ride] (by its index in [ConnectionChain.rides])
   /// takes, when its stops are known.
   TransitLeg? _taken(int ride) =>
       widget.chain.rides[ride].legTaken(widget.fetched.elementAtOrNull(ride));
 
+  /// Whether [a] and [b] are laid out alike: the same legs, each ride between the
+  /// same two stops, as a newer plan of a journey has them, or another journey on
+  /// other trips of the same rides.
+  static bool _alike(Journey a, Journey b) {
+    if (a.legs.length != b.legs.length) return false;
+    for (final (i, leg) in a.legs.indexed) {
+      final other = b.legs[i];
+      if (leg.runtimeType != other.runtimeType) return false;
+      if (leg is TransitLeg &&
+          other is TransitLeg &&
+          (leg.boarding.stop.id != other.boarding.stop.id ||
+              leg.alighting.stop.id != other.alighting.stop.id)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   @override
   void didUpdateWidget(JourneyItinerary oldWidget) {
     super.didUpdateWidget(oldWidget);
     final chain = widget.chain;
-    // A newer plan of the same journey keeps what's open of it.
-    if (JourneyIdentity.of(oldWidget.chain.journey) !=
-        JourneyIdentity.of(chain.journey)) {
+    // A newer plan of the same journey, or a journey on other trips between the same
+    // stops, keeps what's open of it, and its rows.
+    if (!_alike(oldWidget.chain.journey, chain.journey)) {
       _expanded.clear();
+      _waits.clear();
+      _titles.clear();
     }
     // A trip the leg taken doesn't have closes. While the leg isn't known, the ride's
     // stay as they are, to show as they were once it is.
@@ -825,7 +874,10 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         ),
         child: _EndText(
           name: widget.start,
-          time: 'Leave ${clock(context, chain.departure, utcOffset: offset)}',
+          // With every departure of the first ride gone, there's no time to leave.
+          time: chain.gone
+              ? ''
+              : 'Leave ${clock(context, chain.departure, utcOffset: offset)}',
           prefix: 'Leave ',
         ),
       ),
@@ -858,10 +910,10 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
               : connector(previous) == _Line.dotted
               ? _Line.dotted
               : _Line.thin;
-          final wait = choice.made ? choice.waitSeconds : 0;
-          // Whether there's a wait doesn't hang on the departure chosen of this ride,
-          // so choosing one never adds or drops a row above its departures.
-          final waits = change || _mayWait(choice);
+          // Whether there's a row for the wait hangs on nothing chosen, nor the clock,
+          // and it's held for the opening, so nothing ever adds or drops a row above
+          // the ride's departures.
+          final waits = _waits.putIfAbsent(i, () => change || _mayWait(choice));
           if (waits) {
             rows.add(
               _RailRow(
@@ -869,7 +921,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
                 rail: const _Rail.through(_Line.thin),
                 child: _WaitText(
                   change: change ? leg.boarding.stop.name : null,
-                  seconds: wait,
+                  seconds: choice.made ? choice.waitSeconds : null,
                 ),
               ),
             );
@@ -898,9 +950,12 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         ),
         child: _EndText(
           name: widget.destination,
-          time: arrival == null
-              ? 'No connection'
-              : 'Arrive ${clock(context, arrival, utcOffset: offset)}',
+          time: switch (arrival) {
+            _ when chain.gone => '',
+            null => 'No connection',
+            final arrival =>
+              'Arrive ${clock(context, arrival, utcOffset: offset)}',
+          },
           prefix: 'Arrive ',
           connects: arrival != null,
         ),
@@ -948,7 +1003,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
     final departure = choice.departure;
     // Whether any of its departures may show a scheduled time beside a live one, so
     // the boarding stop's row keeps the room for one whichever is chosen.
-    final mayBeOff = ride.realtime || ride.departures.any((d) => d.realtime);
+    final mayBeOff = ride.realtime || choice.departures.any((d) => d.realtime);
 
     rows.add(
       _RailRow(
@@ -959,7 +1014,12 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
           belowColor: first,
           at: _barStart,
         ),
-        child: _RideTitle(ride: ride, route: route, headsign: choice.headsign),
+        child: _RideTitle(
+          ride: ride,
+          room: _titles.putIfAbsent(index, _TitleRoom.new)..add(choice),
+          route: route,
+          headsign: choice.headsign,
+        ),
       ),
     );
     rows.add(
@@ -1120,16 +1180,15 @@ bool _isChange(StreetLeg leg) =>
     (leg.walk == null || leg.walk!.distance < 1) &&
     (leg.from?.name == leg.to?.name || leg.duration < 30);
 
-/// Whether the rider may wait for [choice]'s ride, whichever of its departures they
-/// take: as the plan has it, or, from when they're ready, for any they can make.
+/// Whether the rider may wait for [choice]'s ride, whatever's taken of it and of the
+/// rides before, and whatever the time: the plan has a wait of a minute or more; or,
+/// for a ride after the first whose walk to it is known, more than one of the
+/// departures it lists runs, since a later one is a wait.
 bool _mayWait(RideChoice choice) {
-  final ready = choice.ready;
-  final departures = choice.ride.departures;
-  if (ready == null || departures.isEmpty) return choice.waitSeconds >= 60;
-  return [
-    for (final (i, d) in departures.indexed)
-      if (choice.catchable[i]) d.departure.difference(ready).inSeconds >= 60,
-  ].any((w) => w);
+  final ride = choice.ride;
+  if (ride.waitSeconds >= 60) return true;
+  if (choice.first || ride.transferSeconds == null) return false;
+  return choice.departures.where((d) => d.status.runs).length > 1;
 }
 
 /// [scheduled] as it'd show beside [live]: without the day period they share, so "5:36"
@@ -1202,7 +1261,11 @@ class _TimeSlot extends StatelessWidget {
         FadeSwap(
           value: text,
           alignment: alignment,
-          child: Text(text, style: style, maxLines: 1, softWrap: false),
+          // No time is nothing for a screen reader to announce.
+          child: ExcludeSemantics(
+            excluding: text.isEmpty,
+            child: Text(text, style: style, maxLines: 1, softWrap: false),
+          ),
         ),
       ],
     );
@@ -1377,12 +1440,18 @@ class _EndText extends StatelessWidget {
 /// rows below it stay where they are: on one line, or at the roomier text sizes (see
 /// [isRoomyText]) a line for the change, if there is one, and a line for the wait,
 /// each shrunk to fit or cut short rather than wrapped.
+///
+/// With nothing to wait for, the ride having no connection, it says only the change,
+/// if there is one, or nothing, with no icon; the rail runs through it all the same.
+/// What it says cross-fades.
 class _WaitText extends StatelessWidget {
   const _WaitText({required this.change, required this.seconds});
 
   /// The stop where the rider changes vehicles without walking, if they do.
   final String? change;
-  final int seconds;
+
+  /// The wait, or null with nothing to wait for.
+  final int? seconds;
 
   @override
   Widget build(BuildContext context) {
@@ -1391,12 +1460,23 @@ class _WaitText extends StatelessWidget {
     final muted = theme.textTheme.bodyMedium?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
-    final wait = seconds >= 60 ? formatDuration(seconds.toDouble()) : null;
+    final seconds = this.seconds;
+    final blank = seconds == null;
+    final wait = seconds != null && seconds >= 60
+        ? formatDuration(seconds.toDouble())
+        : null;
     final change = this.change;
-    final icon = Icon(
-      change != null ? Icons.sync_alt : Icons.hourglass_empty,
-      size: 18,
-      color: theme.colorScheme.onSurfaceVariant,
+    const iconSize = 18.0;
+    // Kept in its room when there's none, so the row is as tall either way.
+    final icon = FadeSwap(
+      value: change == null && blank,
+      child: change == null && blank
+          ? const SizedBox.square(dimension: iconSize)
+          : Icon(
+              change != null ? Icons.sync_alt : Icons.hourglass_empty,
+              size: iconSize,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
     );
     final changing = change == null
         ? null
@@ -1406,20 +1486,24 @@ class _WaitText extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           );
-    Widget waiting({required bool after}) => FadeSwap(
-      value: wait,
-      child: Text(
-        switch ((after, wait)) {
-          (false, null) => 'No wait',
-          (false, final wait?) => 'Wait $wait',
-          (true, null) => '',
-          (true, final wait?) => ', wait $wait',
-        },
-        style: muted,
-        maxLines: 1,
-        softWrap: false,
-      ),
-    );
+    Widget waiting({required bool after}) {
+      final said = switch ((after, blank, wait)) {
+        (_, true, _) => '',
+        (false, false, null) => 'No wait',
+        (false, false, final wait?) => 'Wait $wait',
+        (true, false, null) => '',
+        (true, false, final wait?) => ', wait $wait',
+      };
+      return FadeSwap(
+        value: (blank, wait),
+        // Nothing said is nothing for a screen reader to announce.
+        child: ExcludeSemantics(
+          excluding: said.isEmpty,
+          child: Text(said, style: muted, maxLines: 1, softWrap: false),
+        ),
+      );
+    }
+
     final Widget content;
     if (roomy) {
       content = Column(
@@ -1588,30 +1672,65 @@ class _StreetRowState extends State<_StreetRow> {
   }
 }
 
+/// What a ride's title has said, or would say, for any departure it has listed in an
+/// opening of Trip details: the room it keeps at the roomier text sizes. It only
+/// grows, so a newer list, or a newer plan of the journey, that drops a long headsign
+/// never makes the title shorter; one that brings a longer one makes it taller as the
+/// plan is shown, once no finger is down, so choosing that departure later moves
+/// nothing.
+class _TitleRoom {
+  final headings = <String>{};
+  final runnings = <String>{};
+
+  /// Adds what [choice]'s ride would say for each of its departures, and for its own.
+  void add(RideChoice choice) {
+    final ride = choice.ride;
+    headings.add(_RideTitle.heading(ride.route, ride.headsign));
+    runnings.add(_RideTitle.running(ride, ride.route));
+    for (final d in choice.departures) {
+      final route = d.route ?? ride.route;
+      headings.add(
+        _RideTitle.heading(
+          route,
+          d.suggested ? ride.headsign : d.headsign ?? ride.headsign,
+        ),
+      );
+      runnings.add(_RideTitle.running(ride, route));
+    }
+    headings.add(_RideTitle.heading(choice.route, choice.headsign));
+    runnings.add(_RideTitle.running(ride, choice.route));
+  }
+}
+
 /// A ride's route, where it's headed and who runs it, as the departure taken has them.
 ///
 /// Its height doesn't change with the departure chosen, as it's above the ride's
 /// departures: on one line each for where it's headed and who runs it; or, at the
 /// roomier text sizes (see [isRoomyText]), the badge on a line and those two under it,
 /// each wrapping as it needs and keeping the room of the longest any of the ride's
-/// departures would need.
+/// departures would need ([room]).
 class _RideTitle extends StatelessWidget {
   const _RideTitle({
     required this.ride,
+    required this.room,
     required this.route,
     required this.headsign,
   });
 
   final TransitLeg ride;
 
+  /// What any of the ride's departures would say here, for the room the longest
+  /// takes: see [_TitleRoom].
+  final _TitleRoom room;
+
   /// The route and headsign of the departure taken.
   final TransitRoute? route;
   final String? headsign;
 
-  String _heading(TransitRoute? route, String? headsign) =>
+  static String heading(TransitRoute? route, String? headsign) =>
       headsign ?? route?.longName ?? '';
 
-  String _running(TransitRoute? route) =>
+  static String running(TransitLeg ride, TransitRoute? route) =>
       [?ride.agency, (route?.kind ?? VehicleKind.other).label].join(' · ');
 
   @override
@@ -1632,14 +1751,6 @@ class _RideTitle extends StatelessWidget {
       ),
     );
     if (roomy) {
-      // What each of the ride's departures would say here, for the room they need.
-      final others = [
-        for (final d in ride.departures)
-          (
-            d.route ?? ride.route,
-            d.suggested ? ride.headsign : d.headsign ?? ride.headsign,
-          ),
-      ];
       Widget keeping(
         String shown,
         Iterable<String> all,
@@ -1673,20 +1784,12 @@ class _RideTitle extends StatelessWidget {
             badge,
             const SizedBox(height: 2),
             keeping(
-              _heading(route, headsign),
-              [
-                for (final (route, headsign) in others)
-                  _heading(route, headsign),
-              ],
+              heading(route, headsign),
+              room.headings,
               theme.textTheme.titleSmall,
               headsign ?? route?.longName,
             ),
-            keeping(
-              _running(route),
-              [for (final (route, _) in others) _running(route)],
-              muted,
-              route?.kind,
-            ),
+            keeping(running(ride, route), room.runnings, muted, route?.kind),
           ],
         ),
       );
@@ -1708,7 +1811,7 @@ class _RideTitle extends StatelessWidget {
                 FadeSwap(
                   value: headsign ?? route?.longName,
                   child: Text(
-                    _heading(route, headsign),
+                    heading(route, headsign),
                     style: theme.textTheme.titleSmall,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -1717,7 +1820,7 @@ class _RideTitle extends StatelessWidget {
                 FadeSwap(
                   value: route?.kind,
                   child: Text(
-                    _running(route),
+                    running(ride, route),
                     style: muted,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -1751,6 +1854,10 @@ class _BadgeRoom extends StatelessWidget {
 /// ([strong]) as large as the rider reads it, one passed small. A live time is in the
 /// live color; where it isn't the [scheduled] one, that comes before it, struck
 /// through.
+///
+/// A stop got on or off at keeps the room for its time while it has none (its ride
+/// has no connection, or follows one without), so the row is as tall either way and
+/// the departures below it stay where they are; the time cross-fades in and out.
 class _StopText extends StatelessWidget {
   const _StopText({
     required this.visit,
@@ -1839,9 +1946,11 @@ class _StopText extends StatelessWidget {
             ),
         ],
         timeStyle: timeStyle,
+        // A stop got on or off at keeps its time's room, empty while the time isn't
+        // known, so the row is as tall either way; one passed has its time or none.
         time: switch (shown) {
-          final shown? => (alignment) => _TimeSlot(
-            shown,
+          _ when shown != null || strong => (alignment) => _TimeSlot(
+            shown ?? '',
             style: timeStyle?.copyWith(
               color: skipped
                   ? muted
@@ -1858,7 +1967,7 @@ class _StopText extends StatelessWidget {
             // On a line of its own, a scheduled time moves nothing beside it.
             keepsScheduled: keepsScheduled && !roomy,
           ),
-          null => null,
+          _ => null,
         },
       ),
     );
@@ -2059,7 +2168,7 @@ class _DepartureRangeState extends State<DepartureRange> {
       _reveal(center: chosen != _tapped);
     }
     _tapped = null;
-    final runs = {for (final d in widget.choice.ride.departures) _run(d)};
+    final runs = {for (final d in widget.choice.departures) _run(d)};
     _tileKeys.removeWhere((run, _) => !runs.contains(run));
   }
 
@@ -2075,7 +2184,7 @@ class _DepartureRangeState extends State<DepartureRange> {
   Widget build(BuildContext context) {
     final choice = widget.choice;
     final ride = choice.ride;
-    final departures = ride.departures;
+    final departures = choice.departures;
     // Each tile badges its route when they aren't all the ride's.
     final mixed = departures.any((d) => d.route != null);
     return Padding(
@@ -2426,7 +2535,9 @@ class ConnectionTile extends StatelessWidget {
 }
 
 /// That a ride has no connection: each of its departures leaves before the rider can
-/// be at its stop, with the departures chosen before it.
+/// be at its stop, with the departures chosen before it. For the first ride, every one
+/// has gone: the day's last, if the last of them that runs is, and the rider is
+/// pointed back to the other trips.
 class NoConnection extends StatelessWidget {
   const NoConnection({super.key, required this.choice});
 
@@ -2438,6 +2549,31 @@ class NoConnection extends StatelessWidget {
     final scheme = theme.colorScheme;
     final ready = choice.ready;
     final stop = choice.ride.boarding;
+    final last = choice.first ? choice.lastRunning : null;
+    final (icon, title, body) = switch (last) {
+      _ when !choice.first => (
+        Icons.link_off,
+        'No connection',
+        ready == null
+            ? "You can't make any of these departures."
+            : "You'd be at the stop at "
+                  '${clock(context, ready, utcOffset: stop.utcOffset)}'
+                  ', after all of these leave. An earlier departure on a ride '
+                  'before may connect.',
+      ),
+      RideDeparture(lastOfDay: true) => (
+        Icons.bedtime_outlined,
+        'No more departures today',
+        'The last one between these stops left at '
+            '${clock(context, last.departure, utcOffset: stop.utcOffset)}. '
+            'Go back to see other trips.',
+      ),
+      _ => (
+        Icons.link_off,
+        'No departures left',
+        "You can't make any of these departures. Go back to see other trips.",
+      ),
+    };
     return Container(
       margin: const EdgeInsets.only(bottom: 2),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -2448,7 +2584,7 @@ class NoConnection extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.link_off, size: 18, color: scheme.onErrorContainer),
+          Icon(icon, size: 18, color: scheme.onErrorContainer),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -2456,19 +2592,14 @@ class NoConnection extends StatelessWidget {
               spacing: 1,
               children: [
                 Text(
-                  'No connection',
+                  title,
                   style: theme.textTheme.labelLarge?.copyWith(
                     color: scheme.onErrorContainer,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 Text(
-                  ready == null
-                      ? "You can't make any of these departures."
-                      : "You'd be at the stop at "
-                            '${clock(context, ready, utcOffset: stop.utcOffset)}'
-                            ', after all of these leave. An earlier departure '
-                            'on a ride before may connect.',
+                  body,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: scheme.onErrorContainer,
                   ),

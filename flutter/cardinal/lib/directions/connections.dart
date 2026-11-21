@@ -14,6 +14,12 @@
 /// earlier. A ride none of whose departures can be made has no connection in its list,
 /// and what comes after it isn't known.
 ///
+/// The first ride's departures are made as the clock has it, when the chain is given
+/// the time ([ConnectionChain.now]): one can be made if it leaves once the rider,
+/// setting out now, can be at its stop after the streets to it, and the plan doesn't
+/// have it missed. As time passes they're missed one by one, and the rest of the
+/// journey follows as it does a choice.
+///
 /// | A ride's choice | When | Then |
 /// |---|---|---|
 /// | the suggested one | the plan is read | each ride's suggested departure |
@@ -22,16 +28,27 @@
 /// | not chosen | every ride before takes its suggested one | the suggested one, if it can be made |
 /// | not chosen, or chosen and can't be made | otherwise | the one that can be made and arrives first |
 /// | any | none can be made | no connection, and the rides after unknown |
+/// | the first ride's, any | the clock passes the last moment it can be made | it can't be made: as for a choice that can't be |
+/// | the first ride's, any | the clock passes the last moment the last of them can be made | no connection: every departure gone, and the rides after unknown |
 /// | chosen | a new plan still lists it | it stays, if it can still be made |
+/// | any | a new plan has a journey of the departures taken ([ConnectionChain.takes]), and the chain is moved onto it | each stays, chosen if it was, and is now that journey's suggested one |
+/// | any | a new plan hasn't the journey | each ride's departures as last looked up between its two stops, if they have been ([ConnectionChain.relist]); otherwise as a ride of that plan between the same two stops lists them, or as they were if none is; a choice stays if it's still listed and can still be made |
+/// | any | a ride's departures are looked up between its two stops, for a journey no plan has | that ride's departures are those; a choice stays if it's still listed and can still be made, and a ride with no connection has one again if one of them can be made |
 library;
+
+import 'package:flutter/foundation.dart' show listEquals;
 
 import 'transit_plan.dart';
 
 /// One run of a trip: a `trip_id` on its service day.
 typedef DepartureRun = ({String tripId, String? startDate});
 
-DepartureRun _runOf(RideDeparture departure) =>
-    (tripId: departure.tripId, startDate: departure.startDate);
+/// [departure]'s run, of [ride]'s departures: the planner leaves out a departure's
+/// service day when it's the ride's own.
+DepartureRun _runOf(RideDeparture departure, TransitLeg ride) => (
+  tripId: departure.tripId,
+  startDate: departure.startDate ?? ride.startDate,
+);
 
 /// Whether a ride's chosen departure can be made, as the choices before it have it.
 enum RideConnection {
@@ -49,6 +66,8 @@ enum RideConnection {
 class RideChoice {
   RideChoice._({
     required this.ride,
+    required this.departures,
+    required this.first,
     required this.ready,
     required this.catchable,
     required this.index,
@@ -58,17 +77,26 @@ class RideChoice {
 
   final TransitLeg ride;
 
+  /// Departures between the ride's two stops, by departure, as last known: the ride's
+  /// own [TransitLeg.departures], those a newer plan lists between the same stops, as
+  /// [ConnectionChain.refresh] has them, or those looked up between them, as
+  /// [ConnectionChain.relist] has them.
+  final List<RideDeparture> departures;
+
+  /// Whether it's the journey's first ride, whose departures are made by the clock.
+  final bool first;
+
   /// When the rider can be at its boarding stop, from the departure taken of the ride
   /// before; null for the first ride, and where that isn't known (no
   /// [TransitLeg.transferSeconds], or nothing before is made).
   final DateTime? ready;
 
-  /// For each of the ride's [TransitLeg.departures], whether the rider can make it: it
-  /// runs, and it leaves once they're [ready], or, without [ready], the plan doesn't
-  /// have it missed.
+  /// For each of [departures], whether the rider can make it: it runs, and it leaves
+  /// once they're [ready]; or for the first ride, the plan doesn't have it missed, and
+  /// with the time given, it leaves once the rider can be at the stop, setting out then.
   final List<bool> catchable;
 
-  /// The departure taken, in [TransitLeg.departures]; null when the ride lists none (it
+  /// The departure taken, in [departures]; null when the ride lists none (it
   /// takes the ride's own) or [connection] isn't [RideConnection.made].
   final int? index;
 
@@ -80,8 +108,11 @@ class RideChoice {
   bool get made => connection == RideConnection.made;
 
   /// The departure taken, if the ride lists its departures.
-  RideDeparture? get departure =>
-      index == null ? null : ride.departures[index!];
+  RideDeparture? get departure => index == null ? null : departures[index!];
+
+  /// The last of [departures] that runs, if any does.
+  RideDeparture? get lastRunning =>
+      departures.where((d) => d.status.runs).lastOrNull;
 
   /// Whether the departure taken is the plan's own, whose stops the plan lists.
   bool get suggested => made && (departure?.suggested ?? true);
@@ -134,16 +165,26 @@ class RideChoice {
 
 /// What's chosen for each ride of a [journey]: see the library's description.
 class ConnectionChain {
-  /// [journey] as the plan has it: each ride's suggested departure.
-  factory ConnectionChain(Journey journey) =>
-      ConnectionChain._evaluate(journey, const {});
+  /// [journey] as the plan has it: each ride's suggested departure. With [now], the
+  /// first ride's departures are made as the clock has it then.
+  factory ConnectionChain(Journey journey, {DateTime? now}) =>
+      ConnectionChain._evaluate(journey, const {}, null, now);
 
-  ConnectionChain._(this.journey, this.rides, this._picks);
+  ConnectionChain._(
+    this.journey,
+    this.rides,
+    this._picks,
+    this._departures,
+    this.now,
+  );
 
-  /// Works out each ride's choice from [picks], the departures chosen by ride.
+  /// Works out each ride's choice from [picks], the departures chosen by ride, with
+  /// [departures] in place of the rides' own where it's given, at [now].
   factory ConnectionChain._evaluate(
     Journey journey,
     Map<int, DepartureRun> picks,
+    List<List<RideDeparture>>? departures,
+    DateTime? now,
   ) {
     final rides = journey.rides.toList();
     final choices = <RideChoice>[];
@@ -153,14 +194,18 @@ class ConnectionChain {
     // Whether every ride so far takes its suggested departure, so the rider reaches
     // this one's boarding stop when the plan has them there.
     var asPlanned = true;
+    // When the rider, setting out now, can be at the first ride's stop.
+    final atStop = now?.add(_toFirstStop(journey));
     for (final (i, ride) in rides.indexed) {
-      final departures = ride.departures;
+      final listed = departures?[i] ?? ride.departures;
       if (broken) {
         choices.add(
           RideChoice._(
             ride: ride,
+            departures: listed,
+            first: i == 0,
             ready: null,
-            catchable: List.filled(departures.length, false),
+            catchable: List.filled(listed.length, false),
             index: null,
             chosen: false,
             connection: RideConnection.unknown,
@@ -172,34 +217,43 @@ class ConnectionChain {
       final ready = i == 0 || before == null || transfer == null
           ? null
           : before.add(Duration(seconds: transfer));
-      bool makes(DateTime leaves) => ready == null || !leaves.isBefore(ready);
+      bool makes(DateTime leaves) => switch ((i, ready, atStop)) {
+        (_, final ready?, _) => !leaves.isBefore(ready),
+        (0, null, final atStop?) => !leaves.isBefore(atStop),
+        _ => true,
+      };
       final catchable = [
-        for (final d in departures)
-          d.status.runs && (ready == null ? !d.missed : makes(d.departure)),
+        for (final d in listed)
+          d.status.runs &&
+              (ready == null
+                  ? !d.missed && makes(d.departure)
+                  : makes(d.departure)),
       ];
       int? index;
       var chosen = false;
-      final made = departures.isEmpty
+      final made = listed.isEmpty
           ? makes(ride.departure)
           : catchable.contains(true);
-      if (departures.isNotEmpty && made) {
+      if (listed.isNotEmpty && made) {
         final pick = picks[i];
         final picked = pick == null
             ? -1
-            : departures.indexWhere((d) => _runOf(d) == pick);
+            : listed.indexWhere((d) => _runOf(d, ride) == pick);
         if (picked >= 0 && catchable[picked]) {
           index = picked;
           chosen = true;
           kept[i] = pick!;
         } else {
-          final own = departures.indexWhere((d) => d.suggested);
+          final own = listed.indexWhere((d) => d.suggested);
           index = asPlanned && own >= 0 && catchable[own]
               ? own
-              : _arrivesFirst(departures, catchable);
+              : _arrivesFirst(listed, catchable);
         }
       }
       final choice = RideChoice._(
         ride: ride,
+        departures: listed,
+        first: i == 0,
         ready: ready,
         catchable: catchable,
         index: index,
@@ -211,8 +265,15 @@ class ConnectionChain {
       before = choice.arrival;
       broken = !made;
     }
-    return ConnectionChain._(journey, choices, kept);
+    return ConnectionChain._(journey, choices, kept, departures, now);
   }
+
+  /// How long the streets to [journey]'s first ride take: its legs before that ride.
+  static Duration _toFirstStop(Journey journey) => Duration(
+    seconds: journey.legs
+        .takeWhile((leg) => leg is! TransitLeg)
+        .fold(0, (sum, leg) => sum + leg.duration),
+  );
 
   /// Of the departures that can be made, the one reaching the alighting stop first:
   /// on a tie the suggested one, then the earliest to leave (the list's order).
@@ -243,24 +304,179 @@ class ConnectionChain {
   /// The departures the rider chose, by ride, that can still be made.
   final Map<int, DepartureRun> _picks;
 
+  /// Each ride's departures where they're no longer [journey]'s own (see [refresh]
+  /// and [relist]).
+  final List<List<RideDeparture>>? _departures;
+
+  /// The time the first ride's departures are made as, or null for as the plan has
+  /// them.
+  final DateTime? now;
+
   /// With the rider taking departure [departure] of ride [ride] (its index in
   /// [Journey.rides]), and the rides after following from it. Unchanged if they can't
   /// make that one.
   ConnectionChain select(int ride, int departure) {
     final choice = rides[ride];
     if (!choice.made || !choice.catchable[departure]) return this;
-    return ConnectionChain._evaluate(journey, {
-      ..._picks,
-      ride: _runOf(choice.ride.departures[departure]),
-    });
+    return ConnectionChain._evaluate(
+      journey,
+      {..._picks, ride: _runOf(choice.departures[departure], choice.ride)},
+      _departures,
+      now,
+    );
   }
+
+  /// The same choices at [now]: those that can still be made then stay.
+  ConnectionChain at(DateTime now) =>
+      ConnectionChain._evaluate(journey, _picks, _departures, now);
 
   /// The same choices in [journey], a newer plan of this journey: each that it still
   /// lists, and that can still be made, stays.
   ConnectionChain rebase(Journey journey) => ConnectionChain._evaluate(
     journey,
     journey.rides.length == rides.length ? _picks : const {},
+    null,
+    now,
   );
+
+  /// The same choices with the departures of a newer plan's [journeys], none of them
+  /// this journey: each ride's as the first ride among them between the same two
+  /// stops lists them, or as they were if none is, or if the ride is one of [keep]
+  /// (by its index in [rides]), whose departures were looked up and stay until
+  /// they're looked up again. Each choice they still list, and that can still be made,
+  /// stays.
+  ConnectionChain refresh(
+    Iterable<Journey> journeys, {
+    Set<int> keep = const {},
+  }) {
+    final others = [for (final j in journeys) ...j.rides];
+    return ConnectionChain._evaluate(journey, _picks, [
+      for (final (i, choice) in rides.indexed)
+        switch (keep.contains(i)
+            ? null
+            : others.where((o) => _sameStops(o, choice.ride)).firstOrNull) {
+          final other? => [
+            for (final d in other.departures)
+              d.relisted(from: other, to: choice.ride),
+          ],
+          null => choice.departures,
+        },
+    ], now);
+  }
+
+  /// The same choices with the departures of [lists], by ride (its index in [rides]),
+  /// in place of those rides': each as the transit source lists them between the
+  /// ride's two stops ([RideDeparture.listed]), read as the ride's own list would say
+  /// them. The other rides' stay as they were. Each choice still listed, and that can
+  /// still be made, stays; a ride with no connection has one again if one of its new
+  /// departures can be made.
+  ConnectionChain relist(
+    Map<int, List<RideDeparture>> lists,
+  ) => ConnectionChain._evaluate(journey, _picks, [
+    for (final (i, choice) in rides.indexed)
+      switch (lists[i]) {
+        final list? => [
+          // Each says everything of itself, so the ride it's listed with says
+          // nothing for it.
+          for (final d in list) d.relisted(from: choice.ride, to: choice.ride),
+        ],
+        null => choice.departures,
+      },
+  ], now);
+
+  static bool _sameStops(TransitLeg a, TransitLeg b) =>
+      a.boarding.stop.id == b.boarding.stop.id &&
+      a.boarding.stop.feed == b.boarding.stop.feed &&
+      a.alighting.stop.id == b.alighting.stop.id &&
+      a.alighting.stop.feed == b.alighting.stop.feed;
+
+  /// When, after [now], the next of the first ride's departures that can be made then
+  /// can't be: the moment after the last one the rider, setting out, can be at its stop
+  /// for it. Null without [now], or with none to miss.
+  DateTime? get missesAt {
+    final now = this.now;
+    final first = rides.firstOrNull;
+    if (now == null ||
+        first == null ||
+        first.connection != RideConnection.made) {
+      return null;
+    }
+    final toStop = _toFirstStop(journey);
+    final leaving = first.departures.isEmpty
+        ? [first.ride.departure]
+        : [
+            for (final (i, d) in first.departures.indexed)
+              if (first.catchable[i]) d.departure,
+          ];
+    if (leaving.isEmpty) return null;
+    final soonest = leaving.reduce((a, b) => a.isBefore(b) ? a : b);
+    return soonest.subtract(toStop).add(const Duration(microseconds: 1));
+  }
+
+  /// Whether [other]'s rides are the departures taken here, in order, between the same
+  /// stops: as many rides, each the same run of a trip (its trip and service day, or,
+  /// without a trip, its route and when it's scheduled to leave, as [RideIdentity] has
+  /// it). Never while a ride has no connection, nor where what's taken isn't known.
+  ///
+  /// A service day either leaves out is taken to be the other's, as the planner leaves
+  /// it out of a departure that's the ride's own.
+  bool takes(Journey other) {
+    if (brokenAt != null) return false;
+    final theirs = other.rides.toList();
+    if (theirs.length != rides.length) return false;
+    for (final (i, choice) in rides.indexed) {
+      final ride = choice.ride;
+      final their = theirs[i];
+      if (!_sameStops(ride, their)) return false;
+      final departure = choice.departure;
+      final tripId = departure?.tripId ?? ride.tripId;
+      if (tripId != null || their.tripId != null) {
+        final startDate = departure == null
+            ? ride.startDate
+            : _runOf(departure, ride).startDate;
+        final theirDate = their.suggested?.startDate ?? their.startDate;
+        if (tripId != their.tripId ||
+            (startDate != null &&
+                theirDate != null &&
+                startDate != theirDate)) {
+          return false;
+        }
+        continue;
+      }
+      // Neither names its trip: the ride lists no departures (each listed names its
+      // trip), so it takes its own.
+      if (ride.route?.id != their.route?.id ||
+          (ride.boarding.scheduledDeparture ?? ride.departure) !=
+              (their.boarding.scheduledDeparture ?? their.departure)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Whether every departure of the first ride is gone: none can be made.
+  bool get gone => rides.firstOrNull?.connection == RideConnection.none;
+
+  /// Whether [other] chooses as this does: the same departures listed, made and taken
+  /// for each ride.
+  bool choosesAs(ConnectionChain other) {
+    if (!identical(other.journey, journey) ||
+        other.rides.length != rides.length) {
+      return false;
+    }
+    for (final (i, r) in rides.indexed) {
+      final o = other.rides[i];
+      if (!identical(o.departures, r.departures) ||
+          o.index != r.index ||
+          o.chosen != r.chosen ||
+          o.connection != r.connection ||
+          o.ready != r.ready ||
+          !listEquals(o.catchable, r.catchable)) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   /// Whether every ride is as the plan has it.
   bool get suggested => rides.every((r) => r.suggested);
@@ -350,7 +566,7 @@ List<TransitRoute> _others(
 ) {
   final seen = <String>{?choice.ride.route?.id};
   final routes = <TransitRoute>[];
-  for (final (i, d) in choice.ride.departures.indexed) {
+  for (final (i, d) in choice.departures.indexed) {
     final route = d.route;
     if (route == null || !choice.catchable[i]) continue;
     if (d.departure.difference(own.departure).abs() > within) continue;

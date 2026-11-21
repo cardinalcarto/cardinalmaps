@@ -408,8 +408,24 @@ Nothing re-plans a trip by itself, and the recalculate button is gone, so:
 - A journey in the new plan is the one that was open if it has the same trips (trip ID
   and service day) between the same stops in the same order. Then Trip details stays
   open, its times animate, and the chosen departures carry over.
-- If the open journey isn't in the new plan, Trip details returns to the list.
-- A changed trip (ends, or how stops are reached) always returns to the list.
+- If the open journey isn't in the new plan, Trip details stays open on it as it was.
+  Each ride's departures are asked for by its two stops (`POST /transit/departures`,
+  or the same lookup on the device). Until the answer, they come from any journey in
+  the new plan with a ride between the same boarding and alighting stops; where there
+  is none, the last list stays. If a later plan has the journey again, Trip details
+  moves onto it.
+- Trip details closes only when the trip changes (ends, or how stops are reached), or
+  the rider goes back.
+- The first ride's departures are made by the clock: one can be made if it leaves once
+  the rider, setting out now, can be at the stop after the walk to it. As time passes
+  they turn Missed, and the journey re-times as it does when an earlier choice makes a
+  later ride's departure unreachable. A departure the rider chose stays while it can be
+  made.
+- When every departure of the first ride is gone, the header says "No departures left"
+  and when the last one left. The first ride's tiles are all Missed, with a notice
+  under them: "No more departures today" if the last one was the day's last, "No
+  departures left" otherwise. The rides after show no times or departures, and the
+  start and end no times.
 
 As built (step 5):
 
@@ -428,6 +444,79 @@ As built (step 5):
   Two journeys of one plan with the same identity are told apart by their order.
 - The leg fetched for a chosen departure stands in until it's fetched again for the
   new plan, so its stops and its line on the map don't go and come back.
+- A departure turns Missed at the moment the rider can no longer make it, like a new
+  plan: once no finger is down, and 400 ms after. The plan's own misses still count.
+- Departures taken from another journey are restated for this ride: route, headsign
+  and service day as this ride's list would give them, its own run marked suggested,
+  and none marked missed, since that was the other journey's.
+- While Trip details is open, the map draws its journey with the departures taken,
+  whatever is selected in the list under it. Back on the list, the map shows the
+  selected journey.
+- Besides the 30 seconds, transit re-plans just after the soonest listed journey's
+  time to leave passes, so no row says "Go now" for one that's gone. Rows have no
+  clock of their own; the answer is shown like any other. The clock asks at most once
+  every 5 seconds, never while a refresh is under way, and never twice for the same
+  journey under one plan. A plan that arrives with a journey already gone is asked
+  again once, 5 seconds after it arrived; if that answer still has a gone journey, it
+  waits for the 30 seconds. This holds with Trip details open too.
+- On a new plan, Trip details first looks for a journey made of exactly the
+  departures now taken (same trips and service days, or route and scheduled time
+  without a trip ID, between the same stops, in order), whether the rider or the clock
+  chose them. It moves onto that journey and keeps it as the open one from then on.
+  The choices carry over and are now that journey's own, so "Suggested" cross-fades
+  onto their tiles. The list under the page selects it, so Back lands on it, and the
+  map doesn't move. Failing that it looks for the journey it had, then borrows
+  departures as above. While any ride has no connection, the first step is skipped.
+- A ride's wait row stays where it is whatever happens. With no connection on the ride
+  or one before it, the row is blank: no icon, no text, the rail running through.
+  "Change at" stays where it's a change, without the wait. Going blank and back
+  cross-fades. Whether the row exists is settled when the page first shows it: a plan
+  wait of a minute or more, a change, or, for a ride after the first with a known walk
+  to it, more than one listed departure that runs. It then holds for that opening, so
+  a tile turning Missed or a borrowed list never adds or drops it.
+- A ride's boarding and alighting stops keep the room for their times when they have
+  none, so the tiles below don't move; the times fade out and in.
+- At large text a ride's title keeps the room of the longest headsign any list has
+  given it while the page is open. A newer list that drops one doesn't shrink it; one
+  that brings a longer one grows it as that plan is shown, with no finger down, so
+  choosing that departure later moves nothing.
+
+As built (departures looked up):
+
+- Lookups run only while the open journey is missing from the plan. Each new plan
+  without it asks once per ride, and drops what the plan before was still waiting for.
+- A ride is asked around the departure it takes: two before it, and seven from it on,
+  which is that departure and the six after, as a plan lists them.
+- A first ride with every departure gone is asked around the current time, so
+  departures still to come show up and the journey can come back: "No departures
+  left" cross-fades to when to go, the notice under the tiles to how the departure
+  taken is running, and the rides after get their times back. The header and the
+  tiles don't move; what's under the tiles moves by the difference between the notice
+  and the status line, as it does when the departures run out.
+- A later ride with no connection is asked around when the rider gets to its stop.
+  The rides after it aren't asked: nothing says when the rider would be there.
+- An answer is shown like a new plan: once no finger is down, and 400 ms after.
+  Departures are restated for the ride as borrowed ones are, the chosen one stays
+  while it's listed and can be made, and "missed" is worked out here, from the clock
+  and the ride before, not asked for.
+- Which list a ride shows, first that exists: the one looked up for this plan; the one
+  last looked up; one borrowed from the plan; the one it had. So a ride that has been
+  looked up never flips back to a borrowed list between answers.
+- An answer with no departures changes nothing: the list showing stays, and a gone
+  journey stays gone.
+- A lookup that fails changes nothing, and the next plan asks again. A source that
+  doesn't have the lookup at all is not asked again while the app runs; borrowing
+  carries on as before.
+- Everything looked up is dropped, and anything still being asked is abandoned, when a
+  plan has the journey again (or one made of the departures taken), when Trip details
+  closes, and when the trip changes.
+- Wait rows and title room hold as above: a looked-up list never adds or drops a wait
+  row, and can only grow a title.
+- The header's top line no longer changes height when "No departures left" is shrunk
+  to fit: it grew by 1.5 px going gone, and shrank coming back.
+- A journey row that came back under Trip details and is dropped again before it
+  ever grew in (the list under the page doesn't animate) now leaves after the frame.
+  Before, that asserted while the rows were built.
 
 ## Sheet library: recommendation for the anchors
 

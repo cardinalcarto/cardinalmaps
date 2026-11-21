@@ -1,7 +1,7 @@
 // Screenshots of a transit journey's connections, for review: see `render.dart`. The
 // overview's "or" badges, and a journey's departure tiles as planned, with a later first
-// ride chosen, and with no connection; and a journey with a late live ride, its alert
-// and walk opened.
+// ride chosen, and with no connection; a journey with a late live ride, its alert and
+// walk opened; and one whose first ride's departures have all gone.
 import 'package:cardinal/directions/connections.dart';
 import 'package:cardinal/directions/journey_list.dart';
 import 'package:cardinal/directions/transit_details.dart';
@@ -35,22 +35,29 @@ Future<void> _app(WidgetTester tester, Size size, Widget body) async {
 
 /// [journey]'s details, choosing as the rider taps.
 class _Details extends StatefulWidget {
-  const _Details(this.journey);
+  const _Details(this.journey, {this.now});
 
   final Journey journey;
+
+  /// The time, if the first ride's departures are made by the clock.
+  final DateTime? now;
 
   @override
   State<_Details> createState() => _DetailsState();
 }
 
 class _DetailsState extends State<_Details> {
-  late var _chain = ConnectionChain(widget.journey);
+  late var _chain = ConnectionChain(widget.journey, now: widget.now);
 
   @override
   Widget build(BuildContext context) => CustomScrollView(
     slivers: [
       SliverToBoxAdapter(
-        child: JourneyHeader(chain: _chain, now: at(0), onBack: () {}),
+        child: JourneyHeader(
+          chain: _chain,
+          now: widget.now ?? at(0),
+          onBack: () {},
+        ),
       ),
       JourneyItinerary(
         chain: _chain,
@@ -60,7 +67,7 @@ class _DetailsState extends State<_Details> {
         destination: 'Chu Minh',
         units: UnitSystem.imperial,
         access: TransitAccess.walking,
-        now: at(0),
+        now: widget.now ?? at(0),
       ),
     ],
   );
@@ -191,5 +198,15 @@ void main() {
     await tester.tap(find.textContaining('Walk 5 min'));
     await tester.pumpAndSettle();
     await screenshot(tester, 'connections-5-details-late-alert');
+  });
+
+  testWidgets('details, every departure gone', (tester) async {
+    // The 40's last, the day's, left at 6:04 PM.
+    await _app(
+      tester,
+      const Size(_width, 1100),
+      _Details(fakePlan().journeys.single, now: at(1741)),
+    );
+    await screenshot(tester, 'connections-6-details-gone');
   });
 }

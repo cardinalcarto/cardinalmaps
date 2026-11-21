@@ -32,6 +32,38 @@ import 'picker_harness.dart';
 TransitPlan planOf(List<String> tags, {List<int>? shifts}) =>
     fakePlan(journeys: tags.length, tags: tags, shifts: shifts);
 
+/// [seconds] after the fake plans' first journey leaves.
+DateTime at(int seconds) =>
+    DateTime.fromMillisecondsSinceEpoch((fakeStart + seconds) * 1000);
+
+/// [fakePlanJson]'s journey, with [tag], as a plan would have it on its 40 twelve
+/// minutes later (`t40c`), each ride on one trip, and the same Link.
+Map<String, Object?> laterJourneyJson(String tag) {
+  final journey =
+      (fakePlanJson(tags: [tag])['journeys']! as List).single
+          as Map<String, Object?>;
+  final bus = (journey['legs']! as List)[1] as Map<String, Object?>;
+  (bus['trip']! as Map)['trip_id'] = 't40c$tag';
+  bus['segments'] = <Object>[];
+  for (final d in (bus['departures']! as List).cast<Map<String, Object?>>()) {
+    if (d['trip_id'] == 't40c$tag') {
+      d['suggested'] = true;
+    } else {
+      d.remove('suggested');
+    }
+  }
+  return journey;
+}
+
+/// A plan of [journeys], as [fakePlanJson] has them.
+TransitPlan planOfJourneys(List<Object?> journeys) =>
+    TransitPlan.fromJson({...fakePlanJson(), 'journeys': journeys});
+
+/// [planOf]'s journeys' JSON, for [tags].
+List<Object?> journeysOf(List<String> tags) =>
+    fakePlanJson(journeys: tags.length, tags: tags)['journeys']!
+        as List<Object?>;
+
 void main() {
   late Picker picker;
 
@@ -1013,6 +1045,171 @@ void main() {
       expect(tester.getRect(journeys().first), held);
     });
 
+    group('as the clock runs out on a journey', () {
+      /// Opens transit's journeys, as [plan] has them, at [seconds], answering
+      /// nothing more at once.
+      Future<void> openAt(
+        WidgetTester tester,
+        int seconds,
+        TransitPlan plan,
+      ) async {
+        picker.now = at(seconds);
+        await openTransit(tester, plan: plan);
+        picker.transit.immediately = null;
+      }
+
+      int asked() => picker.transit.asked.length;
+
+      testWidgets('just after the soonest can no longer be made, transit is '
+          'planned again, and shown as any new plan is', (tester) async {
+        await openAt(tester, -20, planOf(['-x', '-y']));
+        final before = asked();
+        await tester.pump(const Duration(seconds: 19));
+        expect(asked(), before);
+        picker.now = at(1);
+        await tester.pump(const Duration(seconds: 2));
+        expect(asked(), before + 1);
+        picker.transit.asked.last.answer.complete(
+          planOf(['-y', '-z'], shifts: [600, 1200]),
+        );
+        await tester.pumpAndSettle();
+        expect(shown(tester), ['-y', '-z']);
+        expect(selected(tester), [true, false]);
+        // The half minute runs from that answer.
+        await tester.pump(const Duration(seconds: 28));
+        expect(asked(), before + 1);
+        await tester.pump(const Duration(seconds: 3));
+        expect(asked(), before + 2);
+      });
+
+      testWidgets('with Trip details open just the same', (tester) async {
+        await openAt(tester, -20, planOf(['-x', '-y']));
+        await openDetails(tester);
+        final before = asked();
+        picker.now = at(1);
+        await tester.pump(const Duration(seconds: 21));
+        expect(asked(), before + 1);
+        expect(find.byType(TripDetailsPage), findsOneWidget);
+      });
+
+      testWidgets('a plan with one already gone is asked again once, a few '
+          'seconds on, and an answer to that with it still there is left to '
+          'the half minute', (tester) async {
+        await openAt(tester, 10, planOf(['-x', '-y']));
+        final before = asked();
+        await tester.pump(const Duration(seconds: 4));
+        expect(asked(), before);
+        await tester.pump(const Duration(seconds: 2));
+        expect(asked(), before + 1);
+        // The planner still has the one that's gone.
+        picker.transit.asked.last.answer.complete(planOf(['-x', '-y']));
+        await tester.pumpAndSettle();
+        await tester.pump(const Duration(seconds: 20));
+        expect(asked(), before + 1);
+        await tester.pump(const Duration(seconds: 10));
+        expect(asked(), before + 2);
+        // The half minute's answer with it again: once more, a few seconds on.
+        picker.transit.asked.last.answer.complete(planOf(['-x', '-y']));
+        await tester.pumpAndSettle();
+        await tester.pump(clockRefreshGap);
+        expect(asked(), before + 3);
+        picker.transit.asked.last.answer.complete(planOf(['-x', '-y']));
+        await tester.pumpAndSettle();
+        await tester.pump(const Duration(seconds: 20));
+        expect(asked(), before + 3);
+      });
+
+      testWidgets('no sooner than a few seconds after the clock last asked', (
+        tester,
+      ) async {
+        // Two that leave two seconds apart.
+        await openAt(tester, -1, planOf(['-x', '-y'], shifts: [0, 2]));
+        final before = asked();
+        await tester.pump(const Duration(milliseconds: 1100));
+        expect(asked(), before + 1);
+        picker.now = at(1);
+        picker.transit.asked.last.answer.complete(
+          planOf(['-x', '-y'], shifts: [0, 2]),
+        );
+        await tester.pump();
+        // The second can't be made from 2 s on, but the clock asked at -1 s.
+        await tester.pump(const Duration(milliseconds: 2500));
+        expect(asked(), before + 1);
+        await tester.pump(const Duration(seconds: 1));
+        expect(asked(), before + 2);
+      });
+
+      testWidgets('not while a refresh is under way', (tester) async {
+        await openAt(tester, -35, planOf(['-x', '-y']));
+        final before = asked();
+        await tester.pump(transitRefresh);
+        expect(asked(), before + 1);
+        await tester.pump(const Duration(seconds: 10));
+        expect(asked(), before + 1);
+        picker.now = at(1);
+        picker.transit.asked.last.answer.complete(planOf(['-x', '-y']));
+        await tester.pumpAndSettle();
+        // That answer has one already gone: asked again a few seconds on.
+        await tester.pump(clockRefreshGap);
+        expect(asked(), before + 2);
+      });
+
+      test('the rule, alone', () {
+        final arrived = at(0);
+        // The soonest still to come, just after it passes.
+        expect(
+          clockRefresh(
+            leave: [at(60), at(30)],
+            arrived: arrived,
+            byClock: false,
+          ),
+          (at: at(30).add(const Duration(microseconds: 1)), spends: at(30)),
+        );
+        // One gone already: a few seconds after the plan arrived.
+        expect(
+          clockRefresh(
+            leave: [at(-5), at(30)],
+            arrived: arrived,
+            byClock: false,
+          ),
+          (at: at(5), spends: at(0)),
+        );
+        // Unless the plan answered the clock: then the next still to come.
+        expect(
+          clockRefresh(
+            leave: [at(-5), at(30)],
+            arrived: arrived,
+            byClock: true,
+          ),
+          (at: at(30).add(const Duration(microseconds: 1)), spends: at(30)),
+        );
+        // Not one already asked for under the plan.
+        expect(
+          clockRefresh(
+            leave: [at(-5), at(30)],
+            arrived: arrived,
+            byClock: false,
+            spent: at(30),
+          ),
+          isNull,
+        );
+        // No sooner than a few seconds after the clock last asked.
+        expect(
+          clockRefresh(
+            leave: [at(2)],
+            arrived: arrived,
+            byClock: true,
+            last: at(0),
+          ),
+          (at: at(5), spends: at(2)),
+        );
+        expect(
+          clockRefresh(leave: [], arrived: arrived, byClock: false),
+          isNull,
+        );
+      });
+    });
+
     testWidgets('times alone change under a finger', (tester) async {
       await openTransit(tester, plan: planOf(['-x', '-y']));
       await moveTo(tester, const SheetAnchor.full());
@@ -1109,13 +1306,199 @@ void main() {
       expect(find.textContaining('1 stop · '), findsOneWidget);
     });
 
-    testWidgets('returns to the journeys if the new plan hasn\'t its '
-        'journey', (tester) async {
+    testWidgets('stays on its journey if the new plan hasn\'t it, with the '
+        'departures the plan lists between its rides\' stops', (tester) async {
+      await openTransit(tester, plan: planOf(['-x', '-y']));
+      await openDetails(tester);
+      final page = tester.element(find.byType(TripDetailsPage));
+      final journey = openChain(tester).journey;
+      final question = await refreshDue(tester);
+      await tester.pump(structureSettle);
+      question.answer.complete(planOf(['-y', '-z'], shifts: [600, 1200]));
+      await tester.pumpAndSettle();
+      expect(find.byType(TripDetailsPage), findsOneWidget);
+      expect(tester.element(find.byType(TripDetailsPage)), same(page));
+      final chain = openChain(tester);
+      expect(chain.journey, same(journey));
+      // Each ride's departures are the first of the new plan's between its stops.
+      expect(chain.rides.first.departures.map((d) => d.tripId), [
+        't40a-y',
+        't40b-y',
+        't40-y',
+        't40c-y',
+        't40d-y',
+        't40e-y',
+      ]);
+      expect(chain.rides.last.departures.map((d) => d.tripId), [
+        'link0-y',
+        'link-y',
+      ]);
+      // Its own run isn't among them, so the one that arrives first is taken.
+      expect(chain.rides.first.departure?.tripId, 't40a-y');
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is ConnectionTile && w.departure.tripId == 't40a-y',
+          skipOffstage: false,
+        ),
+        findsOneWidget,
+      );
+      // The map draws it with the departures taken, whatever's selected under it.
+      expect(drawnRides(), hasLength(2));
+      expect(
+        picker.transit.rides.map((r) => r.query.tripId),
+        containsAll(['t40a-y', 'link0-y']),
+      );
+    });
+
+    testWidgets('moves onto a journey of the departures taken, which the list '
+        'under it selects, nothing moving', (tester) async {
+      await openTransit(tester, plan: planOf(['-x', '-y']));
+      await openDetails(tester);
+      await choose(tester, 't40c-x');
+      final page = tester.element(find.byType(TripDetailsPage));
+      final row = find.byKey(const ValueKey(('departures', 1))).last;
+      final top = tester.getTopLeft(row);
+      final header = tester.getRect(
+        find.byType(JourneyHeader, skipOffstage: false),
+      );
+      final sheet = SheetScaffold.controllerOf(page);
+      final extent = sheet.extent;
+      final subjects = picker.map.subjectsSet;
+      Finder tileOf(String trip) => find.byWidgetPredicate(
+        (w) => w is ConnectionTile && w.departure.tripId == trip,
+      );
+      Finder label(String trip) =>
+          find.descendant(of: tileOf(trip), matching: find.text('Suggested'));
+      expect(label('t40-x'), findsOneWidget);
+      expect(label('t40c-x'), findsNothing);
+
+      final question = await refreshDue(tester);
+      await tester.pump(structureSettle);
+      // The journey opened, the one on the 40 taken, and another.
+      final fresh = planOfJourneys([
+        ...journeysOf(['-x']),
+        laterJourneyJson('-x'),
+        ...journeysOf(['-y']),
+      ]);
+      question.answer.complete(fresh);
+      await land(tester);
+      await tester.pump(const Duration(milliseconds: 80));
+      // The label cross-fades onto the tile taken.
+      expect(opacityOf(tester, label('t40c-x')), inExclusiveRange(0, 1));
+      expect(tester.getTopLeft(row), top);
+      await tester.pumpAndSettle();
+      expect(tester.element(find.byType(TripDetailsPage)), same(page));
+      final chain = openChain(tester);
+      expect(chain.journey, same(fresh.journeys[1]));
+      expect(chain.rides.first.departure?.tripId, 't40c-x');
+      expect(chain.rides.first.suggested, isTrue);
+      expect(chain.suggested, isTrue);
+      expect(label('t40c-x'), findsOneWidget);
+      expect(label('t40-x'), findsNothing);
+      expect(tester.getTopLeft(row), top);
+      expect(
+        tester.getRect(find.byType(JourneyHeader, skipOffstage: false)),
+        header,
+      );
+      expect(sheet.extent, extent);
+      expect(picker.map.subjectsSet, subjects);
+      expect(tester.takeException(), isNull);
+
+      // A later plan without the journey opened knows the one adopted.
+      final question2 = await refreshDue(tester);
+      await tester.pump(structureSettle);
+      final later = planOfJourneys([
+        laterJourneyJson('-x'),
+        ...journeysOf(['-y']),
+      ]);
+      question2.answer.complete(later);
+      await tester.pumpAndSettle();
+      expect(openChain(tester).journey, same(later.journeys.first));
+
+      // Back lands on it, the map where it was.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byType(TripDetailsPage), findsNothing);
+      expect(selected(tester), [true, false]);
+      expect(
+        tester.widget<JourneyRow>(journeys().first).journey,
+        same(later.journeys.first),
+      );
+      expect(picker.map.subjectsSet, subjects);
+    });
+
+    testWidgets('Back after a move onto a journey of the departures taken '
+        'lands on it', (tester) async {
+      await openTransit(tester, plan: planOf(['-x', '-y']));
+      await openDetails(tester);
+      await choose(tester, 't40c-x');
+      final subjects = picker.map.subjectsSet;
+      final question = await refreshDue(tester);
+      await tester.pump(structureSettle);
+      question.answer.complete(
+        planOfJourneys([
+          ...journeysOf(['-x']),
+          laterJourneyJson('-x'),
+          ...journeysOf(['-y']),
+        ]),
+      );
+      await tester.pumpAndSettle();
+      // The system's back: the page is scrolled to the tiles.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(selected(tester), [false, true, false]);
+      expect(picker.map.subjectsSet, subjects);
+    });
+
+    testWidgets('with the rider on the journey\'s own departures, it stays on '
+        'the journey opened', (tester) async {
+      await openTransit(tester, plan: planOf(['-x', '-y']));
+      await openDetails(tester);
+      final question = await refreshDue(tester);
+      await tester.pump(structureSettle);
+      final fresh = planOfJourneys([
+        laterJourneyJson('-x'),
+        ...journeysOf(['-x', '-y']),
+      ]);
+      question.answer.complete(fresh);
+      await tester.pumpAndSettle();
+      expect(openChain(tester).journey, same(fresh.journeys[1]));
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      expect(selected(tester), [false, true, false]);
+    });
+
+    testWidgets('goes back onto its journey when a later plan has it again', (
+      tester,
+    ) async {
+      await openTransit(tester, plan: planOf(['-x', '-y']));
+      await openDetails(tester);
+      var question = await refreshDue(tester);
+      await tester.pump(structureSettle);
+      question.answer.complete(planOf(['-y'], shifts: [600]));
+      await tester.pumpAndSettle();
+      expect(openChain(tester).rides.first.departures.first.tripId, 't40a-y');
+      question = await refreshDue(tester);
+      await tester.pump(structureSettle);
+      final again = planOf(['-x', '-y']);
+      question.answer.complete(again);
+      await tester.pumpAndSettle();
+      expect(find.byType(TripDetailsPage), findsOneWidget);
+      final chain = openChain(tester);
+      expect(chain.journey, same(again.journeys.first));
+      expect(chain.rides.first.departure?.tripId, 't40-x');
+      expect(chain.rides.first.suggested, isTrue);
+    });
+
+    testWidgets('goes back to the journeys, as the new plan has them, from a '
+        'journey it hasn\'t', (tester) async {
       await openTransit(tester, plan: planOf(['-x', '-y']));
       await openDetails(tester);
       final question = await refreshDue(tester);
       await tester.pump(structureSettle);
       question.answer.complete(planOf(['-y', '-z'], shifts: [600, 1200]));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
       expect(find.byType(TripDetailsPage), findsNothing);
       expect(shown(tester), ['-y', '-z']);
@@ -1145,11 +1528,12 @@ void main() {
       question.answer.complete(planOf(['-y'], shifts: [600]));
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
-      expect(find.byType(TripDetailsPage), findsOneWidget);
+      expect(openChain(tester).rides.first.departures.first.tripId, 't40a-x');
       await finger.up();
       await tester.pump(structureSettle + const Duration(milliseconds: 20));
       await tester.pumpAndSettle();
-      expect(find.byType(TripDetailsPage), findsNothing);
+      expect(find.byType(TripDetailsPage), findsOneWidget);
+      expect(openChain(tester).rides.first.departures.first.tripId, 't40a-y');
     });
 
     testWidgets('at twice the text size, choosing a departure moves nothing '
@@ -1184,6 +1568,593 @@ void main() {
         header,
       );
       expect(tester.getRect(find.text('Stop A').first), stop);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('Trip details, on a journey the plan hasn\'t', () {
+    Finder tileOf(String trip) => find.byWidgetPredicate(
+      (w) => w is ConnectionTile && w.departure.tripId == trip,
+      skipOffstage: false,
+    );
+
+    List<String> listed(WidgetTester tester, int ride) => [
+      for (final d in openChain(tester).rides[ride].departures) d.tripId,
+    ];
+
+    /// Has transit planned again, and [plan] shown for it.
+    Future<void> planAgain(WidgetTester tester, TransitPlan plan) async {
+      final question = await refreshDue(tester);
+      await tester.pump(structureSettle);
+      question.answer.complete(plan);
+      await tester.pumpAndSettle();
+    }
+
+    /// Opens the first of two journeys, and has a plan without it shown: one whose
+    /// only journey rides between the same stops, ten minutes later.
+    Future<void> openAndLose(WidgetTester tester) async {
+      await openTransit(tester, plan: planOf(['-x', '-y']));
+      await openDetails(tester);
+      expect(picker.transit.departuresAsked, isEmpty);
+      await planAgain(tester, planOf(['-y'], shifts: [600]));
+    }
+
+    /// A list of the bus's departures, as looked up.
+    List<RideDeparture> busList() =>
+        fakeDepartures([('t40a-y', 600), ('t40n', 900), ('t40m', 1500)]);
+
+    testWidgets('asks for each ride\'s departures, around the one it takes, '
+        'once for each plan without the journey', (tester) async {
+      await openAndLose(tester);
+      final chain = openChain(tester);
+      expect(listed(tester, 0).first, 't40a-y');
+      final asked = picker.transit.departuresAsked;
+      expect(asked, hasLength(2));
+      expect(asked[0].access, TransitAccess.walking);
+      expect(asked[0].query, (
+        feed: 'us-wa-Metro-Transit',
+        boardStopId: 'Fremont Ave N & N 34th St',
+        alightStopId: 'Westlake Station',
+        around: chain.rides[0].departureTime,
+        before: 2,
+        after: 7,
+        ready: null,
+      ));
+      expect(asked[1].query.boardStopId, 'Westlake Station Bay 1');
+      expect(asked[1].query.around, chain.rides[1].departureTime);
+      // Nothing more is asked while that plan shows, whatever's chosen.
+      await tester.pump(const Duration(seconds: 5));
+      expect(asked, hasLength(2));
+      // The next plan without it asks again, and gives up on what was asked.
+      await planAgain(tester, planOf(['-y'], shifts: [660]));
+      expect(asked, hasLength(4));
+      expect(asked[0].aborted, isTrue);
+      expect(asked[1].aborted, isTrue);
+      expect(asked[2].aborted, isFalse);
+      expect(asked[2].query.around, openChain(tester).rides[0].departureTime);
+    });
+
+    testWidgets('asks for nothing while the plan has the journey', (
+      tester,
+    ) async {
+      await openTransit(tester, plan: planOf(['-x', '-y']));
+      await openDetails(tester);
+      await planAgain(tester, planOf(['-x', '-y'], shifts: [60, 660]));
+      expect(picker.transit.departuresAsked, isEmpty);
+    });
+
+    testWidgets('takes a ride\'s departures as they arrive, the plan\'s '
+        'standing in until then', (tester) async {
+      await openAndLose(tester);
+      final page = tester.element(find.byType(TripDetailsPage));
+      // What the plan's ride between the same stops lists stands in.
+      expect(listed(tester, 0), contains('t40e-y'));
+      final taken = openChain(tester).rides[0].departure!.tripId;
+      picker.transit.departuresAsked[0].answer.complete(busList());
+      await tester.pumpAndSettle();
+      expect(tester.element(find.byType(TripDetailsPage)), same(page));
+      expect(listed(tester, 0), ['t40a-y', 't40n', 't40m']);
+      expect(openChain(tester).rides[0].departure?.tripId, taken);
+      expect(tileOf('t40n'), findsOneWidget);
+      expect(tileOf('t40e-y'), findsNothing);
+      // The other ride's are as the plan lent them.
+      expect(listed(tester, 1), ['link0-y', 'link-y']);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('keeps a departure chosen that the list looked up has', (
+      tester,
+    ) async {
+      await openAndLose(tester);
+      final tile = tileOf('t40c-y');
+      await tester.ensureVisible(tile);
+      await tester.pumpAndSettle();
+      await tester.tap(tile);
+      await tester.pumpAndSettle();
+      expect(openChain(tester).rides[0].chosen, isTrue);
+      picker.transit.departuresAsked[0].answer.complete(
+        fakeDepartures([('t40a-y', 600), ('t40c-y', 1920), ('t40m', 2500)]),
+      );
+      await tester.pumpAndSettle();
+      final first = openChain(tester).rides[0];
+      expect(first.departure?.tripId, 't40c-y');
+      expect(first.chosen, isTrue);
+    });
+
+    testWidgets('waits for a finger to lift, and a moment after', (
+      tester,
+    ) async {
+      await openAndLose(tester);
+      final before = listed(tester, 0);
+      final finger = await tester.startGesture(
+        tester.getCenter(find.byType(JourneyHeader)),
+      );
+      await tester.pump();
+      picker.transit.departuresAsked[0].answer.complete(busList());
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(listed(tester, 0), before);
+      expect(tileOf('t40n'), findsNothing);
+      await finger.up();
+      await tester.pump(structureSettle ~/ 2);
+      expect(listed(tester, 0), before);
+      await tester.pump(structureSettle);
+      await tester.pumpAndSettle();
+      expect(listed(tester, 0), ['t40a-y', 't40n', 't40m']);
+      expect(tileOf('t40n'), findsOneWidget);
+    });
+
+    testWidgets('keeps what was looked up under the next plan, rather than '
+        'what that plan lends, until it\'s looked up again', (tester) async {
+      await openAndLose(tester);
+      picker.transit.departuresAsked[0].answer.complete(busList());
+      await tester.pumpAndSettle();
+      await planAgain(tester, planOf(['-z'], shifts: [660]));
+      // The bus's were looked up; Link's never were, and are the plan's.
+      expect(listed(tester, 0), ['t40a-y', 't40n', 't40m']);
+      expect(listed(tester, 1), ['link0-z', 'link-z']);
+      picker.transit.departuresAsked[2].answer.complete(
+        fakeDepartures([('t40n', 900), ('t40m', 1500), ('t40p', 2100)]),
+      );
+      await tester.pumpAndSettle();
+      expect(listed(tester, 0), ['t40n', 't40m', 't40p']);
+    });
+
+    testWidgets('an answer of no departures leaves the list showing', (
+      tester,
+    ) async {
+      await openAndLose(tester);
+      final before = openChain(tester);
+      picker.transit.departuresAsked[0].answer.complete(const []);
+      picker.transit.departuresAsked[1].answer.complete(const []);
+      await tester.pumpAndSettle();
+      expect(openChain(tester), same(before));
+      expect(tileOf('t40e-y'), findsOneWidget);
+    });
+
+    testWidgets('a lookup that fails leaves the list showing, and the next '
+        'plan asks again', (tester) async {
+      await openAndLose(tester);
+      final before = openChain(tester);
+      picker.transit.departuresAsked[0].answer.completeError(
+        const TransitPlanError('timed_out', 'too slow'),
+      );
+      await tester.pumpAndSettle();
+      expect(openChain(tester), same(before));
+      await planAgain(tester, planOf(['-y'], shifts: [660]));
+      expect(picker.transit.departuresAsked, hasLength(4));
+      picker.transit.departuresAsked[2].answer.complete(busList());
+      await tester.pumpAndSettle();
+      expect(listed(tester, 0), ['t40a-y', 't40n', 't40m']);
+    });
+
+    testWidgets('a source that can\'t be asked isn\'t asked again, and the '
+        'plan\'s lists go on standing in', (tester) async {
+      await openAndLose(tester);
+      picker.transit.departuresAsked[0].answer.completeError(
+        const TransitDeparturesUnsupported(),
+      );
+      await tester.pumpAndSettle();
+      expect(picker.transit.departuresAsked[1].aborted, isTrue);
+      await planAgain(tester, planOf(['-z'], shifts: [660]));
+      expect(picker.transit.departuresAsked, hasLength(2));
+      expect(listed(tester, 0).first, 't40a-z');
+      // Nor for another journey, opened later.
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      await openDetails(tester);
+      await planAgain(tester, planOf(['-y'], shifts: [720]));
+      expect(picker.transit.departuresAsked, hasLength(2));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('gives up on what\'s asked when the page is left, and takes '
+        'no answer after', (tester) async {
+      await openAndLose(tester);
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      expect(find.byType(TripDetailsPage), findsNothing);
+      expect(picker.transit.departuresAsked.every((q) => q.aborted), isTrue);
+      picker.transit.departuresAsked[0].answer.complete(busList());
+      await tester.pumpAndSettle();
+      // Opened again, the journey has the plan's own lists.
+      await openDetails(tester);
+      expect(listed(tester, 0), isNot(contains('t40n')));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('gives up, and has the plan\'s own lists, when a plan has the '
+        'journey again', (tester) async {
+      await openAndLose(tester);
+      picker.transit.departuresAsked[0].answer.complete(busList());
+      await tester.pumpAndSettle();
+      await planAgain(tester, planOf(['-x', '-y']));
+      expect(picker.transit.departuresAsked[1].aborted, isTrue);
+      expect(picker.transit.departuresAsked, hasLength(2));
+      expect(listed(tester, 0), [
+        't40a-x',
+        't40b-x',
+        't40-x',
+        't40c-x',
+        't40d-x',
+        't40e-x',
+      ]);
+      // Lost again, nothing looked up before stands in: the plan lends.
+      await planAgain(tester, planOf(['-y'], shifts: [600]));
+      expect(listed(tester, 0), contains('t40e-y'));
+      expect(picker.transit.departuresAsked, hasLength(4));
+    });
+
+    testWidgets('lost, back and lost again, the row under it that never grew '
+        'in goes without a frame\'s complaint', (tester) async {
+      // The page under Trip details animates nothing, so a row that comes back
+      // there hasn't grown in when it's dropped again.
+      await openAndLose(tester);
+      await planAgain(tester, planOf(['-x', '-y']));
+      await planAgain(tester, planOf(['-z'], shifts: [600]));
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      expect(shown(tester), ['-z']);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('gives up when a plan has a journey of the departures taken, '
+        'which it moves onto', (tester) async {
+      await openTransit(tester, plan: planOf(['-x', '-y']));
+      await openDetails(tester);
+      // A plan with other stops lends nothing, so the journey stays as it was.
+      await planAgain(tester, TransitPlan.fromJson(connectionsPlanJson()));
+      expect(picker.transit.departuresAsked, hasLength(2));
+      expect(openChain(tester).rides[0].departure?.tripId, 't40-x');
+      final fresh = planOf(['-x', '-y']);
+      await planAgain(tester, fresh);
+      expect(picker.transit.departuresAsked.every((q) => q.aborted), isTrue);
+      expect(openChain(tester).journey, same(fresh.journeys.first));
+      expect(picker.transit.departuresAsked, hasLength(2));
+    });
+
+    testWidgets('gives up when transit is asked again for a changed trip', (
+      tester,
+    ) async {
+      await openAndLose(tester);
+      await picker.store.settings.set(wheelchairByDefault, true);
+      await tester.pumpAndSettle();
+      expect(find.byType(TripDetailsPage), findsNothing);
+      expect(picker.transit.departuresAsked.every((q) => q.aborted), isTrue);
+    });
+
+    group('with every departure of the first ride gone', () {
+      /// Opens the journey 100 s before its last 40 can no longer be made, lets that
+      /// pass, and has a plan shown that neither has the journey nor lends it
+      /// anything.
+      Future<void> goneAndLost(WidgetTester tester) async {
+        picker.now = at(1640);
+        await openTransit(tester, plan: planOf(['-x']));
+        await openDetails(tester);
+        picker.transit.immediately = TransitPlan.fromJson(
+          connectionsPlanJson(),
+        );
+        picker.now = at(1741);
+        await tester.pump(const Duration(seconds: 101));
+        await tester.pumpAndSettle();
+        expect(openChain(tester).gone, isTrue);
+        expect(find.text('No departures left'), findsOneWidget);
+      }
+
+      testWidgets('asks for the first ride\'s alone, around the time it is', (
+        tester,
+      ) async {
+        await goneAndLost(tester);
+        final asked = picker.transit.departuresAsked;
+        expect(asked, isNotEmpty);
+        expect(
+          asked.every(
+            (q) => q.query.boardStopId == 'Fremont Ave N & N 34th St',
+          ),
+          isTrue,
+        );
+        // Each as the clock had it when its plan was shown.
+        expect(asked.last.query.around, isNot(at(600)));
+        expect(asked.last.query.around.isAfter(at(1600)), isTrue);
+        expect(asked.last.query.around.isAfter(picker.now), isFalse);
+        expect(asked.last.query.before, 2);
+        expect(asked.last.query.after, 7);
+      });
+
+      testWidgets('departures still to come bring the journey back, its '
+          'times fading in', (tester) async {
+        await goneAndLost(tester);
+        final page = tester.element(find.byType(TripDetailsPage));
+        final header = tester.getRect(
+          find.byType(JourneyHeader, skipOffstage: false),
+        );
+        final tiles = find.byKey(
+          const ValueKey(('departures', 1)),
+          skipOffstage: false,
+        );
+        final top = tester.getTopLeft(tiles.last);
+        picker.transit.departuresAsked.last.answer.complete(
+          fakeDepartures([('t40e-x', 2040), ('t40r', 2400), ('t40s', 3000)]),
+        );
+        await land(tester);
+        await tester.pump(const Duration(milliseconds: 80));
+        // "No departures left" cross-fades to when to go.
+        expect(
+          opacityOf(tester, find.text('No departures left')),
+          inExclusiveRange(0, 1),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.element(find.byType(TripDetailsPage)), same(page));
+        final chain = openChain(tester);
+        expect(chain.gone, isFalse);
+        expect(chain.rides[0].catchable, [false, true, true]);
+        expect(chain.rides[0].departure?.tripId, 't40r');
+        expect(chain.rides[1].connection, RideConnection.made);
+        expect(find.text('No departures left'), findsNothing);
+        expect(find.text('No more departures today'), findsNothing);
+        expect(tileOf('t40r'), findsOneWidget);
+        expect(tester.widget<ConnectionTile>(tileOf('t40r')).selected, isTrue);
+        // Neither the header nor the tiles moved for it: what's over them is as
+        // tall as it was.
+        expect(
+          tester.getRect(find.byType(JourneyHeader, skipOffstage: false)),
+          header,
+        );
+        expect(tester.getTopLeft(tiles.last), top);
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('waits for a finger to lift before coming back', (
+        tester,
+      ) async {
+        await goneAndLost(tester);
+        final finger = await tester.startGesture(
+          tester.getCenter(find.byType(JourneyHeader)),
+        );
+        await tester.pump();
+        picker.transit.departuresAsked.last.answer.complete(
+          fakeDepartures([('t40r', 2400), ('t40s', 3000)]),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        expect(openChain(tester).gone, isTrue);
+        expect(find.text('No departures left'), findsOneWidget);
+        await finger.up();
+        await tester.pump(structureSettle + const Duration(milliseconds: 20));
+        await tester.pumpAndSettle();
+        expect(openChain(tester).gone, isFalse);
+      });
+
+      testWidgets('an answer of no departures leaves it gone', (tester) async {
+        await goneAndLost(tester);
+        final listed0 = listed(tester, 0);
+        picker.transit.departuresAsked.last.answer.complete(const []);
+        await tester.pumpAndSettle();
+        expect(openChain(tester).gone, isTrue);
+        expect(listed(tester, 0), listed0);
+        expect(find.text('No departures left'), findsOneWidget);
+      });
+    });
+
+    testWidgets('at two and a half times the text size, a list looked up '
+        'moves nothing, and a title keeps its room', (tester) async {
+      tester.platformDispatcher.textScaleFactorTestValue = 2.5;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await picker.store.settings.set(lastTravelMode, TravelMode.transit);
+      picker.transit.immediately = TransitPlan.fromJson(connectionsPlanJson());
+      await picker.open(tester);
+      await openDetails(tester);
+      SheetScaffold.controllerOf(tester.element(find.byType(TripDetailsPage)))
+          .animateTo(const SheetAnchor.full());
+      await tester.pumpAndSettle();
+      // A plan between other stops: it hasn't the journey, and lends nothing.
+      await planAgain(tester, planOf(['-z']));
+      expect(listed(tester, 0), contains('31-1'));
+      Rect rectOf(Finder finder) => tester.getRect(finder);
+      final header = find.byType(JourneyHeader, skipOffstage: false);
+      final tiles = find.byKey(
+        const ValueKey(('departures', 1)),
+        skipOffstage: false,
+      );
+      final below = find.text('Stop B', skipOffstage: false).first;
+      final last = find.text('Stop G', skipOffstage: false).first;
+      final before = [
+        rectOf(header),
+        rectOf(tiles.last),
+        rectOf(below),
+        rectOf(last),
+      ];
+      final extent = SheetScaffold.controllerOf(
+        tester.element(find.byType(TripDetailsPage)),
+      ).extent;
+      // The 40s and a 7, without the 62 to Georgetown or the 31 to Magnolia.
+      picker.transit.departuresAsked[0].answer.complete(
+        [
+          ...fakeDepartures(
+            [('40-1', 600), ('40-2', 1500)],
+            ride: 600,
+            route: fakeRoutes['40'],
+            // As the plan had its own run, so what says how it's running is as tall.
+            live: const {'40-1'},
+          ),
+          ...fakeDepartures(
+            [('7-1', 780)],
+            ride: 540,
+            route: fakeRoutes['7'],
+            headsign: 'Rainier Beach',
+          ),
+        ]..sort((a, b) => a.departure.compareTo(b.departure)),
+      );
+      await tester.pumpAndSettle();
+      expect(listed(tester, 0), ['40-1', '7-1', '40-2']);
+      expect(openChain(tester).rides[0].departure?.tripId, '40-1');
+      expect([
+        rectOf(header),
+        rectOf(tiles.last),
+        rectOf(below),
+        rectOf(last),
+      ], before);
+      expect(
+        SheetScaffold.controllerOf(tester.element(find.byType(TripDetailsPage)))
+            .extent,
+        extent,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('Trip details, as the clock passes', () {
+    // The walk to the first stop takes 5 minutes, and the 40 leaves at 17:40: it can
+    // be made until 17:35, when the 40 at 17:52 is the next.
+    Finder tileOf(String trip) => find.byWidgetPredicate(
+      (w) => w is ConnectionTile && w.departure.tripId == trip,
+      skipOffstage: false,
+    );
+
+    ConnectionTile tile(WidgetTester tester, String trip) =>
+        tester.widget<ConnectionTile>(tileOf(trip));
+
+    Future<void> openAt(WidgetTester tester, int seconds) async {
+      picker.now = at(seconds);
+      await openTransit(tester, plan: planOf(['-x']));
+      await openDetails(tester);
+    }
+
+    testWidgets('a departure that can no longer be made turns Missed, and the '
+        'journey re-times onto the next, on the map too', (tester) async {
+      await openAt(tester, 0);
+      expect(tile(tester, 't40-x').catchable, isTrue);
+      expect(drawnRides(), hasLength(2));
+      final drawn = drawnRides().first;
+      picker.now = at(301);
+      await tester.pump(const Duration(seconds: 301));
+      await tester.pumpAndSettle();
+      expect(find.byType(TripDetailsPage), findsOneWidget);
+      expect(tile(tester, 't40-x').catchable, isFalse);
+      expect(
+        find.descendant(of: tileOf('t40-x'), matching: find.text('Missed')),
+        findsOneWidget,
+      );
+      final chain = openChain(tester);
+      expect(chain.rides.first.departure?.tripId, 't40c-x');
+      expect(chain.departure, at(720));
+      expect(tile(tester, 't40c-x').selected, isTrue);
+      // The map draws the departure taken, along its own line once it's fetched.
+      expect(picker.transit.rides.last.query.tripId, 't40c-x');
+      picker.transit.rides.last.answer.complete(
+        fakeRideLeg(
+          't40c-x',
+          const [
+            [0.6, 2.1],
+            [0.7, 2.6],
+            [0.9, 3.2],
+          ],
+          departure: fakeStart + 1320,
+          from: 'Fremont Ave N & N 34th St',
+          to: 'Westlake Station',
+          between: const ['Aurora Bridge'],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(drawnRides(), hasLength(2));
+      expect(drawnRides().first, isNot(equals(drawn)));
+    });
+
+    testWidgets('a later departure chosen stays as the suggested one leaves', (
+      tester,
+    ) async {
+      await openAt(tester, 0);
+      final later = tileOf('t40c-x');
+      await tester.ensureVisible(later);
+      await tester.pumpAndSettle();
+      await tester.tap(later);
+      await tester.pumpAndSettle();
+      picker.now = at(301);
+      await tester.pump(const Duration(seconds: 301));
+      await tester.pumpAndSettle();
+      expect(tile(tester, 't40-x').catchable, isFalse);
+      final first = openChain(tester).rides.first;
+      expect(first.departure?.tripId, 't40c-x');
+      expect(first.chosen, isTrue);
+    });
+
+    testWidgets('waits for a finger to lift, and a moment after', (
+      tester,
+    ) async {
+      await openAt(tester, 0);
+      final finger = await tester.startGesture(
+        tester.getCenter(find.byType(JourneyHeader)),
+      );
+      await tester.pump();
+      picker.now = at(301);
+      await tester.pump(const Duration(seconds: 301));
+      expect(tile(tester, 't40-x').catchable, isTrue);
+      expect(openChain(tester).rides.first.departure?.tripId, 't40-x');
+      await finger.up();
+      await tester.pump(structureSettle ~/ 2);
+      expect(tile(tester, 't40-x').catchable, isTrue);
+      await tester.pump(structureSettle);
+      await tester.pumpAndSettle();
+      expect(tile(tester, 't40-x').catchable, isFalse);
+      expect(openChain(tester).rides.first.departure?.tripId, 't40c-x');
+    });
+
+    testWidgets('a new plan of the departure the clock moved it onto is the '
+        'journey open from then on', (tester) async {
+      await openAt(tester, 0);
+      picker.now = at(301);
+      await tester.pump(const Duration(seconds: 301));
+      await tester.pumpAndSettle();
+      expect(openChain(tester).rides.first.departure?.tripId, 't40c-x');
+      final fresh = planOfJourneys([
+        ...journeysOf(['-x']),
+        laterJourneyJson('-x'),
+      ]);
+      picker.transit.immediately = fresh;
+      await tester.pump(transitRefresh);
+      await tester.pumpAndSettle();
+      final chain = openChain(tester);
+      expect(chain.journey, same(fresh.journeys[1]));
+      expect(chain.rides.first.suggested, isTrue);
+      expect(chain.rides.first.chosen, isFalse);
+      expect(
+        find.descendant(of: tileOf('t40c-x'), matching: find.text('Suggested')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('with every departure gone, it says so and stays', (
+      tester,
+    ) async {
+      await openAt(tester, 1600);
+      picker.now = at(1741);
+      await tester.pump(const Duration(seconds: 141));
+      await tester.pumpAndSettle();
+      expect(find.byType(TripDetailsPage), findsOneWidget);
+      expect(openChain(tester).gone, isTrue);
+      expect(find.text('No departures left'), findsOneWidget);
+      expect(find.text('No more departures today'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });

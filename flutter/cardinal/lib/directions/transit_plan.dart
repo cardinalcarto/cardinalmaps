@@ -604,6 +604,19 @@ class StopDeparture {
       accessibility = Accessibility.parse(json['accessibility']),
       bikesAllowed = json['bikes_allowed'] as String?;
 
+  /// [other], with its [startDate] and [headsign] as given.
+  StopDeparture._copy(StopDeparture other, {this.startDate, this.headsign})
+    : tripId = other.tripId,
+      status = other.status,
+      departure = other.departure,
+      scheduledDeparture = other.scheduledDeparture,
+      delaySeconds = other.delaySeconds,
+      realtime = other.realtime,
+      vehicleId = other.vehicleId,
+      accessibility = other.accessibility,
+      bikesAllowed = other.bikesAllowed,
+      alerts = other.alerts;
+
   static List<LegAlert> _indexed(Object? indices, List<LegAlert> alerts) => [
     for (final i in _list(indices))
       if (i is int && i >= 0 && i < alerts.length) alerts[i],
@@ -659,6 +672,65 @@ class RideDeparture extends StopDeparture {
         ...StopDeparture._indexed(json['alerts'], legAlerts),
         ...StopDeparture._indexed(json['departure_alerts'], departureAlerts),
       ]);
+
+  /// One of a departures lookup's answer (`POST /transit/departures`), whose `alerts`
+  /// index [alerts], the answer's own. It says its own route, headsign and service
+  /// day, there being no ride whose own they could be, and is never [suggested];
+  /// [relisted] makes it one of a ride's.
+  RideDeparture.listed(
+    Map<String, Object?> json, {
+    List<LegAlert> alerts = const [],
+  }) : this._(json, alerts, const []);
+
+  /// The departures of a departures lookup's answer, in the order it lists them.
+  static List<RideDeparture> decodeLookup(List<int> body) {
+    final answer = _map(jsonDecode(utf8.decode(body)));
+    final alerts = [
+      for (final a in _list(answer['alerts'])) LegAlert.fromJson(_map(a)),
+    ];
+    return [
+      for (final d in _list(answer['departures']))
+        RideDeparture.listed(_map(d), alerts: alerts),
+    ];
+  }
+
+  RideDeparture._relisted(
+    super.other, {
+    required this.route,
+    required this.arrival,
+    required this.scheduledArrival,
+    required this.lastOfDay,
+    required super.startDate,
+    required super.headsign,
+    required this.suggested,
+  }) : missed = false,
+       super._copy();
+
+  /// This departure, listed with [from], as [to]'s list would have it: [from] and [to]
+  /// are rides between the same two stops, so it's one of [to]'s departures too. What
+  /// a list says by leaving it out (its route and headsign the ride's own) is said of
+  /// [to], its service day is said outright, it's [suggested] if it's [to]'s own run,
+  /// and it's never [missed], which [from]'s journey told, not [to]'s.
+  RideDeparture relisted({required TransitLeg from, required TransitLeg to}) {
+    final route = this.route ?? from.route;
+    final startDate = this.startDate ?? from.startDate;
+    final headsign = suggested ? from.headsign : this.headsign ?? from.headsign;
+    return RideDeparture._relisted(
+      this,
+      route: route == null || route.id == to.route?.id ? null : route,
+      arrival: arrival,
+      scheduledArrival: scheduledArrival,
+      lastOfDay: lastOfDay,
+      startDate: startDate,
+      headsign: headsign == to.headsign ? null : headsign,
+      suggested:
+          to.tripId != null &&
+          tripId == to.tripId &&
+          (startDate == null ||
+              to.startDate == null ||
+              startDate == to.startDate),
+    );
+  }
 
   /// Its route when that isn't the ride's: null for one of the ride's own route.
   final TransitRoute? route;

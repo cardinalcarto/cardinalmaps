@@ -28,15 +28,42 @@ class RideQuestion {
   var aborted = false;
 }
 
+/// The departures between two stops [FakeTransit] was asked for, waiting to be
+/// answered.
+class DeparturesQuestion {
+  DeparturesQuestion(this.query, this.access, this.abort);
+
+  final DeparturesQuery query;
+  final TransitAccess access;
+  final Future<void>? abort;
+  final answer = Completer<List<RideDeparture>>();
+
+  /// Whether the asker has given up on the answer.
+  var aborted = false;
+}
+
 /// Transit plans answered by the test, or at once with [immediately] if it's set; and
-/// departures' legs, answered by the test.
+/// departures' legs, and the departures between two stops, answered by the test.
 class FakeTransit implements TransitSource {
   FakeTransit({this.immediately});
 
   TransitPlan? immediately;
   final asked = <TransitQuestion>[];
   final rides = <RideQuestion>[];
+  final departuresAsked = <DeparturesQuestion>[];
   var prepared = 0;
+
+  @override
+  Future<List<RideDeparture>> departures({
+    required DeparturesQuery query,
+    required TransitAccess access,
+    Future<void>? abort,
+  }) {
+    final question = DeparturesQuestion(query, access, abort);
+    unawaited(abort?.then((_) => question.aborted = true));
+    departuresAsked.add(question);
+    return question.answer.future;
+  }
 
   @override
   Future<TransitLeg> ride({
@@ -207,6 +234,40 @@ Map<String, Object?> _departure(
   if (alerts.isNotEmpty) 'alerts': alerts,
   if (departureAlerts.isNotEmpty) 'departure_alerts': departureAlerts,
 };
+
+/// A departures lookup's answer, as the source reads it: one departure for each of
+/// [runs], a trip and how many seconds after [fakeStart] it leaves, each taking [ride]
+/// seconds, on [route] and headed for [headsign], which every one says for itself,
+/// with its service day. Those in [canceled] don't run, those in [live] have their
+/// times from real-time data, and [last] is the day's last.
+List<RideDeparture> fakeDepartures(
+  List<(String, int)> runs, {
+  int ride = 1200,
+  Map<String, Object?>? route,
+  String headsign = 'Downtown Seattle',
+  Set<String> canceled = const {},
+  Set<String> live = const {},
+  String? last,
+}) => [
+  for (final (trip, leaves) in runs)
+    RideDeparture.listed(
+      _departure(
+        trip,
+        fakeStart + leaves,
+        ride,
+        status: canceled.contains(trip)
+            ? 'canceled'
+            : live.contains(trip)
+            ? 'live'
+            : 'scheduled',
+        last: trip == last,
+        route:
+            route ??
+            const {'route_id': '100040', 'short_name': '40', 'route_type': 3},
+        headsign: headsign,
+      ),
+    ),
+];
 
 /// A plan's JSON with one journey: a walk to a moved stop, a stay-seated bus ride that
 /// runs 4 minutes late under a detour alert, a transfer, a ride on Link, and a walk.

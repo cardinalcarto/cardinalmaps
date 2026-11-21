@@ -36,6 +36,7 @@ import '../ui/adaptive.dart';
 import '../units.dart';
 import 'callouts.dart';
 import 'departure_legs.dart';
+import 'departure_lists.dart';
 import 'directions.dart';
 import 'fade_layers.dart';
 import 'format.dart';
@@ -56,6 +57,51 @@ import 'trip_details_page.dart';
 /// How often transit is planned again while its journeys, or one of them in Trip
 /// details, show.
 const transitRefresh = Duration(seconds: 30);
+
+/// The least time between two plans asked for by the clock ([clockRefresh]), and how
+/// long after a plan arrives with a journey it already can't make the clock asks again.
+const clockRefreshGap = Duration(seconds: 5);
+
+/// When the clock has transit planned again, besides every [transitRefresh]: just after
+/// the soonest of a plan's journeys to [leave] (each one's time to set out) can no
+/// longer be made, so no row says "Go now" for one that's gone. With what follows:
+///
+/// | The plan | Then |
+/// |---|---|
+/// | has a journey whose time to leave passed before it [arrived], and didn't answer the clock ([byClock]) | asked again [clockRefreshGap] after it arrived, once |
+/// | otherwise | asked again just after the soonest time to leave that was still to come when it arrived, and that hasn't been asked for under this plan ([spent]) |
+/// | has none of those | not asked again by the clock |
+/// | any | never sooner than [clockRefreshGap] after the clock [last] asked |
+///
+/// So a planner that keeps answering with a journey that's already gone is asked once
+/// more, a few seconds on, and not again until the next [transitRefresh], and one that
+/// fails isn't asked again for the same journey. Returns when to ask, and what that
+/// spends: the time to leave asked for, or, for the ask after a gone journey, when the
+/// plan arrived, so no time to leave up to then is asked for again.
+({DateTime at, DateTime spends})? clockRefresh({
+  required Iterable<DateTime> leave,
+  required DateTime arrived,
+  required bool byClock,
+  DateTime? spent,
+  DateTime? last,
+}) {
+  ({DateTime at, DateTime spends})? ask;
+  if (!byClock && spent == null && leave.any((t) => t.isBefore(arrived))) {
+    ask = (at: arrived.add(clockRefreshGap), spends: arrived);
+  } else {
+    DateTime? soonest;
+    for (final t in leave) {
+      if (t.isBefore(arrived) || (spent != null && !t.isAfter(spent))) continue;
+      if (soonest == null || t.isBefore(soonest)) soonest = t;
+    }
+    if (soonest != null) {
+      ask = (at: soonest.add(const Duration(microseconds: 1)), spends: soonest);
+    }
+  }
+  if (ask == null || last == null) return ask;
+  final earliest = last.add(clockRefreshGap);
+  return ask.at.isBefore(earliest) ? (at: earliest, spends: ask.spends) : ask;
+}
 
 /// How long after the last finger lifts a newer plan waits before it adds, drops or
 /// moves rows, so nothing is tapped as it goes from under the finger.
@@ -96,10 +142,15 @@ const structureSettle = Duration(milliseconds: 400);
 /// | showing transit | Trip details | the selected journey's Trip details, pushed: the journey from its top, the sheet at 40% so the map shows it |
 /// | Trip details showing | back | the journeys, the sheet and the list where they were left |
 /// | showing transit, or Trip details over it, the app in front | [transitRefresh] since transit last answered | transit planned again; what shows stays as it is until the answer, and if planning fails |
+/// | showing transit, or Trip details over it, the app in front | the soonest journey listed can no longer be made: just after its time to leave, as [clockRefresh] has it | transit planned again, as above; no sooner than [clockRefreshGap] after the clock last asked, nor while a refresh is under way |
 /// | transit planned again | the new plan has the same journeys in the same order | each row's times and timeline ease to the new ones, in place |
 /// | transit planned again | the new plan adds, drops or reorders journeys | once no finger is down, and [structureSettle] after: rows grow in, shrink out and slide; the selected journey stays selected and held if it's still there, and the first is selected if not |
-/// | Trip details showing, transit planned again | the open journey is in the new plan | once no finger is down: it stays open, its times ease, the departures chosen kept |
-/// | Trip details showing, transit planned again | the open journey isn't in the new plan | once no finger is down: back to the journeys |
+/// | Trip details showing, transit planned again | the new plan has a journey whose rides are the departures now taken, every ride connected | once no finger is down: it's open on that one, as for the same journey, the departures chosen kept; the list under it selects it (unless it's the journey opened), which neither moves the map nor the page over it, so back lands on it |
+/// | Trip details showing, transit planned again | the open journey is in the new plan (and none as above) | once no finger is down: it stays open, its times ease, the departures chosen kept |
+/// | Trip details showing, transit planned again | the open journey isn't in the new plan | once no finger is down: it stays open on the journey as it was, each ride's departures as last looked up, or as the new plan lists them between its stops where it does, the departures chosen kept as far as they can be; the map goes on drawing it. Each ride's departures are asked for between its stops, once for that plan |
+/// | Trip details showing a journey the plan hasn't | a ride's departures looked up arrive | once no finger is down, and [structureSettle] after: the ride's departures are those, the journey re-timed by them, on the map too |
+/// | Trip details showing a journey the plan hasn't | a newer plan is shown, Trip details closes, or transit is asked again | what's being looked up is given up on |
+/// | Trip details showing | the clock passes the last moment one of the first ride's departures can be made | once no finger is down, and [structureSettle] after: it's missed, and the journey re-timed, on the map too |
 /// | Trip details showing | transit is asked again (an end, or how stops are reached, changed) | back to the journeys |
 /// | any | the text is so large for the window that a held row, the ends and tabs, and the buttons don't fit with the sheet as high as it goes | no row is held, in any way or state: the selected row is one of the list's like any other, still filled; the anchors show the buttons with only the handle over them, and with the ends and tabs; a callout tapped selects its route without bringing its row into view |
 /// | any | the window or the text size changes so they fit again, or no longer do | a row held, or none, from that frame on, the anchors moving with it as they do with the rest of the layout |
@@ -234,6 +285,7 @@ class _DirectionsPageState extends State<DirectionsPage>
     onShow: () {
       _appShown = true;
       _scheduleRefresh();
+      _retime();
     },
     onHide: () {
       _appShown = false;
@@ -243,6 +295,17 @@ class _DirectionsPageState extends State<DirectionsPage>
 
   /// Plans transit again when it runs out.
   Timer? _refreshTimer;
+
+  /// Plans transit again when the soonest of its journeys can no longer be made
+  /// ([clockRefresh]); with when the plan showing arrived, whether it answered the
+  /// clock, what the clock has asked for under it, when the clock last asked, and
+  /// whether the refresh last asked for was the clock's.
+  Timer? _clockRefreshTimer;
+  DateTime? _planArrived;
+  bool _planByClock = false;
+  DateTime? _clockSpent;
+  DateTime? _lastClockRefresh;
+  bool _refreshByClock = false;
 
   /// Transit's plan and whether it was loading, as last seen, and when it last
   /// answered.
@@ -328,6 +391,13 @@ class _DirectionsPageState extends State<DirectionsPage>
   TransitPlan? _openPlan;
   int _openQuestion = 0;
 
+  /// Whether a journey was open in Trip details as the open journey last changed.
+  bool _wasOpen = false;
+
+  /// Runs out when one of the open journey's first ride's departures can no longer be
+  /// made.
+  Timer? _missTimer;
+
   /// The journey open in Trip details, if one is, with the departures chosen of its
   /// rides and the legs of those other than the plan's, for the map to draw.
   late final OpenJourney _open;
@@ -390,7 +460,9 @@ class _DirectionsPageState extends State<DirectionsPage>
     _open = OpenJourney(
       directions: directions,
       legs: DepartureLegs(scope.transit),
+      lists: DepartureLists(scope.transit),
     )..addListener(_chainChanged);
+    _open.lists.addListener(_relist);
     // The map draws one that's arrived along its own line.
     _open.legs.addListener(_drawRoutes);
     // The place's card under this page has it, or is fetching it.
@@ -422,7 +494,9 @@ class _DirectionsPageState extends State<DirectionsPage>
     _lifecycle;
     WidgetsBinding.instance.pointerRouter.addGlobalRoute(_pointer);
     _clock = Timer.periodic(_tick, (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      setState(() {});
+      _retime();
     });
     _map.cameraMoved.addListener(_viewChanged);
     // This page's own pin marks the destination, which can change.
@@ -476,7 +550,9 @@ class _DirectionsPageState extends State<DirectionsPage>
     _calloutTimer?.cancel();
     _clock?.cancel();
     _refreshTimer?.cancel();
+    _clockRefreshTimer?.cancel();
     _settling?.cancel();
+    _missTimer?.cancel();
     _mapSettling?.cancel();
     _marker.dispose();
     if (_directions != null) {
@@ -557,7 +633,11 @@ class _DirectionsPageState extends State<DirectionsPage>
       };
       // The same journey planned again is drawn again, where the map is; one a scrub
       // selects is drawn where the map is too, which pans only to follow the marker.
-      if (key != _shownKey && _scrubbing == null) _showJourney();
+      // Trip details' journey stays the map's subject while it's open, whatever's
+      // selected under it.
+      if (key != _shownKey && _scrubbing == null && !_open.isOpen) {
+        _showJourney();
+      }
       _shownKey = key;
     }
     _followChain();
@@ -567,8 +647,9 @@ class _DirectionsPageState extends State<DirectionsPage>
   }
 
   /// Keeps Trip details on its journey as transit's plan changes: open, on the
-  /// journey as a newer plan of the same trip has it, with the departures chosen, or
-  /// closed if that plan doesn't have it or the trip is another.
+  /// journey as a newer plan of the same trip has it, with the departures chosen; or
+  /// on the journey as it was, with the departures the newer plan lists between its
+  /// rides' stops, if that plan doesn't have it; closed if the trip is another.
   void _followOpen() {
     if (!_open.isOpen) return;
     final directions = _directions!;
@@ -578,13 +659,64 @@ class _DirectionsPageState extends State<DirectionsPage>
       return;
     }
     if (identical(plan, _openPlan)) return;
-    final index = journeyKeys(plan.journeys).indexOf(_openKey!);
-    if (index < 0) {
-      _open.close();
+    _openPlan = plan;
+    final now = DirectionsScope.of(context).clock();
+    final keys = journeyKeys(plan.journeys);
+    // The journey of the departures now taken, as the clock or the rider has
+    // re-timed it, is the one open from now on; otherwise the one opened.
+    final chain = _open.chain!;
+    final taken = plan.journeys.indexWhere(chain.takes);
+    if (taken >= 0) {
+      final adopted = keys[taken] != _openKey;
+      _openKey = keys[taken];
+      _open.rebase(plan.journeys[taken], now: now);
+      // The list under it follows another journey adopted, so back lands on it,
+      // and the map, which draws the open journey, doesn't move.
+      if (adopted && directions.selectedJourney != taken) {
+        directions.selectJourney(taken);
+      }
       return;
     }
-    _openPlan = plan;
-    _open.rebase(plan.journeys[index]);
+    final index = keys.indexOf(_openKey!);
+    if (index < 0) {
+      // What the plan lists between each ride's stops stands in until the ride's own
+      // departures, asked for now, arrive.
+      _open.refresh(plan.journeys, now: now);
+      _open.lookUp(plan, directions.transitAccess, now);
+    } else {
+      _open.rebase(plan.journeys[index], now: now);
+    }
+  }
+
+  /// Makes the open journey's first ride's departures as the clock has them now, once
+  /// no finger is down and [structureSettle] after, as a newer plan is shown: a tile
+  /// may turn Missed, and the rides re-time.
+  void _retime() {
+    if (!mounted || !_open.isOpen || _touched) return;
+    _open.at(DirectionsScope.of(context).clock());
+    _scheduleMiss();
+  }
+
+  /// Has the open journey take the departures looked up between its rides' stops,
+  /// once no finger is down and [structureSettle] after, as a newer plan is shown:
+  /// tiles may come and go, and the rides re-time.
+  void _relist() {
+    if (!mounted || !_open.isOpen || _touched) return;
+    _open.relist(now: DirectionsScope.of(context).clock());
+  }
+
+  /// Sets [_retime] to run when the next of the open journey's first ride's
+  /// departures can no longer be made.
+  void _scheduleMiss() {
+    _missTimer?.cancel();
+    _missTimer = null;
+    final at = _open.chain?.missesAt;
+    if (at == null || !mounted) return;
+    final wait = at.difference(DirectionsScope.of(context).clock());
+    _missTimer = Timer(wait.isNegative ? Duration.zero : wait, () {
+      _missTimer = null;
+      _retime();
+    });
   }
 
   /// Whether transit's journeys, or one of them in Trip details, are showing, with
@@ -604,7 +736,10 @@ class _DirectionsPageState extends State<DirectionsPage>
     final options = _directions!.options(TravelMode.transit);
     if (!options.loading &&
         (_transitLoading || !identical(options.plan, _transitPlan))) {
-      _transitAnswered = DirectionsScope.of(context).clock();
+      final now = _transitAnswered = DirectionsScope.of(context).clock();
+      _planArrived = now;
+      _planByClock = !_transitLoading && _refreshByClock;
+      _clockSpent = null;
     }
     _transitLoading = options.loading;
     _transitPlan = options.plan;
@@ -616,6 +751,7 @@ class _DirectionsPageState extends State<DirectionsPage>
   void _scheduleRefresh() {
     final directions = _directions;
     if (directions == null) return;
+    _scheduleClockRefresh();
     if (!_transitShowing || directions.options(TravelMode.transit).loading) {
       _refreshTimer?.cancel();
       _refreshTimer = null;
@@ -632,11 +768,53 @@ class _DirectionsPageState extends State<DirectionsPage>
     _refreshTimer = Timer(wait.isNegative ? Duration.zero : wait, _refresh);
   }
 
-  /// Plans transit again. A slow answer isn't given up for the next; one that fails
-  /// leaves what's showing, and the next is asked for in its turn.
-  Future<void> _refresh() async {
+  /// Sets transit to be planned again when the clock runs out on the soonest of its
+  /// journeys ([clockRefresh]), while it's showing, its plan isn't loading and no
+  /// refresh is under way; and not to be otherwise.
+  void _scheduleClockRefresh() {
+    _clockRefreshTimer?.cancel();
+    _clockRefreshTimer = null;
+    final directions = _directions!;
+    final options = directions.options(TravelMode.transit);
+    final plan = options.plan;
+    final arrived = _planArrived;
+    if (!mounted ||
+        !_transitShowing ||
+        options.loading ||
+        directions.refreshing ||
+        plan == null ||
+        arrived == null) {
+      return;
+    }
+    final ask = clockRefresh(
+      leave: [for (final journey in plan.journeys) journey.departure],
+      arrived: arrived,
+      byClock: _planByClock,
+      spent: _clockSpent,
+      last: _lastClockRefresh,
+    );
+    if (ask == null) return;
+    final wait = ask.at.difference(DirectionsScope.of(context).clock());
+    _clockRefreshTimer = Timer(wait.isNegative ? Duration.zero : wait, () {
+      _clockRefreshTimer = null;
+      if (!mounted || !_transitShowing || directions.refreshing) return;
+      _clockSpent = ask.spends;
+      _lastClockRefresh = DirectionsScope.of(context).clock();
+      // Asked now, the half minute runs from this answer.
+      _refreshTimer?.cancel();
+      _refreshTimer = null;
+      unawaited(_refresh(byClock: true));
+    });
+  }
+
+  /// Plans transit again, for the clock if [byClock]. A slow answer isn't given up for
+  /// the next; one that fails leaves what's showing, and the next is asked for in its
+  /// turn.
+  Future<void> _refresh({bool byClock = false}) async {
     _refreshTimer = null;
-    await _directions!.refreshTransit();
+    final directions = _directions!;
+    if (!directions.refreshing) _refreshByClock = byClock;
+    await directions.refreshTransit();
     if (!mounted) return;
     _transitAnswered = DirectionsScope.of(context).clock();
     _scheduleRefresh();
@@ -690,7 +868,10 @@ class _DirectionsPageState extends State<DirectionsPage>
       _settling?.cancel();
       _settling = Timer(structureSettle, () {
         _settling = null;
-        if (mounted) _showRefreshed();
+        if (!mounted) return;
+        _showRefreshed();
+        _relist();
+        _retime();
       });
     }
   }
@@ -716,7 +897,7 @@ class _DirectionsPageState extends State<DirectionsPage>
     _map.setGeoJson(
       transitSource,
       journeyGeoJson(
-        navigating ? null : _shownJourney,
+        navigating ? null : _drawnJourney,
         rides: navigating ? const {} : _chosenRides(),
       ),
     );
@@ -736,7 +917,7 @@ class _DirectionsPageState extends State<DirectionsPage>
   /// it's fetched, and until then along the plan's, which is between the same two stops,
   /// in the departure's route's colors.
   Map<int, DrawnRide> _chosenRides() {
-    final journey = _shownJourney;
+    final journey = _drawnJourney;
     final chain = _open.chain;
     if (journey == null ||
         chain == null ||
@@ -755,9 +936,13 @@ class _DirectionsPageState extends State<DirectionsPage>
     };
   }
 
+  /// The transit journey the map draws: Trip details', while it's open, which may be
+  /// one a newer plan hasn't; otherwise the one selected.
+  Journey? get _drawnJourney => _open.chain?.journey ?? _shownJourney;
+
   /// Makes the transit journey the map's subject.
   void _showJourney() {
-    final points = _shownJourney?.legs.expand((leg) => leg.shape) ?? const [];
+    final points = _drawnJourney?.legs.expand((leg) => leg.shape) ?? const [];
     _fit(points);
   }
 
@@ -938,15 +1123,20 @@ class _DirectionsPageState extends State<DirectionsPage>
     _openKey = journeyKeys(plan.journeys)[directions.selectedJourney];
     _openPlan = plan;
     _openQuestion = directions.transitQuestion;
-    _open.open(journey);
+    _open.open(journey, now: DirectionsScope.of(context).clock());
     unawaited(context.push(tripDetailsLocation(widget.to), extra: _open));
   }
 
   /// The journey open in Trip details, or the departures chosen of it, changed: fetch
-  /// the legs they need, and draw them.
+  /// the legs they need, and draw them. Once it's closed, the journey selected under it
+  /// is the map's subject again, if that's another.
   void _chainChanged() {
+    final open = _open.isOpen;
+    if (_wasOpen && !open && _shownKey?.$2 != _openKey) _showJourney();
+    _wasOpen = open;
     _followChain();
     _drawRoutes();
+    _scheduleMiss();
   }
 
   /// A field's tapped: edit it, full, with its text ready to be typed over.

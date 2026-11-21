@@ -131,6 +131,8 @@ void main() {
       overlays: overlays,
       locationSource: location ?? FakeLocation(now: here),
       location: placeLocation(destination.id),
+      // Before the fake plans' departures, so Trip details can make them.
+      clock: () => DateTime(2026, 11, 9, 15, 20),
     );
     await tester.tap(find.text('Directions'));
     await tester.pump();
