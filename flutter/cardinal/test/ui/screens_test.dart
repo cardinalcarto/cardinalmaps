@@ -1,3 +1,4 @@
+import 'package:cardinal/directions/option_row.dart';
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/map/layers.dart';
 import 'package:cardinal/map/location.dart';
@@ -162,32 +163,98 @@ void main() {
       return routes;
     }
 
-    testWidgets('shows the route with Go, its steps, and iOS modes', (
+    testWidgets('shows the routes as cards, with iOS tabs and buttons', (
       tester,
     ) async {
       final routes = await open(tester);
-      expect(find.text('Go'), findsOneWidget);
-      expect(find.text('STEPS'), findsOneWidget);
-      expect(find.text('Drive north.'), findsOneWidget);
+      expect(find.byType(OptionRow), findsOneWidget);
       expect(
         find.byType(CupertinoSlidingSegmentedControl<TravelMode>),
         findsOneWidget,
       );
+      // Each segment has its way's time under its icon.
+      expect(
+        find.descendant(
+          of: find.byType(CupertinoSlidingSegmentedControl<TravelMode>),
+          matching: find.text('11 min'),
+        ),
+        findsNWidgets(3),
+      );
+      // Capsules along the bottom, not Material's buttons.
+      for (final label in ['Steps', 'Start']) {
+        expect(
+          find.ancestor(
+            of: find.text(label),
+            matching: find.byType(CupertinoButton),
+          ),
+          findsOneWidget,
+        );
+      }
+      expect(find.byType(FilledButton), findsNothing);
+      // Round buttons beside the card close directions and swap its ends.
+      expect(find.bySemanticsLabel('Close'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Swap start and destination'),
+        findsOneWidget,
+      );
 
-      await tester.tap(find.bySemanticsLabel('Walking'));
+      final before = routes.asked.length;
+      await tester.tap(find.bySemanticsLabel(RegExp('^Walking')));
       await tester.pumpAndSettle();
-      expect(routes.asked.last.mode, TravelMode.walking);
+      expect(
+        tester
+            .widget<CupertinoSlidingSegmentedControl<TravelMode>>(
+              find.byType(CupertinoSlidingSegmentedControl<TravelMode>),
+            )
+            .groupValue,
+        TravelMode.walking,
+      );
+      expect(routes.asked, hasLength(before), reason: 'asked at the start');
+    });
+
+    testWidgets('fills nothing opaquely, as the sheet is glass while low', (
+      tester,
+    ) async {
+      await open(tester);
+      final fill =
+          tester
+                  .widget<AnimatedContainer>(
+                    find.descendant(
+                      of: find.byType(OptionRow),
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration!
+              as BoxDecoration;
+      expect(fill.color!.a, lessThan(1));
+      // The footer paints nothing behind its buttons.
+      expect(
+        find.ancestor(
+          of: find.text('Start'),
+          matching: find.byType(ColoredBox),
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('the steps open from Steps, in a grouped list', (tester) async {
+      await open(tester);
+      await tester.tap(find.text('Steps'));
+      await tester.pumpAndSettle();
+      expect(find.text('STEPS'), findsOneWidget);
+      expect(find.text('Drive north.'), findsOneWidget);
     });
 
     testWidgets('iOS walking is Wheelchair when that is the default', (
       tester,
     ) async {
       final routes = await open(tester, wheelchair: true);
-      expect(find.bySemanticsLabel('Walking'), findsNothing);
-      await tester.tap(find.bySemanticsLabel('Wheelchair'));
-      await tester.pumpAndSettle();
-      expect(routes.asked.last.mode, TravelMode.walking);
-      expect(routes.asked.last.wheelchair, isTrue);
+      expect(find.bySemanticsLabel(RegExp('^Walking')), findsNothing);
+      expect(find.bySemanticsLabel(RegExp('^Wheelchair')), findsOneWidget);
+      final walking = routes.asked.singleWhere(
+        (question) => question.mode == TravelMode.walking,
+      );
+      expect(walking.wheelchair, isTrue);
     });
 
     testWidgets('chooses an end with an iOS search field and Cancel', (
@@ -202,7 +269,7 @@ void main() {
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       expect(find.byType(CupertinoSearchTextField), findsNothing);
-      expect(find.text('Go'), findsOneWidget);
+      expect(find.text('Start'), findsOneWidget);
     });
   });
 

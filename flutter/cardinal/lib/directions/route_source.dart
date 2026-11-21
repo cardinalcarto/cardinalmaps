@@ -12,7 +12,7 @@ import '../store/store.dart';
 import '../units.dart';
 import 'transit_plan.dart';
 
-/// A way of traveling, in the order the sheet's chips show them.
+/// A way of traveling, in the order the sheet's tabs show them.
 enum TravelMode {
   driving('auto', 'Driving', Icons.directions_car),
 
@@ -34,7 +34,7 @@ enum TravelMode {
   bool byWheelchair({required bool wheelchair}) =>
       wheelchair && this == walking;
 
-  /// What its chip says: Wheelchair for walking by [wheelchair].
+  /// What its tab is called: Wheelchair for walking by [wheelchair].
   String labelFor({required bool wheelchair}) =>
       byWheelchair(wheelchair: wheelchair) ? 'Wheelchair' : label;
 
@@ -466,12 +466,17 @@ class DirectionsScope extends InheritedWidget {
     required this.routes,
     required this.transit,
     required this.location,
+    this.clock = DateTime.now,
     required super.child,
   });
 
   final RouteSource routes;
   final TransitSource transit;
   final LocationSource location;
+
+  /// The time, for when a route arrives and how long until a journey does; a test
+  /// gives its own.
+  final DateTime Function() clock;
 
   static DirectionsScope of(BuildContext context) =>
       context.getInheritedWidgetOfExactType<DirectionsScope>()!;
@@ -480,5 +485,6 @@ class DirectionsScope extends InheritedWidget {
   bool updateShouldNotify(DirectionsScope oldWidget) =>
       routes != oldWidget.routes ||
       transit != oldWidget.transit ||
-      location != oldWidget.location;
+      location != oldWidget.location ||
+      clock != oldWidget.clock;
 }

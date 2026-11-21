@@ -6,10 +6,8 @@ import 'package:cupertino_ui/cupertino_ui.dart'
     show
         CupertinoActivityIndicator,
         CupertinoButton,
-        CupertinoButtonSize,
         CupertinoIcons,
-        CupertinoSearchTextField,
-        CupertinoSlidingSegmentedControl;
+        CupertinoSearchTextField;
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:routing/routing.dart';
@@ -30,34 +28,57 @@ import '../settings/accessibility.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
 import '../ui/adaptive.dart';
-import '../ui/haptics.dart';
 import '../units.dart';
 import 'callouts.dart';
 import 'connections.dart';
 import 'departure_legs.dart';
 import 'directions.dart';
 import 'format.dart';
+import 'mode_tabs.dart';
+import 'option_row.dart';
 import 'route_source.dart';
 import 'transit_details.dart';
 import 'transit_plan.dart';
 import 'transit_sheet.dart';
 import 'transit_timeline.dart';
+import 'trip_card.dart';
 
-/// Directions to the place with [to]: the trip's two ends, the chips for how you're
-/// traveling, and the selected route's summary and steps, with the routes on the map.
+/// Directions to the place with [to], as a choice among the ways to get there: the
+/// trip's two ends, a tab for each way of traveling with its best time, and that way's
+/// options as rows, with the routes on the map. Steps and Start, pinned under the
+/// rows, act on the selected one.
+///
+/// Every way is asked for as soon as the trip has two ends, and each tab and list
+/// fills in when its answer comes. The selected row of a street way is held in view
+/// wherever the sheet is: it stops above the buttons as the rest of the sheet passes
+/// behind it.
 ///
 /// It's showing the trip, or editing one of its ends:
 ///
 /// | In | When | Then |
 /// |---|---|---|
-/// | showing the trip | a field is tapped | editing it: full, keyboard up, the field's text selected |
-/// | editing | a place or My Location is chosen | that's the end; showing the trip, at the summary |
-/// | editing | back | showing the trip, at the summary, the end as it was unless it was cleared |
-/// | showing the trip | back | the place's card |
-/// | showing the trip | transit is chosen | its journeys, the sheet full and held there |
+/// | opening | | the header and up to three rows show, in no more than 60% of the window |
+/// | showing the trip | a field is tapped | editing it: full, keyboard up, the field's text selected; the buttons fade out |
+/// | editing | a place or My Location is chosen | that's the end; showing the trip, at the header anchor (full for transit); the rows and buttons fade in |
+/// | editing | back | showing the trip, the same, the end as it was unless it was cleared |
+/// | showing the trip | X, or back | the place's card |
+/// | showing the trip | an end changes, or the ends are swapped | every way is asked again: placeholders, then its options, the first selected |
+/// | showing the trip | another tab is tapped | that way's options, as they were left; nothing is asked |
+/// | a way loading, or the start being found | | three placeholder rows, the first held; its tab's time empty; the buttons disabled |
+/// | a way loading | its options arrive | its rows fade in where the placeholders were, the first selected; its tab's time fades in |
+/// | a way loading | there's no route, or asking failed | the message in the first row's place, held; a dash on its tab; the buttons disabled |
+/// | either end missing | | the message asking for them, in the first row's place, held; the tabs' times empty |
+/// | showing a street way | a row, or its callout on the map, is tapped | that route selected: its row filled and held, the map's highlight on it |
+/// | showing a street way | Steps | the steps page, pushed; back returns here, the sheet where it was |
+/// | showing a street way | Start | navigating the selected route |
+/// | showing a street way | transit's tab is tapped | transit's journeys, with no held row and no buttons |
 /// | showing transit journeys | a journey is tapped | its legs in detail, the sheet at 40% so the map shows it |
-/// | showing a journey | back, or a new plan | the journeys, the sheet full and held there |
-/// | showing transit journeys | another mode is chosen | that mode's routes, the sheet free and down to the summary |
+/// | showing a journey | back, or a new plan | the journeys, the sheet full |
+///
+/// The sheet rests at two anchors, each with the held row above the buttons: with
+/// only the handle over it, and with the ends and tabs over it. From the second up it
+/// rests wherever it's let go. The rows, the placeholders and the message are one
+/// height, so the anchors are the same in every street way and state.
 class DirectionsPage extends StatefulWidget {
   const DirectionsPage({super.key, required this.to});
 
@@ -68,9 +89,13 @@ class DirectionsPage extends StatefulWidget {
   State<DirectionsPage> createState() => _DirectionsPageState();
 }
 
-class _DirectionsPageState extends State<DirectionsPage> {
-  static const _modes = #directionsModes;
-  static const _summary = #directionsSummary;
+class _DirectionsPageState extends State<DirectionsPage>
+    with SingleTickerProviderStateMixin {
+  /// The trip's ends and the tabs.
+  static const _headerSection = #directionsHeader;
+
+  /// Ends under the last row the sheet first opens to show.
+  static const _opening = #directionsOpening;
   static const _journeySummary = #directionsJourneySummary;
 
   /// Where a transit journey's details rest: low enough for the map to show its shape.
@@ -85,18 +110,20 @@ class _DirectionsPageState extends State<DirectionsPage> {
     carriesIntoScroll: true,
   );
 
-  /// How often "Go in" times count down.
+  /// How often the times that follow the clock are shown again: when a route
+  /// arrives, how long until a journey does, and "Go in".
   static const _tick = Duration(seconds: 30);
 
-  /// Just below the summary. Flings always stop here, on the way up or down.
-  static const _summaryAnchor = SheetAnchor.section(
-    _summary,
+  /// With the ends and tabs showing, over the held row. Flings always stop here, on
+  /// the way up or down.
+  static const _headerAnchor = SheetAnchor.section(
+    _headerSection,
     gravity: double.infinity,
   );
 
-  /// From just below the summary and its Go button up, as for a journey's details.
-  static const _summaryRange = SheetRange(
-    _summaryAnchor,
+  /// From there up, as for a journey's details.
+  static const _tripRange = SheetRange(
+    _headerAnchor,
     SheetAnchor.full(),
     carriesIntoScroll: true,
   );
@@ -134,6 +161,17 @@ class _DirectionsPageState extends State<DirectionsPage> {
   TransitAccess? _rememberedAccess;
   Timer? _calloutTimer;
   Timer? _clock;
+
+  /// Whether the mode last chosen and the start have been looked for, so the first
+  /// questions have been asked if they could be.
+  bool _resumed = false;
+
+  /// How much the rows and the buttons show: all, but not while an end is edited.
+  late final _chrome = AnimationController(
+    vsync: this,
+    value: 1,
+    duration: const Duration(milliseconds: 200),
+  )..addStatusListener((_) => setState(() {}));
 
   final _text = TextEditingController();
   final _focus = FocusNode(debugLabel: 'directions');
@@ -238,6 +276,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
       if (units != _units) setState(() => _units = units);
     });
     _taps = routeTaps.stream.listen(directions.select);
+    _clock = Timer.periodic(_tick, (_) {
+      if (mounted) setState(() {});
+    });
     _map.cameraMoved.addListener(_viewChanged);
     // This page's own pin marks the destination, which can change.
     showSelection(_map, null);
@@ -261,6 +302,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
         .watch(wheelchairByDefault)
         .listen(_wheelchairChanged);
     await directions.startFromMyLocation();
+    if (mounted) setState(() => _resumed = true);
   }
 
   /// Walking, and getting to stops if no way has been chosen, follow the default.
@@ -293,6 +335,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
     _search?.dispose();
     _focus.dispose();
     _text.dispose();
+    _chrome.dispose();
     super.dispose();
   }
 
@@ -333,6 +376,11 @@ class _DirectionsPageState extends State<DirectionsPage> {
     unawaited(context.push(navigationLocation(widget.to)));
   }
 
+  /// Opens the selected route's steps over this page.
+  void _openSteps() {
+    unawaited(context.push(stepsLocation(widget.to), extra: _directions!));
+  }
+
   /// The trip changed: redraw it, and if the routes are new, show them all and place
   /// their callouts.
   void _changed() {
@@ -353,9 +401,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
       if (_journeyOpen &&
           (journey == null ||
               directions.plan?.journeys.contains(_shownJourney) != true)) {
-        // A new plan: back to its list, which holds the sheet full.
+        // A new plan: back to its list.
         _journeyOpen = false;
-        _animateAfterFrame(const SheetAnchor.full());
+        _animateToTrip();
       }
       _shownJourney = journey;
       _showJourney();
@@ -365,20 +413,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
     _followChain();
     _drawRoutes();
     _placeCallouts();
-    _keepClock(directions.mode == TravelMode.transit);
     setState(() {});
-  }
-
-  /// While transit shows, "Go in" counts down.
-  void _keepClock(bool running) {
-    if (!running) {
-      _clock?.cancel();
-      _clock = null;
-    } else {
-      _clock ??= Timer.periodic(_tick, (_) {
-        if (mounted) setState(() {});
-      });
-    }
   }
 
   /// Springs the sheet to [anchor] once this frame has laid out the content that has it.
@@ -388,11 +423,29 @@ class _DirectionsPageState extends State<DirectionsPage> {
     });
   }
 
-  /// Where the sheet rests for the trip, outside a journey's details: full for transit,
-  /// whose journeys need the room, and below the summary otherwise.
-  SheetAnchor get _tripAnchor => _directions!.mode == TravelMode.transit
-      ? const SheetAnchor.full()
-      : _summaryAnchor;
+  /// Springs the sheet back to where it rests for the trip, from a journey's details
+  /// or from editing, once the sheet has the trip's anchors: full for transit, whose
+  /// journeys have no row held in view, and to the ends and tabs over the held row
+  /// otherwise.
+  ///
+  /// A journey's details and editing can rest at full too, so asking for it while
+  /// the sheet still has their anchors would spring it to theirs, which then goes.
+  void _animateToTrip() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _editing != null || _journeyOpen) return;
+      final sheet = _sheet!;
+      if (!sheet.ranges.any((range) => range.range == _tripRange)) {
+        _animateToTrip();
+        WidgetsBinding.instance.scheduleFrame();
+        return;
+      }
+      sheet.animateTo(
+        _directions!.mode == TravelMode.transit
+            ? const SheetAnchor.full()
+            : _headerAnchor,
+      );
+    });
+  }
 
   /// Draws the routes, their start and the destination's pin, and the transit journey;
   /// while navigating, only the pin, the trip's own drawing taking the place of the
@@ -557,11 +610,6 @@ class _DirectionsPageState extends State<DirectionsPage> {
     directions.setMode(mode);
     if (directions.mode == was) return;
     unawaited(_settings!.set(lastTravelMode, mode));
-    // Into transit the sheet goes full and stays; out of it, it's free again and comes
-    // down to the anchor nearest full.
-    if (mode == TravelMode.transit || was == TravelMode.transit) {
-      _animateAfterFrame(_tripAnchor);
-    }
   }
 
   void _setTransitAccess(TransitAccess access) {
@@ -586,7 +634,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
   void _closeJourney() {
     setState(() => _journeyOpen = false);
     _chainChanged();
-    _animateAfterFrame(_tripAnchor);
+    _animateToTrip();
   }
 
   /// The departures chosen changed: fetch the legs they need, and draw them.
@@ -608,17 +656,19 @@ class _DirectionsPageState extends State<DirectionsPage> {
       ..update('')
       ..focus = (directions.from ?? directions.to)?.point;
     setState(() => _editing = field);
+    _chrome.reverse();
     _focus.requestFocus();
     _sheet!.animateTo(const SheetAnchor.full());
   }
 
-  /// Back to showing the trip. The summary's section isn't laid out while editing, so
-  /// the sheet moves to it once it is.
+  /// Back to showing the trip. Its sections aren't laid out while editing, so the
+  /// sheet moves to its anchor once they are.
   void _stopEditing() {
     if (_editing == null) return;
     setState(() => _editing = null);
+    _chrome.forward();
     _focus.unfocus();
-    _animateAfterFrame(_tripAnchor);
+    _animateToTrip();
   }
 
   Future<void> _choose(Place place) async {
@@ -662,11 +712,18 @@ class _DirectionsPageState extends State<DirectionsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final directions = _directions!;
     final editing = _editing;
-    final journey = _journeyOpen ? _directions!.journey : null;
-    final transit = _directions!.mode == TravelMode.transit;
+    final journey = _journeyOpen ? directions.journey : null;
+    final street = directions.mode != TravelMode.transit;
+    final trip = editing == null && journey == null;
+    final list = street ? _optionList(directions) : null;
+    // The buttons outlast the trip by as long as they take to fade when an end is
+    // edited.
+    final buttons =
+        street && journey == null && (editing == null || !_chrome.isDismissed);
     return PopScope(
-      canPop: editing == null && journey == null,
+      canPop: trip,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         if (editing != null) {
@@ -680,17 +737,15 @@ class _DirectionsPageState extends State<DirectionsPage> {
             ? const [SheetAnchor.full()]
             : journey != null
             ? const [_detailsAnchor]
-            : transit
-            ? const [SheetAnchor.full()]
-            : const [SheetAnchor.section(_modes), _summaryAnchor],
+            : const [SheetAnchor.footer(), _headerAnchor],
         freeRanges: editing != null
             ? const []
             : journey != null
             ? const [_detailsRange]
-            : transit
-            ? const []
-            : const [_summaryRange],
+            : const [_tripRange],
         initialAnchor: 1,
+        initialSection: _opening,
+        initialMaxFraction: 0.6,
         // The trip, a journey and editing each scroll on their own: a journey opens
         // at its top whatever the list was scrolled to, and the list is where it was
         // left on the way back. Each time a journey opens is new content.
@@ -699,203 +754,181 @@ class _DirectionsPageState extends State<DirectionsPage> {
             : journey != null
             ? ('journey', _journeyOpens)
             : 'trip',
-        // Transit's journeys hold the sheet full until one is picked.
-        draggable: editing != null || journey != null || !transit,
+        held: trip ? list?.held : null,
+        footer: buttons
+            ? FadeTransition(
+                opacity: _chrome,
+                child: IgnorePointer(
+                  ignoring: editing != null,
+                  child: _TripButtons(
+                    onSteps: directions.selectedRoute == null
+                        ? null
+                        : _openSteps,
+                    onStart: directions.selectedRoute == null
+                        ? null
+                        : _startNavigation,
+                  ),
+                ),
+              )
+            : null,
         slivers: editing != null
             ? _editingSlivers(editing)
             : journey != null
-            ? _journeySlivers(_directions!, journey)
-            : _tripSlivers(_directions!),
+            ? _journeySlivers(directions, journey)
+            : [
+                _header(directions),
+                if (list != null)
+                  SliverToBoxAdapter(child: list)
+                else
+                  ..._transitSlivers(directions),
+              ],
       ),
     );
   }
 
-  List<Widget> _tripSlivers(Directions directions) {
-    final theme = Theme.of(context);
+  /// Whether the trip's start is still being found, before there's a question to
+  /// ask: rows wait as they do for an answer.
+  bool _waiting(Directions directions) => !_resumed || directions.locating;
+
+  /// The time a way's tab shows: how long its best option takes, a dash if it has
+  /// none, and nothing while that's not known.
+  String? _tabTime(Directions directions, TravelMode mode, DateTime now) {
+    final options = directions.options(mode);
+    if (options.best(now) case final best?) {
+      return formatDuration(best.inMilliseconds / 1000);
+    }
+    final asked = directions.from != null && directions.to != null;
+    return options.loading || _waiting(directions) || !asked
+        ? null
+        : noTimeDash;
+  }
+
+  /// The trip's ends and the tabs: what shows above the selected row at the header
+  /// anchor. It's the same height whatever the tabs say and whichever is selected.
+  Widget _header(Directions directions) {
+    final now = DirectionsScope.of(context).clock();
+    return SliverToBoxAdapter(
+      child: SheetSection(
+        id: _headerSection,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TripCard(
+              from: directions.from,
+              to: directions.to,
+              onEdit: _edit,
+              onClose: () => context.canPop() ? context.pop() : context.go('/'),
+              onSwap: directions.from != null && directions.to != null
+                  ? directions.swap
+                  : null,
+            ),
+            ModeTabs(
+              selected: directions.mode,
+              wheelchair: directions.wheelchair,
+              times: {
+                for (final mode in TravelMode.values)
+                  mode: _tabTime(directions, mode, now),
+              },
+              onChanged: _setMode,
+            ),
+            SizedBox(height: OptionRowMetrics.of(context).top),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The rows of the street way of traveling that's showing.
+  OptionList _optionList(Directions directions) => OptionList(
+    routes: directions.routes,
+    selected: directions.selected,
+    loading: directions.loading || _waiting(directions),
+    message: _messageFor(directions),
+    driving: directions.mode == TravelMode.driving,
+    units: _units.onDevice,
+    now: DirectionsScope.of(context).clock(),
+    opening: _opening,
+    reveal: _chrome,
+    onSelect: directions.select,
+  );
+
+  /// Transit's journeys under the tabs: how you get to stops, how live the times are,
+  /// and each journey as a timeline, tapped to open it.
+  List<Widget> _transitSlivers(Directions directions) {
     final cupertino = isCupertinoOf(context);
-    final units = _units.onDevice;
-    final transit = directions.mode == TravelMode.transit;
-    final route = transit ? null : directions.selectedRoute;
-    final plan = transit && !directions.loading ? directions.plan : null;
+    final plan = directions.plan;
     final journeys = plan?.journeys ?? const <Journey>[];
     final axis = TimelineAxis.of(journeys);
-    final now = DateTime.now();
-    final bothEnds = directions.from != null && directions.to != null;
+    final now = DirectionsScope.of(context).clock();
+    final waiting = directions.loading || _waiting(directions);
+    Widget row(int i) => JourneyRow(
+      journey: journeys[i],
+      axis: axis,
+      now: now,
+      onTap: () => _openJourney(i),
+    );
+    const divider = Divider(height: 1, indent: 16, endIndent: 16);
+    final first = math.min(journeys.length, OptionList.shownAtFirst);
+    final status = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TransitAccessRow(
+          access: directions.transitAccess,
+          onChanged: _setTransitAccess,
+        ),
+        if (!cupertino)
+          SizedBox(
+            height: 2,
+            child: waiting ? const LinearProgressIndicator() : null,
+          )
+        else if (waiting)
+          const SizedBox(height: 28, child: CupertinoActivityIndicator()),
+        if (plan != null && journeys.isNotEmpty) ...[
+          RealtimeLine(plan: plan),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+            child: TimelineTicks(axis: axis),
+          ),
+        ] else
+          _Message(
+            plan != null && directions.problem == null
+                ? noJourneysMessage(plan, directions.transitAccess)
+                : waiting
+                ? 'Finding routes…'
+                : _messageFor(directions),
+          ),
+      ],
+    );
     return [
-      SliverToBoxAdapter(
-        child: SheetSection(
-          id: _modes,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Directions',
-                        style: theme.textTheme.headlineSmall,
-                      ),
-                    ),
-                    AppCloseButton(
-                      onPressed: () =>
-                          context.canPop() ? context.pop() : context.go('/'),
-                    ),
-                  ],
-                ),
-              ),
-              if (cupertino)
-                _CupertinoEnds(
-                  directions: directions,
-                  onEdit: _edit,
-                  bothEnds: bothEnds,
-                )
-              else ...[
-                _EndRow(
-                  label: 'From',
-                  endpoint: directions.from,
-                  onTap: () => _edit(RouteField.from),
-                  onClear: () => directions.setEndpoint(RouteField.from, null),
-                  action: IconButton(
-                    tooltip: 'Recalculate route',
-                    icon: const Icon(Icons.refresh),
-                    onPressed: bothEnds && !directions.loading
-                        ? directions.recalculate
-                        : null,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _EndRow(
-                  label: 'To',
-                  endpoint: directions.to,
-                  onTap: () => _edit(RouteField.to),
-                  onClear: () => directions.setEndpoint(RouteField.to, null),
-                  action: IconButton(
-                    tooltip: 'Swap start and destination',
-                    icon: const Icon(Icons.swap_vert),
-                    onPressed: bothEnds ? directions.swap : null,
-                  ),
-                ),
-              ],
-              Padding(
-                padding: EdgeInsets.fromLTRB(16, 12, 16, transit ? 6 : 12),
-                child: cupertino
-                    ? _CupertinoModes(
-                        selected: directions.mode,
-                        wheelchair: directions.wheelchair,
-                        onChanged: _setMode,
-                      )
-                    : Row(
-                        spacing: 8,
-                        children: [
-                          for (final mode in TravelMode.values)
-                            Expanded(
-                              child: _ModeChip(
-                                mode: mode,
-                                wheelchair: directions.wheelchair,
-                                selected: mode == directions.mode,
-                                onTap: () => _setMode(mode),
-                              ),
-                            ),
-                        ],
-                      ),
-              ),
-              if (transit)
-                TransitAccessRow(
-                  access: directions.transitAccess,
-                  onChanged: _setTransitAccess,
-                ),
-            ],
-          ),
-        ),
-      ),
-      SliverToBoxAdapter(
-        child: SheetSection(
-          id: _summary,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (!cupertino)
-                SizedBox(
-                  height: 2,
-                  child: directions.loading || directions.locating
-                      ? const LinearProgressIndicator()
-                      : null,
-                )
-              else if (directions.loading || directions.locating)
-                const SizedBox(height: 28, child: CupertinoActivityIndicator()),
-              if (transit) ...[
-                if (plan != null && journeys.isNotEmpty) ...[
-                  RealtimeLine(plan: plan),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-                    child: TimelineTicks(axis: axis),
-                  ),
-                ] else
-                  _Message(
-                    plan != null && directions.problem == null
-                        ? noJourneysMessage(plan, directions.transitAccess)
-                        : _messageFor(directions),
-                  ),
-              ] else
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-                  child: route == null
-                      ? _Message(_messageFor(directions))
-                      : cupertino
-                      ? _CupertinoSummary(
-                          route: route,
-                          units: units,
-                          onStart: _startNavigation,
-                        )
-                      : _Summary(
-                          route: route,
-                          units: units,
-                          onStart: _startNavigation,
-                        ),
-                ),
-            ],
-          ),
-        ),
-      ),
-      if (journeys.isNotEmpty)
-        SliverPadding(
-          padding: const EdgeInsets.only(bottom: 12),
-          sliver: SliverList.separated(
-            itemCount: journeys.length,
-            itemBuilder: (context, i) => JourneyRow(
-              journey: journeys[i],
-              axis: axis,
-              now: now,
-              onTap: () => _openJourney(i),
-            ),
-            separatorBuilder: (context, i) =>
-                const Divider(height: 1, indent: 16, endIndent: 16),
-          ),
-        ),
-      if (route != null && cupertino && route.steps.isNotEmpty)
-        SliverPadding(
-          padding: const EdgeInsets.only(bottom: 12),
-          sliver: SliverToBoxAdapter(
-            child: AppListSection(
-              header: 'Steps',
-              children: [
-                for (final (i, step) in route.steps.indexed)
-                  _CupertinoStep(number: i + 1, step: step, units: units),
-              ],
-            ),
-          ),
+      // The sheet first opens to show the first few journeys, or why there are none.
+      if (journeys.isEmpty)
+        SliverToBoxAdapter(
+          child: SheetSection(id: _opening, child: status),
         )
-      else if (route != null && !cupertino)
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          sliver: SliverList.builder(
-            itemCount: route.steps.length,
-            itemBuilder: (context, i) =>
-                _StepCard(number: i + 1, step: route.steps[i], units: units),
+      else ...[
+        SliverToBoxAdapter(child: status),
+        SliverToBoxAdapter(
+          child: SheetSection(
+            id: _opening,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < first; i++) ...[if (i > 0) divider, row(i)],
+              ],
+            ),
           ),
         ),
+        SliverPadding(
+          padding: const EdgeInsets.only(bottom: 12),
+          sliver: SliverList.builder(
+            itemCount: journeys.length - first,
+            itemBuilder: (context, i) => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [divider, row(first + i)],
+            ),
+          ),
+        ),
+      ],
     ];
   }
 
@@ -904,7 +937,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
   /// journey is planned again.
   List<Widget> _journeySlivers(Directions directions, Journey journey) {
     final units = _units.onDevice;
-    final now = DateTime.now();
+    final now = DirectionsScope.of(context).clock();
     final chain = _chainOf(journey);
     return [
       SliverToBoxAdapter(
@@ -946,7 +979,6 @@ class _DirectionsPageState extends State<DirectionsPage> {
     Directions(problem: RouteProblem.noRoute) => 'No route found',
     Directions(problem: RouteProblem.failed) =>
       "Couldn't get directions. Try again.",
-    Directions(loading: true) => 'Finding routes…',
     _ => 'Enter a start and a destination to get directions',
   };
 
@@ -1026,221 +1058,6 @@ class _DirectionsPageState extends State<DirectionsPage> {
         ),
       ),
     ];
-  }
-}
-
-/// A trip's end as a field to tap, and a button beside it.
-class _EndRow extends StatelessWidget {
-  const _EndRow({
-    required this.label,
-    required this.endpoint,
-    required this.onTap,
-    required this.onClear,
-    required this.action,
-  });
-
-  final String label;
-  final RouteEndpoint? endpoint;
-  final VoidCallback onTap;
-  final VoidCallback onClear;
-  final Widget action;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(left: 16, right: 8),
-    child: Row(
-      children: [
-        Expanded(
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(4),
-            child: InputDecorator(
-              isEmpty: endpoint == null,
-              decoration: InputDecoration(
-                labelText: label,
-                border: const OutlineInputBorder(),
-                isDense: true,
-                prefixIcon: const Icon(Icons.location_on_outlined),
-                suffixIcon: endpoint == null
-                    ? null
-                    : IconButton(
-                        tooltip: 'Clear ${label.toLowerCase()}',
-                        icon: const Icon(Icons.close),
-                        onPressed: onClear,
-                      ),
-              ),
-              child: Text(
-                endpoint?.label ?? '',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
-        ),
-        action,
-      ],
-    ),
-  );
-}
-
-/// A chip for a way of traveling.
-class _ModeChip extends StatelessWidget {
-  const _ModeChip({
-    required this.mode,
-    required this.wheelchair,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final TravelMode mode;
-
-  /// Whether walking is by wheelchair, which the walking chip then says.
-  final bool wheelchair;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final enabled = mode.available;
-    final radius = BorderRadius.circular(12);
-    final label = mode.labelFor(wheelchair: wheelchair);
-    return Semantics(
-      button: true,
-      enabled: enabled,
-      selected: selected,
-      label: label,
-      excludeSemantics: true,
-      onTap: enabled ? onTap : null,
-      child: Tooltip(
-        message: label,
-        child: Material(
-          color: selected ? scheme.primary : scheme.surfaceContainerHighest,
-          borderRadius: radius,
-          child: InkWell(
-            borderRadius: radius,
-            onTap: enabled ? onTap : null,
-            child: SizedBox(
-              height: 40,
-              child: Icon(
-                mode.iconFor(wheelchair: wheelchair),
-                size: 22,
-                color: selected
-                    ? scheme.onPrimary
-                    : enabled
-                    ? scheme.onSurfaceVariant
-                    : scheme.onSurface.withValues(alpha: 0.38),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A route's distance and travel time, with the button that starts navigation.
-class _Summary extends StatelessWidget {
-  const _Summary({
-    required this.route,
-    required this.units,
-    required this.onStart,
-  });
-
-  final DirectionsRoute route;
-  final UnitSystem units;
-  final VoidCallback onStart;
-
-  @override
-  Widget build(BuildContext context) => Card.filled(
-    margin: EdgeInsets.zero,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _SummaryRow('Distance', formatDistance(route.distance, units: units)),
-          const SizedBox(height: 4),
-          _SummaryRow('Duration', formatDuration(route.duration)),
-          const SizedBox(height: 8),
-          FilledButton(
-            onPressed: onStart,
-            child: const Text('Start Navigation'),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-class _SummaryRow extends StatelessWidget {
-  const _SummaryRow(this.label, this.value);
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(label, style: theme.textTheme.bodyLarge),
-        Text(
-          value,
-          style: theme.textTheme.bodyLarge?.copyWith(
-            color: theme.colorScheme.primary,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// A numbered step of a route.
-class _StepCard extends StatelessWidget {
-  const _StepCard({
-    required this.number,
-    required this.step,
-    required this.units,
-  });
-
-  final int number;
-  final DirectionsStep step;
-  final UnitSystem units;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card.filled(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 28,
-              child: Text(
-                '$number',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.labelLarge,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(step.instruction, style: theme.textTheme.bodyMedium),
-            ),
-            const SizedBox(width: 12),
-            Text(
-              formatDistance(step.distance, units: units),
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }
 
@@ -1430,238 +1247,81 @@ class _ChoiceCard extends StatelessWidget {
   );
 }
 
-/// iOS's trip ends: From and To together in one grouped card, each with its marker and
-/// its action beside the card: Recalculate by From, Swap by To.
-class _CupertinoEnds extends StatelessWidget {
-  const _CupertinoEnds({
-    required this.directions,
-    required this.onEdit,
-    required this.bothEnds,
-  });
+/// Steps and Start along the bottom of the window, acting on the selected route:
+/// Start the main action, twice as wide. Null disables either.
+///
+/// They're as tall as their labels need at the system's text size, and keep clear of
+/// the navigation bar. Nothing is painted behind them: the sheet clips its content out
+/// from under them.
+class _TripButtons extends StatelessWidget {
+  const _TripButtons({required this.onSteps, required this.onStart});
 
-  final Directions directions;
-  final void Function(RouteField field) onEdit;
-  final bool bothEnds;
+  final VoidCallback? onSteps;
+  final VoidCallback? onStart;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    Widget end(RouteField field) {
-      final from = field == RouteField.from;
-      final endpoint = from ? directions.from : directions.to;
-      final label = from ? 'From' : 'To';
-      return AppListTile(
-        leading: Icon(
-          from ? CupertinoIcons.circle_fill : CupertinoIcons.location_solid,
-          size: from ? 14 : 20,
-          color: from ? const Color(0xFF34C759) : const Color(0xFFFF3B30),
-        ),
-        title: Text(
-          endpoint?.label ?? label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: endpoint == null
-              ? TextStyle(color: theme.colorScheme.onSurfaceVariant)
-              : null,
-        ),
-        trailing: endpoint == null
-            ? null
-            : Semantics(
-                button: true,
-                label: 'Clear ${label.toLowerCase()}',
-                excludeSemantics: true,
-                child: CupertinoButton(
-                  padding: EdgeInsets.zero,
-                  minimumSize: const Size.square(32),
-                  onPressed: () => directions.setEndpoint(field, null),
-                  child: Icon(
-                    CupertinoIcons.xmark_circle_fill,
-                    size: 18,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-        onTap: () => onEdit(field),
+    final cupertino = isCupertinoOf(context);
+    // One line, shrunk to fit its button rather than cut off.
+    Widget label(String text) => FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Text(text, maxLines: 1, softWrap: false),
+    );
+    final Widget steps, start;
+    if (cupertino) {
+      // Capsules, the lesser one a tint, as the sheet is glass while it's low.
+      const size = Size(0, 50);
+      final radius = BorderRadius.circular(100);
+      steps = CupertinoButton.tinted(
+        minimumSize: size,
+        borderRadius: radius,
+        onPressed: onSteps,
+        child: label('Steps'),
+      );
+      start = CupertinoButton.filled(
+        minimumSize: size,
+        borderRadius: radius,
+        onPressed: onStart,
+        child: label('Start'),
+      );
+    } else {
+      final style = FilledButton.styleFrom(minimumSize: const Size(0, 48));
+      steps = FilledButton.tonal(
+        style: style,
+        onPressed: onSteps,
+        child: label('Steps'),
+      );
+      start = FilledButton(
+        style: style,
+        onPressed: onStart,
+        child: label('Start'),
       );
     }
-
-    Widget action(String label, IconData icon, VoidCallback? onPressed) =>
-        Semantics(
-          button: true,
-          label: label,
-          excludeSemantics: true,
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size.square(44),
-            onPressed: onPressed,
-            child: Icon(icon, size: 20),
-          ),
-        );
-
-    return Row(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: AppListSection(
-            children: [end(RouteField.from), end(RouteField.to)],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(right: 8, top: 8),
-          child: Column(
-            children: [
-              action(
-                'Recalculate route',
-                CupertinoIcons.arrow_clockwise,
-                bothEnds && !directions.loading ? directions.recalculate : null,
-              ),
-              action(
-                'Swap start and destination',
-                CupertinoIcons.arrow_up_arrow_down,
-                bothEnds ? directions.swap : null,
-              ),
-            ],
+        if (!cupertino) const Divider(height: 1),
+        SafeArea(
+          top: false,
+          minimum: EdgeInsets.only(bottom: cupertino ? 8 : 10),
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              cupertino ? 16 : 12,
+              10,
+              cupertino ? 16 : 12,
+              0,
+            ),
+            child: Row(
+              spacing: 10,
+              children: [
+                Expanded(child: steps),
+                Expanded(flex: 2, child: start),
+              ],
+            ),
           ),
         ),
       ],
-    );
-  }
-}
-
-/// iOS's ways of traveling: a segmented control, with those that can't be routed yet
-/// disabled.
-class _CupertinoModes extends StatelessWidget {
-  const _CupertinoModes({
-    required this.selected,
-    required this.wheelchair,
-    required this.onChanged,
-  });
-
-  final TravelMode selected;
-
-  /// Whether walking is by wheelchair, which its segment then says.
-  final bool wheelchair;
-  final ValueChanged<TravelMode> onChanged;
-
-  @override
-  Widget build(BuildContext context) =>
-      CupertinoSlidingSegmentedControl<TravelMode>(
-        groupValue: selected,
-        disabledChildren: {
-          for (final mode in TravelMode.values)
-            if (!mode.available) mode,
-        },
-        children: {
-          for (final mode in TravelMode.values)
-            mode: Semantics(
-              label: mode.labelFor(wheelchair: wheelchair),
-              excludeSemantics: true,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Icon(mode.iconFor(wheelchair: wheelchair), size: 20),
-              ),
-            ),
-        },
-        onValueChanged: (mode) {
-          if (mode == null || mode == selected) return;
-          Haptics.selection();
-          onChanged(mode);
-        },
-      );
-}
-
-/// iOS's route summary: the time large, the distance under it, and Go, which starts
-/// navigation, as Apple shows a route.
-class _CupertinoSummary extends StatelessWidget {
-  const _CupertinoSummary({
-    required this.route,
-    required this.units,
-    required this.onStart,
-  });
-
-  final DirectionsRoute route;
-  final UnitSystem units;
-  final VoidCallback onStart;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return DecoratedBox(
-      decoration: ShapeDecoration(
-        color: groupedRowColor(context),
-        shape: RoundedSuperellipseBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    formatDuration(route.duration),
-                    style: theme.textTheme.headlineSmall,
-                  ),
-                  Text(
-                    formatDistance(route.distance, units: units),
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // Read out as what it does; "Go" alone says little.
-            Semantics(
-              button: true,
-              label: 'Start Navigation',
-              onTap: onStart,
-              excludeSemantics: true,
-              child: CupertinoButton.filled(
-                color: const Color(0xFF34C759),
-                sizeStyle: CupertinoButtonSize.large,
-                onPressed: onStart,
-                child: const Text('Go'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// A numbered step of a route, in iOS's grouped list.
-class _CupertinoStep extends StatelessWidget {
-  const _CupertinoStep({
-    required this.number,
-    required this.step,
-    required this.units,
-  });
-
-  final int number;
-  final DirectionsStep step;
-  final UnitSystem units;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return AppListTile(
-      leading: Text(
-        '$number',
-        style: theme.textTheme.titleSmall?.copyWith(
-          color: theme.colorScheme.primary,
-        ),
-      ),
-      title: Text(step.instruction, maxLines: 3),
-      trailing: Text(
-        formatDistance(step.distance, units: units),
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ),
     );
   }
 }

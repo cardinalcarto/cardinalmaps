@@ -2,7 +2,9 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sparkle/sparkle.dart';
 
+import 'directions/directions.dart';
 import 'directions/directions_page.dart';
+import 'directions/steps_page.dart';
 import 'home/navigation_bar.dart';
 import 'home/stub_page.dart';
 import 'map/buttons.dart';
@@ -38,6 +40,11 @@ String placeLocation(String id) => '/place/${Uri.encodeComponent(id)}';
 
 /// The location of the screen with directions to the place with [id].
 String directionsLocation(String id) => '${placeLocation(id)}/directions';
+
+/// The location of the steps of the route selected in directions to the place with
+/// [id]. The directions page pushes it with its trip, which this page shows the
+/// selected route of; without one, as when the app restores it, it's directions.
+String stepsLocation(String id) => '${directionsLocation(id)}/steps';
 
 /// The location of the navigation screen, over directions to the place with [id].
 String navigationLocation(String id) => '${directionsLocation(id)}/navigate';
@@ -131,6 +138,18 @@ List<RouteBase> sheetRoutes() => [
               ),
             ),
             routes: [
+              GoRoute(
+                path: 'steps',
+                redirect: (context, state) => state.extra is Directions
+                    ? null
+                    : directionsLocation(state.pathParameters['id']!),
+                pageBuilder: (context, state) => _page(
+                  state,
+                  HidesMapOverlays(
+                    child: StepsPage(directions: state.extra! as Directions),
+                  ),
+                ),
+              ),
               GoRoute(
                 path: 'navigate',
                 pageBuilder: (context, state) => _page(
