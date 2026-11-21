@@ -2164,3 +2164,90 @@ fn pages_that_share_trips_are_one_page_transitively() {
     assert_eq!(only.stop.stop_id, "P1");
     assert_eq!(rows(only), vec![("L71-1110", june_15(11, 10), SCHEDULED)]);
 }
+
+/// Route 44 out to Ballard and back to the University District, on weekdays from 11:00.
+///
+/// The 11:10 "Ballard" leaves `P2` for `PX`, where its vehicle turns around as the 11:25
+/// "University District" (one block, a five-minute wait), back through `P1` to `PZ`; so the
+/// compiler makes the two one combined trip. The 11:40 "Ballard" and 11:50 "University
+/// District" run the same ways, each alone.
+fn turnaround_source() -> InMemorySource {
+    InMemorySource::new()
+        .with(
+            "agency.txt",
+            "agency_id,agency_name,agency_timezone,agency_url\n\
+             TA,Turns,America/Los_Angeles,https://t.test\n",
+        )
+        .with(
+            "routes.txt",
+            "route_id,agency_id,route_short_name,route_type\n\
+             T44,TA,44,3\n",
+        )
+        .with(
+            "stops.txt",
+            "stop_id,stop_name,stop_lat,stop_lon\n\
+             P1,Line 1st,47.6005,-122.3300\n\
+             P2,Line 2nd,47.6040,-122.3300\n\
+             PX,Far West,47.6000,-122.3800\n\
+             PZ,Far East,47.6000,-122.3000\n",
+        )
+        .with(
+            "calendar.txt",
+            "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n\
+             WK,1,1,1,1,1,0,0,20260601,20260630\n",
+        )
+        .with(
+            "trips.txt",
+            "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n\
+             T44,WK,T44-B1110,Ballard,1,T\n\
+             T44,WK,T44-U1125,University District,0,T\n\
+             T44,WK,T44-B1140,Ballard,1,\n\
+             T44,WK,T44-U1150,University District,0,\n",
+        )
+        .with(
+            "stop_times.txt",
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
+             T44-B1110,11:10:00,11:10:00,P2,1\n\
+             T44-B1110,11:20:00,11:20:00,PX,2\n\
+             T44-U1125,11:25:00,11:25:00,PX,1\n\
+             T44-U1125,11:35:00,11:35:00,P1,2\n\
+             T44-U1125,11:45:00,11:45:00,PZ,3\n\
+             T44-B1140,11:40:00,11:40:00,P2,1\n\
+             T44-B1140,11:50:00,11:50:00,PX,2\n\
+             T44-U1150,11:50:00,11:50:00,PX,1\n\
+             T44-U1150,12:00:00,12:00:00,P1,2\n\
+             T44-U1150,12:10:00,12:10:00,PZ,3\n",
+        )
+}
+
+#[test]
+fn a_vehicle_that_turns_around_on_its_block_keeps_both_directions_apart() {
+    let set = TimetableSet::new(vec![loaded("turns", turnaround_source())]).expect("a set");
+    let state = TransitState::from_set(set, StateConfig::default()).expect("state");
+    let response = run(&state, &request(june_15(11, 0)));
+    let r44 = route(&response, "turns", "T44");
+    // The 11:10 to Ballard and the 11:25 to the University District are one combined trip, but
+    // two trips to a rider, going opposite ways from different stops: two pages, not one.
+    assert_eq!(
+        pages(r44),
+        vec![vec!["University District"], vec!["Ballard"]]
+    );
+    let ballard = page(r44, "Ballard");
+    assert_eq!(ballard.stop.stop_id, "P2");
+    assert_eq!(
+        rows(ballard),
+        vec![
+            ("T44-B1110", june_15(11, 10), SCHEDULED),
+            ("T44-B1140", june_15(11, 40), SCHEDULED),
+        ]
+    );
+    let university = page(r44, "University District");
+    assert_eq!(university.stop.stop_id, "P1");
+    assert_eq!(
+        rows(university),
+        vec![
+            ("T44-U1125", june_15(11, 35), SCHEDULED),
+            ("T44-U1150", june_15(12, 0), SCHEDULED),
+        ]
+    );
+}
