@@ -111,7 +111,10 @@ class SheetController extends ChangeNotifier
         animateTo(anchor);
       case final _InRange rest:
         final extent = rest.extentIn(_anchors, _ranges);
-        if (extent != null && !isTransitioning) _springTo(rest, extent, 0);
+        if (extent != null && !isTransitioning) {
+          _asked = null;
+          _springTo(rest, extent, 0);
+        }
       case null:
         break;
     }
@@ -158,8 +161,26 @@ class SheetController extends ChangeNotifier
   /// of its ranges, keeping whatever speed it has. If a page transition has the sheet,
   /// or the current page doesn't have that anchor yet, as when it's about to add it,
   /// once that's over.
+  ///
+  /// The page it's asked of is the page as the frame this is called in lays it out
+  /// (the next frame, between frames). So a page that changes its content, its anchors
+  /// or its ranges can ask in the same breath, before or after it marks itself to build
+  /// or while it builds, and the sheet goes to where the new content has [anchor], in
+  /// one motion from where it is: staying where it is, if that's where it rests
+  /// already. If the new content hasn't got it, that's a page that doesn't have it yet.
   void animateTo(SheetAnchor anchor) {
     _awaited = null;
+    _asked = null;
+    final scheduler = SchedulerBinding.instance;
+    final laidOut =
+        scheduler.schedulerPhase == SchedulerPhase.postFrameCallbacks;
+    if (laidOut) {
+      // After a frame the page is laid out, though the scaffold may not have said so
+      // yet: from where the sheet is, before it follows anything that moved.
+      _asked = anchor;
+      _takeAnchors?.call();
+      _asked = null;
+    }
     final target = _placeOf(anchor);
     if (isTransitioning || target == null) {
       _awaited = anchor;
@@ -170,10 +191,29 @@ class SheetController extends ChangeNotifier
       target.$2,
       _phase == _Phase.settling ? _spring.velocity : 0,
     );
+    if (laidOut) return;
+    // Sprung from where it is, towards where the page had the anchor last frame:
+    // [_setAnchors] turns it to where this frame has it before the spring first moves.
+    _asked = anchor;
+    scheduler
+      ..addPostFrameCallback((_) {
+        if (_asked == null) return;
+        _takeAnchors?.call();
+        _asked = null;
+      })
+      ..ensureVisualUpdate();
   }
 
   /// The anchor to spring to as soon as the current page has it.
   SheetAnchor? _awaited;
+
+  /// The anchor [animateTo] sprang the sheet to, until the frame it was asked in is
+  /// laid out: the page may place it elsewhere in that frame, or drop it.
+  SheetAnchor? _asked;
+
+  /// Has the scaffold showing this sheet give it the current page's anchors as they're
+  /// laid out now (see [_setAnchors]), rather than after the frame.
+  VoidCallback? _takeAnchors;
 
   /// Where [anchor] is on the current page, as a rest and its extent: one of its anchors,
   /// or else an end of one of its ranges.
@@ -205,6 +245,7 @@ class SheetController extends ChangeNotifier
     final next =
         stops.firstWhereOrNull((s) => s.$2 > extent + _epsilon) ??
         stops.firstWhere((s) => s.$1 is _AtAnchor);
+    _asked = null;
     _springTo(next.$1, next.$2, 0);
   }
 
@@ -215,6 +256,7 @@ class SheetController extends ChangeNotifier
   void hold({Object? holder}) {
     if (isTransitioning || !_draggable) return;
     _awaited = null;
+    _asked = null;
     _spring.stop();
     _wheelSettle?.cancel();
     _phase = _Phase.held;
@@ -610,6 +652,24 @@ class SheetController extends ChangeNotifier
       );
       return;
     }
+    if (_asked case final asked?) {
+      // Asked for before this frame laid the page out. Where the page has it now is
+      // where to go, from where the sheet is and at its speed: the spring hasn't moved
+      // it yet.
+      if (_placeOf(asked) case (final rest, final to)?) {
+        final settling = _phase == _Phase.settling;
+        final headed =
+            settling &&
+            _settlingTo == rest &&
+            (_settlingExtent - to).abs() <= _epsilon;
+        if (!headed) _springTo(rest, to, settling ? _spring.velocity : 0);
+        return;
+      }
+      // The page hasn't got it after all: it's waited for, as if asked for now, and the
+      // sheet goes on from where it was headed, which is gone.
+      _asked = null;
+      _awaited = asked;
+    }
     if (_phase == _Phase.settling) {
       // Springing to an anchor that moved (as when the keyboard hides): spring on to
       // where it is now, from where the sheet is and at its speed.
@@ -666,6 +726,7 @@ class SheetController extends ChangeNotifier
 
   /// Hands the sheet to a page transition, which moves it with [_follow].
   void _beginTransition() {
+    _asked = null;
     _spring.stop();
     _wheelSettle?.cancel();
     _glidingIn = null;
@@ -719,6 +780,7 @@ class SheetController extends ChangeNotifier
 
   @override
   void dispose() {
+    _asked = null;
     _wheelSettle?.cancel();
     _spring.dispose();
     _collapsed.dispose();

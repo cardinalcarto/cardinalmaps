@@ -138,6 +138,13 @@ class _SheetScaffoldState extends State<SheetScaffold>
     if (widget.controller == null) {
       _ownController = SheetController(vsync: this, physics: widget.physics);
     }
+    _controller._takeAnchors = _giveAnchors;
+  }
+
+  /// Gives the controller the current page's anchors as they are now, when it asks
+  /// (see [SheetController.animateTo]).
+  void _giveAnchors() {
+    if (mounted) _update();
   }
 
   @override
@@ -153,12 +160,20 @@ class _SheetScaffoldState extends State<SheetScaffold>
       _ownController = SheetController(vsync: this, physics: widget.physics);
     }
     _ownController?.physics = widget.physics;
+    if (widget.controller != oldWidget.controller) {
+      final old = oldWidget.controller ?? _ownController;
+      if (old?._takeAnchors == _giveAnchors) old!._takeAnchors = null;
+      _controller._takeAnchors = _giveAnchors;
+    }
   }
 
   @override
   void dispose() {
     for (final MapEntry(key: entry, value: animation) in _animations.entries) {
       _unlisten(entry, animation);
+    }
+    if (_controller._takeAnchors == _giveAnchors) {
+      _controller._takeAnchors = null;
     }
     _ownController?.dispose();
     _barShown.dispose();
