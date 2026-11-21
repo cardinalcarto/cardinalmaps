@@ -1,9 +1,10 @@
-//! A ride's other departures: its route between the same two stops, around the journey's own.
+//! A ride's other departures: every route's between the same two stops, around the journey's own.
 //!
-//! The route is the rider's: the GTFS routes a trip rides from the boarding stop to the alighting
-//! stop, each once in a row. A departure is listed when its trip rides the same ones,
-//! so a stay-seated ride lists trips that make the same change, and a ride on one route lists
-//! combined trips that are still on that route between the two stops.
+//! A departure is any trip that lets the rider on at the ride's boarding stop and off at its
+//! alighting stop, those exact two stops and no others nearby, whatever its route:
+//! what a rider could take instead, or after missing the journey's own. A trip that stays seated
+//! as its vehicle continues as another route is one, described by the route it boards.
+//! Each is listed once, and `last_of_day` is about all of them: the connection's last.
 //!
 //! The timetable is read as routing reads it, from the pinned snapshot alone:
 //! every pattern serving the boarding stop and then the alighting stop (the occurrences routing
@@ -17,7 +18,9 @@
 //! A ride reads the occurrences at its boarding stop, the stop sequences of those patterns up to
 //! the alighting stop, and per lane a binary search and the rows in the time bound.
 //! Only blocks the overlay changed are read twice. Describing a departure resolves its trip as
-//! a leg does, without stop names or a vehicle's position.
+//! a leg does, without stop names or a vehicle's position. A plan finds the patterns between two
+//! stops, the latest departure between them each day, and each departure's description once,
+//! however many of its journeys ride between them.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -30,7 +33,7 @@ use valinor_transit::{
 };
 
 use crate::response::build::{
-    RideDescriber, boarding_headsign, gtfs_route_of, leg_accessibility, trip_accessibility,
+    RideDescriber, boarding_headsign, leg_accessibility, route_response, trip_accessibility,
     trip_bikes_allowed,
 };
 use crate::response::{Accessibility, AlertResponse, DepartureStatus, RideDeparture, TransitLeg};
@@ -103,28 +106,30 @@ impl Candidate {
     }
 }
 
-/// The GTFS routes a trip rides between two positions, each once in a row, by file.
-type RiddenRoutes = Vec<(usize, GtfsRoute)>;
-
 /// What one plan has already worked out about departures, since its journeys share most of them.
 #[derive(Debug, Default)]
 pub(super) struct DepartureCache {
     /// Each departure described, by its run and its pair of positions.
     described: HashMap<(TripKey, Pair), Rc<Described>>,
-    /// The latest departure of a route between two stops on a service date, on the window clock.
-    latest: HashMap<(StopId, StopId, RiddenRoutes, ServiceDate), Option<Time>>,
+    /// The patterns serving one stop and then another, as [`pairs_for`] finds them.
+    pairs: HashMap<(StopId, StopId), Rc<[Pair]>>,
+    /// The latest departure of any route between two stops on a service date, on the window clock.
+    latest: HashMap<(StopId, StopId, ServiceDate), Option<Time>>,
 }
 
 /// A departure's leg-independent description.
 #[derive(Debug)]
 pub(super) struct Described {
+    /// Its `route` is the one it boards, which a leg on the same route leaves out.
     pub(super) departure: RideDeparture,
+    /// The GTFS route it boards, by file, which tells it from the leg's.
+    pub(super) gtfs_route: Option<(usize, GtfsRoute)>,
     pub(super) alerts: Vec<AlertResponse>,
 }
 
 impl RideDescriber<'_> {
-    /// The departures of a ride's route between its stops, and the alerts on them that aren't
-    /// the leg's own.
+    /// The departures between a ride's two stops, of any route, and the alerts on them that
+    /// aren't the leg's own.
     ///
     /// `ready` is the earliest the rider can be at the boarding stop, in POSIX seconds.
     pub(super) fn ride_departures(
@@ -136,14 +141,6 @@ impl RideDescriber<'_> {
         let snapshot: &Snapshot = &self.snapshot.snapshot;
         let filter = self.mode.route_filter();
         let range = self.departures;
-        let mut routes = RiddenRoutes::new();
-        self.ridden_routes(
-            ride.trip,
-            ride.route,
-            ride.board_position,
-            ride.alight_position,
-            &mut routes,
-        );
 
         let own = Candidate {
             pair: Pair {
@@ -170,45 +167,31 @@ impl RideDescriber<'_> {
                 }),
             found: Found::Runs,
         };
-        // A trip that no GTFS route names has no route to list others of,
-        // nor to say whether it is that route's last.
-        let pairs = if routes.is_empty() {
-            Vec::new()
-        } else {
-            pairs_for(snapshot, filter, ride)
+        let (pairs, own_paired) = self.connection_pairs(filter, ride);
+        let board = ride.board_time.into_inner();
+        let seconds = |count: u8, seconds: u32| {
+            if count == 0 {
+                0
+            } else {
+                i32::try_from(seconds).unwrap_or(i32::MAX)
+            }
         };
-        let mut candidates = if routes.is_empty() {
-            Vec::new()
-        } else {
-            let board = ride.board_time.into_inner();
-            let seconds = |count: u8, seconds: u32| {
-                if count == 0 {
-                    0
-                } else {
-                    i32::try_from(seconds).unwrap_or(i32::MAX)
-                }
-            };
-            let bounds = (
-                board.saturating_sub(seconds(range.before, range.before_seconds)),
-                board.saturating_add(seconds(range.after, range.after_seconds)),
-            );
-            let mut scratch = RiddenRoutes::new();
-            // A departure is listed when its trip rides the same routes between the two stops.
-            let mut rides_the_route = |key: TripKey, pair: Pair| {
-                self.ridden_routes(key, pair.route, pair.board, pair.alight, &mut scratch);
-                scratch == routes
-            };
-            self.candidates(
-                &DepartureSearch {
-                    pairs: &pairs,
-                    filter,
-                    serving: Serving::BoardAndAlight,
-                    bounds,
-                },
-                Some((own.key, own.pair)),
-                &mut rides_the_route,
-            )
-        };
+        let bounds = (
+            board.saturating_sub(seconds(range.before, range.before_seconds)),
+            board.saturating_add(seconds(range.after, range.after_seconds)),
+        );
+        // Every trip that lets the rider on at the one stop and off at the other is a departure,
+        // whatever its route.
+        let mut candidates = self.candidates(
+            &DepartureSearch {
+                pairs: &pairs,
+                filter,
+                serving: Serving::BoardAndAlight,
+                bounds,
+            },
+            Some((own.key, own.pair)),
+            &mut |_, _| true,
+        );
         candidates.sort_unstable_by_key(Candidate::order);
         let at = candidates.partition_point(|c| c.order() < own.order());
         candidates.insert(at, own);
@@ -216,7 +199,9 @@ impl RideDescriber<'_> {
         let last = (at + usize::from(range.after)).min(candidates.len() - 1);
         let chosen = &candidates[first..=last];
 
-        let latest = self.latest_by_date(chosen, ride, &pairs, filter, &routes);
+        let latest = self.latest_by_date(chosen, ride, &pairs, filter, own_paired);
+        // The route the leg boards, which a departure on it doesn't repeat.
+        let own_route = self.ride_view(ride).gtfs_route;
         let mut pool: Vec<AlertResponse> = Vec::new();
         let departures = chosen
             .iter()
@@ -229,7 +214,7 @@ impl RideDescriber<'_> {
                 let mut departure = if is_own {
                     own_departure(leg)
                 } else {
-                    self.describe(ride, candidate, leg, &mut pool)
+                    self.describe(ride, candidate, leg, own_route, &mut pool)
                 };
                 departure.missed = departure.departure < ready;
                 departure.last_of_day = last_of_day;
@@ -239,8 +224,11 @@ impl RideDescriber<'_> {
         (departures, pool)
     }
 
-    /// Every departure of the search whose trip `accepts`, but `skip`'s run at its pair:
-    /// those that run, and those the overlay took away.
+    /// Every departure of the search whose trip `accepts`, but `skip`'s run at its boarding:
+    /// those that run, and those the overlay took away, each once.
+    ///
+    /// A run boarded at one position is one departure, however many of the pairs it alights at:
+    /// the first pair listed for it wins.
     pub(super) fn candidates(
         &self,
         search: &DepartureSearch<'_>,
@@ -251,6 +239,9 @@ impl RideDescriber<'_> {
         let mut out = Vec::new();
         // Every run seen running between the stops, so the schedule's copy isn't listed again.
         let mut runs: HashSet<TripKey> = skip.iter().map(|&(key, _)| key).collect();
+        // Every run listed, by where it is boarded.
+        let mut listed: HashSet<(TripKey, u32)> =
+            skip.iter().map(|&(key, pair)| (key, pair.board)).collect();
         for &pair in search.pairs {
             for day in day_slots(snapshot.days().len()) {
                 for lane in snapshot.block_lanes(pair.route, day).unwrap_or_default() {
@@ -261,10 +252,7 @@ impl RideDescriber<'_> {
                         let Some(key) = snapshot.trip_key(lane, row) else {
                             continue;
                         };
-                        if skip == Some((key, pair)) {
-                            continue;
-                        }
-                        if !accepts(key, pair) {
+                        if listed.contains(&(key, pair.board)) || !accepts(key, pair) {
                             continue;
                         }
                         let (Some(board), Some(alight)) = (
@@ -273,6 +261,7 @@ impl RideDescriber<'_> {
                         ) else {
                             continue;
                         };
+                        listed.insert((key, pair.board));
                         runs.insert(key);
                         out.push(Candidate {
                             pair,
@@ -389,14 +378,17 @@ impl RideDescriber<'_> {
     }
 
     /// The latest departure, on the window clock, of each service date of the running departures
-    /// in `chosen`, over the whole day: every one of `pairs`, whatever the bounds.
+    /// in `chosen`, over the whole day: every one of `pairs`, whatever the bounds and the route.
+    ///
+    /// `shared` says `pairs` are the two stops' alone, which any ride between them would read,
+    /// so what is found is kept for them; a ride's own pair beyond those is its own to read.
     fn latest_by_date(
         &self,
         chosen: &[Candidate],
         ride: &Ride,
         pairs: &[Pair],
         filter: RouteFilter,
-        routes: &[(usize, GtfsRoute)],
+        shared: bool,
     ) -> Vec<(ServiceDate, Time)> {
         let snapshot: &Snapshot = &self.snapshot.snapshot;
         let mut dates: Vec<ServiceDate> = chosen
@@ -406,15 +398,12 @@ impl RideDescriber<'_> {
             .collect();
         dates.sort_unstable();
         dates.dedup();
-        if dates.is_empty() || routes.is_empty() {
-            return Vec::new();
-        }
-        let mut scratch = RiddenRoutes::new();
         let mut out = Vec::with_capacity(dates.len());
         for date in dates {
-            // A route between two stops has one latest departure a day, whichever ride asks.
-            let cache_key = (ride.board_stop, ride.alight_stop, routes.to_vec(), date);
-            if let Some(latest) = self.departure_cache.borrow().latest.get(&cache_key) {
+            // Two stops have one latest departure between them a day, whichever ride asks:
+            // the plan's travel mode, and so its rules, is the same for all of them.
+            let cache_key = (ride.board_stop, ride.alight_stop, date);
+            if shared && let Some(latest) = self.departure_cache.borrow().latest.get(&cache_key) {
                 out.extend(latest.map(|latest| (date, latest)));
                 continue;
             }
@@ -433,31 +422,23 @@ impl RideDescriber<'_> {
                     if !serves(snapshot, lane, pair, filter, Serving::BoardAndAlight) {
                         continue;
                     }
-                    // Rows run in departure order, so the last that rides the route is the latest.
+                    // Rows run in departure order, so the last one is the lane's latest.
                     let count = snapshot.lane_trip_count(lane).unwrap_or(0);
-                    for row in (0..count).rev() {
-                        let (Some(key), Some(board)) = (
-                            snapshot.trip_key(lane, row),
-                            snapshot.lane_event(lane, row, pair.board),
-                        ) else {
-                            continue;
-                        };
-                        if latest.is_some_and(|latest| board.departure <= latest) {
-                            break;
-                        }
-                        self.ridden_routes(key, pair.route, pair.board, pair.alight, &mut scratch);
-                        if scratch != routes {
-                            continue;
-                        }
-                        latest = Some(board.departure);
-                        break;
-                    }
+                    let lane_latest = (0..count).rev().find_map(|row| {
+                        snapshot.trip_key(lane, row)?;
+                        snapshot
+                            .lane_event(lane, row, pair.board)
+                            .map(|board| board.departure)
+                    });
+                    latest = latest.max(lane_latest);
                 }
             }
-            self.departure_cache
-                .borrow_mut()
-                .latest
-                .insert(cache_key, latest);
+            if shared {
+                self.departure_cache
+                    .borrow_mut()
+                    .latest
+                    .insert(cache_key, latest);
+            }
             if let Some(latest) = latest {
                 out.push((date, latest));
             }
@@ -465,48 +446,31 @@ impl RideDescriber<'_> {
         out
     }
 
-    /// The GTFS routes a run rides between two positions of a pattern, into `out`.
-    ///
-    /// A combined trip on its own pattern rides the original trips its positions span;
-    /// any other trip rides its own route, and a trip only real-time data knows rides the route
-    /// its update names. Empty when nothing names a route.
-    fn ridden_routes(
-        &self,
-        key: TripKey,
-        route: RouteId,
-        board: u32,
-        alight: u32,
-        out: &mut RiddenRoutes,
-    ) {
-        out.clear();
-        let set = &self.snapshot.data.set;
-        if let Some((part, local)) = set.trip_part(key.trip)
-            && let Some(info) = part.compiled().trip(local)
-        {
-            if part.global_route(info.pattern) == route {
-                for segment in part.compiled().trip_segments(local) {
-                    if segment.first_position <= alight && board <= segment.last_position {
-                        let entry = (part.index(), segment.route);
-                        if out.last() != Some(&entry) {
-                            out.push(entry);
-                        }
-                    }
-                }
-            }
-            if out.is_empty() {
-                out.push((part.index(), info.route));
-            }
-            return;
-        }
-        let details = self.snapshot.rider.trip_by_key(key);
-        let part = details
-            .and_then(|d| d.feed.as_ref())
-            .and_then(|feed| set.part_of_feed(feed.as_str()))
-            .or_else(|| set.route_part(route).map(|(part, _)| part));
-        if let Some(part) = part
-            && let Some(gtfs) = gtfs_route_of(set, part, None, details)
-        {
-            out.push((part.index(), gtfs));
+    /// Every pattern a query with `filter` may ride from the ride's boarding stop to its
+    /// alighting stop, as [`pairs_for`] finds them, worked out once per plan for each two stops,
+    /// and whether they include the ride's own pair.
+    fn connection_pairs(&self, filter: RouteFilter, ride: &Ride) -> (Rc<[Pair]>, bool) {
+        let key = (ride.board_stop, ride.alight_stop);
+        let own = Pair {
+            route: ride.route,
+            board: ride.board_position,
+            alight: ride.alight_position,
+        };
+        let cached = self.departure_cache.borrow().pairs.get(&key).cloned();
+        let pairs = cached.unwrap_or_else(|| {
+            let pairs: Rc<[Pair]> = pairs_for(&self.snapshot.snapshot, filter, key).into();
+            self.departure_cache
+                .borrow_mut()
+                .pairs
+                .insert(key, Rc::clone(&pairs));
+            pairs
+        });
+        // The ride's own may be on a pattern the stops' occurrences don't pair, such as one
+        // that visits the boarding stop again before the alighting stop.
+        if pairs.contains(&own) {
+            (pairs, true)
+        } else {
+            (pairs.iter().copied().chain([own]).collect(), false)
         }
     }
 
@@ -514,11 +478,14 @@ impl RideDescriber<'_> {
     ///
     /// A departure's description depends only on its run and its two stops, so the journeys of
     /// one plan share it; only what relates it to a leg is worked out per leg.
+    ///
+    /// `own_route` is the GTFS route the leg boards, by file.
     fn describe(
         &self,
         ride: &Ride,
         candidate: &Candidate,
         leg: &TransitLeg,
+        own_route: Option<(usize, GtfsRoute)>,
         pool: &mut Vec<AlertResponse>,
     ) -> RideDeparture {
         let key = (candidate.key, candidate.pair);
@@ -571,6 +538,9 @@ impl RideDescriber<'_> {
             .or(leg.trip.headsign.as_ref());
         if departure.headsign.as_ref() == leg_headsign {
             departure.headsign = None;
+        }
+        if described.gtfs_route == own_route {
+            departure.route = None;
         }
         departure.alerts = alerts;
         departure.departure_alerts = departure_alerts;
@@ -649,6 +619,7 @@ impl RideDescriber<'_> {
                 trip_id: view.trip_id.clone(),
                 start_date: calendar_date(run.trip.date).map(|date| date.to_string()),
                 headsign,
+                route: view.route.map(route_response),
                 status,
                 departure: board_unix,
                 arrival: alight_unix,
@@ -670,6 +641,7 @@ impl RideDescriber<'_> {
                 departure_alerts: Vec::new(),
             },
             alerts,
+            gtfs_route: view.gtfs_route,
         }
     }
 }
@@ -683,6 +655,7 @@ fn own_departure(leg: &TransitLeg) -> RideDeparture {
         trip_id: leg.trip.trip_id.clone(),
         start_date: None,
         headsign: None,
+        route: None,
         status: if realtime {
             DepartureStatus::Live
         } else {
@@ -705,14 +678,18 @@ fn own_departure(leg: &TransitLeg) -> RideDeparture {
     }
 }
 
-/// Every pattern a query with `filter` may ride from the ride's boarding stop to its alighting
-/// stop, by the occurrences routing scans, including the ride's own.
+/// Every pattern a query with `filter` may ride from one stop to another, by the occurrences
+/// routing scans, whatever its route.
 ///
 /// From each visit to the boarding stop, the first later visit to the alighting stop pairs
 /// with it, unless the pattern visits the boarding stop again first: a rider boards there instead.
-fn pairs_for(snapshot: &Snapshot, filter: RouteFilter, ride: &Ride) -> Vec<Pair> {
+fn pairs_for(
+    snapshot: &Snapshot,
+    filter: RouteFilter,
+    (board_stop, alight_stop): (StopId, StopId),
+) -> Vec<Pair> {
     let mut pairs = Vec::new();
-    for (route, board) in snapshot.route_occurrences(ride.board_stop) {
+    for (route, board) in snapshot.route_occurrences(board_stop) {
         if !snapshot
             .route_attributes(route)
             .is_some_and(|attributes| filter.allows(attributes))
@@ -724,8 +701,8 @@ fn pairs_for(snapshot: &Snapshot, filter: RouteFilter, ride: &Ride) -> Vec<Pair>
         };
         let later = stops.iter().enumerate().skip(board as usize + 1);
         let alight = later
-            .take_while(|(_, stop)| **stop != ride.board_stop)
-            .find(|(_, stop)| **stop == ride.alight_stop)
+            .take_while(|(_, stop)| **stop != board_stop)
+            .find(|(_, stop)| **stop == alight_stop)
             .and_then(|(position, _)| u32::try_from(position).ok());
         if let Some(alight) = alight {
             pairs.push(Pair {
@@ -734,14 +711,6 @@ fn pairs_for(snapshot: &Snapshot, filter: RouteFilter, ride: &Ride) -> Vec<Pair>
                 alight,
             });
         }
-    }
-    let own = Pair {
-        route: ride.route,
-        board: ride.board_position,
-        alight: ride.alight_position,
-    };
-    if !pairs.contains(&own) {
-        pairs.push(own);
     }
     pairs
 }

@@ -245,7 +245,9 @@ pub(super) struct RideView<'a> {
     on_base_pattern: bool,
     /// The file that answers for the ride.
     pub(super) part: Option<TimetablePart<'a>>,
-    route: Option<RouteInfo<'a>>,
+    /// The GTFS route boarded, by file: what tells two rides' routes apart, unlike its names.
+    pub(super) gtfs_route: Option<(usize, GtfsRoute)>,
+    pub(super) route: Option<RouteInfo<'a>>,
     agency: Option<AgencyInfo<'a>>,
     pub(super) feed: Option<FeedId>,
     pub(super) trip_id: String,
@@ -653,6 +655,9 @@ impl<'a> RideDescriber<'a> {
             ridden_segments,
             on_base_pattern,
             part,
+            gtfs_route: part
+                .zip(gtfs_route)
+                .map(|(part, route)| (part.index(), route)),
             route,
             agency,
             feed,

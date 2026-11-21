@@ -350,8 +350,9 @@ pub struct TransitLeg {
     pub vehicle: Option<Vehicle>,
     /// Alerts that apply to this leg.
     pub alerts: Vec<LegAlert>,
-    /// Departures of this ride's route from its boarding stop to its alighting stop, in order of
-    /// departure, around and including this leg's own: what a rider has if they miss it.
+    /// Departures of any route from this ride's boarding stop to its alighting stop, in order of
+    /// departure, around and including this leg's own: what a rider has if they miss it,
+    /// or instead of it.
     ///
     /// Empty when the request's departure range lists none.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -364,11 +365,11 @@ pub struct TransitLeg {
     pub departure_alerts: Vec<AlertResponse>,
 }
 
-/// One departure of a ride's route between the ride's boarding and alighting stops.
+/// One departure between a ride's boarding and alighting stops, of any route serving the two.
 ///
-/// The route is the GTFS route the ride is on. A ride that stays seated as its vehicle
-/// continues as another route lists departures that make the same change between the two stops;
-/// a ride on one route also lists combined trips that ride that route between the two stops.
+/// Only those exact two stops count, not others nearby. A departure that stays seated as its
+/// vehicle continues as another route is one when it lets the rider on at the boarding stop and
+/// off at the alighting stop, and is described by the route it boards.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[expect(
@@ -384,6 +385,8 @@ pub struct RideDeparture {
     ///
     /// Absent when it is the leg's own: its first stop's `headsign`, or else its trip's.
     pub headsign: Option<String>,
+    /// The GTFS route it boards, as a leg's `route`; absent when it is the leg's own route.
+    pub route: Option<RouteResponse>,
     /// Whether it runs, and whether real-time data has seen it.
     pub status: DepartureStatus,
     /// When it leaves the boarding stop, as routing would use it (the prediction when there is
@@ -415,7 +418,8 @@ pub struct RideDeparture {
     /// origin.
     #[serde(skip_serializing_if = "is_false")]
     pub missed: bool,
-    /// Whether no later departure of the route between these stops runs on its service date.
+    /// Whether no later departure of any route between these two stops runs on its service date:
+    /// the connection's last of the day. Canceled and skipped departures don't count.
     #[serde(skip_serializing_if = "is_false")]
     pub last_of_day: bool,
     /// Indices into the leg's `alerts` that apply to this departure.

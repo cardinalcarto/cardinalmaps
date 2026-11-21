@@ -65,7 +65,7 @@ pub struct PlanRequestBody {
     /// How many departures before its own each ride lists; two when absent.
     #[serde(default)]
     pub departures_before: Option<u8>,
-    /// How many departures after its own each ride lists; three when absent.
+    /// How many departures after its own each ride lists; six when absent.
     #[serde(default)]
     pub departures_after: Option<u8>,
     /// The narration language for walking and cycling legs (a BCP 47 tag); `en-US` when absent.
