@@ -6,17 +6,21 @@
 /// one of a ride sets when the rider can be at the next ride's boarding stop (its
 /// arrival plus the next ride's [TransitLeg.transferSeconds]), and so which of the
 /// next ride's departures they can make. Down the journey, each ride after keeps what
-/// was chosen for it while that can still be made; otherwise it takes its suggested
-/// departure if that can be made, or else the first that can. A ride none of whose
-/// departures can be made has no connection in its list, and what comes after it isn't
-/// known.
+/// was chosen for it while that can still be made. Otherwise, while every ride before
+/// it takes its suggested departure, it takes its own suggested one; once a ride before
+/// takes another, it takes the departure that can be made and reaches its alighting
+/// stop first (the suggested one, then the earliest to leave, on a tie). So a later
+/// ride doesn't wait on a train that the plan chose for a bus the rider now gets
+/// earlier. A ride none of whose departures can be made has no connection in its list,
+/// and what comes after it isn't known.
 ///
 /// | A ride's choice | When | Then |
 /// |---|---|---|
 /// | the suggested one | the plan is read | each ride's suggested departure |
 /// | any | the rider chooses one they can make | that one, chosen |
 /// | chosen | the ride before changes and it can still be made | it stays |
-/// | chosen | the ride before changes and it can't be made | the suggested one if it can be, else the first that can |
+/// | not chosen | every ride before takes its suggested one | the suggested one, if it can be made |
+/// | not chosen, or chosen and can't be made | otherwise | the one that can be made and arrives first |
 /// | any | none can be made | no connection, and the rides after unknown |
 /// | chosen | a new plan still lists it | it stays, if it can still be made |
 library;
@@ -134,6 +138,9 @@ class ConnectionChain {
     final kept = <int, DepartureRun>{};
     DateTime? before;
     var broken = false;
+    // Whether every ride so far takes its suggested departure, so the rider reaches
+    // this one's boarding stop when the plan has them there.
+    var asPlanned = true;
     for (final (i, ride) in rides.indexed) {
       final departures = ride.departures;
       if (broken) {
@@ -174,7 +181,9 @@ class ConnectionChain {
           kept[i] = pick!;
         } else {
           final own = departures.indexWhere((d) => d.suggested);
-          index = own >= 0 && catchable[own] ? own : catchable.indexOf(true);
+          index = asPlanned && own >= 0 && catchable[own]
+              ? own
+              : _arrivesFirst(departures, catchable);
         }
       }
       final choice = RideChoice._(
@@ -186,10 +195,32 @@ class ConnectionChain {
         connection: made ? RideConnection.made : RideConnection.none,
       );
       choices.add(choice);
+      asPlanned = asPlanned && choice.suggested;
       before = choice.arrival;
       broken = !made;
     }
     return ConnectionChain._(journey, choices, kept);
+  }
+
+  /// Of the departures that can be made, the one reaching the alighting stop first:
+  /// on a tie the suggested one, then the earliest to leave (the list's order).
+  static int _arrivesFirst(
+    List<RideDeparture> departures,
+    List<bool> catchable,
+  ) {
+    var best = -1;
+    for (final (i, d) in departures.indexed) {
+      if (!catchable[i]) continue;
+      if (best < 0) {
+        best = i;
+        continue;
+      }
+      final b = departures[best];
+      final earlier = d.arrival.isBefore(b.arrival);
+      final tie = d.arrival.isAtSameMomentAs(b.arrival);
+      if (earlier || (tie && d.suggested && !b.suggested)) best = i;
+    }
+    return best;
   }
 
   final Journey journey;

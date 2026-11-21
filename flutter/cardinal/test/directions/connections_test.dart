@@ -100,6 +100,28 @@ void main() {
       expect(chain.arrival, at(3720));
     });
 
+    test('an earlier ride makes the next ride the one arriving first', () {
+      // The 62 at 17:32, were it catchable, has the rider at C at 17:44: Link's 17:50
+      // arrives before the suggested 17:55, so the rider doesn't wait for the plan's.
+      final json = connectionsPlanJson();
+      final legs =
+          ((json['journeys']! as List).single as Map<String, Object?>)['legs']!
+              as List;
+      final first = legs.cast<Map<String, Object?>>().firstWhere(
+        (l) => l['type'] == 'transit',
+      );
+      for (final d
+          in (first['departures']! as List).cast<Map<String, Object?>>()) {
+        if (d['trip_id'] == '62-0') d.remove('missed');
+      }
+      final journey = TransitPlan.fromJson(json).journeys.single;
+      final chain = select(ConnectionChain(journey), 0, '62-0');
+      expect(trips(chain), ['62-0', 'link-0', '8-1', '2-1']);
+      expect(chain.rides[1].chosen, isFalse);
+      // Back on the suggested first ride, the suggested ones follow again.
+      expect(trips(select(chain, 0, '40-1')), ['40-1', 'link-1', '8-1', '2-1']);
+    });
+
     test('a ride chosen by the rider stays while it can be made', () {
       var chain = ConnectionChain(connectionsJourney());
       chain = select(chain, 2, '9-1');
