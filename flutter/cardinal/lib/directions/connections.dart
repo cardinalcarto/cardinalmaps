@@ -92,11 +92,11 @@ class RideChoice {
   /// The route of the departure taken: another than the ride's, perhaps.
   TransitRoute? get route => departure?.route ?? ride.route;
 
-  /// Where the departure taken is headed: a departure of the ride's route that doesn't
-  /// say is headed where the ride is.
+  /// Where the departure taken is headed: the planner leaves out a departure's headsign
+  /// when it reads the same as the ride's, whatever route the departure is on.
   String? get headsign => switch (departure) {
     null || RideDeparture(suggested: true) => ride.headsign,
-    final d => d.headsign ?? (d.route == null ? ride.headsign : null),
+    final d => d.headsign ?? ride.headsign,
   };
 
   /// Whether the times of the departure taken came from real-time data.
