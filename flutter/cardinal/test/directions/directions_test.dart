@@ -610,14 +610,152 @@ void main() {
     });
   });
 
-  test('recalculating asks again from a fresh position', () async {
-    await directions.startFromMyLocation();
-    directions.setEndpoint(RouteField.to, b);
-    final before = routes.asked.length;
-    location.now = const Fix(lng: 7, lat: 8, accuracy: 3);
-    await directions.recalculate();
-    expect(routes.asked, hasLength(before + 3), reason: 'every street way');
-    expect(routes.asked.last.from, const LngLat(7, 8));
+  group('transit planned again', () {
+    TransitPlan planOf(List<String> tags) =>
+        fakePlan(journeys: tags.length, tags: tags);
+    ModeOptions transitOptions() => directions.options(TravelMode.transit);
+
+    /// Transit showing [plan], for a trip with both ends.
+    Future<void> showing(TransitPlan plan) async {
+      bothEnds();
+      directions.setMode(TravelMode.transit);
+      transit.asked.single.answer.complete(plan);
+      await pumpEventQueue();
+    }
+
+    test('keeps its plan while it asks, and has the answer wait', () async {
+      final plan = planOf(['-x', '-y']);
+      await showing(plan);
+      final question = directions.transitQuestion;
+      var told = 0;
+      directions.addListener(() => told++);
+      final refresh = directions.refreshTransit();
+      expect(directions.refreshing, isTrue);
+      expect(transit.asked, hasLength(2));
+      expect(transit.asked.last.from, a.point);
+      expect(transit.asked.last.access, TransitAccess.walking);
+      expect(directions.plan, same(plan));
+      expect(directions.loading, isFalse);
+      expect(told, 0, reason: 'nothing to show for it yet');
+      // Asked once at a time.
+      unawaited(directions.refreshTransit());
+      expect(transit.asked, hasLength(2));
+
+      final fresh = planOf(['-x', '-y']);
+      transit.asked.last.answer.complete(fresh);
+      await refresh;
+      expect(directions.refreshing, isFalse);
+      expect(directions.refreshed, same(fresh));
+      expect(directions.plan, same(plan));
+      expect(told, 1);
+      expect(asked(TravelMode.driving), hasLength(1), reason: 'transit alone');
+
+      directions.showRefreshed();
+      expect(directions.plan, same(fresh));
+      expect(directions.refreshed, isNull);
+      expect(told, 2);
+      // The trip is the one that was asked about.
+      expect(directions.transitQuestion, question);
+    });
+
+    test(
+      'the selected journey stays selected where the new plan has it',
+      () async {
+        await showing(planOf(['-x', '-y', '-z']));
+        directions.selectJourney(1);
+        final refresh = directions.refreshTransit();
+        transit.asked.last.answer.complete(planOf(['-y', '-z', '-w']));
+        await refresh;
+        directions.showRefreshed();
+        expect(directions.selectedJourney, 0);
+        expect(directions.journey!.rides.first.tripId, 't40-y');
+      },
+    );
+
+    test('with the selected journey gone, the first is selected', () async {
+      await showing(planOf(['-x', '-y', '-z']));
+      directions.selectJourney(1);
+      final refresh = directions.refreshTransit();
+      transit.asked.last.answer.complete(planOf(['-x', '-z']));
+      await refresh;
+      directions.showRefreshed();
+      expect(directions.selectedJourney, 0);
+      expect(directions.journey!.rides.first.tripId, 't40-x');
+    });
+
+    test('a plan that fails to come changes nothing', () async {
+      final plan = planOf(['-x']);
+      await showing(plan);
+      var told = 0;
+      directions.addListener(() => told++);
+      final refresh = directions.refreshTransit();
+      transit.asked.last.answer.completeError(
+        const TransitPlanError('timed_out', 'slow'),
+      );
+      await refresh;
+      expect(directions.refreshing, isFalse);
+      expect(directions.refreshed, isNull);
+      expect(directions.plan, same(plan));
+      expect(directions.problem, isNull);
+      expect(told, 0);
+    });
+
+    test('a plan with no journeys is a plan, and is shown', () async {
+      await showing(planOf(['-x']));
+      final refresh = directions.refreshTransit();
+      transit.asked.last.answer.complete(emptyPlan('no_service'));
+      await refresh;
+      directions.showRefreshed();
+      expect(directions.plan!.journeys, isEmpty);
+      expect(directions.journey, isNull);
+    });
+
+    test('after a problem, a plan that comes takes its place', () async {
+      bothEnds();
+      directions.setMode(TravelMode.transit);
+      transit.asked.single.answer.completeError(
+        const TransitPlanError('timed_out', 'slow'),
+      );
+      await pumpEventQueue();
+      expect(directions.problem, RouteProblem.failed);
+      final refresh = directions.refreshTransit();
+      transit.asked.last.answer.complete(planOf(['-x']));
+      await refresh;
+      directions.showRefreshed();
+      expect(directions.problem, isNull);
+      expect(directions.plan!.journeys, hasLength(1));
+    });
+
+    test('asked again for a changed trip, drops the refresh under way and '
+        'the plan that waits', () async {
+      await showing(planOf(['-x']));
+      final first = directions.refreshTransit();
+      transit.asked.last.answer.complete(planOf(['-x']));
+      await first;
+      expect(directions.refreshed, isNotNull);
+      final second = directions.refreshTransit();
+      final stale = transit.asked.last;
+      final question = directions.transitQuestion;
+
+      directions.setTransitAccess(TransitAccess.cycling);
+      expect(directions.transitQuestion, question + 1);
+      expect(directions.refreshed, isNull);
+      expect(directions.refreshing, isFalse);
+      expect(transitOptions().loading, isTrue);
+      stale.answer.complete(planOf(['-y']));
+      await second;
+      expect(directions.refreshed, isNull);
+      directions.showRefreshed();
+      expect(transitOptions().loading, isTrue);
+    });
+
+    test('asks nothing while transit loads, or without both ends', () async {
+      await directions.refreshTransit();
+      expect(transit.asked, isEmpty);
+      bothEnds();
+      await directions.refreshTransit();
+      expect(transit.asked, hasLength(1), reason: 'only the first question');
+    });
   });
 }
 

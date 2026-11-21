@@ -115,4 +115,115 @@ void main() {
     expect(VehicleKind.of(700), VehicleKind.bus);
     expect(VehicleKind.of(1000), VehicleKind.ferry);
   });
+
+  group('which journey a journey is', () {
+    List<Journey> journeysOf(List<String> tags, {List<int>? shifts}) =>
+        fakePlan(journeys: tags.length, tags: tags, shifts: shifts).journeys;
+
+    test('is its rides\' trips and stops, whatever its times', () {
+      final [x, y] = journeysOf(['-x', '-y']);
+      final [later] = journeysOf(['-x'], shifts: [240]);
+      expect(JourneyIdentity.of(later), JourneyIdentity.of(x));
+      expect(
+        JourneyIdentity.of(later).hashCode,
+        JourneyIdentity.of(x).hashCode,
+      );
+      expect(JourneyIdentity.of(y), isNot(JourneyIdentity.of(x)));
+      expect(JourneyIdentity.of(x).rides, [
+        (
+          tripId: 't40-x',
+          startDate: null,
+          board: 'Fremont Ave N & N 34th St',
+          alight: 'Westlake Station',
+          route: null,
+          scheduled: null,
+        ),
+        (
+          tripId: 'link-x',
+          startDate: null,
+          board: 'Westlake Station Bay 1',
+          alight: 'Capitol Hill Station',
+          route: null,
+          scheduled: null,
+        ),
+      ]);
+    });
+
+    test('differs with the service day, a stop, or the order of the rides', () {
+      Map<String, Object?> json() => fakePlanJson(tags: ['-x']);
+      Journey read(Map<String, Object?> plan) =>
+          TransitPlan.fromJson(plan).journeys.single;
+      List<Map<String, Object?>> legs(Map<String, Object?> plan) =>
+          (((plan['journeys']! as List).single as Map)['legs'] as List)
+              .cast<Map<String, Object?>>();
+      final plain = JourneyIdentity.of(read(json()));
+
+      final nextDay = json();
+      (legs(nextDay)[1]['trip']! as Map)['start_date'] = '20261110';
+      expect(JourneyIdentity.of(read(nextDay)), isNot(plain));
+
+      final otherStop = json();
+      ((legs(otherStop)[1]['stops']! as List).last as Map)['stop_id'] = 'Pine';
+      expect(JourneyIdentity.of(read(otherStop)), isNot(plain));
+
+      final swapped = json();
+      final all = legs(swapped);
+      final bus = all[1];
+      all[1] = all[3];
+      all[3] = bus;
+      (((swapped['journeys']! as List).single as Map))['legs'] = all;
+      expect(JourneyIdentity.of(read(swapped)), isNot(plain));
+    });
+
+    test('a ride with no trip named is told by its route and its schedule', () {
+      Journey unnamed({required int delay}) {
+        final plan = fakePlanJson(tags: ['-x']);
+        final legs =
+            ((plan['journeys']! as List).single as Map)['legs'] as List;
+        final bus = legs[1] as Map;
+        (bus['trip']! as Map).remove('trip_id');
+        // Running [delay] later than it was, on the same schedule.
+        final boarding = (bus['stops']! as List).first as Map;
+        boarding['departure'] = (boarding['departure']! as int) + delay;
+        return TransitPlan.fromJson(plan).journeys.single;
+      }
+
+      final ride = JourneyIdentity.of(unnamed(delay: 0)).rides.first;
+      expect(ride.tripId, isNull);
+      expect(ride.route, '100040');
+      expect(ride.scheduled, isNotNull);
+      expect(
+        JourneyIdentity.of(unnamed(delay: 120)),
+        JourneyIdentity.of(unnamed(delay: 0)),
+      );
+    });
+
+    test('journeys with no rides are all the same one', () {
+      Journey onFoot(int leaves) => TransitPlan.fromJson({
+        ...fakePlanJson(),
+        'journeys': [
+          {
+            'departure': leaves,
+            'arrival': leaves + 600,
+            'duration_seconds': 600,
+            'trips': 0,
+            'legs': <Object>[],
+          },
+        ],
+      }).journeys.single;
+      expect(
+        JourneyIdentity.of(onFoot(fakeStart)),
+        JourneyIdentity.of(onFoot(fakeStart + 300)),
+      );
+    });
+
+    test('a plan\'s keys tell apart journeys that are the same', () {
+      final keys = journeyKeys(journeysOf(['-x', '-x', '-y']));
+      expect(keys.toSet(), hasLength(3));
+      expect(keys.map((key) => key.nth), [0, 1, 0]);
+      expect(keys[0].identity, keys[1].identity);
+      // Each is found again in a newer plan, in its turn.
+      expect(journeyKeys(journeysOf(['-y', '-x', '-x'])).indexOf(keys[1]), 2);
+    });
+  });
 }

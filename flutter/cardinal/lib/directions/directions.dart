@@ -127,6 +127,10 @@ class ModeOptions {
 /// | anywhere | another way is chosen | that way showing, as it was left, with no request |
 /// | showing routes | a route is selected | that route selected, with no request |
 /// | showing journeys | a journey is selected | that journey selected, with no request |
+/// | transit has a plan or a problem | it's refreshed | the same, until the answer comes; then the same, with the answer waiting as [refreshed] |
+/// | transit being refreshed | planning fails | the same, with nothing waiting |
+/// | a refreshed plan waiting | it's shown | transit has that plan, the journey that was selected still selected if it's there, the first otherwise |
+/// | transit being refreshed, or a refreshed plan waiting | transit is asked again | transit loading; the refresh, or the plan waiting, dropped |
 ///
 /// [routes], [plan], [loading] and the like are those of the way that's showing;
 /// [options] has any way's. A way keeps its selection until it's asked again.
@@ -338,24 +342,69 @@ class Directions extends ChangeNotifier {
     }
   }
 
-  /// Asks every way again, with a new position for an end that's where you are, if
-  /// there is one.
-  Future<void> recalculate() async {
-    if (_from?.isMyLocation ?? false) {
-      final point = await _position();
-      if (_disposed) return;
-      if (point != null && (_from?.isMyLocation ?? false)) {
-        _from = RouteEndpoint.myLocation(point);
-      }
+  /// How many times transit has been asked for the trip: it's asked again when the
+  /// trip changes (an end, or how stops are reached), and not when it's refreshed.
+  int get transitQuestion => _asked[TravelMode.transit] ?? 0;
+
+  /// A newer plan of the trip as transit was last asked for it, waiting to be shown
+  /// ([showRefreshed]) in place of the one that is.
+  TransitPlan? get refreshed => _refreshed;
+  TransitPlan? _refreshed;
+
+  /// Whether transit is being planned again by [refreshTransit].
+  bool get refreshing => _refresh != null;
+
+  /// Completes to give up the refresh under way, if there is one.
+  Completer<void>? _refresh;
+
+  /// Plans transit again for the trip as it is, leaving what transit has as it is: the
+  /// answer waits as [refreshed], and listeners are told. Does nothing while transit
+  /// is being asked or refreshed already, or without both ends. If planning fails,
+  /// nothing changes.
+  Future<void> refreshTransit() async {
+    const mode = TravelMode.transit;
+    final from = _from, to = _to;
+    if (from == null || to == null || _refresh != null) return;
+    if (!_options.containsKey(mode) || options(mode).loading) return;
+    final question = _asked[mode];
+    final abort = _refresh = Completer<void>();
+    TransitPlan? plan;
+    try {
+      plan = await _transit.plan(
+        access: _transitAccess,
+        from: from.point,
+        to: to.point,
+        abort: abort.future,
+      );
+    } on Object catch (e) {
+      // What's showing stays, and the next refresh asks again.
+      if (!abort.isCompleted) debugPrint('directions: transit refresh: $e');
     }
-    if (_to?.isMyLocation ?? false) {
-      final point = await _position();
-      if (_disposed) return;
-      if (point != null && (_to?.isMyLocation ?? false)) {
-        _to = RouteEndpoint.myLocation(point);
-      }
+    if (identical(_refresh, abort)) _refresh = null;
+    // Asked again meanwhile, for a trip that may be another.
+    if (_disposed || abort.isCompleted || question != _asked[mode]) return;
+    if (plan == null) return;
+    _refreshed = plan;
+    notifyListeners();
+  }
+
+  /// Shows the plan waiting as [refreshed] in place of transit's: the journey that
+  /// was selected is selected in it if it has it (see [JourneyIdentity]), and its
+  /// first otherwise.
+  void showRefreshed() {
+    const mode = TravelMode.transit;
+    final fresh = _refreshed;
+    if (fresh == null) return;
+    _refreshed = null;
+    final was = options(mode);
+    var selected = 0;
+    if (was.plan case final plan? when was.selected < plan.journeys.length) {
+      final key = journeyKeys(plan.journeys)[was.selected];
+      final index = journeyKeys(fresh.journeys).indexOf(key);
+      if (index >= 0) selected = index;
     }
-    _askAll();
+    _options[mode] = ModeOptions(plan: fresh, selected: selected);
+    notifyListeners();
   }
 
   /// Asks every way of traveling for the trip as it is now.
@@ -370,6 +419,11 @@ class Directions extends ChangeNotifier {
   /// caller does that, once it has asked all it means to.
   void _ask(TravelMode mode) {
     _aborts.remove(mode)?.complete();
+    if (mode == TravelMode.transit) {
+      _refresh?.complete();
+      _refresh = null;
+      _refreshed = null;
+    }
     final question = _asked[mode] = (_asked[mode] ?? 0) + 1;
     final from = _from, to = _to;
     if (from == null || to == null || !mode.available) {
@@ -449,6 +503,7 @@ class Directions extends ChangeNotifier {
       abort.complete();
     }
     _aborts.clear();
+    _refresh?.complete();
     super.dispose();
   }
 }

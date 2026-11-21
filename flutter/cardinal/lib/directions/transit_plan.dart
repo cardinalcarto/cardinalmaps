@@ -8,6 +8,7 @@ library;
 
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show immutable;
 import 'package:routing/routing.dart' show DirectionsPoint;
 
 /// What is known about whether a stop or leg can be used in a wheelchair.
@@ -180,6 +181,76 @@ class Journey {
 
   /// The first ride's departure, which a rider has to make.
   DateTime? get firstBoarding => rides.firstOrNull?.departure;
+}
+
+/// One ride of a journey, as it's told from any other from one plan to the next: the
+/// run of a trip ([tripId] on its service day) between two stops.
+///
+/// A ride whose trip the plan doesn't name is told by its route and when it's
+/// scheduled to leave instead, which real-time data doesn't move.
+typedef RideIdentity = ({
+  String? tripId,
+  String? startDate,
+  String board,
+  String alight,
+  String? route,
+  DateTime? scheduled,
+});
+
+/// Which journey a journey is, from one plan of a trip to the next: its rides, in
+/// order (see [RideIdentity]). Two plans' journeys with the same rides are the same
+/// journey, whatever their times; a journey with no rides, on the streets all the way,
+/// is the same as any other with none.
+@immutable
+class JourneyIdentity {
+  JourneyIdentity.of(Journey journey)
+    : rides = [
+        for (final ride in journey.rides)
+          (
+            tripId: ride.tripId,
+            startDate: ride.startDate,
+            board: ride.boarding.stop.id,
+            alight: ride.alighting.stop.id,
+            route: ride.tripId == null ? ride.route?.id : null,
+            scheduled: ride.tripId == null
+                ? ride.boarding.scheduledDeparture ?? ride.departure
+                : null,
+          ),
+      ];
+
+  final List<RideIdentity> rides;
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! JourneyIdentity || other.rides.length != rides.length) {
+      return false;
+    }
+    for (var i = 0; i < rides.length; i++) {
+      if (other.rides[i] != rides[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hashAll(rides);
+}
+
+/// A journey among a plan's: which it is, and, where the plan has several that are
+/// the same (runs of a trip the feed doesn't tell apart, say), which of those, in the
+/// plan's order.
+typedef JourneyKey = ({JourneyIdentity identity, int nth});
+
+/// The key of each of [journeys], a plan's, in their order: no two the same.
+List<JourneyKey> journeyKeys(List<Journey> journeys) {
+  final seen = <JourneyIdentity, int>{};
+  return [
+    for (final journey in journeys)
+      () {
+        final identity = JourneyIdentity.of(journey);
+        final nth = seen[identity] = (seen[identity] ?? -1) + 1;
+        return (identity: identity, nth: nth);
+      }(),
+  ];
 }
 
 /// One leg of a journey.
