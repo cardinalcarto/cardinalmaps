@@ -35,8 +35,11 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
-        // The sparkle native library is only built for 64-bit ABIs.
+        // The sparkle native library is only built for 64-bit ABIs. The Flutter
+        // Gradle plugin has already set its own ABIs (armeabi-v7a included) by the
+        // time this runs, so they are replaced, not added to.
         ndk {
+            abiFilters.clear()
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
     }
