@@ -402,6 +402,111 @@ async fn looks_up_one_of_a_rides_departures_on_its_own_path() {
     assert_eq!(body["kind"], "departure_canceled");
 }
 
+#[tokio::test]
+async fn lists_the_departures_between_two_stops_on_their_own_path() {
+    let state = transit_state(Some("secret"));
+    let plan = format!(
+        r#"{{"origin":{{"lat":42.5078,"lon":1.5205}},"destination":{{"lat":42.5100,"lon":1.5350}},"departure":{BEFORE_THE_TRIP}}}"#
+    );
+    let (status, _, body) = send(&state, request("POST", "/transit/plan", &plan)).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    let leg = body["journeys"][0]["legs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|leg| leg["type"] == "transit")
+        .expect("a ride")
+        .clone();
+    let own = &leg["departures"][0];
+    assert_eq!(own["trip_id"], "T1");
+    assert_eq!(own["suggested"], true);
+
+    // The lookup takes the leg's feed and stops, and a time to list around.
+    let lookup = |extra: &str| {
+        format!(
+            r#"{{"feed":"bus","board_stop_id":"A","alight_stop_id":"B","around":{}{extra}}}"#,
+            leg["departure"]
+        )
+    };
+    let (status, headers, body) =
+        send(&state, request("POST", "/transit/departures", &lookup(""))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["content-type"], "application/json;charset=utf-8");
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["realtime"]["level"], "schedule");
+    assert!(body["generated_at"].is_i64());
+    assert!(body.get("alerts").is_none());
+    // The leg's own departure, saying what the leg said for it, and nobody's own.
+    let mut expected = own.clone();
+    let fields = expected.as_object_mut().unwrap();
+    fields.remove("suggested");
+    fields.insert("start_date".to_owned(), leg["trip"]["start_date"].clone());
+    fields.insert("route".to_owned(), leg["route"].clone());
+    assert_eq!(body["departures"], Value::Array(vec![expected]));
+    assert_eq!(body["departures"][0]["last_of_day"], true);
+
+    // It is missed by a rider who is ready after it leaves, and before `around` there is none.
+    let late = lookup(&format!(
+        r#","ready":{}"#,
+        leg["departure"].as_i64().unwrap() + 1
+    ));
+    let (status, _, body) = send(&state, request("POST", "/transit/departures", &late)).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["departures"][0]["missed"], true);
+    let before = lookup(r#","departures_before":3,"departures_after":0"#);
+    let (status, _, body) = send(&state, request("POST", "/transit/departures", &before)).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["departures"], Value::Array(Vec::new()));
+    // Nothing runs back from `B` to `A`: a list of nothing, not an error.
+    let back = lookup("").replace(
+        r#""board_stop_id":"A","alight_stop_id":"B""#,
+        r#""board_stop_id":"B","alight_stop_id":"A""#,
+    );
+    let (status, _, body) = send(&state, request("POST", "/transit/departures", &back)).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["departures"], Value::Array(Vec::new()));
+
+    // What isn't there is a 404, and what can't be asked a 400.
+    let not_found = [
+        (
+            lookup("").replace(r#""feed":"bus""#, r#""feed":"tram""#),
+            "unknown_feed",
+        ),
+        (
+            lookup("").replace(r#""alight_stop_id":"B""#, r#""alight_stop_id":"Z""#),
+            "unknown_stop",
+        ),
+        (
+            r#"{"feed":"bus","board_stop_id":"A","alight_stop_id":"B","around":1000000000}"#
+                .to_owned(),
+            "date_not_covered",
+        ),
+    ];
+    for (body, kind) in not_found {
+        let (status, _, answer) = send(&state, request("POST", "/transit/departures", &body)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        let answer: Value = serde_json::from_slice(&answer).unwrap();
+        assert_eq!(answer["kind"], kind, "{body}");
+    }
+    let invalid = [
+        lookup(r#","departures_before":0,"departures_after":0"#),
+        lookup(r#","departures_after":11"#),
+        lookup(r#","mode":"flying""#),
+        r#"{"feed":"bus","board_stop_id":"A","alight_stop_id":"B"}"#.to_owned(),
+        "{nope".to_owned(),
+    ];
+    for body in invalid {
+        let (status, _, answer) = send(&state, request("POST", "/transit/departures", &body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        let answer: Value = serde_json::from_slice(&answer).unwrap();
+        assert_eq!(answer["kind"], "invalid_request", "{body}");
+    }
+}
+
 /// The `start_date` of a ride lookup's body.
 fn body_date(body: &str) -> String {
     let body: Value = serde_json::from_str(body).unwrap();
@@ -416,6 +521,7 @@ async fn transit_paths_are_unknown_when_it_is_not_configured() {
         "/transit/nearby",
         "/transit/route",
         "/transit/ride",
+        "/transit/departures",
     ] {
         let (status, ..) = send(&state, request("POST", path, PLAN)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");

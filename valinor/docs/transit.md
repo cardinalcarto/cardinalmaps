@@ -458,6 +458,77 @@ Those numbers predate listing every route and six after, and haven't been measur
 A plan finds the patterns between two stops, the latest departure between them each day,
 and each departure's description once, however many of its journeys list them.
 
+### Departures between two stops
+
+`POST /transit/departures` lists the departures between two stops around a moment, for a client
+that kept a journey open after a later plan no longer has it, and so has no leg to read each
+ride's departures from (`OfflineTransit::departures` on the device answers with the same bytes).
+It is a ride's departure range without the ride: the same two exact stops, the same patterns,
+lanes, and rules, described by the same code (`response/between.rs` beside
+`response/departures.rs`), so it agrees with what a plan's leg between the two stops lists.
+
+The request names the stops by what the plan gave: `feed`, the feed of the leg's stops;
+`board_stop_id` and `alight_stop_id`, the leg's first and last stops' `stop_id`; `around`, the
+departure time to centre the list on, in POSIX seconds (required); `departures_before` and
+`departures_after` (2 and 6 by default, at most 10 each); optionally `ready`, when the rider can
+be at the boarding stop, in POSIX seconds; and the plan's `mode`, whose rules the departures are
+read with, so a wheelchair rider is listed only departures they can take and a cyclist only
+those that allow bikes.
+
+The list has up to `departures_before` departures leaving the boarding stop before `around` and
+up to `departures_after` leaving at `around` or later, in order of departure, none more than 60
+minutes before `around` or 120 minutes after it (both to the second, inclusive), as a plan's
+range is bounded around a leg's own departure. Times are as routing would use them, so a
+departure predicted to leave after `around` is after it, whatever its schedule; canceled and
+skipped departures are placed, and counted, at their scheduled times. A plan's range has the
+leg's own departure between its two sides and this has none: a departure leaving exactly at
+`around` is the first of those after it. So a client asking around a departure it knows gets
+that departure as the first of `departures_after`, and asks for one more after than a plan's
+range to see the same list. A side that asks for none lists none; a request that asks for none
+on both sides can only be answered with nothing, and is a 400 here, where a plan's request
+uses it to leave the lists out.
+
+The answer has `generated_at`, `realtime` as a plan's, `departures`, and `alerts`.
+Each departure is in exactly the shape of a plan leg's (`trip_id`, `start_date`, `headsign`,
+`route`, `status`, `departure` and `arrival`, `scheduled_departure` and `scheduled_arrival`,
+`delay_seconds`, `realtime`, `vehicle_id`, `accessibility`, `bikes_allowed`, `last_of_day`,
+and `alerts`), read the same way, except for what a leg's list says relative to its leg:
+
+- `start_date`, `headsign`, and `route` are always stated, there being no leg whose own they
+  could be.
+- `suggested` is never set: no departure is a journey's own.
+- `missed` is set only when the request gave `ready`, on a departure that leaves the boarding
+  stop before it, whether it runs or not, as a plan marks them. The client works `ready` out
+  as a plan does: for a later ride, the arrival of the ride before plus the leg's
+  `transfer_seconds`.
+- `alerts` are indices into the answer's own `alerts`, which has every alert on any of the
+  departures once, in the shape of a leg's `departure_alerts`; a departure's indices are in
+  that list's order. There is no `departure_alerts`.
+
+`last_of_day` is as a plan defines it: no later departure of any route between the two stops
+runs on the departure's service date, whatever the range and the bounds.
+`departures` is always there, and `alerts` is left out when empty.
+
+Two stops no pattern serves in that order (or the same stop twice) are not an error: the
+answer is 200 with empty `departures`, as it is when nothing leaves in the range, since which
+it is makes no difference to a client that has nothing to show either way.
+Only the patterns the two stops' occurrences pair are read, as for any ride between them.
+A plan's ride that boarded a pattern at an earlier visit to the boarding stop than its last
+before the alighting stop lists its own departure there besides;
+here that trip is listed where a rider would board it, at the later visit.
+
+The snapshot is pinned as a plan departing at `around` pins it: the current one when its window
+has that moment's service days (yesterday's, today's, and tomorrow's around it), else a window
+around it with the same feeds, as `/transit/ride` does for a start date.
+A feed that isn't loaded or a stop that isn't in it is a 404 (`unknown_feed` or
+`unknown_stop`), as is an `around` no timetable covers (`date_not_covered`);
+a body that doesn't parse, an unknown `mode`, more than ten departures on a side, or none on
+both is a 400 (`invalid_request`). Every error has the transit paths' JSON body, with its
+`kind`, which tells a client these 404s from that of a server too old to have the path.
+
+`multi_feed_bench`'s `ride departure ranges` stage doesn't cover this lookup, which hasn't been
+measured on real feeds; it reads what one leg's range reads, for one pair of stops.
+
 ### Nearby departures
 
 `POST /transit/nearby` answers which routes a rider can catch near a place, under which

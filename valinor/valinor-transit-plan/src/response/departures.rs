@@ -104,6 +104,15 @@ impl Candidate {
             self.pair.board,
         )
     }
+
+    /// Whether this is the last departure of its service date that runs, given the `latest`
+    /// departure of each date as [`RideDescriber::latest_by_date`] found them.
+    pub(super) fn is_last_of_day(&self, latest: &[(ServiceDate, Time)]) -> bool {
+        self.found == Found::Runs
+            && latest
+                .iter()
+                .any(|&(date, time)| date == self.key.date && time == self.board.departure)
+    }
 }
 
 /// What one plan has already worked out about departures, since its journeys share most of them.
@@ -199,7 +208,13 @@ impl RideDescriber<'_> {
         let last = (at + usize::from(range.after)).min(candidates.len() - 1);
         let chosen = &candidates[first..=last];
 
-        let latest = self.latest_by_date(chosen, ride, &pairs, filter, own_paired);
+        let latest = self.latest_by_date(
+            chosen,
+            (ride.board_stop, ride.alight_stop),
+            &pairs,
+            filter,
+            own_paired,
+        );
         // The route the leg boards, which a departure on it doesn't repeat.
         let own_route = self.ride_view(ride).gtfs_route;
         let mut pool: Vec<AlertResponse> = Vec::new();
@@ -207,10 +222,7 @@ impl RideDescriber<'_> {
             .iter()
             .map(|candidate| {
                 let is_own = candidate.key == own.key && candidate.pair == own.pair;
-                let last_of_day = candidate.found == Found::Runs
-                    && latest.iter().any(|&(date, time)| {
-                        date == candidate.key.date && time == candidate.board.departure
-                    });
+                let last_of_day = candidate.is_last_of_day(&latest);
                 let mut departure = if is_own {
                     own_departure(leg)
                 } else {
@@ -380,12 +392,13 @@ impl RideDescriber<'_> {
     /// The latest departure, on the window clock, of each service date of the running departures
     /// in `chosen`, over the whole day: every one of `pairs`, whatever the bounds and the route.
     ///
+    /// `stops` are the boarding and alighting stops the pairs lead between.
     /// `shared` says `pairs` are the two stops' alone, which any ride between them would read,
     /// so what is found is kept for them; a ride's own pair beyond those is its own to read.
-    fn latest_by_date(
+    pub(super) fn latest_by_date(
         &self,
         chosen: &[Candidate],
-        ride: &Ride,
+        (board_stop, alight_stop): (StopId, StopId),
         pairs: &[Pair],
         filter: RouteFilter,
         shared: bool,
@@ -402,7 +415,7 @@ impl RideDescriber<'_> {
         for date in dates {
             // Two stops have one latest departure between them a day, whichever ride asks:
             // the plan's travel mode, and so its rules, is the same for all of them.
-            let cache_key = (ride.board_stop, ride.alight_stop, date);
+            let cache_key = (board_stop, alight_stop, date);
             if shared && let Some(latest) = self.departure_cache.borrow().latest.get(&cache_key) {
                 out.extend(latest.map(|latest| (date, latest)));
                 continue;

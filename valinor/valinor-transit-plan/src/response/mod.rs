@@ -7,6 +7,7 @@
 //! copied once into the response, so it outlives the query that made it.
 
 mod alerts;
+mod between;
 mod build;
 mod departures;
 mod nearby;
@@ -16,13 +17,14 @@ mod vehicle;
 use serde::Serialize;
 use serde_with::skip_serializing_none;
 
+pub(crate) use between::build_departures;
 pub(crate) use build::{build_response, empty_response, language_supported};
 pub use nearby::{
     ContinuesAs, NearbyPage, NearbyResponse, NearbyRoute, NoRoutesReason, RouteDetailResponse,
     StopDeparture,
 };
 pub(crate) use nearby::{RouteLookupError, build_nearby, build_route_detail, empty_nearby};
-pub(crate) use ride::{RideLookupError, build_ride};
+pub(crate) use ride::{RideLookupError, StopPairError, build_ride};
 pub(crate) use vehicle::lower;
 pub(crate) use vehicle::vehicle_update;
 
@@ -56,6 +58,25 @@ pub struct RideResponse {
     /// What only a plan knows is left out: `wait_seconds` is 0, and it has no
     /// `transfer_seconds`, `departures`, or `departure_alerts`.
     pub ride: TransitLeg,
+}
+
+/// The departures between two stops around a moment, of every route.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DeparturesResponse {
+    /// When the response was generated, in POSIX seconds.
+    pub generated_at: i64,
+    /// What real-time data this answer used, and how old it was.
+    pub realtime: RealtimeStatus,
+    /// The departures, in order of departure from the boarding stop, each as one of a plan
+    /// leg's `departures`, but with no leg to be relative to: every one states its `route`,
+    /// `headsign`, and `start_date`, none is `suggested`, and none has `departure_alerts`.
+    ///
+    /// Always present; empty when nothing leaves in the range, or nothing runs from the one
+    /// stop to the other at all.
+    pub departures: Vec<RideDeparture>,
+    /// The alerts on any of `departures`, each once; a departure's `alerts` index this list.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub alerts: Vec<AlertResponse>,
 }
 
 /// What is known about whether a stop or leg is accessible to a rider in a wheelchair.
@@ -396,6 +417,8 @@ pub struct RideDeparture {
     /// `trip_id` of the trip boarded.
     pub trip_id: String,
     /// `start_date`, as `YYYYMMDD`; absent when it is the leg's own trip's.
+    /// A [`DeparturesResponse`], which has no leg, always states it, as it does `headsign`
+    /// and `route`.
     pub start_date: Option<String>,
     /// The headsign at the boarding stop: its `stop_headsign`, or else `trip_headsign`.
     ///
@@ -425,23 +448,26 @@ pub struct RideDeparture {
     pub accessibility: Accessibility,
     /// `bikes_allowed`: `yes`, `no`, or absent when unknown.
     pub bikes_allowed: Option<&'static str>,
-    /// Whether this is the journey's own departure; absent on the others.
+    /// Whether this is the journey's own departure; absent on the others,
+    /// and on all of a [`DeparturesResponse`]'s.
     #[serde(skip_serializing_if = "is_false")]
     pub suggested: bool,
     /// Whether it leaves the boarding stop before the rider can be there:
     /// before the previous ride's arrival plus the leg's `transfer_seconds`, or for the first
     /// ride, before the request's departure (the window's `earliest`) plus the walk from the
-    /// origin.
+    /// origin. In a [`DeparturesResponse`], before the request's `ready`, when it gave one.
     #[serde(skip_serializing_if = "is_false")]
     pub missed: bool,
     /// Whether no later departure of any route between these two stops runs on its service date:
     /// the connection's last of the day. Canceled and skipped departures don't count.
     #[serde(skip_serializing_if = "is_false")]
     pub last_of_day: bool,
-    /// Indices into the leg's `alerts` that apply to this departure.
+    /// Indices into the leg's `alerts` that apply to this departure;
+    /// in a [`DeparturesResponse`], into its `alerts`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub alerts: Vec<usize>,
-    /// Indices into the leg's `departure_alerts` that apply to this departure.
+    /// Indices into the leg's `departure_alerts` that apply to this departure;
+    /// never set in a [`DeparturesResponse`].
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub departure_alerts: Vec<usize>,
 }

@@ -358,7 +358,19 @@ where
     if request.options.max_trips == 0 || request.options.max_trips > valinor_transit::MAX_TRIPS {
         return Err(PlanError::InvalidRequest("max_trips is out of range"));
     }
-    let range = request.options.departures;
+    validated_range(request.options.departures)?;
+    request
+        .departure
+        .checked_add(i64::from(request.window_seconds))
+        .ok_or(PlanError::InvalidRequest("the departure is out of range"))
+}
+
+/// Checks that a departure range lists no more, and looks no further, than a query may ask.
+pub(crate) fn validated_range<T, A>(range: DepartureRange) -> Result<(), PlanError<T, A>>
+where
+    T: Error + 'static,
+    A: Error + 'static,
+{
     if range.before > MAX_RANGE_DEPARTURES || range.after > MAX_RANGE_DEPARTURES {
         return Err(PlanError::InvalidRequest(
             "a departure range lists more than ten departures on one side",
@@ -371,10 +383,7 @@ where
             "a departure range looks further than a day",
         ));
     }
-    request
-        .departure
-        .checked_add(i64::from(request.window_seconds))
-        .ok_or(PlanError::InvalidRequest("the departure is out of range"))
+    Ok(())
 }
 
 /// Answers a request over one pinned snapshot, pinning it first.
