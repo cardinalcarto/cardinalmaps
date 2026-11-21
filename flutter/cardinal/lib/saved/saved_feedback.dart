@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:material_ui/material_ui.dart';
 
 import '../sheet/sheet.dart';
@@ -26,9 +28,10 @@ void showSheetMessage(
   } else {
     final geometry = view.geometry;
     final full = view.extent >= geometry.maxExtent - 1;
+    // Above the sheet, or the bottom bar when the sheet's under it or covers it all.
     bottom = full
         ? geometry.padding.bottom + SheetScaffold.bottomBarHeightOf(context)
-        : view.extent;
+        : math.max(view.extent, view.bottomBarCover);
   }
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()

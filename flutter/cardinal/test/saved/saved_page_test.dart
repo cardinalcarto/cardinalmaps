@@ -1,7 +1,9 @@
 import 'package:cardinal/home/navigation_bar.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/saved/saved_names.dart';
+import 'package:cardinal/saved/saved_page.dart';
 import 'package:cardinal/search/search_sheet.dart';
+import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -25,6 +27,14 @@ void main() {
 
   Future<GoRouter> open(WidgetTester tester, [String at = '/saved']) =>
       pumpFakeApp(tester, store: store, location: at);
+
+  SheetController sheetOf(WidgetTester tester) =>
+      SheetScaffold.controllerOf(tester.element(find.byType(SavedPage).last));
+
+  Future<void> expand(WidgetTester tester) async {
+    sheetOf(tester).animateTo(const SheetAnchor.full());
+    await tester.pumpAndSettle();
+  }
 
   Future<void> tapAndSettle(WidgetTester tester, Finder finder) async {
     await tester.tap(finder);
@@ -85,20 +95,50 @@ void main() {
       expect(router.state.uri.path, '/saved');
     });
 
-    testWidgets('dragging down leaves the page where it is', (tester) async {
+    testWidgets('opens at 40%, and snaps to it, full or collapsed', (
+      tester,
+    ) async {
       await place('poi:1', name: 'Cafe');
       await open(tester);
-      final top = tester.getTopLeft(text('Saved places').first).dy;
-      final gesture = await tester.startGesture(tester.getCenter(text('Cafe')));
-      await tester.pump();
-      for (var i = 0; i < 6; i++) {
-        await gesture.moveBy(const Offset(0, 25));
-        await tester.pump(const Duration(milliseconds: 16));
-        expect(tester.getTopLeft(text('Saved places').first).dy, top);
-      }
-      await gesture.up();
+      final sheet = sheetOf(tester);
+      expect(sheet.extent, appScreen.height * 0.4);
+      // A little way up, it snaps back...
+      await tester.drag(text('Saved places').first, const Offset(0, -100));
       await tester.pumpAndSettle();
-      expect(tester.getTopLeft(text('Saved places').first).dy, top);
+      expect(sheet.extent, appScreen.height * 0.4);
+      // ...most of the way, it's full...
+      await tester.drag(text('Saved places').first, const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(sheet.extent, appScreen.height);
+      // ...and from 40%, most of the way down, it collapses.
+      sheet.animateTo(const SheetAnchor.fraction(0.4));
+      await tester.pumpAndSettle();
+      await tester.drag(text('Saved places').first, const Offset(0, 250));
+      await tester.pumpAndSettle();
+      expect(sheet.isCollapsed, isTrue);
+    });
+
+    testWidgets('a list opens at the height it was opened from, and back', (
+      tester,
+    ) async {
+      final id = await store.saved.createList('Trips');
+      await place('poi:1', name: 'Cafe');
+      await open(tester);
+      final sheet = sheetOf(tester);
+      sheet.animateTo(const SheetAnchor.full());
+      await tester.pumpAndSettle();
+      await tapAndSettle(tester, text('Trips'));
+      expect(
+        find.byWidgetPredicate((w) => w is SavedPage && w.listId == id),
+        findsOneWidget,
+      );
+      expect(sheet.extent, appScreen.height);
+      sheet.animateTo(const SheetAnchor.fraction(0.4));
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(text('Trips'), findsOneWidget);
+      expect(sheet.extent, appScreen.height * 0.4);
     });
 
     testWidgets('back from the top level goes to search', (tester) async {
@@ -129,6 +169,7 @@ void main() {
         await place('poi:$i');
       }
       await open(tester);
+      await expand(tester);
       await tester.drag(find.byType(Scrollable).first, const Offset(0, -5000));
       await tester.pumpAndSettle();
       expect(
@@ -140,6 +181,8 @@ void main() {
 
   group('editing', () {
     Future<void> startEditing(WidgetTester tester) async {
+      // Full, for the action bar along the bottom of the sheet's content.
+      await expand(tester);
       await tapAndSettle(tester, find.widgetWithText(TextButton, 'Edit'));
     }
 

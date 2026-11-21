@@ -172,6 +172,8 @@ void main() {
     final sheet = SheetScaffold.controllerOf(
       tester.element(find.byType(SavedPage)),
     );
+    sheet.animateTo(const SheetAnchor.full());
+    await tester.pumpAndSettle();
     expect(sheet.extent, appScreen.height);
 
     await tester.tap(_tab('Nearby places'));

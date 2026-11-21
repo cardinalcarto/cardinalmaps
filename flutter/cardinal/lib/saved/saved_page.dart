@@ -239,7 +239,6 @@ class _SavedPageState extends State<SavedPage> {
   @override
   Widget build(BuildContext context) {
     final tree = _tree;
-    final colors = Theme.of(context).colorScheme;
     final view = SheetScaffold.viewOf(context);
     final bottom =
         view.geometry.padding.bottom + SheetScaffold.bottomBarHeightOf(context);
@@ -252,13 +251,17 @@ class _SavedPageState extends State<SavedPage> {
         children: [
           SheetContent(
             showsBottomBar: true,
-            anchors: const [SheetAnchor.full()],
-            // A full screen, with nowhere to be dragged to.
-            draggable: false,
+            collapsible: true,
+            // The same height going into a list and back out of it.
+            keepsHeight: true,
+            anchors: const [SheetAnchor.fraction(0.4), SheetAnchor.full()],
             slivers: [
               PinnedHeaderSliver(
-                child: ColoredBox(
-                  color: colors.surfaceContainerLow,
+                child: SheetBuilder(
+                  // Clear over glass while the sheet's low; the sheet's color once
+                  // rows scroll under it.
+                  builder: (context, sheet, child) =>
+                      ColoredBox(color: sheet.surfaceColor, child: child),
                   child: _editing
                       ? _EditingHeader(
                           count: selection.length,
