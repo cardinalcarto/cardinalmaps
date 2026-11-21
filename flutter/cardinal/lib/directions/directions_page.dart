@@ -144,6 +144,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
   /// Whether the selected transit journey's legs are showing.
   bool _journeyOpen = false;
 
+  /// How many times a journey has been opened, so each opening scrolls on its own.
+  int _journeyOpens = 0;
+
   /// The transit journey the map shows.
   Journey? _shownJourney;
 
@@ -572,6 +575,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
   void _openJourney(int index) {
     _directions!.selectJourney(index);
     setState(() {
+      _journeyOpens++;
       _journeyOpen = true;
       _chain = null;
     });
@@ -687,6 +691,14 @@ class _DirectionsPageState extends State<DirectionsPage> {
             ? const []
             : const [_summaryRange],
         initialAnchor: 1,
+        // The trip, a journey and editing each scroll on their own: a journey opens
+        // at its top whatever the list was scrolled to, and the list is where it was
+        // left on the way back. Each time a journey opens is new content.
+        scrollId: editing != null
+            ? 'editing'
+            : journey != null
+            ? ('journey', _journeyOpens)
+            : 'trip',
         // Transit's journeys hold the sheet full until one is picked.
         draggable: editing != null || journey != null || !transit,
         slivers: editing != null

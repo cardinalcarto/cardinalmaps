@@ -15,6 +15,7 @@ class SheetContent extends StatefulWidget {
     this.draggable = true,
     this.collapsible = false,
     this.keepsHeight = false,
+    this.scrollId,
     required this.slivers,
   }) : assert(anchors.length > 0);
 
@@ -50,6 +51,13 @@ class SheetContent extends StatefulWidget {
   /// it moves to the [initialAnchor] of a page pushed, and back to where it was left
   /// on a page gone back to.
   final bool keepsHeight;
+
+  /// Which content [slivers] are, for a page that shows different content in turn
+  /// (a list, then one of its items). When it changes, the content scrolls to where
+  /// that content was last left, or to its top the first time, rather than keeping the
+  /// last content's scroll offset; each content's offset is remembered while the page
+  /// shows. Null, the default, is one content throughout.
+  final Object? scrollId;
 
   final List<Widget> slivers;
 
@@ -100,9 +108,22 @@ class _SheetContentState extends State<SheetContent> {
     _scaffold!._scheduleUpdate();
   }
 
+  /// Where each content [SheetContent.scrollId] names was left, by its ID.
+  final Map<Object?, double> _scrolledTo = {};
+
   @override
   void didUpdateWidget(SheetContent oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final scroll = _scroll;
+    if (widget.scrollId != oldWidget.scrollId &&
+        scroll != null &&
+        scroll.hasClients) {
+      // Before this frame lays out the new content, so it never shows at the old
+      // content's offset. Layout then brings an offset past its end back within it.
+      final position = scroll.position;
+      _scrolledTo[oldWidget.scrollId] = position.pixels;
+      position.jumpTo(_scrolledTo.remove(widget.scrollId) ?? 0);
+    }
     _entry
       ..geometry = _geometry(_SheetScope.of(context))
       ..anchors = _anchors
