@@ -259,6 +259,29 @@ class ConnectionChain {
 
   /// Seconds door to door, when the journey is made.
   int? get duration => arrival?.difference(departure).inSeconds;
+
+  /// When each of [journey]'s legs starts and ends with these choices: a ride's as its
+  /// departure taken has them, and each walk as long as the plan has it, after what
+  /// comes before. Null when a ride has no connection.
+  List<({DateTime start, DateTime end})>? get legTimes {
+    if (brokenAt != null) return null;
+    final shift = departure.difference(journey.departure);
+    final times = <({DateTime start, DateTime end})>[];
+    DateTime? after;
+    for (final (i, leg) in journey.legs.indexed) {
+      final choice = leg is TransitLeg ? forLeg(i) : null;
+      if (choice != null) {
+        times.add((start: choice.departureTime!, end: choice.arrival!));
+        after = choice.arrival;
+      } else {
+        final start = after ?? leg.departure.add(shift);
+        final end = start.add(Duration(seconds: leg.duration));
+        times.add((start: start, end: end));
+        after = end;
+      }
+    }
+    return times;
+  }
 }
 
 /// The other routes worth naming beside each of [journey]'s rides, as the plan has the

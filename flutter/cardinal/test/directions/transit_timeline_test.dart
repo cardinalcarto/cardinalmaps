@@ -1,5 +1,7 @@
+import 'package:cardinal/directions/connections.dart';
 import 'package:cardinal/directions/transit_timeline.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:cardinal/directions/transit_plan.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../fakes/fake_transit.dart';
@@ -178,5 +180,125 @@ void main() {
       ),
     );
     expect(find.text('Go now'), findsOneWidget);
+  });
+
+  group('other routes', () {
+    test('a stay-seated ride\'s are said once, with its first trip', () {
+      final journey = fakePlan().journeys.single;
+      final pieces = timelinePieces(journey);
+      expect(pieces.where((p) => p.ride != null).map((p) => p.ride), [0, 0, 1]);
+      final route = connectionsJourney().rides.first.departures[3].route!;
+      expect(
+        timelineLabel(
+          pieces,
+          others: [
+            [route],
+            [],
+          ],
+        ),
+        '40 or 7, then 7, then 1 Line',
+      );
+    });
+
+    test('are said with the rides they can be taken for', () {
+      final journey = connectionsJourney();
+      expect(
+        timelineLabel(timelinePieces(journey), others: otherRoutes(journey)),
+        '40 or 7, then 1 Line, then 8 or 48 or 9, then 2',
+      );
+    });
+
+    test('sit over their rides, as near as they fit', () {
+      // Each at its anchor when there's room.
+      expect(
+        placeOrLabels(
+          [0, 100],
+          [
+            [40, 70],
+            [40],
+          ],
+          300,
+        ),
+        [(left: 0.0, count: 2), (left: 100.0, count: 1)],
+      );
+      // Pushed right past the one before, and then fewer badges to fit.
+      expect(
+        placeOrLabels(
+          [0, 50],
+          [
+            [40, 70],
+            [40, 70],
+          ],
+          140,
+        ),
+        [(left: 0.0, count: 2), (left: 78.0, count: 1)],
+      );
+      // Pulled back from the right edge; dropped when there's no room at all.
+      expect(
+        placeOrLabels(
+          [0, 280, 290],
+          [
+            [40],
+            [40],
+            [40],
+          ],
+          300,
+        ),
+        [(left: 0.0, count: 1), (left: 260.0, count: 1), (left: 0.0, count: 0)],
+      );
+    });
+
+    testWidgets('an overview row makes room for them above its timeline', (
+      tester,
+    ) async {
+      Future<double> height(Journey journey) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: JourneyRow(
+                journey: journey,
+                axis: TimelineAxis.of([journey]),
+                now: at(0),
+                onTap: () {},
+              ),
+            ),
+          ),
+        );
+        return tester.getSize(find.byType(JourneyTimeline)).height;
+      }
+
+      expect(await height(fakePlan().journeys.single), 26);
+      expect(
+        await height(connectionsJourney()),
+        26 + JourneyTimeline.orHeight + JourneyTimeline.orGap,
+      );
+      expect(
+        tester.getSemantics(find.byType(JourneyTimeline)).label,
+        startsWith('40 or 7, then 1 Line, then 8 or 48 or 9, then 2'),
+      );
+    });
+  });
+
+  test('pieces follow the departures chosen', () {
+    final journey = connectionsJourney();
+    var chain = ConnectionChain(journey);
+    chain = chain.select(0, 5);
+    final pieces = timelinePieces(journey, chain: chain);
+    final rides = pieces.where((p) => p.kind == TimelineKind.ride).toList();
+    expect(rides.map((p) => p.start), [at(1500), at(2460), at(3180), at(3960)]);
+    expect(pieces.first.start, at(900));
+    expect(pieces.last.end, at(4620));
+    for (var i = 1; i < pieces.length; i++) {
+      expect(pieces[i].start, pieces[i - 1].end);
+    }
+    // Another route's, as one piece.
+    chain = ConnectionChain(journey).select(0, 3);
+    expect(
+      timelinePieces(
+        journey,
+        chain: chain,
+      ).firstWhere((p) => p.ride == 0).route!.name,
+      '7',
+    );
   });
 }
