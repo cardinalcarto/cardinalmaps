@@ -230,6 +230,34 @@ routes clear of the sheet.
   alternatives) as a pushed sheet page like Steps, reached from the button instead of a
   tap on the row. It stops being a state of the directions page.
 
+## Trip details at large text
+
+Mockups on the canvas (normal and 2×). The aim is that it stays usable, not that it's
+polished: nothing overflows, nothing is cut vertically, and the rest is taken as it
+comes.
+
+- Only two things keep a height set by the text size alone, because they change when a
+  departure is chosen and sit above something tappable: the pinned header and the wait
+  row. Everything else (stop names, headsigns, street legs, the ends) wraps freely.
+- From 1.5× a row's clock time moves to its own line above its text, and a ride's title
+  splits: badge and ride time on one line, headsign and operator below.
+- The header stacks at large text. Only its title and duration stay pinned there; the
+  "Go in", the times and the walking distance scroll away with the itinerary.
+- Departure tiles grow with the text and scroll sideways.
+- On a narrow phone at normal text, rows give way with an ellipsis rather than overflow.
+
+## Transit refresh
+
+Nothing re-plans a trip by itself, and the recalculate button is gone, so:
+
+- Transit re-plans every 30 seconds while its list or Trip details shows. The plan on
+  screen stays until the new one arrives; nothing passes through a loading state.
+- A journey in the new plan is the one that was open if it has the same trips (trip ID
+  and service day) between the same stops in the same order. Then Trip details stays
+  open, its times animate, and the chosen departures carry over.
+- If the open journey isn't in the new plan, Trip details returns to the list.
+- A changed trip (ends, or how stops are reached) always returns to the list.
+
 ## Sheet library: recommendation for the anchors
 
 The problem: both anchors rest with a row and the buttons showing below the content the
