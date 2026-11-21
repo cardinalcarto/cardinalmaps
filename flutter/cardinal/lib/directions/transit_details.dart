@@ -502,7 +502,9 @@ class RideStops extends StatelessWidget {
 /// stops as the one chosen has them.
 ///
 /// The plan lists the stops of each ride's suggested trip alone, so for another
-/// departure only its boarding and alighting stops show.
+/// departure only its boarding and alighting stops show until its leg, looked up apart
+/// from the plan, is [fetched]; then its stops and trips grow in below its departures,
+/// as the suggested trip's show.
 class JourneyItinerary extends StatefulWidget {
   const JourneyItinerary({
     super.key,
@@ -513,10 +515,16 @@ class JourneyItinerary extends StatefulWidget {
     required this.units,
     required this.access,
     required this.now,
+    this.fetched = const [],
   });
 
   /// The journey, with the departures chosen of its rides.
   final ConnectionChain chain;
+
+  /// For each of [chain]'s rides, by its index there, the leg of the departure it takes
+  /// when that's another than the plan's own and has been looked up; null, or past the
+  /// end, where it hasn't. A leg of another departure than the one taken is ignored.
+  final List<TransitLeg?> fetched;
 
   /// The rider chose departure `departure` of ride `ride` (by index in
   /// [Journey.rides]).
@@ -536,19 +544,37 @@ class JourneyItinerary extends StatefulWidget {
 }
 
 class _JourneyItineraryState extends State<JourneyItinerary> {
-  /// The rides' segments whose stops between are showing, as (leg, segment).
+  /// The rides' trips whose stops between are showing, as (leg, trip): each ride's,
+  /// whichever of its departures it takes, so one open stays open as the choice
+  /// changes, while the leg taken has that trip.
   final _expanded = <(int, int)>{};
+
+  /// The leg of the departure ride [ride] (by its index in [ConnectionChain.rides])
+  /// takes, when its stops are known.
+  TransitLeg? _taken(int ride) =>
+      widget.chain.rides[ride].legTaken(widget.fetched.elementAtOrNull(ride));
 
   @override
   void didUpdateWidget(JourneyItinerary oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final journey = widget.chain.journey;
-    if (!identical(oldWidget.chain.journey, journey)) _expanded.clear();
-    // A ride on another departure than the plan's shows no stops between.
-    _expanded.removeWhere(
-      (key) => widget.chain.forLeg(key.$1)?.suggested != true,
-    );
+    final chain = widget.chain;
+    if (!identical(oldWidget.chain.journey, chain.journey)) _expanded.clear();
+    // A trip the leg taken doesn't have closes. While the leg isn't known, the ride's
+    // stay as they are, to show as they were once it is.
+    _expanded.removeWhere((key) {
+      final ride = chain.rides.indexWhere(
+        (r) => identical(r.ride, chain.journey.legs[key.$1]),
+      );
+      if (ride < 0) return true;
+      final leg = _taken(ride);
+      return leg != null && key.$2 >= _trips(leg).length;
+    });
   }
+
+  /// A leg's trips, each with the range of its stops: one, all of them, unless it's
+  /// stay-seated.
+  static List<RideSegment?> _trips(TransitLeg? leg) =>
+      leg != null && leg.segments.length >= 2 ? leg.segments : const [null];
 
   @override
   Widget build(BuildContext context) {
@@ -635,6 +661,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
               context,
               i,
               choice,
+              _taken(index),
               onSelect: (departure) => widget.onSelect(index, departure),
               above: waits ? _Line.thin : before,
               below: connector(next),
@@ -660,11 +687,17 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
   }
 
   /// A ride's rows: its route, its stops with their times, its departures, and any
-  /// trips it goes on as, as the departure chosen has them.
+  /// trips it goes on as, as the departure chosen has them. Its stops between and its
+  /// trips are [taken]'s, the leg of the departure chosen, when that's known.
+  ///
+  /// Everything above its departures is the same whether [taken] is known or not, so
+  /// its arrival moves nothing above them. Its boarding and alighting times are the
+  /// choice's, as its tile and the rides after have them.
   List<Widget> _rideRows(
     BuildContext context,
     int index,
-    RideChoice choice, {
+    RideChoice choice,
+    TransitLeg? taken, {
     required ValueChanged<int> onSelect,
     required _Line above,
     required _Line below,
@@ -674,17 +707,15 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
     final ride = choice.ride;
     final route = choice.route;
     final rows = <Widget>[];
-    // The stops between, when they're known: the plan's own trip's.
-    final stops = choice.stops;
-    final segments = stops != null && ride.segments.length >= 2
-        ? ride.segments
-        : <RideSegment?>[null];
+    final segments = _trips(taken);
     Color colorOf(RideSegment? segment) =>
         parseRouteColor(
-          (segment == null ? route : segmentRoute(ride, segment))?.color,
+          (segment == null ? route : segmentRoute(taken!, segment))?.color,
         ) ??
         scheme.primary;
-    final first = colorOf(segments.first);
+    // Another departure's rows above its departures are in its route's color before
+    // its leg is known, and stay so after.
+    final first = choice.suggested ? colorOf(segments.first) : colorOf(null);
     final last = colorOf(segments.last);
     final leaves = choice.departureTime;
     final arrives = choice.arrival;
@@ -726,7 +757,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
           visit: ride.boarding,
           time: leaves,
           live: live.$1,
-          skipped: stops != null && ride.boarding.skipped,
+          skipped: taken?.boarding.skipped ?? false,
           strong: true,
         ),
       ),
@@ -746,12 +777,18 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         ),
       );
     }
-    final lastStop = ride.stops.length - 1;
+    final stops = taken?.stops ?? const <StopVisit>[];
+    final lastStop = stops.length - 1;
+    // The leg's own times, but at the ends the choice's.
+    DateTime leftAt(int i) =>
+        i == 0 && leaves != null ? leaves : stops[i].departure;
+    DateTime reachedAt(int i) =>
+        i == lastStop && arrives != null ? arrives : stops[i].arrival;
     for (final (s, segment) in segments.indexed) {
       final color = colorOf(segment);
       final from = segment?.firstStop.clamp(0, lastStop) ?? 0;
       final to = segment?.lastStop.clamp(0, lastStop) ?? lastStop;
-      final between = stops == null
+      final between = taken == null
           ? const <StopVisit>[]
           : stops.sublist(
               (from + 1).clamp(0, lastStop),
@@ -760,9 +797,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
       final key = (index, s);
       final open = _expanded.contains(key);
       if (between.isNotEmpty) {
-        final minutes = ride.stops[to].arrival.difference(
-          ride.stops[from].departure,
-        );
+        final minutes = reachedAt(to).difference(leftAt(from));
         rows.add(
           _RailRow(
             key: ValueKey(('stops', index, s)),
@@ -815,9 +850,9 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
               icon: Icons.airline_seat_recline_normal,
             ),
             child: _ContinueText(
-              ride: ride,
+              ride: taken!,
               segment: nextSegment,
-              at: ride.stops[nextSegment.firstStop.clamp(0, lastStop)],
+              at: stops[nextSegment.firstStop.clamp(0, lastStop)],
             ),
           ),
         );
@@ -836,7 +871,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
           visit: ride.alighting,
           time: arrives,
           live: live.$2,
-          skipped: stops != null && ride.alighting.skipped,
+          skipped: taken?.alighting.skipped ?? false,
           strong: true,
         ),
       ),

@@ -1,4 +1,5 @@
 import 'package:cardinal/directions/connections.dart';
+import 'package:cardinal/directions/departure_legs.dart';
 import 'package:cardinal/directions/transit_details.dart';
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/units.dart';
@@ -11,14 +12,23 @@ import '../fakes/fake_transit.dart';
 DateTime at(int seconds) =>
     DateTime.fromMillisecondsSinceEpoch((fakeStart + seconds) * 1000);
 
-/// Holds a chain of [journey]'s departures, chosen as [build]'s widget says.
+/// Holds a chain of [journey]'s departures, chosen as [build]'s widget says, and with
+/// [legs], of [plan], the legs fetched of the departures it takes but the plan's.
 class _Chained extends StatefulWidget {
-  const _Chained({required this.journey, required this.build});
+  const _Chained({
+    required this.journey,
+    required this.build,
+    this.legs,
+    this.plan,
+  });
 
   final Journey journey;
+  final DepartureLegs? legs;
+  final TransitPlan? plan;
   final Widget Function(
     ConnectionChain chain,
     void Function(int ride, int departure) select,
+    List<TransitLeg?> fetched,
   )
   build;
 
@@ -30,10 +40,34 @@ class _ChainedState extends State<_Chained> {
   late var _chain = ConnectionChain(widget.journey);
 
   @override
+  void initState() {
+    super.initState();
+    widget.legs?.addListener(_arrived);
+    _follow();
+  }
+
+  void _arrived() => setState(() {});
+
+  void _follow() =>
+      widget.legs?.follow(widget.plan!, _chain, TransitAccess.walking);
+
+  @override
+  void dispose() {
+    widget.legs?.removeListener(_arrived);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) => widget.build(
     _chain,
-    (ride, departure) =>
-        setState(() => _chain = _chain.select(ride, departure)),
+    (ride, departure) {
+      setState(() => _chain = _chain.select(ride, departure));
+      _follow();
+    },
+    [
+      for (final choice in _chain.rides)
+        widget.legs?.legOf(choice, TransitAccess.walking),
+    ],
   );
 }
 
@@ -56,7 +90,7 @@ void main() {
     tester,
     _Chained(
       journey: of ?? journey,
-      build: (chain, select) => DepartureRange(
+      build: (chain, select, _) => DepartureRange(
         choice: chain.rides[ride],
         access: access,
         now: at(0),
@@ -264,7 +298,7 @@ void main() {
         tester,
         _Chained(
           journey: connectionsJourney(),
-          build: (chain, select) => DepartureRange(
+          build: (chain, select, _) => DepartureRange(
             choice: chain.rides[3],
             access: TransitAccess.walking,
             now: at(0),
@@ -295,12 +329,16 @@ void main() {
       Journey journey, {
       TransitAccess access = TransitAccess.walking,
       bool header = false,
+      DepartureLegs? legs,
+      TransitPlan? plan,
     }) => tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: _Chained(
             journey: journey,
-            build: (chain, select) => CustomScrollView(
+            legs: legs,
+            plan: plan,
+            build: (chain, select, fetched) => CustomScrollView(
               slivers: [
                 if (header)
                   SliverToBoxAdapter(
@@ -313,6 +351,7 @@ void main() {
                   ),
                 JourneyItinerary(
                   chain: chain,
+                  fetched: fetched,
                   onSelect: select,
                   start: 'Waiting for the Interurban',
                   destination: 'Chu Minh',
@@ -509,10 +548,10 @@ void main() {
         // Its stops between aren't known.
         expect(find.text('Stop A to Stop B, between'), findsNothing);
         expect(find.text('1 stop before'), findsNWidgets(3));
-        // Back on the suggested one, they're a tap away again.
+        // Back on the suggested one, they show again, still open.
         await choose(tester, 1, '5:40 PM');
         expect(find.text('1 stop before'), findsNWidgets(4));
-        expect(find.text('Stop A to Stop B, between'), findsNothing);
+        expect(find.text('Stop A to Stop B, between'), findsOneWidget);
       },
     );
 
@@ -521,7 +560,17 @@ void main() {
     ) async {
       await tester.binding.setSurfaceSize(const Size(400, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await itinerary(tester, connectionsJourney(), header: true);
+      final transit = FakeTransit();
+      final legs = DepartureLegs(transit);
+      addTearDown(legs.dispose);
+      final plan = TransitPlan.fromJson(connectionsPlanJson());
+      await itinerary(
+        tester,
+        plan.journeys.single,
+        header: true,
+        legs: legs,
+        plan: plan,
+      );
 
       /// Taps [time] among leg [leg]'s departures, and checks that the tiles' row is
       /// exactly where it was, the moment it's tapped, mid-way and after.
@@ -561,6 +610,51 @@ void main() {
         ),
         findsOneWidget,
       );
+
+      /// Answers the question for [trip]'s leg, of leg [leg], with a leg of three stops
+      /// between, and checks that neither the departures' row nor the ride's rows
+      /// above it move or change height as its stops grow in below.
+      Future<void> arrives(String trip, int leg) async {
+        final row = find.byKey(ValueKey(('departures', leg)));
+        Rect title() =>
+            tester.getRect(find.byKey(ValueKey(('title', leg))).first);
+        Rect boarding() =>
+            tester.getRect(find.byKey(ValueKey(('boarding', leg))).first);
+        await tester.ensureVisible(row);
+        await tester.pumpAndSettle();
+        final at = (tester.getTopLeft(row), title(), boarding());
+        final question = transit.rides.singleWhere(
+          (q) => q.query.tripId == trip && !q.aborted,
+        );
+        question.answer.complete(
+          fakeRideLeg(
+            trip,
+            const [
+              [0, 0],
+              [0, 0],
+            ],
+            departure: question.query.departure.millisecondsSinceEpoch ~/ 1000,
+            between: const ['One', 'Two', 'Three'],
+          ),
+        );
+        await tester.pump();
+        expect((tester.getTopLeft(row), title(), boarding()), at);
+        await tester.pump(const Duration(milliseconds: 120));
+        expect((tester.getTopLeft(row), title(), boarding()), at);
+        await tester.pumpAndSettle();
+        expect((tester.getTopLeft(row), title(), boarding()), at);
+        expect(
+          find.descendant(
+            of: find.byKey(ValueKey(('stops', leg, 0))).first,
+            matching: find.text('3 stops before'),
+          ),
+          findsOneWidget,
+        );
+      }
+
+      // The 9's leg, then the 7's, above it.
+      await arrives('9-1', 5);
+      await arrives('7-1', 1);
     });
 
     testWidgets('rows below the departures chosen in grow and fade in', (
@@ -583,6 +677,188 @@ void main() {
       expect(tester.getSize(toggle.first).height, inExclusiveRange(0, full));
       await tester.pumpAndSettle();
       expect(tester.getSize(toggle.first).height, full);
+    });
+
+    group('another departure\'s leg', () {
+      late FakeTransit transit;
+      late DepartureLegs legs;
+      late TransitPlan plan;
+
+      setUp(() {
+        transit = FakeTransit();
+        legs = DepartureLegs(transit);
+        plan = TransitPlan.fromJson(connectionsPlanJson());
+      });
+
+      tearDown(() => legs.dispose());
+
+      Future<void> fetching(WidgetTester tester) async {
+        await tester.binding.setSurfaceSize(const Size(400, 4000));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await itinerary(
+          tester,
+          plan.journeys.single,
+          legs: legs,
+          plan: plan,
+          header: true,
+        );
+      }
+
+      /// The question still asked for [trip]'s leg.
+      RideQuestion asked(String trip) => transit.rides.singleWhere(
+        (q) => q.query.tripId == trip && !q.aborted,
+      );
+
+      /// The 7 at 17:43 from Stop A to Stop B, as the source has it: a minute later
+      /// than the plan does, by two stops.
+      TransitLeg seven({List<Map<String, Object?>> segments = const []}) =>
+          fakeRideLeg(
+            '7-1',
+            const [
+              [0, 0],
+              [0, 0],
+            ],
+            departure: fakeStart + 840,
+            ride: 540,
+            route: fakeRoutes['7'],
+            from: 'Stop A',
+            to: 'Stop B',
+            between: const ['Fremont Bridge', 'Dexter Ave'],
+            skipped: const {'Dexter Ave'},
+            segments: segments,
+          );
+
+      testWidgets('shows its stops once it arrives, timed as chosen', (
+        tester,
+      ) async {
+        await fetching(tester);
+        await choose(tester, 1, '5:43 PM');
+        expect(find.text('1 stop before'), findsNWidgets(3));
+        expect(find.text('2 stops before'), findsNothing);
+
+        asked('7-1').answer.complete(seven());
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        // Growing in.
+        final toggle = find.byKey(const ValueKey(('stops', 1, 0))).first;
+        final height = tester.getSize(toggle).height;
+        await tester.pumpAndSettle();
+        expect(height, lessThan(tester.getSize(toggle).height));
+        expect(find.text('2 stops before'), findsOneWidget);
+        // From when it leaves to when it arrives, as its tile has it.
+        expect(
+          find.descendant(of: toggle, matching: find.text('9 min')),
+          findsOneWidget,
+        );
+        await tester.tap(find.text('2 stops before'));
+        await tester.pumpAndSettle();
+        expect(find.text('Fremont Bridge'), findsOneWidget);
+        // Its stops' own times between, and the choice's at its ends.
+        Finder beside(String stop, String time) => find.descendant(
+          of: find.ancestor(of: find.text(stop), matching: find.byType(Row)),
+          matching: find.text(time),
+        );
+        expect(beside('Fremont Bridge', '5:47 PM'), findsOneWidget);
+        expect(beside('Dexter Ave', '5:50 PM'), findsOneWidget);
+        expect(beside('Stop A', '5:43 PM'), findsOneWidget);
+        expect(beside('Stop B', '5:52 PM'), findsOneWidget);
+        final skipped = tester.widget<Text>(find.text('Dexter Ave'));
+        expect(skipped.style?.decoration, TextDecoration.lineThrough);
+      });
+
+      testWidgets('a stay-seated one stays on board, in each trip\'s colors', (
+        tester,
+      ) async {
+        await fetching(tester);
+        await choose(tester, 1, '5:43 PM');
+        expect(find.text('Stay on board'), findsNothing);
+        asked('7-1').answer.complete(
+          seven(
+            segments: [
+              {
+                'trip_id': '7-1',
+                'route': fakeRoutes['7'],
+                'headsign': 'Rainier Beach',
+                'first_stop_index': 0,
+                'last_stop_index': 1,
+              },
+              {
+                'trip_id': '9-7',
+                'route': fakeRoutes['9'],
+                'headsign': 'Othello',
+                'first_stop_index': 1,
+                'last_stop_index': 3,
+              },
+            ],
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Stay on board'), findsOneWidget);
+        expect(find.text('At Fremont Bridge it continues as'), findsOneWidget);
+        expect(find.text('to Othello'), findsOneWidget);
+        // Each trip's stops between: none on the 7's, one on the 9's.
+        expect(find.byKey(const ValueKey(('stops', 1, 0))), findsNothing);
+        expect(find.text('1 stop before'), findsNWidgets(4));
+        final seat = tester.widget(
+          find.byKey(const ValueKey(('seat', 1, 0))).last,
+        );
+        // ignore: avoid_dynamic_calls
+        final rail = (seat as dynamic).rail;
+        // ignore: avoid_dynamic_calls
+        expect(rail.aboveColor, const Color(0xFF8E3A9C));
+        // ignore: avoid_dynamic_calls
+        expect(rail.belowColor, const Color(0xFFF15A22));
+      });
+
+      testWidgets('an open toggle stays open across choices, on its ride', (
+        tester,
+      ) async {
+        await fetching(tester);
+        await tester.tap(find.text('1 stop before').first);
+        await tester.pumpAndSettle();
+        expect(find.text('Stop A to Stop B, between'), findsOneWidget);
+
+        await choose(tester, 1, '5:43 PM');
+        asked('7-1').answer.complete(seven());
+        await tester.pumpAndSettle();
+        // Open, on the 7's stops.
+        expect(find.text('Stop A to Stop B, between'), findsNothing);
+        expect(find.text('Fremont Bridge'), findsOneWidget);
+        // The other rides' stay closed.
+        expect(find.text('Stop C to Stop D, between'), findsNothing);
+        expect(find.text('Stop D Bay 2 to Stop E, between'), findsNothing);
+
+        await choose(tester, 1, '5:40 PM');
+        expect(find.text('Fremont Bridge'), findsNothing);
+        expect(find.text('Stop A to Stop B, between'), findsOneWidget);
+        expect(find.text('Stop C to Stop D, between'), findsNothing);
+      });
+
+      testWidgets('one no longer taken when it arrives is ignored', (
+        tester,
+      ) async {
+        await fetching(tester);
+        await choose(tester, 1, '5:43 PM');
+        final first = asked('7-1');
+        await choose(tester, 1, '5:51 PM');
+        expect(first.aborted, isTrue);
+        first.answer.complete(seven());
+        await tester.pumpAndSettle();
+        expect(find.text('2 stops before'), findsNothing);
+        expect(find.byKey(const ValueKey(('stops', 1, 0))), findsNothing);
+      });
+
+      testWidgets('one that fails leaves the ride\'s ends', (tester) async {
+        await fetching(tester);
+        await choose(tester, 1, '5:43 PM');
+        asked('7-1').answer.completeError(Exception('offline'));
+        await tester.pumpAndSettle();
+        expect(find.text('1 stop before'), findsNWidgets(3));
+        expect(find.text('Stop A'), findsOneWidget);
+        expect(find.text('Stop B'), findsOneWidget);
+        expect(find.text('5:43 PM'), findsNWidgets(2));
+        expect(find.text('5:52 PM'), findsOneWidget);
+      });
     });
 
     testWidgets('a ride with no connection says so', (tester) async {

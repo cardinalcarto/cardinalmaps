@@ -1794,6 +1794,30 @@ void main() {
         expect(transit.rides, hasLength(1));
       });
 
+      testWidgets('lists its stops once the planner has it', (tester) async {
+        await openJourney(tester);
+        await choose(tester, 't40c');
+        await tester.pumpAndSettle();
+        // The plan's trip went on as the 7; this one's ends are all that's known.
+        expect(find.text('Stay on board'), findsNothing);
+        transit.rides.single.answer.complete(
+          fakeRideLeg(
+            't40c',
+            later,
+            departure: fakeStart + 1320,
+            from: 'Fremont Ave N & N 34th St',
+            to: 'Westlake Station',
+            between: const ['Aurora Bridge', 'Dexter Ave N'],
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('2 stops before'));
+        await tester.tap(find.text('2 stops before'));
+        await tester.pumpAndSettle();
+        expect(find.text('Aurora Bridge'), findsOneWidget);
+        expect(find.text('Dexter Ave N'), findsOneWidget);
+      });
+
       testWidgets('ignores an answer for one chosen before it', (tester) async {
         await openJourney(tester);
         await choose(tester, 't40c');

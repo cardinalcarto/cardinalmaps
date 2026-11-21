@@ -150,7 +150,8 @@ class _DirectionsPageState extends State<DirectionsPage> {
   /// The departures chosen of the open journey's rides, if they've been worked out.
   ConnectionChain? _chain;
 
-  /// The legs of the departures chosen other than the plan's, for the map to draw.
+  /// The legs of the departures chosen other than the plan's, for the map to draw and
+  /// the itinerary to list the stops of.
   DepartureLegs? _legs;
 
   List<SavedPlace> _saved = const [];
@@ -210,7 +211,10 @@ class _DirectionsPageState extends State<DirectionsPage> {
     )..addListener(_changed);
     _legs = DepartureLegs(scope.transit)
       ..addListener(() {
-        if (mounted) _drawRoutes();
+        if (!mounted) return;
+        // The itinerary lists the stops of one that's arrived.
+        setState(() {});
+        _drawRoutes();
       });
     // The place's card under this page has it, or is fetching it.
     final cached = store.places.cached(widget.to);
@@ -904,6 +908,10 @@ class _DirectionsPageState extends State<DirectionsPage> {
       ),
       JourneyItinerary(
         chain: chain,
+        fetched: [
+          for (final choice in chain.rides)
+            _legs!.legOf(choice, directions.transitAccess),
+        ],
         onSelect: (ride, departure) {
           setState(() => _chain = chain.select(ride, departure));
           _chainChanged();

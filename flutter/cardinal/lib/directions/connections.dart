@@ -107,10 +107,22 @@ class RideChoice {
   bool get realtime =>
       suggested ? ride.realtime : departure?.realtime ?? ride.realtime;
 
-  /// The ride's stops when they're known for the departure taken: the plan lists the
-  /// suggested trip's alone. Null for another, whose boarding and alighting stops are
-  /// all that's known.
-  List<StopVisit>? get stops => suggested ? ride.stops : null;
+  /// The leg of the departure taken, with its stops and trips, when it's known: the
+  /// ride's own for the suggested one, whose leg the plan has; for another, [fetched]
+  /// if it's that departure's, looked up apart from the plan. Null otherwise, when only
+  /// its boarding and alighting stops are known.
+  TransitLeg? legTaken(TransitLeg? fetched) {
+    if (suggested) return ride;
+    final departure = this.departure;
+    if (departure == null || fetched == null || !made) return null;
+    // The planner leaves out a departure's service day when it's the ride's own.
+    final startDate = departure.startDate ?? ride.startDate;
+    final same =
+        fetched.stops.length >= 2 &&
+        fetched.tripId == departure.tripId &&
+        (fetched.startDate == null || fetched.startDate == startDate);
+    return same ? fetched : null;
+  }
 
   /// Seconds waited at the boarding stop for the departure taken: from when the rider
   /// is [ready] when that's known, as the plan has it otherwise.

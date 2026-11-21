@@ -1,5 +1,6 @@
 /// The legs of the departures a rider chose instead of a plan's own, fetched as they're
-/// chosen, so the map can draw the journey the rider means to take.
+/// chosen, so the map can draw the journey the rider means to take and the itinerary
+/// can list its stops.
 ///
 /// A plan describes only each ride's suggested departure in full; of the others it says
 /// when they leave and arrive. Once the rider takes another, its leg (its stops and its
@@ -114,7 +115,8 @@ class DepartureLegs extends ChangeNotifier {
         abort: abort.future,
       );
     } on Object catch (e) {
-      // The map draws the plan's line for it, between the same two stops.
+      // The map draws the plan's line for it, between the same two stops, and the
+      // itinerary lists only those two.
       if (!abort.isCompleted) debugPrint('transit ride: $e');
     }
     // Dropped while it was asked: the chain moved on, or the plan did.

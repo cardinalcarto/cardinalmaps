@@ -71,28 +71,50 @@ class FakeTransit implements TransitSource {
 /// A ride lookup's leg on [trip] along [line] (`[[lng, lat], ...]`), from its first
 /// point to its last, leaving at [departure] and taking [ride] seconds, on [route] if
 /// it's given.
+///
+/// Its stops are [from], those [between], evenly spaced in time, and [to]; one in
+/// [skipped] is skipped. [segments] are its trips, if it's stay-seated, as the plan's
+/// JSON has them.
 TransitLeg fakeRideLeg(
   String trip,
   List<List<double>> line, {
   required int departure,
   int ride = 1200,
   Map<String, Object?>? route,
-}) => TransitLeg.fromJson({
-  'accessibility': 'accessible',
-  'departure': departure,
-  'arrival': departure + ride,
-  'duration_seconds': ride,
-  'wait_seconds': 0,
-  'realtime': false,
-  'route': ?route,
-  'trip': {'trip_id': trip, 'start_date': '20261109'},
-  'stops': [
-    _stop('first', line.first[0], line.first[1], departure),
-    _stop('last', line.last[0], line.last[1], departure + ride),
-  ],
-  'shape': polyline6(line),
-  'alerts': <Object>[],
-});
+  String from = 'first',
+  String to = 'last',
+  List<String> between = const [],
+  Set<String> skipped = const {},
+  List<Map<String, Object?>> segments = const [],
+}) {
+  final names = [from, ...between, to];
+  final last = names.length - 1;
+  return TransitLeg.fromJson({
+    'accessibility': 'accessible',
+    'departure': departure,
+    'arrival': departure + ride,
+    'duration_seconds': ride,
+    'wait_seconds': 0,
+    'realtime': false,
+    'route': ?route,
+    'trip': {'trip_id': trip, 'start_date': '20261109'},
+    'stops': [
+      for (final (i, name) in names.indexed)
+        {
+          ..._stop(
+            name,
+            i == last ? line.last[0] : line.first[0],
+            i == last ? line.last[1] : line.first[1],
+            departure + ride * i ~/ last,
+          ),
+          if (skipped.contains(name)) 'skipped': true,
+        },
+    ],
+    'segments': segments,
+    'shape': polyline6(line),
+    'alerts': <Object>[],
+  });
+}
 
 /// 2026-11-09 17:30 in Seattle (UTC-8), in POSIX seconds.
 const fakeStart = 1794792600;
