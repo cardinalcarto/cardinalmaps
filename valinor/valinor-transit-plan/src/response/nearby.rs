@@ -1063,18 +1063,8 @@ impl RideDescriber<'_> {
         let info = compiled
             .route(route)
             .ok_or(RouteLookupError::NotFound(Missing::Route))?;
-        let stop = compiled
-            .stop_by_gtfs_id(&request.feed, &request.stop_id)
-            .map(|stop| part.global_stop(stop))
-            .or_else(|| {
-                self.snapshot
-                    .new_stops
-                    .iter()
-                    .find(|new| {
-                        new.id.feed.as_str() == request.feed && *new.id.id == *request.stop_id
-                    })
-                    .map(|new| new.stop)
-            })
+        let stop = self
+            .feed_stop(part, &request.feed, &request.stop_id)
             .ok_or(RouteLookupError::NotFound(Missing::Stop))?;
 
         let of_route = |boarded: Option<Boarded>| {

@@ -23,6 +23,9 @@ pub enum StateError {
     /// A moment falls outside every date the compiled timetable covers.
     #[error("find a service date in the compiled timetable for POSIX time {0}")]
     DateNotCovered(i64),
+    /// A service date, as `YYYYMMDD`, isn't one any compiled timetable has.
+    #[error("find service date {0} in the compiled timetable")]
+    ServiceDateNotCovered(String),
     /// GTFS-RT bytes arrived for a feed that isn't in the compiled timetable.
     #[error("accept real-time data for unknown feed {0:?}")]
     UnknownFeed(String),
@@ -58,6 +61,35 @@ pub enum PlanError<T: core::error::Error + 'static, A: core::error::Error + 'sta
     /// Something the request names by ID isn't in the timetable or the pinned real-time data.
     #[error("find the {0} the request names")]
     NotFound(Missing),
+    /// The departure the request names is there, but can't be ridden between its two stops.
+    #[error("ride a departure that is {0}")]
+    NotRunning(NotRunning),
+}
+
+/// Why a departure a request named can't be ridden, as a ride's departures list it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotRunning {
+    /// Real-time data or a `NO_SERVICE` alert canceled its trip.
+    Canceled,
+    /// Its trip runs, but no longer lets riders on at the boarding stop or off at the
+    /// alighting stop.
+    Skipped,
+}
+
+impl NotRunning {
+    /// The name used in messages, and after `departure_` in the JSON error's `kind`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Canceled => "canceled",
+            Self::Skipped => "skipped",
+        }
+    }
+}
+
+impl core::fmt::Display for NotRunning {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.name())
+    }
 }
 
 /// What a request named that couldn't be found.

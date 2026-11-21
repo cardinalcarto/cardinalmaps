@@ -10,6 +10,7 @@ mod alerts;
 mod build;
 mod departures;
 mod nearby;
+mod ride;
 mod vehicle;
 
 use serde::Serialize;
@@ -21,6 +22,7 @@ pub use nearby::{
     StopDeparture,
 };
 pub(crate) use nearby::{RouteLookupError, build_nearby, build_route_detail, empty_nearby};
+pub(crate) use ride::{RideLookupError, build_ride};
 pub(crate) use vehicle::lower;
 pub(crate) use vehicle::vehicle_update;
 
@@ -40,6 +42,20 @@ pub struct PlanResponse {
     pub no_journeys_reason: Option<NoJourneysReason>,
     /// How a direct trip without transit fared.
     pub direct: DirectResponse,
+}
+
+/// One of a ride's departures, described as a leg of its own.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RideResponse {
+    /// When the response was generated, in POSIX seconds.
+    pub generated_at: i64,
+    /// What real-time data this answer used, and how old it was.
+    pub realtime: RealtimeStatus,
+    /// A plan's transit leg on the departure, from the boarding stop to the alighting stop.
+    ///
+    /// What only a plan knows is left out: `wait_seconds` is 0, and it has no
+    /// `transfer_seconds`, `departures`, or `departure_alerts`.
+    pub ride: TransitLeg,
 }
 
 /// What is known about whether a stop or leg is accessible to a rider in a wheelchair.
@@ -316,6 +332,13 @@ pub struct TransitLeg {
     pub duration_seconds: i64,
     /// Seconds waiting at the boarding stop after the rider gets there.
     pub wait_seconds: i64,
+    /// Seconds from the journey's previous ride reaching its alighting stop until the rider can
+    /// board here, as routing counts it: the walk's cost, which includes any minimum transfer
+    /// time, or after a ride to this same stop, the stop's change time.
+    ///
+    /// A departure leaving before the previous ride's arrival plus this is one the rider misses.
+    /// Absent on the journey's first ride, which the rider reaches from the origin instead.
+    pub transfer_seconds: Option<i64>,
     /// The departure's delay from the schedule at the boarding stop, when known.
     pub delay_seconds: Option<i32>,
     /// Whether any time in this leg came from real-time data.
@@ -343,8 +366,9 @@ pub struct TransitLeg {
     pub vehicle: Option<Vehicle>,
     /// Alerts that apply to this leg.
     pub alerts: Vec<LegAlert>,
-    /// Departures of this ride's route from its boarding stop to its alighting stop, in order of
-    /// departure, around and including this leg's own: what a rider has if they miss it.
+    /// Departures of any route from this ride's boarding stop to its alighting stop, in order of
+    /// departure, around and including this leg's own: what a rider has if they miss it,
+    /// or instead of it.
     ///
     /// Empty when the request's departure range lists none.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -357,11 +381,11 @@ pub struct TransitLeg {
     pub departure_alerts: Vec<AlertResponse>,
 }
 
-/// One departure of a ride's route between the ride's boarding and alighting stops.
+/// One departure between a ride's boarding and alighting stops, of any route serving the two.
 ///
-/// The route is the GTFS route the ride is on. A ride that stays seated as its vehicle
-/// continues as another route lists departures that make the same change between the two stops;
-/// a ride on one route also lists combined trips that ride that route between the two stops.
+/// Only those exact two stops count, not others nearby. A departure that stays seated as its
+/// vehicle continues as another route is one when it lets the rider on at the boarding stop and
+/// off at the alighting stop, and is described by the route it boards.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[expect(
@@ -377,6 +401,8 @@ pub struct RideDeparture {
     ///
     /// Absent when it is the leg's own: its first stop's `headsign`, or else its trip's.
     pub headsign: Option<String>,
+    /// The GTFS route it boards, as a leg's `route`; absent when it is the leg's own route.
+    pub route: Option<RouteResponse>,
     /// Whether it runs, and whether real-time data has seen it.
     pub status: DepartureStatus,
     /// When it leaves the boarding stop, as routing would use it (the prediction when there is
@@ -403,11 +429,13 @@ pub struct RideDeparture {
     #[serde(skip_serializing_if = "is_false")]
     pub suggested: bool,
     /// Whether it leaves the boarding stop before the rider can be there:
-    /// before the arrival there plus the time a change needs, or for the first ride,
-    /// before the request's departure plus the walk from the origin.
+    /// before the previous ride's arrival plus the leg's `transfer_seconds`, or for the first
+    /// ride, before the request's departure (the window's `earliest`) plus the walk from the
+    /// origin.
     #[serde(skip_serializing_if = "is_false")]
     pub missed: bool,
-    /// Whether no later departure of the route between these stops runs on its service date.
+    /// Whether no later departure of any route between these two stops runs on its service date:
+    /// the connection's last of the day. Canceled and skipped departures don't count.
     #[serde(skip_serializing_if = "is_false")]
     pub last_of_day: bool,
     /// Indices into the leg's `alerts` that apply to this departure.

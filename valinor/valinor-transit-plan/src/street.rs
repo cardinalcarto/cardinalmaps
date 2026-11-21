@@ -56,8 +56,10 @@ use crate::plan::{
     PlanStage, TransitRequest, TravelMode, plan_pinned, validated_latest,
 };
 use crate::response::{
-    NearbyResponse, PlanResponse, RouteDetailResponse, VehicleUpdate, WalkManeuver, WalkPath, lower,
+    NearbyResponse, PlanResponse, RideResponse, RouteDetailResponse, VehicleUpdate, WalkManeuver,
+    WalkPath, lower,
 };
+use crate::ride::{RideRequest, ride};
 use crate::state::{StateConfig, StopSnapper, TransitSnapshot, TransitState};
 
 /// The farthest an origin or destination may be from a usable street, in meters.
@@ -1398,6 +1400,20 @@ impl StreetPlanner {
         interrupt: &dyn Fn() -> bool,
     ) -> Result<RouteDetailResponse, StreetPlanError> {
         route_detail(&self.state, request, interrupt)
+    }
+
+    /// One of a plan ride's departures, as the plan's leg on it would be.
+    ///
+    /// # Errors
+    ///
+    /// If the request is invalid or names what isn't loaded, the departure doesn't run between
+    /// its two stops, or `interrupt` asks to stop.
+    pub fn ride(
+        &self,
+        request: &RideRequest,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<RideResponse, StreetPlanError> {
+        ride(&self.state, request, interrupt)
     }
 }
 

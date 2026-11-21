@@ -355,17 +355,26 @@ final _transitLayers = <Map<String, Object?>>[
 /// The color a ride is drawn in when its route has none.
 const _defaultRideColor = '#3b81de';
 
-/// [journey]'s legs and the stops it boards and leaves vehicles at, as GeoJSON.
-Map<String, Object?> journeyGeoJson(Journey? journey) => {
+/// How the map draws a ride: along [shape], in [route]'s colors.
+typedef DrawnRide = ({List<DirectionsPoint> shape, TransitRoute? route});
+
+/// [journey]'s legs and the stops it boards and leaves vehicles at, as GeoJSON, with
+/// each ride in [rides], by its index in [Journey.legs], drawn as it says rather than
+/// as the plan has it: another departure between the same two stops.
+Map<String, Object?> journeyGeoJson(
+  Journey? journey, {
+  Map<int, DrawnRide> rides = const {},
+}) => {
   'type': 'FeatureCollection',
   'features': [
     if (journey != null)
-      for (final leg in journey.legs)
-        if (leg.shape.length >= 2)
+      for (final (i, leg) in journey.legs.indexed)
+        if (_drawn(leg, rides[i]) case (:final shape, :final route)
+            when shape.length >= 2)
           {
             'type': 'Feature',
             'properties': switch (leg) {
-              TransitLeg(:final route) => {
+              TransitLeg() => {
                 'role': 'ride',
                 'color': _hex(route?.color) ?? _defaultRideColor,
                 'casing': _darker(_hex(route?.color) ?? _defaultRideColor),
@@ -375,7 +384,7 @@ Map<String, Object?> journeyGeoJson(Journey? journey) => {
             'geometry': {
               'type': 'LineString',
               'coordinates': [
-                for (final p in leg.shape) [p.lng, p.lat],
+                for (final p in shape) [p.lng, p.lat],
               ],
             },
           },
@@ -393,6 +402,10 @@ Map<String, Object?> journeyGeoJson(Journey? journey) => {
             },
   ],
 };
+
+/// How [leg] is drawn: as [ride] says, or as the plan has it.
+DrawnRide _drawn(JourneyLeg leg, DrawnRide? ride) =>
+    ride ?? (shape: leg.shape, route: leg is TransitLeg ? leg.route : null);
 
 /// `#RRGGBB` for a GTFS color, or null if it isn't one.
 String? _hex(String? color) =>

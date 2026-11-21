@@ -12,11 +12,12 @@ use valinor_gtfs::{TimetableSet, compile};
 use valinor_gtfs_rt::{FeedKind, proto};
 use valinor_transit::Router;
 
-use crate::error::PlanError;
+use crate::error::{Missing, NotRunning, PlanError, StateError};
 use crate::plan::{DepartureRange, TransitOptions, TransitRequest, TravelMode, plan};
 use crate::response::{
     Accessibility, DepartureStatus, JourneyLeg, PlanResponse, RideDeparture, TransitLeg,
 };
+use crate::ride::{RideRequest, ride};
 use crate::state::{FeedUpdate, StateConfig, TransitState};
 use crate::testing::{
     StraightLineAccess, StraightLineTransfers, alert_entity, delay_update, descriptor,
@@ -283,12 +284,33 @@ fn expected(trip: &str, departure: i64, status: DepartureStatus, flags: &str) ->
     }
 }
 
+fn leg_kind(leg: &JourneyLeg) -> &'static str {
+    match leg {
+        JourneyLeg::Access(_) => "access",
+        JourneyLeg::Transit(_) => "transit",
+        JourneyLeg::Transfer(_) => "transfer",
+        JourneyLeg::Egress(_) => "egress",
+    }
+}
+
 fn trips_of(leg: &TransitLeg) -> Vec<&str> {
     leg.departures.iter().map(|d| d.trip_id.as_str()).collect()
 }
 
+/// Each departure's route as its short name, where it differs from the leg's.
+fn routes_of(leg: &TransitLeg) -> Vec<Option<&str>> {
+    leg.departures
+        .iter()
+        .map(|d| {
+            d.route
+                .as_ref()
+                .and_then(|route| route.short_name.as_deref())
+        })
+        .collect()
+}
+
 #[test]
-fn a_ride_lists_its_route_around_its_own_departure() {
+fn a_ride_lists_every_route_between_its_stops_around_its_own_departure() {
     let state = main_state();
     let response = run(&state, &request(near_a(), near_c(), june_15(7, 55), 1800));
     let leg = leg_on(&response, "R1-0800");
@@ -302,9 +324,19 @@ fn a_ride_lists_its_route_around_its_own_departure() {
             expected("R1-0830", june_15(8, 30), SCHEDULED, ""),
             expected("R1-0900", june_15(9, 0), SCHEDULED, ""),
             expected("R1-0930", june_15(9, 30), SCHEDULED, ""),
+            // Route 3 also runs from `A` to `C`, two hours after the leg's own at the most.
+            expected("F1", june_15(10, 0), SCHEDULED, ""),
         ],
-        "route 3's frequency trip from A to C is another route, and isn't listed"
     );
+    assert_eq!(
+        routes_of(leg),
+        vec![None, None, None, None, None, None, Some("3")],
+        "only another route names its route"
+    );
+    let other = leg.departures[6].route.as_ref().expect("route 3");
+    assert_eq!(other.route_id, "R3");
+    assert_eq!(other.route_type, 3);
+    assert_eq!(leg.departures[6].headsign.as_deref(), Some("Express"));
     let own = &leg.departures[2];
     assert_eq!(own.departure, leg.departure);
     assert_eq!(own.arrival, leg.arrival);
@@ -323,7 +355,7 @@ fn a_ride_lists_its_route_around_its_own_departure() {
     assert!(
         leg.departures
             .iter()
-            .filter(|d| d.trip_id != "R1-0830")
+            .filter(|d| d.trip_id != "R1-0830" && d.trip_id != "F1")
             .all(|d| d.headsign.is_none())
     );
     assert_eq!(next.start_date, None);
@@ -353,6 +385,8 @@ fn the_first_ride_misses_what_leaves_before_the_walk_from_the_origin() {
             ("R1-0830", false),
             ("R1-0900", false),
             ("R1-0930", false),
+            ("F1", false),
+            ("F1", false),
         ]
     );
 }
@@ -486,6 +520,7 @@ fn a_skipped_boarding_stop_is_listed_as_skipped() {
             ("R1-0830", SCHEDULED),
             ("R1-0900", DepartureStatus::Skipped),
             ("R1-0930", SCHEDULED),
+            ("F1", SCHEDULED),
         ]
     );
     assert_eq!(
@@ -502,6 +537,38 @@ fn a_late_first_ride_makes_the_scheduled_connection_one_the_rider_misses() {
 
     // On schedule: at `B` at 08:10, two minutes to change, and route 2 at 08:15.
     let response = run(&state, &trip_to_d);
+    let journey = response
+        .journeys
+        .iter()
+        .find(|journey| {
+            journey
+                .legs
+                .iter()
+                .any(|leg| matches!(leg, JourneyLeg::Transit(leg) if leg.trip.trip_id == "R2-0815"))
+        })
+        .expect("a journey changing to the 08:15");
+    let kinds: Vec<&str> = journey.legs.iter().map(leg_kind).collect();
+    assert_eq!(
+        kinds,
+        vec!["access", "transit", "transit", "egress"],
+        "a change at one stop, without a walk"
+    );
+    let (JourneyLeg::Transit(first), JourneyLeg::Transit(second)) =
+        (&journey.legs[1], &journey.legs[2])
+    else {
+        unreachable!("checked above");
+    };
+    assert_eq!(first.transfer_seconds, None, "the first ride has none");
+    assert_eq!(
+        second.transfer_seconds,
+        Some(120),
+        "the stop's change time after a ride to it"
+    );
+    assert_eq!(second.departures[0].departure, june_15(8, 15));
+    assert!(
+        !second.departures[0].missed,
+        "08:10 plus two minutes is before 08:15"
+    );
     assert_eq!(
         rows(leg_on(&response, "R2-0815")),
         vec![
@@ -606,9 +673,12 @@ fn an_added_trip_on_the_route_is_listed_live() {
             ("EXTRA", DepartureStatus::Live),
             ("R1-0830", SCHEDULED),
             ("R1-0900", SCHEDULED),
+            ("R1-0930", SCHEDULED),
+            ("F1", SCHEDULED),
         ]
     );
     let extra = &leg.departures[3];
+    assert_eq!(extra.route, None, "the update names the leg's route");
     assert_eq!(
         extra.scheduled_departure, None,
         "an added trip has no schedule"
@@ -617,7 +687,7 @@ fn an_added_trip_on_the_route_is_listed_live() {
 }
 
 #[test]
-fn a_trip_no_route_names_lists_only_itself() {
+fn a_trip_no_route_names_lists_every_route_between_its_stops() {
     let state = main_state();
     let stop = |stop: &str, sequence: u32, unix: i64| {
         let event = proto::trip_update::StopTimeEvent {
@@ -647,13 +717,28 @@ fn a_trip_no_route_names_lists_only_itself() {
     assert_eq!(leg.route, None);
     assert_eq!(
         rows(leg),
-        vec![expected(
-            "LONER",
-            june_15(8, 10),
-            DepartureStatus::Live,
-            "S"
-        )],
-        "no route to list others of, or to call this the last of"
+        vec![
+            expected("R1-0730", june_15(7, 30), SCHEDULED, "M"),
+            expected("R1-0800", june_15(8, 0), SCHEDULED, "M"),
+            expected("LONER", june_15(8, 10), DepartureStatus::Live, "S"),
+            expected("R1-0830", june_15(8, 30), SCHEDULED, ""),
+            expected("R1-0900", june_15(9, 0), SCHEDULED, ""),
+            expected("R1-0930", june_15(9, 30), SCHEDULED, ""),
+            expected("F1", june_15(10, 0), SCHEDULED, ""),
+        ],
+        "the stops' departures, on routes it isn't"
+    );
+    assert_eq!(
+        routes_of(leg),
+        vec![
+            Some("1"),
+            Some("1"),
+            None,
+            Some("1"),
+            Some("1"),
+            Some("1"),
+            Some("3")
+        ]
     );
 }
 
@@ -670,14 +755,19 @@ fn frequency_runs_are_each_a_departure() {
     assert_eq!(
         runs,
         vec![
+            (june_15(9, 0), false),
+            (june_15(9, 30), false),
             (june_15(10, 0), true),
             (june_15(10, 20), false),
             (june_15(10, 40), false),
         ],
-        "route 1's 09:30 is another route"
     );
-    assert!(leg.departures.iter().all(|d| d.trip_id == "F1"));
-    assert!(leg.departures[2].last_of_day);
+    assert_eq!(trips_of(leg)[2..], ["F1", "F1", "F1"]);
+    assert_eq!(routes_of(leg), vec![Some("1"), Some("1"), None, None, None]);
+    assert!(
+        leg.departures.iter().all(|d| !d.last_of_day),
+        "route 3's last run isn't the last between `A` and `C`: route 1 runs until after midnight"
+    );
 }
 
 #[test]
@@ -693,7 +783,7 @@ fn a_wheelchair_rider_sees_only_departures_they_can_take() {
     let leg = leg_on(&response, "R1-0800");
     assert_eq!(
         trips_of(leg),
-        vec!["R1-0700", "R1-0730", "R1-0800", "R1-0830", "R1-0900"],
+        vec!["R1-0700", "R1-0730", "R1-0800", "R1-0830", "R1-0900", "F1"],
         "the 09:30 is marked inaccessible"
     );
     assert!(
@@ -730,8 +820,11 @@ fn alerts_on_departures_point_at_the_legs_or_their_own() {
     assert_eq!(leg.alerts[0].alert.id, "route-1");
     assert_eq!(leg.departure_alerts.len(), 1, "the 09:30's own");
     assert_eq!(leg.departure_alerts[0].id, "trip-0930");
+    assert_eq!(trips_of(leg).last(), Some(&"F1"));
     for departure in &leg.departures {
-        assert_eq!(departure.alerts, vec![0], "{}", departure.trip_id);
+        // Route 1's alert isn't about route 3.
+        let leg_alerts: &[usize] = if departure.trip_id == "F1" { &[] } else { &[0] };
+        assert_eq!(departure.alerts, leg_alerts, "{}", departure.trip_id);
         let own: &[usize] = if departure.trip_id == "R1-0930" {
             &[0]
         } else {
@@ -765,7 +858,8 @@ fn json_requests_set_the_range() {
 }
 
 // Stay-seated trips: `T1` (route 1, `ORG` to `MID`) continues as `T2` (route 2, `MID` to `DST`)
-// on block `X`, and `T5` as `T6` on block `Y`; `T3` (route 1) and `T4` (route 2) run alone.
+// on block `X`, and `T5` as `T6` on block `Y`; `T3` (route 1) and `T4` (route 2) run alone,
+// and `T7` (route 3) runs from `ORG` to `DST` without stopping at `MID`.
 
 const SEATED_STOPS: &str = "stop_id,stop_name,stop_lat,stop_lon\n\
 ORG,Origin,47.6000,-122.3300\n\
@@ -775,7 +869,8 @@ DST,Destination,47.6400,-122.3300\n";
 const SEATED_TRIPS: &str = "route_id,service_id,trip_id,block_id,trip_headsign\n\
 R1,WK,T1,X,To Middle\nR2,WK,T2,X,To Destination\n\
 R1,WK,T3,,To Middle\nR2,WK,T4,,To Destination\n\
-R1,WK,T5,Y,To Middle\nR2,WK,T6,Y,To Destination\n";
+R1,WK,T5,Y,To Middle\nR2,WK,T6,Y,To Destination\n\
+R3,WK,T7,,To Destination\n";
 
 const SEATED_TIMES: &str = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n\
 T1,08:05:00,08:05:00,ORG,1\nT1,08:20:00,08:20:00,MID,2\n\
@@ -783,7 +878,8 @@ T2,08:25:00,08:25:00,MID,1\nT2,08:50:00,08:50:00,DST,2\n\
 T3,08:35:00,08:35:00,ORG,1\nT3,08:50:00,08:50:00,MID,2\n\
 T4,09:00:00,09:00:00,MID,1\nT4,09:25:00,09:25:00,DST,2\n\
 T5,09:05:00,09:05:00,ORG,1\nT5,09:20:00,09:20:00,MID,2\n\
-T6,09:25:00,09:25:00,MID,1\nT6,09:50:00,09:50:00,DST,2\n";
+T6,09:25:00,09:25:00,MID,1\nT6,09:50:00,09:50:00,DST,2\n\
+T7,08:40:00,08:40:00,ORG,1\nT7,09:15:00,09:15:00,DST,2\n";
 
 fn seated_state() -> TransitState {
     let source = InMemorySource::new()
@@ -794,7 +890,7 @@ fn seated_state() -> TransitState {
         )
         .with(
             "routes.txt",
-            "route_id,agency_id,route_short_name,route_type\nR1,A,1,3\nR2,A,2,3\n",
+            "route_id,agency_id,route_short_name,route_type\nR1,A,1,3\nR2,A,2,3\nR3,A,3,3\n",
         )
         .with("stops.txt", SEATED_STOPS)
         .with(
@@ -817,11 +913,34 @@ fn a_stay_seated_ride_lists_trips_that_make_the_same_change() {
     let seated = transit_legs(&response)
         .find(|leg| leg.trip.trip_id == "T1" && !leg.segments.is_empty())
         .expect("the ride stays seated from T1 into T2");
-    // `T3` and `T4` don't make the ride without a change; `T5` into `T6` does.
-    assert_eq!(trips_of(seated), vec!["T1", "T5"]);
-    assert_eq!(seated.departures[1].departure, june_15(9, 5));
-    assert_eq!(seated.departures[1].arrival, june_15(9, 50));
-    assert!(seated.departures[1].last_of_day);
+    // `T3` and `T4` don't make the ride without a change; `T5` into `T6` does, and so does
+    // `T7` on route 3, without one.
+    assert_eq!(trips_of(seated), vec!["T1", "T7", "T5"]);
+    assert_eq!(
+        routes_of(seated),
+        vec![None, Some("3"), None],
+        "`T5` boards route 1, as the leg"
+    );
+    assert_eq!(seated.departures[2].departure, june_15(9, 5));
+    assert_eq!(seated.departures[2].arrival, june_15(9, 50));
+    assert!(seated.departures[2].last_of_day);
+    assert!(!seated.departures[1].last_of_day);
+
+    // Seen from `T7`, the seated rides are on the route they board, route 1.
+    let response = run(
+        &state,
+        &request(at(47.5990), at(47.6410), june_15(8, 35), 600),
+    );
+    let direct = leg_on(&response, "T7");
+    assert_eq!(trips_of(direct), vec!["T1", "T7", "T5"]);
+    assert_eq!(routes_of(direct), vec![Some("1"), None, Some("1")]);
+    let seated = &direct.departures[0];
+    assert_eq!(
+        seated.route.as_ref().map(|r| r.route_id.as_str()),
+        Some("R1")
+    );
+    assert_eq!(seated.headsign.as_deref(), Some("To Middle"));
+    assert_eq!(seated.arrival, june_15(8, 50), "where `T2` reaches `DST`");
 }
 
 #[test]
@@ -941,4 +1060,544 @@ fn departures_come_from_the_rides_own_file_and_its_own_overlay() {
         ]
     );
     assert!(leg.departures[1].last_of_day, "T3 is canceled");
+}
+
+// Two routes between the same two stops: route 7 and route 14 from `P` to `Q`, alternating,
+// and route 9 from `W`, a short walk from `Q`, to `R`.
+
+const CONNECTION: &str = "conn";
+
+const CONNECTION_STOPS: &str = "stop_id,stop_name,stop_lat,stop_lon,wheelchair_boarding\n\
+P,Papa,47.6000,-122.3300,1\n\
+Q,Quebec,47.6200,-122.3300,1\n\
+W,Whiskey,47.6215,-122.3300,1\n\
+R,Romeo,47.6400,-122.3300,1\n";
+
+/// `(route, start, minutes to the next stop, wheelchair_accessible, from, to)`.
+const CONNECTION_TRIPS: [(&str, &str, u32, u8, &str, &str); 10] = [
+    ("R7", "21:00", 10, 1, "P", "Q"),
+    ("R7", "21:30", 10, 1, "P", "Q"),
+    ("R7", "22:00", 10, 1, "P", "Q"),
+    ("R14", "21:10", 12, 1, "P", "Q"),
+    ("R14", "21:40", 12, 2, "P", "Q"),
+    ("R14", "22:30", 12, 1, "P", "Q"),
+    ("R9", "21:11", 10, 1, "W", "R"),
+    ("R9", "21:20", 10, 1, "W", "R"),
+    ("R9", "21:35", 10, 1, "W", "R"),
+    ("R9", "21:50", 10, 1, "W", "R"),
+];
+
+fn connection_state() -> TransitState {
+    let mut trips =
+        String::from("route_id,service_id,trip_id,trip_headsign,wheelchair_accessible\n");
+    let mut times = String::from("trip_id,arrival_time,departure_time,stop_id,stop_sequence\n");
+    for (route, start, minutes, wheelchair, from, to) in CONNECTION_TRIPS {
+        let id = trip_id(route, start);
+        let headsign = match route {
+            "R14" => "Mount Baker",
+            _ => "Downtown",
+        };
+        writeln!(trips, "{route},WK,{id},{headsign},{wheelchair}").expect("to a string");
+        let (begin, end) = (plus_minutes(start, 0), plus_minutes(start, minutes));
+        writeln!(
+            times,
+            "{id},{begin},{begin},{from},1\n{id},{end},{end},{to},2"
+        )
+        .expect("to a string");
+    }
+    let source = InMemorySource::new()
+        .with(
+            "agency.txt",
+            "agency_id,agency_name,agency_timezone,agency_url\n\
+             MT,Metro,America/Los_Angeles,https://m.test\n",
+        )
+        .with(
+            "routes.txt",
+            "route_id,agency_id,route_short_name,route_type\n\
+             R7,MT,7,3\nR14,MT,14,3\nR9,MT,9,3\n",
+        )
+        .with("stops.txt", CONNECTION_STOPS)
+        .with(
+            "calendar.txt",
+            "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n\
+             WK,1,1,1,1,1,0,0,20260601,20260630\n",
+        )
+        .with("trips.txt", &trips)
+        .with("stop_times.txt", &times);
+    TransitState::new(loaded(CONNECTION, source), StateConfig::default()).expect("state")
+}
+
+/// 111 m south of `P`, and of `Q`, which is 278 m from `W`.
+fn near_p() -> LatLon {
+    at(47.5990)
+}
+
+fn near_q() -> LatLon {
+    at(47.6190)
+}
+
+fn near_r() -> LatLon {
+    at(47.6410)
+}
+
+#[test]
+fn a_ride_lists_every_route_between_its_two_stops() {
+    let state = connection_state();
+    let response = run(&state, &request(near_p(), near_q(), june_15(20, 55), 600));
+    let leg = leg_on(&response, "R7-2100");
+    assert_eq!(
+        rows(leg),
+        vec![
+            expected("R7-2100", june_15(21, 0), SCHEDULED, "S"),
+            expected("R14-2110", june_15(21, 10), SCHEDULED, ""),
+            expected("R7-2130", june_15(21, 30), SCHEDULED, ""),
+            expected("R14-2140", june_15(21, 40), SCHEDULED, ""),
+            expected("R7-2200", june_15(22, 0), SCHEDULED, ""),
+            // The last between `P` and `Q`, of either route.
+            expected("R14-2230", june_15(22, 30), SCHEDULED, "L"),
+        ]
+    );
+    assert_eq!(
+        routes_of(leg),
+        vec![None, Some("14"), None, Some("14"), None, Some("14")]
+    );
+    let headsigns: Vec<Option<&str>> = leg
+        .departures
+        .iter()
+        .map(|d| d.headsign.as_deref())
+        .collect();
+    assert_eq!(
+        headsigns,
+        vec![
+            None,
+            Some("Mount Baker"),
+            None,
+            Some("Mount Baker"),
+            None,
+            Some("Mount Baker")
+        ]
+    );
+    let other = &leg.departures[1];
+    assert_eq!(
+        other.arrival,
+        june_15(21, 22),
+        "route 14's own running time"
+    );
+    let json = serde_json::to_value(leg).expect("serializes");
+    assert!(json["departures"][0].get("route").is_none());
+    assert_eq!(json["departures"][1]["route"]["route_id"], "R14");
+    assert_eq!(json["departures"][1]["route"]["short_name"], "14");
+    assert!(
+        json.get("transfer_seconds").is_none(),
+        "the journey's first ride"
+    );
+
+    // Seen from route 14, route 7 names its route, and the one before the rider is out is missed.
+    let response = run(&state, &request(near_p(), near_q(), june_15(21, 5), 300));
+    let leg = leg_on(&response, "R14-2110");
+    assert_eq!(
+        rows(leg),
+        vec![
+            expected("R7-2100", june_15(21, 0), SCHEDULED, "M"),
+            expected("R14-2110", june_15(21, 10), SCHEDULED, "S"),
+            expected("R7-2130", june_15(21, 30), SCHEDULED, ""),
+            expected("R14-2140", june_15(21, 40), SCHEDULED, ""),
+            expected("R7-2200", june_15(22, 0), SCHEDULED, ""),
+            expected("R14-2230", june_15(22, 30), SCHEDULED, "L"),
+        ]
+    );
+    assert_eq!(
+        routes_of(leg),
+        vec![Some("7"), None, Some("7"), None, Some("7"), None]
+    );
+    assert_eq!(leg.departures[0].headsign.as_deref(), Some("Downtown"));
+}
+
+#[test]
+fn the_last_of_the_day_is_the_connections_and_a_canceled_one_isnt_it() {
+    let state = connection_state();
+    ingest(
+        &state,
+        CONNECTION,
+        FeedKind::TripUpdates,
+        vec![canceled("R14-2230")],
+    );
+    let response = run(&state, &request(near_p(), near_q(), june_15(20, 55), 600));
+    let leg = leg_on(&response, "R7-2100");
+    assert_eq!(
+        rows(leg),
+        vec![
+            expected("R7-2100", june_15(21, 0), SCHEDULED, "S"),
+            expected("R14-2110", june_15(21, 10), SCHEDULED, ""),
+            expected("R7-2130", june_15(21, 30), SCHEDULED, ""),
+            // Route 14's last that runs, but route 7 runs later.
+            expected("R14-2140", june_15(21, 40), SCHEDULED, ""),
+            // With 22:30 canceled, the last of either route.
+            expected("R7-2200", june_15(22, 0), SCHEDULED, "L"),
+            expected("R14-2230", june_15(22, 30), DepartureStatus::Canceled, ""),
+        ]
+    );
+    assert_eq!(
+        leg.departures[5]
+            .route
+            .as_ref()
+            .map(|r| r.route_id.as_str()),
+        Some("R14")
+    );
+}
+
+#[test]
+fn a_wheelchair_rider_sees_only_the_routes_departures_they_can_take() {
+    let state = connection_state();
+    let response = run(
+        &state,
+        &TransitRequest {
+            mode: TravelMode::Wheelchair,
+            ..request(near_p(), near_q(), june_15(20, 55), 600)
+        },
+    );
+    let leg = leg_on(&response, "R7-2100");
+    assert_eq!(
+        trips_of(leg),
+        vec!["R7-2100", "R14-2110", "R7-2130", "R7-2200", "R14-2230"],
+        "route 14's 21:40 is marked inaccessible"
+    );
+}
+
+#[test]
+fn a_ride_after_a_walk_counts_its_transfer_from_the_previous_arrival() {
+    let state = connection_state();
+    let response = run(&state, &request(near_p(), near_r(), june_15(20, 55), 600));
+    let journey = response
+        .journeys
+        .iter()
+        .find(|journey| {
+            journey
+                .legs
+                .iter()
+                .any(|leg| matches!(leg, JourneyLeg::Transit(leg) if leg.trip.trip_id == "R7-2100"))
+        })
+        .expect("a journey on route 7's 21:00");
+    let kinds: Vec<&str> = journey.legs.iter().map(leg_kind).collect();
+    assert_eq!(
+        kinds,
+        vec!["access", "transit", "transfer", "transit", "egress"]
+    );
+    let (JourneyLeg::Transit(first), JourneyLeg::Transfer(walk), JourneyLeg::Transit(second)) =
+        (&journey.legs[1], &journey.legs[2], &journey.legs[3])
+    else {
+        unreachable!("checked above");
+    };
+    assert_eq!(first.transfer_seconds, None);
+    let transfer = second.transfer_seconds.expect("a ride after the first");
+    // 167 m at 1.33 m/s, and the walk is the whole of routing's cost here.
+    assert_eq!(transfer, walk.duration_seconds);
+    assert_eq!(transfer, 126);
+    assert_eq!(second.trip.trip_id, "R9-2120");
+    // At `Q` at 21:10 and at `W` 126 s later, after the 21:11 leaves.
+    let ready = first.arrival + transfer;
+    for departure in &second.departures {
+        assert_eq!(
+            departure.missed,
+            departure.departure < ready,
+            "{}",
+            departure.trip_id
+        );
+    }
+    assert_eq!(
+        rows(second),
+        vec![
+            expected("R9-2111", june_15(21, 11), SCHEDULED, "M"),
+            expected("R9-2120", june_15(21, 20), SCHEDULED, "S"),
+            expected("R9-2135", june_15(21, 35), SCHEDULED, ""),
+            expected("R9-2150", june_15(21, 50), SCHEDULED, "L"),
+        ]
+    );
+}
+
+// A ride lookup describes one departure of a ride as the plan's leg on it would be.
+
+fn ride_request(feed: &str, (board, alight): (&str, &str), trip: &str) -> RideRequest {
+    RideRequest {
+        feed: feed.to_owned(),
+        board_stop_id: board.to_owned(),
+        alight_stop_id: alight.to_owned(),
+        trip_id: trip.to_owned(),
+        start_date: JUNE_15.to_owned(),
+        departure: None,
+        mode: TravelMode::Walking,
+        now: FEED_TIME + 15,
+    }
+}
+
+type LookupError = PlanError<core::convert::Infallible, core::convert::Infallible>;
+
+fn try_lookup(state: &TransitState, request: &RideRequest) -> Result<TransitLeg, LookupError> {
+    ride(state, request, &|| false).map(|response| response.ride)
+}
+
+fn lookup(state: &TransitState, request: &RideRequest) -> TransitLeg {
+    try_lookup(state, request).expect("the lookup succeeds")
+}
+
+fn stop_ids(leg: &TransitLeg) -> Vec<&str> {
+    leg.stops
+        .iter()
+        .map(|visit| visit.stop.stop_id.as_str())
+        .collect()
+}
+
+/// A plan's leg less what only a plan knows: when the rider gets there, and the other departures.
+fn as_looked_up(leg: &TransitLeg) -> TransitLeg {
+    TransitLeg {
+        wait_seconds: 0,
+        transfer_seconds: None,
+        departures: Vec::new(),
+        departure_alerts: Vec::new(),
+        ..leg.clone()
+    }
+}
+
+#[test]
+fn a_rides_own_departure_looks_up_as_the_plans_leg() {
+    let state = main_state();
+    // Live, with a delay and an alert on the route, so every part of the leg is compared.
+    ingest(
+        &state,
+        FEED,
+        FeedKind::TripUpdates,
+        vec![delay_update("R1-0800", JUNE_15, 1, 120)],
+    );
+    ingest(
+        &state,
+        FEED,
+        FeedKind::Alerts,
+        vec![alert_entity(
+            "detour",
+            proto::alert::Effect::Detour,
+            vec![route_selector("R1")],
+        )],
+    );
+    let response = run(&state, &request(near_a(), near_c(), june_15(7, 55), 1800));
+    let leg = leg_on(&response, "R1-0800");
+    assert!(leg.realtime && !leg.alerts.is_empty(), "{leg:?}");
+    let looked_up = lookup(&state, &ride_request(FEED, ("A", "C"), "R1-0800"));
+    assert_eq!(looked_up, as_looked_up(leg));
+
+    // A plan's ride after a change, which waits and has a transfer, looks up the same way.
+    let response = run(&state, &request(near_a(), near_d(), june_15(7, 55), 1800));
+    let second = transit_legs(&response)
+        .find(|leg| leg.trip.trip_id.starts_with("R2"))
+        .expect("a ride on route 2");
+    assert!(second.transfer_seconds.is_some());
+    let looked_up = lookup(
+        &state,
+        &ride_request(FEED, ("B", "D"), &second.trip.trip_id),
+    );
+    assert_eq!(looked_up, as_looked_up(second));
+}
+
+#[test]
+fn another_routes_departure_looks_up_as_a_leg_on_its_route() {
+    let state = connection_state();
+    let response = run(&state, &request(near_p(), near_q(), june_15(20, 55), 600));
+    let leg = leg_on(&response, "R7-2100");
+    let other = &leg.departures[1];
+    assert_eq!(other.trip_id, "R14-2110");
+    let looked_up = lookup(&state, &ride_request(CONNECTION, ("P", "Q"), "R14-2110"));
+    assert_eq!(looked_up.trip.trip_id, "R14-2110");
+    assert_eq!(looked_up.trip.start_date.as_deref(), Some(JUNE_15));
+    assert_eq!(looked_up.trip.headsign.as_deref(), Some("Mount Baker"));
+    assert_eq!(
+        looked_up
+            .route
+            .as_ref()
+            .map(|route| route.route_id.as_str()),
+        Some("R14")
+    );
+    assert_eq!(stop_ids(&looked_up), ["P", "Q"]);
+    // It agrees with what the ride's list said of it.
+    assert_eq!(
+        (looked_up.departure, looked_up.arrival),
+        (other.departure, other.arrival)
+    );
+    assert_eq!(looked_up.accessibility, other.accessibility);
+    assert_eq!(looked_up.wait_seconds, 0);
+
+    // As a plan would have it, had it ridden route 14.
+    let response = run(&state, &request(near_p(), near_q(), june_15(21, 5), 300));
+    assert_eq!(looked_up, as_looked_up(leg_on(&response, "R14-2110")));
+}
+
+#[test]
+fn a_stay_seated_departure_looks_up_as_one_ride_in_segments() {
+    let state = seated_state();
+    let response = run(
+        &state,
+        &request(at(47.5990), at(47.6410), june_15(8, 35), 600),
+    );
+    let direct = leg_on(&response, "T7");
+    let seated = &direct.departures[0];
+    assert_eq!(seated.trip_id, "T1");
+    let looked_up = lookup(&state, &ride_request("seated", ("ORG", "DST"), "T1"));
+    assert_eq!(stop_ids(&looked_up), ["ORG", "MID", "DST"]);
+    let segments: Vec<(&str, usize, usize)> = looked_up
+        .segments
+        .iter()
+        .map(|s| (s.trip_id.as_str(), s.first_stop_index, s.last_stop_index))
+        .collect();
+    assert_eq!(segments, [("T1", 0, 1), ("T2", 1, 2)]);
+    assert_eq!(looked_up.trip.trip_id, "T1");
+    assert_eq!(
+        looked_up
+            .route
+            .as_ref()
+            .map(|route| route.route_id.as_str()),
+        Some("R1"),
+        "the route it boards"
+    );
+    assert_eq!(
+        (looked_up.departure, looked_up.arrival),
+        (seated.departure, seated.arrival)
+    );
+
+    // The plan that rides it has the same leg.
+    let response = run(
+        &state,
+        &request(at(47.5990), at(47.6410), june_15(8, 0), 3600),
+    );
+    let planned = transit_legs(&response)
+        .find(|leg| leg.trip.trip_id == "T1" && !leg.segments.is_empty())
+        .expect("the ride stays seated from T1 into T2");
+    assert_eq!(looked_up, as_looked_up(planned));
+}
+
+#[test]
+fn a_frequency_trips_run_is_the_one_leaving_nearest_the_departure() {
+    let state = main_state();
+    let mut request = ride_request(FEED, ("A", "C"), "F1");
+    assert_eq!(
+        lookup(&state, &request).departure,
+        june_15(10, 0),
+        "the first"
+    );
+    request.departure = Some(june_15(10, 20));
+    assert_eq!(lookup(&state, &request).departure, june_15(10, 20));
+    request.departure = Some(june_15(10, 31));
+    assert_eq!(lookup(&state, &request).departure, june_15(10, 40));
+    // Halfway between two runs, the earlier.
+    request.departure = Some(june_15(10, 30));
+    assert_eq!(lookup(&state, &request).departure, june_15(10, 20));
+}
+
+#[test]
+fn a_departure_real_time_data_took_away_is_refused() {
+    let state = main_state();
+    ingest(
+        &state,
+        FEED,
+        FeedKind::TripUpdates,
+        vec![canceled("R1-2420")],
+    );
+    // Listed as canceled by a ride from `A` to `C`, but not one a rider can take.
+    let error = try_lookup(&state, &ride_request(FEED, ("A", "C"), "R1-2420")).unwrap_err();
+    assert!(
+        matches!(error, PlanError::NotRunning(NotRunning::Canceled)),
+        "{error:?}"
+    );
+    // Its trip still runs on the other days.
+    let mut tomorrow = ride_request(FEED, ("A", "C"), "R1-2420");
+    tomorrow.start_date = "20260616".to_owned();
+    assert_eq!(lookup(&state, &tomorrow).departure, june_15(24 + 24, 20));
+
+    let mut skip = entity("tu-skip");
+    skip.trip_update = Some(proto::TripUpdate {
+        trip: descriptor("R1-0900", JUNE_15, None),
+        stop_time_update: vec![proto::trip_update::StopTimeUpdate {
+            stop_sequence: Some(1),
+            schedule_relationship: Some(
+                proto::trip_update::stop_time_update::ScheduleRelationship::Skipped as i32,
+            ),
+            ..proto::trip_update::StopTimeUpdate::default()
+        }],
+        ..proto::TripUpdate::default()
+    });
+    ingest(&state, FEED, FeedKind::TripUpdates, vec![skip]);
+    let error = try_lookup(&state, &ride_request(FEED, ("A", "C"), "R1-0900")).unwrap_err();
+    assert!(
+        matches!(error, PlanError::NotRunning(NotRunning::Skipped)),
+        "{error:?}"
+    );
+    // From `B` it still runs.
+    let from_b = lookup(&state, &ride_request(FEED, ("B", "C"), "R1-0900"));
+    assert_eq!(stop_ids(&from_b), ["B", "C"]);
+}
+
+#[test]
+fn a_lookup_names_what_isnt_there() {
+    let state = main_state();
+    let missing = |request: &RideRequest| match try_lookup(&state, request) {
+        Err(PlanError::NotFound(missing)) => Some(missing),
+        _ => None,
+    };
+    // Route 2 doesn't run from `A` to `C`, and no trip runs from `C` back to `A`.
+    assert_eq!(
+        missing(&ride_request(FEED, ("A", "C"), "R2-0815")),
+        Some(Missing::Trip)
+    );
+    assert_eq!(
+        missing(&ride_request(FEED, ("C", "A"), "R1-0800")),
+        Some(Missing::Trip)
+    );
+    // A weekday trip on a Saturday.
+    let mut saturday = ride_request(FEED, ("A", "C"), "R1-0800");
+    saturday.start_date = "20260613".to_owned();
+    assert_eq!(missing(&saturday), Some(Missing::Trip));
+    assert_eq!(
+        missing(&ride_request(FEED, ("A", "Z"), "R1-0800")),
+        Some(Missing::Stop)
+    );
+    assert!(matches!(
+        try_lookup(&state, &ride_request("other", ("A", "C"), "R1-0800")),
+        Err(PlanError::State(StateError::UnknownFeed(_)))
+    ));
+    let mut undated = ride_request(FEED, ("A", "C"), "R1-0800");
+    undated.start_date = "2026-06-15".to_owned();
+    assert!(matches!(
+        try_lookup(&state, &undated),
+        Err(PlanError::InvalidRequest(_))
+    ));
+    // A date the timetable doesn't cover at all.
+    undated.start_date = "20300101".to_owned();
+    assert!(matches!(
+        try_lookup(&state, &undated),
+        Err(PlanError::State(StateError::ServiceDateNotCovered(_)))
+    ));
+}
+
+#[test]
+fn a_wheelchair_lookup_reads_the_rules_a_wheelchair_plan_does() {
+    let state = main_state();
+    // The 09:30 is marked inaccessible, so a wheelchair ride's list doesn't have it.
+    let mut request = ride_request(FEED, ("A", "C"), "R1-0930");
+    assert_eq!(lookup(&state, &request).departure, june_15(9, 30));
+    request.mode = TravelMode::Wheelchair;
+    assert!(matches!(
+        try_lookup(&state, &request),
+        Err(PlanError::NotFound(Missing::Trip))
+    ));
+}
+
+#[test]
+fn a_lookup_on_a_date_outside_the_current_window_pins_one_of_its_own() {
+    let state = main_state();
+    let current = state.pin(FEED_TIME + 15).expect("pin");
+    let mut friday = ride_request(FEED, ("A", "C"), "R1-0800");
+    friday.start_date = "20260619".to_owned();
+    let leg = lookup(&state, &friday);
+    assert_eq!(leg.departure, june_15(4 * 24 + 8, 0));
+    assert_eq!(leg.trip.start_date.as_deref(), Some("20260619"));
+    // The current snapshot stays as it was.
+    let after = state.pin(FEED_TIME + 15).expect("pin");
+    assert!(std::sync::Arc::ptr_eq(&current, &after));
 }

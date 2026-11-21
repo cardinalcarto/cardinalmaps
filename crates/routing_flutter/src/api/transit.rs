@@ -268,6 +268,19 @@ impl OfflineTransit {
         self.answer(Query::Route, &request, feeds, cancel)
     }
 
+    /// One of a plan ride's departures, as the plan's leg on it would be, from JSON request
+    /// bytes (the server's `/transit/ride` body), applying `feeds` first as [`Self::plan`] does.
+    ///
+    /// It answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+    pub fn ride(
+        &self,
+        request: Vec<u8>,
+        feeds: Vec<TransitFeed>,
+        cancel: &TransitCancel,
+    ) -> TransitResponse {
+        self.answer(Query::Ride, &request, feeds, cancel)
+    }
+
     /// The latest real-time state of a vehicle, as the server's vehicle lookup returns it.
     pub fn vehicle(&self, feed: String, id: String) -> TransitResponse {
         response(self.planner.vehicle_json(&feed, &id, unix_now()))
@@ -334,6 +347,19 @@ impl OfflineTransit {
         self.answer_at(Query::Route, request, feeds, now, interrupt)
     }
 
+    /// [`Self::ride`] at a chosen moment, with a chosen interrupt, for tests.
+    /// Not part of the Dart API.
+    #[frb(ignore)]
+    pub fn ride_at(
+        &self,
+        request: &[u8],
+        feeds: Vec<TransitFeed>,
+        now: i64,
+        interrupt: &dyn Fn() -> bool,
+    ) -> TransitResponse {
+        self.answer_at(Query::Ride, request, feeds, now, interrupt)
+    }
+
     /// Applies `feeds`, then answers a query at `now`.
     fn answer_at(
         &self,
@@ -368,6 +394,7 @@ impl OfflineTransit {
             Query::Plan => self.planner.plan_json(request, now, interrupt),
             Query::Nearby => self.planner.nearby_json(request, now, interrupt),
             Query::Route => self.planner.route_json(request, now, interrupt),
+            Query::Ride => self.planner.ride_json(request, now, interrupt),
         };
         TransitResponse {
             ignored_feeds,
@@ -384,6 +411,8 @@ enum Query {
     Nearby,
     /// `POST /transit/route`.
     Route,
+    /// `POST /transit/ride`.
+    Ride,
 }
 
 /// A JSON error body, as the server's would be.
@@ -658,6 +687,57 @@ mod tests {
         assert_eq!(
             transit.nearby_at(far, Vec::new(), now, &|| false).status,
             400
+        );
+    }
+
+    /// The device looks up a ride's departure with the server's bytes, and it's the plan's leg
+    /// less what only the plan knows.
+    #[test]
+    fn a_rides_departure_answers_with_the_servers_bytes() {
+        let (_dir, on_device) = timetable();
+        let (_server_dir, on_server) = timetable();
+        let transit = OfflineTransit::open_timetable(on_device, vec![tiles()])
+            .ok()
+            .unwrap();
+        let server = valinor_transit_plan::StreetPlanner::open_with_built_transfers(
+            valinor_gtfs::TimetableSet::single(on_server).unwrap(),
+            &[tiles()],
+            valinor_transit_plan::StreetConfig::default(),
+        )
+        .unwrap();
+        let now = 1_781_506_440;
+        let plan = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.51,"lon":1.535},"max_walk_seconds":600,"departure":1781506500}"#;
+        let answer = transit.plan_at(plan, Vec::new(), now, &|| false);
+        assert_eq!(answer.status, 200);
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        let leg = body["journeys"][0]["legs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|leg| leg["type"] == "transit")
+            .expect("a ride")
+            .clone();
+        let ride = format!(
+            r#"{{"feed":"bus","board_stop_id":{},"alight_stop_id":{},"trip_id":"T1","start_date":{}}}"#,
+            leg["stops"][0]["stop_id"],
+            leg["stops"].as_array().unwrap().last().unwrap()["stop_id"],
+            leg["trip"]["start_date"],
+        );
+        let answer = transit.ride_at(ride.as_bytes(), Vec::new(), now, &|| false);
+        assert_eq!(answer.status, 200);
+        assert_eq!(
+            answer.body,
+            server.ride_json(ride.as_bytes(), now, &|| false).body,
+            "the same bytes as the server's /transit/ride"
+        );
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        assert_eq!(body["ride"]["shape"], leg["shape"]);
+        assert_eq!(body["ride"]["stops"], leg["stops"]);
+        assert_eq!(
+            transit
+                .ride_at(ride.as_bytes(), Vec::new(), now, &|| true)
+                .status,
+            499
         );
     }
 

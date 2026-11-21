@@ -360,6 +360,23 @@ expression: "&response"
               ]
             },
             {
+              "trip_id": "T5",
+              "headsign": "Via Bikeway",
+              "route": {
+                "route_id": "R3",
+                "short_name": "3",
+                "long_name": "Bike Express",
+                "route_type": 3
+              },
+              "status": "scheduled",
+              "departure": 1781535900,
+              "arrival": 1781538300,
+              "scheduled_departure": 1781535900,
+              "scheduled_arrival": 1781538300,
+              "accessibility": "unknown",
+              "bikes_allowed": "yes"
+            },
+            {
               "trip_id": "T2",
               "status": "scheduled",
               "departure": 1781537430,
@@ -411,6 +428,7 @@ expression: "&response"
           "arrival": 1781539200,
           "duration_seconds": 1200,
           "wait_seconds": 1046,
+          "transfer_seconds": 34,
           "realtime": false,
           "route": {
             "route_id": "R2",
@@ -800,6 +818,23 @@ expression: "&response"
               ]
             },
             {
+              "trip_id": "T5",
+              "headsign": "Via Bikeway",
+              "route": {
+                "route_id": "R3",
+                "short_name": "3",
+                "long_name": "Bike Express",
+                "route_type": 3
+              },
+              "status": "scheduled",
+              "departure": 1781535900,
+              "arrival": 1781538300,
+              "scheduled_departure": 1781535900,
+              "scheduled_arrival": 1781538300,
+              "accessibility": "unknown",
+              "bikes_allowed": "yes"
+            },
+            {
               "trip_id": "T2",
               "status": "scheduled",
               "departure": 1781537430,
@@ -852,6 +887,7 @@ expression: "&response"
           "arrival": 1781541000,
           "duration_seconds": 1200,
           "wait_seconds": 1166,
+          "transfer_seconds": 34,
           "realtime": false,
           "route": {
             "route_id": "R2",

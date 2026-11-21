@@ -6,6 +6,7 @@ import 'package:cupertino_ui/cupertino_ui.dart'
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/directions/transit_timeline.dart';
+import 'package:cardinal/directions/transit_details.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/map/route_layer.dart';
@@ -1713,6 +1714,148 @@ void main() {
             .where((f) => (f['properties']! as Map)['role'] == 'line'),
         isEmpty,
       );
+    });
+
+    group('a departure chosen instead of the plan\'s', () {
+      /// The lines the map draws for the journey's rides, as `[lng, lat]` points.
+      List<List<Object?>> rideLines() => [
+        for (final f in features(transitSource))
+          if ((f['properties']! as Map)['role'] == 'ride')
+            (f['geometry']! as Map)['coordinates'] as List<Object?>,
+      ];
+      const planned = [
+        [0.6, 2.1],
+        [0.8, 3.0],
+        [0.9, 3.2],
+      ];
+      const later = [
+        [0.6, 2.1],
+        [0.7, 2.6],
+        [0.9, 3.2],
+      ];
+      const last = [
+        [0.6, 2.1],
+        [0.65, 2.9],
+        [0.9, 3.2],
+      ];
+
+      Future<void> openJourney(WidgetTester tester) async {
+        await openTransit(tester);
+        await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
+        await tester.pumpAndSettle();
+      }
+
+      Future<void> choose(WidgetTester tester, String trip) async {
+        final tile = find.byWidgetPredicate(
+          (w) => w is ConnectionTile && w.departure.tripId == trip,
+        );
+        await tester.ensureVisible(tile);
+        await tester.pumpAndSettle();
+        await tester.tap(tile);
+        await tester.pump();
+      }
+
+      testWidgets('is drawn along its own line once the planner has it', (
+        tester,
+      ) async {
+        await openJourney(tester);
+        expect(rideLines().first, planned);
+        expect(transit.rides, isEmpty, reason: 'the plan has its own legs');
+
+        await choose(tester, 't40c');
+        final question = transit.rides.single;
+        expect(question.query, (
+          feed: 'us-wa-Metro-Transit',
+          boardStopId: 'Fremont Ave N & N 34th St',
+          alightStopId: 'Westlake Station',
+          tripId: 't40c',
+          startDate: '20261109',
+          departure: DateTime.fromMillisecondsSinceEpoch(
+            (fakeStart + 1320) * 1000,
+          ),
+        ));
+        expect(question.access, TransitAccess.walking);
+        // Until then, along the plan's line between the same two stops.
+        expect(rideLines().first, planned);
+
+        question.answer.complete(
+          fakeRideLeg('t40c', later, departure: fakeStart + 1320),
+        );
+        await tester.pump();
+        expect(rideLines().first, later);
+        // The other ride and the walks are as they were.
+        expect(rideLines(), hasLength(2));
+
+        // Back to the plan's own, the plan's line; and again, without asking again.
+        await choose(tester, 't40');
+        expect(rideLines().first, planned);
+        await choose(tester, 't40c');
+        expect(rideLines().first, later);
+        expect(transit.rides, hasLength(1));
+      });
+
+      testWidgets('lists its stops once the planner has it', (tester) async {
+        await openJourney(tester);
+        await choose(tester, 't40c');
+        await tester.pumpAndSettle();
+        // The plan's trip went on as the 7; this one's ends are all that's known.
+        expect(find.text('Stay on board'), findsNothing);
+        transit.rides.single.answer.complete(
+          fakeRideLeg(
+            't40c',
+            later,
+            departure: fakeStart + 1320,
+            from: 'Fremont Ave N & N 34th St',
+            to: 'Westlake Station',
+            between: const ['Aurora Bridge', 'Dexter Ave N'],
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('2 stops before'));
+        await tester.tap(find.text('2 stops before'));
+        await tester.pumpAndSettle();
+        expect(find.text('Aurora Bridge'), findsOneWidget);
+        expect(find.text('Dexter Ave N'), findsOneWidget);
+      });
+
+      testWidgets('ignores an answer for one chosen before it', (tester) async {
+        await openJourney(tester);
+        await choose(tester, 't40c');
+        await choose(tester, 't40e');
+        final [first, second] = transit.rides;
+        expect(first.query.tripId, 't40c');
+        expect(first.aborted, isTrue, reason: 'no longer wanted');
+        expect(second.query.tripId, 't40e');
+        expect(second.aborted, isFalse);
+
+        first.answer.complete(
+          fakeRideLeg('t40c', later, departure: fakeStart + 1320),
+        );
+        await tester.pump();
+        expect(
+          rideLines().first,
+          planned,
+          reason: 'not the 17:52, which is gone',
+        );
+
+        second.answer.complete(
+          fakeRideLeg(
+            't40e',
+            last,
+            departure: fakeStart + 2040,
+            route: {
+              'route_id': '100062',
+              'short_name': '62',
+              'color': '00857C',
+            },
+          ),
+        );
+        await tester.pump();
+        expect(rideLines().first, last);
+        final ride = features(transitSource)
+            .firstWhere((f) => (f['properties']! as Map)['role'] == 'ride');
+        expect((ride['properties']! as Map)['color'], '#00857C');
+      });
     });
 
     testWidgets('a journey opens in detail, and back returns to the list', (

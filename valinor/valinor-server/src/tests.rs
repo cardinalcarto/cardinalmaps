@@ -308,9 +308,115 @@ async fn finds_nearby_departures_and_a_routes_detail_on_their_own_paths() {
 }
 
 #[tokio::test]
+async fn looks_up_one_of_a_rides_departures_on_its_own_path() {
+    let state = transit_state(Some("secret"));
+    let plan = format!(
+        r#"{{"origin":{{"lat":42.5078,"lon":1.5205}},"destination":{{"lat":42.5100,"lon":1.5350}},"departure":{BEFORE_THE_TRIP}}}"#
+    );
+    let (status, _, body) = send(&state, request("POST", "/transit/plan", &plan)).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    let leg = body["journeys"][0]["legs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|leg| leg["type"] == "transit")
+        .expect("a ride")
+        .clone();
+    let departure = &leg["departures"][0];
+    assert_eq!(departure["trip_id"], "T1");
+
+    // The lookup takes the identifiers the leg and its departure gave.
+    let ride = format!(
+        r#"{{"feed":"bus","board_stop_id":"A","alight_stop_id":"B","trip_id":"T1","start_date":{},"departure":{}}}"#,
+        leg["trip"]["start_date"], departure["departure"]
+    );
+    let (status, headers, body) = send(&state, request("POST", "/transit/ride", &ride)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["content-type"], "application/json;charset=utf-8");
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["realtime"]["level"], "schedule");
+    // The plan's own leg, less what only the plan knows.
+    let mut expected = leg;
+    let fields = expected.as_object_mut().unwrap();
+    for planned in ["type", "departures", "departure_alerts", "transfer_seconds"] {
+        fields.remove(planned);
+    }
+    fields.insert("wait_seconds".to_owned(), Value::from(0));
+    assert_eq!(body["ride"], expected);
+
+    // What isn't there is a 404, and a bad date a 400.
+    let unknown = ride.replace(r#""trip_id":"T1""#, r#""trip_id":"T9""#);
+    let (status, _, body) = send(&state, request("POST", "/transit/ride", &unknown)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["kind"], "unknown_trip");
+    let undated = r#"{"feed":"bus","board_stop_id":"A","alight_stop_id":"B","trip_id":"T1","start_date":"2030-06-03"}"#;
+    let (status, _, body) = send(&state, request("POST", "/transit/ride", undated)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["kind"], "invalid_request");
+
+    // Once real-time data cancels it, it's refused rather than described as running.
+    let start_date = body_date(&ride);
+    let cancel = valinor_gtfs_rt::proto::FeedMessage {
+        header: valinor_gtfs_rt::proto::FeedHeader {
+            gtfs_realtime_version: "2.0".to_owned(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|elapsed| elapsed.as_secs()),
+            ..Default::default()
+        },
+        entity: vec![valinor_gtfs_rt::proto::FeedEntity {
+            id: "cancel".to_owned(),
+            trip_update: Some(valinor_gtfs_rt::proto::TripUpdate {
+                trip: valinor_gtfs_rt::proto::TripDescriptor {
+                    trip_id: Some("T1".to_owned()),
+                    start_date: Some(start_date),
+                    schedule_relationship: Some(
+                        valinor_gtfs_rt::proto::trip_descriptor::ScheduleRelationship::Canceled
+                            as i32,
+                    ),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        }],
+    };
+    let bytes = prost::Message::encode_to_vec(&cancel);
+    let ingest = Request::builder()
+        .method("PUT")
+        .uri("/transit/feeds/bus/trip_updates")
+        .header("authorization", "Bearer secret")
+        .body(Body::from(bytes))
+        .unwrap();
+    let (status, _, body) = send(&state, ingest).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["outcome"], "accepted");
+    let (status, _, body) = send(&state, request("POST", "/transit/ride", &ride)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["kind"], "departure_canceled");
+}
+
+/// The `start_date` of a ride lookup's body.
+fn body_date(body: &str) -> String {
+    let body: Value = serde_json::from_str(body).unwrap();
+    body["start_date"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test]
 async fn transit_paths_are_unknown_when_it_is_not_configured() {
     let state = state(1, Duration::from_secs(30));
-    for path in ["/transit/plan", "/transit/nearby", "/transit/route"] {
+    for path in [
+        "/transit/plan",
+        "/transit/nearby",
+        "/transit/route",
+        "/transit/ride",
+    ] {
         let (status, ..) = send(&state, request("POST", path, PLAN)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
     }

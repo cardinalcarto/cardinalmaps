@@ -2986,6 +2986,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "prost",
  "serde",
  "serde_json",
  "tokio",

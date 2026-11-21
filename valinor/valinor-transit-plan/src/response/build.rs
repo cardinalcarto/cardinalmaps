@@ -245,7 +245,9 @@ pub(super) struct RideView<'a> {
     on_base_pattern: bool,
     /// The file that answers for the ride.
     pub(super) part: Option<TimetablePart<'a>>,
-    route: Option<RouteInfo<'a>>,
+    /// The GTFS route boarded, by file: what tells two rides' routes apart, unlike its names.
+    pub(super) gtfs_route: Option<(usize, GtfsRoute)>,
+    pub(super) route: Option<RouteInfo<'a>>,
     agency: Option<AgencyInfo<'a>>,
     pub(super) feed: Option<FeedId>,
     pub(super) trip_id: String,
@@ -345,6 +347,9 @@ impl<'a, A: AccessEgressSearch> JourneyBuilder<'a, A> {
         // with no walk, the stop's change time. A departure before this is one the rider misses.
         let mut ready = self.request.departure;
         let mut alighted: Option<(i64, StopId)> = None;
+        // The last ride's arrival at its alighting stop, kept across the walk after it,
+        // from which the next ride's `transfer_seconds` counts.
+        let mut previous_arrival: Option<i64> = None;
         for leg in entry.journey.legs {
             match leg {
                 Leg::Access { stop, duration } => {
@@ -379,6 +384,7 @@ impl<'a, A: AccessEgressSearch> JourneyBuilder<'a, A> {
                     let mut leg = self.rides.transit_leg(&ride, wait, &|stage| {
                         self.access_egress.enter_stage(stage);
                     });
+                    leg.transfer_seconds = previous_arrival.map(|arrival| ready - arrival);
                     if !self.request.options.departures.is_empty() {
                         self.access_egress.enter_stage(PlanStage::Departures);
                         let (departures, alerts) = self.rides.ride_departures(&ride, ready, &leg);
@@ -389,6 +395,7 @@ impl<'a, A: AccessEgressSearch> JourneyBuilder<'a, A> {
                     legs.push(JourneyLeg::Transit(Box::new(leg)));
                     clock = alight;
                     alighted = Some((alight, ride.alight_stop));
+                    previous_arrival = Some(alight);
                 }
                 Leg::Transfer {
                     from,
@@ -531,6 +538,26 @@ impl<'a> RideDescriber<'a> {
         }
     }
 
+    /// A stop by its `stop_id` in `feed`, which `part` is the file of: one of the file's own,
+    /// or one real-time data added to the feed.
+    pub(super) fn feed_stop(
+        &self,
+        part: TimetablePart<'_>,
+        feed: &str,
+        stop_id: &str,
+    ) -> Option<StopId> {
+        part.compiled()
+            .stop_by_gtfs_id(feed, stop_id)
+            .map(|stop| part.global_stop(stop))
+            .or_else(|| {
+                self.snapshot
+                    .new_stops
+                    .iter()
+                    .find(|new| new.id.feed.as_str() == feed && *new.id.id == *stop_id)
+                    .map(|new| new.stop)
+            })
+    }
+
     /// Where a stop is: the timetable's coordinate, or an added stop's; `None` when neither
     /// says.
     pub(super) fn stop_coordinate(&self, stop: StopId) -> Option<LatLon> {
@@ -648,6 +675,9 @@ impl<'a> RideDescriber<'a> {
             ridden_segments,
             on_base_pattern,
             part,
+            gtfs_route: part
+                .zip(gtfs_route)
+                .map(|(part, route)| (part.index(), route)),
             route,
             agency,
             feed,
@@ -745,6 +775,7 @@ impl<'a> RideDescriber<'a> {
             arrival: alight_unix,
             duration_seconds: alight_unix - board_unix,
             wait_seconds: wait,
+            transfer_seconds: None,
             delay_seconds,
             realtime,
             route: view.route.map(route_response),

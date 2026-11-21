@@ -250,6 +250,7 @@ class StreetLeg extends JourneyLeg {
 class TransitLeg extends JourneyLeg {
   TransitLeg.fromJson(super.json)
     : waitSeconds = (json['wait_seconds'] as num?)?.toInt() ?? 0,
+      transferSeconds = (json['transfer_seconds'] as num?)?.toInt(),
       delaySeconds = (json['delay_seconds'] as num?)?.toInt(),
       realtime = json['realtime'] == true,
       route = json['route'] == null
@@ -274,6 +275,10 @@ class TransitLeg extends JourneyLeg {
       ],
       departures = _departures(json);
 
+  /// The leg of a ride lookup's answer (`POST /transit/ride`): its `ride`.
+  static TransitLeg decodeRide(List<int> body) =>
+      TransitLeg.fromJson(_map(_map(jsonDecode(utf8.decode(body)))['ride']));
+
   static List<RideDeparture> _departures(Map<String, Object?> json) {
     final own = [
       for (final a in _list(json['alerts'])) LegAlert.fromJson(_map(a)),
@@ -289,6 +294,12 @@ class TransitLeg extends JourneyLeg {
   }
 
   final int waitSeconds;
+
+  /// For a ride after the journey's first: from the ride before reaching the stop it's
+  /// left at until the rider can be at this one's boarding stop, walking or changing
+  /// there. With the arrival of whichever departure of the ride before the rider takes,
+  /// when they're ready to board this one. Null for the first ride.
+  final int? transferSeconds;
 
   /// How late (or, below zero, early) it leaves the boarding stop, when known.
   final int? delaySeconds;
@@ -320,9 +331,10 @@ class TransitLeg extends JourneyLeg {
   final TransitVehicle? vehicle;
   final List<LegAlert> alerts;
 
-  /// Departures of the same route between the same two stops, by departure, around and
-  /// including this ride's own: what's left if the rider misses it. Empty if the plan
-  /// didn't list any.
+  /// Departures between the same two stops, by departure, around and including this
+  /// ride's own: what's left if the rider misses it. Most are of the ride's route; one of
+  /// another route that also runs from the boarding stop to the alighting stop says so
+  /// ([RideDeparture.route]). Empty if the plan didn't list any.
   final List<RideDeparture> departures;
 
   /// This ride's own departure among [departures], if they're listed.
@@ -557,13 +569,17 @@ class StopDeparture {
   final List<LegAlert> alerts;
 }
 
-/// One departure of a ride's route from its boarding stop to its alighting stop.
+/// One departure from a ride's boarding stop to its alighting stop: of the ride's route,
+/// or of another that runs between them.
 class RideDeparture extends StopDeparture {
   RideDeparture._(
     Map<String, Object?> json,
     List<LegAlert> legAlerts,
     List<LegAlert> departureAlerts,
-  ) : arrival = _time(json['arrival']),
+  ) : route = json['route'] == null
+          ? null
+          : TransitRoute.fromJson(_map(json['route'])),
+      arrival = _time(json['arrival']),
       scheduledArrival = _optionalTime(json['scheduled_arrival']),
       suggested = json['suggested'] == true,
       missed = json['missed'] == true,
@@ -573,6 +589,9 @@ class RideDeparture extends StopDeparture {
         ...StopDeparture._indexed(json['departure_alerts'], departureAlerts),
       ]);
 
+  /// Its route when that isn't the ride's: null for one of the ride's own route.
+  final TransitRoute? route;
+
   /// When it reaches the alighting stop, as [departure] leaves the boarding stop.
   final DateTime arrival;
   final DateTime? scheduledArrival;
@@ -580,10 +599,11 @@ class RideDeparture extends StopDeparture {
   /// Whether it's the one the journey takes.
   final bool suggested;
 
-  /// Whether it leaves before the rider can be at the stop.
+  /// Whether it leaves before the rider can be at the stop, as the plan has the journey.
   final bool missed;
 
-  /// Whether it's the route's last between these stops on its service day.
+  /// Whether it's the last departure between these stops on its service day, of any
+  /// route.
   final bool lastOfDay;
 }
 

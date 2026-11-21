@@ -365,29 +365,31 @@ Vehicles can be looked up by ID afterwards.
 
 ### Departure ranges
 
-Each transit leg lists `departures`: the departures of its route from its boarding stop to its
-alighting stop, around and including its own, so a client can show what happens if the rider misses
-a connection, or that the connection is the night's last. They are read from the query's pinned
-snapshot, so they agree with the plan's real-time state.
+Each transit leg lists `departures`: the departures of every route from its boarding stop to its
+alighting stop, around and including its own, so a client can show the other routes a rider could
+take instead (such as "or 7, 14"), what happens if the rider misses a connection, or that the
+connection is the night's last, and can re-time the rest of the journey on the one the rider picks.
+They are read from the query's pinned snapshot, so they agree with the plan's real-time state.
 
-The route is the rider's: the GTFS routes a trip rides between the two stops, each once in a row.
-A departure is listed when its trip rides the same ones. A ride that stays seated as its vehicle
-continues as another route lists trips that make the same change between the two stops, and a ride
-on one route lists combined trips while they are still on that route, each departure once.
+Only the leg's exact two stops count, not other stops nearby: a departure is any trip that lets the
+rider on at the boarding stop and off at the alighting stop, whatever its route. A trip that stays
+seated as its vehicle continues as another route counts when it serves both stops, and is described
+by the route it boards. Each departure is listed once, however many patterns lead from one stop to the other.
 Departures are found as routing finds them: every pattern serving the boarding stop and later the
 alighting stop (from each visit to the boarding stop, the first later visit to the alighting stop,
 unless the pattern visits the boarding stop again first), every service day of the window,
 every lane, and the rules a query of the request's mode reads, so a wheelchair rider sees only
 departures they can take and a cyclist only those that allow bikes. Frequency runs are each a
-departure. A trip no GTFS route names, such as an added trip without a `route_id`, lists only itself.
+departure.
 
-A request sets the range with `departures_before` and `departures_after` (2 and 3 by default,
+A request sets the range with `departures_before` and `departures_after` (2 and 6 by default,
 at most 10 each; both 0 lists nothing), and the range is bounded in time: 60 minutes before the
 leg's own departure and 120 minutes after. Departures are in order of departure from the boarding
 stop. Each has:
 
-- `trip_id`; `start_date` when it differs from the leg's trip's; and `headsign`, the one a rider
-  reads at the boarding stop (its stop headsign, else the trip's), when it differs from the leg's.
+- `trip_id`; `start_date` when it differs from the leg's trip's; `headsign`, the one a rider
+  reads at the boarding stop (its stop headsign, else the trip's), when it differs from the leg's;
+  and `route`, the GTFS route it boards in the shape of a leg's `route`, when it isn't the leg's.
 - `status`: `scheduled`, `live` (its times are predictions), `canceled` (a cancellation or a
   `NO_SERVICE` alert removed the trip), or `skipped` (it runs, but doesn't let riders on at the
   boarding stop or off at the alighting stop any more, or runs a pattern that doesn't serve both).
@@ -400,24 +402,61 @@ stop. Each has:
   and `bikes_allowed`.
 - `suggested` on the journey's own departure, whose fields are the leg's.
 - `missed` when it leaves the boarding stop before the rider can be there, as routing counts it:
-  for the first ride, the request's departure plus the walk from the origin; after a walk, the last
-  alighting plus the walk's cost (which includes any minimum transfer time); and after a ride to the
-  same stop, the last alighting plus the stop's change time. The journey's own is never missed,
-  and a late earlier ride can make a departure that was scheduled to connect a missed one.
-- `last_of_day` when no later departure of the route between the two stops runs on its service
-  date: canceled and skipped departures don't count, and a departure after midnight on the
-  previous date's service day can be that day's last. Knowing it takes the whole service date,
+  for the first ride, the request's departure (the response's `window.earliest`) plus the walk from
+  the origin; for a later one, the previous ride's arrival plus the leg's `transfer_seconds`.
+  The journey's own is never missed, and a late earlier ride can make a departure that was scheduled
+  to connect a missed one.
+- `last_of_day` when no later departure of any route between the two stops runs on its service
+  date, the connection's last: canceled and skipped departures don't count, and a departure after
+  midnight on the previous date's service day can be that day's last. Knowing it takes the whole service date,
   through its last trip (GTFS times can run past 24:00), which the window always holds,
   since it materializes whole service days.
 - `alerts`, indices into the leg's `alerts` that apply to this departure, and `departure_alerts`,
   indices into the leg's `departure_alerts`: the alerts on some of its departures that don't apply
   to the leg itself. Alerts match each departure as they match a leg.
 
+Every transit leg after a journey's first ride has `transfer_seconds`: the seconds from the
+previous ride's arrival at its alighting stop until the rider can board this one, as routing
+counts them for `missed`. After a walk, it is the walk's cost, which includes any minimum transfer
+time, so it can be more than the walk leg's `duration_seconds`, which is the walk alone;
+after a ride to the same stop, it is the stop's change time. A client that re-times a journey on
+another departure of an earlier ride marks as missed the later ride's departures that leave before
+that departure's `arrival` plus `transfer_seconds`.
+
+`POST /transit/ride` describes one of a leg's departures as a leg of its own, for a client that
+lets the rider pick another to draw its shape and list its stops (`OfflineTransit::ride` on the
+device answers with the same bytes). The request names it by what the plan gave: `feed`, the feed
+of the leg's stops; `board_stop_id` and `alight_stop_id`, the leg's first and last stops'
+`stop_id`; the departure's `trip_id` and `start_date` (the leg's trip's when the departure leaves
+it out; required); optionally its `departure`, which tells the runs of a frequency trip apart (the
+run leaving the boarding stop nearest it, the earlier of two as near; the trip's first run on the
+date when absent); and the plan's `mode`, whose rules the departures are read with. The answer has
+`generated_at`, `realtime` as a plan's, and `ride`: a plan's transit leg on the departure, cut at
+the alighting stop, in exactly a plan leg's shape (every stop with its times, the shape as
+polyline6, `segments` for a stay-seated ride, the vehicle, alerts, and accessibility), less what
+only a plan knows: `wait_seconds` is 0, and it has no `transfer_seconds`, `departures`, or
+`departure_alerts`. The departure is found as the leg's list found it, between the same two stops
+by the same patterns, lanes, and rules, from a snapshot pinned as a plan's is (the current one when
+its window has the start date's trips, else a window around that date with the same feeds), so the
+leg agrees with what the list said of it, and the journey's own departure looks up as the plan's
+leg itself.
+
+A feed that isn't loaded, or a stop or trip that isn't there between the two stops on that date,
+is a 404 (`unknown_feed`, `unknown_stop`, or `unknown_trip`), as is a date no timetable has
+(`date_not_covered`); a `start_date` that isn't `YYYYMMDD` is a 400. A departure the list has as
+canceled or skipped is a 409, `departure_canceled` or `departure_skipped`, rather than a leg: a leg
+is a ride the rider can take, and a leg has no status to say otherwise, so a leg at the schedule's
+times would read as one that runs. Clients don't let a rider pick such a departure, so this only
+happens when real-time data took it away after the plan.
+
 False flags, empty lists, and absent values are left out to keep the JSON small.
-Departures add about 11% to a Washington plan's JSON. Finding and describing them costs 0.3 to
+Departures added about 11% to a Washington plan's JSON, and finding and describing them cost 0.3 to
 1.2 ms a plan on the schedule and 0.8 to 2.5 ms with King County Metro's real-time data,
-on plans of 50 to 460 ms, measured with `multi_feed_bench`'s `ride departure ranges` stage.
-A plan describes each departure once, however many of its journeys list it.
+on plans of 50 to 460 ms, measured with `multi_feed_bench`'s `ride departure ranges` stage
+when a leg listed only its own route's departures, three after its own by default.
+Those numbers predate listing every route and six after, and haven't been measured again.
+A plan finds the patterns between two stops, the latest departure between them each day,
+and each departure's description once, however many of its journeys list them.
 
 ### Nearby departures
 

@@ -12,6 +12,7 @@ use crate::nearby::{
 };
 use crate::plan::{DepartureRange, TransitOptions, TransitRequest, TravelMode};
 use crate::response::language_supported;
+use crate::ride::RideRequest;
 use crate::street::{StreetError, StreetPlanner};
 
 /// What the server or bridge sends back: a status and a JSON body.
@@ -65,7 +66,7 @@ pub struct PlanRequestBody {
     /// How many departures before its own each ride lists; two when absent.
     #[serde(default)]
     pub departures_before: Option<u8>,
-    /// How many departures after its own each ride lists; three when absent.
+    /// How many departures after its own each ride lists; six when absent.
     #[serde(default)]
     pub departures_after: Option<u8>,
     /// The narration language for walking and cycling legs (a BCP 47 tag); `en-US` when absent.
@@ -211,6 +212,43 @@ pub struct RouteRequestBody {
     pub start_date: Option<String>,
 }
 
+/// A ride lookup, as the server and the bridge take it, by the identifiers a plan gave:
+/// a transit leg's stops, and one of its `departures`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RideRequestBody {
+    /// The feed of the leg's stops.
+    pub feed: String,
+    /// The leg's boarding stop: its first stop's `stop_id`.
+    pub board_stop_id: String,
+    /// The leg's alighting stop: its last stop's `stop_id`.
+    pub alight_stop_id: String,
+    /// The departure's `trip_id`.
+    pub trip_id: String,
+    /// The departure's `start_date`, or the leg's trip's when the departure leaves it out.
+    pub start_date: String,
+    /// The departure's `departure`, which tells a frequency trip's runs apart; the first run
+    /// of the trip on its date when absent.
+    #[serde(default)]
+    pub departure: Option<i64>,
+    /// The plan's mode: `walking` (the default), `cycling`, or `wheelchair`.
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+fn parse_ride(body: &[u8], now: i64) -> Result<RideRequest, JsonResponse> {
+    let parsed: RideRequestBody = parse_json(body)?;
+    Ok(RideRequest {
+        feed: parsed.feed,
+        board_stop_id: parsed.board_stop_id,
+        alight_stop_id: parsed.alight_stop_id,
+        trip_id: parsed.trip_id,
+        start_date: parsed.start_date,
+        departure: parsed.departure,
+        mode: parse_mode(parsed.mode.as_deref())?,
+        now,
+    })
+}
+
 fn parse_nearby(body: &[u8], now: i64) -> Result<NearbyRequest, JsonResponse> {
     let parsed: NearbyRequestBody = parse_json(body)?;
     let mut request = NearbyRequest::new(
@@ -285,6 +323,18 @@ impl StreetPlanner {
         }
     }
 
+    /// Answers a JSON ride lookup, as the HTTP endpoint and the app's bridge do.
+    pub fn ride_json(&self, body: &[u8], now: i64, interrupt: &dyn Fn() -> bool) -> JsonResponse {
+        let request = match parse_ride(body, now) {
+            Ok(parsed) => parsed,
+            Err(response) => return response,
+        };
+        match self.ride(&request, interrupt) {
+            Ok(response) => ok_body(&response),
+            Err(error) => plan_error(&error),
+        }
+    }
+
     /// Answers a JSON planning request, as the HTTP endpoint and the app's bridge do.
     pub fn plan_json(&self, body: &[u8], now: i64, interrupt: &dyn Fn() -> bool) -> JsonResponse {
         let (request, language) = match parse_body(body, now) {
@@ -318,7 +368,9 @@ fn ok_body<T: Serialize>(response: &T) -> JsonResponse {
 
 fn state_error(error: &StateError) -> JsonResponse {
     match error {
-        StateError::DateNotCovered(_) => error_body(404, "date_not_covered", error.to_string()),
+        StateError::DateNotCovered(_) | StateError::ServiceDateNotCovered(_) => {
+            error_body(404, "date_not_covered", error.to_string())
+        }
         StateError::UnknownFeed(_) => error_body(404, "unknown_feed", error.to_string()),
         other => error_body(500, "internal", other.to_string()),
     }
@@ -334,6 +386,10 @@ fn plan_error(error: &PlanError<WalkError, StreetError>) -> JsonResponse {
             &format!("unknown_{}", missing.name()),
             error.to_string(),
         ),
+        // It's there, but real-time data took it away: what was asked conflicts with now.
+        PlanError::NotRunning(why) => {
+            error_body(409, &format!("departure_{}", why.name()), error.to_string())
+        }
         PlanError::AccessEgress(StreetError::NoStreetNearby(which)) => error_body(
             400,
             "no_street_nearby",

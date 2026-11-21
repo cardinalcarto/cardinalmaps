@@ -72,7 +72,8 @@ impl Default for TransitOptions {
 /// The most departures a ride may list on either side of its own; see [`DepartureRange`].
 pub const MAX_RANGE_DEPARTURES: u8 = 10;
 
-/// Which other departures of a ride's route each ride lists, around the one the journey takes.
+/// Which other departures between a ride's two stops each ride lists, around the one the journey
+/// takes: of any route that serves the boarding stop and then the alighting stop.
 ///
 /// A ride lists up to `before` departures leaving its boarding stop before its own,
 /// and up to `after` leaving after it, no further from its own than the two bounds.
@@ -106,11 +107,11 @@ impl DepartureRange {
 }
 
 impl Default for DepartureRange {
-    /// Two before and three after, within an hour before and two hours after.
+    /// Two before and six after, within an hour before and two hours after.
     fn default() -> Self {
         Self {
             before: 2,
-            after: 3,
+            after: 6,
             before_seconds: 3600,
             after_seconds: 2 * 3600,
         }
