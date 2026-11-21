@@ -8,6 +8,7 @@ import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
 
+import 'connections.dart';
 import 'format.dart';
 import 'transit_plan.dart';
 import 'transit_sheet.dart';
@@ -25,6 +26,7 @@ class TimelinePiece {
     required this.end,
     this.mode,
     this.route,
+    this.ride,
     this.continues = false,
   });
 
@@ -38,6 +40,10 @@ class TimelinePiece {
   /// For a ride piece: its route.
   final TransitRoute? route;
 
+  /// For a ride piece: which of the journey's rides it's of, by index in
+  /// [Journey.rides].
+  final int? ride;
+
   /// For a ride piece: whether the vehicle goes on as the next piece, without the rider
   /// getting off.
   final bool continues;
@@ -46,10 +52,14 @@ class TimelinePiece {
 }
 
 /// [journey]'s timeline, from leaving the start to arriving: a wait fills any time
-/// between one leg and the next.
-List<TimelinePiece> timelinePieces(Journey journey) {
+/// between one leg and the next. With a [chain], it's timed as the departures chosen
+/// have it, unless a ride has no connection.
+List<TimelinePiece> timelinePieces(Journey journey, {ConnectionChain? chain}) {
+  final times = chain?.legTimes;
+  final arrival = times == null ? journey.arrival : chain!.arrival!;
   final pieces = <TimelinePiece>[];
-  var clock = journey.departure;
+  var clock = times == null ? journey.departure : chain!.departure;
+  var ride = 0;
   void add(TimelinePiece piece) {
     if (piece.start.isAfter(clock)) {
       pieces.add(
@@ -62,7 +72,9 @@ List<TimelinePiece> timelinePieces(Journey journey) {
     }
   }
 
-  for (final leg in journey.legs) {
+  for (final (l, leg) in journey.legs.indexed) {
+    final start = times?[l].start ?? leg.departure;
+    final end = times?[l].end ?? leg.arrival;
     switch (leg) {
       case StreetLeg():
         // A change at the same stop has nothing to draw but the wait.
@@ -70,21 +82,25 @@ List<TimelinePiece> timelinePieces(Journey journey) {
           add(
             TimelinePiece(
               kind: TimelineKind.street,
-              start: leg.departure,
-              end: leg.arrival,
+              start: start,
+              end: end,
               mode: leg.mode,
             ),
           );
         }
       case TransitLeg():
+        final choice = times == null ? null : chain!.forLeg(l);
         final segments = leg.segments;
-        if (segments.length < 2) {
+        final index = ride++;
+        if (segments.length < 2 || (choice != null && !choice.suggested)) {
+          // Another departure than the plan's is one trip, as far as is known.
           add(
             TimelinePiece(
               kind: TimelineKind.ride,
-              start: leg.departure,
-              end: leg.arrival,
-              route: leg.route,
+              start: start,
+              end: end,
+              route: choice?.route ?? leg.route,
+              ride: index,
             ),
           );
         } else {
@@ -98,6 +114,7 @@ List<TimelinePiece> timelinePieces(Journey journey) {
                 start: i == 0 ? leg.departure : first.departure,
                 end: i == segments.length - 1 ? leg.arrival : end.arrival,
                 route: segmentRoute(leg, segment),
+                ride: index,
                 continues: i < segments.length - 1,
               ),
             );
@@ -105,13 +122,9 @@ List<TimelinePiece> timelinePieces(Journey journey) {
         }
     }
   }
-  if (journey.arrival.isAfter(clock)) {
+  if (arrival.isAfter(clock)) {
     pieces.add(
-      TimelinePiece(
-        kind: TimelineKind.wait,
-        start: clock,
-        end: journey.arrival,
-      ),
+      TimelinePiece(kind: TimelineKind.wait, start: clock, end: arrival),
     );
   }
   return pieces;
@@ -252,33 +265,53 @@ Color routeTextColor(TransitRoute? route, Color background) =>
 /// A journey's timeline: ride badges in route colors, dotted walks, and thin waits.
 ///
 /// Its pieces sit at their times on [axis], which rows of a list share, with the axis'
-/// marks ([TimelineAxis.ticks]) drawn faintly behind it if [ticks] is set.
+/// marks ([TimelineAxis.ticks]) drawn faintly behind it if [ticks] is set. With a
+/// [chain], it's timed as the departures chosen have it.
+///
+/// With [others], the other routes that can be taken for each ride ([otherRoutes]),
+/// a line above it says "or" and badges them, over the start of each ride that has
+/// some, as far as there's room ([placeOrLabels]).
 class JourneyTimeline extends StatelessWidget {
   const JourneyTimeline({
     super.key,
     required this.journey,
     required this.axis,
+    this.chain,
+    this.others,
     this.ticks = false,
     this.height = 26,
   });
 
   final Journey journey;
   final TimelineAxis axis;
+  final ConnectionChain? chain;
+  final List<List<TransitRoute>>? others;
   final bool ticks;
+
+  /// The height of the timeline itself, below any line of other routes.
   final double height;
+
+  /// The height of the line of other routes, and the room under it.
+  static const orHeight = 16.0;
+  static const orGap = 4.0;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final pieces = timelinePieces(journey);
+    final pieces = timelinePieces(journey, chain: chain);
+    final others = this.others;
+    final hasOthers = others != null && others.any((o) => o.isNotEmpty);
+    final scaler = MediaQuery.textScalerOf(context);
     return Semantics(
-      label: timelineLabel(pieces),
+      label: timelineLabel(pieces, others: others),
       child: SizedBox(
-        height: height,
+        height: hasOthers ? height + orHeight + orGap : height,
         width: double.infinity,
         child: CustomPaint(
           painter: _TimelinePainter(
             pieces: pieces,
+            others: hasOthers ? others : const [],
+            barTop: hasOthers ? orHeight + orGap : 0,
             axis: axis,
             ticks: ticks,
             scheme: theme.colorScheme,
@@ -286,7 +319,15 @@ class JourneyTimeline extends StatelessWidget {
               fontWeight: FontWeight.w600,
               height: 1,
             ),
-            textScaler: MediaQuery.textScalerOf(context),
+            orStyle: theme.textTheme.labelMedium!.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              height: 1,
+            ),
+            orBadgeStyle: theme.textTheme.labelMedium!.copyWith(
+              fontWeight: FontWeight.w700,
+              height: 1,
+            ),
+            textScaler: scaler,
           ),
         ),
       ),
@@ -294,13 +335,66 @@ class JourneyTimeline extends StatelessWidget {
   }
 }
 
-/// What a timeline says, for screen readers: its rides in order.
-String timelineLabel(List<TimelinePiece> pieces) {
+/// What a timeline says, for screen readers: its rides in order, each with the [others]
+/// that can be taken for it.
+String timelineLabel(
+  List<TimelinePiece> pieces, {
+  List<List<TransitRoute>>? others,
+}) {
   final rides = [
-    for (final p in pieces)
-      if (p.kind == TimelineKind.ride) _badgeText(p.route),
+    for (final (i, p) in pieces.indexed)
+      if (p.kind == TimelineKind.ride)
+        [
+          _badgeText(p.route),
+          // Once a ride, at its first piece.
+          if (_startsRide(pieces, i))
+            for (final route in _othersOf(others, p.ride)) _badgeText(route),
+        ].join(' or '),
   ];
   return rides.isEmpty ? 'No rides' : rides.join(', then ');
+}
+
+/// The routes in [others] for ride [ride], if there are any.
+List<TransitRoute> _othersOf(List<List<TransitRoute>>? others, int? ride) =>
+    others == null || ride == null || ride >= others.length
+    ? const []
+    : others[ride];
+
+/// Whether piece [i] is the first of its ride.
+bool _startsRide(List<TimelinePiece> pieces, int i) =>
+    pieces[i].ride != null &&
+    !pieces.take(i).any((p) => p.ride == pieces[i].ride);
+
+/// Where "or" labels go along a timeline [width] wide, each from its [anchors] (the
+/// left of the ride it's for), in order: as near its anchor as it can be without
+/// overlapping the one before ([gap] apart) or passing the right edge, with as many of
+/// its badges as fit. [widths] has each label's width with 1, 2, … badges.
+///
+/// Returns each label's left and how many badges it shows; none for a label with no
+/// room, which isn't drawn.
+List<({double left, int count})> placeOrLabels(
+  List<double> anchors,
+  List<List<double>> widths,
+  double width, {
+  double gap = 8,
+}) {
+  final out = <({double left, int count})>[];
+  var cursor = 0.0;
+  for (final (i, anchor) in anchors.indexed) {
+    var placed = (left: 0.0, count: 0);
+    for (var count = widths[i].length; count >= 1; count--) {
+      final w = widths[i][count - 1];
+      var left = math.max(anchor, cursor);
+      if (left + w > width) left = width - w;
+      if (left >= cursor && left >= 0) {
+        placed = (left: left, count: count);
+        cursor = left + w + gap;
+        break;
+      }
+    }
+    out.add(placed);
+  }
+  return out;
 }
 
 String _badgeText(TransitRoute? route) {
@@ -313,23 +407,34 @@ String _badgeText(TransitRoute? route) {
 class _TimelinePainter extends CustomPainter {
   _TimelinePainter({
     required this.pieces,
+    required this.others,
+    required this.barTop,
     required this.axis,
     required this.ticks,
     required this.scheme,
     required this.textStyle,
+    required this.orStyle,
+    required this.orBadgeStyle,
     required this.textScaler,
   });
 
   final List<TimelinePiece> pieces;
+
+  /// The other routes for each ride, or empty for no line of them.
+  final List<List<TransitRoute>> others;
+
+  /// Where the timeline itself starts, below any line of other routes.
+  final double barTop;
   final TimelineAxis axis;
   final bool ticks;
   final ColorScheme scheme;
   final TextStyle textStyle;
+  final TextStyle orStyle;
+  final TextStyle orBadgeStyle;
   final TextScaler textScaler;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final mid = size.height / 2;
     if (ticks) {
       final tick = Paint()
         ..color = scheme.outlineVariant.withValues(alpha: 0.5)
@@ -340,6 +445,15 @@ class _TimelinePainter extends CustomPainter {
       }
     }
     final placed = placePieces(pieces, axis, size.width);
+    if (others.isNotEmpty) _others(canvas, placed, size.width);
+    canvas.save();
+    canvas.translate(0, barTop);
+    _pieces(canvas, placed, Size(size.width, size.height - barTop));
+    canvas.restore();
+  }
+
+  void _pieces(Canvas canvas, List<PlacedPiece> placed, Size size) {
+    final mid = size.height / 2;
     for (final (i, p) in placed.indexed) {
       switch (p.piece.kind) {
         case TimelineKind.wait:
@@ -364,6 +478,76 @@ class _TimelinePainter extends CustomPainter {
             size.height,
             joined: before?.kind == TimelineKind.ride && before!.continues,
           );
+      }
+    }
+  }
+
+  /// The line of other routes: "or" and their badges, over the start of each ride
+  /// that has some.
+  void _others(Canvas canvas, List<PlacedPiece> placed, double width) {
+    const space = 4.0, padding = 4.0, badgeGap = 3.0;
+    const height = JourneyTimeline.orHeight;
+    TextPainter text(String label, TextStyle style) => TextPainter(
+      text: TextSpan(text: label, style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: textScaler,
+      maxLines: 1,
+      ellipsis: '…',
+    )..layout(maxWidth: 56);
+    final or = text('or', orStyle);
+    (Color, TextPainter) badge(TransitRoute route) {
+      final color = parseRouteColor(route.color) ?? scheme.primary;
+      return (
+        color,
+        text(
+          _badgeText(route),
+          orBadgeStyle.copyWith(color: routeTextColor(route, color)),
+        ),
+      );
+    }
+
+    // Each ride's anchor, and its badges' colors and labels.
+    final rides = <(double, List<(Color, TextPainter)>)>[];
+    for (final (i, p) in placed.indexed) {
+      final routes = _othersOf(others, p.piece.ride);
+      if (routes.isEmpty || !_startsRide(pieces, i)) continue;
+      rides.add((p.left + 1, [for (final route in routes) badge(route)]));
+    }
+    double badgeWidth(TextPainter label) => label.width + 2 * padding;
+    final widths = [
+      for (final (_, badges) in rides)
+        [
+          for (var n = 1; n <= badges.length; n++)
+            or.width +
+                space +
+                badges.take(n).fold(0.0, (w, b) => w + badgeWidth(b.$2)) +
+                (n - 1) * badgeGap,
+        ],
+    ];
+    final spots = placeOrLabels([for (final (a, _) in rides) a], widths, width);
+    for (final (i, (_, badges)) in rides.indexed) {
+      final spot = spots[i];
+      if (spot.count == 0) continue;
+      var x = spot.left;
+      or.paint(canvas, Offset(x, (height - or.height) / 2));
+      x += or.width + space;
+      for (final (color, label) in badges.take(spot.count)) {
+        final rect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(x, 0, badgeWidth(label), height),
+          const Radius.circular(4),
+        );
+        canvas.drawRRect(rect, Paint()..color = color);
+        if (_lowContrast(color)) {
+          canvas.drawRRect(
+            rect,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1
+              ..color = scheme.outline,
+          );
+        }
+        label.paint(canvas, Offset(x + padding, (height - label.height) / 2));
+        x = rect.right + badgeGap;
       }
     }
   }
@@ -520,8 +704,25 @@ class _TimelinePainter extends CustomPainter {
       old.axis != axis ||
       old.scheme != scheme ||
       old.textStyle != textStyle ||
+      old.orStyle != orStyle ||
+      old.barTop != barTop ||
+      !_sameOthers(old.others, others) ||
       old.textScaler != textScaler ||
       old.ticks != ticks;
+
+  static bool _sameOthers(
+    List<List<TransitRoute>> a,
+    List<List<TransitRoute>> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].length != b[i].length) return false;
+      for (var j = 0; j < a[i].length; j++) {
+        if (a[i][j].id != b[i][j].id) return false;
+      }
+    }
+    return true;
+  }
 
   static bool _samePieces(List<TimelinePiece> a, List<TimelinePiece> b) {
     if (a.length != b.length) return false;
@@ -576,8 +777,8 @@ class TimelineTicks extends StatelessWidget {
   }
 }
 
-/// A journey in the overview: its timeline on the shared axis, when to go, and how long
-/// it takes.
+/// A journey in the overview: its timeline on the shared axis, with the other routes
+/// that can be taken for its rides above it, when to go, and how long it takes.
 class JourneyRow extends StatelessWidget {
   const JourneyRow({
     super.key,
@@ -610,7 +811,12 @@ class JourneyRow extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            JourneyTimeline(journey: journey, axis: axis, ticks: true),
+            JourneyTimeline(
+              journey: journey,
+              axis: axis,
+              others: otherRoutes(journey),
+              ticks: true,
+            ),
             const SizedBox(height: 6),
             Row(
               crossAxisAlignment: CrossAxisAlignment.baseline,
@@ -655,17 +861,29 @@ class JourneyRow extends StatelessWidget {
 /// "Go in 5 min", with the minutes in the live color when the first ride's times are
 /// live.
 class GoIn extends StatelessWidget {
-  const GoIn({super.key, required this.journey, required this.now, this.style});
+  const GoIn({
+    super.key,
+    required this.journey,
+    required this.now,
+    this.leave,
+    this.live,
+    this.style,
+  });
 
   final Journey journey;
   final DateTime now;
+
+  /// When to leave, and whether the first ride's times are live, when not as the plan
+  /// has them: with another departure of its first ride chosen.
+  final DateTime? leave;
+  final bool? live;
   final TextStyle? style;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Text.rich(
-      goInSpan(theme, journey, now),
+      goInSpan(theme, journey, now, leave: leave, live: live),
       style: style ?? theme.textTheme.titleSmall,
       maxLines: 1,
       softWrap: false,
@@ -674,10 +892,17 @@ class GoIn extends StatelessWidget {
 }
 
 /// "Go in 5 min" or "Go now", from [now], with the time in the live color when the
-/// first ride's times are live.
-TextSpan goInSpan(ThemeData theme, Journey journey, DateTime now) {
-  final live = journey.rides.firstOrNull?.realtime ?? false;
-  final minutes = (journey.departure.difference(now).inSeconds / 60).floor();
+/// first ride's times are live: as the plan has them, unless [leave] and [live] say.
+TextSpan goInSpan(
+  ThemeData theme,
+  Journey journey,
+  DateTime now, {
+  DateTime? leave,
+  bool? live,
+}) {
+  live ??= journey.rides.firstOrNull?.realtime ?? false;
+  final minutes = ((leave ?? journey.departure).difference(now).inSeconds / 60)
+      .floor();
   final liveStyle = live ? TextStyle(color: liveColor(theme)) : null;
   return TextSpan(
     children: minutes <= 0

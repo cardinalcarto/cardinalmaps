@@ -3,28 +3,33 @@
 /// the other departures of its route, so a rider can see what happens if they miss it.
 library;
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
 
 import '../units.dart';
+import '../transit/countdown.dart';
+import '../transit/nearby_page.dart' show CountdownNumber, countdownMinutes;
+import 'connections.dart';
 import 'format.dart';
 import 'transit_plan.dart';
 import 'transit_sheet.dart';
 import 'transit_timeline.dart';
 
-/// The top of a journey's details: back to the overview, when it leaves and arrives,
-/// and its timeline.
+/// The top of a journey's details: back to the overview, when it leaves and arrives
+/// with the departures chosen in [chain], and its timeline.
 class JourneyHeader extends StatelessWidget {
   const JourneyHeader({
     super.key,
-    required this.journey,
+    required this.chain,
     required this.now,
     required this.units,
     required this.onBack,
   });
 
-  final Journey journey;
+  /// The journey, with the departures chosen of its rides.
+  final ConnectionChain chain;
   final DateTime now;
 
   /// Metric or imperial, for the distances on foot.
@@ -37,8 +42,11 @@ class JourneyHeader extends StatelessWidget {
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
+    final journey = chain.journey;
     final offset = journeyUtcOffset(journey);
     final street = journey.streetMeters;
+    final arrival = chain.arrival;
+    final duration = chain.duration;
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 0, 16, 8),
       child: Column(
@@ -54,12 +62,13 @@ class JourneyHeader extends StatelessWidget {
               Expanded(
                 child: Text('Trip details', style: theme.textTheme.titleLarge),
               ),
-              Text(
-                formatDuration(journey.duration.toDouble()),
-                style: theme.textTheme.titleLarge?.copyWith(
-                  color: theme.colorScheme.primary,
+              if (duration != null)
+                Text(
+                  formatDuration(duration.toDouble()),
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: theme.colorScheme.primary,
+                  ),
                 ),
-              ),
             ],
           ),
           Padding(
@@ -71,14 +80,23 @@ class JourneyHeader extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.baseline,
                   textBaseline: TextBaseline.alphabetic,
                   children: [
-                    GoIn(journey: journey, now: now),
+                    GoIn(
+                      journey: journey,
+                      now: now,
+                      leave: chain.departure,
+                      live: chain.rides.firstOrNull?.realtime,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '${clock(context, journey.departure, utcOffset: offset)}'
+                        '${clock(context, chain.departure, utcOffset: offset)}'
                         ' – '
-                        '${clock(context, journey.arrival, utcOffset: offset)}',
-                        style: theme.textTheme.bodyMedium,
+                        '${arrival == null ? 'no connection' : clock(context, arrival, utcOffset: offset)}',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: arrival == null
+                              ? theme.colorScheme.error
+                              : null,
+                        ),
                         textAlign: TextAlign.end,
                       ),
                     ),
@@ -100,7 +118,11 @@ class JourneyHeader extends StatelessWidget {
                 const SizedBox(height: 8),
                 JourneyTimeline(
                   journey: journey,
-                  axis: TimelineAxis(journey.departure, journey.arrival),
+                  chain: chain,
+                  // With no connection, the plan's.
+                  axis: arrival == null
+                      ? TimelineAxis(journey.departure, journey.arrival)
+                      : TimelineAxis(chain.departure, arrival),
                   height: 22,
                 ),
               ],
@@ -375,6 +397,7 @@ class RideStops extends StatelessWidget {
             visit: visit,
             time: i == last ? visit.arrival : visit.departure,
             live: visit.predicted,
+            skipped: visit.skipped,
             strong: i == 0,
           ),
         ),
@@ -431,11 +454,17 @@ class RideStops extends StatelessWidget {
   }
 }
 
-/// A journey's legs from top to bottom, as slivers' worth of rows.
+/// A journey's legs from top to bottom, as slivers' worth of rows, with the departures
+/// chosen in [chain]: each ride's departures to choose from, and its route, times and
+/// stops as the one chosen has them.
+///
+/// The plan lists the stops of each ride's suggested trip alone, so for another
+/// departure only its boarding and alighting stops show.
 class JourneyItinerary extends StatefulWidget {
   const JourneyItinerary({
     super.key,
-    required this.journey,
+    required this.chain,
+    required this.onSelect,
     required this.start,
     required this.destination,
     required this.units,
@@ -443,7 +472,12 @@ class JourneyItinerary extends StatefulWidget {
     required this.now,
   });
 
-  final Journey journey;
+  /// The journey, with the departures chosen of its rides.
+  final ConnectionChain chain;
+
+  /// The rider chose departure `departure` of ride `ride` (by index in
+  /// [Journey.rides]).
+  final void Function(int ride, int departure) onSelect;
 
   /// What the trip's ends are called.
   final String start;
@@ -465,7 +499,12 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
   @override
   void didUpdateWidget(JourneyItinerary oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.journey, widget.journey)) _expanded.clear();
+    final journey = widget.chain.journey;
+    if (!identical(oldWidget.chain.journey, journey)) _expanded.clear();
+    // A ride on another departure than the plan's shows no stops between.
+    _expanded.removeWhere(
+      (key) => widget.chain.forLeg(key.$1)?.suggested != true,
+    );
   }
 
   @override
@@ -481,9 +520,11 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
   }
 
   List<Widget> _rows(BuildContext context) {
-    final journey = widget.journey;
+    final chain = widget.chain;
+    final journey = chain.journey;
     final legs = journey.legs;
     final offset = journeyUtcOffset(journey);
+    final arrival = chain.arrival;
     final rows = <Widget>[];
 
     _Line connector(JourneyLeg? leg) => switch (leg) {
@@ -498,11 +539,12 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         rail: _Rail(marker: _Marker.end, below: connector(legs.firstOrNull)),
         child: _EndText(
           name: widget.start,
-          time: 'Leave ${clock(context, journey.departure, utcOffset: offset)}',
+          time: 'Leave ${clock(context, chain.departure, utcOffset: offset)}',
         ),
       ),
     );
 
+    var ride = 0;
     for (final (i, leg) in legs.indexed) {
       final next = i + 1 < legs.length ? legs[i + 1] : null;
       final previous = i > 0 ? legs[i - 1] : null;
@@ -521,6 +563,8 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
             ),
           );
         case TransitLeg():
+          final choice = chain.rides[ride];
+          final index = ride++;
           final change =
               previous is TransitLeg ||
               (previous is StreetLeg && _isChange(previous));
@@ -529,13 +573,14 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
               : connector(previous) == _Line.dotted
               ? _Line.dotted
               : _Line.thin;
-          if (change || leg.waitSeconds >= 60) {
+          final wait = choice.made ? choice.waitSeconds : 0;
+          if (change || wait >= 60) {
             rows.add(
               _RailRow(
                 rail: const _Rail.through(_Line.thin),
                 child: _WaitText(
                   change: change ? leg.boarding.stop.name : null,
-                  seconds: leg.waitSeconds,
+                  seconds: wait,
                 ),
               ),
             );
@@ -544,8 +589,9 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
             _rideRows(
               context,
               i,
-              leg,
-              above: change || leg.waitSeconds >= 60 ? _Line.thin : before,
+              choice,
+              onSelect: (departure) => widget.onSelect(index, departure),
+              above: change || wait >= 60 ? _Line.thin : before,
               below: connector(next),
             ),
           );
@@ -557,7 +603,9 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         rail: _Rail(marker: _Marker.end, above: connector(legs.lastOrNull)),
         child: _EndText(
           name: widget.destination,
-          time: 'Arrive ${clock(context, journey.arrival, utcOffset: offset)}',
+          time: arrival == null
+              ? 'No connection'
+              : 'Arrive ${clock(context, arrival, utcOffset: offset)}',
         ),
       ),
     );
@@ -565,27 +613,37 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
   }
 
   /// A ride's rows: its route, its stops with their times, its departures, and any
-  /// trips it goes on as.
+  /// trips it goes on as, as the departure chosen has them.
   List<Widget> _rideRows(
     BuildContext context,
     int index,
-    TransitLeg ride, {
+    RideChoice choice, {
+    required ValueChanged<int> onSelect,
     required _Line above,
     required _Line below,
   }) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final ride = choice.ride;
+    final route = choice.route;
     final rows = <Widget>[];
-    final segments = ride.segments.length >= 2
+    // The stops between, when they're known: the plan's own trip's.
+    final stops = choice.stops;
+    final segments = stops != null && ride.segments.length >= 2
         ? ride.segments
         : <RideSegment?>[null];
     Color colorOf(RideSegment? segment) =>
         parseRouteColor(
-          (segment == null ? ride.route : segmentRoute(ride, segment))?.color,
+          (segment == null ? route : segmentRoute(ride, segment))?.color,
         ) ??
         scheme.primary;
     final first = colorOf(segments.first);
     final last = colorOf(segments.last);
+    final leaves = choice.departureTime;
+    final arrives = choice.arrival;
+    final live = choice.suggested
+        ? (ride.boarding.predicted, ride.alighting.predicted)
+        : (choice.realtime, choice.realtime);
 
     rows.add(
       _RailRow(
@@ -594,9 +652,16 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
           below: _Line.bar,
           marker: _Marker.vehicle,
           belowColor: first,
-          icon: vehicleIcon(ride.route?.kind ?? VehicleKind.other),
+          icon: vehicleIcon(route?.kind ?? VehicleKind.other),
         ),
-        child: _RideTitle(ride: ride),
+        child: _RideTitle(
+          ride: ride,
+          route: route,
+          headsign: choice.headsign,
+          seconds: leaves != null && arrives != null
+              ? arrives.difference(leaves).inSeconds
+              : null,
+        ),
       ),
     );
     rows.add(
@@ -610,32 +675,38 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         ),
         child: _StopText(
           visit: ride.boarding,
-          time: ride.boarding.departure,
-          live: ride.boarding.predicted,
+          time: leaves,
+          live: live.$1,
+          skipped: stops != null && ride.boarding.skipped,
           strong: true,
         ),
       ),
     );
-    rows.add(
-      _RailRow(
-        rail: _Rail.through(_Line.bar, color: first),
-        child: DepartureRange(
-          key: ValueKey(('departures', index)),
-          ride: ride,
-          access: widget.access,
-          now: widget.now,
+    if (choice.connection != RideConnection.unknown) {
+      rows.add(
+        _RailRow(
+          rail: _Rail.through(_Line.bar, color: first),
+          child: DepartureRange(
+            key: ValueKey(('departures', index)),
+            choice: choice,
+            access: widget.access,
+            now: widget.now,
+            onSelect: onSelect,
+          ),
         ),
-      ),
-    );
+      );
+    }
     final lastStop = ride.stops.length - 1;
     for (final (s, segment) in segments.indexed) {
       final color = colorOf(segment);
       final from = segment?.firstStop.clamp(0, lastStop) ?? 0;
       final to = segment?.lastStop.clamp(0, lastStop) ?? lastStop;
-      final between = ride.stops.sublist(
-        (from + 1).clamp(0, lastStop),
-        to.clamp(from + 1, lastStop + 1),
-      );
+      final between = stops == null
+          ? const <StopVisit>[]
+          : stops.sublist(
+              (from + 1).clamp(0, lastStop),
+              to.clamp(from + 1, lastStop + 1),
+            );
       final key = (index, s);
       final open = _expanded.contains(key);
       if (between.isNotEmpty) {
@@ -670,6 +741,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
                   visit: visit,
                   time: visit.departure,
                   live: visit.predicted,
+                  skipped: visit.skipped,
                 ),
               ),
             );
@@ -708,8 +780,9 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         ),
         child: _StopText(
           visit: ride.alighting,
-          time: ride.alighting.arrival,
-          live: ride.alighting.predicted,
+          time: arrives,
+          live: live.$2,
+          skipped: stops != null && ride.alighting.skipped,
           strong: true,
         ),
       ),
@@ -910,9 +983,21 @@ class _StreetRowState extends State<_StreetRow> {
 }
 
 class _RideTitle extends StatelessWidget {
-  const _RideTitle({required this.ride});
+  const _RideTitle({
+    required this.ride,
+    required this.route,
+    required this.headsign,
+    required this.seconds,
+  });
 
   final TransitLeg ride;
+
+  /// The route and headsign of the departure taken.
+  final TransitRoute? route;
+  final String? headsign;
+
+  /// How long it rides, when that's known.
+  final int? seconds;
 
   @override
   Widget build(BuildContext context) {
@@ -920,20 +1005,21 @@ class _RideTitle extends StatelessWidget {
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
-    final headsign = ride.headsign;
+    final route = this.route;
+    final seconds = this.seconds;
     return Padding(
       padding: const EdgeInsets.only(top: 2, bottom: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          RouteBadge(route: ride.route),
+          RouteBadge(route: route),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  headsign ?? ride.route?.longName ?? '',
+                  headsign ?? route?.longName ?? '',
                   style: theme.textTheme.titleSmall,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -941,20 +1027,22 @@ class _RideTitle extends StatelessWidget {
                 Text(
                   [
                     ?ride.agency,
-                    (ride.route?.kind ?? VehicleKind.other).label,
+                    (route?.kind ?? VehicleKind.other).label,
                   ].join(' · '),
                   style: muted,
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          Text(
-            formatDuration(ride.duration.toDouble()),
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.primary,
+          if (seconds != null) ...[
+            const SizedBox(width: 8),
+            Text(
+              formatDuration(seconds.toDouble()),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.primary,
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -966,12 +1054,18 @@ class _StopText extends StatelessWidget {
     required this.visit,
     required this.time,
     required this.live,
+    required this.skipped,
     this.strong = false,
   });
 
   final StopVisit visit;
-  final DateTime time;
+
+  /// When it's left or reached, or null when that isn't known.
+  final DateTime? time;
   final bool live;
+
+  /// Whether the trip skips it.
+  final bool skipped;
 
   /// Whether the rider gets on or off here, rather than passing it.
   final bool strong;
@@ -996,7 +1090,7 @@ class _StopText extends StatelessWidget {
             child: Text(
               name,
               style: style?.copyWith(
-                decoration: visit.skipped ? TextDecoration.lineThrough : null,
+                decoration: skipped ? TextDecoration.lineThrough : null,
               ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
@@ -1011,11 +1105,13 @@ class _StopText extends StatelessWidget {
                 color: theme.colorScheme.error,
               ),
             ),
-          const SizedBox(width: 8),
-          Text(
-            clock(context, time, utcOffset: visit.utcOffset),
-            style: style?.copyWith(color: live ? liveColor(theme) : null),
-          ),
+          if (time case final time?) ...[
+            const SizedBox(width: 8),
+            Text(
+              clock(context, time, utcOffset: visit.utcOffset),
+              style: style?.copyWith(color: live ? liveColor(theme) : null),
+            ),
+          ],
         ],
       ),
     );
@@ -1102,45 +1198,74 @@ class _ContinueText extends StatelessWidget {
   }
 }
 
-/// A ride's departures, as chips to compare, and one place that says how the chosen
-/// one is running: live or scheduled, how accessible, and its alerts.
+/// A ride's departures, as tiles counting down to compare and choose from, and one
+/// place that says how the chosen one is running: live or scheduled, how accessible,
+/// and its alerts. Or, when the rider can make none of them, that there's no
+/// connection.
 ///
-/// The journey's own departure is emphasized and chosen to start with. Departures the
-/// rider can't make, and ones that don't run, are muted and can't be chosen.
+/// The suggested departure, the plan's own, says so. Departures the rider can't make,
+/// and ones that don't run, are muted and can't be chosen. The countdowns tick each
+/// second from [now].
 class DepartureRange extends StatefulWidget {
   const DepartureRange({
     super.key,
-    required this.ride,
+    required this.choice,
     required this.access,
     required this.now,
+    required this.onSelect,
   });
 
-  final TransitLeg ride;
+  final RideChoice choice;
   final TransitAccess access;
   final DateTime now;
+
+  /// The rider chose a departure, by its index in the ride's departures.
+  final ValueChanged<int> onSelect;
 
   @override
   State<DepartureRange> createState() => _DepartureRangeState();
 }
 
 class _DepartureRangeState extends State<DepartureRange> {
-  /// The departure described below the chips, by index; null for the ride's own.
-  int? _chosen;
+  late final _now = ValueNotifier(widget.now);
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _start();
+  }
+
+  /// Counts on from [DepartureRange.now], a second at a time.
+  void _start() {
+    _tick?.cancel();
+    _now.value = widget.now;
+    _tick = Timer.periodic(const Duration(seconds: 1), (timer) {
+      _now.value = widget.now.add(Duration(seconds: timer.tick));
+    });
+  }
 
   @override
   void didUpdateWidget(DepartureRange oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.ride, widget.ride)) _chosen = null;
+    if (oldWidget.now != widget.now) _start();
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    _now.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final ride = widget.ride;
+    final choice = widget.choice;
+    final ride = choice.ride;
     final departures = ride.departures;
-    final own = departures.indexWhere((d) => d.suggested);
-    final chosen = _chosen ?? (own >= 0 ? own : null);
-    final departure = chosen == null ? null : departures[chosen];
+    // Each tile badges its route when they aren't all the ride's.
+    final mixed = departures.any((d) => d.route != null);
     return Padding(
       padding: const EdgeInsets.only(top: 6, bottom: 8),
       child: Column(
@@ -1154,28 +1279,249 @@ class _DepartureRangeState extends State<DepartureRange> {
               ),
             ),
             const SizedBox(height: 4),
-            SizedBox(
-              height: 46,
-              child: ListView.separated(
+            ValueListenableBuilder(
+              valueListenable: _now,
+              builder: (context, now, _) => SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                itemCount: departures.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 6),
-                itemBuilder: (context, i) => DepartureChip(
-                  departure: departures[i],
-                  route: ride.route,
-                  own: own >= 0 ? departures[own] : null,
-                  chosen: i == chosen,
-                  utcOffset: ride.boarding.utcOffset,
-                  onTap: () => setState(() => _chosen = i),
+                child: IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    spacing: 6,
+                    children: [
+                      for (final (i, d) in departures.indexed)
+                        ConnectionTile(
+                          key: ValueKey((d.tripId, d.startDate)),
+                          departure: d,
+                          route: mixed ? d.route ?? ride.route : null,
+                          countdown: Countdown(d, now: now),
+                          catchable: choice.catchable[i],
+                          selected: i == choice.index,
+                          utcOffset: ride.boarding.utcOffset,
+                          onTap: () => widget.onSelect(i),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),
             const SizedBox(height: 6),
           ],
-          VehicleStatus(
-            ride: ride,
-            departure: departure,
-            access: widget.access,
+          if (choice.connection == RideConnection.none)
+            NoConnection(choice: choice)
+          else
+            VehicleStatus(
+              ride: ride,
+              departure: choice.departure,
+              access: widget.access,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One departure of a ride, as a tile to choose: its route's badge, when the ride's
+/// departures are of several routes; its countdown, with the live mark when its time is
+/// real-time, and the clock time it leaves at; and whether it's the suggested one or the
+/// day's last. One that doesn't run is struck through with a label, and one the rider
+/// can't make is dimmed with its clock time, and neither can be chosen.
+class ConnectionTile extends StatelessWidget {
+  const ConnectionTile({
+    super.key,
+    required this.departure,
+    required this.route,
+    required this.countdown,
+    required this.catchable,
+    required this.selected,
+    required this.utcOffset,
+    required this.onTap,
+  });
+
+  final RideDeparture departure;
+
+  /// Its route, to badge, or null for no badge.
+  final TransitRoute? route;
+  final Countdown countdown;
+
+  /// Whether the rider can make it, as the rides before have it.
+  final bool catchable;
+  final bool selected;
+
+  /// The boarding stop's offset from UTC, for its clock time.
+  final int? utcOffset;
+  final VoidCallback onTap;
+
+  static const _minWidth = 64.0;
+  static const _radius = 10.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final d = departure;
+    final struck = !d.status.runs;
+    final usable = !struck && catchable;
+    final faded = scheme.onSurface.withValues(alpha: 0.38);
+    final muted = theme.textTheme.bodySmall?.copyWith(
+      color: scheme.onSurfaceVariant,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    final time = clock(context, d.departure, utcOffset: utcOffset);
+    // One the rider can't make, or past the hour, or once it has left, shows the clock
+    // time in place of a countdown.
+    final counts =
+        !struck &&
+        catchable &&
+        !countdown.departed &&
+        countdown.minutesUntil <= countdownMinutes;
+    final (label, labelColor) = switch (d) {
+      RideDeparture(status: DepartureStatus.canceled) => (
+        'Canceled',
+        scheme.onSurfaceVariant,
+      ),
+      RideDeparture(status: DepartureStatus.skipped) => (
+        'Skips stop',
+        scheme.onSurfaceVariant,
+      ),
+      _ when !catchable => ('Missed', faded),
+      RideDeparture(suggested: true, lastOfDay: true) => (
+        'Suggested · Last',
+        scheme.primary,
+      ),
+      RideDeparture(suggested: true) => ('Suggested', scheme.primary),
+      RideDeparture(lastOfDay: true) => ('Last', scheme.error),
+      _ => (null, null),
+    };
+    final route = this.route;
+    return Semantics(
+      button: usable,
+      selected: selected,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(_radius),
+          border: Border.all(
+            width: 2,
+            color: selected ? scheme.primary : Colors.transparent,
+          ),
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(_radius - 2),
+            onTap: usable ? onTap : null,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: _minWidth),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  spacing: 2,
+                  children: [
+                    if (route != null)
+                      Opacity(
+                        opacity: usable ? 1 : 0.45,
+                        child: RouteBadge(route: route),
+                      ),
+                    if (counts)
+                      CountdownNumber(
+                        countdown,
+                        key: const ValueKey('countdown'),
+                        alignment: AlignmentDirectional.centerStart,
+                      )
+                    else
+                      Text(
+                        time,
+                        key: const ValueKey('countdown'),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: usable ? null : faded,
+                          decoration: struck
+                              ? TextDecoration.lineThrough
+                              : null,
+                        ),
+                      ),
+                    if (counts)
+                      Text(
+                        time,
+                        key: const ValueKey('clock'),
+                        style: muted?.copyWith(
+                          decoration: struck
+                              ? TextDecoration.lineThrough
+                              : null,
+                        ),
+                      ),
+                    if (label != null)
+                      Text(
+                        label,
+                        key: const ValueKey('label'),
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: labelColor,
+                          fontWeight: d.suggested && usable
+                              ? FontWeight.w600
+                              : null,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// That a ride has no connection: each of its departures leaves before the rider can
+/// be at its stop, with the departures chosen before it.
+class NoConnection extends StatelessWidget {
+  const NoConnection({super.key, required this.choice});
+
+  final RideChoice choice;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final ready = choice.ready;
+    final stop = choice.ride.boarding;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.link_off, size: 20, color: scheme.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'No connection',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: scheme.onErrorContainer,
+                  ),
+                ),
+                Text(
+                  ready == null
+                      ? "You can't make any of these departures."
+                      : "You'd be at the stop at "
+                            '${clock(context, ready, utcOffset: stop.utcOffset)}'
+                            ', after all of these leave. An earlier departure '
+                            'on a ride before may connect.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onErrorContainer,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1183,125 +1529,9 @@ class _DepartureRangeState extends State<DepartureRange> {
   }
 }
 
-/// One departure of a ride's route, to compare with the journey's own.
-class DepartureChip extends StatelessWidget {
-  const DepartureChip({
-    super.key,
-    required this.departure,
-    required this.route,
-    required this.own,
-    required this.chosen,
-    required this.utcOffset,
-    required this.onTap,
-  });
-
-  final RideDeparture departure;
-  final TransitRoute? route;
-
-  /// The journey's own departure, to say how much later this one is.
-  final RideDeparture? own;
-  final bool chosen;
-  final int? utcOffset;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final d = departure;
-    final usable = d.status.runs && !d.missed;
-    final routeColor = parseRouteColor(route?.color) ?? scheme.primary;
-    final Color background, foreground;
-    if (d.suggested) {
-      background = routeColor;
-      foreground = routeTextColor(route, routeColor);
-    } else if (usable) {
-      background = scheme.surfaceContainerHighest;
-      foreground = scheme.onSurface;
-    } else {
-      background = Colors.transparent;
-      foreground = scheme.onSurface.withValues(alpha: 0.45);
-    }
-    final note = switch (d) {
-      RideDeparture(status: DepartureStatus.canceled) => 'Canceled',
-      RideDeparture(status: DepartureStatus.skipped) => 'Skips stop',
-      RideDeparture(missed: true) => 'Missed',
-      RideDeparture(lastOfDay: true) => 'Last',
-      RideDeparture(suggested: true) => 'Planned',
-      _ when own != null => _later(d.departure.difference(own!.departure)),
-      _ => '',
-    };
-    final border = chosen && !d.suggested
-        ? BorderSide(color: scheme.primary, width: 2)
-        : usable || d.suggested
-        ? BorderSide.none
-        : BorderSide(color: scheme.outlineVariant);
-    return Semantics(
-      button: usable,
-      selected: chosen,
-      child: Material(
-        color: background,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-          side: border,
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: usable ? onTap : null,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (d.status == DepartureStatus.live) ...[
-                      Icon(
-                        Icons.sensors,
-                        size: 13,
-                        color: d.suggested ? foreground : liveColor(theme),
-                      ),
-                      const SizedBox(width: 2),
-                    ],
-                    Text(
-                      clock(context, d.departure, utcOffset: utcOffset),
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        color: foreground,
-                        fontWeight: d.suggested ? FontWeight.w700 : null,
-                        decoration: d.status.runs
-                            ? null
-                            : TextDecoration.lineThrough,
-                      ),
-                    ),
-                  ],
-                ),
-                Text(
-                  note,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: d.lastOfDay && usable && !d.suggested
-                        ? scheme.error
-                        : foreground,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  static String _later(Duration difference) {
-    final minutes = (difference.inSeconds / 60).round();
-    if (minutes == 0) return 'Same time';
-    return minutes > 0 ? '+$minutes min' : '−${-minutes} min';
-  }
-}
-
 /// How one departure of a ride is running, in one place: live or scheduled, its
-/// accessibility, its vehicle, whether it's the night's last, and its alerts.
+/// accessibility, its vehicle, whether it's the night's last, and its alerts. When and
+/// where it goes are the ride's rows'.
 ///
 /// With no [departure], it describes the ride's own.
 class VehicleStatus extends StatelessWidget {
@@ -1337,7 +1567,6 @@ class VehicleStatus extends StatelessWidget {
     final alerts = (own ? ride.alerts : d.alerts)
         .where((a) => a.effect != 'stop_moved')
         .toList();
-    final routeName = ride.route?.name ?? '';
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
@@ -1348,16 +1577,6 @@ class VehicleStatus extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         spacing: 3,
         children: [
-          if (!own)
-            Text(
-              [
-                'Leaves ${clock(context, d.departure, utcOffset: ride.boarding.utcOffset)}',
-                'arrives ${clock(context, d.arrival, utcOffset: ride.alighting.utcOffset)}',
-              ].join(', '),
-              style: theme.textTheme.labelLarge,
-            ),
-          if (!own && d.headsign != null)
-            Text('To ${d.headsign}', style: muted),
           IconLine(
             icon: status.live ? Icons.sensors : Icons.schedule,
             text: status.text,
@@ -1367,9 +1586,7 @@ class VehicleStatus extends StatelessWidget {
           if (d?.lastOfDay ?? false)
             IconLine(
               icon: Icons.bedtime_outlined,
-              text: routeName.isEmpty
-                  ? 'The last one of the day from this stop'
-                  : 'The last $routeName of the day from this stop',
+              text: 'The last departure of the day between these stops',
               color: scheme.error,
               style: theme.textTheme.bodySmall?.copyWith(color: scheme.error),
               maxLines: 2,

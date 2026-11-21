@@ -1,3 +1,4 @@
+import 'package:cardinal/directions/connections.dart';
 import 'package:cardinal/directions/transit_details.dart';
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/units.dart';
@@ -9,10 +10,34 @@ import '../fakes/fake_transit.dart';
 DateTime at(int seconds) =>
     DateTime.fromMillisecondsSinceEpoch((fakeStart + seconds) * 1000);
 
+/// Holds a chain of [journey]'s departures, chosen as [build]'s widget says.
+class _Chained extends StatefulWidget {
+  const _Chained({required this.journey, required this.build});
+
+  final Journey journey;
+  final Widget Function(
+    ConnectionChain chain,
+    void Function(int ride, int departure) select,
+  )
+  build;
+
+  @override
+  State<_Chained> createState() => _ChainedState();
+}
+
+class _ChainedState extends State<_Chained> {
+  late var _chain = ConnectionChain(widget.journey);
+
+  @override
+  Widget build(BuildContext context) => widget.build(
+    _chain,
+    (ride, departure) =>
+        setState(() => _chain = _chain.select(ride, departure)),
+  );
+}
+
 void main() {
   final journey = fakePlan().journeys.single;
-  final bus = journey.rides.first;
-  final link = journey.rides.last;
 
   Future<void> pump(WidgetTester tester, Widget child) => tester.pumpWidget(
     MaterialApp(
@@ -20,79 +45,100 @@ void main() {
     ),
   );
 
+  /// The departures of ride [ride] of [of], choosing as the rider taps.
   Future<void> range(
     WidgetTester tester,
-    TransitLeg ride, {
+    int ride, {
+    Journey? of,
     TransitAccess access = TransitAccess.walking,
-  }) => pump(tester, DepartureRange(ride: ride, access: access, now: at(0)));
+  }) => pump(
+    tester,
+    _Chained(
+      journey: of ?? journey,
+      build: (chain, select) => DepartureRange(
+        choice: chain.rides[ride],
+        access: access,
+        now: at(0),
+        onSelect: (departure) => select(ride, departure),
+      ),
+    ),
+  );
 
-  /// The chip for the departure at [time].
-  Finder chip(String time) =>
-      find.ancestor(of: find.text(time), matching: find.byType(DepartureChip));
+  /// The tile for the departure at [time].
+  Finder tile(String time) =>
+      find.ancestor(of: find.text(time), matching: find.byType(ConnectionTile));
 
-  group('departure range', () {
-    testWidgets('the journey\'s own is emphasized and described', (
-      tester,
-    ) async {
-      await range(tester, bus);
-      expect(find.byType(DepartureChip), findsNWidgets(6));
-      final own = tester.widget<DepartureChip>(chip('5:40 PM'));
+  group('departure tiles', () {
+    testWidgets('the suggested one says so, and is described', (tester) async {
+      await range(tester, 0);
+      expect(find.byType(ConnectionTile), findsNWidgets(6));
+      final own = tester.widget<ConnectionTile>(tile('5:40 PM'));
       expect(own.departure.suggested, isTrue);
-      expect(own.chosen, isTrue);
-      expect(find.text('Planned'), findsOneWidget);
-      // Its color is the route's.
-      final material = tester.widget<Material>(
-        find.descendant(of: chip('5:40 PM'), matching: find.byType(Material)),
+      expect(own.selected, isTrue);
+      expect(
+        find.descendant(of: tile('5:40 PM'), matching: find.text('Suggested')),
+        findsOneWidget,
       );
-      expect(material.color, const Color(0xffFDB71A));
+      expect(find.text('Planned'), findsNothing);
+      // Counting down from 5:30, with the live mark for a live time.
+      expect(
+        find.descendant(of: tile('5:40 PM'), matching: find.text('10')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: tile('5:40 PM'),
+          matching: find.byIcon(Icons.sensors),
+        ),
+        findsOneWidget,
+      );
+      // All the 40's, so no badges.
+      expect(find.byType(RouteBadge), findsNothing);
       // How it's running, in one place.
       expect(find.text('Live: 4 min late'), findsOneWidget);
       expect(find.text('Wheelchair accessible'), findsOneWidget);
       expect(find.text('Route 40 detoured'), findsOneWidget);
     });
 
+    testWidgets('the countdown ticks each second', (tester) async {
+      await range(tester, 0);
+      expect(
+        find.descendant(of: tile('5:52 PM'), matching: find.text('22')),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: tile('5:52 PM'), matching: find.text('21')),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('departures the rider misses are muted and can\'t be chosen', (
       tester,
     ) async {
-      await range(tester, bus);
+      await range(tester, 0);
       expect(find.text('Missed'), findsNWidgets(2));
-      final missed = tester.widget<Material>(
-        find.descendant(of: chip('5:30 PM'), matching: find.byType(Material)),
-      );
-      expect(missed.color, Colors.transparent);
-      await tester.tap(chip('5:30 PM'));
+      await tester.tap(tile('5:35 PM'));
       await tester.pump();
-      // Still describing the journey's own.
+      // Still describing the suggested one.
       expect(find.text('Live: 4 min late'), findsOneWidget);
-      expect(find.textContaining('Leaves'), findsNothing);
+      expect(tester.widget<ConnectionTile>(tile('5:40 PM')).selected, isTrue);
     });
 
-    testWidgets('live and scheduled departures say which they are', (
-      tester,
-    ) async {
-      await range(tester, bus);
-      // A live departure has the live mark on its chip; a scheduled one doesn't.
+    testWidgets('a later one, chosen, is described instead', (tester) async {
+      await range(tester, 0);
       expect(
         find.descendant(
-          of: chip('5:35 PM'),
-          matching: find.byIcon(Icons.sensors),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(
-          of: chip('5:52 PM'),
+          of: tile('5:52 PM'),
           matching: find.byIcon(Icons.sensors),
         ),
         findsNothing,
       );
-
-      // A later one, chosen: when it leaves and arrives, and that it's scheduled, not
-      // accessible, and has an alert the journey's own doesn't.
-      expect(find.text('+12 min'), findsOneWidget);
-      await tester.tap(chip('5:52 PM'));
+      await tester.tap(tile('5:52 PM'));
       await tester.pump();
-      expect(find.text('Leaves 5:52 PM, arrives 6:12 PM'), findsOneWidget);
+      expect(tester.widget<ConnectionTile>(tile('5:52 PM')).selected, isTrue);
+      // That it's scheduled, not accessible, and has an alert the suggested one doesn't.
       expect(find.text('Scheduled'), findsOneWidget);
       expect(find.text('Not wheelchair accessible'), findsOneWidget);
       expect(find.text('Trip 40c ends at Westlake'), findsOneWidget);
@@ -113,11 +159,11 @@ void main() {
     testWidgets('a canceled departure is struck through and can\'t be chosen', (
       tester,
     ) async {
-      await range(tester, bus);
+      await range(tester, 0);
       expect(find.text('Canceled'), findsOneWidget);
       final time = tester.widget<Text>(find.text('6:00 PM'));
       expect(time.style?.decoration, TextDecoration.lineThrough);
-      await tester.tap(chip('6:00 PM'));
+      await tester.tap(tile('6:00 PM'));
       await tester.pump();
       expect(find.text('Live: 4 min late'), findsOneWidget);
     });
@@ -125,12 +171,12 @@ void main() {
     testWidgets('the day\'s last is marked, and says so when chosen', (
       tester,
     ) async {
-      await range(tester, bus);
+      await range(tester, 0);
       expect(find.text('Last'), findsOneWidget);
-      await tester.tap(chip('6:04 PM'));
+      await tester.tap(tile('6:04 PM'));
       await tester.pump();
       expect(
-        find.text('The last 40 of the day from this stop'),
+        find.text('The last departure of the day between these stops'),
         findsOneWidget,
       );
     });
@@ -138,16 +184,61 @@ void main() {
     testWidgets('a connection that is the night\'s last says so at once', (
       tester,
     ) async {
-      await range(tester, link);
-      // Its own chip is the last; the earlier one is missed.
-      expect(find.text('Last'), findsOneWidget);
+      await range(tester, 1);
+      expect(find.text('Suggested · Last'), findsOneWidget);
       expect(find.text('Missed'), findsOneWidget);
       expect(
-        find.text('The last 1 Line of the day from this stop'),
+        find.text('The last departure of the day between these stops'),
         findsOneWidget,
       );
       expect(find.text('Scheduled'), findsOneWidget);
       expect(find.text('Wheelchair access unknown'), findsOneWidget);
+    });
+
+    testWidgets('departures of several routes each badge theirs', (
+      tester,
+    ) async {
+      await range(tester, 0, of: connectionsJourney());
+      final badges = tester.widgetList<RouteBadge>(find.byType(RouteBadge));
+      expect(badges.map((b) => b.route!.shortName), [
+        '40',
+        '62',
+        '40',
+        '7',
+        '7',
+        '40',
+        '31',
+        '40',
+      ]);
+    });
+
+    testWidgets('one leaving past the hour shows its time', (tester) async {
+      await pump(
+        tester,
+        _Chained(
+          journey: connectionsJourney(),
+          build: (chain, select) => DepartureRange(
+            choice: chain.rides[3],
+            access: TransitAccess.walking,
+            now: at(0),
+            onSelect: (departure) => select(3, departure),
+          ),
+        ),
+      );
+      // The 2 at 18:21 is 51 minutes off; the one at 18:36, 66.
+      expect(
+        find.descendant(of: tile('6:21 PM'), matching: find.text('51')),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<Text>(
+          find.descendant(
+            of: find.byType(ConnectionTile).last,
+            matching: find.byKey(const ValueKey('countdown')),
+          ),
+        ),
+        isA<Text>().having((t) => t.data, 'text', '6:36 PM'),
+      );
     });
   });
 
@@ -156,20 +247,34 @@ void main() {
       WidgetTester tester,
       Journey journey, {
       TransitAccess access = TransitAccess.walking,
+      bool header = false,
     }) => tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: CustomScrollView(
-            slivers: [
-              JourneyItinerary(
-                journey: journey,
-                start: 'Waiting for the Interurban',
-                destination: 'Chu Minh',
-                units: UnitSystem.imperial,
-                access: access,
-                now: at(0),
-              ),
-            ],
+          body: _Chained(
+            journey: journey,
+            build: (chain, select) => CustomScrollView(
+              slivers: [
+                if (header)
+                  SliverToBoxAdapter(
+                    child: JourneyHeader(
+                      chain: chain,
+                      now: at(0),
+                      units: UnitSystem.imperial,
+                      onBack: () {},
+                    ),
+                  ),
+                JourneyItinerary(
+                  chain: chain,
+                  onSelect: select,
+                  start: 'Waiting for the Interurban',
+                  destination: 'Chu Minh',
+                  units: UnitSystem.imperial,
+                  access: access,
+                  now: at(0),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -263,6 +368,130 @@ void main() {
       );
       expect(find.textContaining('Wheelchair 5 min'), findsOneWidget);
       expect(find.textContaining('Go '), findsNothing);
+    });
+
+    /// The tile at [time] among the departures of the ride that's leg [leg].
+    Finder rideTile(int leg, String time) => find.descendant(
+      of: find.byKey(ValueKey(('departures', leg))),
+      matching: tile(time),
+    );
+
+    /// Taps that tile, scrolled to.
+    Future<void> choose(WidgetTester tester, int leg, String time) async {
+      await tester.ensureVisible(rideTile(leg, time));
+      await tester.pumpAndSettle();
+      await tester.tap(rideTile(leg, time));
+      await tester.pump();
+    }
+
+    bool selected(WidgetTester tester, int leg, String time) =>
+        tester.widget<ConnectionTile>(rideTile(leg, time)).selected;
+
+    testWidgets('a later first ride re-times the rides after it', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(400, 4000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await itinerary(tester, connectionsJourney(), header: true);
+      expect(find.text('5:30 PM – 6:32 PM'), findsOneWidget);
+      expect(find.text('Leave 5:30 PM'), findsOneWidget);
+      expect(find.text('Arrive 6:32 PM'), findsOneWidget);
+      expect(selected(tester, 3, '5:55 PM'), isTrue);
+
+      await choose(tester, 1, '5:55 PM');
+      // Leaving as much later, so there's as long to get to the stop.
+      expect(find.text('5:45 PM – 6:47 PM'), findsOneWidget);
+      expect(find.text('Leave 5:45 PM'), findsOneWidget);
+      expect(find.text('Arrive 6:47 PM'), findsOneWidget);
+      // Each ride after on the first it can make.
+      expect(selected(tester, 3, '6:11 PM'), isTrue);
+      expect(selected(tester, 5, '6:23 PM'), isTrue);
+      expect(selected(tester, 7, '6:36 PM'), isTrue);
+      // Link's earlier ones can't be made now.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey(('departures', 3))),
+          matching: find.text('Missed'),
+        ),
+        findsNWidgets(3),
+      );
+      expect(find.text('Wait 3 min'), findsOneWidget);
+
+      // And back.
+      await choose(tester, 1, '5:40 PM');
+      expect(find.text('Arrive 6:32 PM'), findsOneWidget);
+      expect(selected(tester, 3, '5:55 PM'), isTrue);
+    });
+
+    testWidgets(
+      'another route\'s departure shows its route, and only its ends',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(400, 4000));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await itinerary(tester, connectionsJourney());
+        expect(find.text('1 stop before'), findsNWidgets(4));
+        await tester.tap(find.text('1 stop before').first);
+        await tester.pump();
+        expect(find.text('Stop A to Stop B, between'), findsOneWidget);
+
+        await choose(tester, 1, '5:43 PM');
+        // Its route and headsign above, and when it leaves and arrives.
+        final title = find.ancestor(
+          of: find.text('Rainier Beach').first,
+          matching: find.byType(Row),
+        );
+        expect(
+          find.descendant(of: title.first, matching: find.byType(RouteBadge)),
+          findsOneWidget,
+        );
+        expect(find.text('Downtown Seattle'), findsNothing);
+        expect(find.text('5:43 PM'), findsNWidgets(2));
+        expect(find.text('5:52 PM'), findsOneWidget);
+        // Its stops between aren't known.
+        expect(find.text('Stop A to Stop B, between'), findsNothing);
+        expect(find.text('1 stop before'), findsNWidgets(3));
+        // Back on the suggested one, they're a tap away again.
+        await choose(tester, 1, '5:40 PM');
+        expect(find.text('1 stop before'), findsNWidgets(4));
+        expect(find.text('Stop A to Stop B, between'), findsNothing);
+      },
+    );
+
+    testWidgets('a ride with no connection says so', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(400, 4000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await itinerary(
+        tester,
+        connectionsJourney(lateLastRide: false),
+        header: true,
+      );
+      await choose(tester, 1, '5:55 PM');
+      expect(find.byType(NoConnection), findsOneWidget);
+      expect(
+        find.textContaining("You'd be at the stop at 6:35 PM"),
+        findsOneWidget,
+      );
+      expect(find.text('5:45 PM – no connection'), findsOneWidget);
+      // The destination's row says so too.
+      expect(find.text('No connection'), findsNWidgets(2));
+    });
+
+    testWidgets('the rides after one with no connection are unknown', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(400, 4000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final json = connectionsPlanJson();
+      final legs = ((json['journeys']! as List).single as Map)['legs']! as List;
+      ((legs[3] as Map)['departures']! as List).removeLast();
+      await itinerary(tester, TransitPlan.fromJson(json).journeys.single);
+      await choose(tester, 1, '5:55 PM');
+      expect(find.byType(NoConnection), findsOneWidget);
+      // No departures to choose from, and no times.
+      expect(find.byKey(const ValueKey(('departures', 5))), findsNothing);
+      expect(find.byKey(const ValueKey(('departures', 7))), findsNothing);
+      expect(find.text('6:08 PM'), findsNothing);
+      expect(find.text('Mount Baker'), findsOneWidget);
     });
   });
 }
