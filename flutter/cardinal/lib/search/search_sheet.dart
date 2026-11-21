@@ -331,7 +331,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
                                 controller: _text,
                                 focusNode: _focus,
                                 onTap: _searchFull,
-                                hintText: 'Search',
+                                hintText: 'Where to?',
                                 elevation: const WidgetStatePropertyAll(0),
                                 // While searching, Material's back arrow in place of
                                 // the magnifying glass: Cancel, as on iOS.
