@@ -415,6 +415,48 @@ void main() {
     }
   });
 
+  testWidgets('on iOS, the tabs\' labels fit under their icons at every text '
+      'size, scaled no further than 1.3×', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await pumpFakeApp(tester, store: _store());
+    // The glass bar's labels, rather than the search bar's hint.
+    Finder label(String text) => find.descendant(
+      of: find.byType(AppNavigationBar),
+      matching: find.text(text),
+    );
+    final heights = <double, double>{};
+    for (final scale in [1.0, 1.3, 1.5, 2.0, 3.1]) {
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '$scale×');
+      heights[scale] = tester.getSize(label('Saved')).height;
+      for (final text in ['Saved', 'Nearby', 'Search', 'Transit', 'Offline']) {
+        // Within its tab, under its icon.
+        final tab = tester.getRect(
+          find.ancestor(of: label(text), matching: find.byType(Column)).first,
+        );
+        final rect = tester.getRect(label(text));
+        expect(
+          rect.top,
+          greaterThanOrEqualTo(tab.top),
+          reason: '$text, $scale×',
+        );
+        expect(
+          rect.bottom,
+          lessThanOrEqualTo(tab.bottom),
+          reason: '$text, $scale×',
+        );
+      }
+    }
+    expect(heights[1.3], greaterThan(heights[1.0]!));
+    expect(heights[1.5], heights[1.3]);
+    expect(heights[2.0], heights[1.3]);
+    expect(heights[3.1], heights[1.3]);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('on iOS, the lens leaves while collapsed, and comes back', (
     tester,
   ) async {

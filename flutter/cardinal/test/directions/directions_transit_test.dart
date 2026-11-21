@@ -258,15 +258,6 @@ void main() {
           'and with none, at $scale×', (tester) async {
         tester.platformDispatcher.textScaleFactorTestValue = scale;
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-        final report = FlutterError.onError;
-        FlutterError.onError = (details) {
-          // The search sheet under directions overflows at the largest sizes.
-          if (details.toString().contains('lib/search/search_sheet.dart')) {
-            return;
-          }
-          report?.call(details);
-        };
-        addTearDown(() => FlutterError.onError = report);
         picker.answerNothing();
         await picker.open(tester);
         final sheet = sheetOf(tester);
@@ -1156,14 +1147,6 @@ void main() {
         'above it', (tester) async {
       tester.platformDispatcher.textScaleFactorTestValue = 2;
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-      final report = FlutterError.onError;
-      FlutterError.onError = (details) {
-        if (details.toString().contains('lib/search/search_sheet.dart')) {
-          return;
-        }
-        report?.call(details);
-      };
-      addTearDown(() => FlutterError.onError = report);
       await picker.store.settings.set(lastTravelMode, TravelMode.transit);
       picker.transit.immediately = TransitPlan.fromJson(connectionsPlanJson());
       await picker.open(tester);

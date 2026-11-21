@@ -93,23 +93,6 @@ void main() {
     expect(tester.widget<ModeTabs>(tabs).selected, mode);
   }
 
-  /// Lets the pages around directions overflow as they do at the largest sizes: the
-  /// search sheet's header, under the place's card under directions, and iOS's
-  /// navigation bar. That's not what these tests are about, and anything else that
-  /// overflows still fails them.
-  void ignoreOtherPages() {
-    final report = FlutterError.onError;
-    FlutterError.onError = (details) {
-      final text = details.toString();
-      if (text.contains('lib/search/search_sheet.dart') ||
-          text.contains('lib/home/navigation_bar.dart')) {
-        return;
-      }
-      report?.call(details);
-    };
-    addTearDown(() => FlutterError.onError = report);
-  }
-
   for (final (platform, window, scale) in [
     for (final platform in [TargetPlatform.android, TargetPlatform.iOS])
       for (final window in _windows)
@@ -123,7 +106,6 @@ void main() {
       Future<void> open(WidgetTester tester) async {
         tester.platformDispatcher.textScaleFactorTestValue = scale;
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-        ignoreOtherPages();
         picker.answerNothing();
         await picker.open(tester, size: window, platform: platform);
       }
@@ -247,7 +229,6 @@ void main() {
     Future<void> open(WidgetTester tester) async {
       tester.platformDispatcher.textScaleFactorTestValue = scale;
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-      ignoreOtherPages();
       await picker.open(tester, size: window, platform: platform);
     }
 
@@ -309,7 +290,6 @@ void main() {
     ) async {
       tester.platformDispatcher.textScaleFactorTestValue = scale;
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-      ignoreOtherPages();
       picker.routes.immediatelyBy
         ..[TravelMode.driving] = detailedDrivingRoutes
         ..[TravelMode.cycling] = detailedCyclingRoutes
@@ -370,7 +350,6 @@ void main() {
         '${platform.name}', (tester) async {
       tester.platformDispatcher.textScaleFactorTestValue = scale;
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-      ignoreOtherPages();
       // A journey of four rides, with other routes' departures to choose from,
       // after one with a moved stop, an alert and a stay-seated ride.
       for (final plan in [
@@ -518,7 +497,6 @@ void main() {
         'header anchor, and the selected row read in full, $where', (
       tester,
     ) async {
-      ignoreOtherPages();
       tester.platformDispatcher.textScaleFactorTestValue = scale;
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       await picker.open(tester, size: window, platform: platform);
@@ -573,7 +551,6 @@ void main() {
 
     testWidgets('the heights the page tells whether a row fits by are the '
         'heights laid out, $where', (tester) async {
-      ignoreOtherPages();
       tester.platformDispatcher.textScaleFactorTestValue = scale;
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       await picker.open(tester, size: window, platform: platform);
@@ -645,7 +622,6 @@ void main() {
   testWidgets('a change of text size holds a row, or none, in the frame it '
       'lays out at the new size', (tester) async {
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-    ignoreOtherPages();
     await picker.open(tester, size: const Size(320, 568));
     expect(heldSlot(tester), OptionList.slotId(0));
     tester.platformDispatcher.textScaleFactorTestValue = 3.1;

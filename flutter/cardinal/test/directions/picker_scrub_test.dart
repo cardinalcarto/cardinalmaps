@@ -755,23 +755,6 @@ void main() {
     });
   });
 
-  /// Shows [mode]'s rows, by its tab, or as the tab would if the tab is out of
-  /// reach at the largest text.
-  /// Leaves out what the pages under directions overflow by at large text, which
-  /// isn't this page's to fix.
-  void ignoreOtherPages() {
-    final report = FlutterError.onError;
-    FlutterError.onError = (details) {
-      final text = details.toString();
-      if (text.contains('lib/search/search_sheet.dart') ||
-          text.contains('lib/home/navigation_bar.dart')) {
-        return;
-      }
-      report?.call(details);
-    };
-    addTearDown(() => FlutterError.onError = report);
-  }
-
   group('nothing moves', () {
     for (final (platform, scale) in [
       for (final platform in [TargetPlatform.android, TargetPlatform.iOS])
@@ -783,7 +766,6 @@ void main() {
             '${platform.name}', (tester) async {
           tester.platformDispatcher.textScaleFactorTestValue = scale;
           addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-          ignoreOtherPages();
           await picker.open(tester, size: size, platform: platform);
           for (final mode in TravelMode.values) {
             await moveTo(tester, headerAnchor);
