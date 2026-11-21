@@ -12,8 +12,17 @@ sealed class SheetAnchor {
   const SheetAnchor({this.gravity});
 
   /// Rests with the section [id] (see [SheetSection]) and everything above it showing.
+  ///
+  /// If the content holds a slot ([SheetContent.held]) that starts at or below the
+  /// section's end, the sheet rests that slot's height further up: the slot's child is
+  /// held above the footer there, under the section.
   const factory SheetAnchor.section(Object id, {double? gravity}) =
       _SectionAnchor;
+
+  /// Rests with none of the content showing: only the handle, the child of the held
+  /// slot if there is one ([SheetContent.held]), and the footer
+  /// ([SheetContent.footer]).
+  const factory SheetAnchor.footer({double? gravity}) = _FooterAnchor;
 
   /// Rests at [fraction] of the furthest the sheet can be pulled up, measured from the
   /// keyboard's top while it shows.
@@ -33,8 +42,21 @@ sealed class SheetAnchor {
   final double? gravity;
 
   /// The extent this anchor rests at, or null if it can't be placed yet (its section
-  /// hasn't been laid out).
-  double? _resolve(SheetGeometry geometry, Map<Object, _Span> sections);
+  /// hasn't been laid out). [held] is where the held slot sits in the content, if
+  /// there is one.
+  double? _resolve(
+    SheetGeometry geometry,
+    Map<Object, _Span> sections,
+    _Span? held,
+  );
+}
+
+/// The extent that shows the content down to [y], and under it the child of the slot
+/// at [held] if that slot starts at or below [y], where its child is held above the
+/// footer rather than showing in its place.
+double _extentShowingTo(double y, SheetGeometry geometry, _Span? held) {
+  final below = held != null && held.start >= y - precisionErrorTolerance;
+  return geometry.extentShowing(below ? y + held.end - held.start : y);
 }
 
 final class _SectionAnchor extends SheetAnchor {
@@ -43,9 +65,13 @@ final class _SectionAnchor extends SheetAnchor {
   final Object id;
 
   @override
-  double? _resolve(SheetGeometry geometry, Map<Object, _Span> sections) {
+  double? _resolve(
+    SheetGeometry geometry,
+    Map<Object, _Span> sections,
+    _Span? held,
+  ) {
     final span = sections[id];
-    return span == null ? null : geometry.extentShowing(span.end);
+    return span == null ? null : _extentShowingTo(span.end, geometry, held);
   }
 
   @override
@@ -65,8 +91,11 @@ final class _FractionAnchor extends SheetAnchor {
   final double fraction;
 
   @override
-  double _resolve(SheetGeometry geometry, Map<Object, _Span> sections) =>
-      geometry.extentAtFraction(fraction);
+  double _resolve(
+    SheetGeometry geometry,
+    Map<Object, _Span> sections,
+    _Span? held,
+  ) => geometry.extentAtFraction(fraction);
 
   @override
   bool operator ==(Object other) =>
@@ -85,8 +114,11 @@ final class _FullAnchor extends SheetAnchor {
   const _FullAnchor({super.gravity});
 
   @override
-  double _resolve(SheetGeometry geometry, Map<Object, _Span> sections) =>
-      geometry.maxExtent;
+  double _resolve(
+    SheetGeometry geometry,
+    Map<Object, _Span> sections,
+    _Span? held,
+  ) => geometry.maxExtent;
 
   @override
   bool operator ==(Object other) =>
@@ -103,8 +135,11 @@ final class _CollapsedAnchor extends SheetAnchor {
   const _CollapsedAnchor({super.gravity});
 
   @override
-  double? _resolve(SheetGeometry geometry, Map<Object, _Span> sections) =>
-      geometry.keyboard > 0 ? null : 0;
+  double? _resolve(
+    SheetGeometry geometry,
+    Map<Object, _Span> sections,
+    _Span? held,
+  ) => geometry.keyboard > 0 ? null : 0;
 
   @override
   bool operator ==(Object other) =>
@@ -115,6 +150,27 @@ final class _CollapsedAnchor extends SheetAnchor {
 
   @override
   String toString() => 'SheetAnchor.collapsed()';
+}
+
+final class _FooterAnchor extends SheetAnchor {
+  const _FooterAnchor({super.gravity});
+
+  @override
+  double _resolve(
+    SheetGeometry geometry,
+    Map<Object, _Span> sections,
+    _Span? held,
+  ) => _extentShowingTo(0, geometry, held);
+
+  @override
+  bool operator ==(Object other) =>
+      other is _FooterAnchor && other.gravity == gravity;
+
+  @override
+  int get hashCode => Object.hash(_FooterAnchor, gravity);
+
+  @override
+  String toString() => 'SheetAnchor.footer()';
 }
 
 /// An anchor placed for the current layout.
@@ -162,11 +218,12 @@ List<ResolvedAnchor> _resolveAnchors(
   List<SheetAnchor> anchors,
   SheetGeometry geometry,
   Map<Object, _Span> sections,
-  SheetPhysics physics,
-) {
+  SheetPhysics physics, [
+  _Span? held,
+]) {
   final resolved = <ResolvedAnchor>[
     for (final anchor in anchors)
-      if (anchor._resolve(geometry, sections) case final extent?)
+      if (anchor._resolve(geometry, sections, held) case final extent?)
         ResolvedAnchor(anchor, extent, anchor.gravity ?? physics.gravity),
   ];
   return resolved..sort((a, b) => a.extent.compareTo(b.extent));
@@ -264,12 +321,13 @@ List<ResolvedRange> _resolveRanges(
   List<SheetRange> ranges,
   List<ResolvedAnchor> anchors,
   SheetGeometry geometry,
-  Map<Object, _Span> sections,
-) {
+  Map<Object, _Span> sections, [
+  _Span? held,
+]) {
   final resolved = <ResolvedRange>[];
   for (final range in ranges) {
-    final from = range.from._resolve(geometry, sections);
-    final to = range.to._resolve(geometry, sections);
+    final from = range.from._resolve(geometry, sections, held);
+    final to = range.to._resolve(geometry, sections, held);
     if (from == null || to == null) continue;
     final lower = math.min(from, to);
     final upper = math.max(from, to);

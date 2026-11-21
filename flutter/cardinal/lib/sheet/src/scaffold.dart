@@ -320,7 +320,7 @@ class _SheetScaffoldState extends State<SheetScaffold>
       ranges: entry.ranges,
       floor: geometry.keyboard,
       draggable: entry.draggable,
-      initial: entry.initial,
+      initial: entry.initialRest,
     );
     final rest = entry.resting;
     final at = entry.restingExtent;

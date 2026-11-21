@@ -98,16 +98,23 @@ class SheetController extends ChangeNotifier
   ValueListenable<bool> get collapsed => _collapsed;
   final _collapsed = ValueNotifier<bool>(false);
 
-  /// The anchor the current page's sheet first moves to (see
-  /// [SheetContent.initialAnchor]), for [expand].
-  SheetAnchor? _initial;
+  /// Where the current page's sheet first rests (see [SheetContent.initialAnchor] and
+  /// [SheetContent.initialSection]), for [expand].
+  _Rest? _initial;
 
-  /// Brings a collapsed sheet back up to the current page's initial anchor. Does
+  /// Brings a collapsed sheet back up to where the current page first rests. Does
   /// nothing unless it's collapsed.
   void expand() {
     if (!isCollapsed) return;
-    final initial = _initial;
-    if (initial != null) animateTo(initial);
+    switch (_initial) {
+      case _AtAnchor(:final anchor):
+        animateTo(anchor);
+      case final _InRange rest:
+        final extent = rest.extentIn(_anchors, _ranges);
+        if (extent != null && !isTransitioning) _springTo(rest, extent, 0);
+      case null:
+        break;
+    }
   }
 
   /// The furthest the sheet can be pulled up at all.
@@ -585,7 +592,7 @@ class SheetController extends ChangeNotifier
     List<ResolvedRange> ranges = const [],
     double floor = 0,
     bool draggable = true,
-    SheetAnchor? initial,
+    _Rest? initial,
   }) {
     _draggable = draggable;
     _initial = initial;
