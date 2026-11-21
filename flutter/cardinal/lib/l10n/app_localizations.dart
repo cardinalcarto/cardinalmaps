@@ -387,6 +387,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{first}, and {last}'**
   String listEnd(String first, String last);
+
+  /// What a screen reader says for the small (i) button in the corner of the map while the map's credits (OpenStreetMap and the other data sources) are hidden; tapping it shows them.
+  ///
+  /// In en, this message translates to:
+  /// **'Show map credits'**
+  String get mapCreditsShow;
+
+  /// What a screen reader says for the small (i) button in the corner of the map while the map's credits are shown; tapping it hides them.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide map credits'**
+  String get mapCreditsHide;
 }
 
 class _AppLocalizationsDelegate

@@ -300,6 +300,13 @@ impl SparkleMap {
         self.view().poll_style()
     }
 
+    /// The attributions of the style's sources, each once: text that may hold `<a href>`
+    /// links and HTML entities, as MapLibre styles write them.
+    #[frb(sync)]
+    pub fn attributions(&self) -> Vec<String> {
+        self.view().attributions()
+    }
+
     /// Where `--screenshot` wants the first complete frame saved, if anywhere.
     #[frb(sync)]
     pub fn screenshot_path(&self) -> Option<String> {

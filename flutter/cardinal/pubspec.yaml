@@ -37,6 +37,7 @@ dependencies:
   sparkle:
     path: ../sparkle
   # Below 1.8.1, which needs dbus 0.8, while every geolocator_linux needs dbus 0.7.
+  url_launcher: ^6.3.3
   wakelock_plus: ">=1.8.0 <1.8.1"
 
 dev_dependencies:
