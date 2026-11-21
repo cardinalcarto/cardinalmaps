@@ -148,6 +148,9 @@ pub struct MapState<T> {
     /// Per source, tiles of GeoJSON data newer than the drawn tiles have, while some of
     /// those covering the view are still being cut: see [`MapState::set_geojson`].
     pending: Vec<Option<HashMap<TileId, CacheEntry<T>>>>,
+    /// Per source, the newest GeoJSON data set while older data was still on its way in:
+    /// it follows once that has been swapped in.
+    waiting: Vec<Option<Arc<GeoJsonIndex>>>,
     /// Bytes loaded tiles may take, across sources, before the least recently drawn are
     /// dropped (so that panning back to them is instant until then).
     memory_budget: usize,
@@ -190,6 +193,7 @@ impl<T> MapState<T> {
         let mut map = Self {
             caches: sources.iter().map(|_| HashMap::new()).collect(),
             pending: sources.iter().map(|_| None).collect(),
+            waiting: sources.iter().map(|_| None).collect(),
             memory_budget,
             min_generation: vec![0; sources.len()],
             style,
@@ -317,36 +321,46 @@ impl<T> MapState<T> {
                     .filter(|&(_, id)| source.bounds.is_none_or(|b| intersects(id, b)))
                     .map(|(tier, id)| (tier, s, id, zoom_for(id))),
             );
+            wanted.extend(covering.iter().map(|p| ((s, p.id()), Tier::Visible)));
             // Tiles are loaded into the new data's tiles while it's cut, and drawn from the
             // old ones until it's all in.
-            let cache = filling(&mut self.pending, &mut self.caches, s);
-            for p in &covering {
-                let id = p.id();
-                let zoom = zoom_for(id);
-                wanted.push(((s, id), Tier::Visible));
-                match cache.get_mut(&id) {
-                    None => {
-                        self.loader.request((s, id), zoom);
-                        cache.insert(id, CacheEntry::Loading);
+            loop {
+                let cache = filling(&mut self.pending, &mut self.caches, s);
+                for p in &covering {
+                    let id = p.id();
+                    let zoom = zoom_for(id);
+                    match cache.get_mut(&id) {
+                        None => {
+                            self.loader.request((s, id), zoom);
+                            cache.insert(id, CacheEntry::Loading);
+                        }
+                        Some(CacheEntry::Ready {
+                            zoom: processed,
+                            stale,
+                            requested,
+                            ..
+                        }) if (*stale || *processed != zoom) && !*requested => {
+                            self.loader.request((s, id), zoom);
+                            *requested = true;
+                        }
+                        Some(_) => {}
                     }
-                    Some(CacheEntry::Ready {
-                        zoom: processed,
-                        stale,
-                        requested,
-                        ..
-                    }) if (*stale || *processed != zoom) && !*requested => {
-                        self.loader.request((s, id), zoom);
-                        *requested = true;
-                    }
-                    Some(_) => {}
                 }
-            }
-            if let Some(pending) = &self.pending[s]
-                && covering
-                    .iter()
-                    .all(|p| settled(pending, p.id(), zoom_for(p.id())))
-            {
+                let all_in = self.pending[s].as_ref().is_some_and(|pending| {
+                    covering
+                        .iter()
+                        .all(|p| settled(pending, p.id(), zoom_for(p.id())))
+                });
+                if !all_in {
+                    break;
+                }
                 self.caches[s] = self.pending[s].take().expect("just matched");
+                // Data set meanwhile is next, its tiles asked for in this same frame.
+                let Some(index) = self.waiting[s].take() else {
+                    break;
+                };
+                self.min_generation[s] = self.loader.set_geojson(s, index);
+                self.pending[s] = Some(HashMap::new());
             }
             let cache = &mut self.caches[s];
             let chosen = choose(cache, &covering, source.max_zoom);
@@ -526,7 +540,12 @@ impl<T> MapState<T> {
             for (s, cache) in self.caches.iter_mut().enumerate() {
                 cache.clear();
                 self.pending[s] = None;
-                self.min_generation[s] = generation;
+                // With nothing left to draw meanwhile, data that was waiting for older
+                // data to come in is loaded in its place.
+                self.min_generation[s] = match self.waiting[s].take() {
+                    Some(index) => self.loader.set_geojson(s, index),
+                    None => generation,
+                };
             }
             self.terrain = TerrainTiles::new();
             self.find_terrain_source();
@@ -574,8 +593,14 @@ impl<T> MapState<T> {
     /// The swap is of the whole source at once, not tile by tile, so old and new never
     /// show side by side: a line crossing tiles would be broken where they meet, and a
     /// point near an edge shown twice or not at all. That waits for the slowest tile
-    /// in view, but they're cut from memory, in milliseconds. Data set again before
-    /// the swap replaces the data on its way in, still drawing the old tiles.
+    /// in view, but they're cut from memory, in milliseconds.
+    ///
+    /// Data set again while tiles of earlier data are being cut waits for those to be
+    /// swapped in, then follows: a source set every frame shows, each frame, the newest
+    /// data that has been cut, rather than nothing new until the changes stop. Only the
+    /// newest data waits (any set in between is skipped), so what is drawn only ever
+    /// goes forward. Data set again before any tile of the earlier data was asked for
+    /// replaces it outright.
     pub fn set_geojson(&mut self, id: &str, data: &serde_json::Value) -> Result<()> {
         let Some(Source::GeoJson(source)) = self.style.source(id) else {
             bail!("the style has no GeoJSON source {id:?}");
@@ -587,15 +612,21 @@ impl<T> MapState<T> {
             .with_context(|| format!("GeoJSON source {id:?} isn't loaded"))?;
         let index =
             GeoJsonIndex::new(source, data).with_context(|| format!("GeoJSON source {id:?}"))?;
+        // The source's own, whatever its data.
         self.sources[s].max_zoom = index.max_zoom();
-        let generation = self.loader.set_geojson(s, Arc::new(index));
-        self.min_generation[s] = generation;
-        self.pending[s] = Some(HashMap::new());
+        let index = Arc::new(index);
+        if self.pending[s].as_ref().is_some_and(|p| !p.is_empty()) {
+            self.waiting[s] = Some(index);
+        } else {
+            self.waiting[s] = None;
+            self.min_generation[s] = self.loader.set_geojson(s, index);
+            self.pending[s] = Some(HashMap::new());
+        }
         Ok(())
     }
 
-    /// Whether a GeoJSON source's new data is still being cut, its old tiles drawn
-    /// meanwhile.
+    /// Whether a GeoJSON source's new data is still being cut or waiting to be, older
+    /// tiles drawn meanwhile.
     pub fn swapping(&self, id: &str) -> bool {
         self.sources
             .iter()
