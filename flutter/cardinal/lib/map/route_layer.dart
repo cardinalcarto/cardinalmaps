@@ -30,6 +30,10 @@ const navigationSource = 'navigation';
 /// the stop the rider gets on at, and its vehicles.
 const nearbyRouteSource = 'nearby-route';
 
+/// The style's GeoJSON source for the marker that shows where along the selected route
+/// its graph is being scrubbed.
+const scrubSource = 'route-scrub';
+
 /// The property of a callout saying which route it's for.
 const routeIndexProperty = 'route';
 
@@ -80,6 +84,7 @@ void addRouteLayers(Map<String, Object?> style) {
   sources[transitSource] = {'type': 'geojson', 'data': empty};
   sources[navigationSource] = {'type': 'geojson', 'data': empty};
   sources[nearbyRouteSource] = {'type': 'geojson', 'data': empty};
+  sources[scrubSource] = {'type': 'geojson', 'data': empty};
   final layers = style['layers'] as List<Object?>;
   final firstSymbol = layers.indexWhere((l) => (l as Map)['type'] == 'symbol');
   layers.insertAll(firstSymbol < 0 ? layers.length : firstSymbol, [
@@ -128,6 +133,20 @@ void addRouteLayers(Map<String, Object?> style) {
         'icon-anchor': 'bottom',
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
+      },
+    },
+    // Over the lines and the pins, under the callouts, which name the routes.
+    {
+      'id': 'route-scrub',
+      'type': 'circle',
+      'source': scrubSource,
+      'paint': {
+        'circle-radius': 7,
+        'circle-color': _selectedCasing,
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 3,
+        'circle-opacity': ['get', 'opacity'],
+        'circle-stroke-opacity': ['get', 'opacity'],
       },
     },
     {
@@ -195,6 +214,25 @@ Map<String, Object?> routesGeoJson(
         'geometry': {
           'type': 'Point',
           'coordinates': [destination.lon, destination.lat],
+        },
+      },
+  ],
+};
+
+/// The scrub marker at [point], [opacity] opaque, as GeoJSON: nothing without a point.
+Map<String, Object?> scrubGeoJson(
+  DirectionsPoint? point, {
+  double opacity = 1,
+}) => {
+  'type': 'FeatureCollection',
+  'features': [
+    if (point != null)
+      {
+        'type': 'Feature',
+        'properties': {'opacity': opacity},
+        'geometry': {
+          'type': 'Point',
+          'coordinates': [point.lng, point.lat],
         },
       },
   ],
