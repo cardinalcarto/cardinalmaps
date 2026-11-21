@@ -5,6 +5,8 @@ import 'package:cardinal/saved/saved_page.dart';
 import 'package:cardinal/search/search_sheet.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show CupertinoIcons, CupertinoMenuItem;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -636,6 +638,30 @@ void main() {
       expect(text('1 selected'), findsOneWidget);
     });
 
+    testWidgets('Pin pins the places selected, then unpins them', (
+      tester,
+    ) async {
+      await store.saved.createList('Food');
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      await openFull(tester);
+      await startEditing(tester);
+      await tapAndSettle(tester, text('Food'));
+      await tapAndSettle(tester, find.byTooltip('More options'));
+      // Not with a list selected.
+      expect(menuEnabled(tester, 'Pin'), isFalse);
+      await tester.tapAt(Offset.zero);
+      await tester.pumpAndSettle();
+
+      await tapAndSettle(tester, text('Food'));
+      await tapAndSettle(tester, text('Cafe'));
+      await tapAndSettle(tester, text('Bar'));
+      await act(tester, 'Pin');
+      expect((await tree()).pinned, hasLength(2));
+      await act(tester, 'Unpin');
+      expect((await tree()).pinned, isEmpty);
+    });
+
     testWidgets('the bar has only what acts on the selection', (tester) async {
       await place('poi:1', name: 'Cafe');
       await openFull(tester);
@@ -798,6 +824,237 @@ void main() {
       expect(text('2 selected'), findsOneWidget);
       await act(tester, 'Deselect all');
       expect(text('Select items'), findsOneWidget);
+    });
+  });
+
+  group('iOS', () {
+    /// Saved on iOS, full, with room for every row.
+    Future<GoRouter> openIos(
+      WidgetTester tester, [
+      String at = '/saved',
+    ]) async {
+      final router = await pumpFakeApp(
+        tester,
+        store: store,
+        location: at,
+        platform: TargetPlatform.iOS,
+      );
+      await expand(tester);
+      return router;
+    }
+
+    /// A long press frame by frame, as a finger's: the context menu opens as it goes.
+    Future<void> hold(WidgetTester tester, Finder finder) async {
+      final gesture = await tester.startGesture(tester.getCenter(finder));
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+
+    /// A swipe by [dx], step by step as a finger's, and let go.
+    Future<void> swipe(WidgetTester tester, Finder finder, double dx) async {
+      final gesture = await tester.startGesture(tester.getCenter(finder));
+      const steps = 20;
+      for (var i = 0; i < steps; i++) {
+        await gesture.moveBy(Offset(dx / steps, 0));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> moreMenu(WidgetTester tester, String item) async {
+      await tapAndSettle(tester, find.byIcon(CupertinoIcons.ellipsis_circle));
+      await tapAndSettle(tester, text(item));
+    }
+
+    bool barShown(WidgetTester tester) =>
+        find.byType(AppNavigationBar).hitTestable().evaluate().isNotEmpty;
+
+    testWidgets('⋯ selects, the toolbar taking the bar\'s place, until Done', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      final router = await openIos(tester);
+      expect(barShown(tester), isTrue);
+      await moreMenu(tester, 'Select');
+      expect(text('Select items'), findsOneWidget);
+      expect(barShown(tester), isFalse);
+      expect(text('Move'), findsOneWidget);
+      expect(text('Pin'), findsOneWidget);
+
+      await tapAndSettle(tester, text('Cafe'));
+      expect(text('1 selected'), findsOneWidget);
+      expect(router.state.uri.path, '/saved');
+      // All there is, so it's Deselect All.
+      await tapAndSettle(tester, text('Deselect All'));
+      expect(text('Select items'), findsOneWidget);
+      await tapAndSettle(tester, text('Select All'));
+      expect(text('1 selected'), findsOneWidget);
+
+      await tapAndSettle(tester, text('Done'));
+      expect(text('Select items'), findsNothing);
+      expect(barShown(tester), isTrue);
+    });
+
+    testWidgets('⋯ makes a new list here', (tester) async {
+      await openIos(tester);
+      await moreMenu(tester, 'New List');
+      await tester.enterText(find.byType(EditableText), 'Trips');
+      await tester.pump();
+      await tapAndSettle(tester, text('Create'));
+      expect((await tree()).listsIn(null).single.name, 'Trips');
+    });
+
+    testWidgets('a row\'s long press menu pins, and unpins', (tester) async {
+      await place('poi:1', name: 'Cafe');
+      final router = await openIos(tester);
+      await hold(tester, text('Cafe'));
+      expect(router.state.uri.path, '/saved');
+      for (final choice in [
+        'Pin',
+        'Edit',
+        'Move',
+        'Copy',
+        'Select',
+        'Delete',
+      ]) {
+        expect(text(choice), findsOneWidget, reason: choice);
+      }
+      await tapAndSettle(tester, text('Pin'));
+      expect((await tree()).pinned, hasLength(1));
+
+      await hold(tester, text('Cafe'));
+      await tapAndSettle(tester, text('Unpin'));
+      expect((await tree()).pinned, isEmpty);
+    });
+
+    testWidgets('a list\'s menu has no Pin or Copy', (tester) async {
+      await store.saved.createList('Food');
+      await openIos(tester);
+      await hold(tester, text('Food'));
+      expect(text('Edit'), findsOneWidget);
+      expect(text('Pin'), findsNothing);
+      expect(text('Copy'), findsNothing);
+    });
+
+    testWidgets('the menu\'s Delete deletes at once, with Undo', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await openIos(tester);
+      await hold(tester, text('Cafe'));
+      await tapAndSettle(tester, text('Delete'));
+      expect((await tree()).copiesOf('poi:1'), isEmpty);
+      await tapAndSettle(tester, text('Undo'));
+      expect((await tree()).copiesOf('poi:1'), isNotEmpty);
+    });
+
+    testWidgets('the menu\'s Select selects that row', (tester) async {
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      await openIos(tester);
+      await hold(tester, text('Bar'));
+      await tapAndSettle(tester, text('Select'));
+      expect(text('1 selected'), findsOneWidget);
+    });
+
+    testWidgets('swiped left all the way, a row goes, with Undo', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await openIos(tester);
+      await swipe(tester, text('Cafe'), -380);
+      expect(text('Cafe'), findsNothing);
+      expect((await tree()).copiesOf('poi:1'), isEmpty);
+      await tapAndSettle(tester, text('Undo'));
+      expect((await tree()).copiesOf('poi:1'), isNotEmpty);
+    });
+
+    testWidgets('swiped left a little, More has the menu as a sheet', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await openIos(tester);
+      await swipe(tester, text('Cafe'), -150);
+      expect(find.bySemanticsLabel('Delete'), findsOneWidget);
+      await tapAndSettle(tester, find.bySemanticsLabel('More'));
+      expect(text('Cancel'), findsOneWidget);
+      await tapAndSettle(tester, text('Edit'));
+      expect(text('Edit place'), findsOneWidget);
+    });
+
+    testWidgets('a place swiped right all the way is pinned, and stays', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await openIos(tester);
+      await swipe(tester, text('Cafe'), 380);
+      expect((await tree()).pinned, hasLength(1));
+      expect(text('Cafe'), findsOneWidget);
+    });
+
+    testWidgets('a list swiped right pins nothing', (tester) async {
+      await store.saved.createList('Food');
+      await openIos(tester);
+      await swipe(tester, text('Food'), 150);
+      expect(find.bySemanticsLabel('Pin'), findsNothing);
+    });
+
+    testWidgets('selecting, a row swiped away goes, with Undo', (tester) async {
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      await openIos(tester);
+      await moreMenu(tester, 'Select');
+      await swipe(tester, text('Cafe'), -380);
+      expect((await tree()).copiesOf('poi:1'), isEmpty);
+      expect(text('Select items'), findsOneWidget);
+      await tapAndSettle(tester, text('Undo'));
+      expect((await tree()).copiesOf('poi:1'), isNotEmpty);
+    });
+
+    testWidgets('the toolbar pins the places selected, then unpins them', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      await openIos(tester);
+      await moreMenu(tester, 'Select');
+      await tapAndSettle(tester, text('Select All'));
+      await tapAndSettle(tester, text('Pin'));
+      expect((await tree()).pinned, hasLength(2));
+      await tapAndSettle(tester, text('Unpin'));
+      expect((await tree()).pinned, isEmpty);
+    });
+
+    testWidgets('the back button goes up, and its menu further', (
+      tester,
+    ) async {
+      final food = await store.saved.createList('Food');
+      final italian = await store.saved.createList('Italian', parent: food);
+      final router = await openIos(tester, '/saved/$food');
+      await tapAndSettle(tester, text('Italian'));
+      expect(router.state.uri.path, '/saved/$italian');
+      // Named for the list above.
+      await tapAndSettle(tester, text('Food'));
+      expect(router.state.uri.path, '/saved/$food');
+
+      await tapAndSettle(tester, text('Italian'));
+      await hold(tester, text('Food'));
+      final saved = find.widgetWithText(CupertinoMenuItem, 'Saved');
+      expect(saved, findsOneWidget);
+      await tapAndSettle(tester, saved);
+      expect(router.state.uri.path, '/saved');
+    });
+
+    testWidgets('selecting, the sheet can\'t be collapsed', (tester) async {
+      await place('poi:1', name: 'Cafe');
+      await openIos(tester);
+      expect(sheetOf(tester).anchors.first.extent, 0);
+      await moreMenu(tester, 'Select');
+      expect(sheetOf(tester).anchors.first.extent, greaterThan(0));
     });
   });
 
