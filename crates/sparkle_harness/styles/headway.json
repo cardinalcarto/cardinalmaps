@@ -5,7 +5,7 @@
   "metadata": {
     "openmaptiles:version": "3.x",
     "cardinal:attribution": {
-      "style": "Headway Default (v4) by Michael Kirk and the Headway contributors, Apache License 2.0: https://github.com/headwaymaps/headway",
+      "style": "Headway Default (v4) by Headway authors, Apache License 2.0: https://github.com/headwaymaps/headway",
       "style-revision": "headwaymaps/headway@653096ceea78ece82a4c7ef48b073650225b8bb5, services/tileserver/maplibre-style/tests/fixtures/headway-v4.json",
       "style-upstream": "OSM Liberty (https://github.com/maputnik/osm-liberty), which Headway started from",
       "shields": "Highway shields inspired by OpenStreetMap Americana (https://github.com/osm-americana/openstreetmap-americana)",
@@ -22,7 +22,7 @@
       "encoding": "mlt",
       "type": "vector",
       "url": "mbtiles://{default}",
-      "attribution": "<a href=\"https://github.com/headwaymaps/headway\">Map style &copy; Michael Kirk and the Headway contributors</a> <a href=\"https://openmaptiles.org/\">&copy; OpenMapTiles</a> <a href=\"https://www.openstreetmap.org/copyright\">&copy; OpenStreetMap contributors</a>"
+      "attribution": "<a href=\"https://github.com/headwaymaps/headway\">Map style &copy; Headway authors</a> <a href=\"https://openmaptiles.org/\">&copy; OpenMapTiles</a> <a href=\"https://www.openstreetmap.org/copyright\">&copy; OpenStreetMap contributors</a>"
     },
     "landcover": {
       "maxzoom": 8,
