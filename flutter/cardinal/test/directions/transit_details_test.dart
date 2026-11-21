@@ -2,6 +2,7 @@ import 'package:cardinal/directions/connections.dart';
 import 'package:cardinal/directions/departure_legs.dart';
 import 'package:cardinal/directions/transit_details.dart';
 import 'package:cardinal/directions/transit_plan.dart';
+import 'package:cardinal/transit/nearby_page.dart' show CountdownNumber;
 import 'package:cardinal/units.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -655,6 +656,54 @@ void main() {
       // The 9's leg, then the 7's, above it.
       await arrives('9-1', 5);
       await arrives('7-1', 1);
+    });
+
+    testWidgets('a tile missed with a choice upstream fades, its row as tall', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(400, 4000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await itinerary(tester, connectionsJourney());
+      // Link's 18:03, counting down, with no label.
+      final link = find.byKey(const ValueKey(('departures', 3)));
+      Finder row() =>
+          find.descendant(of: link, matching: find.byType(IntrinsicHeight));
+      Finder inTile(Finder f) =>
+          find.descendant(of: rideTile(3, '6:03 PM'), matching: f);
+      final height = tester.getSize(row()).height;
+      expect(inTile(find.text('33')), findsOneWidget);
+      expect(inTile(find.text('Missed')), findsNothing);
+
+      /// How far down the tile [f] is.
+      double down(Finder f) =>
+          tester.getTopLeft(f).dy -
+          tester.getTopLeft(rideTile(3, '6:03 PM')).dy;
+      final labelTop = down(inTile(find.byKey(const ValueKey('label'))).last);
+
+      await tester.ensureVisible(rideTile(1, '5:55 PM'));
+      await tester.pumpAndSettle();
+      await tester.tap(rideTile(1, '5:55 PM'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      // Mid-way, the label fades in where the line kept for it is, the countdown
+      // fades to the dimmed time, and the row's as tall as it was.
+      double opacity(Finder f) => tester
+          .widget<FadeTransition>(
+            find.ancestor(of: f, matching: find.byType(FadeTransition)).first,
+          )
+          .opacity
+          .value;
+      final missed = inTile(find.text('Missed'));
+      expect(opacity(missed), inExclusiveRange(0, 1));
+      final countdown = inTile(find.byType(CountdownNumber));
+      expect(opacity(countdown), inExclusiveRange(0, 1));
+      expect(down(missed), labelTop);
+      expect(tester.getSize(row()).height, height);
+      await tester.pumpAndSettle();
+      expect(opacity(missed), 1);
+      expect(countdown, findsNothing);
+      expect(down(missed), labelTop);
+      expect(tester.getSize(row()).height, height);
     });
 
     testWidgets('rows below the departures chosen in grow and fade in', (

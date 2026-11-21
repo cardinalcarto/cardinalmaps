@@ -1519,6 +1519,12 @@ class _DepartureRangeState extends State<DepartureRange> {
     final departures = ride.departures;
     // Each tile badges its route when they aren't all the ride's.
     final mixed = departures.any((d) => d.route != null);
+    // A label line in each tile when any may have one: any once the rides before
+    // can make one missed. A choice upstream then changes no tile's height.
+    final labels =
+        choice.ready != null ||
+        choice.catchable.contains(false) ||
+        departures.any((d) => !d.status.runs || d.suggested || d.lastOfDay);
     return Padding(
       padding: const EdgeInsets.only(top: 6, bottom: 8),
       child: Column(
@@ -1535,39 +1541,53 @@ class _DepartureRangeState extends State<DepartureRange> {
             LayoutBuilder(
               builder: (context, constraints) => ValueListenableBuilder(
                 valueListenable: _now,
-                builder: (context, now, _) => SingleChildScrollView(
-                  controller: _tiles,
-                  scrollDirection: Axis.horizontal,
-                  child: _CenterAtFirst(
+                builder: (context, now, _) {
+                  final countdowns = [
+                    for (final d in departures) Countdown(d, now: now),
+                  ];
+                  // A line for the clock time under a countdown in each tile when
+                  // any could count down, whether the rider can make it or not.
+                  final clocks = departures.indexed.any(
+                    (e) =>
+                        e.$2.status.runs &&
+                        ConnectionTile.inCountdown(countdowns[e.$1]),
+                  );
+                  return SingleChildScrollView(
                     controller: _tiles,
-                    tile: choice.departure == null
-                        ? null
-                        : _keyOf(choice.departure!),
-                    viewport: constraints.maxWidth,
-                    child: IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        spacing: 6,
-                        children: [
-                          for (final (i, d) in departures.indexed)
-                            ConnectionTile(
-                              key: _keyOf(d),
-                              departure: d,
-                              route: mixed ? d.route ?? ride.route : null,
-                              countdown: Countdown(d, now: now),
-                              catchable: choice.catchable[i],
-                              selected: i == choice.index,
-                              utcOffset: ride.boarding.utcOffset,
-                              onTap: () {
-                                _tapped = _run(d);
-                                widget.onSelect(i);
-                              },
-                            ),
-                        ],
+                    scrollDirection: Axis.horizontal,
+                    child: _CenterAtFirst(
+                      controller: _tiles,
+                      tile: choice.departure == null
+                          ? null
+                          : _keyOf(choice.departure!),
+                      viewport: constraints.maxWidth,
+                      child: IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          spacing: 6,
+                          children: [
+                            for (final (i, d) in departures.indexed)
+                              ConnectionTile(
+                                key: _keyOf(d),
+                                departure: d,
+                                route: mixed ? d.route ?? ride.route : null,
+                                countdown: countdowns[i],
+                                catchable: choice.catchable[i],
+                                labelLine: labels,
+                                clockLine: clocks,
+                                selected: i == choice.index,
+                                utcOffset: ride.boarding.utcOffset,
+                                onTap: () {
+                                  _tapped = _run(d);
+                                  widget.onSelect(i);
+                                },
+                              ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
             ),
             const SizedBox(height: 6),
@@ -1656,6 +1676,10 @@ class _RenderCenterAtFirst extends RenderProxyBox {
 /// real-time, and the clock time it leaves at; and whether it's the suggested one or the
 /// day's last. One that doesn't run is struck through with a label, and one the rider
 /// can't make is dimmed with its clock time, and neither can be chosen.
+///
+/// As whether it can be made changes, its countdown and clock time, and its label,
+/// cross-fade, in lines kept for them while [clockLine] and [labelLine] say, so it
+/// stays the same height.
 class ConnectionTile extends StatelessWidget {
   const ConnectionTile({
     super.key,
@@ -1666,7 +1690,14 @@ class ConnectionTile extends StatelessWidget {
     required this.selected,
     required this.utcOffset,
     required this.onTap,
+    this.labelLine = false,
+    this.clockLine = false,
   });
+
+  /// Whether a departure leaving as [countdown] says would count down, if it can be
+  /// made: within the hour, and not yet gone.
+  static bool inCountdown(Countdown countdown) =>
+      !countdown.departed && countdown.minutesUntil <= countdownMinutes;
 
   final RideDeparture departure;
 
@@ -1681,6 +1712,11 @@ class ConnectionTile extends StatelessWidget {
   /// The boarding stop's offset from UTC, for its clock time.
   final int? utcOffset;
   final VoidCallback onTap;
+
+  /// Whether to keep a line for a label when it has none, and for the clock time
+  /// under a countdown when it isn't counting down.
+  final bool labelLine;
+  final bool clockLine;
 
   static const _minWidth = 64.0;
   static const _radius = 10.0;
@@ -1700,11 +1736,7 @@ class ConnectionTile extends StatelessWidget {
     final time = clock(context, d.departure, utcOffset: utcOffset);
     // One the rider can't make, or past the hour, or once it has left, shows the clock
     // time in place of a countdown.
-    final counts =
-        !struck &&
-        catchable &&
-        !countdown.departed &&
-        countdown.minutesUntil <= countdownMinutes;
+    final counts = !struck && catchable && inCountdown(countdown);
     final (label, labelColor) = switch (d) {
       RideDeparture(status: DepartureStatus.canceled) => (
         'Canceled',
@@ -1778,21 +1810,24 @@ class ConnectionTile extends StatelessWidget {
                               ),
                             ),
                     ),
-                    if (counts)
-                      Text(
-                        time,
-                        key: const ValueKey('clock'),
-                        style: muted?.copyWith(
-                          decoration: struck
-                              ? TextDecoration.lineThrough
-                              : null,
+                    if (counts || clockLine)
+                      FadeSwap(
+                        value: counts,
+                        child: Text(
+                          counts ? time : '',
+                          key: const ValueKey('clock'),
+                          style: muted?.copyWith(
+                            decoration: struck
+                                ? TextDecoration.lineThrough
+                                : null,
+                          ),
                         ),
                       ),
-                    if (label case final label?)
+                    if (label != null || labelLine)
                       FadeSwap(
                         value: (label, labelColor),
                         child: Text(
-                          label,
+                          label ?? '',
                           key: const ValueKey('label'),
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: labelColor,
