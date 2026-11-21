@@ -14,6 +14,7 @@ class SheetContent extends StatefulWidget {
     this.showsBottomBar = false,
     this.draggable = true,
     this.collapsible = false,
+    this.keepsHeight = false,
     required this.slivers,
   }) : assert(anchors.length > 0);
 
@@ -43,6 +44,12 @@ class SheetContent extends StatefulWidget {
   /// brings it back. Usually for a page that [showsBottomBar], where the bar is the
   /// way to bring it back.
   final bool collapsible;
+
+  /// Whether the sheet stays where it rests when this page comes in, pushed or gone
+  /// back to, if this page has that anchor (or range) too. Otherwise, as for any page,
+  /// it moves to the [initialAnchor] of a page pushed, and back to where it was left
+  /// on a page gone back to.
+  final bool keepsHeight;
 
   final List<Widget> slivers;
 
@@ -88,7 +95,8 @@ class _SheetContentState extends State<SheetContent> {
       ..freeRanges = widget.freeRanges
       ..initialAnchor = widget.initialAnchor
       ..showsBottomBar = widget.showsBottomBar
-      ..draggable = widget.draggable;
+      ..draggable = widget.draggable
+      ..keepsHeight = widget.keepsHeight;
     _scaffold!._scheduleUpdate();
   }
 
@@ -101,7 +109,8 @@ class _SheetContentState extends State<SheetContent> {
       ..freeRanges = widget.freeRanges
       ..initialAnchor = widget.initialAnchor
       ..showsBottomBar = widget.showsBottomBar
-      ..draggable = widget.draggable;
+      ..draggable = widget.draggable
+      ..keepsHeight = widget.keepsHeight;
     if (widget.draggable != oldWidget.draggable) _scaffold?._scheduleUpdate();
   }
 
@@ -160,6 +169,7 @@ class _SheetEntry extends ChangeNotifier {
   int initialAnchor = 0;
   bool showsBottomBar = false;
   bool draggable = true;
+  bool keepsHeight = false;
 
   /// What the bottom bar's [_SheetScaffoldState._barShown] is on this page.
   double get _barValue => showsBottomBar ? 1 : 0;

@@ -292,6 +292,9 @@ sealed class _Rest {
   /// The extent this rest is at among [anchors] and [ranges], or null if they don't
   /// have it.
   double? extentIn(List<ResolvedAnchor> anchors, List<ResolvedRange> ranges);
+
+  /// Whether a page with [anchors] and [ranges], placed or not, can rest here.
+  bool isAmong(List<SheetAnchor> anchors, List<SheetRange> ranges);
 }
 
 final class _AtAnchor extends _Rest {
@@ -302,6 +305,10 @@ final class _AtAnchor extends _Rest {
   @override
   double? extentIn(List<ResolvedAnchor> anchors, List<ResolvedRange> ranges) =>
       anchors.firstWhereOrNull((a) => a.anchor == anchor)?.extent;
+
+  @override
+  bool isAmong(List<SheetAnchor> anchors, List<SheetRange> ranges) =>
+      anchors.contains(anchor);
 
   @override
   bool operator ==(Object other) =>
@@ -323,6 +330,10 @@ final class _InRange extends _Rest {
   @override
   double? extentIn(List<ResolvedAnchor> anchors, List<ResolvedRange> ranges) =>
       ranges.firstWhereOrNull((r) => r.range == range)?.extentAt(fraction);
+
+  @override
+  bool isAmong(List<SheetAnchor> anchors, List<SheetRange> ranges) =>
+      ranges.contains(range);
 
   @override
   bool operator ==(Object other) =>
