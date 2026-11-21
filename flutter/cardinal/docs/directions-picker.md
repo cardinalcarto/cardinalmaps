@@ -362,14 +362,27 @@ time.
 
 ## iOS
 
-Native per platform, as elsewhere in the app. The mockups are Android only, and iOS
-mockups are deferred, so iOS is built with the same structure and this mapping: the trip
-card as a grouped inset list, the tabs as a segmented control whose segments carry the
-times, rows in a grouped list, and the buttons in a bottom toolbar. The docking and
-scrubbing rules are the same. It gets restyled once it has mockups of its own.
+Native per platform, as elsewhere in the app. iOS has edge-case mockups only (on the
+canvas linked above), drawn to settle these points before it's built:
+
+- **Trip card:** one grouped inset card, with X and swap as round buttons beside it.
+- **Tabs:** a segmented control whose segments are two lines tall, the icon over the
+  time, about 44 pt. Icon and time side by side don't fit four segments.
+- **Rows:** separate cards with a gap between them, not one grouped list, so a row
+  looks the same in place and docked.
+- **Buttons:** capsules in the footer, over the home indicator.
+- **Glass:** the sheet is translucent while it's low, which is where the row docks.
+  The selected row, the cards and the Steps button are translucent tints there, and
+  nothing paints an opaque backing; the library clips the list out from behind them.
+- **Dark mode:** the profile's freeway tone is the lighter, more prominent one.
+
+The docking and scrubbing rules are the same as Android's.
+
+Not designed yet: large text sizes (the fixed row height will clip at the biggest
+accessibility sizes), transit and cycling rows on iOS, and right-to-left layout.
 
 ## Still open
 
-1. **iOS mockups.** Deferred; iOS is built from the mapping above meanwhile.
+1. **Large text sizes**: how rows grow, on both platforms.
 2. **The third driving tone** waits on the route runs from Valinor; until then the
    profile has two.
