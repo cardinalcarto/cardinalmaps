@@ -223,6 +223,9 @@ const _railX = 20.0;
 /// Where the marker sits from a row's top: level with its first line of text.
 const _markerY = 13.0;
 
+/// How far a solid line runs past a row's edge, so rows join without a seam.
+const _overlap = 1.0;
+
 class _RailPainter extends CustomPainter {
   _RailPainter(this.rail, this.scheme);
 
@@ -232,8 +235,11 @@ class _RailPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final markerY = rail.marker == _Marker.none ? size.height / 2 : _markerY;
-    _line(canvas, rail.above, rail.aboveColor, 0, markerY);
-    _line(canvas, rail.below, rail.belowColor, markerY, size.height);
+    // Solid lines run a pixel past the row's edges into the next row's, whose line
+    // meets this one: rows can end between pixels, where two half-covered edges
+    // would show as a seam across the bar.
+    _line(canvas, rail.above, rail.aboveColor, 0, markerY, size);
+    _line(canvas, rail.below, rail.belowColor, markerY, size.height, size);
     final center = Offset(_railX, markerY);
     switch (rail.marker) {
       case _Marker.none:
@@ -284,8 +290,18 @@ class _RailPainter extends CustomPainter {
     }
   }
 
-  void _line(Canvas canvas, _Line line, Color? color, double from, double to) {
+  void _line(
+    Canvas canvas,
+    _Line line,
+    Color? color,
+    double from,
+    double to,
+    Size size,
+  ) {
     if (to <= from) return;
+    // Where a solid line reaches the row's edge, it runs on past it.
+    final top = from <= 0 ? -_overlap : from;
+    final bottom = to >= size.height ? size.height + _overlap : to;
     switch (line) {
       case _Line.none:
         break;
@@ -298,15 +314,15 @@ class _RailPainter extends CustomPainter {
         }
       case _Line.thin:
         canvas.drawLine(
-          Offset(_railX, from),
-          Offset(_railX, to),
+          Offset(_railX, top),
+          Offset(_railX, bottom),
           Paint()
             ..color = scheme.outlineVariant
             ..strokeWidth = 2,
         );
       case _Line.bar:
         canvas.drawRect(
-          Rect.fromLTRB(_railX - 3.5, from, _railX + 3.5, to),
+          Rect.fromLTRB(_railX - 3.5, top, _railX + 3.5, bottom),
           Paint()..color = color ?? scheme.primary,
         );
     }
