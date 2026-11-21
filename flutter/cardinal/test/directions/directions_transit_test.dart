@@ -137,6 +137,15 @@ void main() {
       }
       expect(find.text('Live times from 1 of 2 feeds'), findsOneWidget);
       expect(find.text('Walking to stops'), findsOneWidget);
+      // The control ends where the line does, which is where the time axis ends.
+      final control = find.ancestor(
+        of: find.text('Walking to stops'),
+        matching: find.byType(PopupMenuButton<TransitAccess>),
+      );
+      expect(
+        tester.getRect(control).right,
+        moreOrLessEquals(tester.getRect(find.byType(TimelineTicks)).right),
+      );
       expect(find.byType(TimelineTicks), findsOneWidget);
       expect(
         find.descendant(of: footer, matching: find.text('Trip details')),

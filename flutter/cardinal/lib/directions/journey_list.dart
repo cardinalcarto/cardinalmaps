@@ -657,6 +657,9 @@ class TransitStrip extends StatelessWidget {
   /// The least the control is tall, to be tapped.
   static const _controlHeight = 36.0;
 
+  /// The most of the line's width the control takes, the rest being the status's.
+  static const _controlShare = 0.6;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -705,12 +708,21 @@ class TransitStrip extends StatelessWidget {
             status,
             Align(alignment: AlignmentDirectional.centerStart, child: control),
           ] else
-            Row(
-              children: [
-                Expanded(child: status),
-                const SizedBox(width: 8),
-                Flexible(child: control),
-              ],
+            // The control at the end of the line, as wide as it is and no wider
+            // than most of the line, and the status in what's left.
+            LayoutBuilder(
+              builder: (context, constraints) => Row(
+                children: [
+                  Expanded(child: status),
+                  const SizedBox(width: 8),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: constraints.maxWidth * _controlShare,
+                    ),
+                    child: control,
+                  ),
+                ],
+              ),
             ),
           SizedBox(
             height: TimelineTicks.heightOf(context),
