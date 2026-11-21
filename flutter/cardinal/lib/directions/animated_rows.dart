@@ -1,6 +1,6 @@
 /// Rows that change smoothly: a column whose rows grow and fade in as they appear and
-/// shrink and fade out as they go, a sliver that holds one of its rows where it is on
-/// screen while the rows above it change, and text that cross-fades as it changes.
+/// shrink and fade out as they go, a sliver that doesn't shrink from under the bottom
+/// of the viewport, and text that cross-fades as it changes.
 library;
 
 import 'dart:math' as math;
@@ -166,97 +166,41 @@ class _RowSlotState extends State<_RowSlot>
   );
 }
 
-/// [child], a box, as a sliver that holds what's under [anchor] where it is on screen
-/// while [anchor] is set: when the rows above it change height, it scrolls the
-/// viewport by as much, as far as it can scroll.
-class AnchoredSliver extends SingleChildRenderObjectWidget {
-  const AnchoredSliver({super.key, required this.anchor, super.child});
-
-  /// The key of the widget to hold in place, or null to let it move.
-  final GlobalKey? anchor;
+/// [child], a box, as a sliver that doesn't shrink from under the bottom of the
+/// viewport: rows going below what's on screen would leave the viewport scrolled past
+/// the end, which then scrolls back, moving everything showing. It keeps the room
+/// showing instead, blank, and gives it up as it scrolls out of sight.
+class SteadySliver extends SingleChildRenderObjectWidget {
+  const SteadySliver({super.key, super.child});
 
   @override
-  RenderAnchoredSliver createRenderObject(BuildContext context) =>
-      RenderAnchoredSliver()..anchor = anchor;
-
-  @override
-  void updateRenderObject(
-    BuildContext context,
-    RenderAnchoredSliver renderObject,
-  ) {
-    renderObject.anchor = anchor;
-  }
+  RenderSteadySliver createRenderObject(BuildContext context) =>
+      RenderSteadySliver();
 }
 
-class RenderAnchoredSliver extends RenderSliverToBoxAdapter {
-  GlobalKey? _anchor;
-
-  /// Where the anchor's top was in the viewport's content at the last layout.
-  double? _anchorAt;
-
-  /// The scroll extent at the end of the last layout that didn't correct the scroll.
-  double? _extent;
-
-  set anchor(GlobalKey? key) {
-    if (key == _anchor) return;
-    _anchor = key;
-    // As it is now, before anything changes.
-    _anchorAt = key == null ? null : _topOf(key);
-  }
-
-  double? _topOf(GlobalKey key) {
-    final box = key.currentContext?.findRenderObject();
-    final child = this.child;
-    if (box is! RenderBox ||
-        !box.attached ||
-        !box.hasSize ||
-        child == null ||
-        !child.hasSize) {
-      return null;
-    }
-    // Below the slivers before this one, which may have changed too.
-    return constraints.precedingScrollExtent +
-        box.localToGlobal(Offset.zero, ancestor: child).dy;
-  }
-
-  ScrollPosition? get _position {
-    for (var node = parent; node != null; node = node.parent) {
-      if (node is RenderViewportBase) {
-        final offset = node.offset;
-        return offset is ScrollPosition ? offset : null;
-      }
-    }
-    return null;
-  }
+class RenderSteadySliver extends RenderSliverToBoxAdapter {
+  /// The extent at the last layout.
+  double _extent = 0;
 
   @override
   void performLayout() {
     super.performLayout();
-    final key = _anchor;
-    final before = _anchorAt;
-    final now = key == null ? null : _topOf(key);
-    _anchorAt = now;
-    if (before != null && now != null && (now - before).abs() > 0.01) {
-      var shift = now - before;
-      final position = _position;
-      if (position == null ||
-          !position.hasPixels ||
-          !position.hasContentDimensions) {
-        shift = 0;
-      } else {
-        // As far as it can scroll once this layout is done.
-        final grown = geometry!.scrollExtent - (_extent ?? 0);
-        final low = position.minScrollExtent - position.pixels;
-        final high = position.maxScrollExtent + grown - position.pixels;
-        shift = shift.clamp(math.min(0.0, low), math.max(0.0, high));
-      }
-      if (shift.abs() > 0.01) {
-        // The viewport scrolls by as much and lays this out again.
-        geometry = SliverGeometry(scrollOffsetCorrection: shift);
-        return;
-      }
-    }
-    _extent = geometry!.scrollExtent;
+    final laid = geometry!;
+    if (laid.scrollOffsetCorrection != null) return;
+    // As far down as shows now, at most as far as it reached before.
+    final showing = constraints.scrollOffset + constraints.remainingPaintExtent;
+    final extent = math.max(laid.scrollExtent, math.min(_extent, showing));
+    _extent = extent;
+    if (extent <= laid.scrollExtent) return;
+    final paint = calculatePaintOffset(constraints, from: 0, to: extent);
+    geometry = SliverGeometry(
+      scrollExtent: extent,
+      paintExtent: paint,
+      maxPaintExtent: extent,
+      hitTestExtent: paint,
+      cacheExtent: calculateCacheOffset(constraints, from: 0, to: extent),
+      hasVisualOverflow: laid.hasVisualOverflow,
+    );
   }
 }
 

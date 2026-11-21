@@ -392,10 +392,8 @@ void main() {
       final linkStops = (legs[2] as Map)['stops']! as List;
       (linkStops.first as Map)['name'] = 'Westlake Station';
       await itinerary(tester, TransitPlan.fromJson(json).journeys.single);
-      expect(
-        find.text('Change at Westlake Station, wait 1 min'),
-        findsOneWidget,
-      );
+      expect(find.text('Change at Westlake Station'), findsOneWidget);
+      expect(find.text(', wait 1 min'), findsOneWidget);
     });
 
     testWidgets('a wheelchair rider\'s street legs are named for it', (
@@ -504,45 +502,74 @@ void main() {
       },
     );
 
-    testWidgets(
-      'a row appearing above the departures chosen in grows in, and they stay put',
-      (tester) async {
-        await tester.binding.setSurfaceSize(const Size(400, 800));
-        addTearDown(() => tester.binding.setSurfaceSize(null));
-        await itinerary(tester, connectionsJourney(), header: true);
-        // A 7 that reaches Link just as it leaves: no wait for it.
-        await choose(tester, 1, '5:43 PM');
-        // The row and, inside it, what it says.
-        final wait = find.byKey(const ValueKey(('wait', 3)));
-        expect(wait, findsNothing);
+    testWidgets('a choice moves nothing above the departures chosen in', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(400, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await itinerary(tester, connectionsJourney(), header: true);
 
-        final link = find.byKey(const ValueKey(('departures', 3)));
-        await tester.ensureVisible(rideTile(3, '6:03 PM'));
+      /// Taps [time] among leg [leg]'s departures, and checks that the tiles' row is
+      /// exactly where it was, the moment it's tapped, mid-way and after.
+      Future<void> stays(int leg, String time) async {
+        final row = find.byKey(ValueKey(('departures', leg)));
+        await tester.ensureVisible(rideTile(leg, time));
         await tester.pumpAndSettle();
-        final top = tester.getTopLeft(link).dy;
-        await tester.tap(rideTile(3, '6:03 PM'));
+        final at = tester.getTopLeft(row);
+        await tester.tap(rideTile(leg, time));
         await tester.pump();
-        await tester.pump(const Duration(milliseconds: 100));
-        // Growing in above, while the tiles stay under the finger.
-        final half = tester.getSize(wait.first).height;
-        expect(tester.getTopLeft(link).dy, moreOrLessEquals(top, epsilon: 0.5));
+        expect(tester.getTopLeft(row), at);
+        await tester.pump(const Duration(milliseconds: 120));
+        expect(tester.getTopLeft(row), at);
         await tester.pumpAndSettle();
-        final full = tester.getSize(wait.first).height;
-        expect(find.text('Wait 8 min'), findsOneWidget);
-        expect(half, inExclusiveRange(0, full));
-        expect(tester.getTopLeft(link).dy, moreOrLessEquals(top, epsilon: 0.5));
+        expect(selected(tester, leg, time), isTrue);
+        expect(tester.getTopLeft(row), at);
+      }
 
-        // And going again as it came.
-        await tester.tap(rideTile(3, '5:55 PM'));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 100));
-        expect(tester.getSize(wait.first).height, inExclusiveRange(0, full));
-        expect(tester.getTopLeft(link).dy, moreOrLessEquals(top, epsilon: 0.5));
-        await tester.pumpAndSettle();
-        expect(wait, findsNothing);
-        expect(tester.getTopLeft(link).dy, moreOrLessEquals(top, epsilon: 0.5));
-      },
-    );
+      // A 7 that reaches Link just as it leaves: no wait for it, said in a row that
+      // stays for when there is one.
+      await choose(tester, 1, '5:43 PM');
+      expect(find.text('No wait'), findsOneWidget);
+      await stays(3, '6:03 PM');
+      expect(find.text('Wait 8 min'), findsOneWidget);
+      await stays(3, '5:55 PM');
+      expect(find.text('No wait'), findsOneWidget);
+
+      // Another route, headed elsewhere, with a longer wait.
+      expect(find.text('Wait 2 min'), findsOneWidget);
+      await stays(5, '6:15 PM');
+      expect(find.text('Wait 9 min'), findsOneWidget);
+      expect(find.text('Rainier Beach'), findsWidgets);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey(('title', 5))).first,
+          matching: find.text('9'),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('rows below the departures chosen in grow and fade in', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(400, 4000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await itinerary(tester, connectionsJourney());
+      // The 7 shows only its ends, so the 40's stops toggle goes; back on the 40 it
+      // grows back in.
+      final toggle = find.byKey(const ValueKey(('stops', 1, 0)));
+      final full = tester.getSize(toggle.first).height;
+      await choose(tester, 1, '5:43 PM');
+      expect(toggle, findsNothing);
+      await tester.ensureVisible(rideTile(1, '5:40 PM'));
+      await tester.pumpAndSettle();
+      await tester.tap(rideTile(1, '5:40 PM'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.getSize(toggle.first).height, inExclusiveRange(0, full));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(toggle.first).height, full);
+    });
 
     testWidgets('a ride with no connection says so', (tester) async {
       await tester.binding.setSurfaceSize(const Size(400, 4000));

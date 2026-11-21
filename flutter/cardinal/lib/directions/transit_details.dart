@@ -62,15 +62,24 @@ class JourneyHeader extends StatelessWidget {
                 onPressed: onBack,
               ),
               Expanded(
-                child: Text('Trip details', style: theme.textTheme.titleLarge),
+                child: Text(
+                  'Trip details',
+                  style: theme.textTheme.titleLarge,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              if (duration != null)
-                Text(
-                  formatDuration(duration.toDouble()),
+              FadeSwap(
+                value: duration == null ? null : duration ~/ 60,
+                alignment: AlignmentDirectional.centerEnd,
+                child: Text(
+                  duration == null ? '' : formatDuration(duration.toDouble()),
                   style: theme.textTheme.titleLarge?.copyWith(
                     color: theme.colorScheme.primary,
                   ),
+                  maxLines: 1,
                 ),
+              ),
             ],
           ),
           Padding(
@@ -78,28 +87,44 @@ class JourneyHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // One line, whatever the choices, so nothing below it moves: the
+                // times shrink to fit beside a long "Go in" rather than wrap.
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.baseline,
                   textBaseline: TextBaseline.alphabetic,
                   children: [
-                    GoIn(
-                      journey: journey,
-                      now: now,
-                      leave: chain.departure,
-                      live: chain.rides.firstOrNull?.realtime,
+                    // Cross-fades when the time to leave changes with a choice, not
+                    // as it counts down.
+                    FadeSwap(
+                      value: chain.departure,
+                      child: GoIn(
+                        journey: journey,
+                        now: now,
+                        leave: chain.departure,
+                        live: chain.rides.firstOrNull?.realtime,
+                      ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(
-                        '${clock(context, chain.departure, utcOffset: offset)}'
-                        ' – '
-                        '${arrival == null ? 'no connection' : clock(context, arrival, utcOffset: offset)}',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: arrival == null
-                              ? theme.colorScheme.error
-                              : null,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: FadeSwap(
+                          value: (chain.departure, arrival),
+                          alignment: AlignmentDirectional.centerEnd,
+                          child: Text(
+                            '${clock(context, chain.departure, utcOffset: offset)}'
+                            ' – '
+                            '${arrival == null ? 'no connection' : clock(context, arrival, utcOffset: offset)}',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: arrival == null
+                                  ? theme.colorScheme.error
+                                  : null,
+                            ),
+                            maxLines: 1,
+                            softWrap: false,
+                          ),
                         ),
-                        textAlign: TextAlign.end,
                       ),
                     ),
                   ],
@@ -509,37 +534,11 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
     );
   }
 
-  /// Each ride's departures row, by leg, to hold in place while the rows above it
-  /// change with a choice made in it.
-  final _anchors = <int, GlobalKey>{};
-
-  /// The departures row the rider last chose in, while the rows settle.
-  GlobalKey? _anchor;
-  Timer? _settle;
-
-  /// Holds ride [leg]'s departures where they are on screen while the rows change.
-  void _hold(int leg) {
-    _settle?.cancel();
-    setState(() => _anchor = _anchors[leg]);
-    _settle = Timer(rowDuration + const Duration(milliseconds: 100), () {
-      if (mounted) setState(() => _anchor = null);
-    });
-  }
-
-  @override
-  void dispose() {
-    _settle?.cancel();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return SliverPadding(
       padding: const EdgeInsets.only(bottom: 16),
-      sliver: AnchoredSliver(
-        anchor: _anchor,
-        child: AnimatedRows(rows: _rows(context)),
-      ),
+      sliver: SteadySliver(child: AnimatedRows(rows: _rows(context))),
     );
   }
 
@@ -565,6 +564,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         child: _EndText(
           name: widget.start,
           time: 'Leave ${clock(context, chain.departure, utcOffset: offset)}',
+          prefix: 'Leave ',
         ),
       ),
     );
@@ -599,7 +599,10 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
               ? _Line.dotted
               : _Line.thin;
           final wait = choice.made ? choice.waitSeconds : 0;
-          if (change || wait >= 60) {
+          // Whether there's a wait doesn't hang on the departure chosen of this ride,
+          // so choosing one never adds or drops a row above its departures.
+          final waits = change || _mayWait(choice);
+          if (waits) {
             rows.add(
               _RailRow(
                 key: ValueKey(('wait', i)),
@@ -616,11 +619,8 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
               context,
               i,
               choice,
-              onSelect: (departure) {
-                _hold(i);
-                widget.onSelect(index, departure);
-              },
-              above: change || wait >= 60 ? _Line.thin : before,
+              onSelect: (departure) => widget.onSelect(index, departure),
+              above: waits ? _Line.thin : before,
               below: connector(next),
             ),
           );
@@ -636,6 +636,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
           time: arrival == null
               ? 'No connection'
               : 'Arrive ${clock(context, arrival, utcOffset: offset)}',
+          prefix: 'Arrive ',
         ),
       ),
     );
@@ -719,15 +720,12 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         _RailRow(
           key: ValueKey(('departuresRow', index)),
           rail: _Rail.through(_Line.bar, color: first),
-          child: KeyedSubtree(
-            key: _anchors.putIfAbsent(index, GlobalKey.new),
-            child: DepartureRange(
-              key: ValueKey(('departures', index)),
-              choice: choice,
-              access: widget.access,
-              now: widget.now,
-              onSelect: onSelect,
-            ),
+          child: DepartureRange(
+            key: ValueKey(('departures', index)),
+            choice: choice,
+            access: widget.access,
+            now: widget.now,
+            onSelect: onSelect,
           ),
         ),
       );
@@ -837,11 +835,76 @@ bool _isChange(StreetLeg leg) =>
     (leg.walk == null || leg.walk!.distance < 1) &&
     (leg.from?.name == leg.to?.name || leg.duration < 30);
 
+/// Whether the rider may wait for [choice]'s ride, whichever of its departures they
+/// take: as the plan has it, or, from when they're ready, for any they can make.
+bool _mayWait(RideChoice choice) {
+  final ready = choice.ready;
+  final departures = choice.ride.departures;
+  if (ready == null || departures.isEmpty) return choice.waitSeconds >= 60;
+  return [
+    for (final (i, d) in departures.indexed)
+      if (choice.catchable[i]) d.departure.difference(ready).inSeconds >= 60,
+  ].any((w) => w);
+}
+
+/// [text], a clock time at the end of a row, after [prefix], in a space as wide as
+/// any clock time there, so what's beside it lays out the same whatever the time; a
+/// change cross-fades.
+class _TimeSlot extends StatelessWidget {
+  const _TimeSlot(this.text, {this.prefix = '', this.style});
+
+  final String text;
+  final String prefix;
+  final TextStyle? style;
+
+  static const _figures = [FontFeature.tabularFigures()];
+
+  @override
+  Widget build(BuildContext context) {
+    final style = (this.style ?? DefaultTextStyle.of(context).style).copyWith(
+      fontFeatures: _figures,
+    );
+    final localizations = MaterialLocalizations.of(context);
+    final h24 = MediaQuery.alwaysUse24HourFormatOf(context);
+    String widest(int hour) => localizations.formatTimeOfDay(
+      TimeOfDay(hour: hour, minute: 0),
+      alwaysUse24HourFormat: h24,
+    );
+    return Stack(
+      alignment: AlignmentDirectional.centerEnd,
+      children: [
+        for (final hour in const [10, 22])
+          ExcludeSemantics(
+            child: Visibility(
+              visible: false,
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: Text('$prefix${widest(hour)}', style: style),
+            ),
+          ),
+        FadeSwap(
+          value: text,
+          alignment: AlignmentDirectional.centerEnd,
+          child: Text(text, style: style),
+        ),
+      ],
+    );
+  }
+}
+
 class _EndText extends StatelessWidget {
-  const _EndText({required this.name, required this.time});
+  const _EndText({
+    required this.name,
+    required this.time,
+    required this.prefix,
+  });
 
   final String name;
   final String time;
+
+  /// What [time] says before its clock time.
+  final String prefix;
 
   @override
   Widget build(BuildContext context) {
@@ -860,13 +923,15 @@ class _EndText extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Text(time, style: theme.textTheme.bodyMedium),
+          _TimeSlot(time, prefix: prefix, style: theme.textTheme.bodyMedium),
         ],
       ),
     );
   }
 }
 
+/// The change or wait before a ride, on one line: its height is the same whatever the
+/// wait, so the rows below it stay where they are.
 class _WaitText extends StatelessWidget {
   const _WaitText({required this.change, required this.seconds});
 
@@ -880,12 +945,8 @@ class _WaitText extends StatelessWidget {
     final muted = theme.textTheme.bodyMedium?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
-    final wait = seconds >= 60
-        ? 'wait ${formatDuration(seconds.toDouble())}'
-        : null;
-    final text = change != null
-        ? ['Change at $change', ?wait].join(', ')
-        : 'Wait ${formatDuration(seconds.toDouble())}';
+    final wait = seconds >= 60 ? formatDuration(seconds.toDouble()) : null;
+    final change = this.change;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -896,7 +957,32 @@ class _WaitText extends StatelessWidget {
             color: theme.colorScheme.onSurfaceVariant,
           ),
           const SizedBox(width: 6),
-          Expanded(child: Text(text, style: muted)),
+          if (change != null)
+            Flexible(
+              child: Text(
+                'Change at $change',
+                style: muted,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          Flexible(
+            flex: 0,
+            child: FadeSwap(
+              value: wait,
+              child: Text(
+                switch ((change, wait)) {
+                  (null, null) => 'No wait',
+                  (null, final wait?) => 'Wait $wait',
+                  (_, null) => '',
+                  (_, final wait?) => ', wait $wait',
+                },
+                style: muted,
+                maxLines: 1,
+                softWrap: false,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1052,34 +1138,56 @@ class _RideTitle extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          RouteBadge(route: route),
+          // One line each, so a choice of departure above the ride's departures
+          // never changes their height.
+          AnimatedSize(
+            duration: rowDuration,
+            curve: rowCurve,
+            alignment: AlignmentDirectional.centerStart,
+            child: FadeSwap(
+              value: route?.id,
+              child: RouteBadge(route: route),
+            ),
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  headsign ?? route?.longName ?? '',
-                  style: theme.textTheme.titleSmall,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                FadeSwap(
+                  value: headsign ?? route?.longName,
+                  child: Text(
+                    headsign ?? route?.longName ?? '',
+                    style: theme.textTheme.titleSmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                Text(
-                  [
-                    ?ride.agency,
-                    (route?.kind ?? VehicleKind.other).label,
-                  ].join(' · '),
-                  style: muted,
+                FadeSwap(
+                  value: route?.kind,
+                  child: Text(
+                    [
+                      ?ride.agency,
+                      (route?.kind ?? VehicleKind.other).label,
+                    ].join(' · '),
+                    style: muted,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ],
             ),
           ),
           if (seconds != null) ...[
             const SizedBox(width: 8),
-            Text(
-              formatDuration(seconds.toDouble()),
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.primary,
+            FadeSwap(
+              value: seconds ~/ 60,
+              alignment: AlignmentDirectional.centerEnd,
+              child: Text(
+                formatDuration(seconds.toDouble()),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.primary,
+                ),
               ),
             ),
           ],
@@ -1147,7 +1255,7 @@ class _StopText extends StatelessWidget {
             ),
           if (time case final time?) ...[
             const SizedBox(width: 8),
-            Text(
+            _TimeSlot(
               clock(context, time, utcOffset: visit.utcOffset),
               style: style?.copyWith(color: live ? liveColor(theme) : null),
             ),
