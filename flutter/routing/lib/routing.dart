@@ -16,12 +16,14 @@ import 'src/rust/frb_generated.dart';
 export 'src/rust/api/directions.dart'
     show
         DirectionsAdapter,
+        DirectionsElevation,
         DirectionsError,
         DirectionsErrorKind,
         DirectionsPoint,
         DirectionsRequest,
         DirectionsRoute,
         DirectionsRun,
+        DirectionsRunKind,
         DirectionsStep,
         DistanceUnits,
         NavigableRoute,

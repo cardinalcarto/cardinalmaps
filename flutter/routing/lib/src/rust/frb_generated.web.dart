@@ -245,7 +245,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  DirectionsElevation dco_decode_box_autoadd_directions_elevation(dynamic raw);
+
+  @protected
   DirectionsPoint dco_decode_box_autoadd_directions_point(dynamic raw);
+
+  @protected
+  DirectionsRunKind dco_decode_box_autoadd_directions_run_kind(dynamic raw);
 
   @protected
   double dco_decode_box_autoadd_f_64(dynamic raw);
@@ -296,6 +302,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
+  int dco_decode_box_autoadd_u_8(dynamic raw);
+
+  @protected
+  DirectionsElevation dco_decode_directions_elevation(dynamic raw);
+
+  @protected
   DirectionsError dco_decode_directions_error(dynamic raw);
 
   @protected
@@ -314,10 +326,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DirectionsRun dco_decode_directions_run(dynamic raw);
 
   @protected
+  DirectionsRunKind dco_decode_directions_run_kind(dynamic raw);
+
+  @protected
   DirectionsStep dco_decode_directions_step(dynamic raw);
 
   @protected
   DistanceUnits dco_decode_distance_units(dynamic raw);
+
+  @protected
+  double dco_decode_f_32(dynamic raw);
 
   @protected
   double dco_decode_f_64(dynamic raw);
@@ -382,6 +400,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<NavVisualInstruction> dco_decode_list_nav_visual_instruction(
     dynamic raw,
   );
+
+  @protected
+  Float32List dco_decode_list_prim_f_32_strict(dynamic raw);
 
   @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
@@ -459,6 +480,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
+  DirectionsElevation? dco_decode_opt_box_autoadd_directions_elevation(
+    dynamic raw,
+  );
+
+  @protected
+  DirectionsRunKind? dco_decode_opt_box_autoadd_directions_run_kind(
+    dynamic raw,
+  );
+
+  @protected
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
 
   @protected
@@ -505,6 +536,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_8(dynamic raw);
 
   @protected
   List<String>? dco_decode_opt_list_String(dynamic raw);
@@ -761,7 +795,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  DirectionsElevation sse_decode_box_autoadd_directions_elevation(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   DirectionsPoint sse_decode_box_autoadd_directions_point(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DirectionsRunKind sse_decode_box_autoadd_directions_run_kind(
     SseDeserializer deserializer,
   );
 
@@ -826,6 +870,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
+  int sse_decode_box_autoadd_u_8(SseDeserializer deserializer);
+
+  @protected
+  DirectionsElevation sse_decode_directions_elevation(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   DirectionsError sse_decode_directions_error(SseDeserializer deserializer);
 
   @protected
@@ -846,10 +898,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DirectionsRun sse_decode_directions_run(SseDeserializer deserializer);
 
   @protected
+  DirectionsRunKind sse_decode_directions_run_kind(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   DirectionsStep sse_decode_directions_step(SseDeserializer deserializer);
 
   @protected
   DistanceUnits sse_decode_distance_units(SseDeserializer deserializer);
+
+  @protected
+  double sse_decode_f_32(SseDeserializer deserializer);
 
   @protected
   double sse_decode_f_64(SseDeserializer deserializer);
@@ -926,6 +986,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<NavVisualInstruction> sse_decode_list_nav_visual_instruction(
     SseDeserializer deserializer,
   );
+
+  @protected
+  Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer);
 
   @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
@@ -1013,6 +1076,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  DirectionsElevation? sse_decode_opt_box_autoadd_directions_elevation(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DirectionsRunKind? sse_decode_opt_box_autoadd_directions_run_kind(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
 
   @protected
@@ -1075,6 +1148,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_8(SseDeserializer deserializer);
 
   @protected
   List<String>? sse_decode_opt_list_String(SseDeserializer deserializer);
@@ -1363,8 +1439,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_directions_elevation(
+    DirectionsElevation self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_directions_point(
     DirectionsPoint self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_directions_run_kind(
+    DirectionsRunKind self,
     SseSerializer serializer,
   );
 
@@ -1444,6 +1532,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_u_8(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_directions_elevation(
+    DirectionsElevation self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_directions_error(
     DirectionsError self,
     SseSerializer serializer,
@@ -1477,6 +1574,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_directions_run(DirectionsRun self, SseSerializer serializer);
 
   @protected
+  void sse_encode_directions_run_kind(
+    DirectionsRunKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_directions_step(
     DirectionsStep self,
     SseSerializer serializer,
@@ -1484,6 +1587,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_distance_units(DistanceUnits self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_f_32(double self, SseSerializer serializer);
 
   @protected
   void sse_encode_f_64(double self, SseSerializer serializer);
@@ -1578,6 +1684,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_nav_visual_instruction(
     List<NavVisualInstruction> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_f_32_strict(
+    Float32List self,
     SseSerializer serializer,
   );
 
@@ -1693,6 +1805,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_directions_elevation(
+    DirectionsElevation? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_directions_run_kind(
+    DirectionsRunKind? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
 
   @protected
@@ -1766,6 +1890,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_8(int? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_list_String(List<String>? self, SseSerializer serializer);

@@ -1,10 +1,10 @@
 //! What the directions sheet says about a route beyond its line and steps: what to call
-//! it, and how fast and on what kind of road it goes along the way.
+//! it, how fast and on what kind of way it goes along the way, and how it climbs.
 //!
 //! All of it is worked out from the router's OSRM answer, which
 //! [`crate::api::directions`] reads and hands over as the plain values here.
 
-use crate::api::directions::DirectionsRun;
+use crate::api::directions::{DirectionsElevation, DirectionsRun, DirectionsRunKind};
 
 /// The kinds of road the app tells apart, of an intersection's `classes`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -245,9 +245,17 @@ struct Run {
     duration: f64,
     distance: f64,
     classes: RoadClasses,
+    /// What kind of way it's on, where the router said.
+    kind: Option<DirectionsRunKind>,
 }
 
 impl Run {
+    /// Whether it and `other` are on the same kind of road: of the same classes and the
+    /// same kind of way.
+    fn alike(&self, other: &Run) -> bool {
+        self.classes == other.classes && self.kind == other.kind
+    }
+
     /// Its speed in meters per second; zero if it takes no time.
     fn speed(&self) -> f64 {
         if self.duration > 0.0 {
@@ -290,6 +298,7 @@ fn stretches(leg: &ProfileLeg) -> Option<Vec<Run>> {
         duration: leg.durations[from..to].iter().sum::<f64>() + turn_duration,
         distance: leg.distances[from..to].iter().sum(),
         classes,
+        kind: None,
     };
     let mut stretches = Vec::with_capacity(leg.intersections.len());
     // The point the stretches so far reach.
@@ -323,55 +332,184 @@ fn stretches(leg: &ProfileLeg) -> Option<Vec<Run>> {
     Some(stretches)
 }
 
-/// A route's speed profile: runs that follow one another from its start to its end, each
-/// with how long it takes, how far it goes and what kind of road it's on. Empty if any of
-/// the route's `legs` has no annotation, since the runs wouldn't cover the route.
+/// A route's speed profile from its legs' annotations and its intersections' classes,
+/// which is all an answer without the router's own runs has to go by: the stretches of
+/// road between intersections ([`stretches`]), which a route has hundreds or thousands
+/// of, joined into runs ([`joined`]). Empty if any of the route's `legs` has no
+/// annotation, since the runs wouldn't cover the route.
 ///
-/// The runs are put together from the stretches of road between intersections
-/// ([`stretches`]), which a route has hundreds or thousands of, in two steps that leave
-/// it some tens:
-///
-/// 1. A stretch joins the run before it when the two have the same classes and the
-///    stretch's speed is within 3 m/s of the run's so far. A stretch with no length or
-///    that takes no time has no speed, and joins the run before it whatever its classes
-///    (or, at the route's start, the run after it).
-/// 2. A run that takes less than a hundredth of the route's duration is too short to
-///    draw, so it joins whichever neighbor of the same classes is nearer its speed (the
-///    one before it if they're equally near). The shortest such run goes first, and this
-///    repeats until every run left is long enough or has no neighbor of its classes.
-///
-/// Classes never mix, except that a stretch with no speed has none that matter: a run is
-/// all motorway or not, all tolled or not, all ferry or not. Joining adds durations and
-/// distances, so the runs' add up to the stretches'. A run's speed is its distance over
-/// its duration.
+/// These runs have no kind, and their classes are the intersections': motorway or not,
+/// ferry or not, and tolled wherever the maneuver they're part of is tolled at all.
 pub(crate) fn speed_profile(legs: &[ProfileLeg]) -> Vec<DirectionsRun> {
-    let mut runs: Vec<Run> = Vec::new();
-    // Stretches without a speed that came before any run.
-    let mut carried: Option<Run> = None;
+    let mut all = Vec::new();
     for leg in legs {
         let Some(stretches) = stretches(leg) else {
             return Vec::new();
         };
-        for mut stretch in stretches {
-            let has_speed = stretch.duration > 0.0 && stretch.distance > 0.0;
-            match runs.last_mut() {
-                Some(run) if !has_speed => run.absorb(&stretch),
-                Some(run)
-                    if run.classes == stretch.classes
-                        && (run.speed() - stretch.speed()).abs() <= RUN_SPEED_TOLERANCE =>
-                {
-                    run.absorb(&stretch);
-                }
-                None if !has_speed => match carried.as_mut() {
-                    Some(carried) => carried.absorb(&stretch),
-                    None => carried = Some(stretch),
+        all.extend(stretches);
+    }
+    joined(all)
+}
+
+/// A run of a leg as Valinor gives it (a leg's `valinor_details.runs`; see
+/// `valinor/docs/osrm-leg-details.md`): some of the leg's roads, one after another, that
+/// are alike and that the router takes at one speed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RouterRun<'a> {
+    /// Seconds, with the turns along it.
+    pub(crate) duration: f64,
+    /// Meters.
+    pub(crate) distance: f64,
+    /// How it's travelled: `drive`, `bicycle`, `pedestrian` or `transit`.
+    pub(crate) travel_mode: &'a str,
+    /// How big a road it is, from `motorway` down to `service_other`.
+    pub(crate) road_class: &'a str,
+    /// What the way is for: `road`, `cycleway`, `steps`, `ferry` and many others.
+    pub(crate) road_use: &'a str,
+    /// The cycle lane along it, if it's cycled: `none`, `shared`, `dedicated` or
+    /// `separated`.
+    pub(crate) cycle_lane: Option<&'a str>,
+    /// Whether it's tolled.
+    pub(crate) toll: bool,
+}
+
+/// Uses of a way that keep motor traffic off it, whatever its travel mode.
+const CAR_FREE_USES: [&str; 7] = [
+    "cycleway",
+    "mountain_bike",
+    "path",
+    "footway",
+    "pedestrian",
+    "bridleway",
+    "track",
+];
+
+/// What kind of way a run is on, for the tone the app draws it in: the one place
+/// Valinor's words for a road are turned into the app's.
+///
+/// | Travelled | Kind | When |
+/// |---|---|---|
+/// | any way | none | `use` is `ferry` or `rail-ferry`: a crossing is on no kind of road |
+/// | `drive` | [`Freeway`] | `road_class` is `motorway` |
+/// | | [`MainRoad`] | `road_class` is `trunk`, `primary` or `secondary` |
+/// | | [`Street`] | any other class |
+/// | `bicycle` | [`Trail`] | `use` is one of [`CAR_FREE_USES`] |
+/// | | [`BikeLane`] | else, `cycle_lane` is `dedicated` or `separated` |
+/// | | [`SharedRoad`] | else: no lane, or one only painted with sharrows (`shared`) |
+/// | `pedestrian` | [`Stairs`] | `use` is `steps` or `escalator` |
+/// | | [`Path`] | `use` is one of [`CAR_FREE_USES`] |
+/// | | [`Sidewalk`] | else: along a street, on its sidewalk or a crossing |
+/// | anything else | none | |
+///
+/// A road's ramps go by its class, as Valinor classes them. A track (a farm or forest
+/// road) counts as car-free, since what traffic it has is rare and slow. A cycleway is a
+/// trail whatever its lane says, which there is about sharing it with people on foot.
+///
+/// [`Freeway`]: DirectionsRunKind::Freeway
+/// [`MainRoad`]: DirectionsRunKind::MainRoad
+/// [`Street`]: DirectionsRunKind::Street
+/// [`Trail`]: DirectionsRunKind::Trail
+/// [`BikeLane`]: DirectionsRunKind::BikeLane
+/// [`SharedRoad`]: DirectionsRunKind::SharedRoad
+/// [`Stairs`]: DirectionsRunKind::Stairs
+/// [`Path`]: DirectionsRunKind::Path
+/// [`Sidewalk`]: DirectionsRunKind::Sidewalk
+pub(crate) fn run_kind(run: &RouterRun) -> Option<DirectionsRunKind> {
+    if is_ferry(run.road_use) {
+        return None;
+    }
+    let car_free = CAR_FREE_USES.contains(&run.road_use);
+    Some(match run.travel_mode {
+        "drive" => match run.road_class {
+            "motorway" => DirectionsRunKind::Freeway,
+            "trunk" | "primary" | "secondary" => DirectionsRunKind::MainRoad,
+            _ => DirectionsRunKind::Street,
+        },
+        "bicycle" if car_free => DirectionsRunKind::Trail,
+        "bicycle" => match run.cycle_lane {
+            Some("dedicated" | "separated") => DirectionsRunKind::BikeLane,
+            _ => DirectionsRunKind::SharedRoad,
+        },
+        "pedestrian" => match run.road_use {
+            "steps" | "escalator" => DirectionsRunKind::Stairs,
+            _ if car_free => DirectionsRunKind::Path,
+            _ => DirectionsRunKind::Sidewalk,
+        },
+        _ => return None,
+    })
+}
+
+/// Whether a way of this `use` is a ferry crossing, by boat or by train.
+fn is_ferry(road_use: &str) -> bool {
+    matches!(road_use, "ferry" | "rail-ferry")
+}
+
+/// A route's speed profile from the router's own runs, every leg's in order, joined into
+/// fewer ([`joined`]).
+///
+/// Unlike [`speed_profile`]'s, these runs are of the roads themselves: each has a kind
+/// ([`run_kind`]), and is tolled only where its roads are. A run is a motorway where its
+/// roads are of that class, whoever travels them, and a ferry where their use is.
+pub(crate) fn router_profile<'a>(
+    runs: impl IntoIterator<Item = RouterRun<'a>>,
+) -> Vec<DirectionsRun> {
+    joined(
+        runs.into_iter()
+            .map(|run| Run {
+                duration: run.duration,
+                distance: run.distance,
+                classes: RoadClasses {
+                    motorway: run.road_class == "motorway" && !is_ferry(run.road_use),
+                    toll: run.toll,
+                    ferry: is_ferry(run.road_use),
                 },
-                _ => {
-                    if let Some(carried) = carried.take() {
-                        stretch.absorb(&carried);
-                    }
-                    runs.push(stretch);
+                kind: run_kind(&run),
+            })
+            .collect(),
+    )
+}
+
+/// `stretches` of a route, in order, joined into the runs of its speed profile: runs
+/// that follow one another from its start to its end, each with how long it takes, how
+/// far it goes and what kind of road it's on. A route has hundreds or thousands of
+/// stretches, and the two steps here leave it some tens of runs:
+///
+/// 1. A stretch joins the run before it when the two are alike (the same classes and
+///    the same kind of way) and the stretch's speed is within 3 m/s of the run's so
+///    far. A stretch with no length or that takes no time has no speed, and joins the
+///    run before it whatever it's like (or, at the route's start, the run after it).
+/// 2. A run that takes less than a hundredth of the route's duration is too short to
+///    draw, so it joins whichever neighbor like it is nearer its speed (the one before
+///    it if they're equally near). The shortest such run goes first, and this repeats
+///    until every run left is long enough or has no neighbor like it.
+///
+/// Kinds of road never mix, except that a stretch with no speed has none that matters:
+/// a run is all motorway or not, all tolled or not, all ferry or not, and all one kind
+/// of way. Joining adds durations and distances, so the runs' add up to the stretches'.
+/// A run's speed is its distance over its duration.
+fn joined(stretches: Vec<Run>) -> Vec<DirectionsRun> {
+    let mut runs: Vec<Run> = Vec::new();
+    // Stretches without a speed that came before any run.
+    let mut carried: Option<Run> = None;
+    for mut stretch in stretches {
+        let has_speed = stretch.duration > 0.0 && stretch.distance > 0.0;
+        match runs.last_mut() {
+            Some(run) if !has_speed => run.absorb(&stretch),
+            Some(run)
+                if run.alike(&stretch)
+                    && (run.speed() - stretch.speed()).abs() <= RUN_SPEED_TOLERANCE =>
+            {
+                run.absorb(&stretch);
+            }
+            None if !has_speed => match carried.as_mut() {
+                Some(carried) => carried.absorb(&stretch),
+                None => carried = Some(stretch),
+            },
+            _ => {
+                if let Some(carried) = carried.take() {
+                    stretch.absorb(&carried);
                 }
+                runs.push(stretch);
             }
         }
     }
@@ -395,13 +533,14 @@ pub(crate) fn speed_profile(legs: &[ProfileLeg]) -> Vec<DirectionsRun> {
             motorway: run.classes.motorway,
             toll: run.classes.toll,
             ferry: run.classes.ferry,
+            kind: run.kind,
         })
         .collect()
 }
 
-/// The shortest of `runs` that takes less than `shortest` seconds and has a neighbor of
-/// its classes, with the neighbor it should join: the one nearer its speed, or the one
-/// before it if they're equally near.
+/// The shortest of `runs` that takes less than `shortest` seconds and has a neighbor
+/// like it, with the neighbor it should join: the one nearer its speed, or the one before
+/// it if they're equally near.
 fn shortest_joinable(runs: &[Run], shortest: f64) -> Option<(usize, usize)> {
     let neighbor_of = |index: usize| {
         let run = &runs[index];
@@ -411,13 +550,195 @@ fn shortest_joinable(runs: &[Run], shortest: f64) -> Option<(usize, usize)> {
         [before, after]
             .into_iter()
             .flatten()
-            .filter(|&neighbor| runs[neighbor].classes == run.classes)
+            .filter(|&neighbor| runs[neighbor].alike(run))
             .min_by(|a, b| apart(a).total_cmp(&apart(b)))
     };
     (0..runs.len())
         .filter(|&index| runs[index].duration < shortest)
         .filter_map(|index| Some((index, neighbor_of(index)?)))
         .min_by(|(a, _), (b, _)| runs[*a].duration.total_cmp(&runs[*b].duration))
+}
+
+/// How much of a route is on each kind of way the captions speak of, from its `runs`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct WayShares {
+    /// The share of its distance on trails, cycled, or paths, walked: 0 to 1.
+    pub(crate) trail: f64,
+    /// The share of its distance in bike lanes: 0 to 1.
+    pub(crate) bike_lane: f64,
+    /// Whether any of it is stairs.
+    pub(crate) stairs: bool,
+}
+
+impl WayShares {
+    /// The shares of `runs`. They're of the distance of the runs that have a kind, so a
+    /// ferry crossing in the middle of a ride doesn't make less of its trails; all are
+    /// nothing if no run has a kind or none has any length.
+    pub(crate) fn of(runs: &[DirectionsRun]) -> Self {
+        // Folded from zero, not summed: the sum of no distances is negative zero.
+        let on = |kinds: &[DirectionsRunKind]| -> f64 {
+            runs.iter()
+                .filter(|run| run.kind.is_some_and(|kind| kinds.contains(&kind)))
+                .fold(0.0, |distance, run| distance + run.distance)
+        };
+        let all = runs
+            .iter()
+            .filter(|run| run.kind.is_some())
+            .fold(0.0, |distance, run| distance + run.distance);
+        let share = |distance: f64| if all > 0.0 { distance / all } else { 0.0 };
+        Self {
+            trail: share(on(&[DirectionsRunKind::Trail, DirectionsRunKind::Path])),
+            bike_lane: share(on(&[DirectionsRunKind::BikeLane])),
+            stairs: on(&[DirectionsRunKind::Stairs]) > 0.0,
+        }
+    }
+}
+
+/// A leg's elevation as Valinor gives it (a leg's `valinor_details`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LegElevation<'a> {
+    /// How far apart the heights are along the leg, in meters.
+    pub(crate) interval: f64,
+    /// Meters above sea level: at the leg's start, every `interval` along it, and at its
+    /// end.
+    pub(crate) heights: &'a [f32],
+    /// How long the leg is, in meters, which is where its last height is.
+    pub(crate) length: f64,
+}
+
+impl LegElevation<'_> {
+    /// How far along the leg the height at `index` is, in meters.
+    fn position(&self, index: usize) -> f64 {
+        if index + 1 == self.heights.len() {
+            self.length
+        } else {
+            // Not past the end, should the leg be a little shorter than its heights say.
+            (index as f64 * self.interval).min(self.length)
+        }
+    }
+}
+
+/// How far a route's height must turn back from a top or a bottom for that to count as
+/// one, in meters. The heights come from a terrain model of 30 m cells, each height good
+/// to a few meters, so a flat road reads as a meter or two of ripple: counting every rise
+/// would give a long flat route hundreds of meters of climb.
+const CLIMB_THRESHOLD: f64 = 3.0;
+
+/// How far `heights` climb and descend in all, in meters, as `(climb, descent)`.
+///
+/// The heights are followed from turning point to turning point, a top being one only
+/// once the heights have fallen [`CLIMB_THRESHOLD`] below it, and a bottom once they've
+/// risen as far above it. Each climb is from a bottom to the next top and counts in
+/// full, and each descent likewise, so a hill counts for all its height and ripple
+/// smaller than the threshold for nothing, whether on the flat or on the way up a hill.
+/// Before the first rise or fall of the threshold, the bottom or top is the first height.
+pub(crate) fn climb_and_descent(heights: &[f32]) -> (f64, f64) {
+    let Some(&first) = heights.first() else {
+        return (0.0, 0.0);
+    };
+    let (mut climb, mut descent) = (0.0, 0.0);
+    // The last turning point, the furthest the heights have gone from it since, and
+    // which way that is; no way until they've gone the threshold.
+    let mut turn = f64::from(first);
+    let mut furthest = turn;
+    let mut rising: Option<bool> = None;
+    for &height in heights {
+        let height = f64::from(height);
+        match rising {
+            None if (height - turn).abs() >= CLIMB_THRESHOLD => {
+                rising = Some(height > turn);
+                furthest = height;
+            }
+            None => {}
+            Some(true) if height >= furthest => furthest = height,
+            Some(false) if height <= furthest => furthest = height,
+            Some(up) if (height - furthest).abs() >= CLIMB_THRESHOLD => {
+                if up {
+                    climb += furthest - turn;
+                } else {
+                    descent += turn - furthest;
+                }
+                turn = furthest;
+                furthest = height;
+                rising = Some(!up);
+            }
+            Some(_) => {}
+        }
+    }
+    match rising {
+        Some(true) => climb += furthest - turn,
+        Some(false) => descent += turn - furthest,
+        None => {}
+    }
+    (climb, descent)
+}
+
+/// A route's elevation from its legs', in order; none if any leg has none, since the
+/// heights wouldn't cover the route, or if the legs' don't make sense together (no
+/// heights, different intervals, or none that's a positive length).
+///
+/// The route's heights are at its start, every interval along it and at its end, like a
+/// leg's. A leg's last height is at the leg's end, not an interval past the one before,
+/// so the legs' heights can't simply follow one another: the route's are read off the
+/// line through all the legs' heights, each placed where it is along the route. For a
+/// route of one leg that gives the leg's own heights.
+pub(crate) fn route_elevation(legs: &[Option<LegElevation>]) -> Option<DirectionsElevation> {
+    let interval = legs.first()?.as_ref()?.interval;
+    if !(interval.is_finite() && interval > 0.0) {
+        return None;
+    }
+    // Every height of every leg, with how far along the route it is.
+    let mut profile: Vec<(f64, f32)> = Vec::new();
+    let mut length = 0.0;
+    for leg in legs {
+        let leg = leg.as_ref()?;
+        let usable = leg.interval == interval
+            && leg.heights.len() >= 2
+            && leg.length.is_finite()
+            && leg.length >= 0.0
+            && leg.heights.iter().all(|height| height.is_finite());
+        if !usable {
+            return None;
+        }
+        profile.extend(
+            leg.heights
+                .iter()
+                .enumerate()
+                .map(|(index, &height)| (length + leg.position(index), height)),
+        );
+        length += leg.length;
+    }
+
+    let mut heights = Vec::with_capacity((length / interval) as usize + 2);
+    // The last of `profile` at or before the height being read.
+    let mut before = 0;
+    let mut read = |at: f64| {
+        while profile.get(before + 1).is_some_and(|next| next.0 <= at) {
+            before += 1;
+        }
+        let (from, low) = profile[before];
+        match profile.get(before + 1) {
+            Some(&(to, high)) => {
+                let along = ((at - from) / (to - from)) as f32;
+                low + (high - low) * along
+            }
+            None => low,
+        }
+    };
+    // A height a hair short of the end is the end's.
+    let mut index = 0;
+    while index as f64 * interval < length - 1e-6 {
+        heights.push(read(index as f64 * interval));
+        index += 1;
+    }
+    heights.push(read(length));
+    let (climb, descent) = climb_and_descent(&heights);
+    Some(DirectionsElevation {
+        interval,
+        heights,
+        climb,
+        descent,
+    })
 }
 
 #[cfg(test)]
@@ -927,5 +1248,413 @@ mod tests {
         };
         assert!(speed_profile(&[leg(STREET), bare]).is_empty());
         assert!(speed_profile(&[]).is_empty());
+    }
+
+    fn router_run<'a>(
+        travel_mode: &'a str,
+        road_class: &'a str,
+        road_use: &'a str,
+        cycle_lane: Option<&'a str>,
+    ) -> RouterRun<'a> {
+        RouterRun {
+            duration: 10.0,
+            distance: 100.0,
+            travel_mode,
+            road_class,
+            road_use,
+            cycle_lane,
+            toll: false,
+        }
+    }
+
+    #[test]
+    fn a_driven_run_is_a_freeway_a_main_road_or_a_street_by_its_class() {
+        use DirectionsRunKind::{Freeway, MainRoad, Street};
+        for (road_class, kind) in [
+            ("motorway", Freeway),
+            ("trunk", MainRoad),
+            ("primary", MainRoad),
+            ("secondary", MainRoad),
+            ("tertiary", Street),
+            ("unclassified", Street),
+            ("residential", Street),
+            ("service_other", Street),
+            // A class this doesn't know is the least of roads.
+            ("null", Street),
+            ("", Street),
+        ] {
+            // Whatever the way is for, short of a ferry.
+            for road_use in ["road", "ramp", "turn_channel", "living_street", "track"] {
+                let run = router_run("drive", road_class, road_use, None);
+                assert_eq!(run_kind(&run), Some(kind), "{road_class} {road_use}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_cycled_run_is_a_trail_a_bike_lane_or_a_shared_road() {
+        use DirectionsRunKind::{BikeLane, SharedRoad, Trail};
+        let kind = |road_use, cycle_lane| {
+            run_kind(&router_run("bicycle", "secondary", road_use, cycle_lane))
+        };
+        // A way without cars is a trail, whatever lane it says it has.
+        for road_use in CAR_FREE_USES {
+            for cycle_lane in [None, Some("none"), Some("shared"), Some("separated")] {
+                assert_eq!(kind(road_use, cycle_lane), Some(Trail), "{road_use}");
+            }
+        }
+        // On a road it goes by the lane.
+        for road_use in ["road", "living_street", "service_road", "alley", "sidewalk"] {
+            assert_eq!(kind(road_use, Some("separated")), Some(BikeLane));
+            assert_eq!(kind(road_use, Some("dedicated")), Some(BikeLane));
+            assert_eq!(kind(road_use, Some("shared")), Some(SharedRoad));
+            assert_eq!(kind(road_use, Some("none")), Some(SharedRoad));
+            assert_eq!(kind(road_use, Some("null")), Some(SharedRoad));
+            assert_eq!(kind(road_use, None), Some(SharedRoad));
+        }
+        // The road's class doesn't come into it.
+        let motorway = router_run("bicycle", "motorway", "road", Some("dedicated"));
+        assert_eq!(run_kind(&motorway), Some(BikeLane));
+    }
+
+    #[test]
+    fn a_walked_run_is_a_path_a_sidewalk_or_stairs() {
+        use DirectionsRunKind::{Path, Sidewalk, Stairs};
+        let kind = |road_use| run_kind(&router_run("pedestrian", "service_other", road_use, None));
+        assert_eq!(kind("steps"), Some(Stairs));
+        assert_eq!(kind("escalator"), Some(Stairs));
+        for road_use in CAR_FREE_USES {
+            assert_eq!(kind(road_use), Some(Path), "{road_use}");
+        }
+        for road_use in [
+            "road",
+            "sidewalk",
+            "pedestrian_crossing",
+            "living_street",
+            "alley",
+            "elevator",
+            "null",
+        ] {
+            assert_eq!(kind(road_use), Some(Sidewalk), "{road_use}");
+        }
+        // A cycle lane is nothing to someone on foot.
+        let beside_a_lane = router_run("pedestrian", "primary", "road", Some("dedicated"));
+        assert_eq!(run_kind(&beside_a_lane), Some(Sidewalk));
+    }
+
+    #[test]
+    fn a_ferry_or_a_way_travelled_some_other_way_has_no_kind() {
+        for travel_mode in ["drive", "bicycle", "pedestrian"] {
+            for road_use in ["ferry", "rail-ferry"] {
+                let run = router_run(travel_mode, "primary", road_use, None);
+                assert_eq!(run_kind(&run), None, "{travel_mode} {road_use}");
+            }
+        }
+        for travel_mode in ["transit", "null", ""] {
+            let run = router_run(travel_mode, "primary", "road", None);
+            assert_eq!(run_kind(&run), None, "{travel_mode}");
+        }
+    }
+
+    /// A router's run of `distance` meters at `speed` meters a second.
+    fn driven<'a>(distance: f64, speed: f64, road_class: &'a str) -> RouterRun<'a> {
+        RouterRun {
+            duration: distance / speed,
+            distance,
+            ..router_run("drive", road_class, "road", None)
+        }
+    }
+
+    /// A run as `(distance, kind, tolled, motorway, ferry)`, its distance to the meter.
+    fn drawn(runs: &[DirectionsRun]) -> Vec<(f64, Option<DirectionsRunKind>, bool, bool, bool)> {
+        runs.iter()
+            .map(|run| {
+                (
+                    run.distance.round(),
+                    run.kind,
+                    run.toll,
+                    run.motorway,
+                    run.ferry,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_routers_runs_keep_their_kinds_and_their_tolls() {
+        use DirectionsRunKind::{Freeway, MainRoad, Street};
+        let tolled = |run: RouterRun<'static>| RouterRun { toll: true, ..run };
+        let ferry = RouterRun {
+            road_use: "ferry",
+            ..driven(4000.0, 5.0, "motorway")
+        };
+        let runs = router_profile([
+            driven(500.0, 8.0, "residential"),
+            driven(2000.0, 14.0, "primary"),
+            driven(3000.0, 28.0, "motorway"),
+            // The same road at the same speed, tolled for a stretch.
+            tolled(driven(3500.0, 28.0, "motorway")),
+            driven(3000.0, 28.0, "motorway"),
+            driven(2000.0, 14.0, "trunk"),
+            ferry,
+            driven(500.0, 8.0, "service_other"),
+        ]);
+        assert_eq!(
+            drawn(&runs),
+            [
+                (500.0, Some(Street), false, false, false),
+                (2000.0, Some(MainRoad), false, false, false),
+                (3000.0, Some(Freeway), false, true, false),
+                (3500.0, Some(Freeway), true, true, false),
+                (3000.0, Some(Freeway), false, true, false),
+                (2000.0, Some(MainRoad), false, false, false),
+                // A crossing is on no kind of road, and isn't a motorway whatever class
+                // the router gives it.
+                (4000.0, None, false, false, true),
+                (500.0, Some(Street), false, false, false),
+            ]
+        );
+        assert_eq!(runs[3].speed, 28.0);
+        assert_eq!(runs[3].duration, 125.0);
+    }
+
+    #[test]
+    fn the_routers_runs_join_as_the_lines_stretches_do() {
+        use DirectionsRunKind::{MainRoad, Street};
+        // Of one kind and within 3 m/s, they join; a main road and a street never do,
+        // though they go at one speed.
+        let runs = router_profile([
+            driven(1000.0, 10.0, "primary"),
+            driven(1000.0, 12.5, "secondary"),
+            driven(1000.0, 12.0, "tertiary"),
+            driven(1000.0, 20.0, "residential"),
+        ]);
+        assert_eq!(
+            drawn(&runs),
+            [
+                (2000.0, Some(MainRoad), false, false, false),
+                (1000.0, Some(Street), false, false, false),
+                (1000.0, Some(Street), false, false, false),
+            ]
+        );
+        assert_eq!(runs[0].duration, 180.0);
+
+        // A run under a hundredth of the route joins a neighbor of its kind, however far
+        // from its speed, and stays put between two of another kind.
+        let runs = router_profile([
+            driven(10_000.0, 10.0, "primary"),
+            driven(20.0, 2.0, "primary"),
+            driven(10_000.0, 20.0, "primary"),
+            driven(20.0, 2.0, "residential"),
+            driven(10_000.0, 20.0, "primary"),
+        ]);
+        assert_eq!(
+            drawn(&runs),
+            [
+                (10_020.0, Some(MainRoad), false, false, false),
+                (10_000.0, Some(MainRoad), false, false, false),
+                (20.0, Some(Street), false, false, false),
+                (10_000.0, Some(MainRoad), false, false, false),
+            ]
+        );
+
+        // Joining loses nothing: the runs add up to the router's.
+        let duration: f64 = runs.iter().map(|run| run.duration).sum();
+        let distance: f64 = runs.iter().map(|run| run.distance).sum();
+        assert_eq!(distance, 30_040.0);
+        assert_eq!(duration, 1000.0 + 10.0 + 500.0 + 10.0 + 500.0);
+
+        // A run that goes nowhere has no speed, and joins the run before it whatever
+        // its kind.
+        let stopped = RouterRun {
+            duration: 30.0,
+            distance: 0.0,
+            ..router_run("drive", "residential", "road", None)
+        };
+        let runs = router_profile([driven(1000.0, 10.0, "primary"), stopped]);
+        assert_eq!(
+            drawn(&runs),
+            [(1000.0, Some(MainRoad), false, false, false)]
+        );
+        assert_eq!(runs[0].duration, 130.0);
+        assert!(router_profile([]).is_empty());
+    }
+
+    fn run_of(kind: Option<DirectionsRunKind>, distance: f64) -> DirectionsRun {
+        DirectionsRun {
+            duration: distance,
+            distance,
+            speed: 1.0,
+            motorway: false,
+            toll: false,
+            ferry: kind.is_none(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn shares_are_of_the_distance_on_ways_of_a_kind() {
+        use DirectionsRunKind::{BikeLane, Path, SharedRoad, Sidewalk, Stairs, Trail};
+        let ride = [
+            run_of(Some(SharedRoad), 1000.0),
+            run_of(Some(Trail), 5000.0),
+            run_of(Some(BikeLane), 2000.0),
+            // The crossing isn't part of what the shares are of.
+            run_of(None, 12_000.0),
+            run_of(Some(Trail), 1000.0),
+            run_of(Some(BikeLane), 1000.0),
+        ];
+        assert_eq!(
+            WayShares::of(&ride),
+            WayShares {
+                trail: 0.6,
+                bike_lane: 0.3,
+                stairs: false,
+            }
+        );
+        let walk = [
+            run_of(Some(Sidewalk), 700.0),
+            run_of(Some(Stairs), 20.0),
+            run_of(Some(Path), 280.0),
+        ];
+        assert_eq!(
+            WayShares::of(&walk),
+            WayShares {
+                trail: 0.28,
+                bike_lane: 0.0,
+                stairs: true,
+            }
+        );
+        // Runs without kinds, as from a router that doesn't say, have no shares; nor has
+        // a route that goes nowhere.
+        for runs in [
+            vec![run_of(None, 500.0)],
+            vec![run_of(Some(Trail), 0.0)],
+            Vec::new(),
+        ] {
+            let shares = WayShares::of(&runs);
+            assert_eq!(shares, WayShares::default());
+            assert!(shares.trail.is_sign_positive() && shares.bike_lane.is_sign_positive());
+        }
+    }
+
+    #[test]
+    fn climb_counts_hills_and_not_ripple() {
+        // A flat road that reads a meter or two up and down climbs nothing, however long.
+        let ripple: Vec<f32> = (0..1000)
+            .map(|index| 100.0 + [0.0, 1.4, -0.9, 2.1, 0.3][index % 5])
+            .collect();
+        assert_eq!(climb_and_descent(&ripple), (0.0, 0.0));
+        // A hill is all counted, in however small steps, and so is the way back down.
+        let up: Vec<f32> = (0..=100).map(|index| 50.0 + index as f32 * 0.5).collect();
+        assert_eq!(climb_and_descent(&up), (50.0, 0.0));
+        let over: Vec<f32> = up.iter().chain(up.iter().rev()).copied().collect();
+        assert_eq!(climb_and_descent(&over), (50.0, 50.0));
+        // A rise counts from 3 m, and then to its top.
+        assert_eq!(climb_and_descent(&[10.0, 12.5, 10.0]), (0.0, 0.0));
+        assert_eq!(climb_and_descent(&[10.0, 13.0, 10.0]), (3.0, 3.0));
+        assert_eq!(climb_and_descent(&[10.0, 13.0, 15.5]), (5.5, 0.0));
+        // A top is one only once the heights are 3 m below it: 2.5 m down from 15.5
+        // is ripple, and 3 m down is a descent.
+        assert_eq!(climb_and_descent(&[10.0, 13.0, 15.5, 13.0]), (5.5, 0.0));
+        assert_eq!(climb_and_descent(&[10.0, 13.0, 15.5, 12.5]), (5.5, 3.0));
+        // A hill with ripple on it: 40 m up by way of dips of 2 m, which count neither
+        // against it nor for it.
+        assert_eq!(
+            climb_and_descent(&[0.0, 12.0, 10.0, 25.0, 23.0, 40.0]),
+            (40.0, 0.0)
+        );
+        // And with a real dip in it: 12 up, 4 down, 32 up.
+        assert_eq!(
+            climb_and_descent(&[0.0, 12.0, 8.0, 25.0, 23.0, 40.0]),
+            (44.0, 4.0)
+        );
+        // Ripple before the first hill doesn't move where the hill is counted from.
+        assert_eq!(
+            climb_and_descent(&[10.0, 8.0, 11.0, 9.0, 20.0]),
+            (10.0, 0.0)
+        );
+        assert_eq!(climb_and_descent(&[7.0]), (0.0, 0.0));
+        assert_eq!(climb_and_descent(&[]), (0.0, 0.0));
+    }
+
+    fn leg_elevation(heights: &[f32], length: f64) -> Option<LegElevation<'_>> {
+        Some(LegElevation {
+            interval: 30.0,
+            heights,
+            length,
+        })
+    }
+
+    #[test]
+    fn a_route_of_one_leg_has_the_legs_heights() {
+        // 100 m: a height at 0, 30, 60 and 90 m, and at the end.
+        let heights = [10.0, 13.0, 16.0, 19.0, 20.0];
+        let elevation = route_elevation(&[leg_elevation(&heights, 100.0)]).unwrap();
+        assert_eq!(elevation.interval, 30.0);
+        assert_eq!(elevation.heights, heights);
+        assert_eq!((elevation.climb, elevation.descent), (10.0, 0.0));
+        // A leg a whole number of intervals long ends on its last interval.
+        let elevation = route_elevation(&[leg_elevation(&heights[..4], 90.0)]).unwrap();
+        assert_eq!(elevation.heights, heights[..4]);
+    }
+
+    #[test]
+    fn a_route_of_several_legs_has_heights_every_interval_from_its_start() {
+        // 100 m climbing a meter every 10, then 50 m level: the second leg's heights are
+        // 100, 130 and 150 m along the route.
+        let first = [10.0, 13.0, 16.0, 19.0, 20.0];
+        let second = [20.0, 20.0, 20.0];
+        let elevation =
+            route_elevation(&[leg_elevation(&first, 100.0), leg_elevation(&second, 50.0)]).unwrap();
+        // At 0, 30, 60, 90, 120 and 150 m.
+        assert_eq!(elevation.heights, [10.0, 13.0, 16.0, 19.0, 20.0, 20.0]);
+        assert_eq!(elevation.interval, 30.0);
+        assert_eq!((elevation.climb, elevation.descent), (10.0, 0.0));
+
+        // A height between two of a leg's is on the line between them: the second leg
+        // falls 6 m over its first 30 m, from 100 m along the route, so at 120 m it has
+        // fallen 4.
+        let second = [20.0, 14.0, 14.0];
+        let elevation =
+            route_elevation(&[leg_elevation(&first, 100.0), leg_elevation(&second, 50.0)]).unwrap();
+        assert_eq!(elevation.heights, [10.0, 13.0, 16.0, 19.0, 16.0, 14.0]);
+    }
+
+    #[test]
+    fn a_leg_a_little_shorter_than_its_heights_say_keeps_them_in_order() {
+        // Four heights at 30 m are 90 m, and the leg is 80: the third is at its end too.
+        let heights = [10.0, 13.0, 16.0, 17.0];
+        let elevation = route_elevation(&[leg_elevation(&heights, 80.0)]).unwrap();
+        // At 0, 30, 60 and 80 m.
+        assert_eq!(elevation.heights.len(), 4);
+        assert_eq!(elevation.heights[..3], [10.0, 13.0, 16.0]);
+        assert_eq!(elevation.heights[3], 17.0);
+    }
+
+    #[test]
+    fn a_route_has_no_elevation_unless_every_leg_has() {
+        let heights = [10.0, 13.0, 16.0, 19.0, 20.0];
+        let leg = leg_elevation(&heights, 100.0);
+        assert!(route_elevation(&[leg, leg]).is_some());
+        assert!(route_elevation(&[leg, None]).is_none());
+        assert!(route_elevation(&[None, leg]).is_none());
+        assert!(route_elevation(&[]).is_none());
+        // Nor with heights that make no profile.
+        assert!(route_elevation(&[leg_elevation(&heights[..1], 100.0)]).is_none());
+        assert!(route_elevation(&[leg_elevation(&[], 100.0)]).is_none());
+        assert!(route_elevation(&[leg_elevation(&[10.0, f32::NAN], 100.0)]).is_none());
+        assert!(route_elevation(&[leg_elevation(&heights, f64::NAN)]).is_none());
+        let with_interval = |interval: f64| {
+            Some(LegElevation {
+                interval,
+                heights: &heights,
+                length: 100.0,
+            })
+        };
+        assert!(route_elevation(&[with_interval(0.0)]).is_none());
+        assert!(route_elevation(&[with_interval(-30.0)]).is_none());
+        assert!(route_elevation(&[with_interval(f64::INFINITY)]).is_none());
+        assert!(route_elevation(&[leg, with_interval(60.0)]).is_none());
     }
 }

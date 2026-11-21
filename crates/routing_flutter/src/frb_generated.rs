@@ -2588,6 +2588,22 @@ impl SseDecode for bool {
     }
 }
 
+impl SseDecode for crate::api::directions::DirectionsElevation {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_interval = <f64>::sse_decode(deserializer);
+        let mut var_heights = <Vec<f32>>::sse_decode(deserializer);
+        let mut var_climb = <f64>::sse_decode(deserializer);
+        let mut var_descent = <f64>::sse_decode(deserializer);
+        return crate::api::directions::DirectionsElevation {
+            interval: var_interval,
+            heights: var_heights,
+            climb: var_climb,
+            descent: var_descent,
+        };
+    }
+}
+
 impl SseDecode for crate::api::directions::DirectionsError {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2651,6 +2667,11 @@ impl SseDecode for crate::api::directions::DirectionsRoute {
         let mut var_hasFerry = <bool>::sse_decode(deserializer);
         let mut var_hasMotorway = <bool>::sse_decode(deserializer);
         let mut var_runs = <Vec<crate::api::directions::DirectionsRun>>::sse_decode(deserializer);
+        let mut var_elevation =
+            <Option<crate::api::directions::DirectionsElevation>>::sse_decode(deserializer);
+        let mut var_trailShare = <f64>::sse_decode(deserializer);
+        let mut var_bikeLaneShare = <f64>::sse_decode(deserializer);
+        let mut var_hasStairs = <bool>::sse_decode(deserializer);
         let mut var_navigable = <NavigableRoute>::sse_decode(deserializer);
         return crate::api::directions::DirectionsRoute {
             geometry: var_geometry,
@@ -2662,6 +2683,10 @@ impl SseDecode for crate::api::directions::DirectionsRoute {
             has_ferry: var_hasFerry,
             has_motorway: var_hasMotorway,
             runs: var_runs,
+            elevation: var_elevation,
+            trail_share: var_trailShare,
+            bike_lane_share: var_bikeLaneShare,
+            has_stairs: var_hasStairs,
             navigable: var_navigable,
         };
     }
@@ -2676,6 +2701,8 @@ impl SseDecode for crate::api::directions::DirectionsRun {
         let mut var_motorway = <bool>::sse_decode(deserializer);
         let mut var_toll = <bool>::sse_decode(deserializer);
         let mut var_ferry = <bool>::sse_decode(deserializer);
+        let mut var_kind =
+            <Option<crate::api::directions::DirectionsRunKind>>::sse_decode(deserializer);
         return crate::api::directions::DirectionsRun {
             duration: var_duration,
             distance: var_distance,
@@ -2683,6 +2710,26 @@ impl SseDecode for crate::api::directions::DirectionsRun {
             motorway: var_motorway,
             toll: var_toll,
             ferry: var_ferry,
+            kind: var_kind,
+        };
+    }
+}
+
+impl SseDecode for crate::api::directions::DirectionsRunKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::directions::DirectionsRunKind::Freeway,
+            1 => crate::api::directions::DirectionsRunKind::MainRoad,
+            2 => crate::api::directions::DirectionsRunKind::Street,
+            3 => crate::api::directions::DirectionsRunKind::Trail,
+            4 => crate::api::directions::DirectionsRunKind::BikeLane,
+            5 => crate::api::directions::DirectionsRunKind::SharedRoad,
+            6 => crate::api::directions::DirectionsRunKind::Path,
+            7 => crate::api::directions::DirectionsRunKind::Sidewalk,
+            8 => crate::api::directions::DirectionsRunKind::Stairs,
+            _ => unreachable!("Invalid variant for DirectionsRunKind: {}", inner),
         };
     }
 }
@@ -2694,11 +2741,19 @@ impl SseDecode for crate::api::directions::DirectionsStep {
         let mut var_distance = <f64>::sse_decode(deserializer);
         let mut var_duration = <f64>::sse_decode(deserializer);
         let mut var_roadName = <Option<String>>::sse_decode(deserializer);
+        let mut var_maneuverType =
+            <Option<crate::api::navigation::ManeuverType>>::sse_decode(deserializer);
+        let mut var_maneuverModifier =
+            <Option<crate::api::navigation::ManeuverModifier>>::sse_decode(deserializer);
+        let mut var_roundaboutExit = <Option<u8>>::sse_decode(deserializer);
         return crate::api::directions::DirectionsStep {
             instruction: var_instruction,
             distance: var_distance,
             duration: var_duration,
             road_name: var_roadName,
+            maneuver_type: var_maneuverType,
+            maneuver_modifier: var_maneuverModifier,
+            roundabout_exit: var_roundaboutExit,
         };
     }
 }
@@ -2712,6 +2767,13 @@ impl SseDecode for crate::api::directions::DistanceUnits {
             1 => crate::api::directions::DistanceUnits::Miles,
             _ => unreachable!("Invalid variant for DistanceUnits: {}", inner),
         };
+    }
+}
+
+impl SseDecode for f32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_f32::<NativeEndian>().unwrap()
     }
 }
 
@@ -2955,6 +3017,18 @@ impl SseDecode for Vec<crate::api::navigation::NavVisualInstruction> {
             ans_.push(<crate::api::navigation::NavVisualInstruction>::sse_decode(
                 deserializer,
             ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<f32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<f32>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -3373,6 +3447,32 @@ impl SseDecode for Option<String> {
     }
 }
 
+impl SseDecode for Option<crate::api::directions::DirectionsElevation> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::directions::DirectionsElevation>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::directions::DirectionsRunKind> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::directions::DirectionsRunKind>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<f64> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3543,6 +3643,17 @@ impl SseDecode for Option<u32> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<u32>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<u8> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<u8>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -4207,6 +4318,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::offline::ArchiveTile>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::directions::DirectionsElevation {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.interval.into_into_dart().into_dart(),
+            self.heights.into_into_dart().into_dart(),
+            self.climb.into_into_dart().into_dart(),
+            self.descent.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::directions::DirectionsElevation
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::directions::DirectionsElevation>
+    for crate::api::directions::DirectionsElevation
+{
+    fn into_into_dart(self) -> crate::api::directions::DirectionsElevation {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::directions::DirectionsError {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -4304,6 +4438,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::directions::DirectionsRoute {
             self.has_ferry.into_into_dart().into_dart(),
             self.has_motorway.into_into_dart().into_dart(),
             self.runs.into_into_dart().into_dart(),
+            self.elevation.into_into_dart().into_dart(),
+            self.trail_share.into_into_dart().into_dart(),
+            self.bike_lane_share.into_into_dart().into_dart(),
+            self.has_stairs.into_into_dart().into_dart(),
             self.navigable.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -4330,6 +4468,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::directions::DirectionsRun {
             self.motorway.into_into_dart().into_dart(),
             self.toll.into_into_dart().into_dart(),
             self.ferry.into_into_dart().into_dart(),
+            self.kind.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4346,6 +4485,34 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::directions::DirectionsRun>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::directions::DirectionsRunKind {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Freeway => 0.into_dart(),
+            Self::MainRoad => 1.into_dart(),
+            Self::Street => 2.into_dart(),
+            Self::Trail => 3.into_dart(),
+            Self::BikeLane => 4.into_dart(),
+            Self::SharedRoad => 5.into_dart(),
+            Self::Path => 6.into_dart(),
+            Self::Sidewalk => 7.into_dart(),
+            Self::Stairs => 8.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::directions::DirectionsRunKind
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::directions::DirectionsRunKind>
+    for crate::api::directions::DirectionsRunKind
+{
+    fn into_into_dart(self) -> crate::api::directions::DirectionsRunKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::directions::DirectionsStep {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -4353,6 +4520,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::directions::DirectionsStep {
             self.distance.into_into_dart().into_dart(),
             self.duration.into_into_dart().into_dart(),
             self.road_name.into_into_dart().into_dart(),
+            self.maneuver_type.into_into_dart().into_dart(),
+            self.maneuver_modifier.into_into_dart().into_dart(),
+            self.roundabout_exit.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5405,6 +5575,16 @@ impl SseEncode for bool {
     }
 }
 
+impl SseEncode for crate::api::directions::DirectionsElevation {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <f64>::sse_encode(self.interval, serializer);
+        <Vec<f32>>::sse_encode(self.heights, serializer);
+        <f64>::sse_encode(self.climb, serializer);
+        <f64>::sse_encode(self.descent, serializer);
+    }
+}
+
 impl SseEncode for crate::api::directions::DirectionsError {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5458,6 +5638,13 @@ impl SseEncode for crate::api::directions::DirectionsRoute {
         <bool>::sse_encode(self.has_ferry, serializer);
         <bool>::sse_encode(self.has_motorway, serializer);
         <Vec<crate::api::directions::DirectionsRun>>::sse_encode(self.runs, serializer);
+        <Option<crate::api::directions::DirectionsElevation>>::sse_encode(
+            self.elevation,
+            serializer,
+        );
+        <f64>::sse_encode(self.trail_share, serializer);
+        <f64>::sse_encode(self.bike_lane_share, serializer);
+        <bool>::sse_encode(self.has_stairs, serializer);
         <NavigableRoute>::sse_encode(self.navigable, serializer);
     }
 }
@@ -5471,6 +5658,30 @@ impl SseEncode for crate::api::directions::DirectionsRun {
         <bool>::sse_encode(self.motorway, serializer);
         <bool>::sse_encode(self.toll, serializer);
         <bool>::sse_encode(self.ferry, serializer);
+        <Option<crate::api::directions::DirectionsRunKind>>::sse_encode(self.kind, serializer);
+    }
+}
+
+impl SseEncode for crate::api::directions::DirectionsRunKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::directions::DirectionsRunKind::Freeway => 0,
+                crate::api::directions::DirectionsRunKind::MainRoad => 1,
+                crate::api::directions::DirectionsRunKind::Street => 2,
+                crate::api::directions::DirectionsRunKind::Trail => 3,
+                crate::api::directions::DirectionsRunKind::BikeLane => 4,
+                crate::api::directions::DirectionsRunKind::SharedRoad => 5,
+                crate::api::directions::DirectionsRunKind::Path => 6,
+                crate::api::directions::DirectionsRunKind::Sidewalk => 7,
+                crate::api::directions::DirectionsRunKind::Stairs => 8,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -5481,6 +5692,12 @@ impl SseEncode for crate::api::directions::DirectionsStep {
         <f64>::sse_encode(self.distance, serializer);
         <f64>::sse_encode(self.duration, serializer);
         <Option<String>>::sse_encode(self.road_name, serializer);
+        <Option<crate::api::navigation::ManeuverType>>::sse_encode(self.maneuver_type, serializer);
+        <Option<crate::api::navigation::ManeuverModifier>>::sse_encode(
+            self.maneuver_modifier,
+            serializer,
+        );
+        <Option<u8>>::sse_encode(self.roundabout_exit, serializer);
     }
 }
 
@@ -5497,6 +5714,13 @@ impl SseEncode for crate::api::directions::DistanceUnits {
             },
             serializer,
         );
+    }
+}
+
+impl SseEncode for f32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_f32::<NativeEndian>(self).unwrap();
     }
 }
 
@@ -5682,6 +5906,16 @@ impl SseEncode for Vec<crate::api::navigation::NavVisualInstruction> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::navigation::NavVisualInstruction>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<f32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <f32>::sse_encode(item, serializer);
         }
     }
 }
@@ -6042,6 +6276,26 @@ impl SseEncode for Option<String> {
     }
 }
 
+impl SseEncode for Option<crate::api::directions::DirectionsElevation> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::directions::DirectionsElevation>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::directions::DirectionsRunKind> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::directions::DirectionsRunKind>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<f64> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -6178,6 +6432,16 @@ impl SseEncode for Option<u32> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <u32>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<u8> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <u8>::sse_encode(value, serializer);
         }
     }
 }

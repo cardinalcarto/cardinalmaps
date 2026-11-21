@@ -2416,9 +2416,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DirectionsElevation dco_decode_box_autoadd_directions_elevation(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_directions_elevation(raw);
+  }
+
+  @protected
   DirectionsPoint dco_decode_box_autoadd_directions_point(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_directions_point(raw);
+  }
+
+  @protected
+  DirectionsRunKind dco_decode_box_autoadd_directions_run_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_directions_run_kind(raw);
   }
 
   @protected
@@ -2512,6 +2524,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  int dco_decode_box_autoadd_u_8(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  DirectionsElevation dco_decode_directions_elevation(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return DirectionsElevation(
+      interval: dco_decode_f_64(arr[0]),
+      heights: dco_decode_list_prim_f_32_strict(arr[1]),
+      climb: dco_decode_f_64(arr[2]),
+      descent: dco_decode_f_64(arr[3]),
+    );
+  }
+
+  @protected
   DirectionsError dco_decode_directions_error(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2558,8 +2590,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DirectionsRoute dco_decode_directions_route(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 14)
+      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
     return DirectionsRoute(
       geometry: dco_decode_list_directions_point(arr[0]),
       distance: dco_decode_f_64(arr[1]),
@@ -2570,9 +2602,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       hasFerry: dco_decode_bool(arr[6]),
       hasMotorway: dco_decode_bool(arr[7]),
       runs: dco_decode_list_directions_run(arr[8]),
+      elevation: dco_decode_opt_box_autoadd_directions_elevation(arr[9]),
+      trailShare: dco_decode_f_64(arr[10]),
+      bikeLaneShare: dco_decode_f_64(arr[11]),
+      hasStairs: dco_decode_bool(arr[12]),
       navigable:
           dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
-            arr[9],
+            arr[13],
           ),
     );
   }
@@ -2581,8 +2617,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DirectionsRun dco_decode_directions_run(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return DirectionsRun(
       duration: dco_decode_f_64(arr[0]),
       distance: dco_decode_f_64(arr[1]),
@@ -2590,20 +2626,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       motorway: dco_decode_bool(arr[3]),
       toll: dco_decode_bool(arr[4]),
       ferry: dco_decode_bool(arr[5]),
+      kind: dco_decode_opt_box_autoadd_directions_run_kind(arr[6]),
     );
+  }
+
+  @protected
+  DirectionsRunKind dco_decode_directions_run_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DirectionsRunKind.values[raw as int];
   }
 
   @protected
   DirectionsStep dco_decode_directions_step(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return DirectionsStep(
       instruction: dco_decode_String(arr[0]),
       distance: dco_decode_f_64(arr[1]),
       duration: dco_decode_f_64(arr[2]),
       roadName: dco_decode_opt_String(arr[3]),
+      maneuverType: dco_decode_opt_box_autoadd_maneuver_type(arr[4]),
+      maneuverModifier: dco_decode_opt_box_autoadd_maneuver_modifier(arr[5]),
+      roundaboutExit: dco_decode_opt_box_autoadd_u_8(arr[6]),
     );
   }
 
@@ -2611,6 +2657,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DistanceUnits dco_decode_distance_units(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return DistanceUnits.values[raw as int];
+  }
+
+  @protected
+  double dco_decode_f_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
   }
 
   @protected
@@ -2754,6 +2806,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return (raw as List<dynamic>)
         .map(dco_decode_nav_visual_instruction)
         .toList();
+  }
+
+  @protected
+  Float32List dco_decode_list_prim_f_32_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as Float32List;
   }
 
   @protected
@@ -3018,6 +3076,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DirectionsElevation? dco_decode_opt_box_autoadd_directions_elevation(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_directions_elevation(raw);
+  }
+
+  @protected
+  DirectionsRunKind? dco_decode_opt_box_autoadd_directions_run_kind(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_directions_run_kind(raw);
+  }
+
+  @protected
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_f_64(raw);
@@ -3111,6 +3187,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
+  }
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_8(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_u_8(raw);
   }
 
   @protected
@@ -3690,11 +3772,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DirectionsElevation sse_decode_box_autoadd_directions_elevation(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_directions_elevation(deserializer));
+  }
+
+  @protected
   DirectionsPoint sse_decode_box_autoadd_directions_point(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_directions_point(deserializer));
+  }
+
+  @protected
+  DirectionsRunKind sse_decode_box_autoadd_directions_run_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_directions_run_kind(deserializer));
   }
 
   @protected
@@ -3804,6 +3902,29 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  int sse_decode_box_autoadd_u_8(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_8(deserializer));
+  }
+
+  @protected
+  DirectionsElevation sse_decode_directions_elevation(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_interval = sse_decode_f_64(deserializer);
+    var var_heights = sse_decode_list_prim_f_32_strict(deserializer);
+    var var_climb = sse_decode_f_64(deserializer);
+    var var_descent = sse_decode_f_64(deserializer);
+    return DirectionsElevation(
+      interval: var_interval,
+      heights: var_heights,
+      climb: var_climb,
+      descent: var_descent,
+    );
+  }
+
+  @protected
   DirectionsError sse_decode_directions_error(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_kind = sse_decode_directions_error_kind(deserializer);
@@ -3855,6 +3976,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_hasFerry = sse_decode_bool(deserializer);
     var var_hasMotorway = sse_decode_bool(deserializer);
     var var_runs = sse_decode_list_directions_run(deserializer);
+    var var_elevation = sse_decode_opt_box_autoadd_directions_elevation(
+      deserializer,
+    );
+    var var_trailShare = sse_decode_f_64(deserializer);
+    var var_bikeLaneShare = sse_decode_f_64(deserializer);
+    var var_hasStairs = sse_decode_bool(deserializer);
     var var_navigable =
         sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
           deserializer,
@@ -3869,6 +3996,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       hasFerry: var_hasFerry,
       hasMotorway: var_hasMotorway,
       runs: var_runs,
+      elevation: var_elevation,
+      trailShare: var_trailShare,
+      bikeLaneShare: var_bikeLaneShare,
+      hasStairs: var_hasStairs,
       navigable: var_navigable,
     );
   }
@@ -3882,6 +4013,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_motorway = sse_decode_bool(deserializer);
     var var_toll = sse_decode_bool(deserializer);
     var var_ferry = sse_decode_bool(deserializer);
+    var var_kind = sse_decode_opt_box_autoadd_directions_run_kind(deserializer);
     return DirectionsRun(
       duration: var_duration,
       distance: var_distance,
@@ -3889,7 +4021,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       motorway: var_motorway,
       toll: var_toll,
       ferry: var_ferry,
+      kind: var_kind,
     );
+  }
+
+  @protected
+  DirectionsRunKind sse_decode_directions_run_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return DirectionsRunKind.values[inner];
   }
 
   @protected
@@ -3899,11 +4041,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_distance = sse_decode_f_64(deserializer);
     var var_duration = sse_decode_f_64(deserializer);
     var var_roadName = sse_decode_opt_String(deserializer);
+    var var_maneuverType = sse_decode_opt_box_autoadd_maneuver_type(
+      deserializer,
+    );
+    var var_maneuverModifier = sse_decode_opt_box_autoadd_maneuver_modifier(
+      deserializer,
+    );
+    var var_roundaboutExit = sse_decode_opt_box_autoadd_u_8(deserializer);
     return DirectionsStep(
       instruction: var_instruction,
       distance: var_distance,
       duration: var_duration,
       roadName: var_roadName,
+      maneuverType: var_maneuverType,
+      maneuverModifier: var_maneuverModifier,
+      roundaboutExit: var_roundaboutExit,
     );
   }
 
@@ -3912,6 +4064,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return DistanceUnits.values[inner];
+  }
+
+  @protected
+  double sse_decode_f_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getFloat32();
   }
 
   @protected
@@ -4145,6 +4303,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       ans_.add(sse_decode_nav_visual_instruction(deserializer));
     }
     return ans_;
+  }
+
+  @protected
+  Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getFloat32List(len_);
   }
 
   @protected
@@ -4505,6 +4670,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DirectionsElevation? sse_decode_opt_box_autoadd_directions_elevation(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_directions_elevation(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  DirectionsRunKind? sse_decode_opt_box_autoadd_directions_run_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_directions_run_kind(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -4675,6 +4866,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_u_32(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_8(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_u_8(deserializer));
     } else {
       return null;
     }
@@ -5284,12 +5486,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_directions_elevation(
+    DirectionsElevation self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_directions_elevation(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_directions_point(
     DirectionsPoint self,
     SseSerializer serializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_directions_point(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_directions_run_kind(
+    DirectionsRunKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_directions_run_kind(self, serializer);
   }
 
   @protected
@@ -5410,6 +5630,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_u_8(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_8(self, serializer);
+  }
+
+  @protected
+  void sse_encode_directions_elevation(
+    DirectionsElevation self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_64(self.interval, serializer);
+    sse_encode_list_prim_f_32_strict(self.heights, serializer);
+    sse_encode_f_64(self.climb, serializer);
+    sse_encode_f_64(self.descent, serializer);
+  }
+
+  @protected
   void sse_encode_directions_error(
     DirectionsError self,
     SseSerializer serializer,
@@ -5464,6 +5702,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.hasFerry, serializer);
     sse_encode_bool(self.hasMotorway, serializer);
     sse_encode_list_directions_run(self.runs, serializer);
+    sse_encode_opt_box_autoadd_directions_elevation(self.elevation, serializer);
+    sse_encode_f_64(self.trailShare, serializer);
+    sse_encode_f_64(self.bikeLaneShare, serializer);
+    sse_encode_bool(self.hasStairs, serializer);
     sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
       self.navigable,
       serializer,
@@ -5479,6 +5721,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.motorway, serializer);
     sse_encode_bool(self.toll, serializer);
     sse_encode_bool(self.ferry, serializer);
+    sse_encode_opt_box_autoadd_directions_run_kind(self.kind, serializer);
+  }
+
+  @protected
+  void sse_encode_directions_run_kind(
+    DirectionsRunKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -5491,12 +5743,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_f_64(self.distance, serializer);
     sse_encode_f_64(self.duration, serializer);
     sse_encode_opt_String(self.roadName, serializer);
+    sse_encode_opt_box_autoadd_maneuver_type(self.maneuverType, serializer);
+    sse_encode_opt_box_autoadd_maneuver_modifier(
+      self.maneuverModifier,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_u_8(self.roundaboutExit, serializer);
   }
 
   @protected
   void sse_encode_distance_units(DistanceUnits self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_f_32(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putFloat32(self);
   }
 
   @protected
@@ -5699,6 +5963,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     for (final item in self) {
       sse_encode_nav_visual_instruction(item, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_list_prim_f_32_strict(
+    Float32List self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putFloat32List(self);
   }
 
   @protected
@@ -5987,6 +6261,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_directions_elevation(
+    DirectionsElevation? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_directions_elevation(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_directions_run_kind(
+    DirectionsRunKind? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_directions_run_kind(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -6156,6 +6456,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_u_32(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_8(int? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_8(self, serializer);
     }
   }
 
@@ -6452,9 +6762,10 @@ class DirectionsAdapterImpl extends RustOpaque implements DirectionsAdapter {
   /// went wrong.
   ///
   /// Ferrostar's parser reads the routes; the answer is read again only for what it
-  /// leaves out: each step's speed-limit sign and unit and its road, and what the
-  /// intersections' classes and the legs' annotations say of each route, which is
-  /// whether it has tolls, a ferry or a motorway, and its speed profile. The routes
+  /// leaves out: each step's speed-limit sign and unit, its road and its maneuver, and
+  /// what the intersections' classes and the legs' annotations and details say of each
+  /// route, which is whether it has tolls, a ferry or a motorway, its speed profile,
+  /// and its elevation. The routes
   /// are named here too, together, so that no two are called the same if their roads
   /// can tell them apart.
   Future<List<DirectionsRoute>> parse({required List<int> body}) => RustLib
