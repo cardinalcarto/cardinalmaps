@@ -562,7 +562,8 @@ List<DrawnPiece> lerpDrawn(
     final f = byKey[p.key];
     if (f != null && alike(f, p)) {
       matched.add(f);
-      final relabels = _badgeText(f.piece.route) != _badgeText(p.piece.route);
+      final relabels =
+          routeBadgeText(f.piece.route) != routeBadgeText(p.piece.route);
       coming.add(
         DrawnPiece(
           key: p.key,
@@ -617,10 +618,11 @@ String timelineLabel(
     for (final (i, p) in pieces.indexed)
       if (p.kind == TimelineKind.ride)
         [
-          _badgeText(p.route),
+          routeBadgeText(p.route),
           // Once a ride, at its first piece.
           if (_startsRide(pieces, i))
-            for (final route in _othersOf(others, p.ride)) _badgeText(route),
+            for (final route in _othersOf(others, p.ride))
+              routeBadgeText(route),
         ].join(' or '),
   ];
   return rides.isEmpty ? 'No rides' : rides.join(', then ');
@@ -669,7 +671,9 @@ List<({double left, int count})> placeOrLabels(
   return out;
 }
 
-String _badgeText(TransitRoute? route) {
+/// What a ride's badge calls its [route]: its short name, else its long name, else
+/// the kind of vehicle it runs.
+String routeBadgeText(TransitRoute? route) {
   final name = route?.shortName ?? route?.longName;
   return name == null || name.isEmpty
       ? (route?.kind ?? VehicleKind.other).label
@@ -815,7 +819,7 @@ class _TimelinePainter extends CustomPainter {
       return (
         color,
         text(
-          _badgeText(route),
+          routeBadgeText(route),
           orBadgeStyle.copyWith(color: routeTextColor(route, color)),
         ),
       );
@@ -986,7 +990,7 @@ class _TimelinePainter extends CustomPainter {
       textScaler: textScaler,
       maxLines: 1,
     )..layout();
-    final name = _badgeText(route);
+    final name = routeBadgeText(route);
     var painter = text(name);
     // "E Line" or "1 Line" says "E" or "1" where it must, as its signs do.
     if (painter.width > room && name.endsWith(' Line') && name.length > 5) {
