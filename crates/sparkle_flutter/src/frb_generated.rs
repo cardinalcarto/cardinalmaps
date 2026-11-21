@@ -30,7 +30,7 @@
 use crate::api::map::*;
 use crate::api::offline::*;
 use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
 use flutter_rust_bridge::{Handler, IntoIntoDart};
 
 // Section: boilerplate
@@ -41,7 +41,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1889677742;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -485452831;
 
 // Section: executor
 
@@ -289,6 +289,53 @@ fn wire__crate__api__map__SparkleMap_add_images_impl(
                 let output_ok = Ok::<_, ()>({
                     crate::api::map::SparkleMap::add_images(&*api_that_guard, api_images);
                 })?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__map__SparkleMap_attributions_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "SparkleMap_attributions",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<SparkleMap>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok =
+                    Ok::<_, ()>(crate::api::map::SparkleMap::attributions(&*api_that_guard))?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -3257,29 +3304,29 @@ fn pde_ffi_dispatcher_primary_impl(
         1 => wire__crate__api__offline__MapPlanner_add_leaf_impl(port, ptr, rust_vec_len, data_len),
         2 => wire__crate__api__offline__MapPlanner_finish_impl(port, ptr, rust_vec_len, data_len),
         4 => wire__crate__api__offline__MapPlanner_new_impl(port, ptr, rust_vec_len, data_len),
-        18 => wire__crate__api__map__SparkleMap_new_impl(port, ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__map__SparkleMap_wake_stream_impl(port, ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__offline__basemap_claim_impl(port, ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__offline__basemap_prepare_impl(port, ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__offline__basemap_read_region_tiles_impl(
+        19 => wire__crate__api__map__SparkleMap_new_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__map__SparkleMap_wake_stream_impl(port, ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__offline__basemap_claim_impl(port, ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__offline__basemap_prepare_impl(port, ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__offline__basemap_read_region_tiles_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        46 => wire__crate__api__offline__basemap_read_tiles_impl(port, ptr, rust_vec_len, data_len),
-        47 => {
+        47 => wire__crate__api__offline__basemap_read_tiles_impl(port, ptr, rust_vec_len, data_len),
+        48 => {
             wire__crate__api__offline__basemap_region_tiles_impl(port, ptr, rust_vec_len, data_len)
         }
-        48 => wire__crate__api__offline__basemap_region_zoom_tiles_impl(
+        49 => wire__crate__api__offline__basemap_region_zoom_tiles_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        49 => wire__crate__api__offline__basemap_release_impl(port, ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__offline__basemap_unpack_impl(port, ptr, rust_vec_len, data_len),
-        51 => wire__crate__api__map__init_app_impl(port, ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__offline__basemap_release_impl(port, ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__offline__basemap_unpack_impl(port, ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__map__init_app_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3294,42 +3341,43 @@ fn pde_ffi_dispatcher_sync_impl(
     match func_id {
         3 => wire__crate__api__offline__MapPlanner_needed_leaves_impl(ptr, rust_vec_len, data_len),
         5 => wire__crate__api__map__SparkleMap_add_images_impl(ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__map__SparkleMap_camera_impl(ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__map__SparkleMap_clear_subject_impl(ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__map__SparkleMap_click_impl(ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__map__SparkleMap_double_tap_zoom_impl(ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__map__SparkleMap_ease_to_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__map__SparkleMap_fly_to_impl(ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__map__SparkleMap_follow_impl(ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__map__SparkleMap_frame_impl(ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__map__SparkleMap_has_subject_impl(ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__map__SparkleMap_hover_argument_impl(ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__map__SparkleMap_is_following_impl(ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__map__SparkleMap_key_impl(ptr, rust_vec_len, data_len),
-        19 => wire__crate__api__map__SparkleMap_pan_zoom_impl(ptr, rust_vec_len, data_len),
-        20 => wire__crate__api__map__SparkleMap_pan_zoom_end_impl(ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__map__SparkleMap_pan_zoom_start_impl(ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__map__SparkleMap_pointer_down_impl(ptr, rust_vec_len, data_len),
-        23 => wire__crate__api__map__SparkleMap_pointer_move_impl(ptr, rust_vec_len, data_len),
-        24 => wire__crate__api__map__SparkleMap_pointer_up_impl(ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__map__SparkleMap_poll_style_impl(ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__map__SparkleMap_quick_zoom_impl(ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__map__SparkleMap_resize_impl(ptr, rust_vec_len, data_len),
-        28 => wire__crate__api__map__SparkleMap_screen_to_lng_lat_impl(ptr, rust_vec_len, data_len),
-        29 => wire__crate__api__map__SparkleMap_screenshot_path_impl(ptr, rust_vec_len, data_len),
-        30 => wire__crate__api__map__SparkleMap_scroll_impl(ptr, rust_vec_len, data_len),
-        31 => wire__crate__api__map__SparkleMap_set_geojson_impl(ptr, rust_vec_len, data_len),
-        32 => wire__crate__api__map__SparkleMap_set_padding_impl(ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__map__SparkleMap_set_puck_impl(ptr, rust_vec_len, data_len),
-        34 => wire__crate__api__map__SparkleMap_set_puck_style_impl(ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__map__SparkleMap_set_subject_impl(ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__map__SparkleMap_show_puck_impl(ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__map__SparkleMap_stop_following_impl(ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__map__SparkleMap_take_clicked_impl(ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__map__SparkleMap_tile_feature_impl(ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__map__SparkleMap_tilt_impl(ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__map__SparkleMap_turn_north_impl(ptr, rust_vec_len, data_len),
-        52 => wire__crate__api__offline__map_first_fetch_impl(ptr, rust_vec_len, data_len),
+        6 => wire__crate__api__map__SparkleMap_attributions_impl(ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__map__SparkleMap_camera_impl(ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__map__SparkleMap_clear_subject_impl(ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__map__SparkleMap_click_impl(ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__map__SparkleMap_double_tap_zoom_impl(ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__map__SparkleMap_ease_to_impl(ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__map__SparkleMap_fly_to_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__map__SparkleMap_follow_impl(ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__map__SparkleMap_frame_impl(ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__map__SparkleMap_has_subject_impl(ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__map__SparkleMap_hover_argument_impl(ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__map__SparkleMap_is_following_impl(ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__map__SparkleMap_key_impl(ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__map__SparkleMap_pan_zoom_impl(ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__map__SparkleMap_pan_zoom_end_impl(ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__map__SparkleMap_pan_zoom_start_impl(ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__map__SparkleMap_pointer_down_impl(ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__map__SparkleMap_pointer_move_impl(ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__map__SparkleMap_pointer_up_impl(ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__map__SparkleMap_poll_style_impl(ptr, rust_vec_len, data_len),
+        27 => wire__crate__api__map__SparkleMap_quick_zoom_impl(ptr, rust_vec_len, data_len),
+        28 => wire__crate__api__map__SparkleMap_resize_impl(ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__map__SparkleMap_screen_to_lng_lat_impl(ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__map__SparkleMap_screenshot_path_impl(ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__map__SparkleMap_scroll_impl(ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__map__SparkleMap_set_geojson_impl(ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__map__SparkleMap_set_padding_impl(ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__map__SparkleMap_set_puck_impl(ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__map__SparkleMap_set_puck_style_impl(ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__map__SparkleMap_set_subject_impl(ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__map__SparkleMap_show_puck_impl(ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__map__SparkleMap_stop_following_impl(ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__map__SparkleMap_take_clicked_impl(ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__map__SparkleMap_tile_feature_impl(ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__map__SparkleMap_tilt_impl(ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__map__SparkleMap_turn_north_impl(ptr, rust_vec_len, data_len),
+        53 => wire__crate__api__offline__map_first_fetch_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4310,7 +4358,7 @@ mod io {
     use flutter_rust_bridge::for_generated::byteorder::{
         NativeEndian, ReadBytesExt, WriteBytesExt,
     };
-    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate
@@ -4364,7 +4412,7 @@ mod web {
     };
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
-    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate

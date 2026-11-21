@@ -10,7 +10,12 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart'
-    show ValueListenable, ValueNotifier, defaultTargetPlatform, immutable;
+    show
+        ValueListenable,
+        ValueNotifier,
+        defaultTargetPlatform,
+        immutable,
+        listEquals;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
@@ -191,6 +196,10 @@ class _CameraMoved extends ChangeNotifier {
   void moved() => notifyListeners();
 }
 
+class _Touched extends ChangeNotifier {
+  void touched() => notifyListeners();
+}
+
 class SparkleMapController {
   _SparkleMapState? _state;
 
@@ -217,6 +226,22 @@ class SparkleMapController {
 
   /// Where the camera is.
   rust.CameraState? get camera => _map?.camera();
+
+  /// The attributions of the style's sources, each once, as the style has them: text
+  /// that may hold `<a href>` links and HTML entities. Empty until the map is set up;
+  /// updated when the style is reloaded. See `SparkleAttribution`.
+  ValueListenable<List<String>> get attributions => _attributions;
+  final _attributions = ValueNotifier<List<String>>(const []);
+
+  void _readAttributions(rust.SparkleMap map) {
+    final read = map.attributions();
+    if (!listEquals(read, _attributions.value)) _attributions.value = read;
+  }
+
+  /// Notifies its listeners when a gesture on the map starts: a touch or click, a
+  /// scroll, a trackpad pan or a key. Programmatic camera moves don't count.
+  Listenable get touched => _touched;
+  final _touched = _Touched();
 
   /// Notifies its listeners on each frame that shows the camera somewhere new.
   Listenable get cameraMoved => _cameraMoved;
@@ -540,6 +565,7 @@ class SparkleMapController {
   final _images = <String, rust.SpriteImageInput>{};
 
   void _attached(rust.SparkleMap map) {
+    _readAttributions(map);
     map.setPadding(padding: _mapPadding(_padding));
     if (_subject
         case (
@@ -852,7 +878,8 @@ class _SparkleMapState extends State<SparkleMap> {
     _wake = created.wakeStream().listen((_) => _requestFrame());
     widget.controller?._attached(created);
     _stylePoll = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (_map?.pollStyle() ?? false) {
+      if (_map case final map? when map.pollStyle()) {
+        widget.controller?._readAttributions(map);
         _requestFrame();
       }
     });
@@ -1063,6 +1090,7 @@ class _SparkleMapState extends State<SparkleMap> {
 
   void _onPointerDown(PointerDownEvent e) {
     _focus.requestFocus();
+    widget.controller?._touched.touched();
     if (_map == null) {
       return;
     }
@@ -1410,6 +1438,7 @@ class _SparkleMapState extends State<SparkleMap> {
     }
     GestureBinding.instance.pointerSignalResolver.register(e, (event) {
       final scroll = event as PointerScrollEvent;
+      widget.controller?._touched.touched();
       _map?.scroll(
         x: scroll.localPosition.dx,
         y: scroll.localPosition.dy,
@@ -1420,6 +1449,7 @@ class _SparkleMapState extends State<SparkleMap> {
   }
 
   void _onPanZoomStart(PointerPanZoomStartEvent e) {
+    widget.controller?._touched.touched();
     _lastPanZoomScale = 1;
     _lastPanZoomRotation = 0;
     _map?.panZoomStart(x: e.localPosition.dx, y: e.localPosition.dy);
@@ -1465,6 +1495,7 @@ class _SparkleMapState extends State<SparkleMap> {
     if (!map.key(key: key, shift: HardwareKeyboard.instance.isShiftPressed)) {
       return KeyEventResult.ignored;
     }
+    widget.controller?._touched.touched();
     _requestFrame();
     return KeyEventResult.handled;
   }

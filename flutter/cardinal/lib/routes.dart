@@ -8,6 +8,7 @@ import 'directions/steps_page.dart';
 import 'directions/trip_details_page.dart';
 import 'home/navigation_bar.dart';
 import 'home/stub_page.dart';
+import 'map/attribution.dart';
 import 'map/buttons.dart';
 import 'map/map.dart';
 import 'map/map_drawing.dart';
@@ -109,7 +110,13 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
           body: SheetScaffold(
             body: CardinalMap(controller: map),
             floating: const NavigationLayer(
-              child: MapDrawingLayer(child: MapButtons()),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  MapDrawingLayer(child: MapButtons()),
+                  MapAttribution(),
+                ],
+              ),
             ),
             bottomBar: const AppNavigationBar(),
             backdrop: sheetGlassOf(context),

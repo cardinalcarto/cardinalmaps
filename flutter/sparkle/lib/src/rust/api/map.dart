@@ -17,6 +17,10 @@ abstract class SparkleMap implements RustOpaqueInterface {
   /// first time needs its data set after this.
   void addImages({required List<SpriteImageInput> images});
 
+  /// The attributions of the style's sources, each once: text that may hold `<a href>`
+  /// links and HTML entities, as MapLibre styles write them.
+  List<String> attributions();
+
   /// Where the camera is: its center is the middle of the view less the padding.
   CameraState camera();
 

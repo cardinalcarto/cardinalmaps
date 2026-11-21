@@ -252,5 +252,13 @@
       "first": {"type": "String", "example": "SR 509"},
       "last": {"type": "String", "example": "Des Moines Memorial Drive"}
     }
+  },
+  "mapCreditsShow": "Show map credits",
+  "@mapCreditsShow": {
+    "description": "What a screen reader says for the small (i) button in the corner of the map while the map's credits (OpenStreetMap and the other data sources) are hidden; tapping it shows them."
+  },
+  "mapCreditsHide": "Hide map credits",
+  "@mapCreditsHide": {
+    "description": "What a screen reader says for the small (i) button in the corner of the map while the map's credits are shown; tapping it hides them."
   }
 }

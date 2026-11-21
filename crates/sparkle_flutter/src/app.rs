@@ -13,7 +13,7 @@ use anyhow::{Result, bail};
 use maplibre_expr::Value;
 use sparkle::Style;
 use sparkle::sprite::{ImageAtlas, SpriteImage};
-use sparkle::style::StyleDiff;
+use sparkle::style::{Source, StyleDiff};
 use sparkle::transition::Transitions;
 use sparkle_view::args::Args;
 use sparkle_view::camera::{Camera, Framing, Padding, Placement, lng_lat_to_world};
@@ -363,6 +363,24 @@ impl MapView {
         }
         self.camera.show(&framing, self.padding + follow.padding);
         follow.entry.is_some() || puck.moving(now)
+    }
+
+    /// The attributions of the style's sources, in the order of their ids, each once.
+    pub fn attributions(&self) -> Vec<String> {
+        let mut seen = Vec::new();
+        for source in self.style.sources.values() {
+            let text = match source {
+                Source::GeoJson(s) => s.attribution.as_deref(),
+                s => s.tiles().and_then(|t| t.attribution.as_deref()),
+            };
+            if let Some(text) = text.map(str::trim)
+                && !text.is_empty()
+                && !seen.iter().any(|s| s == text)
+            {
+                seen.push(text.to_owned());
+            }
+        }
+        seen
     }
 
     /// Reload the `--style` file if it changed, transitioning to it. Returns whether it

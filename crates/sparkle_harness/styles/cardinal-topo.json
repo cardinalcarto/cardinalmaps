@@ -10,7 +10,7 @@
   "openmaptiles": {
    "type": "vector",
    "url": "mbtiles://{default}",
-   "attribution": "© OpenStreetMap contributors © OpenMapTiles, elevation © OpenGeoHub GEDTM (CC BY 4.0)"
+   "attribution": "<a href=\"https://www.openstreetmap.org/copyright\">© OpenStreetMap contributors</a> <a href=\"https://openmaptiles.org/\">© OpenMapTiles</a> <a href=\"https://codeberg.org/openlandmap/GEDTM30\">Elevation © OpenGeoHub GEDTM (CC BY 4.0)</a>"
   }
  },
  "sprite": "sprite",

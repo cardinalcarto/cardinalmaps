@@ -195,4 +195,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String listEnd(String first, String last) {
     return '$first, and $last';
   }
+
+  @override
+  String get mapCreditsShow => 'Show map credits';
+
+  @override
+  String get mapCreditsHide => 'Hide map credits';
 }

@@ -2,6 +2,8 @@
 /// with Flutter GPU.
 library;
 
+export 'src/attribution.dart'
+    show AttributionSpan, SparkleAttribution, parseAttribution;
 export 'src/rust/api/map.dart'
     show CameraState, ClickedFeature, EaseCurve, SpriteImageInput;
 export 'src/sparkle_map.dart'
