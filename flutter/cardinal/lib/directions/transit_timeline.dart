@@ -5,9 +5,11 @@
 library;
 
 import 'dart:math' as math;
+import 'dart:ui' show lerpDouble;
 
 import 'package:material_ui/material_ui.dart';
 
+import 'animated_rows.dart';
 import 'connections.dart';
 import 'format.dart';
 import 'transit_plan.dart';
@@ -266,12 +268,15 @@ Color routeTextColor(TransitRoute? route, Color background) =>
 ///
 /// Its pieces sit at their times on [axis], which rows of a list share, with the axis'
 /// marks ([TimelineAxis.ticks]) drawn faintly behind it if [ticks] is set. With a
-/// [chain], it's timed as the departures chosen have it.
+/// [chain], it's timed as the departures chosen have it, and when the chain changes it
+/// eases there: each piece moves and recolors to where it now is, the labels
+/// cross-fade, and pieces that come or go fade in or out.
 ///
 /// With [others], the other routes that can be taken for each ride ([otherRoutes]),
 /// a line above it says "or" and badges them, over the start of each ride that has
-/// some, as far as there's room ([placeOrLabels]).
-class JourneyTimeline extends StatelessWidget {
+/// some, as far as there's room ([placeOrLabels]). Whether it has that line is the
+/// journey's alone, so its height doesn't change with a choice.
+class JourneyTimeline extends StatefulWidget {
   const JourneyTimeline({
     super.key,
     required this.journey,
@@ -296,24 +301,100 @@ class JourneyTimeline extends StatelessWidget {
   static const orGap = 4.0;
 
   @override
+  State<JourneyTimeline> createState() => JourneyTimelineState();
+}
+
+/// What a timeline painted last, to ease on from.
+class _Frame {
+  List<DrawnPiece>? pieces;
+  double width = 0;
+}
+
+class JourneyTimelineState extends State<JourneyTimeline>
+    with SingleTickerProviderStateMixin {
+  late final _t = AnimationController(
+    vsync: this,
+    duration: rowDuration,
+    value: 1,
+  );
+  late final _curve = CurvedAnimation(parent: _t, curve: rowCurve);
+  final _frame = _Frame();
+  late var _pieces = timelinePieces(widget.journey, chain: widget.chain);
+
+  /// What it eases from, as it was painted, [_fromWidth] wide.
+  List<DrawnPiece>? _from;
+  double _fromWidth = 0;
+  List<List<TransitRoute>> _fromOthers = const [];
+
+  /// The pieces as last painted, for tests.
+  @visibleForTesting
+  List<DrawnPiece> get drawn => _frame.pieces ?? const [];
+
+  List<List<TransitRoute>> _othersOf(JourneyTimeline w) {
+    final others = w.others;
+    return others != null && others.any((o) => o.isNotEmpty)
+        ? others
+        : const [];
+  }
+
+  @override
+  void didUpdateWidget(JourneyTimeline oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final pieces = timelinePieces(widget.journey, chain: widget.chain);
+    final changed =
+        !_samePieces(_pieces, pieces) ||
+        oldWidget.axis != widget.axis ||
+        !_sameOthers(_othersOf(oldWidget), _othersOf(widget));
+    _pieces = pieces;
+    if (!changed) return;
+    final painted = _frame.pieces;
+    // A timeline that follows choices eases between them; one that doesn't, such as
+    // an overview row given another journey, just changes.
+    if (widget.chain == null || oldWidget.chain == null || painted == null) {
+      _from = null;
+      _t.value = 1;
+      return;
+    }
+    _from = painted;
+    _fromWidth = _frame.width;
+    _fromOthers = _othersOf(oldWidget);
+    _t.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _curve.dispose();
+    _t.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final pieces = timelinePieces(journey, chain: chain);
-    final others = this.others;
-    final hasOthers = others != null && others.any((o) => o.isNotEmpty);
+    final others = _othersOf(widget);
+    final hasOthers = others.isNotEmpty;
     final scaler = MediaQuery.textScalerOf(context);
     return Semantics(
-      label: timelineLabel(pieces, others: others),
+      label: timelineLabel(_pieces, others: widget.others),
       child: SizedBox(
-        height: hasOthers ? height + orHeight + orGap : height,
+        height: hasOthers
+            ? widget.height + JourneyTimeline.orHeight + JourneyTimeline.orGap
+            : widget.height,
         width: double.infinity,
         child: CustomPaint(
           painter: _TimelinePainter(
-            pieces: pieces,
-            others: hasOthers ? others : const [],
-            barTop: hasOthers ? orHeight + orGap : 0,
-            axis: axis,
-            ticks: ticks,
+            pieces: _pieces,
+            others: others,
+            from: _from,
+            fromWidth: _fromWidth,
+            fromOthers: _fromOthers,
+            t: _curve,
+            frame: _frame,
+            barTop: hasOthers
+                ? JourneyTimeline.orHeight + JourneyTimeline.orGap
+                : 0,
+            axis: widget.axis,
+            ticks: widget.ticks,
             scheme: theme.colorScheme,
             textStyle: theme.textTheme.labelLarge!.copyWith(
               fontWeight: FontWeight.w600,
@@ -333,6 +414,164 @@ class JourneyTimeline extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A piece of a timeline as it's drawn: where, in what color and how opaque, which
+/// can be part way from how another timeline drew it.
+@immutable
+class DrawnPiece {
+  const DrawnPiece({
+    required this.key,
+    required this.piece,
+    required this.left,
+    required this.right,
+    required this.color,
+    this.joined = false,
+    this.opacity = 1,
+    this.fromRoute,
+    this.labelT = 1,
+  });
+
+  /// Which piece of its journey it is, whatever the departures chosen: a ride's trip
+  /// by the ride and its place in it, a walk by its place, and a wait by what follows.
+  final Object key;
+  final TimelinePiece piece;
+  final double left;
+  final double right;
+
+  /// A ride's fill.
+  final Color color;
+
+  /// Whether it's a ride that the one before goes on as.
+  final bool joined;
+  final double opacity;
+
+  /// For a ride whose route changes, the route whose label fades out as [labelT] goes
+  /// from 0 to 1, and the piece's own fades in.
+  final TransitRoute? fromRoute;
+  final double labelT;
+
+  double get width => right - left;
+}
+
+/// Each of [pieces]'s keys ([DrawnPiece.key]).
+List<Object> _pieceKeys(List<TimelinePiece> pieces) {
+  final keys = List<Object>.filled(pieces.length, '');
+  final trips = <int?, int>{};
+  var streets = 0;
+  for (final (i, p) in pieces.indexed) {
+    keys[i] = switch (p.kind) {
+      TimelineKind.ride => (
+        'ride',
+        p.ride,
+        trips[p.ride] = (trips[p.ride] ?? -1) + 1,
+      ),
+      TimelineKind.street => ('street', streets++),
+      TimelineKind.wait => '',
+    };
+  }
+  Object after = 'end';
+  for (var i = pieces.length - 1; i >= 0; i--) {
+    if (pieces[i].kind == TimelineKind.wait) {
+      keys[i] = ('wait', after);
+    } else {
+      after = keys[i];
+    }
+  }
+  return keys;
+}
+
+/// [pieces] as drawn on [axis] across [width], rides in their routes' colors or
+/// [primary].
+List<DrawnPiece> drawnPieces(
+  List<TimelinePiece> pieces,
+  TimelineAxis axis,
+  double width,
+  Color primary,
+) {
+  final placed = placePieces(pieces, axis, width);
+  final keys = _pieceKeys(pieces);
+  return [
+    for (final (i, p) in placed.indexed)
+      DrawnPiece(
+        key: keys[i],
+        piece: p.piece,
+        left: p.left,
+        right: p.right,
+        color: parseRouteColor(p.piece.route?.color) ?? primary,
+        joined:
+            p.piece.kind == TimelineKind.ride &&
+            i > 0 &&
+            placed[i - 1].piece.kind == TimelineKind.ride &&
+            placed[i - 1].piece.continues,
+      ),
+  ];
+}
+
+/// [t] of the way from [from], drawn [fromWidth] wide, to [to], drawn [width] wide:
+/// each piece of both moves and recolors, and one of either alone fades.
+List<DrawnPiece> lerpDrawn(
+  List<DrawnPiece> from,
+  double fromWidth,
+  List<DrawnPiece> to,
+  double t,
+  double width,
+) {
+  final scale = fromWidth > 0 ? width / fromWidth : 1.0;
+  final byKey = {for (final f in from) f.key: f};
+  bool alike(DrawnPiece a, DrawnPiece b) =>
+      a.piece.kind == b.piece.kind &&
+      a.piece.continues == b.piece.continues &&
+      a.joined == b.joined;
+  final matched = <DrawnPiece>{};
+  final coming = <DrawnPiece>[];
+  for (final p in to) {
+    final f = byKey[p.key];
+    if (f != null && alike(f, p)) {
+      matched.add(f);
+      final relabels = _badgeText(f.piece.route) != _badgeText(p.piece.route);
+      coming.add(
+        DrawnPiece(
+          key: p.key,
+          piece: p.piece,
+          left: lerpDouble(f.left * scale, p.left, t)!,
+          right: lerpDouble(f.right * scale, p.right, t)!,
+          color: Color.lerp(f.color, p.color, t)!,
+          joined: p.joined,
+          opacity: lerpDouble(f.opacity, 1, t)!,
+          fromRoute: relabels ? f.piece.route : null,
+          labelT: t,
+        ),
+      );
+    } else {
+      coming.add(
+        DrawnPiece(
+          key: p.key,
+          piece: p.piece,
+          left: p.left,
+          right: p.right,
+          color: p.color,
+          joined: p.joined,
+          opacity: t,
+        ),
+      );
+    }
+  }
+  return [
+    // Those going, under those coming.
+    for (final f in from)
+      if (!matched.contains(f) && f.opacity * (1 - t) > 0.01)
+        DrawnPiece(
+          key: f.key,
+          piece: f.piece,
+          left: f.left * scale,
+          right: f.right * scale,
+          color: f.color,
+          joined: f.joined,
+          opacity: f.opacity * (1 - t),
+        ),
+    ...coming,
+  ];
 }
 
 /// What a timeline says, for screen readers: its rides in order, each with the [others]
@@ -408,6 +647,11 @@ class _TimelinePainter extends CustomPainter {
   _TimelinePainter({
     required this.pieces,
     required this.others,
+    required this.from,
+    required this.fromWidth,
+    required this.fromOthers,
+    required this.t,
+    required this.frame,
     required this.barTop,
     required this.axis,
     required this.ticks,
@@ -416,12 +660,22 @@ class _TimelinePainter extends CustomPainter {
     required this.orStyle,
     required this.orBadgeStyle,
     required this.textScaler,
-  });
+  }) : super(repaint: t);
 
   final List<TimelinePiece> pieces;
 
   /// The other routes for each ride, or empty for no line of them.
   final List<List<TransitRoute>> others;
+
+  /// What it eases from, as drawn [fromWidth] wide, with its other routes, [t] of the
+  /// way.
+  final List<DrawnPiece>? from;
+  final double fromWidth;
+  final List<List<TransitRoute>> fromOthers;
+  final Animation<double> t;
+
+  /// Where it notes what it painted.
+  final _Frame frame;
 
   /// Where the timeline itself starts, below any line of other routes.
   final double barTop;
@@ -444,47 +698,82 @@ class _TimelinePainter extends CustomPainter {
         canvas.drawLine(Offset(x, -12), Offset(x, size.height + 12), tick);
       }
     }
-    final placed = placePieces(pieces, axis, size.width);
-    if (others.isNotEmpty) _others(canvas, placed, size.width);
+    final target = drawnPieces(pieces, axis, size.width, scheme.primary);
+    final from = this.from;
+    final t = this.t.value;
+    final drawn = from == null || t >= 1
+        ? target
+        : lerpDrawn(from, fromWidth, target, t, size.width);
+    frame
+      ..pieces = drawn
+      ..width = size.width;
+    // Each ride's left, where its "or" goes.
+    final anchors = <int, double>{
+      for (final p in drawn)
+        if (p.key case ('ride', final int ride, 0)) ride: p.left + 1,
+    };
+    final crossing = from != null && t < 1 && !_sameOthers(fromOthers, others);
+    if (crossing && fromOthers.isNotEmpty) {
+      _faded(canvas, size, 1 - t, () {
+        _others(canvas, anchors, fromOthers, size.width);
+      });
+    }
+    if (others.isNotEmpty) {
+      _faded(canvas, size, crossing ? t : 1, () {
+        _others(canvas, anchors, others, size.width);
+      });
+    }
     canvas.save();
     canvas.translate(0, barTop);
-    _pieces(canvas, placed, Size(size.width, size.height - barTop));
+    final bar = Size(size.width, size.height - barTop);
+    for (final p in drawn) {
+      _faded(canvas, bar, p.opacity, () => _piece(canvas, p, bar));
+    }
     canvas.restore();
   }
 
-  void _pieces(Canvas canvas, List<PlacedPiece> placed, Size size) {
+  /// Paints what [draw] does at [opacity].
+  void _faded(Canvas canvas, Size size, double opacity, VoidCallback draw) {
+    if (opacity >= 1) return draw();
+    if (opacity <= 0) return;
+    canvas.saveLayer(
+      (Offset.zero & size).inflate(4),
+      Paint()..color = Color.fromRGBO(0, 0, 0, opacity),
+    );
+    draw();
+    canvas.restore();
+  }
+
+  void _piece(Canvas canvas, DrawnPiece p, Size size) {
     final mid = size.height / 2;
-    for (final (i, p) in placed.indexed) {
-      switch (p.piece.kind) {
-        case TimelineKind.wait:
-          final paint = Paint()
-            ..color = scheme.outlineVariant
-            ..strokeWidth = 2
-            ..strokeCap = StrokeCap.round;
-          if (p.width >= 4) {
-            canvas.drawLine(
-              Offset(p.left + 2, mid),
-              Offset(p.right - 2, mid),
-              paint,
-            );
-          }
-        case TimelineKind.street:
-          _street(canvas, p, mid);
-        case TimelineKind.ride:
-          final before = i > 0 ? placed[i - 1].piece : null;
-          _ride(
-            canvas,
-            p,
-            size.height,
-            joined: before?.kind == TimelineKind.ride && before!.continues,
+    switch (p.piece.kind) {
+      case TimelineKind.wait:
+        final paint = Paint()
+          ..color = scheme.outlineVariant
+          ..strokeWidth = 2
+          ..strokeCap = StrokeCap.round;
+        if (p.width >= 4) {
+          canvas.drawLine(
+            Offset(p.left + 2, mid),
+            Offset(p.right - 2, mid),
+            paint,
           );
-      }
+        }
+      case TimelineKind.street:
+        _street(canvas, p, mid);
+      case TimelineKind.ride:
+        _ride(canvas, p, size.height);
     }
   }
 
   /// The line of other routes: "or" and their badges, over the start of each ride
-  /// that has some.
-  void _others(Canvas canvas, List<PlacedPiece> placed, double width) {
+  /// that has some, at [anchors].
+  void _others(
+    Canvas canvas,
+    Map<int, double> anchors,
+    List<List<TransitRoute>> others,
+    double width,
+  ) {
     const space = 4.0, padding = 4.0, badgeGap = 3.0;
     const height = JourneyTimeline.orHeight;
     TextPainter text(String label, TextStyle style) => TextPainter(
@@ -508,10 +797,10 @@ class _TimelinePainter extends CustomPainter {
 
     // Each ride's anchor, and its badges' colors and labels.
     final rides = <(double, List<(Color, TextPainter)>)>[];
-    for (final (i, p) in placed.indexed) {
-      final routes = _othersOf(others, p.piece.ride);
-      if (routes.isEmpty || !_startsRide(pieces, i)) continue;
-      rides.add((p.left + 1, [for (final route in routes) badge(route)]));
+    for (final (ride, anchor) in anchors.entries.map((e) => (e.key, e.value))) {
+      final routes = _othersOf(others, ride);
+      if (routes.isEmpty) continue;
+      rides.add((anchor, [for (final route in routes) badge(route)]));
     }
     double badgeWidth(TextPainter label) => label.width + 2 * padding;
     final widths = [
@@ -552,7 +841,7 @@ class _TimelinePainter extends CustomPainter {
     }
   }
 
-  void _street(Canvas canvas, PlacedPiece p, double mid) {
+  void _street(Canvas canvas, DrawnPiece p, double mid) {
     final paint = Paint()..color = scheme.onSurfaceVariant;
     final width = p.width - 4;
     if (width <= 0) return;
@@ -581,15 +870,10 @@ class _TimelinePainter extends CustomPainter {
     }
   }
 
-  void _ride(
-    Canvas canvas,
-    PlacedPiece p,
-    double height, {
-    required bool joined,
-  }) {
+  void _ride(Canvas canvas, DrawnPiece p, double height) {
     final route = p.piece.route;
-    final color = parseRouteColor(route?.color) ?? scheme.primary;
-    final text = routeTextColor(route, color);
+    final color = p.color;
+    final joined = p.joined;
     final mid = height / 2;
     final notch = height * 0.25;
     const r = 6.0;
@@ -640,7 +924,21 @@ class _TimelinePainter extends CustomPainter {
       p.piece.continues ? right - notch : right,
       height,
     );
-    _label(canvas, body, route, text);
+    // Each label in its own route's text color, the one going fading out.
+    Color textOf(TransitRoute? route) =>
+        routeTextColor(route, parseRouteColor(route?.color) ?? scheme.primary);
+    final fromRoute = p.fromRoute;
+    if (fromRoute != null && p.labelT < 1) {
+      _label(
+        canvas,
+        body,
+        fromRoute,
+        textOf(fromRoute).withValues(alpha: 1 - p.labelT),
+      );
+      _label(canvas, body, route, textOf(route).withValues(alpha: p.labelT));
+    } else {
+      _label(canvas, body, route, textOf(route));
+    }
   }
 
   /// Whether [color] would blend into the sheet behind it.
@@ -701,6 +999,7 @@ class _TimelinePainter extends CustomPainter {
   @override
   bool shouldRepaint(_TimelinePainter old) =>
       !identical(old.pieces, pieces) && !_samePieces(old.pieces, pieces) ||
+      !identical(old.from, from) ||
       old.axis != axis ||
       old.scheme != scheme ||
       old.textStyle != textStyle ||
@@ -709,33 +1008,33 @@ class _TimelinePainter extends CustomPainter {
       !_sameOthers(old.others, others) ||
       old.textScaler != textScaler ||
       old.ticks != ticks;
+}
 
-  static bool _sameOthers(
-    List<List<TransitRoute>> a,
-    List<List<TransitRoute>> b,
-  ) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i].length != b[i].length) return false;
-      for (var j = 0; j < a[i].length; j++) {
-        if (a[i][j].id != b[i][j].id) return false;
-      }
+bool _sameOthers(List<List<TransitRoute>> a, List<List<TransitRoute>> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].length != b[i].length) return false;
+    for (var j = 0; j < a[i].length; j++) {
+      if (a[i][j].id != b[i][j].id) return false;
     }
-    return true;
   }
+  return true;
+}
 
-  static bool _samePieces(List<TimelinePiece> a, List<TimelinePiece> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i].kind != b[i].kind ||
-          a[i].start != b[i].start ||
-          a[i].end != b[i].end ||
-          a[i].route?.name != b[i].route?.name) {
-        return false;
-      }
+bool _samePieces(List<TimelinePiece> a, List<TimelinePiece> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].kind != b[i].kind ||
+        a[i].start != b[i].start ||
+        a[i].end != b[i].end ||
+        a[i].continues != b[i].continues ||
+        a[i].route?.id != b[i].route?.id ||
+        a[i].route?.name != b[i].route?.name ||
+        a[i].route?.color != b[i].route?.color) {
+      return false;
     }
-    return true;
   }
+  return true;
 }
 
 /// Times along the overview's axis, above its rows.

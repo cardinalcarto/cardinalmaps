@@ -6,11 +6,13 @@ library;
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../units.dart';
 import '../transit/countdown.dart';
 import '../transit/nearby_page.dart' show CountdownNumber, countdownMinutes;
+import 'animated_rows.dart';
 import 'connections.dart';
 import 'format.dart';
 import 'transit_plan.dart';
@@ -60,15 +62,24 @@ class JourneyHeader extends StatelessWidget {
                 onPressed: onBack,
               ),
               Expanded(
-                child: Text('Trip details', style: theme.textTheme.titleLarge),
+                child: Text(
+                  'Trip details',
+                  style: theme.textTheme.titleLarge,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              if (duration != null)
-                Text(
-                  formatDuration(duration.toDouble()),
+              FadeSwap(
+                value: duration == null ? null : duration ~/ 60,
+                alignment: AlignmentDirectional.centerEnd,
+                child: Text(
+                  duration == null ? '' : formatDuration(duration.toDouble()),
                   style: theme.textTheme.titleLarge?.copyWith(
                     color: theme.colorScheme.primary,
                   ),
+                  maxLines: 1,
                 ),
+              ),
             ],
           ),
           Padding(
@@ -76,28 +87,44 @@ class JourneyHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // One line, whatever the choices, so nothing below it moves: the
+                // times shrink to fit beside a long "Go in" rather than wrap.
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.baseline,
                   textBaseline: TextBaseline.alphabetic,
                   children: [
-                    GoIn(
-                      journey: journey,
-                      now: now,
-                      leave: chain.departure,
-                      live: chain.rides.firstOrNull?.realtime,
+                    // Cross-fades when the time to leave changes with a choice, not
+                    // as it counts down.
+                    FadeSwap(
+                      value: chain.departure,
+                      child: GoIn(
+                        journey: journey,
+                        now: now,
+                        leave: chain.departure,
+                        live: chain.rides.firstOrNull?.realtime,
+                      ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(
-                        '${clock(context, chain.departure, utcOffset: offset)}'
-                        ' – '
-                        '${arrival == null ? 'no connection' : clock(context, arrival, utcOffset: offset)}',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: arrival == null
-                              ? theme.colorScheme.error
-                              : null,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: FadeSwap(
+                          value: (chain.departure, arrival),
+                          alignment: AlignmentDirectional.centerEnd,
+                          child: Text(
+                            '${clock(context, chain.departure, utcOffset: offset)}'
+                            ' – '
+                            '${arrival == null ? 'no connection' : clock(context, arrival, utcOffset: offset)}',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: arrival == null
+                                  ? theme.colorScheme.error
+                                  : null,
+                            ),
+                            maxLines: 1,
+                            softWrap: false,
+                          ),
                         ),
-                        textAlign: TextAlign.end,
                       ),
                     ),
                   ],
@@ -509,13 +536,9 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
 
   @override
   Widget build(BuildContext context) {
-    final rows = _rows(context);
     return SliverPadding(
       padding: const EdgeInsets.only(bottom: 16),
-      sliver: SliverList.builder(
-        itemCount: rows.length,
-        itemBuilder: (context, i) => rows[i],
-      ),
+      sliver: SteadySliver(child: AnimatedRows(rows: _rows(context))),
     );
   }
 
@@ -536,10 +559,12 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
 
     rows.add(
       _RailRow(
+        key: const ValueKey('start'),
         rail: _Rail(marker: _Marker.end, below: connector(legs.firstOrNull)),
         child: _EndText(
           name: widget.start,
           time: 'Leave ${clock(context, chain.departure, utcOffset: offset)}',
+          prefix: 'Leave ',
         ),
       ),
     );
@@ -574,9 +599,13 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
               ? _Line.dotted
               : _Line.thin;
           final wait = choice.made ? choice.waitSeconds : 0;
-          if (change || wait >= 60) {
+          // Whether there's a wait doesn't hang on the departure chosen of this ride,
+          // so choosing one never adds or drops a row above its departures.
+          final waits = change || _mayWait(choice);
+          if (waits) {
             rows.add(
               _RailRow(
+                key: ValueKey(('wait', i)),
                 rail: const _Rail.through(_Line.thin),
                 child: _WaitText(
                   change: change ? leg.boarding.stop.name : null,
@@ -591,7 +620,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
               i,
               choice,
               onSelect: (departure) => widget.onSelect(index, departure),
-              above: change || wait >= 60 ? _Line.thin : before,
+              above: waits ? _Line.thin : before,
               below: connector(next),
             ),
           );
@@ -600,12 +629,14 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
 
     rows.add(
       _RailRow(
+        key: const ValueKey('end'),
         rail: _Rail(marker: _Marker.end, above: connector(legs.lastOrNull)),
         child: _EndText(
           name: widget.destination,
           time: arrival == null
               ? 'No connection'
               : 'Arrive ${clock(context, arrival, utcOffset: offset)}',
+          prefix: 'Arrive ',
         ),
       ),
     );
@@ -647,6 +678,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
 
     rows.add(
       _RailRow(
+        key: ValueKey(('title', index)),
         rail: _Rail(
           above: above,
           below: _Line.bar,
@@ -666,6 +698,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
     );
     rows.add(
       _RailRow(
+        key: ValueKey(('boarding', index)),
         rail: _Rail(
           above: _Line.bar,
           below: _Line.bar,
@@ -685,6 +718,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
     if (choice.connection != RideConnection.unknown) {
       rows.add(
         _RailRow(
+          key: ValueKey(('departuresRow', index)),
           rail: _Rail.through(_Line.bar, color: first),
           child: DepartureRange(
             key: ValueKey(('departures', index)),
@@ -715,6 +749,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         );
         rows.add(
           _RailRow(
+            key: ValueKey(('stops', index, s)),
             rail: _Rail.through(_Line.bar, color: color),
             onTap: () => setState(() {
               if (!_expanded.remove(key)) _expanded.add(key);
@@ -727,9 +762,10 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
           ),
         );
         if (open) {
-          for (final visit in between) {
+          for (final (k, visit) in between.indexed) {
             rows.add(
               _RailRow(
+                key: ValueKey(('between', index, s, k, visit.stop.id)),
                 rail: _Rail(
                   above: _Line.bar,
                   below: _Line.bar,
@@ -753,6 +789,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
         final nextColor = colorOf(nextSegment);
         rows.add(
           _RailRow(
+            key: ValueKey(('seat', index, s)),
             rail: _Rail(
               above: _Line.bar,
               below: _Line.bar,
@@ -772,6 +809,7 @@ class _JourneyItineraryState extends State<JourneyItinerary> {
     }
     rows.add(
       _RailRow(
+        key: ValueKey(('alighting', index)),
         rail: _Rail(
           above: _Line.bar,
           below: below,
@@ -797,11 +835,76 @@ bool _isChange(StreetLeg leg) =>
     (leg.walk == null || leg.walk!.distance < 1) &&
     (leg.from?.name == leg.to?.name || leg.duration < 30);
 
+/// Whether the rider may wait for [choice]'s ride, whichever of its departures they
+/// take: as the plan has it, or, from when they're ready, for any they can make.
+bool _mayWait(RideChoice choice) {
+  final ready = choice.ready;
+  final departures = choice.ride.departures;
+  if (ready == null || departures.isEmpty) return choice.waitSeconds >= 60;
+  return [
+    for (final (i, d) in departures.indexed)
+      if (choice.catchable[i]) d.departure.difference(ready).inSeconds >= 60,
+  ].any((w) => w);
+}
+
+/// [text], a clock time at the end of a row, after [prefix], in a space as wide as
+/// any clock time there, so what's beside it lays out the same whatever the time; a
+/// change cross-fades.
+class _TimeSlot extends StatelessWidget {
+  const _TimeSlot(this.text, {this.prefix = '', this.style});
+
+  final String text;
+  final String prefix;
+  final TextStyle? style;
+
+  static const _figures = [FontFeature.tabularFigures()];
+
+  @override
+  Widget build(BuildContext context) {
+    final style = (this.style ?? DefaultTextStyle.of(context).style).copyWith(
+      fontFeatures: _figures,
+    );
+    final localizations = MaterialLocalizations.of(context);
+    final h24 = MediaQuery.alwaysUse24HourFormatOf(context);
+    String widest(int hour) => localizations.formatTimeOfDay(
+      TimeOfDay(hour: hour, minute: 0),
+      alwaysUse24HourFormat: h24,
+    );
+    return Stack(
+      alignment: AlignmentDirectional.centerEnd,
+      children: [
+        for (final hour in const [10, 22])
+          ExcludeSemantics(
+            child: Visibility(
+              visible: false,
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: Text('$prefix${widest(hour)}', style: style),
+            ),
+          ),
+        FadeSwap(
+          value: text,
+          alignment: AlignmentDirectional.centerEnd,
+          child: Text(text, style: style),
+        ),
+      ],
+    );
+  }
+}
+
 class _EndText extends StatelessWidget {
-  const _EndText({required this.name, required this.time});
+  const _EndText({
+    required this.name,
+    required this.time,
+    required this.prefix,
+  });
 
   final String name;
   final String time;
+
+  /// What [time] says before its clock time.
+  final String prefix;
 
   @override
   Widget build(BuildContext context) {
@@ -820,13 +923,15 @@ class _EndText extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Text(time, style: theme.textTheme.bodyMedium),
+          _TimeSlot(time, prefix: prefix, style: theme.textTheme.bodyMedium),
         ],
       ),
     );
   }
 }
 
+/// The change or wait before a ride, on one line: its height is the same whatever the
+/// wait, so the rows below it stay where they are.
 class _WaitText extends StatelessWidget {
   const _WaitText({required this.change, required this.seconds});
 
@@ -840,12 +945,8 @@ class _WaitText extends StatelessWidget {
     final muted = theme.textTheme.bodyMedium?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
-    final wait = seconds >= 60
-        ? 'wait ${formatDuration(seconds.toDouble())}'
-        : null;
-    final text = change != null
-        ? ['Change at $change', ?wait].join(', ')
-        : 'Wait ${formatDuration(seconds.toDouble())}';
+    final wait = seconds >= 60 ? formatDuration(seconds.toDouble()) : null;
+    final change = this.change;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -856,7 +957,32 @@ class _WaitText extends StatelessWidget {
             color: theme.colorScheme.onSurfaceVariant,
           ),
           const SizedBox(width: 6),
-          Expanded(child: Text(text, style: muted)),
+          if (change != null)
+            Flexible(
+              child: Text(
+                'Change at $change',
+                style: muted,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          Flexible(
+            flex: 0,
+            child: FadeSwap(
+              value: wait,
+              child: Text(
+                switch ((change, wait)) {
+                  (null, null) => 'No wait',
+                  (null, final wait?) => 'Wait $wait',
+                  (_, null) => '',
+                  (_, final wait?) => ', wait $wait',
+                },
+                style: muted,
+                maxLines: 1,
+                softWrap: false,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1012,34 +1138,56 @@ class _RideTitle extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          RouteBadge(route: route),
+          // One line each, so a choice of departure above the ride's departures
+          // never changes their height.
+          AnimatedSize(
+            duration: rowDuration,
+            curve: rowCurve,
+            alignment: AlignmentDirectional.centerStart,
+            child: FadeSwap(
+              value: route?.id,
+              child: RouteBadge(route: route),
+            ),
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  headsign ?? route?.longName ?? '',
-                  style: theme.textTheme.titleSmall,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                FadeSwap(
+                  value: headsign ?? route?.longName,
+                  child: Text(
+                    headsign ?? route?.longName ?? '',
+                    style: theme.textTheme.titleSmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                Text(
-                  [
-                    ?ride.agency,
-                    (route?.kind ?? VehicleKind.other).label,
-                  ].join(' · '),
-                  style: muted,
+                FadeSwap(
+                  value: route?.kind,
+                  child: Text(
+                    [
+                      ?ride.agency,
+                      (route?.kind ?? VehicleKind.other).label,
+                    ].join(' · '),
+                    style: muted,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ],
             ),
           ),
           if (seconds != null) ...[
             const SizedBox(width: 8),
-            Text(
-              formatDuration(seconds.toDouble()),
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.primary,
+            FadeSwap(
+              value: seconds ~/ 60,
+              alignment: AlignmentDirectional.centerEnd,
+              child: Text(
+                formatDuration(seconds.toDouble()),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.primary,
+                ),
               ),
             ),
           ],
@@ -1107,7 +1255,7 @@ class _StopText extends StatelessWidget {
             ),
           if (time case final time?) ...[
             const SizedBox(width: 8),
-            Text(
+            _TimeSlot(
               clock(context, time, utcOffset: visit.utcOffset),
               style: style?.copyWith(color: live ? liveColor(theme) : null),
             ),
@@ -1233,26 +1381,52 @@ class _DepartureRangeState extends State<DepartureRange> {
   /// The tiles' row, scrolled so the chosen tile shows: a choice upstream can choose one
   /// far along the row, out of sight.
   final _tiles = ScrollController();
-  final _selected = GlobalKey();
+
+  /// Each departure's tile, by its run, to scroll to.
+  final _tileKeys = <DepartureRun, GlobalKey>{};
+
+  /// The departure the rider last tapped, until the choice comes back.
+  DepartureRun? _tapped;
+
+  static DepartureRun? _run(RideDeparture? d) =>
+      d == null ? null : (tripId: d.tripId, startDate: d.startDate);
+
+  GlobalKey _keyOf(RideDeparture d) =>
+      _tileKeys.putIfAbsent(_run(d)!, GlobalKey.new);
 
   @override
   void initState() {
     super.initState();
     _start();
-    _reveal(animate: false);
   }
 
-  /// Scrolls the tiles' row, and only that row, to the chosen tile after this frame.
-  void _reveal({required bool animate}) {
+  /// Scrolls the tiles' row, and only that row, to the chosen tile after this frame:
+  /// centered on it for a choice made elsewhere, and only as far as shows all of it for
+  /// one the rider tapped, so it doesn't slide from under their finger.
+  void _reveal({required bool center}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final tile = _selected.currentContext?.findRenderObject();
+      final chosen = widget.choice.departure;
+      final tile = chosen == null
+          ? null
+          : _tileKeys[_run(chosen)]?.currentContext?.findRenderObject();
       if (!mounted || tile == null || !_tiles.hasClients) return;
-      _tiles.position.ensureVisible(
-        tile,
-        alignment: 0.5,
-        duration: animate ? const Duration(milliseconds: 250) : Duration.zero,
-        curve: Curves.easeOutCubic,
+      final position = _tiles.position;
+      final viewport = RenderAbstractViewport.maybeOf(tile);
+      if (viewport == null) return;
+      final double to;
+      if (center) {
+        to = viewport.getOffsetToReveal(tile, 0.5).offset;
+      } else {
+        final start = viewport.getOffsetToReveal(tile, 0).offset;
+        final end = viewport.getOffsetToReveal(tile, 1).offset;
+        to = position.pixels.clamp(math.min(start, end), math.max(start, end));
+      }
+      final target = to.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
       );
+      if ((target - position.pixels).abs() < 0.5) return;
+      position.animateTo(target, duration: rowDuration, curve: rowCurve);
     });
   }
 
@@ -1269,11 +1443,13 @@ class _DepartureRangeState extends State<DepartureRange> {
   void didUpdateWidget(DepartureRange oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.now != widget.now) _start();
-    final old = oldWidget.choice.departure;
-    final chosen = widget.choice.departure;
-    if (old?.tripId != chosen?.tripId || old?.startDate != chosen?.startDate) {
-      _reveal(animate: true);
+    final chosen = _run(widget.choice.departure);
+    if (_run(oldWidget.choice.departure) != chosen) {
+      _reveal(center: chosen != _tapped);
     }
+    _tapped = null;
+    final runs = {for (final d in widget.choice.ride.departures) _run(d)};
+    _tileKeys.removeWhere((run, _) => !runs.contains(run));
   }
 
   @override
@@ -1305,47 +1481,122 @@ class _DepartureRangeState extends State<DepartureRange> {
               ),
             ),
             const SizedBox(height: 4),
-            ValueListenableBuilder(
-              valueListenable: _now,
-              builder: (context, now, _) => SingleChildScrollView(
-                controller: _tiles,
-                scrollDirection: Axis.horizontal,
-                child: IntrinsicHeight(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    spacing: 6,
-                    children: [
-                      for (final (i, d) in departures.indexed)
-                        ConnectionTile(
-                          key: i == choice.index
-                              ? _selected
-                              : ValueKey((d.tripId, d.startDate)),
-                          departure: d,
-                          route: mixed ? d.route ?? ride.route : null,
-                          countdown: Countdown(d, now: now),
-                          catchable: choice.catchable[i],
-                          selected: i == choice.index,
-                          utcOffset: ride.boarding.utcOffset,
-                          onTap: () => widget.onSelect(i),
-                        ),
-                    ],
+            LayoutBuilder(
+              builder: (context, constraints) => ValueListenableBuilder(
+                valueListenable: _now,
+                builder: (context, now, _) => SingleChildScrollView(
+                  controller: _tiles,
+                  scrollDirection: Axis.horizontal,
+                  child: _CenterAtFirst(
+                    controller: _tiles,
+                    tile: choice.departure == null
+                        ? null
+                        : _keyOf(choice.departure!),
+                    viewport: constraints.maxWidth,
+                    child: IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        spacing: 6,
+                        children: [
+                          for (final (i, d) in departures.indexed)
+                            ConnectionTile(
+                              key: _keyOf(d),
+                              departure: d,
+                              route: mixed ? d.route ?? ride.route : null,
+                              countdown: Countdown(d, now: now),
+                              catchable: choice.catchable[i],
+                              selected: i == choice.index,
+                              utcOffset: ride.boarding.utcOffset,
+                              onTap: () {
+                                _tapped = _run(d);
+                                widget.onSelect(i);
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
             const SizedBox(height: 6),
           ],
-          if (choice.connection == RideConnection.none)
-            NoConnection(choice: choice)
-          else
-            VehicleStatus(
-              ride: ride,
-              departure: choice.departure,
-              access: widget.access,
-            ),
+          FadeSwap(
+            value: (choice.connection, _run(choice.departure)),
+            alignment: AlignmentDirectional.topStart,
+            fit: StackFit.passthrough,
+            child: choice.connection == RideConnection.none
+                ? NoConnection(choice: choice)
+                : VehicleStatus(
+                    ride: ride,
+                    departure: choice.departure,
+                    access: widget.access,
+                  ),
+          ),
         ],
       ),
     );
+  }
+}
+
+/// [child], a row of tiles in [controller]'s horizontal scroll view [viewport] wide,
+/// scrolled to center [tile] in its first layout, before it's painted.
+class _CenterAtFirst extends SingleChildRenderObjectWidget {
+  const _CenterAtFirst({
+    required this.controller,
+    required this.tile,
+    required this.viewport,
+    super.child,
+  });
+
+  final ScrollController controller;
+  final GlobalKey? tile;
+  final double viewport;
+
+  @override
+  _RenderCenterAtFirst createRenderObject(BuildContext context) =>
+      _RenderCenterAtFirst(controller, tile, viewport);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderCenterAtFirst renderObject,
+  ) {
+    renderObject
+      ..tile = tile
+      ..viewport = viewport;
+  }
+}
+
+class _RenderCenterAtFirst extends RenderProxyBox {
+  _RenderCenterAtFirst(this.controller, this.tile, this.viewport);
+
+  final ScrollController controller;
+  GlobalKey? tile;
+  double viewport;
+  bool _done = false;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    if (_done) return;
+    _done = true;
+    final box = tile?.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || !controller.hasClients) return;
+    double leftOf(RenderBox b) =>
+        b.localToGlobal(Offset.zero, ancestor: this).dx;
+    // Its right, from the next tile's left: only its row may read its size here.
+    final row = box.parent;
+    final next = row is RenderFlex ? row.childAfter(box) : null;
+    final left = leftOf(box);
+    final right = next == null
+        ? size.width
+        : leftOf(next) - (row as RenderFlex).spacing;
+    final to = ((left + right) / 2 - viewport / 2)
+        .clamp(0.0, math.max(0.0, size.width - viewport))
+        .toDouble();
+    // The scroll view applies its extent after this, and paints from here.
+    controller.position.correctPixels(to);
   }
 }
 
@@ -1450,28 +1701,32 @@ class ConnectionTile extends StatelessWidget {
                   spacing: 2,
                   children: [
                     if (route != null)
-                      Opacity(
+                      AnimatedOpacity(
+                        duration: rowDuration,
+                        curve: rowCurve,
                         opacity: usable ? 1 : 0.45,
                         child: RouteBadge(route: route),
                       ),
-                    if (counts)
-                      CountdownNumber(
-                        countdown,
-                        key: const ValueKey('countdown'),
-                        alignment: AlignmentDirectional.centerStart,
-                      )
-                    else
-                      Text(
-                        time,
-                        key: const ValueKey('countdown'),
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: usable ? null : faded,
-                          decoration: struck
-                              ? TextDecoration.lineThrough
-                              : null,
-                        ),
-                      ),
+                    FadeSwap(
+                      value: counts ? null : (time, usable, struck),
+                      child: counts
+                          ? CountdownNumber(
+                              countdown,
+                              key: const ValueKey('countdown'),
+                              alignment: AlignmentDirectional.centerStart,
+                            )
+                          : Text(
+                              time,
+                              key: const ValueKey('countdown'),
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: usable ? null : faded,
+                                decoration: struck
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                              ),
+                            ),
+                    ),
                     if (counts)
                       Text(
                         time,
@@ -1482,15 +1737,18 @@ class ConnectionTile extends StatelessWidget {
                               : null,
                         ),
                       ),
-                    if (label != null)
-                      Text(
-                        label,
-                        key: const ValueKey('label'),
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: labelColor,
-                          fontWeight: d.suggested && usable
-                              ? FontWeight.w600
-                              : null,
+                    if (label case final label?)
+                      FadeSwap(
+                        value: (label, labelColor),
+                        child: Text(
+                          label,
+                          key: const ValueKey('label'),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: labelColor,
+                            fontWeight: d.suggested && usable
+                                ? FontWeight.w600
+                                : null,
+                          ),
                         ),
                       ),
                   ],
