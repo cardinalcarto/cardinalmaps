@@ -22,6 +22,7 @@ valinor-router = { workspace = true }
 valinor-transit-plan = { path = "../valinor-transit-plan" }
 
 [dev-dependencies]
+prost = { workspace = true }
 tower = { workspace = true }
 valinor-gtfs = { path = "../valinor-gtfs" }
 valinor-transit-plan = { path = "../valinor-transit-plan", features = ["test-support"] }
