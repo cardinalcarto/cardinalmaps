@@ -252,18 +252,17 @@ void main() {
       );
     });
 
-    testWidgets('an overview row keeps room for them above its timeline', (
-      tester,
-    ) async {
+    testWidgets('a timeline asked to keeps room for them under it, with or '
+        'without any', (tester) async {
       Future<double> height(Journey journey) async {
         await tester.pumpWidget(
           MaterialApp(
             home: Scaffold(
-              body: JourneyRow(
+              body: JourneyTimeline(
                 journey: journey,
                 axis: TimelineAxis.of([journey]),
-                now: at(0),
-                onTap: () {},
+                others: otherRoutes(journey),
+                reserveOthers: true,
               ),
             ),
           ),
@@ -271,14 +270,13 @@ void main() {
         return tester.getSize(find.byType(JourneyTimeline)).height;
       }
 
-      // The same, with or without any: every row keeps the line's room.
       expect(
         await height(fakePlan().journeys.single),
-        26 + JourneyTimeline.orHeight + JourneyTimeline.orGap,
+        26 + JourneyTimeline.orGap + JourneyTimeline.orHeight,
       );
       expect(
         await height(connectionsJourney()),
-        26 + JourneyTimeline.orHeight + JourneyTimeline.orGap,
+        26 + JourneyTimeline.orGap + JourneyTimeline.orHeight,
       );
       expect(
         tester.getSemantics(find.byType(JourneyTimeline)).label,

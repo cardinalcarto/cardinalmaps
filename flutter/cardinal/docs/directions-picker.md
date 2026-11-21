@@ -44,10 +44,10 @@ move the tabs when one is tapped there.
 
 | Line | Street modes | Transit |
 |---|---|---|
-| Headline | Duration, large. Arrival time on the right. | "Go in 4 min" and the clock range. Duration on the right. |
-| Name | "via I-5 South" | none: the timeline's route badges name it |
-| Graph | 32 px tall and as wide as the route's share of the slowest option's time. Driving: a speed profile. Cycling and walking: an elevation profile over a bar in three tones | The journey's timeline on the list's shared time axis, with a lane above it for "or 4, 13" |
-| Caption | Distance, then how it differs from the best option | none |
+| Headline | Duration, large. Arrival time on the right. | "Go in 4 min", large, the minutes in the live color when the first ride's times are live. Duration on the right. |
+| Name | "via I-5 South" | The clock range, then transfers and the time on the streets: "3:42 PM – 4:28 PM · 1 transfer · 8 min walking". A mark at its end if a stop has moved |
+| Graph | 32 px tall and as wide as the route's share of the slowest option's time. Driving: a speed profile. Cycling and walking: an elevation profile over a bar in three tones | The journey's timeline on the list's shared time axis, in the middle of the same 32 px |
+| Caption | Distance, then how it differs from the best option | "or 4, 13": the other routes for a ride, as badges under it. Blank without any |
 
 - **Shared axis.** Within a list, graph width is time. A slower option is visibly longer.
   Transit already works this way (`TimelineAxis.of`).
@@ -64,9 +64,15 @@ move the tabs when one is tapped there.
   traffic, and nothing on the row should suggest they're live.
 - **Cycling and walking** draw the elevation profile along the route, with the tone bar
   under it.
-- **"or" lane.** Every transit row reserves it, with or without alternatives, and the
-  label starts at its ride's left edge and may run as wide as it needs. It never goes
-  inline in the timeline.
+- **"or" line.** A transit row's last line, under its timeline, there with or without
+  alternatives. A label starts under its ride's left edge and may run as wide as it
+  needs. It never goes inline in the timeline.
+- **A transit row's second line.** One line, cut with an ellipsis, so what's last gives
+  way first: the clock range; "1 transfer" or "2 transfers", one fewer than its rides,
+  a ride that stays on as another trip being one, and nothing for none; then the
+  minutes on the streets to, between and from stops, "8 min walking", "8 min cycling"
+  or "8 min by wheelchair", and nothing under half a minute. The mark of a stop that
+  has moved is beside it, not part of what's cut.
 - **Caption.** One line, cut with an ellipsis, built in this order: distance; "Fastest"
   on the first row or "N min slower" on the others; "Shortest"; then mode facts.
   Driving: "Ferry", "No freeways" when another option has them, and "Tolls" only when
@@ -105,7 +111,10 @@ change of text size moves the anchors once, as a rotation does.
 - Each line reserves one line at the current text size. The graph stays 32 px.
 - At 1.5× and above every row takes a taller layout: the arrival time moves to its own
   line under the duration, and the name and the caption get two lines each. The switch
-  depends only on the text size, never on what a row holds.
+  depends only on the text size, never on what a row holds. A transit row does the
+  same: its duration under "Go in", two lines for its clock range and the rest, and
+  its "or" line in the caption's two, which also give the timeline what it needs
+  beyond 32 px once its route names are taller than that (from about 1.9×).
 - Truncation is horizontal only. The duration and arrival never truncate. The name and
   caption end in an ellipsis only after their lines, and the caption's order is its
   priority, so the least important fact goes first.
@@ -226,7 +235,8 @@ animation, since the row is under their control. All durations 200 ms, ease out.
 - **Hairline.** A vertical line at the finger, across the band and bar. The graph's
   width is time, so the position is a time into the trip.
 - **Readout.** While scrubbing it replaces the text on the right of the headline, which
-  is above the finger. It fades back on release.
+  is above the finger; on a transit row, the second line, the clock range and the
+  rest. It fades back on release.
   - Driving: distance so far, the road and the expected speed,
     "Mile 6.2 · I-5 South · 58 mph".
   - Cycling and walking: distance, elevation and grade, "Mile 4.1 · 330 ft · 6% uphill".
@@ -243,7 +253,8 @@ As built (step 6), in `scrub.dart`, `scrub_track.dart` and `scrub_marker.dart`:
 
 - **The zone** is the graph's drawn width (at least 44 px) and the 6 px gaps above and
   below a street row's 32 px graph, so 44 px tall with nothing laid out anew; a
-  transit row's whole timeline, "or" lane and all, which is taller than that already.
+  transit row's timeline with the gap above it and its "or" line under it, which is
+  taller than that already, and the hairline crosses both.
   The drag is a horizontal drag recognizer in the gesture arena with the sheet's
   vertical one and the row's tap: whichever axis passes the slop first wins, and
   once the scrub has the finger the sheet doesn't move. A finger that goes down in
@@ -260,9 +271,11 @@ As built (step 6), in `scrub.dart`, `scrub_track.dart` and `scrub_marker.dart`:
   and once as it ends.
 - **The readout** is in the arrival's place, in its style, medium and in the primary
   color; at 1.5× and up, on the arrival's own line. Transit's takes the place of the
-  journey's times, after "Go in", which keeps its room, as does the duration. Parts
-  that don't fit are left off from the end, and the first is cut with an ellipsis if
-  even it doesn't fit.
+  row's second line, the journey's times and what follows them, in that line's style
+  and the primary color; "Go in" and the duration stay as they are. Parts that don't
+  fit are left off from the end, and the first is cut with an ellipsis if even it
+  doesn't fit; at 1.5× and up transit's has the second line's two lines to wrap onto
+  instead.
   - "Mile 6.2" or "km 6.2" (the kilometer post's lowercase symbol), in tenths, whole
     from 100. The road is the name of the step there by distance; the speed is the
     run's there, in mph or km/h. Without runs, distance is the share of the graph and
@@ -348,7 +361,8 @@ As built (step 5):
   refreshed at once. A refresh that fails leaves the plan and its status line as they
   are, and the next one asks again.
 - A plan with the same journeys in the same order is shown at once: each row's times
-  change in place, and its timeline and the axis ease to the new ones.
+  change in place, and its timeline and the axis ease to the new ones. If its
+  minutes on the streets change, its second line cross-fades where it is.
 - A plan that adds, drops or reorders journeys, and any plan while Trip details is
   open, waits until no finger is down and 400 ms after. Then rows grow in, shrink out
   and slide. The selected journey stays selected and held by its identity; if it's

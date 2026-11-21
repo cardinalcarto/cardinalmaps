@@ -466,10 +466,11 @@ class _HairlinePainter extends CustomPainter {
       offset != oldDelegate.offset;
 }
 
-/// [child], the text of a row's headline that a scrub's readout replaces: while the
-/// row's scrubbed, the readout fades in over it in [style] as it fades out, and back.
-/// The readout takes [child]'s room and no more, so nothing moves; what it can't fit
-/// it leaves off, from the end.
+/// [child], the text of a row that a scrub's readout replaces: while the row's
+/// scrubbed, the readout fades in over it in [style] as it fades out, and back. The
+/// readout takes [child]'s room and no more, so nothing moves; what it can't fit on
+/// its line it leaves off, from the end. Where [child] has [lines] lines, more than
+/// one, the readout wraps onto as many, from the top.
 class ScrubReadout extends StatelessWidget {
   const ScrubReadout({
     super.key,
@@ -477,11 +478,13 @@ class ScrubReadout extends StatelessWidget {
     required this.style,
     required this.child,
     this.alignment = TextAlign.start,
+    this.lines = 1,
   });
 
   final RowScrub? scrub;
   final TextStyle style;
   final TextAlign alignment;
+  final int lines;
   final Widget child;
 
   @override
@@ -506,6 +509,7 @@ class ScrubReadout extends StatelessWidget {
                       textScaler: MediaQuery.textScalerOf(context),
                       direction: Directionality.of(context),
                       alignment: alignment,
+                      lines: lines,
                     ),
                   ),
                 ),
@@ -550,6 +554,7 @@ class ReadoutPainter extends CustomPainter {
     required this.textScaler,
     required this.direction,
     required this.alignment,
+    this.lines = 1,
   }) : super(repaint: scrub);
 
   final RowScrub scrub;
@@ -557,6 +562,10 @@ class ReadoutPainter extends CustomPainter {
   final TextScaler textScaler;
   final TextDirection direction;
   final TextAlign alignment;
+
+  /// How many lines it has: one, in the middle of its room, which holds the parts
+  /// that fit; or more, from the top, which all the parts wrap onto.
+  final int lines;
 
   /// The text last laid out, and for what, so a readout that says the same isn't
   /// laid out again.
@@ -573,27 +582,32 @@ class ReadoutPainter extends CustomPainter {
     if (parts.isEmpty) return;
     if (_for case (final p, final w) when p == parts && w == size.width) {
     } else {
-      final text = fittedReadout(
-        parts,
-        size.width,
-        style: style,
-        textScaler: textScaler,
-        direction: direction,
-      );
+      final text = lines > 1
+          ? parts.join(' · ')
+          : fittedReadout(
+              parts,
+              size.width,
+              style: style,
+              textScaler: textScaler,
+              direction: direction,
+            );
       _painter?.dispose();
       _painter = TextPainter(
         text: TextSpan(text: text, style: style),
         textDirection: direction,
         textScaler: textScaler,
         textAlign: alignment,
-        maxLines: 1,
+        maxLines: lines,
         ellipsis: '…',
       )..layout(minWidth: size.width, maxWidth: size.width);
       _for = (parts, size.width);
       painted = text;
     }
     final painter = _painter!;
-    painter.paint(canvas, Offset(0, (size.height - painter.height) / 2));
+    painter.paint(
+      canvas,
+      Offset(0, lines > 1 ? 0 : (size.height - painter.height) / 2),
+    );
   }
 
   @override
@@ -602,5 +616,6 @@ class ReadoutPainter extends CustomPainter {
       style != oldDelegate.style ||
       textScaler != oldDelegate.textScaler ||
       direction != oldDelegate.direction ||
-      alignment != oldDelegate.alignment;
+      alignment != oldDelegate.alignment ||
+      lines != oldDelegate.lines;
 }

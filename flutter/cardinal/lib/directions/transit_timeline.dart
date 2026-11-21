@@ -272,14 +272,16 @@ Color routeTextColor(TransitRoute? route, Color background) =>
 /// cross-fade, and pieces that come or go fade in or out.
 ///
 /// With [others], the other routes that can be taken for each ride ([otherRoutes]),
-/// a line above it says "or" and badges them, over the start of each ride that has
+/// a line under it says "or" and badges them, each from the left of the ride that has
 /// some, as far as there's room ([placeOrLabels]). Whether it has that line is the
 /// journey's alone, so its height doesn't change with a choice; with [reserveOthers]
 /// it keeps the line's room whether or not there's anything to say on it, as rows of
 /// one height do.
 ///
 /// The timeline and that line are as tall as [height] and [orHeight] say, or as their
-/// labels need at the system's text size if that's more, so no label is cut short.
+/// labels need at the system's text size if that's more, so no label is cut short. A
+/// row of a list says where they go in it: the timeline in the middle of [room], and
+/// the line [othersGap] under that, [othersHeight] tall.
 class JourneyTimeline extends StatefulWidget {
   const JourneyTimeline({
     super.key,
@@ -290,6 +292,9 @@ class JourneyTimeline extends StatefulWidget {
     this.reserveOthers = false,
     this.eases,
     this.height = 26,
+    this.room,
+    this.othersGap = orGap,
+    this.othersHeight,
   });
 
   final Journey journey;
@@ -305,12 +310,23 @@ class JourneyTimeline extends StatefulWidget {
   /// change. If null, it does while it has a [chain].
   final bool? eases;
 
-  /// The height of the timeline itself, below any line of other routes, at the
+  /// The height of the timeline itself, above any line of other routes, at the
   /// default text size.
   final double height;
 
+  /// The room the timeline itself is in the middle of, if that's more than it's
+  /// tall: a row's place for its graph.
+  final double? room;
+
+  /// The room between the timeline's and the line of other routes.
+  final double othersGap;
+
+  /// How tall the line of other routes and its badges are, or null for
+  /// [orHeightOf]: a line of a row's text.
+  final double? othersHeight;
+
   /// The height of the line of other routes at the default text size, and the room
-  /// under it.
+  /// over it.
   static const orHeight = 16.0;
   static const orGap = 4.0;
 
@@ -325,13 +341,6 @@ class JourneyTimeline extends StatefulWidget {
     final size = Theme.of(context).textTheme.labelMedium!.fontSize!;
     return math.max(orHeight, MediaQuery.textScalerOf(context).scale(size) + 4);
   }
-
-  /// How tall the whole of it is at [context]'s text size, with the line of other
-  /// routes.
-  static double heightWithOthersOf(
-    BuildContext context, {
-    double height = 26,
-  }) => orHeightOf(context) + orGap + barHeightOf(context, height: height);
 
   @override
   State<JourneyTimeline> createState() => JourneyTimelineState();
@@ -410,11 +419,13 @@ class JourneyTimelineState extends State<JourneyTimeline>
     final hasOthers = others.isNotEmpty || widget.reserveOthers;
     final scaler = MediaQuery.textScalerOf(context);
     final bar = JourneyTimeline.barHeightOf(context, height: widget.height);
-    final orHeight = JourneyTimeline.orHeightOf(context);
+    final room = math.max(bar, widget.room ?? 0.0);
+    final orHeight = widget.othersHeight ?? JourneyTimeline.orHeightOf(context);
+    final orTop = room + widget.othersGap;
     return Semantics(
       label: timelineLabel(_pieces, others: widget.others),
       child: SizedBox(
-        height: hasOthers ? bar + orHeight + JourneyTimeline.orGap : bar,
+        height: hasOthers ? orTop + orHeight : room,
         width: double.infinity,
         child: CustomPaint(
           painter: _TimelinePainter(
@@ -425,7 +436,9 @@ class JourneyTimelineState extends State<JourneyTimeline>
             fromOthers: _fromOthers,
             t: _curve,
             frame: _frame,
-            barTop: hasOthers ? orHeight + JourneyTimeline.orGap : 0,
+            barTop: (room - bar) / 2,
+            barHeight: bar,
+            orTop: orTop,
             orHeight: orHeight,
             axis: widget.axis,
             scheme: theme.colorScheme,
@@ -690,6 +703,8 @@ class _TimelinePainter extends CustomPainter {
     required this.t,
     required this.frame,
     required this.barTop,
+    required this.barHeight,
+    required this.orTop,
     required this.orHeight,
     required this.axis,
     required this.scheme,
@@ -714,10 +729,12 @@ class _TimelinePainter extends CustomPainter {
   /// Where it notes what it painted.
   final _Frame frame;
 
-  /// Where the timeline itself starts, below any line of other routes.
+  /// Where the timeline itself starts, and how tall it is.
   final double barTop;
+  final double barHeight;
 
-  /// How tall the line of other routes is.
+  /// Where the line of other routes starts, under the timeline, and how tall it is.
+  final double orTop;
   final double orHeight;
   final TimelineAxis axis;
   final ColorScheme scheme;
@@ -743,19 +760,23 @@ class _TimelinePainter extends CustomPainter {
         if (p.key case ('ride', final int ride, 0)) ride: p.left + 1,
     };
     final crossing = from != null && t < 1 && !_sameOthers(fromOthers, others);
+    canvas.save();
+    canvas.translate(0, orTop);
+    final line = Size(size.width, orHeight);
     if (crossing && fromOthers.isNotEmpty) {
-      _faded(canvas, size, 1 - t, () {
+      _faded(canvas, line, 1 - t, () {
         _others(canvas, anchors, fromOthers, size.width);
       });
     }
     if (others.isNotEmpty) {
-      _faded(canvas, size, crossing ? t : 1, () {
+      _faded(canvas, line, crossing ? t : 1, () {
         _others(canvas, anchors, others, size.width);
       });
     }
+    canvas.restore();
     canvas.save();
     canvas.translate(0, barTop);
-    final bar = Size(size.width, size.height - barTop);
+    final bar = Size(size.width, barHeight);
     for (final p in drawn) {
       _faded(canvas, bar, p.opacity, () => _piece(canvas, p, bar));
     }
@@ -796,7 +817,7 @@ class _TimelinePainter extends CustomPainter {
     }
   }
 
-  /// The line of other routes: "or" and their badges, over the start of each ride
+  /// The line of other routes: "or" and their badges, under the start of each ride
   /// that has some, at [anchors].
   void _others(
     Canvas canvas,
@@ -1035,6 +1056,8 @@ class _TimelinePainter extends CustomPainter {
       old.textStyle != textStyle ||
       old.orStyle != orStyle ||
       old.barTop != barTop ||
+      old.barHeight != barHeight ||
+      old.orTop != orTop ||
       old.orHeight != orHeight ||
       !_sameOthers(old.others, others) ||
       old.textScaler != textScaler;
