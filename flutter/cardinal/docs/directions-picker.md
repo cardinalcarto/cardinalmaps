@@ -1,7 +1,8 @@
 # Directions as an alternate picker
 
-Status: design agreed 2026-11-20, nothing built. Mockups (Android only, invented trip and
-numbers): https://claude.ai/artifact/LbDfkfMsy2JBsvkoBvJTk3
+Status: design agreed 2026-11-20. Being built on `directions-picker` in the order at the
+end of this document; steps 1 to 3 are done. Mockups (invented trip and numbers):
+https://claude.ai/artifact/LbDfkfMsy2JBsvkoBvJTk3
 
 ## Goal
 
@@ -405,6 +406,23 @@ canvas linked above), drawn to settle these points before it's built:
 The docking and scrubbing rules are the same as Android's.
 
 Not designed yet: transit and cycling rows on iOS, and right-to-left layout.
+
+## Build order
+
+1. Sheet library: the footer, slots and the held slot, the lowest anchor, opening inside
+   a free range. Done.
+2. Route data already in the response: road names, the route's name, toll, ferry and
+   freeway, speed runs. Done.
+3. The picker for street modes: trip card, tabs with parallel planning, rows, selection
+   and docking, large text. Done. Transit keeps its old list under the new header.
+4. Steps restyled, and Trip details as a pushed page.
+5. Transit rows in the new shape: tap selects, a docked row, a Trip details button.
+6. Scrubbing and the map marker.
+7. Valinor's added route fields: road-type runs and elevation, for the cycling and
+   walking bands, driving's third tone and the "Toll" label.
+
+Until step 5, switching between a street mode and transit at the header height moves
+the sheet by a row and the buttons, since transit has neither yet.
 
 ## Still open
 
