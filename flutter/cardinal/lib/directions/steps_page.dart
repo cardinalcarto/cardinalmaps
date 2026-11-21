@@ -13,6 +13,7 @@ import 'directions.dart';
 import 'format.dart';
 import 'option_row.dart';
 import 'route_source.dart';
+import 'step_icon.dart';
 import 'trip_buttons.dart';
 
 /// The steps of the route selected in [directions], pushed over the directions page:
@@ -224,9 +225,10 @@ class _StepsHeader extends StatelessWidget {
   }
 }
 
-/// A numbered step of a route, with how far it goes: beside the instruction, or under
-/// it at the roomier text sizes (see [roomyTextScale]). Its instruction takes as many
-/// lines as it needs.
+/// A step of a route, with an arrow for its maneuver (see [stepIcon]) or, if it has
+/// none, its number, and how far it goes: beside the instruction, or under it at the
+/// roomier text sizes (see [roomyTextScale]). Its instruction takes as many lines as
+/// it needs.
 class _StepRow extends StatelessWidget {
   const _StepRow({
     required this.number,
@@ -240,11 +242,16 @@ class _StepRow extends StatelessWidget {
   final UnitSystem units;
   final bool roomy;
 
+  /// How big a step's arrow is, and how wide the column its arrow or number is in.
+  static const iconSize = 24.0;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cupertino = isCupertinoOf(context);
     final muted = theme.colorScheme.onSurfaceVariant;
+    final mark = cupertino ? theme.colorScheme.primary : muted;
+    final icon = stepIcon(step);
     final instruction = Text(
       step.instruction,
       style: theme.textTheme.bodyLarge,
@@ -263,14 +270,15 @@ class _StepRow extends StatelessWidget {
         child: Row(
           children: [
             ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 24),
-              child: Text(
-                '$number',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.labelLarge?.copyWith(
-                  color: cupertino ? theme.colorScheme.primary : muted,
-                ),
-              ),
+              constraints: const BoxConstraints(minWidth: iconSize),
+              child: icon == null
+                  ? Text(
+                      '$number',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.labelLarge?.copyWith(color: mark),
+                    )
+                  // The instruction says what it shows, so it says nothing.
+                  : Icon(icon, size: iconSize, color: mark),
             ),
             const SizedBox(width: 12),
             Expanded(

@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:material_ui/material_ui.dart';
 
+import '../fakes/fake_routes.dart';
 import 'picker_harness.dart';
 
 /// The system text sizes the sheet is built at, from the default to the largest
@@ -260,6 +261,72 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(StepsPage), findsOneWidget);
       await checkPage(tester, StepsPage);
+    });
+  }
+
+  for (final (platform, window, scale) in [
+    for (final platform in [TargetPlatform.android, TargetPlatform.iOS])
+      for (final window in _windows)
+        for (final scale in _scales) (platform, window, scale),
+  ]) {
+    final where =
+        'at $scale× in ${window.width.round()}×${window.height.round()} on '
+        '${platform.name}';
+
+    testWidgets('with road details, elevation, tolls and the legend: nothing '
+        'overflows or is cut off, and the rows and anchors hold, $where', (
+      tester,
+    ) async {
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      ignoreOtherPages();
+      picker.routes.immediatelyBy
+        ..[TravelMode.driving] = detailedDrivingRoutes
+        ..[TravelMode.cycling] = detailedCyclingRoutes
+        ..[TravelMode.walking] = detailedWalkingRoutes;
+      await picker.open(tester, size: window, platform: platform);
+      final sheet = sheetOf(tester);
+      List<double> anchors() => [
+        extentOf(sheet, footerAnchor),
+        extentOf(sheet, headerAnchor),
+      ];
+      final rests = anchors();
+      final row = OptionRowMetrics.heightOf(tester.element(tabs));
+      for (final mode in [
+        TravelMode.driving,
+        TravelMode.walking,
+        TravelMode.cycling,
+      ]) {
+        await showMode(tester, mode);
+        await moveTo(tester, const SheetAnchor.full());
+        final state = '$mode with road details';
+        expect(tester.takeException(), isNull, reason: state);
+        expect(find.byType(WayLegend), findsOneWidget, reason: state);
+        _expectNoTextCutOff(tester, state);
+        for (final slot in slots.evaluate()) {
+          expect(slot.size!.height, row, reason: 'a row, $state');
+        }
+        expect(anchors(), rests, reason: 'the anchors, $state');
+        // The legend below the rows, wrapped as far as it needs.
+        final legend = tester.getRect(find.byType(WayLegend));
+        expect(legend.top, greaterThanOrEqualTo(slotRects(tester).last.bottom));
+        await moveTo(tester, headerAnchor);
+      }
+
+      // And the steps, with their arrows.
+      await showMode(tester, TravelMode.driving);
+      await tester.tap(find.text('Steps'));
+      await tester.pumpAndSettle();
+      expect(find.byType(StepsPage), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(StepsPage),
+          matching: find.byType(Icon),
+        ),
+        findsWidgets,
+      );
+      expect(tester.takeException(), isNull);
+      _expectNoTextCutOff(tester, 'the steps with arrows', page: StepsPage);
     });
   }
 

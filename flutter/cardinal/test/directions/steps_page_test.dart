@@ -2,6 +2,7 @@ import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/steps_page.dart';
 import 'package:cardinal/directions/trip_buttons.dart';
 import 'package:cardinal/map/route_layer.dart';
+import 'package:cardinal/navigation/maneuver_glyphs.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
@@ -10,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../fakes/fake_routes.dart';
 import 'picker_harness.dart';
 
 void main() {
@@ -62,6 +64,63 @@ void main() {
       expect(text.maxLines, isNull);
       expect(text.overflow, isNull);
     }
+  });
+
+  testWidgets('shows each step\'s maneuver as an arrow, and the number of '
+      'one that doesn\'t say', (tester) async {
+    picker.routes.immediatelyBy[TravelMode.driving] = detailedDrivingRoutes;
+    await openSteps(tester);
+    final page = find.byType(StepsPage);
+    IconData? iconBeside(String instruction) {
+      final row = find
+          .ancestor(of: find.text(instruction), matching: find.byType(Row))
+          .first;
+      final icons = find.descendant(of: row, matching: find.byType(Icon));
+      return icons.evaluate().isEmpty
+          ? null
+          : tester.widget<Icon>(icons.first).icon;
+    }
+
+    for (final (instruction, name) in [
+      ('Drive south on 5th Avenue North.', 'depart'),
+      ('Turn left onto Denny Way.', 'turn_left'),
+      ('Take the ramp on the right to I-5 South.', 'on_ramp_slight_right'),
+      ('Enter the roundabout and take the 2nd exit.', 'roundabout_right'),
+      ('Arrive at Museum of Flight.', 'arrive'),
+    ]) {
+      expect(iconBeside(instruction), maneuverGlyphs[name], reason: name);
+    }
+    // The fifth says no maneuver: its number stands in.
+    expect(iconBeside('Keep going.'), isNull);
+    expect(find.descendant(of: page, matching: find.text('5')), findsOneWidget);
+    for (final number in ['1', '2', '3', '4', '6']) {
+      expect(
+        find.descendant(of: page, matching: find.text(number)),
+        findsNothing,
+      );
+    }
+    // The arrows say nothing the instructions don't.
+    for (final icon in tester.widgetList<Icon>(
+      find.descendant(
+        of: page,
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Icon && maneuverGlyphs.containsValue(widget.icon),
+        ),
+      ),
+    )) {
+      expect(icon.semanticLabel, isNull);
+    }
+    expect(
+      find.descendant(
+        of: page,
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Icon && maneuverGlyphs.containsValue(widget.icon),
+        ),
+      ),
+      findsNWidgets(5),
+    );
   });
 
   testWidgets('Start navigates the selected route, as the directions page\'s '
