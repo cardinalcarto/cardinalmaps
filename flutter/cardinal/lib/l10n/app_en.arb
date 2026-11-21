@@ -213,5 +213,44 @@
   "navigationArrived": "You've arrived",
   "@navigationArrived": {
     "description": "The navigation screen's banner at the end of a trip, above the destination's name, until you end the trip."
+  },
+  "directionsVia": "via {roads}",
+  "@directionsVia": {
+    "description": "The line under a route's travel time in the directions sheet's list of routes, naming the main roads the route takes. roads is one road's name, or several already joined as a list with listTwo, listStart, listMiddle and listEnd.",
+    "placeholders": {
+      "roads": {"type": "String", "example": "I-5 South and Mercer Street"}
+    }
+  },
+  "listTwo": "{first} and {second}",
+  "@listTwo": {
+    "description": "A list of exactly two things, such as two road names, as the language writes one (Unicode CLDR's list pattern for two).",
+    "placeholders": {
+      "first": {"type": "String", "example": "SR 99"},
+      "second": {"type": "String", "example": "SR 509"}
+    }
+  },
+  "listStart": "{first}, {rest}",
+  "@listStart": {
+    "description": "The start of a list of three or more things: its first thing, then the rest of the list, already joined (Unicode CLDR's list pattern start).",
+    "placeholders": {
+      "first": {"type": "String", "example": "SR 99"},
+      "rest": {"type": "String", "example": "SR 509, and Des Moines Memorial Drive"}
+    }
+  },
+  "listMiddle": "{first}, {rest}",
+  "@listMiddle": {
+    "description": "The middle of a list of four or more things: one of the things between its first and its last two, then the rest of the list, already joined (Unicode CLDR's list pattern middle).",
+    "placeholders": {
+      "first": {"type": "String", "example": "SR 509"},
+      "rest": {"type": "String", "example": "1st Avenue South, and Des Moines Memorial Drive"}
+    }
+  },
+  "listEnd": "{first}, and {last}",
+  "@listEnd": {
+    "description": "The end of a list of three or more things: its last two (Unicode CLDR's list pattern end).",
+    "placeholders": {
+      "first": {"type": "String", "example": "SR 509"},
+      "last": {"type": "String", "example": "Des Moines Memorial Drive"}
+    }
   }
 }

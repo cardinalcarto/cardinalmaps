@@ -170,4 +170,29 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get navigationArrived => 'You\'ve arrived';
+
+  @override
+  String directionsVia(String roads) {
+    return 'via $roads';
+  }
+
+  @override
+  String listTwo(String first, String second) {
+    return '$first and $second';
+  }
+
+  @override
+  String listStart(String first, String rest) {
+    return '$first, $rest';
+  }
+
+  @override
+  String listMiddle(String first, String rest) {
+    return '$first, $rest';
+  }
+
+  @override
+  String listEnd(String first, String last) {
+    return '$first, and $last';
+  }
 }

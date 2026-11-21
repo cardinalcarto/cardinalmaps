@@ -30,11 +30,14 @@ class RerouteQuestion {
   final answer = Completer<DirectionsRoute>();
 }
 
-/// Routes answered by the test, or at once with [immediately] if it's set.
+/// Routes answered by the test, or at once with [immediately] if it's set, or for a
+/// way of traveling in [immediatelyBy] with its routes there.
 class FakeRoutes implements RouteSource {
-  FakeRoutes({this.immediately});
+  FakeRoutes({this.immediately, Map<TravelMode, List<DirectionsRoute>>? by})
+    : immediatelyBy = by ?? {};
 
   List<DirectionsRoute>? immediately;
+  final Map<TravelMode, List<DirectionsRoute>> immediatelyBy;
   final asked = <RouteQuestion>[];
   final rerouted = <RerouteQuestion>[];
 
@@ -63,7 +66,7 @@ class FakeRoutes implements RouteSource {
   }) {
     final question = RouteQuestion(mode, wheelchair, from, to, abort);
     asked.add(question);
-    final now = immediately;
+    final now = immediatelyBy[mode] ?? immediately;
     if (now != null) question.answer.complete(now);
     return question.answer.future;
   }
@@ -110,7 +113,8 @@ class FakeDirectionsAdapter implements DirectionsAdapter {
   bool get isDisposed => false;
 }
 
-/// A route along [points], given as `[lng, lat]`, navigated in [navigationSteps].
+/// A route along [points], given as `[lng, lat]`, navigated in [navigationSteps],
+/// called by [roadNames], with what it has along it and its speed profile ([runs]).
 DirectionsRoute fakeRoute(
   List<List<double>> points, {
   double distance = 1000,
@@ -118,18 +122,39 @@ DirectionsRoute fakeRoute(
   List<DirectionsStep> steps = const [],
   List<NavStep> navigationSteps = const [],
   String language = 'en-US',
+  List<String> roadNames = const [],
+  bool toll = false,
+  bool ferry = false,
+  bool motorway = false,
+  List<DirectionsRun> runs = const [],
 }) => DirectionsRoute(
   geometry: [for (final p in points) DirectionsPoint(lat: p[1], lng: p[0])],
   distance: distance,
   duration: duration,
   steps: steps,
-  roadNames: const [],
-  hasToll: false,
-  hasFerry: false,
-  hasMotorway: false,
-  runs: const [],
+  roadNames: roadNames,
+  hasToll: toll,
+  hasFerry: ferry,
+  hasMotorway: motorway,
+  runs: runs,
   navigable: FakeNavigableRoute(
     navigationSteps: navigationSteps,
     locale: language,
   ),
+);
+
+/// A run of a route's speed profile, [minutes] long at [speed] meters a second.
+DirectionsRun fakeRun(
+  double minutes,
+  double speed, {
+  bool motorway = false,
+  bool toll = false,
+  bool ferry = false,
+}) => DirectionsRun(
+  duration: minutes * 60,
+  distance: minutes * 60 * speed,
+  speed: speed,
+  motorway: motorway,
+  toll: toll,
+  ferry: ferry,
 );
