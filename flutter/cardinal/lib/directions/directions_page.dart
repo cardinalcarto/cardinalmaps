@@ -89,6 +89,8 @@ const structureSettle = Duration(milliseconds: 400);
 /// | showing a street way | Start | navigating the selected route |
 /// | showing transit | | over the rows, how live the times are, how stops are reached, and the times along the rows' axis; the first journey selected, and the only one on the map |
 /// | showing transit | a journey is tapped | that journey selected: its row filled and held, the map showing it alone |
+/// | showing a way's options | a row's graph is dragged sideways, or a screen reader steps along it | scrubbing: the row selected (for transit, its journey drawn where the map is); what was held stays held, so a row cut off by the buttons stays put; a hairline at the finger, the readout in place of when it arrives (or of a journey's times), and the marker on the map, which pans as little as it must when the marker leaves what shows, but not while the map is moved by hand |
+/// | scrubbing | the finger lifts, or a second passes after the screen reader's last step | the readout fades back; the row is held, rising into the dock if it's cut off; the marker fades a second later |
 /// | showing transit | how stops are reached is chosen from its menu | transit asked again that way: placeholders, then its journeys |
 /// | showing transit | Trip details | the selected journey's Trip details, pushed: the journey from its top, the sheet at 40% so the map shows it |
 /// | Trip details showing | back | the journeys, the sheet and the list where they were left |

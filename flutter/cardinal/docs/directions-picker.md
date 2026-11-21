@@ -1,7 +1,7 @@
 # Directions as an alternate picker
 
 Status: design agreed 2026-11-20. Being built on `directions-picker` in the order at the
-end of this document; steps 1 to 5 and 7 are done, with step 7's data drawn in the rows. Mockups (invented trip and numbers):
+end of this document; all seven steps are done, with step 7's data drawn in the rows. Mockups (invented trip and numbers):
 https://claude.ai/artifact/LbDfkfMsy2JBsvkoBvJTk3
 
 ## Goal
@@ -215,6 +215,58 @@ animation, since the row is under their control. All durations 200 ms, ease out.
 - **After.** The marker fades one second after release.
 - **Without the gesture.** The graph is a slider to screen readers: it steps along the
   route and speaks the readout.
+
+As built (step 6), in `scrub.dart`, `scrub_track.dart` and `scrub_marker.dart`:
+
+- **The zone** is the graph's drawn width (at least 44 px) and the 6 px gaps above and
+  below a street row's 32 px graph, so 44 px tall with nothing laid out anew; a
+  transit row's whole timeline, "or" lane and all, which is taller than that already.
+  The drag is a horizontal drag recognizer in the gesture arena with the sheet's
+  vertical one and the row's tap: whichever axis passes the slop first wins, and
+  once the scrub has the finger the sheet doesn't move. A finger that goes down in
+  the system's gesture insets, or on iOS within 20 px of the leading edge, where a
+  back swipe starts, doesn't scrub.
+- **Holding still.** A scrub selects its row as it starts, but the page keeps
+  holding the slot it held until the scrub ends, then holds the new one, so a row cut
+  off by the buttons rises as for a tap only once the finger lifts. A journey a
+  scrub selects is drawn where the map is, not fitted: the camera only follows the
+  marker.
+- **Painting.** The hairline (2 px, primary) and the readout each paint in a layer
+  of their own from the row's scrub; following the finger builds nothing and paints
+  nothing else. The readout's cross-fade repaints the row's layers once as it starts
+  and once as it ends.
+- **The readout** is in the arrival's place, in its style, medium and in the primary
+  color; at 1.5× and up, on the arrival's own line. Transit's takes the place of the
+  journey's times, after "Go in", which keeps its room, as does the duration. Parts
+  that don't fit are left off from the end, and the first is cut with an ellipsis if
+  even it doesn't fit.
+  - "Mile 6.2" or "km 6.2" (the kilometer post's lowercase symbol), in tenths, whole
+    from 100. The road is the name of the step there by distance; the speed is the
+    run's there, in mph or km/h. Without runs, distance is the share of the graph and
+    there's no speed.
+  - Heights to the nearest 10 ft or 5 m, as climbs are; the grade over 50 m either
+    side, "level" under 1%.
+  - Transit's time is the clock's ("3:41 PM"), and what's happening comes from the
+    legs: "on" the route as its badge names it (a stay-seated ride's trip there),
+    "walking", "cycling", "by wheelchair", "waiting at" the stop the next leg starts
+    from. A point on the timeline is a time within the piece drawn there, as pieces
+    are widened to be read.
+- **The marker** is a 7 px dot in the selected route's casing color, ringed in
+  white, over the lines and pins and under the callouts, in a GeoJSON source of its
+  own that's written at most once a frame. A street route's is along its line by its
+  share of the distance gone (through the runs, or straight from the graph's share);
+  a journey's along a walk by its time, along a ride between stops by their times,
+  each stop snapped onto the ride's line once (the line between stops with no
+  shape), and at the stop where the next leg starts while waiting.
+- **The camera** pans (300 ms, ease out, the zoom kept) by the least that brings the
+  marker 32 px inside what the sheet and status bar leave of the map, and not while
+  a finger is on the map or for 300 ms after the map last moved from one.
+- **Screen readers.** The slider has ten steps; each step is a scrub there, which
+  selects the row and shows the readout and marker, ending a second after the last.
+  Keyboard and switch access reach it through the same actions. The row's own label
+  and tap are as before.
+- No haptics: `Haptics.selection` is for a choice that changes, and a scrub isn't
+  one.
 
 ## Map
 
@@ -453,7 +505,7 @@ Not designed yet: transit and cycling rows on iOS, and right-to-left layout.
 4. Steps restyled, and Trip details as a pushed page. Done.
 5. Transit rows in the new shape: tap selects, a docked row, a Trip details button;
    transit that refreshes itself; Trip details at large text. Done.
-6. Scrubbing and the map marker.
+6. Scrubbing and the map marker. Done.
 7. Valinor's added route fields: road-type runs and elevation, for the cycling and
    walking bands, driving's third tone and the "Toll" label. Done, and drawn in the
    rows, with the legend and the arrows on Steps.
