@@ -236,8 +236,16 @@ List<ResolvedAnchor> _resolveAnchors(
 /// [SheetContent.anchors]: the sheet can be pulled up (or down) as far as a range goes
 /// whether or not an anchor waits there. A fling within the range glides to a stop where
 /// it runs out of speed. One that would carry past an end stops at that end, unless
-/// there are anchors beyond it to catch the fling as usual. No anchor may lie strictly
-/// between the ends.
+/// there are anchors beyond it to catch the fling as usual.
+///
+/// A fling gets into the range from outside as it gets out. One that starts beyond an
+/// end, towards the range, has the anchors on its way to pass first, the one at that
+/// end among them if there is one: each catches it or lets it by as anchors do (see
+/// [SheetAnchor]). Let by them all, it glides on over the end into the range, in the one
+/// motion, and stops where it runs out of speed, or at the range's other end if it
+/// would carry past that. An end with no anchor at it catches nothing.
+///
+/// No anchor may lie strictly between the ends.
 @immutable
 class SheetRange {
   const SheetRange(this.from, this.to, {this.carriesIntoScroll = false});

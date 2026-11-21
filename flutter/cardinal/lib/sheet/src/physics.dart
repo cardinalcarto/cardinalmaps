@@ -100,83 +100,209 @@ class SheetPhysics {
   /// The anchor the sheet comes to rest at when let go at [extent] moving at
   /// [velocity] (logical pixels per second, positive upwards), as an index into
   /// [anchors] (sorted lowest first, and not empty).
+  ///
+  /// Only the anchors are weighed here. A page with ranges (see [SheetRange]) is
+  /// decided by [decide], which glides a fling on into a range when every anchor up
+  /// to the range's end lets it past, where this would stop it at the last of them.
   int target(List<ResolvedAnchor> anchors, double extent, double velocity) {
     assert(anchors.isNotEmpty);
-    int nearestTo(double position) {
-      var best = 0;
-      for (var i = 1; i < anchors.length; i++) {
-        if ((anchors[i].extent - position).abs() <
-            (anchors[best].extent - position).abs()) {
-          best = i;
+    final caught = _catch(anchors, extent, velocity);
+    return anchors.indexOf(caught.anchor!);
+  }
+
+  /// Where the anchors alone take a release: the nearest for a slow one, and for a
+  /// fling the first ahead that catches it.
+  SheetDecision _catch(
+    List<ResolvedAnchor> anchors,
+    double extent,
+    double velocity,
+  ) {
+    ResolvedAnchor nearestTo(double position) {
+      var best = anchors.first;
+      for (final anchor in anchors.skip(1)) {
+        if ((anchor.extent - position).abs() < (best.extent - position).abs()) {
+          best = anchor;
         }
       }
       return best;
     }
 
-    if (velocity.abs() < minFlingVelocity) return nearestTo(extent);
-
-    // The anchors ahead of the fling, nearest first.
-    final direction = velocity.sign;
-    final ahead = [
-      for (var i = 0; i < anchors.length; i++)
-        if ((anchors[i].extent - extent) * direction > _epsilon) i,
-    ];
-    if (direction < 0) ahead.setAll(0, ahead.reversed.toList());
-    if (ahead.isEmpty) return nearestTo(extent);
-
     // How far the fling would carry the sheet if nothing caught it.
     final landing = this.landing(extent, velocity);
+    if (velocity.abs() < minFlingVelocity) {
+      return SheetDecision.anchor(
+        SheetRule.slowToNearest,
+        nearestTo(extent),
+        landing: landing,
+      );
+    }
+
+    final ahead = _ahead(anchors, extent, velocity.sign);
+    if (ahead.isEmpty) {
+      return SheetDecision.anchor(
+        SheetRule.noAnchorAhead,
+        nearestTo(extent),
+        landing: landing,
+      );
+    }
+
     final reach = (landing - extent).abs();
+    double? arrival;
     for (var i = 0; i < ahead.length; i++) {
-      final anchor = anchors[ahead[i]];
+      final anchor = ahead[i];
       final distance = (anchor.extent - extent).abs();
       if (distance >= reach) {
         // The fling runs out before this anchor: it always gets as far as the first,
         // and otherwise stops at whichever side of where it runs out is nearer.
-        if (i == 0) return ahead[0];
-        final previous = anchors[ahead[i - 1]];
-        return (previous.extent - landing).abs() <=
-                (anchor.extent - landing).abs()
-            ? ahead[i - 1]
-            : ahead[i];
+        final previous = i == 0 ? null : ahead[i - 1];
+        return SheetDecision.anchor(
+          SheetRule.ranOutBeforeAnchor,
+          previous != null &&
+                  (previous.extent - landing).abs() <=
+                      (anchor.extent - landing).abs()
+              ? previous
+              : anchor,
+          landing: landing,
+        );
       }
-      if (speedAt(extent, velocity, anchor.extent) < anchor.gravity) {
-        return ahead[i];
+      arrival = speedAt(extent, velocity, anchor.extent);
+      if (arrival < anchor.gravity) {
+        return SheetDecision.anchor(
+          SheetRule.caughtAtAnchor,
+          anchor,
+          landing: landing,
+          arrival: arrival,
+        );
       }
     }
-    return ahead.last;
+    return SheetDecision.anchor(
+      SheetRule.passedAllAnchors,
+      ahead.last,
+      landing: landing,
+      arrival: arrival,
+    );
+  }
+
+  /// The anchors ahead of a fling from [extent] in [direction] (1 up, -1 down),
+  /// nearest first.
+  List<ResolvedAnchor> _ahead(
+    List<ResolvedAnchor> anchors,
+    double extent,
+    double direction,
+  ) {
+    final ahead = [
+      for (final anchor in anchors)
+        if ((anchor.extent - extent) * direction > _epsilon) anchor,
+    ];
+    return direction < 0 ? ahead.reversed.toList() : ahead;
   }
 
   /// Where the sheet glides to when let go at [extent] moving at [velocity] (logical
-  /// pixels per second, positive upwards) within one of [ranges] (see [SheetRange]), or
-  /// null if it springs to the anchor [target] picks among [anchors] instead.
+  /// pixels per second, positive upwards) within one of [ranges] or flung into one
+  /// (see [SheetRange]), or null if it springs to the anchor [target] picks among
+  /// [anchors] instead.
   ///
-  /// A slow release stays where it is. A fling glides on, slowing as [coast] has it,
-  /// and stops where it runs out of speed, so long as that's within the same range. A
-  /// fling that would carry it out of the range is for the anchors to catch, if there
-  /// are any at or beyond that end; otherwise it stops at the end.
+  /// A slow release within a range stays where it is. A fling within one glides on,
+  /// slowing as [coast] has it, and stops where it runs out of speed, so long as
+  /// that's within the same range. A fling that would carry it out of the range is for
+  /// the anchors to catch, if there are any at or beyond that end; otherwise it stops
+  /// at the end.
+  ///
+  /// A fling from outside every range, towards one, glides on into it if nothing
+  /// catches it first. Each anchor on the way, up to and including one at the end of
+  /// the range it comes to, catches it as [target] has it: by its gravity, or because
+  /// the fling runs out before it. An end with no anchor at it has nothing to catch
+  /// with. Past them all, the fling stops in the range where it runs out of speed, or
+  /// at the range's far end if it would carry beyond that.
   double? glide(
     List<ResolvedAnchor> anchors,
     List<ResolvedRange> ranges,
     double extent,
     double velocity,
   ) {
+    final decision = decide(anchors, ranges, extent, velocity);
+    return decision.range == null ? null : decision.extent;
+  }
+
+  /// Where the sheet comes to rest when let go at [extent] moving at [velocity]
+  /// (logical pixels per second, positive upwards) among [anchors] (sorted lowest
+  /// first, and not empty) and [ranges], and the rule that decided: [glide] and
+  /// [target] in one.
+  SheetDecision decide(
+    List<ResolvedAnchor> anchors,
+    List<ResolvedRange> ranges,
+    double extent,
+    double velocity,
+  ) {
+    assert(anchors.isNotEmpty);
+    final landing = this.landing(extent, velocity);
+    final inside = ranges.firstWhereOrNull((r) => r.contains(extent));
     if (velocity.abs() < minFlingVelocity) {
-      final range = ranges.firstWhereOrNull((r) => r.contains(extent));
-      return range == null ? null : extent.clamp(range.lower, range.upper);
+      if (inside == null) return _catch(anchors, extent, velocity);
+      return SheetDecision.range(
+        SheetRule.slowInRange,
+        inside,
+        extent.clamp(inside.lower, inside.upper),
+        landing: landing,
+      );
     }
     final direction = velocity.sign;
-    final landing = this.landing(extent, velocity);
-    final within = ranges.firstWhereOrNull(
-      (r) => r.contains(extent) && r.contains(landing),
+    if (inside != null) {
+      final within = ranges.firstWhereOrNull(
+        (r) => r.contains(extent) && r.contains(landing),
+      );
+      if (within != null) {
+        return SheetDecision.range(
+          SheetRule.glideWithinRange,
+          within,
+          landing.clamp(within.lower, within.upper),
+          landing: landing,
+        );
+      }
+      // Out past an end: stop there, unless an anchor waits at or beyond it.
+      final end = direction > 0 ? inside.upper : inside.lower;
+      final caught = anchors.any(
+        (a) => (a.extent - end) * direction > -_epsilon,
+      );
+      if (caught) return _catch(anchors, extent, velocity);
+      return SheetDecision.range(
+        SheetRule.rangeEnd,
+        inside,
+        end,
+        landing: landing,
+      );
+    }
+
+    // Outside every range: into the next one ahead, if the fling gets past its near
+    // end and every anchor up to there.
+    double nearEnd(ResolvedRange range) =>
+        direction > 0 ? range.lower : range.upper;
+    ResolvedRange? next;
+    for (final range in ranges) {
+      final distance = (nearEnd(range) - extent) * direction;
+      if (distance <= 0) continue;
+      if (next == null || distance < (nearEnd(next) - extent) * direction) {
+        next = range;
+      }
+    }
+    if (next == null) return _catch(anchors, extent, velocity);
+    final near = nearEnd(next);
+    if ((landing - near) * direction <= _epsilon) {
+      return _catch(anchors, extent, velocity);
+    }
+    for (final anchor in _ahead(anchors, extent, direction)) {
+      if ((anchor.extent - near) * direction > _epsilon) break;
+      if (speedAt(extent, velocity, anchor.extent) < anchor.gravity) {
+        return _catch(anchors, extent, velocity);
+      }
+    }
+    return SheetDecision.range(
+      SheetRule.glideIntoRange,
+      next,
+      landing.clamp(next.lower, next.upper),
+      landing: landing,
+      arrival: speedAt(extent, velocity, near),
     );
-    if (within != null) return landing.clamp(within.lower, within.upper);
-    // Out past an end: stop there, unless an anchor waits at or beyond it.
-    final range = ranges.firstWhereOrNull((r) => r.contains(extent));
-    if (range == null) return null;
-    final end = direction > 0 ? range.upper : range.lower;
-    final caught = anchors.any((a) => (a.extent - end) * direction > -_epsilon);
-    return caught ? null : end;
   }
 
   @override
@@ -208,3 +334,81 @@ const double _epsilon = 0.5;
 /// Coasting stops once it's this slow, in logical pixels per second, short of where it
 /// would end by a few pixels: as scrolling stops, about a physical pixel a frame.
 const Tolerance _coastTolerance = Tolerance(distance: 0.5, velocity: 10);
+
+/// The rule that decides where a release takes the sheet (see [SheetPhysics.decide]).
+enum SheetRule {
+  /// A slow release outside every range: the nearest anchor.
+  slowToNearest,
+
+  /// A slow release within a range: where it was let go.
+  slowInRange,
+
+  /// A fling within a range that runs out of speed within it: where it runs out.
+  glideWithinRange,
+
+  /// A fling from outside every range that nothing catches up to and including the
+  /// near end of the range ahead: where it runs out of speed in that range, or the
+  /// range's far end.
+  glideIntoRange,
+
+  /// A fling out of a range past an end with no anchor at or beyond it: that end.
+  rangeEnd,
+
+  /// A fling with no anchor ahead of it: the nearest anchor.
+  noAnchorAhead,
+
+  /// A fling that runs out of speed before an anchor: that anchor, if it's the first
+  /// ahead, or else whichever of it and the one before is nearer to where it runs out.
+  ranOutBeforeAnchor,
+
+  /// A fling that reaches an anchor slower than the anchor's gravity: that anchor.
+  caughtAtAnchor,
+
+  /// A fling that reaches every anchor ahead at its gravity or faster: the last.
+  passedAllAnchors,
+}
+
+/// Where a release takes the sheet, and the rule that decided (see
+/// [SheetPhysics.decide]).
+@immutable
+class SheetDecision {
+  /// Rests at [anchor].
+  const SheetDecision.anchor(
+    this.rule,
+    ResolvedAnchor this.anchor, {
+    required this.landing,
+    this.arrival,
+  }) : range = null,
+       _extent = null;
+
+  /// Rests [extent] up within [range].
+  const SheetDecision.range(
+    this.rule,
+    ResolvedRange this.range,
+    double extent, {
+    required this.landing,
+    this.arrival,
+  }) : anchor = null,
+       _extent = extent;
+
+  final SheetRule rule;
+
+  /// The anchor the sheet rests at, or null if it rests within [range].
+  final ResolvedAnchor? anchor;
+
+  /// The range the sheet rests within, or null if it rests at [anchor].
+  final ResolvedRange? range;
+
+  /// Where the sheet rests, in logical pixels up.
+  double get extent => anchor?.extent ?? _extent!;
+  final double? _extent;
+
+  /// Where the release would have carried the sheet if nothing caught it (see
+  /// [SheetPhysics.landing]).
+  final double landing;
+
+  /// How fast, in logical pixels per second, the fling is still going where the rule
+  /// weighed it: at the anchor that caught it, at the last anchor it passed, or at the
+  /// near end of the range it glides into. Null where no speed was weighed.
+  final double? arrival;
+}

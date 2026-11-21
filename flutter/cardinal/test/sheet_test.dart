@@ -104,6 +104,146 @@ void main() {
     });
   });
 
+  group('SheetPhysics.glide into a range', () {
+    const physics = SheetPhysics(platform: TargetPlatform.android);
+    const low = SheetAnchor.fraction(0.1);
+    const waypoint = SheetAnchor.fraction(0.25, gravity: 1200);
+    const full = SheetAnchor.full();
+    const range = SheetRange(waypoint, full);
+
+    // A low anchor, and a range from a weaker one above it to the top.
+    final bottom = ResolvedAnchor(low, 100, physics.gravity);
+    const middle = ResolvedAnchor(waypoint, 200, 1200);
+    final below = [bottom, middle];
+    const above = [ResolvedRange(range, 200, 800)];
+
+    // An anchor at the top, and a range from a weaker one under it down to the low
+    // one: the same, upside down.
+    final top = ResolvedAnchor(full, 800, physics.gravity);
+    const under = ResolvedAnchor(waypoint, 600, 1200);
+    final over = [bottom, under, top];
+    const beneath = [ResolvedRange(SheetRange(low, waypoint), 100, 600)];
+
+    test('a fling from below that passes the end lands where it runs out', () {
+      final landing = physics.landing(100, 1500);
+      expect(landing, inExclusiveRange(200, 800));
+      expect(
+        physics.speedAt(100, 1500, 200),
+        greaterThan(1200),
+        reason: 'arrives faster than the anchor at the end holds',
+      );
+      expect(physics.glide(below, above, 100, 1500), landing);
+      final decision = physics.decide(below, above, 100, 1500);
+      expect(decision.rule, SheetRule.glideIntoRange);
+      expect(decision.range, above.single);
+      expect(decision.anchor, isNull);
+      expect(decision.extent, landing);
+      expect(decision.arrival, physics.speedAt(100, 1500, 200));
+    });
+
+    test('a fling from above that passes the end lands where it runs out', () {
+      final landing = physics.landing(800, -2000);
+      expect(landing, inExclusiveRange(100, 600));
+      expect(physics.speedAt(800, -2000, 600), greaterThan(1200));
+      expect(physics.glide(over, beneath, 800, -2000), landing);
+      expect(
+        physics.decide(over, beneath, 800, -2000).rule,
+        SheetRule.glideIntoRange,
+      );
+    });
+
+    test("the anchor at the range's end catches by its gravity", () {
+      expect(physics.landing(100, 1300), greaterThan(250));
+      expect(physics.speedAt(100, 1300, 200), lessThan(1200));
+      expect(physics.glide(below, above, 100, 1300), isNull);
+      expect(physics.target(below, 100, 1300), 1);
+      final up = physics.decide(below, above, 100, 1300);
+      expect(up.rule, SheetRule.caughtAtAnchor);
+      expect(up.anchor, middle);
+
+      expect(physics.speedAt(800, -1300, 600), lessThan(1200));
+      expect(physics.glide(over, beneath, 800, -1300), isNull);
+      expect(physics.target(over, 800, -1300), 1);
+    });
+
+    test('an anchor before the end catches as it always did', () {
+      // One between the low anchor and the range, that holds as hard as any.
+      const between = SheetAnchor.fraction(0.2);
+      final caught = [
+        bottom,
+        ResolvedAnchor(between, 150, physics.gravity),
+        middle,
+      ];
+      expect(physics.glide(caught, above, 100, 3000), isNull);
+      expect(physics.target(caught, 100, 3000), 1);
+      // With no hold of its own, it lets the fling by to the range.
+      final passed = [bottom, const ResolvedAnchor(between, 150, 0), middle];
+      expect(
+        physics.glide(passed, above, 100, 1500),
+        physics.landing(100, 1500),
+      );
+    });
+
+    test('a fling that runs out before the end is for the anchors', () {
+      expect(physics.landing(100, 600), lessThan(200));
+      expect(physics.glide(below, above, 100, 600), isNull);
+      expect(physics.target(below, 100, 600), 1);
+      expect(
+        physics.decide(below, above, 100, 600).rule,
+        SheetRule.ranOutBeforeAnchor,
+      );
+    });
+
+    test("a fling that would carry past the range's far end stops there", () {
+      expect(physics.landing(100, 3000), greaterThan(800));
+      expect(physics.glide(below, above, 100, 3000), 800);
+      expect(physics.landing(800, -3000), lessThan(100));
+      expect(physics.glide(over, beneath, 800, -3000), 100);
+    });
+
+    test('an end with no anchor at it catches nothing', () {
+      // The range starts above the only anchor, with nothing at its lower end.
+      final only = [bottom];
+      const apart = [ResolvedRange(range, 300, 800)];
+      final landing = physics.landing(150, 1500);
+      expect(landing, inExclusiveRange(300, 800));
+      expect(physics.glide(only, apart, 150, 1500), landing);
+      // Short of the end, it's for the anchors as before.
+      expect(physics.landing(150, 600), lessThan(300));
+      expect(physics.glide(only, apart, 150, 600), isNull);
+    });
+
+    test('a slow release outside a range is for the anchors', () {
+      expect(physics.glide(below, above, 180, 100), isNull);
+      expect(physics.target(below, 180, 100), 1);
+    });
+
+    test('with several ranges, it is the one ahead that it glides into', () {
+      const lowRange = SheetRange(low, SheetAnchor.fraction(0.3));
+      const highRange = SheetRange(SheetAnchor.fraction(0.6), full);
+      const ranges = [
+        ResolvedRange(lowRange, 100, 300),
+        ResolvedRange(highRange, 500, 800),
+      ];
+      // Between the two, an anchor to start from; one at each range's nearer end,
+      // which let a fling by.
+      final anchors = [
+        bottom,
+        const ResolvedAnchor(SheetAnchor.fraction(0.3), 300, 0),
+        ResolvedAnchor(const SheetAnchor.fraction(0.4), 400, physics.gravity),
+        const ResolvedAnchor(SheetAnchor.fraction(0.6), 500, 0),
+      ];
+      final up = physics.decide(anchors, ranges, 400, 1500);
+      expect(up.rule, SheetRule.glideIntoRange);
+      expect(up.range, ranges[1]);
+      expect(up.extent, physics.landing(400, 1500));
+      final down = physics.decide(anchors, ranges, 400, -1000);
+      expect(down.rule, SheetRule.glideIntoRange);
+      expect(down.range, ranges[0]);
+      expect(down.extent, physics.landing(400, -1000));
+    });
+  });
+
   group('SheetPhysics.coast', () {
     test("on iOS, slows as UIScrollView's normal deceleration rate", () {
       const physics = SheetPhysics(platform: TargetPlatform.iOS);
