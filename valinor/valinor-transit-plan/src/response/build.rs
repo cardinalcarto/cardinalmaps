@@ -345,6 +345,9 @@ impl<'a, A: AccessEgressSearch> JourneyBuilder<'a, A> {
         // with no walk, the stop's change time. A departure before this is one the rider misses.
         let mut ready = self.request.departure;
         let mut alighted: Option<(i64, StopId)> = None;
+        // The last ride's arrival at its alighting stop, kept across the walk after it,
+        // from which the next ride's `transfer_seconds` counts.
+        let mut previous_arrival: Option<i64> = None;
         for leg in entry.journey.legs {
             match leg {
                 Leg::Access { stop, duration } => {
@@ -379,6 +382,7 @@ impl<'a, A: AccessEgressSearch> JourneyBuilder<'a, A> {
                     let mut leg = self.rides.transit_leg(&ride, wait, &|stage| {
                         self.access_egress.enter_stage(stage);
                     });
+                    leg.transfer_seconds = previous_arrival.map(|arrival| ready - arrival);
                     if !self.request.options.departures.is_empty() {
                         self.access_egress.enter_stage(PlanStage::Departures);
                         let (departures, alerts) = self.rides.ride_departures(&ride, ready, &leg);
@@ -389,6 +393,7 @@ impl<'a, A: AccessEgressSearch> JourneyBuilder<'a, A> {
                     legs.push(JourneyLeg::Transit(Box::new(leg)));
                     clock = alight;
                     alighted = Some((alight, ride.alight_stop));
+                    previous_arrival = Some(alight);
                 }
                 Leg::Transfer {
                     from,
@@ -745,6 +750,7 @@ impl<'a> RideDescriber<'a> {
             arrival: alight_unix,
             duration_seconds: alight_unix - board_unix,
             wait_seconds: wait,
+            transfer_seconds: None,
             delay_seconds,
             realtime,
             route: view.route.map(route_response),

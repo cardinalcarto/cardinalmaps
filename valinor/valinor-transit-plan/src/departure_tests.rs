@@ -283,6 +283,15 @@ fn expected(trip: &str, departure: i64, status: DepartureStatus, flags: &str) ->
     }
 }
 
+fn leg_kind(leg: &JourneyLeg) -> &'static str {
+    match leg {
+        JourneyLeg::Access(_) => "access",
+        JourneyLeg::Transit(_) => "transit",
+        JourneyLeg::Transfer(_) => "transfer",
+        JourneyLeg::Egress(_) => "egress",
+    }
+}
+
 fn trips_of(leg: &TransitLeg) -> Vec<&str> {
     leg.departures.iter().map(|d| d.trip_id.as_str()).collect()
 }
@@ -502,6 +511,38 @@ fn a_late_first_ride_makes_the_scheduled_connection_one_the_rider_misses() {
 
     // On schedule: at `B` at 08:10, two minutes to change, and route 2 at 08:15.
     let response = run(&state, &trip_to_d);
+    let journey = response
+        .journeys
+        .iter()
+        .find(|journey| {
+            journey
+                .legs
+                .iter()
+                .any(|leg| matches!(leg, JourneyLeg::Transit(leg) if leg.trip.trip_id == "R2-0815"))
+        })
+        .expect("a journey changing to the 08:15");
+    let kinds: Vec<&str> = journey.legs.iter().map(leg_kind).collect();
+    assert_eq!(
+        kinds,
+        vec!["access", "transit", "transit", "egress"],
+        "a change at one stop, without a walk"
+    );
+    let (JourneyLeg::Transit(first), JourneyLeg::Transit(second)) =
+        (&journey.legs[1], &journey.legs[2])
+    else {
+        unreachable!("checked above");
+    };
+    assert_eq!(first.transfer_seconds, None, "the first ride has none");
+    assert_eq!(
+        second.transfer_seconds,
+        Some(120),
+        "the stop's change time after a ride to it"
+    );
+    assert_eq!(second.departures[0].departure, june_15(8, 15));
+    assert!(
+        !second.departures[0].missed,
+        "08:10 plus two minutes is before 08:15"
+    );
     assert_eq!(
         rows(leg_on(&response, "R2-0815")),
         vec![

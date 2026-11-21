@@ -317,6 +317,7 @@ expression: "&response"
           "arrival": 1781508300,
           "duration_seconds": 300,
           "wait_seconds": 362,
+          "transfer_seconds": 358,
           "realtime": false,
           "route": {
             "route_id": "L2",

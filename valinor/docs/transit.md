@@ -400,10 +400,10 @@ stop. Each has:
   and `bikes_allowed`.
 - `suggested` on the journey's own departure, whose fields are the leg's.
 - `missed` when it leaves the boarding stop before the rider can be there, as routing counts it:
-  for the first ride, the request's departure plus the walk from the origin; after a walk, the last
-  alighting plus the walk's cost (which includes any minimum transfer time); and after a ride to the
-  same stop, the last alighting plus the stop's change time. The journey's own is never missed,
-  and a late earlier ride can make a departure that was scheduled to connect a missed one.
+  for the first ride, the request's departure (the response's `window.earliest`) plus the walk from
+  the origin; for a later one, the previous ride's arrival plus the leg's `transfer_seconds`.
+  The journey's own is never missed, and a late earlier ride can make a departure that was scheduled
+  to connect a missed one.
 - `last_of_day` when no later departure of the route between the two stops runs on its service
   date: canceled and skipped departures don't count, and a departure after midnight on the
   previous date's service day can be that day's last. Knowing it takes the whole service date,
@@ -412,6 +412,14 @@ stop. Each has:
 - `alerts`, indices into the leg's `alerts` that apply to this departure, and `departure_alerts`,
   indices into the leg's `departure_alerts`: the alerts on some of its departures that don't apply
   to the leg itself. Alerts match each departure as they match a leg.
+
+Every transit leg after a journey's first ride has `transfer_seconds`: the seconds from the
+previous ride's arrival at its alighting stop until the rider can board this one, as routing
+counts them for `missed`. After a walk, it is the walk's cost, which includes any minimum transfer
+time, so it can be more than the walk leg's `duration_seconds`, which is the walk alone;
+after a ride to the same stop, it is the stop's change time. A client that re-times a journey on
+another departure of an earlier ride marks as missed the later ride's departures that leave before
+that departure's `arrival` plus `transfer_seconds`.
 
 False flags, empty lists, and absent values are left out to keep the JSON small.
 Departures add about 11% to a Washington plan's JSON. Finding and describing them costs 0.3 to

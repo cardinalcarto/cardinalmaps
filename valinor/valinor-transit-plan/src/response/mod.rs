@@ -316,6 +316,13 @@ pub struct TransitLeg {
     pub duration_seconds: i64,
     /// Seconds waiting at the boarding stop after the rider gets there.
     pub wait_seconds: i64,
+    /// Seconds from the journey's previous ride reaching its alighting stop until the rider can
+    /// board here, as routing counts it: the walk's cost, which includes any minimum transfer
+    /// time, or after a ride to this same stop, the stop's change time.
+    ///
+    /// A departure leaving before the previous ride's arrival plus this is one the rider misses.
+    /// Absent on the journey's first ride, which the rider reaches from the origin instead.
+    pub transfer_seconds: Option<i64>,
     /// The departure's delay from the schedule at the boarding stop, when known.
     pub delay_seconds: Option<i32>,
     /// Whether any time in this leg came from real-time data.
@@ -403,8 +410,9 @@ pub struct RideDeparture {
     #[serde(skip_serializing_if = "is_false")]
     pub suggested: bool,
     /// Whether it leaves the boarding stop before the rider can be there:
-    /// before the arrival there plus the time a change needs, or for the first ride,
-    /// before the request's departure plus the walk from the origin.
+    /// before the previous ride's arrival plus the leg's `transfer_seconds`, or for the first
+    /// ride, before the request's departure (the window's `earliest`) plus the walk from the
+    /// origin.
     #[serde(skip_serializing_if = "is_false")]
     pub missed: bool,
     /// Whether no later departure of the route between these stops runs on its service date.

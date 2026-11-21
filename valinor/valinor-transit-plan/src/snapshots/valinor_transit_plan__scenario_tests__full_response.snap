@@ -411,6 +411,7 @@ expression: "&response"
           "arrival": 1781539200,
           "duration_seconds": 1200,
           "wait_seconds": 1046,
+          "transfer_seconds": 34,
           "realtime": false,
           "route": {
             "route_id": "R2",
@@ -852,6 +853,7 @@ expression: "&response"
           "arrival": 1781541000,
           "duration_seconds": 1200,
           "wait_seconds": 1166,
+          "transfer_seconds": 34,
           "realtime": false,
           "route": {
             "route_id": "R2",
