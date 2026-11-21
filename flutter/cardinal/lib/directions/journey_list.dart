@@ -749,6 +749,10 @@ class _AccessControl extends StatelessWidget {
   final ValueChanged<TransitAccess> onChanged;
   final double height;
 
+  /// How far across its box the drop-down arrow's glyph reaches: it's drawn from 7
+  /// to 17 of the icon's 24 units.
+  static const _arrowInk = 17 / 24;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -768,7 +772,13 @@ class _AccessControl extends StatelessWidget {
               maxLines: 1,
               softWrap: false,
             ),
-            Icon(Icons.arrow_drop_down, size: 20, color: primary),
+            // The arrow's glyph ends short of its box, so the box is cut to where
+            // the arrow ends: the control then ends flush with what's under it.
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              widthFactor: _arrowInk,
+              child: Icon(Icons.arrow_drop_down, size: 20, color: primary),
+            ),
           ],
         ),
       ),
