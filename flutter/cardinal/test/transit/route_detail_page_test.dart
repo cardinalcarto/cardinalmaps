@@ -274,7 +274,8 @@ void main() {
           tester.element(find.byType(RouteDetailPage)),
         );
         final lower = appScreen.height * 0.4;
-        expect(controller.anchors.single.extent, lower);
+        // Collapsed, or at 40%.
+        expect([for (final a in controller.anchors) a.extent], [0, lower]);
         // Free from there up, with no anchor at the top.
         final range = controller.ranges.single;
         expect(range.lower, lower);

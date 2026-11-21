@@ -739,7 +739,7 @@ void main() {
     ) async {
       await open(tester);
       await answer(tester, routes(20));
-      expect(anchors(tester), [lower]);
+      expect(anchors(tester), [0, lower]);
       expect(range(tester), [lower, appScreen.height]);
       expect(sheet(tester).extent, lower);
 
@@ -757,11 +757,17 @@ void main() {
       expect(sheet(tester).extent, appScreen.height);
     });
 
-    testWidgets('never rests below 40%', (tester) async {
+    testWidgets('rests at 40% or else collapsed, never between', (
+      tester,
+    ) async {
       await open(tester);
       await answer(tester, routes(20));
-      await drag(tester, 200);
+      await drag(tester, 100);
       expect(sheet(tester).extent, lower);
+      expect(sheet(tester).isCollapsed, isFalse);
+      await drag(tester, 300);
+      expect(sheet(tester).extent, 0);
+      expect(sheet(tester).isCollapsed, isTrue);
     });
 
     testWidgets('with a few rows, tops out where the content ends', (
@@ -769,7 +775,7 @@ void main() {
     ) async {
       await open(tester);
       await answer(tester, routes(3));
-      expect(anchors(tester), [lower]);
+      expect(anchors(tester), [0, lower]);
       final [low, high] = range(tester);
       // Three rows end a little above 40%.
       expect(low, lower);
@@ -813,7 +819,7 @@ void main() {
         expect(find.text('Finding departures near you…'), findsOneWidget);
         // The library can't take the lower of 40% and the content's end: the end
         // becomes the free range's lower end, and 40%, past the content, its top.
-        expect(anchors(tester), [lower]);
+        expect(anchors(tester), [0, lower]);
         final [end, top] = range(tester);
         expect(end, lessThan(lower));
         expect(top, lower);
@@ -821,8 +827,12 @@ void main() {
 
         await drag(tester, -600);
         expect(sheet(tester).extent, lower);
-        await drag(tester, 200);
+        // Let go just below the content's end, it springs back up to it...
+        await drag(tester, lower - end + 20);
         expect(sheet(tester).extent, end);
+        // ...and nearer the bottom, it collapses.
+        await drag(tester, end - 20);
+        expect(sheet(tester).isCollapsed, isTrue);
       },
     );
 

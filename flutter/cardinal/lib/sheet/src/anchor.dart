@@ -23,6 +23,11 @@ sealed class SheetAnchor {
   /// Rests as far up as the sheet goes: the full screen, or the top of a docked column.
   const factory SheetAnchor.full({double? gravity}) = _FullAnchor;
 
+  /// Rests out of sight below the bottom of the window, on a [SheetContent.collapsible]
+  /// page, until [SheetController.expand] brings it back. It can't be placed while the
+  /// keyboard shows, as the sheet can't go behind the keyboard.
+  const factory SheetAnchor.collapsed({double? gravity}) = _CollapsedAnchor;
+
   /// The speed, in logical pixels per second, below which a fling passing over this
   /// anchor stops here. Null takes [SheetPhysics.gravity].
   final double? gravity;
@@ -92,6 +97,24 @@ final class _FullAnchor extends SheetAnchor {
 
   @override
   String toString() => 'SheetAnchor.full()';
+}
+
+final class _CollapsedAnchor extends SheetAnchor {
+  const _CollapsedAnchor({super.gravity});
+
+  @override
+  double? _resolve(SheetGeometry geometry, Map<Object, _Span> sections) =>
+      geometry.keyboard > 0 ? null : 0;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _CollapsedAnchor && other.gravity == gravity;
+
+  @override
+  int get hashCode => Object.hash(_CollapsedAnchor, gravity);
+
+  @override
+  String toString() => 'SheetAnchor.collapsed()';
 }
 
 /// An anchor placed for the current layout.

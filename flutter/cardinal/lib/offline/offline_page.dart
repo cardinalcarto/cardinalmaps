@@ -174,6 +174,7 @@ class _OfflinePageState extends State<OfflinePage> {
     final areas = _areas;
     return SheetContent(
       showsBottomBar: true,
+      collapsible: true,
       anchors: const [SheetAnchor.section(_content)],
       slivers: [
         SliverToBoxAdapter(

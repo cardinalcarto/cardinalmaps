@@ -290,6 +290,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
         listenable: search,
         builder: (context, _) => SheetContent(
           showsBottomBar: true,
+          collapsible: true,
           // Just the bar, until searching.
           anchors: _searching
               ? const [SheetAnchor.section(_bar), SheetAnchor.full()]
