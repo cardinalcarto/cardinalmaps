@@ -1,7 +1,7 @@
 # Directions as an alternate picker
 
 Status: design agreed 2026-11-20. Being built on `directions-picker` in the order at the
-end of this document; steps 1 to 4 and 7 are done, with step 7's data drawn in the rows. Mockups (invented trip and numbers):
+end of this document; steps 1 to 5 and 7 are done, with step 7's data drawn in the rows. Mockups (invented trip and numbers):
 https://claude.ai/artifact/LbDfkfMsy2JBsvkoBvJTk3
 
 ## Goal
@@ -246,6 +246,13 @@ comes.
 - Departure tiles grow with the text and scroll sideways.
 - On a narrow phone at normal text, rows give way with an ellipsis rather than overflow.
 
+As built (step 5): the header was never pinned in the app, and still isn't at any text
+size. It scrolls away with the itinerary, whole. Pinning it needs an opaque backing,
+which iOS's glass sheet doesn't allow; that's open. Its height is set by the text size
+alone either way. A ride's title, which is above its departures, keeps the room of the
+longest headsign among them, so it wraps freely and still doesn't move when another
+departure is chosen.
+
 ## Transit refresh
 
 Nothing re-plans a trip by itself, and the recalculate button is gone, so:
@@ -257,6 +264,23 @@ Nothing re-plans a trip by itself, and the recalculate button is gone, so:
   open, its times animate, and the chosen departures carry over.
 - If the open journey isn't in the new plan, Trip details returns to the list.
 - A changed trip (ends, or how stops are reached) always returns to the list.
+
+As built (step 5):
+
+- The 30 seconds run from transit's last answer, while the transit tab or Trip details
+  shows with the app in front. A plan older than that when the tab is shown again is
+  refreshed at once. A refresh that fails leaves the plan and its status line as they
+  are, and the next one asks again.
+- A plan with the same journeys in the same order is shown at once: each row's times
+  change in place, and its timeline and the axis ease to the new ones.
+- A plan that adds, drops or reorders journeys, and any plan while Trip details is
+  open, waits until no finger is down and 400 ms after. Then rows grow in, shrink out
+  and slide. The selected journey stays selected and held by its identity; if it's
+  gone, the first is selected.
+- A ride with no trip ID is told by its route and its scheduled departure instead.
+  Two journeys of one plan with the same identity are told apart by their order.
+- The leg fetched for a chosen departure stands in until it's fetched again for the
+  new plan, so its stops and its line on the map don't go and come back.
 
 ## Sheet library: recommendation for the anchors
 
@@ -426,14 +450,12 @@ Not designed yet: transit and cycling rows on iOS, and right-to-left layout.
 3. The picker for street modes: trip card, tabs with parallel planning, rows, selection
    and docking, large text. Done. Transit keeps its old list under the new header.
 4. Steps restyled, and Trip details as a pushed page. Done.
-5. Transit rows in the new shape: tap selects, a docked row, a Trip details button.
+5. Transit rows in the new shape: tap selects, a docked row, a Trip details button;
+   transit that refreshes itself; Trip details at large text. Done.
 6. Scrubbing and the map marker.
 7. Valinor's added route fields: road-type runs and elevation, for the cycling and
    walking bands, driving's third tone and the "Toll" label. Done, and drawn in the
    rows, with the legend and the arrows on Steps.
-
-Until step 5, switching between a street mode and transit at the header height moves
-the sheet by a row and the buttons, since transit has neither yet.
 
 ## Still open
 
