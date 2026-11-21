@@ -4,9 +4,13 @@ import 'package:cardinal/directions/option_row.dart';
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/steps_page.dart';
 import 'package:cardinal/directions/transit_plan.dart';
+import 'package:cardinal/directions/trip_buttons.dart';
+import 'package:cardinal/directions/trip_card.dart';
 import 'package:cardinal/directions/trip_details_page.dart';
 import 'package:cardinal/map/route_layer.dart';
 import 'package:cardinal/sheet/sheet.dart';
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show CupertinoButton, CupertinoListTile;
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -82,19 +86,10 @@ void main() {
 
   setUp(() => picker = Picker());
 
-  /// Shows [mode]: by its tab, or, where the held row covers the tabs wherever the
-  /// sheet is (the largest text in the small window, where a row and the buttons
-  /// are as tall as the window), as its tab would.
+  /// Shows [mode] by tapping its tab, which is in reach at every size: where a held
+  /// row would cover the tabs wherever the sheet is, none is held.
   Future<void> show(WidgetTester tester, TravelMode mode) async {
-    await tester.tap(
-      find.descendant(of: tabs, matching: find.byIcon(mode.icon)),
-      warnIfMissed: false,
-    );
-    await tester.pumpAndSettle();
-    if (tester.widget<ModeTabs>(tabs).selected != mode) {
-      tester.widget<ModeTabs>(tabs).onChanged(mode);
-      await tester.pumpAndSettle();
-    }
+    await showMode(tester, mode);
     expect(tester.widget<ModeTabs>(tabs).selected, mode);
   }
 
@@ -384,7 +379,7 @@ void main() {
       ]) {
         picker = Picker();
         picker.transit.immediately = plan;
-        // Opened on transit, as the tabs may be out of reach at the largest sizes.
+        // Opened on transit, as the way last chosen.
         await picker.store.settings.set(lastTravelMode, TravelMode.transit);
         await picker.open(tester, size: window, platform: platform);
         await tester.tap(find.text('Trip details'));
@@ -475,6 +470,200 @@ void main() {
           )
           .maxLines,
       2,
+    );
+  });
+
+  /// Fails unless all of [finder]'s widget is in the window, above the buttons unless
+  /// it's one of them, and a tap at its middle lands on it.
+  void expectTappable(WidgetTester tester, Finder finder, String what) {
+    final rect = tester.getRect(finder);
+    final window = tester.view.physicalSize / tester.view.devicePixelRatio;
+    final bottom =
+        find.descendant(of: footer, matching: finder).evaluate().isEmpty
+        ? footerTop(tester)
+        : window.height;
+    expect(rect.top, greaterThanOrEqualTo(-0.5), reason: 'the top of $what');
+    expect(rect.left, greaterThanOrEqualTo(-0.5), reason: 'the start of $what');
+    expect(
+      rect.right,
+      lessThanOrEqualTo(window.width + 0.5),
+      reason: 'the end of $what',
+    );
+    expect(
+      rect.bottom,
+      lessThanOrEqualTo(bottom + 0.5),
+      reason: 'the bottom of $what',
+    );
+    final box = tester.renderObject(finder);
+    expect(
+      tester
+          .hitTestOnBinding(rect.center)
+          .path
+          .any((entry) => entry.target == box),
+      isTrue,
+      reason: 'a tap on $what',
+    );
+  }
+
+  for (final (platform, window, scale) in [
+    for (final platform in [TargetPlatform.android, TargetPlatform.iOS])
+      for (final window in _windows)
+        for (final scale in _scales) (platform, window, scale),
+  ]) {
+    final where =
+        'at $scale× in ${window.width.round()}×${window.height.round()} on '
+        '${platform.name}';
+
+    testWidgets('the ends, every tab and the buttons can be tapped at the '
+        'header anchor, and the selected row read in full, $where', (
+      tester,
+    ) async {
+      ignoreOtherPages();
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await picker.open(tester, size: window, platform: platform);
+      // Held, unless a held row and the buttons would leave the ends and tabs no
+      // room in the small window: from 2× there.
+      final holds = window.height > 600 || scale < 2;
+      expect(heldSlot(tester), holds ? OptionList.slotId(0) : isNull);
+      await moveTo(tester, headerAnchor);
+      for (final end in ['From', 'To']) {
+        expectTappable(
+          tester,
+          find
+              .ancestor(
+                of: find.text(end),
+                matching: find.byWidgetPredicate(
+                  (widget) => widget is InkWell || widget is CupertinoListTile,
+                ),
+              )
+              .first,
+          end,
+        );
+      }
+      for (final mode in TravelMode.values.reversed) {
+        final tab = find.descendant(of: tabs, matching: find.byIcon(mode.icon));
+        expectTappable(tester, tab, 'the tab of $mode');
+        await tester.tap(tab);
+        await tester.pumpAndSettle();
+        expect(tester.widget<ModeTabs>(tabs).selected, mode);
+        expect(sheetOf(tester).restingAt, headerAnchor);
+        final buttons = find.descendant(
+          of: footer,
+          matching: find.byWidgetPredicate(
+            (widget) => widget is FilledButton || widget is CupertinoButton,
+          ),
+        );
+        expect(buttons, findsWidgets);
+        for (var i = 0; i < buttons.evaluate().length; i++) {
+          expectTappable(tester, buttons.at(i), 'button $i of $mode');
+        }
+      }
+
+      // Driving's selected row, scrolled to, as high as the sheet goes.
+      await moveTo(tester, const SheetAnchor.full());
+      final row = rows.first;
+      expect(tester.widget<OptionRow>(row).selected, isTrue);
+      await Scrollable.ensureVisible(tester.element(row));
+      await tester.pumpAndSettle();
+      final rect = tester.getRect(row);
+      expect(rect.top, greaterThanOrEqualTo(-0.5));
+      expect(rect.bottom, lessThanOrEqualTo(footerTop(tester) + 0.5));
+    });
+
+    testWidgets('the heights the page tells whether a row fits by are the '
+        'heights laid out, $where', (tester) async {
+      ignoreOtherPages();
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await picker.open(tester, size: window, platform: platform);
+      final page = tester.element(find.byType(DirectionsPage));
+      Matcher near(double height) => moreOrLessEquals(height, epsilon: 1e-6);
+      expect(
+        TripCard.heightOf(page),
+        near(tester.getSize(find.byType(TripCard)).height),
+      );
+      expect(ModeTabs.heightOf(page), near(tester.getSize(tabs).height));
+      expect(
+        TripButtons.heightOf(
+          page,
+          bottomPadding: SheetScaffold.viewOf(page).geometry.padding.bottom,
+        ),
+        near(tester.getSize(footer).height),
+      );
+    });
+  }
+
+  // What the sheet rests at, the lowest anchor and the header anchor, as it did
+  // before rows could go unheld: in a current phone's window, a row is held at every
+  // text size, and nothing about it changed.
+  for (final (platform, scale, rests) in [
+    (TargetPlatform.android, 1.0, [243.0, 398.0]),
+    (TargetPlatform.android, 1.3, [262.0, 428.0]),
+    (TargetPlatform.android, 1.5, [353.0, 529.0]),
+    (TargetPlatform.android, 2.0, [411.0, 611.0]),
+    (TargetPlatform.iOS, 1.0, [249.0, 437.5]),
+    (TargetPlatform.iOS, 1.3, [272.0, 465.5]),
+    (TargetPlatform.iOS, 1.5, [373.0, 566.5]),
+    (TargetPlatform.iOS, 2.0, [440.0, 633.5]),
+  ]) {
+    testWidgets('at $scale× in 390×844 on ${platform.name}, the first row is '
+        'held under the tabs at the anchors it always had', (tester) async {
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await picker.open(tester, size: const Size(390, 844), platform: platform);
+      final sheet = sheetOf(tester);
+      expect(heldSlot(tester), OptionList.slotId(0));
+      expect(
+        [extentOf(sheet, footerAnchor), extentOf(sheet, headerAnchor)],
+        pairwiseCompare<double, double>(
+          rests,
+          (expected, actual) => (expected - actual).abs() < 0.05,
+          'within a twentieth of a pixel of',
+        ),
+      );
+      await moveTo(tester, headerAnchor);
+      final header = find.byWidgetPredicate(
+        (widget) => widget is SheetSection && widget.id == #directionsHeader,
+      );
+      expect(
+        tester.getRect(rows.first).top,
+        moreOrLessEquals(tester.getRect(header).bottom),
+      );
+      expect(
+        tester.getRect(rows.first).bottom,
+        moreOrLessEquals(footerTop(tester)),
+      );
+      await moveTo(tester, footerAnchor);
+      expect(
+        tester.getRect(rows.first).bottom,
+        moreOrLessEquals(footerTop(tester)),
+      );
+    });
+  }
+
+  testWidgets('a change of text size holds a row, or none, in the frame it '
+      'lays out at the new size', (tester) async {
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    ignoreOtherPages();
+    await picker.open(tester, size: const Size(320, 568));
+    expect(heldSlot(tester), OptionList.slotId(0));
+    tester.platformDispatcher.textScaleFactorTestValue = 3.1;
+    await tester.pump();
+    expect(heldSlot(tester), isNull);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(sheetOf(tester).restingAt, headerAnchor);
+    await showMode(tester, TravelMode.walking);
+    expect(tester.widget<ModeTabs>(tabs).selected, TravelMode.walking);
+    tester.platformDispatcher.textScaleFactorTestValue = 1;
+    await tester.pump();
+    expect(heldSlot(tester), OptionList.slotId(0));
+    await tester.pumpAndSettle();
+    expect(sheetOf(tester).restingAt, headerAnchor);
+    expect(
+      tester.getRect(rows.first).bottom,
+      moreOrLessEquals(footerTop(tester)),
     );
   });
 }

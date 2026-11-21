@@ -100,12 +100,14 @@ const structureSettle = Duration(milliseconds: 400);
 /// | Trip details showing, transit planned again | the open journey is in the new plan | once no finger is down: it stays open, its times ease, the departures chosen kept |
 /// | Trip details showing, transit planned again | the open journey isn't in the new plan | once no finger is down: back to the journeys |
 /// | Trip details showing | transit is asked again (an end, or how stops are reached, changed) | back to the journeys |
+/// | any | the text is so large for the window that a held row, the ends and tabs, and the buttons don't fit with the sheet as high as it goes | no row is held, in any way or state: the selected row is one of the list's like any other, still filled; the anchors show the buttons with only the handle over them, and with the ends and tabs; a callout tapped selects its route without bringing its row into view |
+/// | any | the window or the text size changes so they fit again, or no longer do | a row held, or none, from that frame on, the anchors moving with it as they do with the rest of the layout |
 ///
 /// The sheet rests at two anchors, each with the held row above the buttons: with
 /// only the handle over it, and with the ends and tabs over it. From the second up it
 /// rests wherever it's let go. The rows, the placeholders and the message are one
 /// height in every way, and so are the buttons, so the anchors are the same in every
-/// way and state.
+/// way and state. Where no row is held, the anchors are the same without it.
 class DirectionsPage extends StatefulWidget {
   const DirectionsPage({super.key, required this.to});
 
@@ -995,7 +997,7 @@ class _DirectionsPageState extends State<DirectionsPage>
         ? _trip(directions)
         : null;
     final transit = directions.mode == TravelMode.transit;
-    _held = _scrubHeld ?? trip?.held;
+    _held = _rowFits(context) ? _scrubHeld ?? trip?.held : null;
     return PopScope(
       canPop: editing == null,
       onPopInvokedWithResult: (didPop, _) {
@@ -1179,6 +1181,31 @@ class _DirectionsPageState extends State<DirectionsPage>
       ),
     );
   }
+
+  /// Whether a row can be held under the ends and tabs with all of them showing, the
+  /// sheet as high as it goes: if not, none is, and the selected row is one of the
+  /// list's like any other, as a held row would cover the tabs wherever the sheet is.
+  ///
+  /// It's worked out from the heights the ends, the tabs, a row and the buttons take at
+  /// the text size, and from the window, never from what they say or which way shows,
+  /// so it changes only as the window or the text size does. The keyboard doesn't
+  /// count: it shows only while an end is edited, and the trip comes back without it.
+  bool _rowFits(BuildContext context) {
+    final geometry = SheetScaffold.viewOf(context).geometry;
+    // What the navigation bar covers, which the buttons keep clear of.
+    final navigation = geometry.padding.bottom;
+    final metrics = OptionRowMetrics.of(context);
+    final header =
+        TripCard.heightOf(context) + ModeTabs.heightOf(context) + metrics.top;
+    final buttons =
+        TripButtons.heightOf(context, bottomPadding: navigation) - navigation;
+    final room = geometry.fullContentHeight - navigation - buttons;
+    return header + metrics.height <= room + _tolerance;
+  }
+
+  /// How far apart two heights added up in different orders may be and still be the
+  /// same.
+  static const _tolerance = 1e-6;
 
   /// Whether the trip's start is still being found, before there's a question to
   /// ask: rows wait as they do for an answer.

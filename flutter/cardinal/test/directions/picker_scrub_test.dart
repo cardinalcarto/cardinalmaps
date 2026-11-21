@@ -757,18 +757,6 @@ void main() {
 
   /// Shows [mode]'s rows, by its tab, or as the tab would if the tab is out of
   /// reach at the largest text.
-  Future<void> show(WidgetTester tester, TravelMode mode) async {
-    await tester.tap(
-      find.descendant(of: tabs, matching: find.byIcon(mode.icon)),
-      warnIfMissed: false,
-    );
-    await tester.pumpAndSettle();
-    if (tester.widget<ModeTabs>(tabs).selected != mode) {
-      tester.widget<ModeTabs>(tabs).onChanged(mode);
-      await tester.pumpAndSettle();
-    }
-  }
-
   /// Leaves out what the pages under directions overflow by at large text, which
   /// isn't this page's to fix.
   void ignoreOtherPages() {
@@ -799,10 +787,21 @@ void main() {
           await picker.open(tester, size: size, platform: platform);
           for (final mode in TravelMode.values) {
             await moveTo(tester, headerAnchor);
-            await show(tester, mode);
-            await moveTo(tester, footerAnchor);
+            await showMode(tester, mode);
+            expect(tester.widget<ModeTabs>(tabs).selected, mode);
             final transit = mode == TravelMode.transit;
             final row = transit ? journeyRows().first : rows.first;
+            // Held over the buttons at the lowest anchor; or where the text is too
+            // large for that, in the list, scrolled to the top of what shows with the
+            // sheet as high as it goes.
+            final held = heldSlot(tester) != null;
+            if (held) {
+              await moveTo(tester, footerAnchor);
+            } else {
+              await moveTo(tester, const SheetAnchor.full());
+              await Scrollable.ensureVisible(tester.element(row));
+              await tester.pumpAndSettle();
+            }
             final graph = transit
                 ? timelineOf(0)
                 : find.descendant(
@@ -814,7 +813,7 @@ void main() {
                     ),
                   );
             final places = slotRects(tester);
-            final held = tester.getRect(row);
+            final where = tester.getRect(row);
             final texts = {
               for (final text
                   in find
@@ -826,7 +825,7 @@ void main() {
             await tester.pump(const Duration(milliseconds: 300));
             expect(tester.takeException(), isNull, reason: '$mode');
             expect(slotRects(tester), places, reason: '$mode');
-            expect(tester.getRect(row), held, reason: '$mode');
+            expect(tester.getRect(row), where, reason: '$mode');
             for (final MapEntry(key: text, value: rect) in texts.entries) {
               expect(
                 tester.getRect(find.byElementPredicate((e) => e == text)),
@@ -839,6 +838,11 @@ void main() {
             await gesture.up();
             await tester.pumpAndSettle();
             expect(slotRects(tester), places, reason: '$mode, after');
+            if (!held) {
+              // Back to the top, as dragging the sheet down would scroll it first.
+              await Scrollable.ensureVisible(tester.element(tabs));
+              await tester.pumpAndSettle();
+            }
           }
         });
       }

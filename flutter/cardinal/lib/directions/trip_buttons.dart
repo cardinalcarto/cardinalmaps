@@ -2,8 +2,14 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
-import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoButton;
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show
+        CupertinoButton,
+        CupertinoButtonSize,
+        CupertinoTheme,
+        kCupertinoButtonPadding;
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -73,6 +79,56 @@ class TripButtons extends StatelessWidget {
   /// Whether there's a Steps button.
   final bool _steps;
 
+  /// The least a button is tall on Android, and on iOS.
+  static const _material = 48.0, _cupertino = 50.0;
+
+  /// Above the buttons, and the least below them on Android, and on iOS.
+  static const _top = 10.0, _materialBottom = 10.0, _cupertinoBottom = 8.0;
+
+  /// The line along the top on Android.
+  static const _divider = 1.0;
+
+  /// How tall the buttons are at [context]'s text size, whatever they say, over a
+  /// navigation bar [bottomPadding] tall that they keep clear of. A button is as tall
+  /// as its label's line and the padding its platform puts above and below it (none
+  /// on Android), or its least height if that's more.
+  static double heightOf(
+    BuildContext context, {
+    required double bottomPadding,
+  }) {
+    if (isCupertinoOf(context)) {
+      final padding = kCupertinoButtonPadding[CupertinoButtonSize.large]!;
+      final line = _labelHeight(
+        context,
+        CupertinoTheme.of(context).textTheme.actionTextStyle,
+      );
+      return _top +
+          math.max(_cupertino, padding.vertical + line) +
+          math.max(_cupertinoBottom, bottomPadding);
+    }
+    final line = _labelHeight(context, Theme.of(context).textTheme.labelLarge!);
+    return _divider +
+        _top +
+        math.max(_material, line) +
+        math.max(_materialBottom, bottomPadding);
+  }
+
+  /// How tall a label in [style] is: the empty line it keeps its room with.
+  static double _labelHeight(BuildContext context, TextStyle style) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: '',
+        style: DefaultTextStyle.of(context).style.merge(style),
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final height = painter.height;
+    painter.dispose();
+    return height;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cupertino = isCupertinoOf(context);
@@ -94,7 +150,7 @@ class TripButtons extends StatelessWidget {
     final Widget steps, start;
     if (cupertino) {
       // Capsules, the lesser one a tint, as the sheet is glass while it's low.
-      const size = Size(0, 50);
+      const size = Size(0, _cupertino);
       final radius = BorderRadius.circular(100);
       steps = CupertinoButton.tinted(
         minimumSize: size,
@@ -109,7 +165,9 @@ class TripButtons extends StatelessWidget {
         child: label(_main),
       );
     } else {
-      final style = FilledButton.styleFrom(minimumSize: const Size(0, 48));
+      final style = FilledButton.styleFrom(
+        minimumSize: const Size(0, _material),
+      );
       steps = FilledButton.tonal(
         style: style,
         onPressed: onSteps,
@@ -125,14 +183,16 @@ class TripButtons extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (!cupertino) const Divider(height: 1),
+        if (!cupertino) const Divider(height: _divider),
         SafeArea(
           top: false,
-          minimum: EdgeInsets.only(bottom: cupertino ? 8 : 10),
+          minimum: EdgeInsets.only(
+            bottom: cupertino ? _cupertinoBottom : _materialBottom,
+          ),
           child: Padding(
             padding: EdgeInsets.fromLTRB(
               cupertino ? 16 : 12,
-              10,
+              _top,
               cupertino ? 16 : 12,
               0,
             ),

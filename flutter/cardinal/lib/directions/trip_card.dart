@@ -2,12 +2,19 @@
 /// leave directions and swap the ends.
 library;
 
+import 'dart:math' as math;
+
 import 'package:cupertino_ui/cupertino_ui.dart'
-    show CupertinoButton, CupertinoIcons;
+    show
+        CupertinoButton,
+        CupertinoIcons,
+        CupertinoListSection,
+        CupertinoListTile;
 import 'package:material_ui/material_ui.dart';
 
 import '../ui/adaptive.dart';
 import 'directions.dart';
+import 'option_row.dart' show textLinesHeight;
 
 /// From and To as two rows of one card, each tapped to choose that end, and beside the
 /// card, outside it, the button that closes directions over the one that swaps the
@@ -35,6 +42,43 @@ class TripCard extends StatelessWidget {
   final VoidCallback? onSwap;
 
   static const _swap = 'Swap start and destination';
+
+  /// The least a row is tall, and the side of each button beside the card.
+  static const _minRow = 44.0;
+
+  /// Above and below a row's text on Android, and the line between the rows.
+  static const _rowPadding = 8.0, _divider = 1.0;
+
+  /// Above the buttons beside iOS's card, which has room above it.
+  static const _buttonsTop = 8.0;
+
+  /// Above and below iOS's grouped rows: the margins
+  /// [CupertinoListSection.insetGrouped] puts round them.
+  static const _sectionTop = 20.0, _sectionBottom = 10.0;
+
+  /// How tall the card is at [context]'s text size, whatever its ends say: each row's
+  /// one line, or the buttons beside it if they're taller. On iOS a row is a
+  /// [CupertinoListTile], which is at least 44 tall too, with nothing above or below its
+  /// line, and the line between the rows is a hairline.
+  static double heightOf(BuildContext context) {
+    final cupertino = isCupertinoOf(context);
+    final text = Theme.of(context).textTheme;
+    final line = math.max(
+      textLinesHeight(context, text.bodySmall!),
+      textLinesHeight(context, text.bodyLarge!),
+    );
+    const buttons = 2 * _minRow;
+    if (cupertino) {
+      final row = math.max(_minRow, line);
+      final divider = 1 / MediaQuery.devicePixelRatioOf(context);
+      return math.max(
+        _sectionTop + 2 * row + divider + _sectionBottom,
+        _buttonsTop + buttons,
+      );
+    }
+    final row = math.max(_minRow, 2 * _rowPadding + line);
+    return math.max(2 * row + _divider, buttons);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -72,9 +116,12 @@ class TripCard extends StatelessWidget {
       return InkWell(
         onTap: () => onEdit(field),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 44),
+          constraints: const BoxConstraints(minHeight: _minRow),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: _rowPadding,
+            ),
             child: content,
           ),
         ),
@@ -108,7 +155,7 @@ class TripCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           ends.first,
-                          const Divider(height: 1, indent: 56),
+                          const Divider(height: _divider, indent: 56),
                           ends.last,
                         ],
                       ),
@@ -116,16 +163,16 @@ class TripCard extends StatelessWidget {
             ),
             Padding(
               // Beside the card itself: iOS's has room above it.
-              padding: EdgeInsets.only(top: cupertino ? 8 : 0),
+              padding: EdgeInsets.only(top: cupertino ? _buttonsTop : 0),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   SizedBox.square(
-                    dimension: 44,
+                    dimension: _minRow,
                     child: AppCloseButton(onPressed: onClose),
                   ),
                   SizedBox.square(
-                    dimension: 44,
+                    dimension: _minRow,
                     child: cupertino
                         ? _RoundButton(
                             label: _swap,

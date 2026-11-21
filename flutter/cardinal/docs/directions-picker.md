@@ -118,8 +118,30 @@ change of text size moves the anchors once, as a rotation does.
 At the largest sizes the docked row is tall, so the lowest height covers more of the
 map and on a small phone the header anchor may reach full height.
 
+Where even that doesn't leave room, no row is docked. If the trip card and tabs, a row
+and the buttons don't all fit with the sheet at full height, the selected row is an
+ordinary row of the list, still filled, and nothing is held: the lowest anchor shows
+the handle and the buttons, the header anchor the trip card and tabs over them, and the
+list scrolls at full height to show any row in turn. A docked row there would cover the
+tabs at every height, which no amount of polish elsewhere makes up for. The bar is that
+it stays usable, not that it looks as designed.
+
+- The choice is made from the window and the text size alone: the heights the trip
+  card, the tabs, a row and the buttons take at that size (each worked out from its
+  text, as rows are, and tested against the laid-out height) and the room at full
+  height without the keyboard. Never from what a row says or which mode shows, so it
+  holds for every mode, placeholder and message, and the anchors still never move in
+  use. It changes only with a rotation, a resize or a change of text size, in the
+  frame the rest of the layout changes.
+- On a 320×568 window that's from 2× (both platforms); a 390×844 window docks a row at
+  every size up to 3.1×. A 400×800 one stops at 3.1× on iOS.
+- Scrubbing works on the rows in the list as anywhere else; with nothing held, a row
+  selected by a scrub or a callout stays where it is in the list.
+
 A test builds the page at 1×, 1.3×, 1.5×, 2× and 3.1× in every mode, on a regular and a
-small window, and fails on any overflow or any text taller than its box.
+small window, and fails on any overflow or any text taller than its box. Another taps
+the trip card's fields, each tab and the buttons at the header anchor at each of those
+sizes, and reads the selected row in full at full height.
 
 ## Mode tabs and loading
 
@@ -160,7 +182,8 @@ if there are fewer, capped at about 60% of the window.
 
 ### Docking
 
-One rule: **the selected row is never below the top of the buttons.**
+One rule: **the selected row is never below the top of the buttons.** (Except where
+the text is too large for a docked row to leave the tabs any room: see "Large text".)
 
 - While its place in the list is in view, it's an ordinary row.
 - When the sheet lowers past that, the row stops above the buttons. Everything else

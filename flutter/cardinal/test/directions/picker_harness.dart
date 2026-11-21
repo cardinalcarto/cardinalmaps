@@ -208,6 +208,17 @@ Finder get footer => find.descendant(
   matching: find.byType(TripButtons),
 );
 
+/// The slot of the list the directions page holds in view, or null if it holds
+/// none, as where the text is too large for a row to be held under the tabs.
+Object? heldSlot(WidgetTester tester) => tester
+    .widget<SheetContent>(
+      find.descendant(
+        of: find.byType(DirectionsPage),
+        matching: find.byType(SheetContent),
+      ),
+    )
+    .held;
+
 SheetController sheetOf(WidgetTester tester) =>
     SheetScaffold.controllerOf(tester.element(tabs));
 

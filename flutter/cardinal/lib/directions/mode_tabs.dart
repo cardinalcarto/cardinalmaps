@@ -2,12 +2,15 @@
 /// best option takes.
 library;
 
+import 'dart:math' as math;
+
 import 'package:cupertino_ui/cupertino_ui.dart'
     show CupertinoSlidingSegmentedControl;
 import 'package:material_ui/material_ui.dart';
 
 import '../ui/adaptive.dart';
 import '../ui/haptics.dart';
+import 'option_row.dart' show textLinesHeight;
 import 'route_source.dart';
 
 /// What a tab says for a way of traveling with nothing to offer.
@@ -16,6 +19,18 @@ const noTimeDash = '—';
 /// The most the system's text scale enlarges a tab's time, as four tabs share the
 /// sheet's width.
 const double _maxTextScale = 1.3;
+
+/// Above the tabs on Android, and above the segmented control on iOS.
+const double _tabsTop = 6, _segmentsTop = 10;
+
+/// Above and below a tab's label on Android, and a segment's on iOS.
+const double _tabPadding = 7, _segmentPadding = 4;
+
+/// Round the segments, within the segmented control's track: its own default.
+const EdgeInsets _trackPadding = EdgeInsets.symmetric(
+  vertical: 2,
+  horizontal: 3,
+);
 
 /// Four equal tabs, one for each way of traveling: its icon over [times]' entry for
 /// it. A tab keeps the room for its time, which fades in when it comes; null leaves it
@@ -40,6 +55,17 @@ class ModeTabs extends StatelessWidget {
   /// What each tab says under its icon: how long, or [noTimeDash].
   final Map<TravelMode, String?> times;
   final ValueChanged<TravelMode> onChanged;
+
+  /// How tall the tabs are at [context]'s text size, whatever they say.
+  static double heightOf(BuildContext context) {
+    final label = _TabLabel.heightOf(
+      context,
+      MediaQuery.textScalerOf(context).clamp(maxScaleFactor: _maxTextScale),
+    );
+    return isCupertinoOf(context)
+        ? _segmentsTop + _trackPadding.vertical + 2 * _segmentPadding + label
+        : _tabsTop + 2 * _tabPadding + label;
+  }
 
   void _change(TravelMode mode) {
     if (!mode.available || mode == selected) return;
@@ -71,7 +97,7 @@ class ModeTabs extends StatelessWidget {
     final index = TravelMode.values.indexOf(selected);
     final last = TravelMode.values.length - 1;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      padding: const EdgeInsets.fromLTRB(12, _tabsTop, 12, 0),
       child: DecoratedBox(
         decoration: BoxDecoration(
           border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
@@ -94,7 +120,9 @@ class ModeTabs extends StatelessWidget {
                         child: InkWell(
                           onTap: mode.available ? () => _change(mode) : null,
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 7),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: _tabPadding,
+                            ),
                             child: _TabLabel(
                               icon: mode.iconFor(wheelchair: wheelchair),
                               time: times[mode],
@@ -134,8 +162,9 @@ class ModeTabs extends StatelessWidget {
   }
 
   Widget _segments(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+    padding: const EdgeInsets.fromLTRB(16, _segmentsTop, 16, 0),
     child: CupertinoSlidingSegmentedControl<TravelMode>(
+      padding: _trackPadding,
       groupValue: selected,
       disabledChildren: {
         for (final mode in TravelMode.values)
@@ -147,7 +176,7 @@ class ModeTabs extends StatelessWidget {
             label: _label(mode),
             excludeSemantics: true,
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
+              padding: const EdgeInsets.symmetric(vertical: _segmentPadding),
               child: _TabLabel(
                 icon: mode.iconFor(wheelchair: wheelchair),
                 time: times[mode],
@@ -178,12 +207,26 @@ class _TabLabel extends StatelessWidget {
   final Color? color;
   final bool emphasized;
 
+  static const _iconSize = 20.0, _gap = 2.0;
+
+  /// The style of a tab's time.
+  static TextStyle _style(BuildContext context, {required bool emphasized}) =>
+      Theme.of(context).textTheme.labelMedium!
+          .copyWith(fontWeight: emphasized ? FontWeight.w700 : FontWeight.w500);
+
+  /// How tall a label is with its text scaled by [scaler], selected or not.
+  static double heightOf(BuildContext context, TextScaler scaler) {
+    double line(bool emphasized) => textLinesHeight(
+      context,
+      _style(context, emphasized: emphasized),
+      textScaler: scaler,
+    );
+    return _iconSize + _gap + math.max(line(true), line(false));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final style = theme.textTheme.labelMedium!.copyWith(
-      fontWeight: emphasized ? FontWeight.w700 : FontWeight.w500,
-    );
+    final style = _style(context, emphasized: emphasized);
     final end = color ?? DefaultTextStyle.of(context).style.color;
     return TweenAnimationBuilder<Color?>(
       tween: ColorTween(end: end),
@@ -192,8 +235,8 @@ class _TabLabel extends StatelessWidget {
       builder: (context, color, _) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 20, color: color),
-          const SizedBox(height: 2),
+          Icon(icon, size: _iconSize, color: color),
+          const SizedBox(height: _gap),
           Stack(
             alignment: Alignment.center,
             children: [

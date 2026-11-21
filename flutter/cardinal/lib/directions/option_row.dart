@@ -28,16 +28,22 @@ const double roomyTextScale = 1.5;
 /// them, take the roomier layout. By the scale alone, never by what fits.
 bool isRoomyText(TextScaler scaler) => scaler.scale(16) / 16 >= roomyTextScale;
 
-/// How tall [lines] lines of text in [style] are at [context]'s text scale: what a
-/// line that may be empty reserves, so nothing moves when its text comes.
-double textLinesHeight(BuildContext context, TextStyle style, {int lines = 1}) {
+/// How tall [lines] lines of text in [style] are at [context]'s text scale, or scaled
+/// by [textScaler] if it's given: what a line that may be empty reserves, so nothing
+/// moves when its text comes.
+double textLinesHeight(
+  BuildContext context,
+  TextStyle style, {
+  int lines = 1,
+  TextScaler? textScaler,
+}) {
   final painter = TextPainter(
     text: TextSpan(
       text: List.filled(lines, ' ').join('\n'),
       style: DefaultTextStyle.of(context).style.merge(style),
     ),
     textDirection: Directionality.of(context),
-    textScaler: MediaQuery.textScalerOf(context),
+    textScaler: textScaler ?? MediaQuery.textScalerOf(context),
   )..layout();
   final height = painter.height;
   painter.dispose();
