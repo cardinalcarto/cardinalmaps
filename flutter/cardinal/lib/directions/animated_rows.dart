@@ -268,11 +268,16 @@ class FadeSwap extends StatelessWidget {
     required this.value,
     required this.child,
     this.alignment = AlignmentDirectional.centerStart,
+    this.fit = StackFit.loose,
   });
 
   /// What [child] shows: a change cross-fades.
   final Object? value;
   final AlignmentGeometry alignment;
+
+  /// How the two are sized while they cross: [StackFit.passthrough] for blocks that
+  /// fill the width given.
+  final StackFit fit;
   final Widget child;
 
   @override
@@ -280,8 +285,11 @@ class FadeSwap extends StatelessWidget {
     duration: rowDuration,
     switchInCurve: rowCurve,
     switchOutCurve: rowCurve,
-    layoutBuilder: (current, previous) =>
-        Stack(alignment: alignment, children: [...previous, ?current]),
+    layoutBuilder: (current, previous) => Stack(
+      alignment: alignment,
+      fit: fit,
+      children: [...previous, ?current],
+    ),
     child: KeyedSubtree(key: ValueKey(value), child: child),
   );
 }

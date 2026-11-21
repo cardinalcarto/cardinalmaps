@@ -2,6 +2,7 @@ import 'package:cardinal/directions/connections.dart';
 import 'package:cardinal/directions/transit_details.dart';
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/units.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -136,7 +137,7 @@ void main() {
         findsNothing,
       );
       await tester.tap(tile('5:52 PM'));
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(tester.widget<ConnectionTile>(tile('5:52 PM')).selected, isTrue);
       // That it's scheduled, not accessible, and has an alert the suggested one doesn't.
       expect(find.text('Scheduled'), findsOneWidget);
@@ -154,6 +155,52 @@ void main() {
         find.text('Riders continuing south should transfer.'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('choosing one keeps each tile, and eases the border over', (
+      tester,
+    ) async {
+      await range(tester, 0);
+      final before = tester.element(tile('5:52 PM'));
+      final own = tester.element(tile('5:40 PM'));
+      await tester.tap(tile('5:52 PM'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      // The same tiles, not rebuilt in each other's places.
+      expect(tester.element(tile('5:52 PM')), same(before));
+      expect(tester.element(tile('5:40 PM')), same(own));
+      Color border(String time) {
+        final box = tester.renderObject<RenderDecoratedBox>(
+          find
+              .descendant(of: tile(time), matching: find.byType(DecoratedBox))
+              .first,
+        );
+        return ((box.decoration as BoxDecoration).border! as Border).top.color;
+      }
+
+      // Mid-way, the border is on its way from one to the other.
+      expect(border('5:52 PM').a, inExclusiveRange(0, 1));
+      expect(border('5:40 PM').a, inExclusiveRange(0, 1));
+      await tester.pumpAndSettle();
+      expect(border('5:52 PM').a, 1);
+      expect(border('5:40 PM').a, 0);
+    });
+
+    testWidgets('the row opens on the chosen tile, from its first frame', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(160, 600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await range(tester, 0);
+      final row = tester.state<ScrollableState>(
+        find.descendant(
+          of: find.byType(DepartureRange),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      final x = tester.getCenter(tile('5:40 PM')).dx;
+      expect(row.position.pixels, greaterThan(0));
+      expect(x, moreOrLessEquals(80, epsilon: 1));
     });
 
     testWidgets('a canceled departure is struck through and can\'t be chosen', (

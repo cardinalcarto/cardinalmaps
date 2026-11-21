@@ -6,6 +6,7 @@ library;
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../units.dart';
@@ -1272,26 +1273,52 @@ class _DepartureRangeState extends State<DepartureRange> {
   /// The tiles' row, scrolled so the chosen tile shows: a choice upstream can choose one
   /// far along the row, out of sight.
   final _tiles = ScrollController();
-  final _selected = GlobalKey();
+
+  /// Each departure's tile, by its run, to scroll to.
+  final _tileKeys = <DepartureRun, GlobalKey>{};
+
+  /// The departure the rider last tapped, until the choice comes back.
+  DepartureRun? _tapped;
+
+  static DepartureRun? _run(RideDeparture? d) =>
+      d == null ? null : (tripId: d.tripId, startDate: d.startDate);
+
+  GlobalKey _keyOf(RideDeparture d) =>
+      _tileKeys.putIfAbsent(_run(d)!, GlobalKey.new);
 
   @override
   void initState() {
     super.initState();
     _start();
-    _reveal(animate: false);
   }
 
-  /// Scrolls the tiles' row, and only that row, to the chosen tile after this frame.
-  void _reveal({required bool animate}) {
+  /// Scrolls the tiles' row, and only that row, to the chosen tile after this frame:
+  /// centered on it for a choice made elsewhere, and only as far as shows all of it for
+  /// one the rider tapped, so it doesn't slide from under their finger.
+  void _reveal({required bool center}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final tile = _selected.currentContext?.findRenderObject();
+      final chosen = widget.choice.departure;
+      final tile = chosen == null
+          ? null
+          : _tileKeys[_run(chosen)]?.currentContext?.findRenderObject();
       if (!mounted || tile == null || !_tiles.hasClients) return;
-      _tiles.position.ensureVisible(
-        tile,
-        alignment: 0.5,
-        duration: animate ? const Duration(milliseconds: 250) : Duration.zero,
-        curve: Curves.easeOutCubic,
+      final position = _tiles.position;
+      final viewport = RenderAbstractViewport.maybeOf(tile);
+      if (viewport == null) return;
+      final double to;
+      if (center) {
+        to = viewport.getOffsetToReveal(tile, 0.5).offset;
+      } else {
+        final start = viewport.getOffsetToReveal(tile, 0).offset;
+        final end = viewport.getOffsetToReveal(tile, 1).offset;
+        to = position.pixels.clamp(math.min(start, end), math.max(start, end));
+      }
+      final target = to.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
       );
+      if ((target - position.pixels).abs() < 0.5) return;
+      position.animateTo(target, duration: rowDuration, curve: rowCurve);
     });
   }
 
@@ -1308,11 +1335,13 @@ class _DepartureRangeState extends State<DepartureRange> {
   void didUpdateWidget(DepartureRange oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.now != widget.now) _start();
-    final old = oldWidget.choice.departure;
-    final chosen = widget.choice.departure;
-    if (old?.tripId != chosen?.tripId || old?.startDate != chosen?.startDate) {
-      _reveal(animate: true);
+    final chosen = _run(widget.choice.departure);
+    if (_run(oldWidget.choice.departure) != chosen) {
+      _reveal(center: chosen != _tapped);
     }
+    _tapped = null;
+    final runs = {for (final d in widget.choice.ride.departures) _run(d)};
+    _tileKeys.removeWhere((run, _) => !runs.contains(run));
   }
 
   @override
@@ -1344,47 +1373,122 @@ class _DepartureRangeState extends State<DepartureRange> {
               ),
             ),
             const SizedBox(height: 4),
-            ValueListenableBuilder(
-              valueListenable: _now,
-              builder: (context, now, _) => SingleChildScrollView(
-                controller: _tiles,
-                scrollDirection: Axis.horizontal,
-                child: IntrinsicHeight(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    spacing: 6,
-                    children: [
-                      for (final (i, d) in departures.indexed)
-                        ConnectionTile(
-                          key: i == choice.index
-                              ? _selected
-                              : ValueKey((d.tripId, d.startDate)),
-                          departure: d,
-                          route: mixed ? d.route ?? ride.route : null,
-                          countdown: Countdown(d, now: now),
-                          catchable: choice.catchable[i],
-                          selected: i == choice.index,
-                          utcOffset: ride.boarding.utcOffset,
-                          onTap: () => widget.onSelect(i),
-                        ),
-                    ],
+            LayoutBuilder(
+              builder: (context, constraints) => ValueListenableBuilder(
+                valueListenable: _now,
+                builder: (context, now, _) => SingleChildScrollView(
+                  controller: _tiles,
+                  scrollDirection: Axis.horizontal,
+                  child: _CenterAtFirst(
+                    controller: _tiles,
+                    tile: choice.departure == null
+                        ? null
+                        : _keyOf(choice.departure!),
+                    viewport: constraints.maxWidth,
+                    child: IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        spacing: 6,
+                        children: [
+                          for (final (i, d) in departures.indexed)
+                            ConnectionTile(
+                              key: _keyOf(d),
+                              departure: d,
+                              route: mixed ? d.route ?? ride.route : null,
+                              countdown: Countdown(d, now: now),
+                              catchable: choice.catchable[i],
+                              selected: i == choice.index,
+                              utcOffset: ride.boarding.utcOffset,
+                              onTap: () {
+                                _tapped = _run(d);
+                                widget.onSelect(i);
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
             const SizedBox(height: 6),
           ],
-          if (choice.connection == RideConnection.none)
-            NoConnection(choice: choice)
-          else
-            VehicleStatus(
-              ride: ride,
-              departure: choice.departure,
-              access: widget.access,
-            ),
+          FadeSwap(
+            value: (choice.connection, _run(choice.departure)),
+            alignment: AlignmentDirectional.topStart,
+            fit: StackFit.passthrough,
+            child: choice.connection == RideConnection.none
+                ? NoConnection(choice: choice)
+                : VehicleStatus(
+                    ride: ride,
+                    departure: choice.departure,
+                    access: widget.access,
+                  ),
+          ),
         ],
       ),
     );
+  }
+}
+
+/// [child], a row of tiles in [controller]'s horizontal scroll view [viewport] wide,
+/// scrolled to center [tile] in its first layout, before it's painted.
+class _CenterAtFirst extends SingleChildRenderObjectWidget {
+  const _CenterAtFirst({
+    required this.controller,
+    required this.tile,
+    required this.viewport,
+    super.child,
+  });
+
+  final ScrollController controller;
+  final GlobalKey? tile;
+  final double viewport;
+
+  @override
+  _RenderCenterAtFirst createRenderObject(BuildContext context) =>
+      _RenderCenterAtFirst(controller, tile, viewport);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderCenterAtFirst renderObject,
+  ) {
+    renderObject
+      ..tile = tile
+      ..viewport = viewport;
+  }
+}
+
+class _RenderCenterAtFirst extends RenderProxyBox {
+  _RenderCenterAtFirst(this.controller, this.tile, this.viewport);
+
+  final ScrollController controller;
+  GlobalKey? tile;
+  double viewport;
+  bool _done = false;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    if (_done) return;
+    _done = true;
+    final box = tile?.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || !controller.hasClients) return;
+    double leftOf(RenderBox b) =>
+        b.localToGlobal(Offset.zero, ancestor: this).dx;
+    // Its right, from the next tile's left: only its row may read its size here.
+    final row = box.parent;
+    final next = row is RenderFlex ? row.childAfter(box) : null;
+    final left = leftOf(box);
+    final right = next == null
+        ? size.width
+        : leftOf(next) - (row as RenderFlex).spacing;
+    final to = ((left + right) / 2 - viewport / 2)
+        .clamp(0.0, math.max(0.0, size.width - viewport))
+        .toDouble();
+    // The scroll view applies its extent after this, and paints from here.
+    controller.position.correctPixels(to);
   }
 }
 
@@ -1489,28 +1593,32 @@ class ConnectionTile extends StatelessWidget {
                   spacing: 2,
                   children: [
                     if (route != null)
-                      Opacity(
+                      AnimatedOpacity(
+                        duration: rowDuration,
+                        curve: rowCurve,
                         opacity: usable ? 1 : 0.45,
                         child: RouteBadge(route: route),
                       ),
-                    if (counts)
-                      CountdownNumber(
-                        countdown,
-                        key: const ValueKey('countdown'),
-                        alignment: AlignmentDirectional.centerStart,
-                      )
-                    else
-                      Text(
-                        time,
-                        key: const ValueKey('countdown'),
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: usable ? null : faded,
-                          decoration: struck
-                              ? TextDecoration.lineThrough
-                              : null,
-                        ),
-                      ),
+                    FadeSwap(
+                      value: counts ? null : (time, usable, struck),
+                      child: counts
+                          ? CountdownNumber(
+                              countdown,
+                              key: const ValueKey('countdown'),
+                              alignment: AlignmentDirectional.centerStart,
+                            )
+                          : Text(
+                              time,
+                              key: const ValueKey('countdown'),
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: usable ? null : faded,
+                                decoration: struck
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                              ),
+                            ),
+                    ),
                     if (counts)
                       Text(
                         time,
@@ -1521,15 +1629,18 @@ class ConnectionTile extends StatelessWidget {
                               : null,
                         ),
                       ),
-                    if (label != null)
-                      Text(
-                        label,
-                        key: const ValueKey('label'),
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: labelColor,
-                          fontWeight: d.suggested && usable
-                              ? FontWeight.w600
-                              : null,
+                    if (label case final label?)
+                      FadeSwap(
+                        value: (label, labelColor),
+                        child: Text(
+                          label,
+                          key: const ValueKey('label'),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: labelColor,
+                            fontWeight: d.suggested && usable
+                                ? FontWeight.w600
+                                : null,
+                          ),
                         ),
                       ),
                   ],
