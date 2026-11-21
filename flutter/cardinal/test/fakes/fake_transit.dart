@@ -111,8 +111,13 @@ Map<String, Object?> _departure(
   String accessibility = 'accessible',
   List<int> alerts = const [],
   List<int> departureAlerts = const [],
+  Map<String, Object?>? route,
+  String? headsign,
 }) => {
   'trip_id': trip,
+  'start_date': '20261109',
+  'route': ?route,
+  'headsign': ?headsign,
   'status': status,
   'departure': departure,
   'arrival': departure + ride,
@@ -397,3 +402,213 @@ TransitPlan emptyPlan(String reason) => TransitPlan.fromJson({
   'no_journeys_reason': reason,
   'direct': {'status': 'not_searched'},
 });
+
+Map<String, Object?> _route(
+  String id,
+  String name, {
+  int type = 3,
+  String? color,
+}) => {'route_id': id, 'short_name': name, 'route_type': type, 'color': ?color};
+
+/// The routes of [connectionsPlanJson].
+final fakeRoutes = {
+  '40': _route('100040', '40', color: 'FDB71A'),
+  '7': _route('100007', '7', color: '8E3A9C'),
+  '62': _route('100062', '62', color: '00857C'),
+  '31': _route('100031', '31', color: '6C6F70'),
+  '1 Line': _route('100479', '1 Line', type: 0, color: '28813F'),
+  '8': _route('100008', '8', color: 'D2232A'),
+  '48': _route('100048', '48', color: '0072BC'),
+  '9': _route('100009', '9', color: 'F15A22'),
+  '2': _route('100002', '2', color: '2E3192'),
+};
+
+/// A plan's JSON with one journey of four rides, each after the first [transfer_seconds]
+/// from the one before, and the departures between each ride's two stops:
+///
+/// | Ride | Its own | Others |
+/// |---|---|---|
+/// | 40, A to B | 17:40–17:50, live | a missed 40 at 17:30 and 62 at 17:32; a 7 at 17:43–17:52 and 17:51; a 40 at 17:55–18:05; a 31 at 18:00; a canceled 40 at 18:05 |
+/// | 1 Line, C to D (3 min walk) | 17:55–18:05 | at 17:50, 18:03 and 18:11 |
+/// | 8, D to E (1 min walk) | 18:08–18:18 | a 48 at 18:10–18:21; a 9 at 18:15–18:24; an 8 at 18:23–18:33 |
+/// | 2, E to F (2 min walk) | 18:21–18:29 | a 2 at 18:36–18:44, the day's last, unless not [lateLastRide] |
+///
+/// It leaves at 17:30 and arrives at 18:32, after a 3 minute walk.
+Map<String, Object?> connectionsPlanJson({bool lateLastRide = true}) {
+  final t = fakeStart;
+  Map<String, Object?> walk(
+    String type,
+    int from,
+    int to, {
+    String? a,
+    String? b,
+  }) => {
+    'type': type,
+    'mode': 'walking',
+    'accessibility': 'unknown',
+    'duration_seconds': to - from,
+    'departure': t + from,
+    'arrival': t + to,
+    if (type == 'access') 'stop': _stop(b!, 0, 0, t + to),
+    if (type == 'egress') 'stop': _stop(a!, 0, 0, t + from),
+    if (type == 'transfer') ...{
+      'from': _stop(a!, 0, 0, t + from),
+      'to': _stop(b!, 0, 0, t + to),
+    },
+  };
+  Map<String, Object?> ride(
+    String route,
+    String trip,
+    String headsign,
+    String from,
+    String to,
+    int departs,
+    int arrives, {
+    required int wait,
+    int? transfer,
+    required List<Map<String, Object?>> departures,
+  }) => {
+    'type': 'transit',
+    'accessibility': 'accessible',
+    'departure': t + departs,
+    'arrival': t + arrives,
+    'duration_seconds': arrives - departs,
+    'wait_seconds': wait,
+    'transfer_seconds': ?transfer,
+    'realtime': false,
+    'route': fakeRoutes[route],
+    'agency': {'name': 'Metro Transit'},
+    'trip': {'trip_id': trip, 'start_date': '20261109', 'headsign': headsign},
+    'stops': [
+      _stop(from, 0, 0, t + departs),
+      _stop('$from to $to, between', 0, 0, t + (departs + arrives) ~/ 2),
+      _stop(to, 0, 0, t + arrives),
+    ],
+    'alerts': <Object>[],
+    'departures': departures,
+  };
+  Map<String, Object?> d(
+    String trip,
+    int departs,
+    int arrives, {
+    String? route,
+    String? headsign,
+    String status = 'scheduled',
+    bool suggested = false,
+    bool missed = false,
+    bool last = false,
+  }) => _departure(
+    trip,
+    t + departs,
+    arrives - departs,
+    status: status,
+    suggested: suggested,
+    missed: missed,
+    last: last,
+    route: route == null ? null : fakeRoutes[route],
+    headsign: headsign,
+  );
+  return {
+    'generated_at': t,
+    'window': {'earliest': t, 'latest': t + 3600},
+    'realtime': {'level': 'schedule', 'built_at': t, 'feeds': <Object>[]},
+    'journeys': [
+      {
+        'departure': t,
+        'arrival': t + 3720,
+        'duration_seconds': 3720,
+        'trips': 4,
+        'legs': [
+          walk('access', 0, 300, b: 'Stop A'),
+          ride(
+            '40',
+            '40-1',
+            'Downtown Seattle',
+            'Stop A',
+            'Stop B',
+            600,
+            1200,
+            wait: 300,
+            departures: [
+              d('40-0', 0, 600, missed: true),
+              d(
+                '62-0',
+                120,
+                700,
+                route: '62',
+                headsign: 'Georgetown',
+                missed: true,
+              ),
+              d('40-1', 600, 1200, status: 'live', suggested: true),
+              d('7-1', 780, 1320, route: '7', headsign: 'Rainier Beach'),
+              d('7-2', 1260, 1800, route: '7', headsign: 'Rainier Beach'),
+              d('40-2', 1500, 2100),
+              d('31-1', 1800, 2400, route: '31', headsign: 'Magnolia'),
+              d('40-3', 2100, 2700, status: 'canceled'),
+            ],
+          ),
+          walk('transfer', 1200, 1380, a: 'Stop B', b: 'Stop C'),
+          ride(
+            '1 Line',
+            'link-1',
+            'Angle Lake',
+            'Stop C',
+            'Stop D',
+            1500,
+            2100,
+            wait: 120,
+            transfer: 180,
+            departures: [
+              d('link-0', 1200, 1800, missed: true),
+              d('link-1', 1500, 2100, suggested: true),
+              d('link-2', 1980, 2580),
+              d('link-3', 2460, 3060),
+            ],
+          ),
+          walk('transfer', 2100, 2160, a: 'Stop D', b: 'Stop D Bay 2'),
+          ride(
+            '8',
+            '8-1',
+            'Mount Baker',
+            'Stop D Bay 2',
+            'Stop E',
+            2280,
+            2880,
+            wait: 120,
+            transfer: 60,
+            departures: [
+              d('8-1', 2280, 2880, suggested: true),
+              d('48-1', 2400, 3060, route: '48', headsign: 'Mount Baker'),
+              d('9-1', 2700, 3240, route: '9', headsign: 'Rainier Beach'),
+              d('8-2', 3180, 3780),
+            ],
+          ),
+          walk('transfer', 2880, 3000, a: 'Stop E', b: 'Stop F'),
+          ride(
+            '2',
+            '2-1',
+            'Madrona',
+            'Stop F',
+            'Stop G',
+            3060,
+            3540,
+            wait: 60,
+            transfer: 120,
+            departures: [
+              d('2-1', 3060, 3540, suggested: true, last: !lateLastRide),
+              if (lateLastRide) d('2-2', 3960, 4440, last: true),
+            ],
+          ),
+          walk('egress', 3540, 3720, a: 'Stop G'),
+        ],
+      },
+    ],
+    'direct': {'status': 'not_searched'},
+  };
+}
+
+/// [connectionsPlanJson]'s journey.
+Journey connectionsJourney({bool lateLastRide = true}) =>
+    TransitPlan.fromJson(connectionsPlanJson(lateLastRide: lateLastRide))
+        .journeys
+        .single;
