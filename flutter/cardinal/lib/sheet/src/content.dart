@@ -518,14 +518,12 @@ class _SheetEntry extends ChangeNotifier {
 
 /// Where [box] sits in [viewport]'s content, as an anchor shows down to it.
 _Span _spanOf(RenderAbstractViewport viewport, RenderBox box) {
-  var top = viewport.getOffsetToReveal(box, 0).offset;
-  if (!top.isFinite) {
-    // A box in a pinned sliver can't be revealed at the leading edge (Flutter says
-    // infinity), but it can at the trailing edge, a viewport's height less its own
-    // above where its top is.
-    final bottom = viewport.getOffsetToReveal(box, 1).offset;
-    top = bottom + (viewport as RenderBox).size.height - box.size.height;
-  }
+  // Revealed at the trailing edge, a viewport's height less its own above where its
+  // top is. Not at the leading edge: there Flutter stops short by the height of
+  // whatever is pinned before the box, to reveal it under that, and a box in a pinned
+  // sliver can't be revealed at all (it says infinity).
+  final bottom = viewport.getOffsetToReveal(box, 1).offset;
+  final top = bottom + (viewport as RenderBox).size.height - box.size.height;
   return _Span(top, top + box.size.height);
 }
 
