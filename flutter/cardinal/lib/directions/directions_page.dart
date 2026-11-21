@@ -127,8 +127,8 @@ class DirectionsPage extends StatefulWidget {
   /// ends and tabs showing. So one swipe gets between the two, and a gentle one stops
   /// on the way.
   ///
-  /// Tuned by feel on the phone, from the sheet library's first default.
-  static const headerGravity = 1200.0;
+  /// Tuned by feel on the phone.
+  static const headerGravity = 2400.0;
 
   /// Where the sheet rests with the ends and tabs showing, over the held row or, where
   /// no row is held, over the buttons. A waypoint between the sheet's lowest anchor

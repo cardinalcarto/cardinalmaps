@@ -1698,12 +1698,12 @@ void main() {
       final sheet = sheetOf(tester);
       expect(sheet.anchors.map((a) => a.anchor), [footer, header]);
       expect(sheet.anchors.last.gravity, DirectionsPage.headerGravity);
-      expect(DirectionsPage.headerGravity, 1200);
+      expect(DirectionsPage.headerGravity, 2400);
       expect(sheet.anchors.first.gravity, sheet.physics.gravity);
       expect(sheet.ranges.single.range.from, header);
     });
 
-    testWidgets('down from the list at 3000 goes to the lowest anchor', (
+    testWidgets('down from the list at 6000 goes to the lowest anchor', (
       tester,
     ) async {
       await open(tester);
@@ -1713,11 +1713,11 @@ void main() {
         tester,
         tester.getCenter(find.text('From')),
         60,
-        3000,
+        6000,
       );
       // Still faster than the header holds when it gets there.
       expect(
-        sheet.physics.speedAt(released, -3000, extentOf(sheet, header)),
+        sheet.physics.speedAt(released, -6000, extentOf(sheet, header)),
         greaterThan(2 * DirectionsPage.headerGravity),
       );
       expect(sheet.restingAt, footer);
@@ -1725,7 +1725,7 @@ void main() {
     });
 
     testWidgets(
-      'down from as high as the sheet goes at 3000 goes to the lowest '
+      'down from as high as the sheet goes at 6000 goes to the lowest '
       'anchor',
       (tester) async {
         await open(tester);
@@ -1737,10 +1737,10 @@ void main() {
           tester,
           tester.getCenter(find.text('From')),
           60,
-          3000,
+          6000,
         );
         expect(
-          sheet.physics.speedAt(released, -3000, extentOf(sheet, header)),
+          sheet.physics.speedAt(released, -6000, extentOf(sheet, header)),
           greaterThan(DirectionsPage.headerGravity + 500),
         );
         expect(sheet.restingAt, footer);
@@ -1772,7 +1772,7 @@ void main() {
       expect(sheet.extent, extentOf(sheet, header));
     });
 
-    testWidgets('up from the lowest anchor at 3000 goes into the list, as far '
+    testWidgets('up from the lowest anchor at 6000 goes into the list, as far '
         'up as the sheet goes', (tester) async {
       await open(tester);
       final sheet = sheetOf(tester);
@@ -1781,9 +1781,9 @@ void main() {
       expect(sheet.restingAt, footer);
 
       // By the handle, which moves only the sheet.
-      final released = await fling(tester, handle(tester), -60, 3000);
+      final released = await fling(tester, handle(tester), -60, 6000);
       expect(
-        sheet.physics.speedAt(released, 3000, extentOf(sheet, header)),
+        sheet.physics.speedAt(released, 6000, extentOf(sheet, header)),
         greaterThan(2 * DirectionsPage.headerGravity),
       );
       expect(sheet.restingAt, isNull);
@@ -1795,27 +1795,25 @@ void main() {
       // the top is the list's to scroll with.
       sheet.animateTo(footer);
       await tester.pumpAndSettle();
-      await fling(tester, heldRow(tester), -60, 3000);
+      await fling(tester, heldRow(tester), -60, 6000);
       expect(sheet.restingIn, sheet.ranges.single.range);
       expect(sheet.extent, appScreen.height);
       expect(listOf(tester).pixels, listOf(tester).maxScrollExtent);
     });
 
-    testWidgets('up from the lowest anchor at 1650 stops part way up the list, '
-        'in one motion', (tester) async {
+    testWidgets('up from the lowest anchor at 3000 passes the header without '
+        'stopping, only slowing', (tester) async {
       await open(tester);
       final sheet = sheetOf(tester);
       sheet.animateTo(footer);
       await tester.pumpAndSettle();
 
-      await tester.flingFrom(heldRow(tester), const Offset(0, -60), 1650);
+      await tester.flingFrom(handle(tester), const Offset(0, -60), 3000);
       final released = sheet.extent;
-      final landing = sheet.physics.landing(released, 1650);
       expect(
-        sheet.physics.speedAt(released, 1650, extentOf(sheet, header)),
+        sheet.physics.speedAt(released, 3000, extentOf(sheet, header)),
         greaterThan(DirectionsPage.headerGravity + 200),
       );
-      expect(landing, lessThan(appScreen.height - 50));
       // The frame its motion starts on, and then every frame until it rests.
       await tester.pump();
       final extents = [released];
@@ -1824,16 +1822,22 @@ void main() {
         extents.add(sheet.extent);
       }
       expect(sheet.restingIn, sheet.ranges.single.range);
-      expect(sheet.extent, moreOrLessEquals(landing, epsilon: 0.5));
-      // Over the header anchor without stopping, only slowing.
+      expect(sheet.extent, appScreen.height);
+      // Over the header anchor and on up without stopping, only slowing, until the
+      // top stops it.
+      final moving = [
+        for (final extent in extents)
+          if (extent < appScreen.height - 1) extent,
+      ];
+      expect(moving.where((e) => e < extentOf(sheet, header)), isNotEmpty);
+      expect(moving.where((e) => e > extentOf(sheet, header)), isNotEmpty);
       var last = double.infinity;
-      for (var i = 1; i < extents.length - 1; i++) {
-        final step = extents[i] - extents[i - 1];
+      for (var i = 1; i < moving.length; i++) {
+        final step = moving[i] - moving[i - 1];
         expect(step, greaterThan(0), reason: 'frame $i stands still');
         expect(step, lessThanOrEqualTo(last + 0.01), reason: 'frame $i');
         last = step;
       }
-      expect(extents.where((e) => e < extentOf(sheet, header)), isNotEmpty);
     });
 
     testWidgets(
