@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:cardinal/directions/connections.dart';
+import 'package:cardinal/directions/journey_list.dart';
 import 'package:cardinal/directions/transit_timeline.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cardinal/directions/transit_plan.dart';
@@ -251,7 +252,7 @@ void main() {
       );
     });
 
-    testWidgets('an overview row makes room for them above its timeline', (
+    testWidgets('an overview row keeps room for them above its timeline', (
       tester,
     ) async {
       Future<double> height(Journey journey) async {
@@ -270,14 +271,18 @@ void main() {
         return tester.getSize(find.byType(JourneyTimeline)).height;
       }
 
-      expect(await height(fakePlan().journeys.single), 26);
+      // The same, with or without any: every row keeps the line's room.
+      expect(
+        await height(fakePlan().journeys.single),
+        26 + JourneyTimeline.orHeight + JourneyTimeline.orGap,
+      );
       expect(
         await height(connectionsJourney()),
         26 + JourneyTimeline.orHeight + JourneyTimeline.orGap,
       );
       expect(
         tester.getSemantics(find.byType(JourneyTimeline)).label,
-        startsWith('40 or 7, then 1 Line, then 8 or 48 or 9, then 2'),
+        contains('40 or 7, then 1 Line, then 8 or 48 or 9, then 2'),
       );
     });
   });

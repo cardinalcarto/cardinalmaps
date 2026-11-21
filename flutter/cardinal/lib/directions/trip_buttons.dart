@@ -37,21 +37,38 @@ void startNavigation(
 
 /// Steps and Start along the bottom of the window, acting on the selected route:
 /// Start the main action, twice as wide. Null disables either. [TripButtons.start] has
-/// Start alone, the width of the window.
+/// Start alone, the width of the window, and [TripButtons.details] has Trip details
+/// alone, which acts on the selected transit journey.
+///
+/// Whichever they are, they're one height at a text size, so one set can take
+/// another's place without the sheet's anchors moving.
 ///
 /// They're as tall as their labels need at the system's text size, and keep clear of
 /// the navigation bar. Nothing is painted behind them: the sheet clips its content out
 /// from under them.
 class TripButtons extends StatelessWidget {
   const TripButtons({super.key, required this.onSteps, required this.onStart})
-    : _steps = true;
+    : _steps = true,
+      _main = 'Start';
 
   const TripButtons.start({super.key, required this.onStart})
     : onSteps = null,
-      _steps = false;
+      _steps = false,
+      _main = 'Start';
+
+  const TripButtons.details({super.key, required VoidCallback? onDetails})
+    : onSteps = null,
+      onStart = onDetails,
+      _steps = false,
+      _main = 'Trip details';
 
   final VoidCallback? onSteps;
+
+  /// What the main button does: Start, or Trip details.
   final VoidCallback? onStart;
+
+  /// What the main button says.
+  final String _main;
 
   /// Whether there's a Steps button.
   final bool _steps;
@@ -59,10 +76,20 @@ class TripButtons extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cupertino = isCupertinoOf(context);
-    // One line, shrunk to fit its button rather than cut off.
-    Widget label(String text) => FittedBox(
-      fit: BoxFit.scaleDown,
-      child: Text(text, maxLines: 1, softWrap: false),
+    // One line, shrunk to fit its button rather than cut off, in the room of a line
+    // at its full size: a button is as tall whatever it says.
+    Widget label(String text) => Stack(
+      children: [
+        const ExcludeSemantics(
+          child: SizedBox(width: double.infinity, child: Text('', maxLines: 1)),
+        ),
+        Positioned.fill(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(text, maxLines: 1, softWrap: false),
+          ),
+        ),
+      ],
     );
     final Widget steps, start;
     if (cupertino) {
@@ -79,7 +106,7 @@ class TripButtons extends StatelessWidget {
         minimumSize: size,
         borderRadius: radius,
         onPressed: onStart,
-        child: label('Start'),
+        child: label(_main),
       );
     } else {
       final style = FilledButton.styleFrom(minimumSize: const Size(0, 48));
@@ -91,7 +118,7 @@ class TripButtons extends StatelessWidget {
       start = FilledButton(
         style: style,
         onPressed: onStart,
-        child: label('Start'),
+        child: label(_main),
       );
     }
     return Column(

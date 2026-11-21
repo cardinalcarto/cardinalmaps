@@ -4,12 +4,12 @@ import 'dart:math' as math;
 import 'package:cupertino_ui/cupertino_ui.dart'
     show CupertinoActivityIndicator, CupertinoButton;
 import 'package:cardinal/directions/connections.dart';
+import 'package:cardinal/directions/journey_list.dart';
 import 'package:cardinal/directions/directions_page.dart';
 import 'package:cardinal/directions/mode_tabs.dart';
 import 'package:cardinal/directions/option_row.dart';
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/transit_plan.dart';
-import 'package:cardinal/directions/transit_timeline.dart';
 import 'package:cardinal/directions/transit_details.dart';
 import 'package:cardinal/directions/trip_details_page.dart';
 import 'package:cardinal/map/location.dart';
@@ -1706,8 +1706,21 @@ void main() {
   });
 
   group('transit', () {
-    /// Shows transit's journeys, with the sheet pulled up to show them all: it has no
-    /// row held in view, so it rests lower than a street way's did.
+    /// Opens the selected journey's Trip details.
+    Future<void> openDetails(WidgetTester tester) async {
+      await tester.tap(find.widgetWithText(FilledButton, 'Trip details'));
+      await tester.pumpAndSettle();
+    }
+
+    /// Chooses [way] from the menu of how stops are reached.
+    Future<void> chooseAccess(WidgetTester tester, String way) async {
+      await tester.tap(find.text('Walking to stops'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(way).last);
+      await tester.pumpAndSettle();
+    }
+
+    /// Shows transit's journeys, with the sheet pulled up to show them all.
     Future<void> openTransit(WidgetTester tester) async {
       await open(tester);
       await tester.tap(find.byIcon(Icons.directions_transit));
@@ -1734,10 +1747,7 @@ void main() {
       expect(find.textContaining('5:30 PM – 6:15 PM'), findsOneWidget);
       expect(find.text('45 min'), findsNWidgets(2));
       // Feeds, not messages: one of the two feeds is live.
-      expect(
-        find.text('Live times from 1 of 2 real-time feeds'),
-        findsOneWidget,
-      );
+      expect(find.text('Live times from 1 of 2 feeds'), findsOneWidget);
       // The walk to a moved stop is flagged in the overview.
       expect(find.byIcon(Icons.wrong_location), findsNWidgets(2));
     });
@@ -1788,8 +1798,7 @@ void main() {
 
       Future<void> openJourney(WidgetTester tester) async {
         await openTransit(tester);
-        await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
-        await tester.pumpAndSettle();
+        await openDetails(tester);
       }
 
       Future<void> choose(WidgetTester tester, String trip) async {
@@ -1950,8 +1959,7 @@ void main() {
         await tester.binding.handlePopRoute();
         await tester.pumpAndSettle();
 
-        await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
-        await tester.pumpAndSettle();
+        await openDetails(tester);
         expect(shownChain(tester).suggested, isTrue);
         expect(rideLines().first, planned);
         await choose(tester, 't40c');
@@ -1967,8 +1975,7 @@ void main() {
           tester.element(find.text('From')),
         );
         final extent = sheet.extent;
-        await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
-        await tester.pumpAndSettle();
+        await openDetails(tester);
         await chooseLater(tester);
 
         // Getting to stops follows the default, so transit is asked again.
@@ -2028,8 +2035,11 @@ void main() {
         return router;
       }
 
+      /// Selects the fifth journey, and taps Trip details.
       Future<void> openJourney(WidgetTester tester) async {
         await tester.tap(find.byType(JourneyRow).at(4).hitTestable());
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(FilledButton, 'Trip details'));
       }
 
       testWidgets('opens from the journey\'s top, with it from its first '
@@ -2052,7 +2062,13 @@ void main() {
         );
         expect(sheetOf(tester).restingAt, const SheetAnchor.fraction(0.4));
         expect(scrolled(tester, TripDetailsPage), 0);
-        expect(find.text('Trip details'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(JourneyHeader),
+            matching: find.text('Trip details'),
+          ),
+          findsOneWidget,
+        );
       });
 
       for (final how in ['its back button', 'the system\'s back']) {
@@ -2064,6 +2080,9 @@ void main() {
           await tester.drag(find.text('From'), const Offset(0, 100));
           await tester.pumpAndSettle();
           expect(sheet.restingIn, isNotNull);
+          // The fifth journey selected, its row where it's held from here on.
+          await tester.tap(find.byType(JourneyRow).at(4).hitTestable());
+          await tester.pumpAndSettle();
           final extent = sheet.extent;
           final offset = scrolled(tester, DirectionsPage);
           expect(offset, greaterThan(0));
@@ -2103,9 +2122,8 @@ void main() {
       tester,
     ) async {
       await openTransit(tester);
-      await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
-      await tester.pumpAndSettle();
-      expect(find.text('Trip details'), findsOneWidget);
+      await openDetails(tester);
+      expect(find.byType(TripDetailsPage), findsOneWidget);
       expect(
         find.text('Board at the temporary stop 50 feet north.'),
         findsOneWidget,
@@ -2113,7 +2131,7 @@ void main() {
       expect(find.text('Route 40 detoured'), findsOneWidget);
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
-      expect(find.text('Trip details'), findsNothing);
+      expect(find.byType(TripDetailsPage), findsNothing);
       expect(find.byType(JourneyRow), findsWidgets);
     });
 
@@ -2137,7 +2155,8 @@ void main() {
           header,
         ]);
         expect(sheet.ranges, hasLength(1), reason: 'free from the header up');
-        // Nothing is held, and there are no buttons.
+        // Its own button, and none of a street way's.
+        expect(find.text('Trip details'), findsOneWidget);
         expect(find.text('Start'), findsNothing);
         expect(find.text('Steps'), findsNothing);
         await tester.fling(find.text('From'), const Offset(0, 300), 3000);
@@ -2152,8 +2171,7 @@ void main() {
         await openTransit(tester);
         final sheet = sheetOf(tester);
 
-        await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
-        await tester.pumpAndSettle();
+        await openDetails(tester);
         expect(sheet.restingAt, const SheetAnchor.fraction(0.4));
         expect(sheet.isDraggable, isTrue);
         expect(map.subject, isTrue);
@@ -2179,8 +2197,7 @@ void main() {
         expect(sheet.restingIn, isNotNull);
         expect(sheet.isAtMax, isFalse);
         final extent = sheet.extent;
-        await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
-        await tester.pumpAndSettle();
+        await openDetails(tester);
 
         await tester.tap(find.byTooltip('Back'));
         await tester.pumpAndSettle();
@@ -2209,8 +2226,7 @@ void main() {
       tester,
     ) async {
       await openTransit(tester);
-      await tester.tap(find.text('Wheelchair'));
-      await tester.pumpAndSettle();
+      await chooseAccess(tester, 'Wheelchair');
       expect(transit.asked.last.access, TransitAccess.wheelchair);
       expect(
         await store.settings.get(lastTransitAccess),
@@ -2262,8 +2278,7 @@ void main() {
         tester,
       ) async {
         await openTransit(tester);
-        await tester.tap(find.text('Bike'));
-        await tester.pumpAndSettle();
+        await chooseAccess(tester, 'Bike');
         final asked = transit.asked.length;
         await store.settings.set(wheelchairByDefault, true);
         await tester.pumpAndSettle();

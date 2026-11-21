@@ -3,7 +3,6 @@ import 'package:cardinal/directions/mode_tabs.dart';
 import 'package:cardinal/directions/option_row.dart';
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/speed_profile.dart';
-import 'package:cardinal/directions/transit_timeline.dart';
 import 'package:cardinal/directions/trip_card.dart';
 import 'package:cardinal/map/route_layer.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
@@ -29,6 +28,13 @@ void main() {
 
   Finder tabText(String text) =>
       find.descendant(of: tabs, matching: find.text(text));
+
+  /// How much the buttons show, as they fade with the trip.
+  double footerShown(WidgetTester tester) => tester
+      .widgetList<FadeTransition>(
+        find.ancestor(of: footer, matching: find.byType(FadeTransition)),
+      )
+      .fold(1, (shown, fade) => shown * fade.opacity.value);
 
   /// The row of the list at [index], wherever it's painted.
   Rect rowRect(WidgetTester tester, int index) =>
@@ -810,10 +816,7 @@ void main() {
       await tester.tap(find.widgetWithText(InkWell, 'To'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 60));
-      final fading = tester.widget<FadeTransition>(
-        find.ancestor(of: footer, matching: find.byType(FadeTransition)).first,
-      );
-      expect(fading.opacity.value, inExclusiveRange(0, 1));
+      expect(footerShown(tester), inExclusiveRange(0, 1));
       await tester.pumpAndSettle();
       expect(footer, findsNothing);
       expect(rows, findsNothing);
@@ -827,17 +830,7 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 60));
-      expect(
-        tester
-            .widget<FadeTransition>(
-              find
-                  .ancestor(of: footer, matching: find.byType(FadeTransition))
-                  .first,
-            )
-            .opacity
-            .value,
-        inExclusiveRange(0, 1),
-      );
+      expect(footerShown(tester), inExclusiveRange(0, 1));
       await tester.pumpAndSettle();
       expect(sheet.restingAt, headerAnchor);
       expect(rows, findsNWidgets(4));
@@ -928,37 +921,6 @@ void main() {
       router.go(stepsLocation(destination.id));
       await tester.pumpAndSettle();
       expect(router.state.uri.toString(), directionsLocation(destination.id));
-    });
-  });
-
-  group('transit, until it has rows of its own', () {
-    testWidgets('lists its journeys under the same ends and tabs, with '
-        'nothing held and no buttons', (tester) async {
-      await picker.open(tester);
-      final header = tester.getRect(tabs);
-      await showMode(tester, TravelMode.transit);
-      await moveTo(tester, const SheetAnchor.full());
-      expect(find.byType(JourneyRow), findsNWidgets(2));
-      expect(footer, findsNothing);
-      expect(slots, findsNothing);
-      expect(tester.getSize(tabs), header.size);
-      final sheet = sheetOf(tester);
-      expect(sheet.anchors.map((a) => a.anchor), [footerAnchor, headerAnchor]);
-      // The lowest shows only the handle, the other only the ends and tabs.
-      expect(extentOf(sheet, footerAnchor), lessThan(60));
-    });
-
-    testWidgets('a journey opens its Trip details over the page', (
-      tester,
-    ) async {
-      await picker.open(tester);
-      await showMode(tester, TravelMode.transit);
-      await moveTo(tester, const SheetAnchor.full());
-      final sheet = sheetOf(tester);
-      await tester.tap(find.byType(JourneyRow).first);
-      await tester.pumpAndSettle();
-      expect(find.text('Trip details'), findsOneWidget);
-      expect(sheet.restingAt, const SheetAnchor.fraction(0.4));
     });
   });
 

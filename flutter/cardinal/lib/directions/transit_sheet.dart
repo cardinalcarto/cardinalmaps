@@ -1,5 +1,5 @@
-/// What the directions sheet's transit views share: the chips for getting to stops, how
-/// live the plan is, and the small pieces both the overview and a journey's details use.
+/// What the directions sheet's transit views share: the small pieces both the list of
+/// journeys and a journey's details use.
 ///
 /// The look follows Murena Maps, with less padding.
 library;
@@ -8,37 +8,6 @@ import 'package:material_ui/material_ui.dart';
 
 import 'format.dart';
 import 'transit_plan.dart';
-
-/// Chips for how to get to, from, and between stops.
-class TransitAccessRow extends StatelessWidget {
-  const TransitAccessRow({
-    super.key,
-    required this.access,
-    required this.onChanged,
-  });
-
-  final TransitAccess access;
-  final ValueChanged<TransitAccess> onChanged;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-    child: Wrap(
-      spacing: 8,
-      children: [
-        for (final option in TransitAccess.values)
-          ChoiceChip(
-            avatar: Icon(accessIcon(option), size: 18),
-            label: Text(option.label),
-            selected: option == access,
-            showCheckmark: false,
-            visualDensity: VisualDensity.compact,
-            onSelected: (_) => onChanged(option),
-          ),
-      ],
-    ),
-  );
-}
 
 IconData accessIcon(TransitAccess access) => switch (access) {
   TransitAccess.walking => Icons.directions_walk,
@@ -52,7 +21,7 @@ IconData streetIcon(String mode) => switch (mode) {
   _ => Icons.directions_walk,
 };
 
-/// What a street leg is called: the same words as the chips for getting to stops.
+/// What a street leg is called: the same words as the menu of ways to get to stops.
 String streetVerb(String mode) => switch (mode) {
   'cycling' => TransitAccess.cycling.label,
   'wheelchair' => TransitAccess.wheelchair.label,
@@ -68,51 +37,6 @@ IconData vehicleIcon(VehicleKind kind) => switch (kind) {
   VehicleKind.cableway => Icons.airline_seat_recline_normal,
   VehicleKind.other => Icons.directions_transit,
 };
-
-/// Whether the plan's times are live, and from how many feeds.
-class RealtimeLine extends StatelessWidget {
-  const RealtimeLine({super.key, required this.plan});
-
-  final TransitPlan plan;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final live = plan.feedsApplied > 0;
-    final text = switch (plan) {
-      TransitPlan(feedsReported: 0) => 'Scheduled times: no live data',
-      TransitPlan(feedsApplied: 0) =>
-        'Scheduled times: live data is out of date',
-      TransitPlan(feedsReported: 1) => 'Live times from 1 real-time feed',
-      _ when plan.feedsApplied == plan.feedsReported =>
-        'Live times from ${plan.feedsReported} real-time feeds',
-      _ =>
-        'Live times from ${plan.feedsApplied} of ${plan.feedsReported} '
-            'real-time feeds',
-    };
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
-      child: Row(
-        children: [
-          Icon(
-            live ? Icons.sensors : Icons.schedule,
-            size: 16,
-            color: live ? liveColor(theme) : theme.colorScheme.onSurfaceVariant,
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              text,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 /// What to say when a plan has no journeys.
 String noJourneysMessage(TransitPlan plan, TransitAccess access) {

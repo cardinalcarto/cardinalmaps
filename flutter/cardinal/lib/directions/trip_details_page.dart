@@ -24,11 +24,17 @@ import 'transit_plan.dart';
 /// |---|---|---|
 /// | closed | a journey is opened | open: each ride's departure the plan's own |
 /// | open | a departure is chosen | open: the rest of the journey re-timed by it |
-/// | open | a newer plan of the journey | open: the choices kept, as far as they can be |
-/// | open | closed by the page that opened it, or by a new plan | closed |
+/// | open | transit is planned again, and the new plan has the journey | open, on the journey as that plan has it: the choices kept, as far as they can be |
+/// | open | transit is planned again, and the new plan hasn't the journey | closed |
+/// | open | transit is asked again for a changed trip | closed |
+/// | open | closed by the page that opened it | closed |
+///
+/// The directions page says which of those a new plan is: a journey is the same one
+/// from plan to plan by its rides' trips and stops ([JourneyIdentity]).
 ///
 /// The legs are kept while the plan lasts, so a departure chosen again, in this
-/// opening or another, isn't fetched again; the choices start afresh each opening.
+/// opening or another, isn't fetched again; under a newer plan each is fetched again,
+/// what was known standing in until then. The choices start afresh each opening.
 class OpenJourney extends ChangeNotifier {
   OpenJourney({required this.directions, required this.legs});
 
@@ -119,7 +125,8 @@ class OpenJourney extends ChangeNotifier {
 /// | showing the journey | a departure is chosen | the rest of the journey re-timed, nothing above the departure moving |
 /// | showing the journey | the leg of a departure chosen arrives | its stops listed, its line on the map |
 /// | showing the journey | back | the directions page, the sheet and its list where they were left |
-/// | showing the journey | a new plan, or transit asked again | the same, as for back |
+/// | showing the journey | transit planned again, the new plan with this journey | the same journey as that plan has it: its times and timeline ease to the new ones, the departures chosen kept, what's open of its stops still open |
+/// | showing the journey | transit planned again without this journey, or asked again for a changed trip | the directions page, as for back |
 ///
 /// From the 40% anchor up the sheet rests wherever it's let go, and a fling up carries
 /// on into scrolling the journey, so reading through it is one long scroll.
@@ -188,7 +195,7 @@ class _TripDetailsPageState extends State<TripDetailsPage> {
       setState(() => _shown = chain);
       return;
     }
-    // A new plan closed it: back to the journeys.
+    // A plan without it, or another trip, closed it: back to the journeys.
     if (_leaving) return;
     _leaving = true;
     context.pop();

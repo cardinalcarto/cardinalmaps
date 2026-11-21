@@ -3,6 +3,8 @@ import 'package:cardinal/directions/mode_tabs.dart';
 import 'package:cardinal/directions/option_row.dart';
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/steps_page.dart';
+import 'package:cardinal/directions/transit_plan.dart';
+import 'package:cardinal/directions/trip_details_page.dart';
 import 'package:cardinal/map/route_layer.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:flutter/rendering.dart';
@@ -11,6 +13,7 @@ import 'package:http/http.dart' as http;
 import 'package:material_ui/material_ui.dart';
 
 import '../fakes/fake_routes.dart';
+import '../fakes/fake_transit.dart';
 import 'picker_harness.dart';
 
 /// The system text sizes the sheet is built at, from the default to the largest
@@ -66,10 +69,34 @@ void _expectNoTextCutOff(WidgetTester tester, String state, {Type? page}) {
   }
 }
 
+/// Matches extents that are [extents], give or take what adding the same heights up
+/// in another order comes to.
+Matcher _near(List<double> extents) => pairwiseCompare<double, double>(
+  extents,
+  (expected, actual) => (expected - actual).abs() < 1e-9,
+  'within a billionth of a pixel of',
+);
+
 void main() {
   late Picker picker;
 
   setUp(() => picker = Picker());
+
+  /// Shows [mode]: by its tab, or, where the held row covers the tabs wherever the
+  /// sheet is (the largest text in the small window, where a row and the buttons
+  /// are as tall as the window), as its tab would.
+  Future<void> show(WidgetTester tester, TravelMode mode) async {
+    await tester.tap(
+      find.descendant(of: tabs, matching: find.byIcon(mode.icon)),
+      warnIfMissed: false,
+    );
+    await tester.pumpAndSettle();
+    if (tester.widget<ModeTabs>(tabs).selected != mode) {
+      tester.widget<ModeTabs>(tabs).onChanged(mode);
+      await tester.pumpAndSettle();
+    }
+    expect(tester.widget<ModeTabs>(tabs).selected, mode);
+  }
 
   /// Lets the pages around directions overflow as they do at the largest sizes: the
   /// search sheet's header, under the place's card under directions, and iOS's
@@ -115,7 +142,7 @@ void main() {
           extentOf(sheet, headerAnchor),
         ];
         final row = OptionRowMetrics.heightOf(tester.element(tabs));
-        final header = tester.getRect(tabs).size;
+        final header = tester.getSize(tabs);
         final buttons = tester.getSize(footer);
 
         /// One state of the sheet: laid out without error, with every row as tall
@@ -126,25 +153,36 @@ void main() {
           for (final slot in slots.evaluate()) {
             expect(slot.size!.height, row, reason: 'a row, $state');
           }
-          expect(tester.getRect(tabs).size, header, reason: 'the tabs, $state');
+          expect(tester.getSize(tabs), header, reason: 'the tabs, $state');
           expect(tester.getSize(footer), buttons, reason: 'buttons, $state');
-          expect(anchors(), rests, reason: 'the anchors, $state');
+          expect(anchors(), _near(rests), reason: 'the anchors, $state');
         }
 
         final rests = anchors();
         check('loading', rests);
         expect(isRoomyText(TextScaler.linear(scale)), scale >= 1.5);
+        for (final mode in TravelMode.values) {
+          await show(tester, mode);
+          check('$mode, loading', rests);
+        }
 
         picker.asked(TravelMode.driving).single.answer.complete(drivingRoutes);
         picker.asked(TravelMode.walking).single.answer.complete(walkingRoutes);
         picker.asked(TravelMode.cycling).single.answer.complete(cyclingRoutes);
+        picker.transit.asked.single.answer.complete(
+          TransitPlan.fromJson({
+            ...fakePlanJson(journeys: 2, tags: ['a', 'b']),
+            // One with other routes to name over its rides.
+            'journeys': [
+              ...fakePlanJson(journeys: 2, tags: ['a', 'b'])['journeys']!
+                  as List<Object?>,
+              ...connectionsPlanJson()['journeys']! as List<Object?>,
+            ],
+          }),
+        );
         await tester.pumpAndSettle();
-        for (final mode in [
-          TravelMode.driving,
-          TravelMode.walking,
-          TravelMode.cycling,
-        ]) {
-          await showMode(tester, mode);
+        for (final mode in TravelMode.values) {
+          await show(tester, mode);
           check('$mode', rests);
           // With every row in view, and at each anchor.
           await moveTo(tester, const SheetAnchor.full());
@@ -176,13 +214,10 @@ void main() {
             .single
             .answer
             .completeError(http.ClientException('offline'));
+        picker.transit.asked.single.answer.complete(emptyPlan('no_egress'));
         await tester.pumpAndSettle();
-        for (final mode in [
-          TravelMode.driving,
-          TravelMode.walking,
-          TravelMode.cycling,
-        ]) {
-          await showMode(tester, mode);
+        for (final mode in TravelMode.values) {
+          await show(tester, mode);
           for (final anchor in [
             const SheetAnchor.full(),
             footerAnchor,
@@ -196,7 +231,7 @@ void main() {
             expect(tester.getSize(slots).height, row, reason: state);
             expect(
               [extentOf(sheet, footerAnchor), extentOf(sheet, headerAnchor)],
-              rests,
+              _near(rests),
               reason: state,
             );
           }
@@ -327,6 +362,69 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       _expectNoTextCutOff(tester, 'the steps with arrows', page: StepsPage);
+    });
+  }
+
+  for (final (platform, window, scale) in [
+    for (final platform in [TargetPlatform.android, TargetPlatform.iOS])
+      for (final window in _windows)
+        for (final scale in _scales) (platform, window, scale),
+  ]) {
+    testWidgets('a journey\'s details: nothing overflows or is cut off, at '
+        '$scale× in ${window.width.round()}×${window.height.round()} on '
+        '${platform.name}', (tester) async {
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      ignoreOtherPages();
+      // A journey of four rides, with other routes' departures to choose from,
+      // after one with a moved stop, an alert and a stay-seated ride.
+      for (final plan in [
+        fakePlan(),
+        TransitPlan.fromJson(connectionsPlanJson()),
+      ]) {
+        picker = Picker();
+        picker.transit.immediately = plan;
+        // Opened on transit, as the tabs may be out of reach at the largest sizes.
+        await picker.store.settings.set(lastTravelMode, TravelMode.transit);
+        await picker.open(tester, size: window, platform: platform);
+        await tester.tap(find.text('Trip details'));
+        await tester.pumpAndSettle();
+        expect(find.byType(TripDetailsPage), findsOneWidget);
+        final sheet = SheetScaffold.controllerOf(
+          tester.element(find.byType(TripDetailsPage)),
+        );
+        void check(String state) {
+          expect(tester.takeException(), isNull, reason: state);
+          _expectNoTextCutOff(tester, state, page: TripDetailsPage);
+        }
+
+        check('opened');
+        sheet.animateTo(const SheetAnchor.full());
+        await tester.pumpAndSettle();
+        check('full');
+        final scrollable = find
+            .descendant(
+              of: find.byType(TripDetailsPage),
+              matching: find.byType(Scrollable),
+            )
+            .first;
+        // Down through all of it, a window at a time.
+        final position = tester.state<ScrollableState>(scrollable).position;
+        for (
+          var step = 0;
+          step < 100 && position.pixels < position.maxScrollExtent - 0.5;
+          step++
+        ) {
+          position.jumpTo(
+            (position.pixels + window.height / 2).clamp(
+              0,
+              position.maxScrollExtent,
+            ),
+          );
+          await tester.pump();
+          check('scrolled to ${position.pixels.round()}');
+        }
+      }
     });
   }
 

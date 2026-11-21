@@ -2,6 +2,7 @@
 // overview's "or" badges, and a journey's departure tiles as planned, with a later first
 // ride chosen, and with no connection.
 import 'package:cardinal/directions/connections.dart';
+import 'package:cardinal/directions/journey_list.dart';
 import 'package:cardinal/directions/transit_details.dart';
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/directions/transit_timeline.dart';

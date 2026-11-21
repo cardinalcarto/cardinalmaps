@@ -27,6 +27,44 @@ const double roomyTextScale = 1.5;
 /// them, take the roomier layout. By the scale alone, never by what fits.
 bool isRoomyText(TextScaler scaler) => scaler.scale(16) / 16 >= roomyTextScale;
 
+/// How tall [lines] lines of text in [style] are at [context]'s text scale: what a
+/// line that may be empty reserves, so nothing moves when its text comes.
+double textLinesHeight(BuildContext context, TextStyle style, {int lines = 1}) {
+  final painter = TextPainter(
+    text: TextSpan(
+      text: List.filled(lines, ' ').join('\n'),
+      style: DefaultTextStyle.of(context).style.merge(style),
+    ),
+    textDirection: Directionality.of(context),
+    textScaler: MediaQuery.textScalerOf(context),
+  )..layout();
+  final height = painter.height;
+  painter.dispose();
+  return height;
+}
+
+/// [child], a line of text in [style], shrunk to fit the width it's given rather than
+/// cut off or wrapped, in the room a line of that style takes at full size: it's as
+/// tall whatever it says, so nothing under it moves when what it says changes.
+class FittedLine extends StatelessWidget {
+  const FittedLine({
+    super.key,
+    required this.style,
+    required this.child,
+    this.alignment = AlignmentDirectional.centerStart,
+  });
+
+  final TextStyle? style;
+  final AlignmentGeometry alignment;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: textLinesHeight(context, style ?? const TextStyle()),
+    child: FittedBox(fit: BoxFit.scaleDown, alignment: alignment, child: child),
+  );
+}
+
 /// How a row of the list is laid out: one height for every row of every way of
 /// traveling, which depends only on the platform, the theme's text and how far the
 /// system scales it.
@@ -61,20 +99,8 @@ class OptionRowMetrics {
     final arrival = text.bodySmall!.copyWith(color: muted);
     final name = text.titleSmall!;
     final caption = text.bodySmall!.copyWith(color: muted);
-    final base = DefaultTextStyle.of(context).style;
-    double lines(TextStyle style, int count) {
-      final painter = TextPainter(
-        text: TextSpan(
-          text: List.filled(count, ' ').join('\n'),
-          style: base.merge(style),
-        ),
-        textDirection: Directionality.of(context),
-        textScaler: scaler,
-      )..layout();
-      final height = painter.height;
-      painter.dispose();
-      return height;
-    }
+    double lines(TextStyle style, int count) =>
+        textLinesHeight(context, style, lines: count);
 
     return OptionRowMetrics._(
       roomy: roomy,
@@ -172,8 +198,9 @@ class OptionRowMetrics {
 /// What every row of the list is drawn in: its place in the list, [OptionRowMetrics]
 /// tall, with [child] in a rounded fill, and the shadow it casts while it's held away
 /// from its place.
-class _RowFrame extends StatelessWidget {
-  const _RowFrame({
+class OptionRowFrame extends StatelessWidget {
+  const OptionRowFrame({
+    super.key,
     required this.metrics,
     required this.selected,
     required this.child,
@@ -442,7 +469,7 @@ class OptionRow extends StatelessWidget {
       label: [duration, arrival, ?name, ...facts].join(', '),
       excludeSemantics: true,
       onTap: onTap,
-      child: _RowFrame(
+      child: OptionRowFrame(
         metrics: metrics,
         selected: selected,
         onTap: onTap,
@@ -581,7 +608,7 @@ class OptionPlaceholder extends StatelessWidget {
       ),
     );
     return ExcludeSemantics(
-      child: _RowFrame(
+      child: OptionRowFrame(
         metrics: metrics,
         selected: false,
         child: Column(
@@ -624,7 +651,7 @@ class OptionMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return _RowFrame(
+    return OptionRowFrame(
       metrics: metrics,
       selected: false,
       child: LayoutBuilder(
@@ -648,7 +675,8 @@ class OptionMessage extends StatelessWidget {
 
 /// The rows of a street way of traveling, each in a [SheetSlot] the sheet can hold
 /// above its buttons: the routes, or placeholders while they're [loading], or
-/// [message] in the first row's place when there are none.
+/// [message] in the first row's place when there are none. Transit's placeholders and
+/// its message are a list of these with no routes, in a [group] of its own.
 ///
 /// The slots are the list's, not the routes': the row in a slot fades into whatever
 /// takes its place (another way's route, a placeholder, the message), so a row held
@@ -667,6 +695,7 @@ class OptionList extends StatefulWidget {
     required this.opening,
     required this.reveal,
     required this.onSelect,
+    this.group,
   });
 
   /// How many rows stand for routes on their way.
@@ -675,8 +704,14 @@ class OptionList extends StatefulWidget {
   /// How many rows the sheet first opens to show, if there are as many.
   static const shownAtFirst = 3;
 
-  /// The ID of the slot of the row at [index], for [SheetContent.held].
-  static Object slotId(int index) => (#directionsOption, index);
+  /// The ID of the slot of the row at [index] of a list in [group], for
+  /// [SheetContent.held].
+  static Object slotId(int index, {Object? group}) =>
+      (#directionsOption, group, index);
+
+  /// Which list this is, where a page may show two at once, one fading into the
+  /// other: their slots' IDs differ by it.
+  final Object? group;
 
   final List<DirectionsRoute> routes;
 
@@ -691,8 +726,8 @@ class OptionList extends StatefulWidget {
   final DateTime now;
 
   /// The ID of a [SheetSection] that ends under the last row the sheet first opens to
-  /// show.
-  final Object opening;
+  /// show, or null to mark none.
+  final Object? opening;
 
   /// Fades the rows in, and out, with the rest of what the page shows around its
   /// content.
@@ -707,7 +742,8 @@ class OptionList extends StatefulWidget {
       : routes.length;
 
   /// The slot the sheet holds: the selected route's, or the first.
-  Object get held => slotId(loading || routes.isEmpty ? 0 : selected);
+  Object get held =>
+      slotId(loading || routes.isEmpty ? 0 : selected, group: group);
 
   @override
   State<OptionList> createState() => _OptionListState();
@@ -793,7 +829,7 @@ class _OptionListState extends State<OptionList>
         for (var i = 0; i < _slots; i++) ...[
           SheetSlot(
             key: ValueKey(i),
-            id: OptionList.slotId(i),
+            id: OptionList.slotId(i, group: widget.group),
             child: SizedBox(
               height: metrics.height,
               child: FadeTransition(
@@ -808,10 +844,10 @@ class _OptionListState extends State<OptionList>
             ),
           ),
           // Its end is the end of the last row the sheet first opens to show.
-          if (i == opening - 1)
+          if (widget.opening case final id? when i == opening - 1)
             SheetSection(
               key: const ValueKey(#opening),
-              id: widget.opening,
+              id: id,
               child: const SizedBox(width: double.infinity),
             ),
         ],
