@@ -62,6 +62,23 @@ Color liveColor(ThemeData theme) => theme.brightness == Brightness.dark
     ? const Color(0xff7fd99a)
     : const Color(0xff1b7a3a);
 
+/// The colors of something to take note of that isn't an error, such as a stop that
+/// has moved or a service alert: a notice's fill, the text and icons on it, and an
+/// icon on the surface.
+({Color container, Color onContainer, Color icon}) warningColors(
+  ThemeData theme,
+) => theme.brightness == Brightness.dark
+    ? const (
+        container: Color(0xff4a3600),
+        onContainer: Color(0xffffdf9e),
+        icon: Color(0xfff0bd5a),
+      )
+    : const (
+        container: Color(0xfffdf0d8),
+        onContainer: Color(0xff4a2e00),
+        icon: Color(0xff8a5300),
+      );
+
 /// A clock time as the rider's settings show it, at a stop's UTC offset if it's known.
 String clock(BuildContext context, DateTime time, {int? utcOffset}) {
   final local = utcOffset == null
@@ -85,22 +102,22 @@ int? journeyUtcOffset(Journey journey) =>
   final muted = theme.colorScheme.onSurfaceVariant;
   if (!ride.realtime) return (text: 'Scheduled', color: muted, live: false);
   if (ride.tripState == 'added' || ride.tripState == 'replaced') {
-    return (text: 'Live: changed trip', color: liveColor(theme), live: true);
+    return (text: 'Live · changed trip', color: liveColor(theme), live: true);
   }
   final delay = ride.boarding.departureDelay ?? ride.delaySeconds ?? 0;
   final minutes = (delay.abs() / 60).round();
   if (minutes == 0) {
-    return (text: 'Live: on time', color: liveColor(theme), live: true);
+    return (text: 'Live · on time', color: liveColor(theme), live: true);
   }
   if (delay > 0) {
     return (
-      text: 'Live: $minutes min late',
+      text: 'Live · $minutes min late',
       color: theme.colorScheme.error,
       live: true,
     );
   }
   return (
-    text: 'Live: $minutes min early',
+    text: 'Live · $minutes min early',
     color: liveColor(theme),
     live: true,
   );
@@ -126,32 +143,32 @@ class StopMovedBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final warning = warningColors(theme);
     final name = notice.stopName ?? 'This stop';
     final header = notice.header;
     final description = notice.description;
     return Container(
       margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
-        color: scheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
+        color: warning.container,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.wrong_location, size: 20, color: scheme.onErrorContainer),
+          Icon(Icons.wrong_location, size: 18, color: warning.onContainer),
           const SizedBox(width: 8),
           Expanded(
             child: DefaultTextStyle.merge(
-              style: TextStyle(color: scheme.onErrorContainer),
+              style: TextStyle(color: warning.onContainer),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     '$name has moved',
                     style: theme.textTheme.labelLarge?.copyWith(
-                      color: scheme.onErrorContainer,
+                      color: warning.onContainer,
                     ),
                   ),
                   if (header != null)

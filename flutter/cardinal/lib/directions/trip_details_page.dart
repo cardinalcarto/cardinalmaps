@@ -222,7 +222,6 @@ class _TripDetailsPageState extends State<TripDetailsPage> {
             child: JourneyHeader(
               chain: chain,
               now: now,
-              units: units,
               onBack: () => context.pop(),
             ),
           ),

@@ -30,6 +30,16 @@ import 'transit_timeline.dart';
 /// vehicle, and how long it's on the streets, getting to, between and from stops.
 List<String> journeyFacts(Journey journey) {
   final transfers = journey.rides.length - 1;
+  return [
+    if (transfers == 1) '1 transfer',
+    if (transfers > 1) '$transfers transfers',
+    ?streetTime(journey),
+  ];
+}
+
+/// How long [journey] is on the streets, getting to, between and from stops, and how:
+/// "15 min walking", "8 min cycling", "12 min by wheelchair". Null for under a minute.
+String? streetTime(Journey journey) {
   final streets = journey.legs.whereType<StreetLeg>();
   final seconds = streets.fold(0, (sum, leg) => sum + leg.duration);
   final by = switch (streets.firstOrNull?.mode) {
@@ -37,11 +47,8 @@ List<String> journeyFacts(Journey journey) {
     'wheelchair' => 'by wheelchair',
     _ => 'walking',
   };
-  return [
-    if (transfers == 1) '1 transfer',
-    if (transfers > 1) '$transfers transfers',
-    if ((seconds / 60).round() > 0) '${formatDuration(seconds.toDouble())} $by',
-  ];
+  if ((seconds / 60).round() <= 0) return null;
+  return '${formatDuration(seconds.toDouble())} $by';
 }
 
 /// A transit journey as a row, line for line a street route's ([OptionRow]): when to

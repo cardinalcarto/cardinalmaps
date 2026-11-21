@@ -362,6 +362,43 @@ alone either way. A ride's title, which is above its departures, keeps the room 
 longest headsign among them, so it wraps freely and still doesn't move when another
 departure is chosen.
 
+### Trip details, redesigned
+
+As built from the redesign boards (TripOpen, TripWhole, TripExpanded, TripLater,
+TripNoConnection). The page does what it did; only how it looks changed.
+
+- The header has no title. Back, then "Go in N min" with the journey's duration at the
+  right in the primary color; under it the clock range, the transfers and the time on
+  the streets in the picker row's words ("15 min walking", "8 min cycling", "12 min by
+  wheelchair"). Then the timeline and a divider (none on iOS, as on Steps). With no
+  connection the line starts "11:50 PM – no connection" in the error color and there's
+  no duration. The line keeps the room the widest times or no connection would take,
+  so the header is as tall whatever is chosen.
+- The rail is a 6 px bar in the route's color with rounded ends, from the ride's title
+  to where it's left. Boarding and alighting stops are white dots ringed in the route
+  color, stops between small white dots on the bar. Walks are dotted, waits a thin grey
+  line. The big vehicle icon at the title is gone; a stay-on-board row keeps a ringed
+  seat marker where the color changes.
+- Stop times sit at the row's end, in a slot as wide as any time, cross-fading. A live
+  time is in the live color. Where it differs from the schedule, the scheduled time
+  comes first, small, muted and struck through; a row above a ride's departures keeps
+  room for one when any of its departures is live, so choosing one never re-wraps it.
+- A ride's title is its badge, headsign, and "agency · kind". Its riding time moved to
+  the stops toggle: "11 stops · 28 min", or "1 stop".
+- Departure tiles are outlined, radius 12; the chosen one has a 2 px primary border and
+  a tonal fill, drawn over the tile so nothing in it moves. Missed and canceled ones
+  are flat and muted, and can't be chosen. Lines: the route badge when the departures
+  are of several routes, the countdown (live mark and color when real-time) or the
+  clock time, the clock time with " · 2 min late" or " · 1 min early", and the label.
+  There's no "Departures" caption. The tiles scroll to the screen's edge.
+- Under them, a wrapping row of chips: the live status first and tinted (live color,
+  or the error container when late, canceled or skipped), "Scheduled" plain; then
+  wheelchair access, occupancy, bikes when cycling to stops, and the day's last in the
+  error tint. Vehicle numbers aren't shown. Alerts follow, a row each, at least 44 px,
+  their descriptions a tap away.
+- A walk is "Walk 6 min · 0.3 mi" with a chevron, its steps below; a moved stop's notice
+  stays above it. Waits, changes, the ends and No connection keep what they say.
+
 ## Transit refresh
 
 Nothing re-plans a trip by itself, and the recalculate button is gone, so:

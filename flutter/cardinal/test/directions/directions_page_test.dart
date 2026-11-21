@@ -2059,8 +2059,8 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        await tester.ensureVisible(find.text('2 stops before'));
-        await tester.tap(find.text('2 stops before'));
+        await tester.ensureVisible(find.textContaining('2 stops · '));
+        await tester.tap(find.textContaining('2 stops · '));
         await tester.pumpAndSettle();
         expect(find.text('Aurora Bridge'), findsOneWidget);
         expect(find.text('Dexter Ave N'), findsOneWidget);
@@ -2254,12 +2254,20 @@ void main() {
         );
         expect(sheetOf(tester).restingAt, const SheetAnchor.fraction(0.4));
         expect(scrolled(tester, TripDetailsPage), 0);
+        // From its top: its back button, and when to go.
         expect(
           find.descendant(
             of: find.byType(JourneyHeader),
-            matching: find.text('Trip details'),
+            matching: find.byTooltip('Back'),
           ),
           findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: find.byType(JourneyHeader),
+            matching: find.textContaining('Go '),
+          ),
+          findsWidgets,
         );
       });
 

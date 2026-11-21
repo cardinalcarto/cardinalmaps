@@ -1,6 +1,7 @@
 // Screenshots of a transit journey's connections, for review: see `render.dart`. The
 // overview's "or" badges, and a journey's departure tiles as planned, with a later first
-// ride chosen, and with no connection.
+// ride chosen, and with no connection; and a journey with a late live ride, its alert
+// and walk opened.
 import 'package:cardinal/directions/connections.dart';
 import 'package:cardinal/directions/journey_list.dart';
 import 'package:cardinal/directions/transit_details.dart';
@@ -49,12 +50,7 @@ class _DetailsState extends State<_Details> {
   Widget build(BuildContext context) => CustomScrollView(
     slivers: [
       SliverToBoxAdapter(
-        child: JourneyHeader(
-          chain: _chain,
-          now: at(0),
-          units: UnitSystem.imperial,
-          onBack: () {},
-        ),
+        child: JourneyHeader(chain: _chain, now: at(0), onBack: () {}),
       ),
       JourneyItinerary(
         chain: _chain,
@@ -170,5 +166,30 @@ void main() {
     );
     await _laterFirstRide(tester);
     await screenshot(tester, 'connections-4-details-no-connection');
+  });
+
+  testWidgets('details, a late live ride, its alert open', (tester) async {
+    // The 40 runs 4 minutes late, with a full vehicle and an alert that says more.
+    final json = fakePlanJson();
+    final legs = ((json['journeys']! as List).single as Map)['legs']! as List;
+    final bus = legs[1] as Map<String, Object?>;
+    ((bus['alerts']! as List).single as Map)['description'] = [
+      {
+        'text':
+            'Buses use 3rd Ave between Mercer and Denny while Westlake Ave '
+            'is closed.',
+      },
+    ];
+    bus['vehicle'] = {'id': '4321', 'occupancy': 'many_seats_available'};
+    await _app(
+      tester,
+      const Size(_width, 1500),
+      _Details(TransitPlan.fromJson(json).journeys.single),
+    );
+    await tester.tap(find.text('Route 40 detoured'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('Walk 5 min'));
+    await tester.pumpAndSettle();
+    await screenshot(tester, 'connections-5-details-late-alert');
   });
 }

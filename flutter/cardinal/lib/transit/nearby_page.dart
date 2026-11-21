@@ -925,6 +925,7 @@ class CountdownNumber extends StatelessWidget {
     this.unitStyle,
     this.liveSize = 14,
     this.alignment = Alignment.centerRight,
+    this.liveColored = false,
   });
 
   final Countdown? countdown;
@@ -941,6 +942,9 @@ class CountdownNumber extends StatelessWidget {
   /// Where a number fading out sits under the one fading in.
   final AlignmentGeometry alignment;
 
+  /// Whether a live time's number is in the live color too, not only its mark.
+  final bool liveColored;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -953,6 +957,8 @@ class CountdownNumber extends StatelessWidget {
         ? _dimmed(theme)
         : struck
         ? theme.colorScheme.onSurfaceVariant
+        : liveColored && c?.status == DepartureStatus.live
+        ? liveColor(theme)
         : theme.colorScheme.onSurface;
     final decoration = struck ? TextDecoration.lineThrough : null;
     final minutes = c?.minutesUntil ?? 0;

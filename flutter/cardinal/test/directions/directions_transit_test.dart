@@ -1099,14 +1099,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('1 stop before'), findsOneWidget);
+      expect(find.textContaining('1 stop · '), findsOneWidget);
       final question = await refreshDue(tester);
       await tester.pump(structureSettle);
       question.answer.complete(planOf(['-x']));
       await tester.pumpAndSettle();
       // Asked again of the new plan, and what was known stands in meanwhile.
       expect(picker.transit.rides, hasLength(2));
-      expect(find.text('1 stop before'), findsOneWidget);
+      expect(find.textContaining('1 stop · '), findsOneWidget);
     });
 
     testWidgets('returns to the journeys if the new plan hasn\'t its '
