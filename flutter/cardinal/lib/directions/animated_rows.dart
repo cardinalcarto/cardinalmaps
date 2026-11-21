@@ -151,16 +151,19 @@ class _RowSlotState extends State<_RowSlot>
   }
 
   @override
+  // SizeTransition and AnimatedSize loosen the width they pass down, which would
+  // center a row narrower than the list (a stay-on-board row, say) and its rail with
+  // it, so each row is given the list's whole width.
   Widget build(BuildContext context) => SizeTransition(
     sizeFactor: _curve,
-    alignment: Alignment.topCenter,
+    alignment: Alignment.topLeft,
     child: FadeTransition(
       opacity: _curve,
       child: AnimatedSize(
         duration: rowDuration,
         curve: rowCurve,
-        alignment: Alignment.topCenter,
-        child: widget.child,
+        alignment: Alignment.topLeft,
+        child: SizedBox(width: double.infinity, child: widget.child),
       ),
     ),
   );

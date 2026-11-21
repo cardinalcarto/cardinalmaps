@@ -356,12 +356,26 @@ void main() {
     testWidgets('a stay-seated ride goes on as the next route, in one ride', (
       tester,
     ) async {
-      await tester.binding.setSurfaceSize(const Size(400, 2400));
+      await tester.binding.setSurfaceSize(const Size(900, 2400));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await itinerary(tester, journey);
       expect(find.text('Stay on board'), findsOneWidget);
       expect(find.text('At 3rd Ave & Pike St it continues as'), findsOneWidget);
       expect(find.text('to Rainier Beach'), findsOneWidget);
+      // Its row spans the list as the others do, so its rail lines up with theirs
+      // however short its text: on a wide screen, its lines don't fill the row.
+      Finder rowOf(Finder text) => find
+          .ancestor(
+            of: text,
+            matching: find.byWidgetPredicate(
+              (w) => w.runtimeType.toString() == '_RailRow',
+            ),
+          )
+          .first;
+      final seat = tester.getRect(rowOf(find.text('Stay on board')));
+      final departures = tester.getRect(rowOf(find.text('Departures').first));
+      expect(seat.left, departures.left);
+      expect(seat.width, departures.width);
       // Each trip's stops between are a tap away.
       expect(find.text('3rd Ave & Pike St'), findsNothing);
     });
