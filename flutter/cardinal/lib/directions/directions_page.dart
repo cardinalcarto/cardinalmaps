@@ -33,6 +33,7 @@ import '../ui/adaptive.dart';
 import '../ui/haptics.dart';
 import '../units.dart';
 import 'callouts.dart';
+import 'connections.dart';
 import 'directions.dart';
 import 'format.dart';
 import 'route_source.dart';
@@ -144,6 +145,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
 
   /// The transit journey the map shows.
   Journey? _shownJourney;
+
+  /// The departures chosen of the open journey's rides, if they've been worked out.
+  ConnectionChain? _chain;
 
   List<SavedPlace> _saved = const [];
 
@@ -507,7 +511,10 @@ class _DirectionsPageState extends State<DirectionsPage> {
   /// enough for the map to show it.
   void _openJourney(int index) {
     _directions!.selectJourney(index);
-    setState(() => _journeyOpen = true);
+    setState(() {
+      _journeyOpen = true;
+      _chain = null;
+    });
     _animateAfterFrame(_detailsAnchor);
   }
 
@@ -812,16 +819,24 @@ class _DirectionsPageState extends State<DirectionsPage> {
     ];
   }
 
-  /// A transit journey's legs in detail, under a header to go back to the journeys.
+  /// A transit journey's legs in detail, under a header to go back to the journeys,
+  /// with the departures chosen of its rides: kept, as far as they can be, when the
+  /// journey is planned again.
   List<Widget> _journeySlivers(Directions directions, Journey journey) {
     final units = _units.onDevice;
     final now = DateTime.now();
+    final chain = switch (_chain) {
+      final chain? when identical(chain.journey, journey) => chain,
+      final chain? => chain.rebase(journey),
+      null => ConnectionChain(journey),
+    };
+    _chain = chain;
     return [
       SliverToBoxAdapter(
         child: SheetSection(
           id: _journeySummary,
           child: JourneyHeader(
-            journey: journey,
+            chain: chain,
             now: now,
             units: units,
             onBack: _closeJourney,
@@ -829,7 +844,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
         ),
       ),
       JourneyItinerary(
-        journey: journey,
+        chain: chain,
+        onSelect: (ride, departure) =>
+            setState(() => _chain = chain.select(ride, departure)),
         start: directions.from?.label ?? 'Start',
         destination: directions.to?.label ?? 'Destination',
         units: units,
