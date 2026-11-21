@@ -3,12 +3,15 @@ import 'dart:math' as math;
 
 import 'package:cupertino_ui/cupertino_ui.dart'
     show CupertinoActivityIndicator, CupertinoButton;
+import 'package:cardinal/directions/connections.dart';
+import 'package:cardinal/directions/directions_page.dart';
 import 'package:cardinal/directions/mode_tabs.dart';
 import 'package:cardinal/directions/option_row.dart';
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/transit_plan.dart';
 import 'package:cardinal/directions/transit_timeline.dart';
 import 'package:cardinal/directions/transit_details.dart';
+import 'package:cardinal/directions/trip_details_page.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/overlays.dart';
 import 'package:cardinal/map/route_layer.dart';
@@ -1900,6 +1903,200 @@ void main() {
             .firstWhere((f) => (f['properties']! as Map)['role'] == 'ride');
         expect((ride['properties']! as Map)['color'], '#00857C');
       });
+
+      /// Chooses the 17:52, and has its leg arrive.
+      Future<void> chooseLater(WidgetTester tester) async {
+        await choose(tester, 't40c');
+        transit.rides.last.answer.complete(
+          fakeRideLeg('t40c', later, departure: fakeStart + 1320),
+        );
+        await tester.pumpAndSettle();
+        expect(rideLines().first, later);
+      }
+
+      /// The departures the open journey takes.
+      ConnectionChain shownChain(WidgetTester tester) => tester
+          .widget<JourneyHeader>(
+            find.byType(JourneyHeader, skipOffstage: false),
+          )
+          .chain;
+
+      testWidgets('re-times the rest of the journey', (tester) async {
+        await openJourney(tester);
+        expect(shownChain(tester).suggested, isTrue);
+        final leaving = shownChain(tester).departure;
+        await choose(tester, 't40c');
+        await tester.pumpAndSettle();
+        final chain = shownChain(tester);
+        expect(chain.rides.first.departure?.tripId, 't40c');
+        expect(chain.suggested, isFalse);
+        // Later, so it's time to leave later.
+        expect(chain.departure.isAfter(leaving), isTrue);
+      });
+
+      testWidgets('is drawn no more once back at the journeys', (tester) async {
+        await openJourney(tester);
+        await chooseLater(tester);
+        // The header is scrolled out of view.
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(rideLines().first, planned);
+      });
+
+      testWidgets('is the plan\'s again when the journey opens again, and its '
+          'leg isn\'t asked for again', (tester) async {
+        await openJourney(tester);
+        await chooseLater(tester);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
+        await tester.pumpAndSettle();
+        expect(shownChain(tester).suggested, isTrue);
+        expect(rideLines().first, planned);
+        await choose(tester, 't40c');
+        expect(rideLines().first, later);
+        expect(transit.rides, hasLength(1));
+      });
+
+      testWidgets('a new plan returns to the journeys, where they were left', (
+        tester,
+      ) async {
+        await openTransit(tester);
+        final sheet = SheetScaffold.controllerOf(
+          tester.element(find.text('From')),
+        );
+        final extent = sheet.extent;
+        await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
+        await tester.pumpAndSettle();
+        await chooseLater(tester);
+
+        // Getting to stops follows the default, so transit is asked again.
+        await store.settings.set(wheelchairByDefault, true);
+        await tester.pumpAndSettle();
+        expect(transit.asked.last.access, TransitAccess.wheelchair);
+        expect(find.byType(JourneyHeader), findsNothing);
+        expect(find.byType(JourneyRow), findsNWidgets(2));
+        expect(sheet.extent, moreOrLessEquals(extent));
+        // The new plan's journey, as the plan has it.
+        expect(rideLines().first, planned);
+      });
+
+      testWidgets('with no journey in the new plan, returns to the journeys, '
+          'which say why', (tester) async {
+        await openJourney(tester);
+        transit.immediately = emptyPlan('no_egress');
+        await store.settings.set(wheelchairByDefault, true);
+        await tester.pumpAndSettle();
+        expect(find.byType(JourneyHeader), findsNothing);
+        expect(find.byType(JourneyRow), findsNothing);
+        expect(find.textContaining('No stops within'), findsOneWidget);
+        expect(rideLines(), isEmpty);
+      });
+    });
+
+    group('Trip details', () {
+      SheetController sheetOf(WidgetTester tester) =>
+          SheetScaffold.controllerOf(
+            tester.element(find.byType(ModeTabs, skipOffstage: false)),
+          );
+
+      /// How far [page]'s content is scrolled.
+      double scrolled(WidgetTester tester, Type page) => tester
+          .state<ScrollableState>(
+            find
+                .descendant(
+                  of: find.byType(page),
+                  matching: find.byType(Scrollable),
+                )
+                .first,
+          )
+          .position
+          .pixels;
+
+      /// Shows ten journeys, full, the list scrolled some way down.
+      Future<GoRouter> openScrolled(WidgetTester tester) async {
+        transit.immediately = fakePlan(journeys: 10);
+        final router = await open(tester);
+        await tester.tap(find.byIcon(Icons.directions_transit));
+        await tester.pumpAndSettle();
+        sheetOf(tester).animateTo(const SheetAnchor.full());
+        await tester.pumpAndSettle();
+        await tester.drag(find.byType(JourneyRow).at(2), const Offset(0, -150));
+        await tester.pumpAndSettle();
+        expect(scrolled(tester, DirectionsPage), greaterThan(0));
+        return router;
+      }
+
+      Future<void> openJourney(WidgetTester tester) async {
+        await tester.tap(find.byType(JourneyRow).at(4).hitTestable());
+      }
+
+      testWidgets('opens from the journey\'s top, with it from its first '
+          'frame, at 40%', (tester) async {
+        final router = await openScrolled(tester);
+        await openJourney(tester);
+        // The page is built a frame or so after the tap, and has the journey from
+        // the first frame it's built in.
+        for (var frames = 0; frames < 3; frames++) {
+          await tester.pump();
+          if (find.byType(TripDetailsPage).evaluate().isNotEmpty) break;
+        }
+        expect(find.byType(TripDetailsPage), findsOneWidget);
+        expect(find.byType(JourneyHeader), findsOneWidget);
+        expect(find.byType(JourneyItinerary), findsOneWidget);
+        await tester.pumpAndSettle();
+        expect(
+          router.state.uri.toString(),
+          tripDetailsLocation(destination.id),
+        );
+        expect(sheetOf(tester).restingAt, const SheetAnchor.fraction(0.4));
+        expect(scrolled(tester, TripDetailsPage), 0);
+        expect(find.text('Trip details'), findsOneWidget);
+      });
+
+      for (final how in ['its back button', 'the system\'s back']) {
+        testWidgets('back by $how returns to the journeys, the sheet and the '
+            'list where they were left', (tester) async {
+          final router = await openScrolled(tester);
+          final sheet = sheetOf(tester);
+          // Lowered into the free range, the list still scrolled.
+          await tester.drag(find.text('From'), const Offset(0, 100));
+          await tester.pumpAndSettle();
+          expect(sheet.restingIn, isNotNull);
+          final extent = sheet.extent;
+          final offset = scrolled(tester, DirectionsPage);
+          expect(offset, greaterThan(0));
+          List<Rect> rows() => [
+            for (var i = 0; i < find.byType(JourneyRow).evaluate().length; i++)
+              tester.getRect(find.byType(JourneyRow).at(i)),
+          ];
+          final before = rows();
+
+          await openJourney(tester);
+          await tester.pumpAndSettle();
+          if (how == 'its back button') {
+            await tester.tap(find.byTooltip('Back'));
+          } else {
+            await tester.binding.handlePopRoute();
+          }
+          await tester.pumpAndSettle();
+          expect(
+            router.state.uri.toString(),
+            directionsLocation(destination.id),
+          );
+          expect(sheet.extent, moreOrLessEquals(extent));
+          expect(scrolled(tester, DirectionsPage), offset);
+          expect(rows(), before);
+        });
+      }
+
+      testWidgets('restored without its journey is directions', (tester) async {
+        final router = await open(tester);
+        router.go(tripDetailsLocation(destination.id));
+        await tester.pumpAndSettle();
+        expect(router.state.uri.toString(), directionsLocation(destination.id));
+      });
     });
 
     testWidgets('a journey opens in detail, and back returns to the list', (
@@ -1972,17 +2169,22 @@ void main() {
         expect(sheet.isAtMax, isTrue);
       });
 
-      testWidgets('back from a journey goes full, and is free to move', (
-        tester,
-      ) async {
+      testWidgets('back from a journey rests where it was left, and is free to '
+          'move', (tester) async {
         await openTransit(tester);
         final sheet = sheetOf(tester);
+        // Somewhere in the free range, below full.
+        await tester.drag(find.text('From'), const Offset(0, 120));
+        await tester.pumpAndSettle();
+        expect(sheet.restingIn, isNotNull);
+        expect(sheet.isAtMax, isFalse);
+        final extent = sheet.extent;
         await tester.tap(find.textContaining('5:30 PM – 6:15 PM'));
         await tester.pumpAndSettle();
 
         await tester.tap(find.byTooltip('Back'));
         await tester.pumpAndSettle();
-        expect(sheet.isAtMax, isTrue);
+        expect(sheet.extent, moreOrLessEquals(extent));
         expect(sheet.restingIn, isNotNull);
         expect(sheet.isDraggable, isTrue);
       });

@@ -30,19 +30,18 @@ import '../store/store.dart';
 import '../ui/adaptive.dart';
 import '../units.dart';
 import 'callouts.dart';
-import 'connections.dart';
 import 'departure_legs.dart';
 import 'directions.dart';
 import 'format.dart';
 import 'mode_tabs.dart';
 import 'option_row.dart';
 import 'route_source.dart';
-import 'transit_details.dart';
 import 'transit_plan.dart';
 import 'transit_sheet.dart';
 import 'transit_timeline.dart';
 import 'trip_buttons.dart';
 import 'trip_card.dart';
+import 'trip_details_page.dart';
 
 /// Directions to the place with [to], as a choice among the ways to get there: the
 /// trip's two ends, a tab for each way of traveling with its best time, and that way's
@@ -73,8 +72,8 @@ import 'trip_card.dart';
 /// | showing a street way | Steps | the steps page, pushed; back returns here, the sheet where it was |
 /// | showing a street way | Start | navigating the selected route |
 /// | showing a street way | transit's tab is tapped | transit's journeys, with no held row and no buttons |
-/// | showing transit journeys | a journey is tapped | its legs in detail, the sheet at 40% so the map shows it |
-/// | showing a journey | back, or a new plan | the journeys, the sheet full |
+/// | showing transit journeys | a journey is tapped | its Trip details, pushed: the journey from its top, the sheet at 40% so the map shows it |
+/// | Trip details showing | back, a new plan, or transit asked again | the journeys, the sheet and the list where they were left |
 ///
 /// The sheet rests at two anchors, each with the held row above the buttons: with
 /// only the handle over it, and with the ends and tabs over it. From the second up it
@@ -97,19 +96,6 @@ class _DirectionsPageState extends State<DirectionsPage>
 
   /// Ends under the last row the sheet first opens to show.
   static const _opening = #directionsOpening;
-  static const _journeySummary = #directionsJourneySummary;
-
-  /// Where a transit journey's details rest: low enough for the map to show its shape.
-  static const _detailsAnchor = SheetAnchor.fraction(0.4);
-
-  /// From the details anchor up, the sheet rests wherever it's let go, with no anchor
-  /// at the top to spring to, and a fling up carries on into scrolling the journey, so
-  /// reading through it is one long scroll.
-  static const _detailsRange = SheetRange(
-    _detailsAnchor,
-    SheetAnchor.full(),
-    carriesIntoScroll: true,
-  );
 
   /// How often the times that follow the clock are shown again: when a route
   /// arrives, how long until a journey does, and "Go in".
@@ -122,7 +108,8 @@ class _DirectionsPageState extends State<DirectionsPage>
     gravity: double.infinity,
   );
 
-  /// From there up, as for a journey's details.
+  /// From there up the sheet rests wherever it's let go, with no anchor at the top to
+  /// spring to, and a fling up carries on into scrolling the list.
   static const _tripRange = SheetRange(
     _headerAnchor,
     SheetAnchor.full(),
@@ -180,21 +167,12 @@ class _DirectionsPageState extends State<DirectionsPage>
   /// The end being edited, if one is.
   RouteField? _editing;
 
-  /// Whether the selected transit journey's legs are showing.
-  bool _journeyOpen = false;
-
-  /// How many times a journey has been opened, so each opening scrolls on its own.
-  int _journeyOpens = 0;
-
   /// The transit journey the map shows.
   Journey? _shownJourney;
 
-  /// The departures chosen of the open journey's rides, if they've been worked out.
-  ConnectionChain? _chain;
-
-  /// The legs of the departures chosen other than the plan's, for the map to draw and
-  /// the itinerary to list the stops of.
-  DepartureLegs? _legs;
+  /// The journey open in Trip details, if one is, with the departures chosen of its
+  /// rides and the legs of those other than the plan's, for the map to draw.
+  late final OpenJourney _open;
 
   List<SavedPlace> _saved = const [];
 
@@ -251,13 +229,12 @@ class _DirectionsPageState extends State<DirectionsPage>
       transit: scope.transit,
       location: scope.location,
     )..addListener(_changed);
-    _legs = DepartureLegs(scope.transit)
-      ..addListener(() {
-        if (!mounted) return;
-        // The itinerary lists the stops of one that's arrived.
-        setState(() {});
-        _drawRoutes();
-      });
+    _open = OpenJourney(
+      directions: directions,
+      legs: DepartureLegs(scope.transit),
+    )..addListener(_chainChanged);
+    // The map draws one that's arrived along its own line.
+    _open.legs.addListener(_drawRoutes);
     // The place's card under this page has it, or is fetching it.
     final cached = store.places.cached(widget.to);
     if (cached != null) {
@@ -274,6 +251,7 @@ class _DirectionsPageState extends State<DirectionsPage>
       setState(() => _saved = tree.allPlaces);
     });
     _watchUnits = store.settings.watch(unitSystem).listen((units) {
+      _open.units = units;
       if (units != _units) setState(() => _units = units);
     });
     _taps = routeTaps.stream.listen(directions.select);
@@ -332,7 +310,7 @@ class _DirectionsPageState extends State<DirectionsPage>
       ..setGeoJson(routeCalloutSource, empty)
       ..setGeoJson(transitSource, empty);
     _directions?.dispose();
-    _legs?.dispose();
+    _open.dispose();
     _search?.dispose();
     _focus.dispose();
     _text.dispose();
@@ -381,41 +359,32 @@ class _DirectionsPageState extends State<DirectionsPage>
     }
     final journey = directions.journey;
     if (!identical(journey, _shownJourney)) {
-      if (_journeyOpen &&
+      if (_open.isOpen &&
           (journey == null ||
               directions.plan?.journeys.contains(_shownJourney) != true)) {
-        // A new plan: back to its list.
-        _journeyOpen = false;
-        _animateToTrip();
+        // A new plan: Trip details goes back to its list.
+        _open.close();
       }
       _shownJourney = journey;
       _showJourney();
     }
     // A newer plan of the open journey keeps its choices, as far as it can.
-    if (_journeyOpen && journey != null) _chainOf(journey);
+    if (journey != null) _open.rebase(journey);
     _followChain();
     _drawRoutes();
     _placeCallouts();
     setState(() {});
   }
 
-  /// Springs the sheet to [anchor] once this frame has laid out the content that has it.
-  void _animateAfterFrame(SheetAnchor anchor) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _sheet!.animateTo(anchor);
-    });
-  }
-
-  /// Springs the sheet back to where it rests for the trip, from a journey's details
-  /// or from editing, once the sheet has the trip's anchors: full for transit, whose
-  /// journeys have no row held in view, and to the ends and tabs over the held row
-  /// otherwise.
+  /// Springs the sheet back to where it rests for the trip, from editing, once the
+  /// sheet has the trip's anchors: full for transit, whose journeys have no row held in
+  /// view, and to the ends and tabs over the held row otherwise.
   ///
-  /// A journey's details and editing can rest at full too, so asking for it while
-  /// the sheet still has their anchors would spring it to theirs, which then goes.
+  /// Editing rests at full too, so asking for it while the sheet still has editing's
+  /// anchors would spring it to theirs, which then goes.
   void _animateToTrip() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _editing != null || _journeyOpen) return;
+      if (!mounted || _editing != null) return;
       final sheet = _sheet!;
       if (!sheet.ranges.any((range) => range.range == _tripRange)) {
         _animateToTrip();
@@ -457,20 +426,13 @@ class _DirectionsPageState extends State<DirectionsPage>
     );
   }
 
-  /// The open journey's choices, rebased onto [journey] when that's a newer plan of it.
-  ConnectionChain _chainOf(Journey journey) => _chain = switch (_chain) {
-    final chain? when identical(chain.journey, journey) => chain,
-    final chain? => chain.rebase(journey),
-    null => ConnectionChain(journey),
-  };
-
   /// Has the legs fetched of the departures the open journey takes but the plan's own,
   /// and no others.
   void _followChain() {
     final directions = _directions!;
     final plan = directions.plan;
     if (plan == null) return;
-    _legs!.follow(plan, _journeyOpen ? _chain : null, directions.transitAccess);
+    _open.legs.follow(plan, _open.chain, directions.transitAccess);
   }
 
   /// How the map draws each ride of the open journey that takes another departure than
@@ -479,9 +441,8 @@ class _DirectionsPageState extends State<DirectionsPage>
   /// in the departure's route's colors.
   Map<int, DrawnRide> _chosenRides() {
     final journey = _shownJourney;
-    final chain = _chain;
-    if (!_journeyOpen ||
-        journey == null ||
+    final chain = _open.chain;
+    if (journey == null ||
         chain == null ||
         !identical(chain.journey, journey)) {
       return const {};
@@ -491,7 +452,7 @@ class _DirectionsPageState extends State<DirectionsPage>
       for (final (i, leg) in journey.legs.indexed)
         if (chain.forLeg(i) case final choice?
             when choice.made && !choice.suggested)
-          i: switch (_legs!.legOf(choice, access)) {
+          i: switch (_open.legs.legOf(choice, access)) {
             final fetched? => (shape: fetched.shape, route: fetched.route),
             null => (shape: leg.shape, route: choice.route),
           },
@@ -601,26 +562,18 @@ class _DirectionsPageState extends State<DirectionsPage>
     unawaited(_settings!.set(lastTransitAccess, access));
   }
 
-  /// A journey's tapped: show its legs, and it alone on the map, with the sheet low
-  /// enough for the map to show it.
+  /// A journey's tapped: push its Trip details, which bring the sheet low enough for
+  /// the map to show it, alone.
   void _openJourney(int index) {
-    _directions!.selectJourney(index);
-    setState(() {
-      _journeyOpens++;
-      _journeyOpen = true;
-      _chain = null;
-    });
-    _chainChanged();
-    _animateAfterFrame(_detailsAnchor);
+    final directions = _directions!..selectJourney(index);
+    final journey = directions.journey;
+    if (journey == null) return;
+    _open.open(journey);
+    unawaited(context.push(tripDetailsLocation(widget.to), extra: _open));
   }
 
-  void _closeJourney() {
-    setState(() => _journeyOpen = false);
-    _chainChanged();
-    _animateToTrip();
-  }
-
-  /// The departures chosen changed: fetch the legs they need, and draw them.
+  /// The journey open in Trip details, or the departures chosen of it, changed: fetch
+  /// the legs they need, and draw them.
   void _chainChanged() {
     _followChain();
     _drawRoutes();
@@ -697,47 +650,28 @@ class _DirectionsPageState extends State<DirectionsPage>
   Widget build(BuildContext context) {
     final directions = _directions!;
     final editing = _editing;
-    final journey = _journeyOpen ? directions.journey : null;
     final street = directions.mode != TravelMode.transit;
-    final trip = editing == null && journey == null;
     final list = street ? _optionList(directions) : null;
     // The buttons outlast the trip by as long as they take to fade when an end is
     // edited.
-    final buttons =
-        street && journey == null && (editing == null || !_chrome.isDismissed);
+    final buttons = street && (editing == null || !_chrome.isDismissed);
     return PopScope(
-      canPop: trip,
+      canPop: editing == null,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        if (editing != null) {
-          _stopEditing();
-        } else {
-          _closeJourney();
-        }
+        if (!didPop) _stopEditing();
       },
       child: SheetContent(
         anchors: editing != null
             ? const [SheetAnchor.full()]
-            : journey != null
-            ? const [_detailsAnchor]
             : const [SheetAnchor.footer(), _headerAnchor],
-        freeRanges: editing != null
-            ? const []
-            : journey != null
-            ? const [_detailsRange]
-            : const [_tripRange],
+        freeRanges: editing != null ? const [] : const [_tripRange],
         initialAnchor: 1,
         initialSection: _opening,
         initialMaxFraction: 0.6,
-        // The trip, a journey and editing each scroll on their own: a journey opens
-        // at its top whatever the list was scrolled to, and the list is where it was
-        // left on the way back. Each time a journey opens is new content.
-        scrollId: editing != null
-            ? 'editing'
-            : journey != null
-            ? ('journey', _journeyOpens)
-            : 'trip',
-        held: trip ? list?.held : null,
+        // The trip and editing each scroll on their own: the list is where it was
+        // left on the way back from editing.
+        scrollId: editing != null ? 'editing' : 'trip',
+        held: editing == null ? list?.held : null,
         footer: buttons
             ? FadeTransition(
                 opacity: _chrome,
@@ -760,8 +694,6 @@ class _DirectionsPageState extends State<DirectionsPage>
             : null,
         slivers: editing != null
             ? _editingSlivers(editing)
-            : journey != null
-            ? _journeySlivers(directions, journey)
             : [
                 _header(directions),
                 if (list != null)
@@ -916,44 +848,6 @@ class _DirectionsPageState extends State<DirectionsPage>
           ),
         ),
       ],
-    ];
-  }
-
-  /// A transit journey's legs in detail, under a header to go back to the journeys,
-  /// with the departures chosen of its rides: kept, as far as they can be, when the
-  /// journey is planned again.
-  List<Widget> _journeySlivers(Directions directions, Journey journey) {
-    final units = _units.onDevice;
-    final now = DirectionsScope.of(context).clock();
-    final chain = _chainOf(journey);
-    return [
-      SliverToBoxAdapter(
-        child: SheetSection(
-          id: _journeySummary,
-          child: JourneyHeader(
-            chain: chain,
-            now: now,
-            units: units,
-            onBack: _closeJourney,
-          ),
-        ),
-      ),
-      JourneyItinerary(
-        chain: chain,
-        fetched: [
-          for (final choice in chain.rides)
-            _legs!.legOf(choice, directions.transitAccess),
-        ],
-        onSelect: (ride, departure) {
-          setState(() => _chain = chain.select(ride, departure));
-          _chainChanged();
-        },
-        start: directions.from?.label ?? 'Start',
-        destination: directions.to?.label ?? 'Destination',
-        units: units,
-        access: directions.transitAccess,
-        now: now,
-      ),
     ];
   }
 

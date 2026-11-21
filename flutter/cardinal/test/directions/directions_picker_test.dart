@@ -944,7 +944,9 @@ void main() {
       expect(extentOf(sheet, footerAnchor), lessThan(60));
     });
 
-    testWidgets('a journey opens in the page, as before', (tester) async {
+    testWidgets('a journey opens its Trip details over the page', (
+      tester,
+    ) async {
       await picker.open(tester);
       await showMode(tester, TravelMode.transit);
       await moveTo(tester, const SheetAnchor.full());
