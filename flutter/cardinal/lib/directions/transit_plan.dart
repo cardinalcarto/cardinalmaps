@@ -275,6 +275,10 @@ class TransitLeg extends JourneyLeg {
       ],
       departures = _departures(json);
 
+  /// The leg of a ride lookup's answer (`POST /transit/ride`): its `ride`.
+  static TransitLeg decodeRide(List<int> body) =>
+      TransitLeg.fromJson(_map(_map(jsonDecode(utf8.decode(body)))['ride']));
+
   static List<RideDeparture> _departures(Map<String, Object?> json) {
     final own = [
       for (final a in _list(json['alerts'])) LegAlert.fromJson(_map(a)),

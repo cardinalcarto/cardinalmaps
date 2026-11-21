@@ -15,13 +15,40 @@ class TransitQuestion {
   final answer = Completer<TransitPlan>();
 }
 
-/// Transit plans answered by the test, or at once with [immediately] if it's set.
+/// A departure's leg [FakeTransit] was asked for, waiting to be answered.
+class RideQuestion {
+  RideQuestion(this.query, this.access, this.abort);
+
+  final RideQuery query;
+  final TransitAccess access;
+  final Future<void>? abort;
+  final answer = Completer<TransitLeg>();
+
+  /// Whether the asker has given up on the answer.
+  var aborted = false;
+}
+
+/// Transit plans answered by the test, or at once with [immediately] if it's set; and
+/// departures' legs, answered by the test.
 class FakeTransit implements TransitSource {
   FakeTransit({this.immediately});
 
   TransitPlan? immediately;
   final asked = <TransitQuestion>[];
+  final rides = <RideQuestion>[];
   var prepared = 0;
+
+  @override
+  Future<TransitLeg> ride({
+    required RideQuery query,
+    required TransitAccess access,
+    Future<void>? abort,
+  }) {
+    final question = RideQuestion(query, access, abort);
+    unawaited(abort?.then((_) => question.aborted = true));
+    rides.add(question);
+    return question.answer.future;
+  }
 
   @override
   void prepare() => prepared++;
@@ -40,6 +67,32 @@ class FakeTransit implements TransitSource {
     return question.answer.future;
   }
 }
+
+/// A ride lookup's leg on [trip] along [line] (`[[lng, lat], ...]`), from its first
+/// point to its last, leaving at [departure] and taking [ride] seconds, on [route] if
+/// it's given.
+TransitLeg fakeRideLeg(
+  String trip,
+  List<List<double>> line, {
+  required int departure,
+  int ride = 1200,
+  Map<String, Object?>? route,
+}) => TransitLeg.fromJson({
+  'accessibility': 'accessible',
+  'departure': departure,
+  'arrival': departure + ride,
+  'duration_seconds': ride,
+  'wait_seconds': 0,
+  'realtime': false,
+  'route': ?route,
+  'trip': {'trip_id': trip, 'start_date': '20261109'},
+  'stops': [
+    _stop('first', line.first[0], line.first[1], departure),
+    _stop('last', line.last[0], line.last[1], departure + ride),
+  ],
+  'shape': polyline6(line),
+  'alerts': <Object>[],
+});
 
 /// 2026-11-09 17:30 in Seattle (UTC-8), in POSIX seconds.
 const fakeStart = 1794792600;

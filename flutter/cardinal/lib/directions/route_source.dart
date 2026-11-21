@@ -125,7 +125,41 @@ abstract class TransitSource {
     required LngLat to,
     Future<void>? abort,
   });
+
+  /// The leg of a departure [query] names, of a ride a plan got to and from stops by
+  /// [access]: as the plan's leg on it would be, with its stops and its line. Throws as
+  /// [plan] does; a departure that isn't there is a [TransitPlanError] of kind
+  /// `unknown_trip` (or `unknown_stop`), and one real-time data has since taken away
+  /// `departure_canceled` or `departure_skipped`.
+  Future<TransitLeg> ride({
+    required RideQuery query,
+    required TransitAccess access,
+    Future<void>? abort,
+  });
 }
+
+/// One of a ride's departures, by what the plan gave of the ride and of it: the feed
+/// of the ride's stops, its boarding and alighting stops, and the departure's run and
+/// when it leaves the boarding stop (which tells a frequency trip's runs apart).
+typedef RideQuery = ({
+  String feed,
+  String boardStopId,
+  String alightStopId,
+  String tripId,
+  String startDate,
+  DateTime departure,
+});
+
+/// The router's request for [query], getting to and from stops by [access].
+Map<String, Object?> rideRequest(RideQuery query, TransitAccess access) => {
+  'feed': query.feed,
+  'board_stop_id': query.boardStopId,
+  'alight_stop_id': query.alightStopId,
+  'trip_id': query.tripId,
+  'start_date': query.startDate,
+  'departure': query.departure.millisecondsSinceEpoch ~/ 1000,
+  'mode': access.mode,
+};
 
 /// Why a transit plan, or another question to the transit router, failed.
 class TransitPlanError implements Exception {
@@ -374,6 +408,39 @@ class OfflineTransitSource implements TransitSource {
       '${feeds.length} new real-time messages)',
     );
     return TransitPlan.decode(transitAnswer(response));
+  }
+
+  @override
+  Future<TransitLeg> ride({
+    required RideQuery query,
+    required TransitAccess access,
+    Future<void>? abort,
+  }) async {
+    final cancel = TransitCancel();
+    unawaited(abort?.then((_) => cancel.cancel()));
+    return abortable(_ride(query, access, cancel), abort);
+  }
+
+  Future<TransitLeg> _ride(
+    RideQuery query,
+    TransitAccess access,
+    TransitCancel cancel,
+  ) async {
+    final area = await needOfflineArea(_area);
+    await area.transit;
+    // What has arrived since the plan, without waiting for more: the plan was just made.
+    final feeds = _realtime(area).arrived().feeds;
+    final request = utf8.encode(jsonEncode(rideRequest(query, access)));
+    final watch = Stopwatch()..start();
+    final response = await area.useTransit(
+      (transit) => transit.ride(request: request, feeds: feeds, cancel: cancel),
+    );
+    debugPrint(
+      'cardinal-timing: transit ride ${access.mode} '
+      '${watch.elapsedMilliseconds} ms (${response.status}, '
+      '${feeds.length} new real-time messages)',
+    );
+    return TransitLeg.decodeRide(transitAnswer(response));
   }
 }
 
