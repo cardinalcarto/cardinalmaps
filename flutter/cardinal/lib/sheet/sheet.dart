@@ -8,6 +8,8 @@
 /// - [SheetSlot] marks a part of the content that can be held in view as the rest of
 ///   it passes behind ([SheetContent.held]).
 /// - [SheetBuilder] rebuilds as the sheet moves, with a [SheetView] of where it is.
+/// - [SheetLog] says where each release took the sheet and why, in a build that asks
+///   for it.
 library;
 
 import 'dart:async';
@@ -28,6 +30,7 @@ part 'src/content.dart';
 part 'src/controller.dart';
 part 'src/geometry.dart';
 part 'src/held.dart';
+part 'src/log.dart';
 part 'src/page.dart';
 part 'src/physics.dart';
 part 'src/scaffold.dart';

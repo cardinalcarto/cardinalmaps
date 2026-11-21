@@ -320,18 +320,42 @@ class SheetController extends ChangeNotifier
     ValueChanged<double>? carryOn,
   }) {
     if (!isHeldBy(holder)) return;
-    if (carryOn != null && _carryIntoScroll(velocity, carryOn)) return;
-    _settle(velocity);
+    final from = extent;
+    final decision =
+        (carryOn == null ? null : _carryIntoScroll(velocity, carryOn)) ??
+        _settle(velocity);
+    if (SheetLog.enabled) {
+      debugPrint(
+        SheetLog.release(
+          extent: from,
+          velocity: velocity,
+          anchors: _anchors,
+          ranges: _ranges,
+          decision: decision,
+          content: holder is _SheetScrollPosition,
+          carries: carryOn != null,
+          finger: _finger,
+        ),
+      );
+      _finger = null;
+    }
   }
+
+  /// How fast the finger that last lifted from the sheet was moving, for [SheetLog].
+  VelocityEstimate? _finger;
 
   /// Called with the speed left when a glide reaches the highest anchor.
   ValueChanged<double>? _carryOn;
 
   /// Glides the sheet up to the top of a range, as high as it goes, at [velocity], then
   /// hands what's left of its speed to [carryOn], if the range lets it and the fling
-  /// would carry it that far: from within the range, or into it from below.
-  bool _carryIntoScroll(double velocity, ValueChanged<double> carryOn) {
-    if (velocity < _physics.minFlingVelocity || _anchors.isEmpty) return false;
+  /// would carry it that far: from within the range, or into it from below. Null if
+  /// not.
+  SheetDecision? _carryIntoScroll(
+    double velocity,
+    ValueChanged<double> carryOn,
+  ) {
+    if (velocity < _physics.minFlingVelocity || _anchors.isEmpty) return null;
     final top = _max;
     bool carries(ResolvedRange r) =>
         r.range.carriesIntoScroll && (r.upper - top).abs() < _epsilon;
@@ -343,15 +367,24 @@ class SheetController extends ChangeNotifier
       final entered = _entered(velocity);
       if (entered != null && carries(entered)) range = entered;
     }
-    if (range == null) return false;
-    if (_physics.landing(extent, velocity) <= top + _epsilon) {
-      return false;
-    }
+    if (range == null) return null;
+    final landing = _physics.landing(extent, velocity);
+    if (landing <= top + _epsilon) return null;
+    final decision = SheetDecision.range(
+      SheetRule.carriedIntoScroll,
+      range,
+      range.upper,
+      landing: landing,
+      at: top,
+      arrival: SheetLog.enabled
+          ? _physics.speedAt(extent, velocity, top)
+          : null,
+    );
     _wheelSettle?.cancel();
     _spring.stop();
     _settlingTo = null;
     _glideIn(range, velocity, carryOn: carryOn);
-    return true;
+    return decision;
   }
 
   /// The range a release at [velocity] glides into from outside every range (see
@@ -371,10 +404,12 @@ class SheetController extends ChangeNotifier
     });
   }
 
-  void _settle(double velocity) {
+  /// Sets the sheet on its way to where it rests from here, let go at [velocity], and
+  /// says where that is and why: null on a page with no anchors, which rests nowhere.
+  SheetDecision? _settle(double velocity) {
     if (_anchors.isEmpty) {
       _phase = _Phase.idle;
-      return;
+      return null;
     }
     final decision = _physics.decide(_anchors, _ranges, extent, velocity);
     // Pulled down past the bottom of a range, with no anchor from here up to it: back
@@ -395,19 +430,28 @@ class SheetController extends ChangeNotifier
           if (a.extent < bottom.lower - _epsilon) a,
         ResolvedAnchor(end, bottom.lower, end.gravity ?? _physics.gravity),
       ];
-      final i = _physics.target(stops, extent, velocity);
-      if (i == stops.length - 1) {
-        _springTo(_InRange(bottom.range, 0), bottom.lower, velocity);
-      } else {
-        _catchOn(stops[i], velocity);
+      final caught = _physics._catch(stops, extent, velocity);
+      if (caught.anchor != stops.last) {
+        _catchOn(caught.anchor!, velocity);
+        return caught;
       }
-      return;
+      _springTo(_InRange(bottom.range, 0), bottom.lower, velocity);
+      return SheetDecision.range(
+        caught.rule,
+        bottom,
+        bottom.lower,
+        landing: caught.landing,
+        at: caught.at,
+        arrival: caught.arrival,
+        gravity: caught.gravity,
+      );
     }
     if (decision.range case final range?) {
       _glideTo(range, decision.extent, velocity);
     } else {
       _catchOn(decision.anchor!, velocity);
     }
+    return decision;
   }
 
   /// Settles on [target], let go at [velocity]. A fling that would carry the sheet past

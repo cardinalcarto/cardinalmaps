@@ -171,7 +171,9 @@ class SheetPhysics {
           SheetRule.caughtAtAnchor,
           anchor,
           landing: landing,
+          at: anchor.extent,
           arrival: arrival,
+          gravity: anchor.gravity,
         );
       }
     }
@@ -179,7 +181,9 @@ class SheetPhysics {
       SheetRule.passedAllAnchors,
       ahead.last,
       landing: landing,
+      at: ahead.last.extent,
       arrival: arrival,
+      gravity: ahead.last.gravity,
     );
   }
 
@@ -290,18 +294,25 @@ class SheetPhysics {
     if ((landing - near) * direction <= _epsilon) {
       return _catch(anchors, extent, velocity);
     }
+    ResolvedAnchor? last;
     for (final anchor in _ahead(anchors, extent, direction)) {
       if ((anchor.extent - near) * direction > _epsilon) break;
       if (speedAt(extent, velocity, anchor.extent) < anchor.gravity) {
         return _catch(anchors, extent, velocity);
       }
+      last = anchor;
     }
     return SheetDecision.range(
       SheetRule.glideIntoRange,
       next,
       landing.clamp(next.lower, next.upper),
       landing: landing,
+      at: near,
       arrival: speedAt(extent, velocity, near),
+      // The anchor at the end, if there is one.
+      gravity: last != null && (last.extent - near).abs() <= _epsilon
+          ? last.gravity
+          : null,
     );
   }
 
@@ -366,6 +377,12 @@ enum SheetRule {
 
   /// A fling that reaches every anchor ahead at its gravity or faster: the last.
   passedAllAnchors,
+
+  /// A fling up that would carry the sheet past the top of a range that
+  /// [SheetRange.carriesIntoScroll], let go by something that can scroll the content
+  /// on: the top of that range, with the speed left handed on. It's the controller
+  /// that decides this, before it asks [SheetPhysics.decide].
+  carriedIntoScroll,
 }
 
 /// Where a release takes the sheet, and the rule that decided (see
@@ -377,7 +394,9 @@ class SheetDecision {
     this.rule,
     ResolvedAnchor this.anchor, {
     required this.landing,
+    this.at,
     this.arrival,
+    this.gravity,
   }) : range = null,
        _extent = null;
 
@@ -387,7 +406,9 @@ class SheetDecision {
     ResolvedRange this.range,
     double extent, {
     required this.landing,
+    this.at,
     this.arrival,
+    this.gravity,
   }) : anchor = null,
        _extent = extent;
 
@@ -407,8 +428,15 @@ class SheetDecision {
   /// [SheetPhysics.landing]).
   final double landing;
 
-  /// How fast, in logical pixels per second, the fling is still going where the rule
-  /// weighed it: at the anchor that caught it, at the last anchor it passed, or at the
-  /// near end of the range it glides into. Null where no speed was weighed.
+  /// Where the rule weighed the fling's speed: at the anchor that caught it, at the
+  /// last anchor it passed, at the near end of the range it glides into, or at the top
+  /// it carries into scroll from. Null where no speed was weighed.
+  final double? at;
+
+  /// How fast, in logical pixels per second, the fling is still going [at] there.
   final double? arrival;
+
+  /// The gravity of the anchor [at] there, which [arrival] was weighed against, or
+  /// null if no anchor is there.
+  final double? gravity;
 }

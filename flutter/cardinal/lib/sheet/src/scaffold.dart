@@ -399,40 +399,43 @@ class _SheetScaffoldState extends State<SheetScaffold>
                     builder: backdrop,
                   ),
                 RepaintBoundary(
-                  child: GestureDetector(
-                    onVerticalDragStart: (_) => controller.hold(),
-                    onVerticalDragUpdate: (details) =>
-                        controller.dragBy(-details.primaryDelta!),
-                    onVerticalDragEnd: (details) =>
-                        controller.release(-details.primaryVelocity!),
-                    onVerticalDragCancel: () => controller.release(0),
-                    child: _SheetSurface(
-                      controller: controller,
-                      geometry: geometry,
-                      extent: _paintExtent,
-                      color: color,
-                      translucent: widget.backdrop != null,
-                      shadowColor: theme.colorScheme.shadow,
-                      elevation: widget.elevation,
-                      handle: _DragHandle(controller: controller),
-                      content: RepaintBoundary(
-                        child: Material(
-                          type: MaterialType.transparency,
-                          child: MediaQuery.removePadding(
-                            context: context,
-                            removeTop: true,
-                            removeBottom: true,
-                            removeLeft: true,
-                            removeRight: true,
-                            child: ScrollConfiguration(
-                              // Drag with a mouse too, as with a finger.
-                              behavior: ScrollConfiguration.of(context)
-                                  .copyWith(
-                                    dragDevices: PointerDeviceKind.values
-                                        .toSet(),
-                                    scrollbars: false,
-                                  ),
-                              child: widget.sheet,
+                  child: _withFingerLog(
+                    controller,
+                    GestureDetector(
+                      onVerticalDragStart: (_) => controller.hold(),
+                      onVerticalDragUpdate: (details) =>
+                          controller.dragBy(-details.primaryDelta!),
+                      onVerticalDragEnd: (details) =>
+                          controller.release(-details.primaryVelocity!),
+                      onVerticalDragCancel: () => controller.release(0),
+                      child: _SheetSurface(
+                        controller: controller,
+                        geometry: geometry,
+                        extent: _paintExtent,
+                        color: color,
+                        translucent: widget.backdrop != null,
+                        shadowColor: theme.colorScheme.shadow,
+                        elevation: widget.elevation,
+                        handle: _DragHandle(controller: controller),
+                        content: RepaintBoundary(
+                          child: Material(
+                            type: MaterialType.transparency,
+                            child: MediaQuery.removePadding(
+                              context: context,
+                              removeTop: true,
+                              removeBottom: true,
+                              removeLeft: true,
+                              removeRight: true,
+                              child: ScrollConfiguration(
+                                // Drag with a mouse too, as with a finger.
+                                behavior: ScrollConfiguration.of(context)
+                                    .copyWith(
+                                      dragDevices: PointerDeviceKind.values
+                                          .toSet(),
+                                      scrollbars: false,
+                                    ),
+                                child: widget.sheet,
+                              ),
                             ),
                           ),
                         ),
