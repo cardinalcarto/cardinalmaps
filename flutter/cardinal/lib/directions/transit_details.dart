@@ -1230,10 +1230,30 @@ class _DepartureRangeState extends State<DepartureRange> {
   late final _now = ValueNotifier(widget.now);
   Timer? _tick;
 
+  /// The tiles' row, scrolled so the chosen tile shows: a choice upstream can choose one
+  /// far along the row, out of sight.
+  final _tiles = ScrollController();
+  final _selected = GlobalKey();
+
   @override
   void initState() {
     super.initState();
     _start();
+    _reveal(animate: false);
+  }
+
+  /// Scrolls the tiles' row, and only that row, to the chosen tile after this frame.
+  void _reveal({required bool animate}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final tile = _selected.currentContext?.findRenderObject();
+      if (!mounted || tile == null || !_tiles.hasClients) return;
+      _tiles.position.ensureVisible(
+        tile,
+        alignment: 0.5,
+        duration: animate ? const Duration(milliseconds: 250) : Duration.zero,
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   /// Counts on from [DepartureRange.now], a second at a time.
@@ -1249,11 +1269,17 @@ class _DepartureRangeState extends State<DepartureRange> {
   void didUpdateWidget(DepartureRange oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.now != widget.now) _start();
+    final old = oldWidget.choice.departure;
+    final chosen = widget.choice.departure;
+    if (old?.tripId != chosen?.tripId || old?.startDate != chosen?.startDate) {
+      _reveal(animate: true);
+    }
   }
 
   @override
   void dispose() {
     _tick?.cancel();
+    _tiles.dispose();
     _now.dispose();
     super.dispose();
   }
@@ -1282,6 +1308,7 @@ class _DepartureRangeState extends State<DepartureRange> {
             ValueListenableBuilder(
               valueListenable: _now,
               builder: (context, now, _) => SingleChildScrollView(
+                controller: _tiles,
                 scrollDirection: Axis.horizontal,
                 child: IntrinsicHeight(
                   child: Row(
@@ -1290,7 +1317,9 @@ class _DepartureRangeState extends State<DepartureRange> {
                     children: [
                       for (final (i, d) in departures.indexed)
                         ConnectionTile(
-                          key: ValueKey((d.tripId, d.startDate)),
+                          key: i == choice.index
+                              ? _selected
+                              : ValueKey((d.tripId, d.startDate)),
                           departure: d,
                           route: mixed ? d.route ?? ride.route : null,
                           countdown: Countdown(d, now: now),
