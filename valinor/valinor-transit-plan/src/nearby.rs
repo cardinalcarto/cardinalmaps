@@ -11,8 +11,8 @@
 //!   past midnight are handled as they are there.
 //! - Departures are grouped by GTFS route, then into pages by the headsign a rider reads at the
 //!   stop. Two headsigns of a route share a page when, from the page's stop, every pair of
-//!   their trips calls at the same stops until one of them ends, and pages that share a trip
-//!   are one, so no trip is on two pages.
+//!   their trips calls at the same stops until one of them ends, and pages that share a GTFS
+//!   trip are one, so no trip is on two pages.
 //! - A departure is catchable when it leaves at or after the request's time plus the walk to its
 //!   stop, as routing counts a first boarding. A page's stop is the nearest of those where
 //!   its earliest catchable trip can still be caught.

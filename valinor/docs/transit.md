@@ -484,7 +484,9 @@ A nearby request has a `location`; `time` (`now` by default); `mode`, `walking` 
   Seattle" after it, and each headsign alone would be a page at its own stop listing the same
   trips. The page's stop is chosen over all its departures as above, it lists departures from
   that stop only, and its headsigns are those read there, so a rider at Stone Way sees one page
-  under Stone Way's headsign. No trip is listed on two pages of a route.
+  under Stone Way's headsign. No trip is listed on two pages of a route. A stay-seated chain's
+  trips are each a trip of their own: a 44 that reaches Ballard and goes back as a 44 to the
+  University District doesn't join the two directions' pages.
 - Every headsign with a departure that runs starts as a page of its own. Then, in rounds until a
   round changes nothing:
   1. Pages are taken in a fixed order, most distinct catchable trips that run first, then by

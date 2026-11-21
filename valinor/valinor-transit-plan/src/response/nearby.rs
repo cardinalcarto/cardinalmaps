@@ -422,12 +422,34 @@ fn same_way_from(
     })
 }
 
+/// One original GTFS trip of a run: what pages that share a trip have in common.
+///
+/// A stay-seated combined trip's [`TripKey`] names its whole chain of original trips, which may
+/// turn around at a terminus and come back the other way under another headsign (King County
+/// Metro's 44 to Ballard goes on as a 44 to the University District). Those are different
+/// trips to a rider, so the boarded trip's last position on the combined trip's pattern tells
+/// them apart; on a trip that isn't combined, it's the same for every boarding.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct OriginalTrip {
+    key: TripKey,
+    end: u32,
+}
+
+impl OriginalTrip {
+    fn of(seen: &Seen) -> Self {
+        Self {
+            key: seen.candidate.key,
+            end: seen.end,
+        }
+    }
+}
+
 /// What [`route_pages`] reads of each of a route's headsigns.
 struct HeadsignTrips {
-    /// The distinct trips that run under each headsign, at any reachable stop.
-    running: Vec<HashSet<TripKey>>,
-    /// The distinct trips under each headsign, whether they run or not.
-    all: Vec<HashSet<TripKey>>,
+    /// The distinct original trips that run under each headsign, at any reachable stop.
+    running: Vec<HashSet<OriginalTrip>>,
+    /// The distinct original trips under each headsign, whether they run or not.
+    all: Vec<HashSet<OriginalTrip>>,
 }
 
 impl HeadsignTrips {
@@ -435,24 +457,24 @@ impl HeadsignTrips {
         let mut running = vec![HashSet::new(); route.headsigns.len()];
         let mut all = vec![HashSet::new(); route.headsigns.len()];
         for seen in &route.seen {
-            all[seen.headsign].insert(seen.candidate.key);
+            all[seen.headsign].insert(OriginalTrip::of(seen));
             if seen.runs() {
-                running[seen.headsign].insert(seen.candidate.key);
+                running[seen.headsign].insert(OriginalTrip::of(seen));
             }
         }
         Self { running, all }
     }
 
-    /// How many distinct trips run under any of `members`.
+    /// How many distinct original trips run under any of `members`.
     fn running_count(&self, members: &[usize]) -> usize {
-        let mut trips: HashSet<TripKey> = HashSet::new();
+        let mut trips: HashSet<OriginalTrip> = HashSet::new();
         for &member in members {
             trips.extend(&self.running[member]);
         }
         trips.len()
     }
 
-    /// Whether two sets of headsigns have a trip in common, whether it runs or not.
+    /// Whether two sets of headsigns have an original trip in common, whether it runs or not.
     fn share_a_trip(&self, a: &[usize], b: &[usize]) -> bool {
         a.iter().any(|&one| {
             b.iter()
@@ -486,7 +508,7 @@ fn joined_pages(
         .iter()
         .filter(|s| s.stop == stop && s.runs() && members.contains(&s.headsign))
         .collect();
-    let listed_trips: HashSet<TripKey> = there.iter().map(|s| s.candidate.key).collect();
+    let listed_trips: HashSet<OriginalTrip> = there.iter().map(|&s| OriginalTrip::of(s)).collect();
     let lists = |page: &[usize]| there.iter().any(|s| page.contains(&s.headsign));
     let is_there = |member: usize| {
         there.iter().any(|s| s.headsign == member) || !trips.all[member].is_disjoint(&listed_trips)
@@ -514,8 +536,9 @@ fn headsign_order(a: Option<&str>, b: Option<&str>) -> core::cmp::Ordering {
 ///    the same way as ([`joined_pages`]), at the stop the two would then have; or else stays.
 ///    Every pair of headsigns is compared, so two that each go the same way as a third but not
 ///    as each other stay apart.
-/// 2. Pages that share a trip, running or not, become one, transitively: a trip whose
-///    headsign changes along its route is one vehicle, which is on one page.
+/// 2. Pages that share an original trip ([`OriginalTrip`]), running or not, become one,
+///    transitively: a trip whose headsign changes along its route is one vehicle, which is on
+///    one page. A stay-seated vehicle's later trip back the other way is another trip.
 ///
 /// Each round only merges pages, so it ends; and since the order in each round depends only
 /// on the pages, not on the order departures were found in, so does the answer. Departures
