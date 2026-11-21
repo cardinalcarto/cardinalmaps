@@ -2646,13 +2646,43 @@ impl SseDecode for crate::api::directions::DirectionsRoute {
         let mut var_distance = <f64>::sse_decode(deserializer);
         let mut var_duration = <f64>::sse_decode(deserializer);
         let mut var_steps = <Vec<crate::api::directions::DirectionsStep>>::sse_decode(deserializer);
+        let mut var_roadNames = <Vec<String>>::sse_decode(deserializer);
+        let mut var_hasToll = <bool>::sse_decode(deserializer);
+        let mut var_hasFerry = <bool>::sse_decode(deserializer);
+        let mut var_hasMotorway = <bool>::sse_decode(deserializer);
+        let mut var_runs = <Vec<crate::api::directions::DirectionsRun>>::sse_decode(deserializer);
         let mut var_navigable = <NavigableRoute>::sse_decode(deserializer);
         return crate::api::directions::DirectionsRoute {
             geometry: var_geometry,
             distance: var_distance,
             duration: var_duration,
             steps: var_steps,
+            road_names: var_roadNames,
+            has_toll: var_hasToll,
+            has_ferry: var_hasFerry,
+            has_motorway: var_hasMotorway,
+            runs: var_runs,
             navigable: var_navigable,
+        };
+    }
+}
+
+impl SseDecode for crate::api::directions::DirectionsRun {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_duration = <f64>::sse_decode(deserializer);
+        let mut var_distance = <f64>::sse_decode(deserializer);
+        let mut var_speed = <f64>::sse_decode(deserializer);
+        let mut var_motorway = <bool>::sse_decode(deserializer);
+        let mut var_toll = <bool>::sse_decode(deserializer);
+        let mut var_ferry = <bool>::sse_decode(deserializer);
+        return crate::api::directions::DirectionsRun {
+            duration: var_duration,
+            distance: var_distance,
+            speed: var_speed,
+            motorway: var_motorway,
+            toll: var_toll,
+            ferry: var_ferry,
         };
     }
 }
@@ -2663,10 +2693,12 @@ impl SseDecode for crate::api::directions::DirectionsStep {
         let mut var_instruction = <String>::sse_decode(deserializer);
         let mut var_distance = <f64>::sse_decode(deserializer);
         let mut var_duration = <f64>::sse_decode(deserializer);
+        let mut var_roadName = <Option<String>>::sse_decode(deserializer);
         return crate::api::directions::DirectionsStep {
             instruction: var_instruction,
             distance: var_distance,
             duration: var_duration,
+            road_name: var_roadName,
         };
     }
 }
@@ -2815,6 +2847,20 @@ impl SseDecode for Vec<crate::api::directions::DirectionsRoute> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<crate::api::directions::DirectionsRoute>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::directions::DirectionsRun> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::directions::DirectionsRun>::sse_decode(
                 deserializer,
             ));
         }
@@ -4253,6 +4299,11 @@ impl flutter_rust_bridge::IntoDart for crate::api::directions::DirectionsRoute {
             self.distance.into_into_dart().into_dart(),
             self.duration.into_into_dart().into_dart(),
             self.steps.into_into_dart().into_dart(),
+            self.road_names.into_into_dart().into_dart(),
+            self.has_toll.into_into_dart().into_dart(),
+            self.has_ferry.into_into_dart().into_dart(),
+            self.has_motorway.into_into_dart().into_dart(),
+            self.runs.into_into_dart().into_dart(),
             self.navigable.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -4270,12 +4321,38 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::directions::DirectionsRoute>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::directions::DirectionsRun {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.duration.into_into_dart().into_dart(),
+            self.distance.into_into_dart().into_dart(),
+            self.speed.into_into_dart().into_dart(),
+            self.motorway.into_into_dart().into_dart(),
+            self.toll.into_into_dart().into_dart(),
+            self.ferry.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::directions::DirectionsRun
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::directions::DirectionsRun>
+    for crate::api::directions::DirectionsRun
+{
+    fn into_into_dart(self) -> crate::api::directions::DirectionsRun {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::directions::DirectionsStep {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.instruction.into_into_dart().into_dart(),
             self.distance.into_into_dart().into_dart(),
             self.duration.into_into_dart().into_dart(),
+            self.road_name.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5376,7 +5453,24 @@ impl SseEncode for crate::api::directions::DirectionsRoute {
         <f64>::sse_encode(self.distance, serializer);
         <f64>::sse_encode(self.duration, serializer);
         <Vec<crate::api::directions::DirectionsStep>>::sse_encode(self.steps, serializer);
+        <Vec<String>>::sse_encode(self.road_names, serializer);
+        <bool>::sse_encode(self.has_toll, serializer);
+        <bool>::sse_encode(self.has_ferry, serializer);
+        <bool>::sse_encode(self.has_motorway, serializer);
+        <Vec<crate::api::directions::DirectionsRun>>::sse_encode(self.runs, serializer);
         <NavigableRoute>::sse_encode(self.navigable, serializer);
+    }
+}
+
+impl SseEncode for crate::api::directions::DirectionsRun {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <f64>::sse_encode(self.duration, serializer);
+        <f64>::sse_encode(self.distance, serializer);
+        <f64>::sse_encode(self.speed, serializer);
+        <bool>::sse_encode(self.motorway, serializer);
+        <bool>::sse_encode(self.toll, serializer);
+        <bool>::sse_encode(self.ferry, serializer);
     }
 }
 
@@ -5386,6 +5480,7 @@ impl SseEncode for crate::api::directions::DirectionsStep {
         <String>::sse_encode(self.instruction, serializer);
         <f64>::sse_encode(self.distance, serializer);
         <f64>::sse_encode(self.duration, serializer);
+        <Option<String>>::sse_encode(self.road_name, serializer);
     }
 }
 
@@ -5507,6 +5602,16 @@ impl SseEncode for Vec<crate::api::directions::DirectionsRoute> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::directions::DirectionsRoute>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::directions::DirectionsRun> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::directions::DirectionsRun>::sse_encode(item, serializer);
         }
     }
 }

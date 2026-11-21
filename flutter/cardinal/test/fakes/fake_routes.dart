@@ -123,6 +123,11 @@ DirectionsRoute fakeRoute(
   distance: distance,
   duration: duration,
   steps: steps,
+  roadNames: const [],
+  hasToll: false,
+  hasFerry: false,
+  hasMotorway: false,
+  runs: const [],
   navigable: FakeNavigableRoute(
     navigationSteps: navigationSteps,
     locale: language,

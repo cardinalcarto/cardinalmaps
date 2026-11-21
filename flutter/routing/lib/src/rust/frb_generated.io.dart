@@ -309,6 +309,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DirectionsRoute dco_decode_directions_route(dynamic raw);
 
   @protected
+  DirectionsRun dco_decode_directions_run(dynamic raw);
+
+  @protected
   DirectionsStep dco_decode_directions_step(dynamic raw);
 
   @protected
@@ -349,6 +352,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<DirectionsRoute> dco_decode_list_directions_route(dynamic raw);
+
+  @protected
+  List<DirectionsRun> dco_decode_list_directions_run(dynamic raw);
 
   @protected
   List<DirectionsStep> dco_decode_list_directions_step(dynamic raw);
@@ -835,6 +841,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DirectionsRoute sse_decode_directions_route(SseDeserializer deserializer);
 
   @protected
+  DirectionsRun sse_decode_directions_run(SseDeserializer deserializer);
+
+  @protected
   DirectionsStep sse_decode_directions_step(SseDeserializer deserializer);
 
   @protected
@@ -881,6 +890,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<DirectionsRoute> sse_decode_list_directions_route(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<DirectionsRun> sse_decode_list_directions_run(
     SseDeserializer deserializer,
   );
 
@@ -1458,6 +1472,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_directions_run(DirectionsRun self, SseSerializer serializer);
+
+  @protected
   void sse_encode_directions_step(
     DirectionsStep self,
     SseSerializer serializer,
@@ -1517,6 +1534,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_directions_route(
     List<DirectionsRoute> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_directions_run(
+    List<DirectionsRun> self,
     SseSerializer serializer,
   );
 

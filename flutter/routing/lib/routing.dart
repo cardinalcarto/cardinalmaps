@@ -21,6 +21,7 @@ export 'src/rust/api/directions.dart'
         DirectionsPoint,
         DirectionsRequest,
         DirectionsRoute,
+        DirectionsRun,
         DirectionsStep,
         DistanceUnits,
         NavigableRoute,

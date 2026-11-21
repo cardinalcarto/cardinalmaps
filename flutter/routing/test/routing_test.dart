@@ -93,6 +93,17 @@ void main() {
     expect(best.duration, greaterThan(0));
     expect(best.geometry.length, greaterThan(2));
     expect(best.steps.first.instruction, isNotEmpty);
+    // What the answer says besides: the roads, and the speed profile.
+    expect(best.steps.first.roadName, 'Carrer Doctor Nequí');
+    expect(best.roadNames, ['CG-2']);
+    expect(
+      (best.hasToll, best.hasFerry, best.hasMotorway),
+      (false, false, false),
+    );
+    expect(best.runs.length, inInclusiveRange(10, 50));
+    final ran = best.runs.fold(0.0, (sum, run) => sum + run.duration);
+    expect(ran, closeTo(best.duration, best.duration / 200));
+    expect(best.runs.first.speed, greaterThan(0));
   });
 
   test('navigation follows the route the directions show', () async {

@@ -11,3 +11,4 @@
 
 pub mod api;
 mod frb_generated;
+mod route_details;

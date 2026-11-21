@@ -2558,17 +2558,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DirectionsRoute dco_decode_directions_route(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
     return DirectionsRoute(
       geometry: dco_decode_list_directions_point(arr[0]),
       distance: dco_decode_f_64(arr[1]),
       duration: dco_decode_f_64(arr[2]),
       steps: dco_decode_list_directions_step(arr[3]),
+      roadNames: dco_decode_list_String(arr[4]),
+      hasToll: dco_decode_bool(arr[5]),
+      hasFerry: dco_decode_bool(arr[6]),
+      hasMotorway: dco_decode_bool(arr[7]),
+      runs: dco_decode_list_directions_run(arr[8]),
       navigable:
           dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
-            arr[4],
+            arr[9],
           ),
+    );
+  }
+
+  @protected
+  DirectionsRun dco_decode_directions_run(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return DirectionsRun(
+      duration: dco_decode_f_64(arr[0]),
+      distance: dco_decode_f_64(arr[1]),
+      speed: dco_decode_f_64(arr[2]),
+      motorway: dco_decode_bool(arr[3]),
+      toll: dco_decode_bool(arr[4]),
+      ferry: dco_decode_bool(arr[5]),
     );
   }
 
@@ -2576,12 +2597,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DirectionsStep dco_decode_directions_step(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return DirectionsStep(
       instruction: dco_decode_String(arr[0]),
       distance: dco_decode_f_64(arr[1]),
       duration: dco_decode_f_64(arr[2]),
+      roadName: dco_decode_opt_String(arr[3]),
     );
   }
 
@@ -2676,6 +2698,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<DirectionsRoute> dco_decode_list_directions_route(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_directions_route).toList();
+  }
+
+  @protected
+  List<DirectionsRun> dco_decode_list_directions_run(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_directions_run).toList();
   }
 
   @protected
@@ -3822,6 +3850,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_distance = sse_decode_f_64(deserializer);
     var var_duration = sse_decode_f_64(deserializer);
     var var_steps = sse_decode_list_directions_step(deserializer);
+    var var_roadNames = sse_decode_list_String(deserializer);
+    var var_hasToll = sse_decode_bool(deserializer);
+    var var_hasFerry = sse_decode_bool(deserializer);
+    var var_hasMotorway = sse_decode_bool(deserializer);
+    var var_runs = sse_decode_list_directions_run(deserializer);
     var var_navigable =
         sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
           deserializer,
@@ -3831,7 +3864,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       distance: var_distance,
       duration: var_duration,
       steps: var_steps,
+      roadNames: var_roadNames,
+      hasToll: var_hasToll,
+      hasFerry: var_hasFerry,
+      hasMotorway: var_hasMotorway,
+      runs: var_runs,
       navigable: var_navigable,
+    );
+  }
+
+  @protected
+  DirectionsRun sse_decode_directions_run(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_duration = sse_decode_f_64(deserializer);
+    var var_distance = sse_decode_f_64(deserializer);
+    var var_speed = sse_decode_f_64(deserializer);
+    var var_motorway = sse_decode_bool(deserializer);
+    var var_toll = sse_decode_bool(deserializer);
+    var var_ferry = sse_decode_bool(deserializer);
+    return DirectionsRun(
+      duration: var_duration,
+      distance: var_distance,
+      speed: var_speed,
+      motorway: var_motorway,
+      toll: var_toll,
+      ferry: var_ferry,
     );
   }
 
@@ -3841,10 +3898,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_instruction = sse_decode_String(deserializer);
     var var_distance = sse_decode_f_64(deserializer);
     var var_duration = sse_decode_f_64(deserializer);
+    var var_roadName = sse_decode_opt_String(deserializer);
     return DirectionsStep(
       instruction: var_instruction,
       distance: var_distance,
       duration: var_duration,
+      roadName: var_roadName,
     );
   }
 
@@ -3980,6 +4039,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <DirectionsRoute>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_directions_route(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<DirectionsRun> sse_decode_list_directions_run(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <DirectionsRun>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_directions_run(deserializer));
     }
     return ans_;
   }
@@ -5386,10 +5459,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_f_64(self.distance, serializer);
     sse_encode_f_64(self.duration, serializer);
     sse_encode_list_directions_step(self.steps, serializer);
+    sse_encode_list_String(self.roadNames, serializer);
+    sse_encode_bool(self.hasToll, serializer);
+    sse_encode_bool(self.hasFerry, serializer);
+    sse_encode_bool(self.hasMotorway, serializer);
+    sse_encode_list_directions_run(self.runs, serializer);
     sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNavigableRoute(
       self.navigable,
       serializer,
     );
+  }
+
+  @protected
+  void sse_encode_directions_run(DirectionsRun self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_64(self.duration, serializer);
+    sse_encode_f_64(self.distance, serializer);
+    sse_encode_f_64(self.speed, serializer);
+    sse_encode_bool(self.motorway, serializer);
+    sse_encode_bool(self.toll, serializer);
+    sse_encode_bool(self.ferry, serializer);
   }
 
   @protected
@@ -5401,6 +5490,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.instruction, serializer);
     sse_encode_f_64(self.distance, serializer);
     sse_encode_f_64(self.duration, serializer);
+    sse_encode_opt_String(self.roadName, serializer);
   }
 
   @protected
@@ -5518,6 +5608,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_directions_route(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_directions_run(
+    List<DirectionsRun> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_directions_run(item, serializer);
     }
   }
 
@@ -6350,7 +6452,11 @@ class DirectionsAdapterImpl extends RustOpaque implements DirectionsAdapter {
   /// went wrong.
   ///
   /// Ferrostar's parser reads the routes; the answer is read again only for what it
-  /// leaves out, each step's speed-limit sign and unit.
+  /// leaves out: each step's speed-limit sign and unit and its road, and what the
+  /// intersections' classes and the legs' annotations say of each route, which is
+  /// whether it has tolls, a ferry or a motorway, and its speed profile. The routes
+  /// are named here too, together, so that no two are called the same if their roads
+  /// can tell them apart.
   Future<List<DirectionsRoute>> parse({required List<int> body}) => RustLib
       .instance
       .api
