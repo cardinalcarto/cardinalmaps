@@ -3,10 +3,13 @@ import 'package:cardinal/directions/option_row.dart';
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/directions/speed_profile.dart';
 import 'package:cardinal/directions/transit_timeline.dart';
+import 'package:cardinal/directions/trip_card.dart';
 import 'package:cardinal/map/route_layer.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/sheet/sheet.dart';
+import 'package:cardinal/ui/adaptive.dart';
+import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoListSection;
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart' show LocationPermission;
@@ -955,6 +958,47 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Trip details'), findsOneWidget);
       expect(sheet.restingAt, const SheetAnchor.fraction(0.4));
+    });
+  });
+
+  group('the trip card', () {
+    /// What the card of the trip's ends is filled with.
+    Color? fill(WidgetTester tester) => tester
+        .widget<CupertinoListSection>(
+          find.descendant(
+            of: find.byType(TripCard),
+            matching: find.byType(CupertinoListSection),
+          ),
+        )
+        .decoration!
+        .color;
+
+    for (final brightness in Brightness.values) {
+      testWidgets('is a tint on iOS, as the cards are, '
+          '${brightness.name}', (tester) async {
+        tester.platformDispatcher.platformBrightnessTestValue = brightness;
+        addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+        await picker.open(tester, platform: TargetPlatform.iOS);
+        final context = tester.element(find.byType(TripCard));
+        expect(fill(tester), groupedRowTint(context));
+        expect(fill(tester)!.a, lessThan(1));
+        expect(fill(tester)!.withValues(alpha: 1), groupedRowColor(context));
+      });
+    }
+
+    testWidgets('is a filled card on Android', (tester) async {
+      await picker.open(tester);
+      expect(
+        find.descendant(of: find.byType(TripCard), matching: find.byType(Card)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(TripCard),
+          matching: find.byType(CupertinoListSection),
+        ),
+        findsNothing,
+      );
     });
   });
 }

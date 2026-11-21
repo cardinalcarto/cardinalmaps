@@ -163,7 +163,7 @@ class OptionRowMetrics {
   final dark = theme.brightness == Brightness.dark;
   return (
     selected: scheme.primary.withValues(alpha: dark ? 0.3 : 0.16),
-    plain: groupedRowColor(context).withValues(alpha: 0.7),
+    plain: groupedRowTint(context),
   );
 }
 

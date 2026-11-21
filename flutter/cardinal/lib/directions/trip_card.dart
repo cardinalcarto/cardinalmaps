@@ -13,7 +13,8 @@ import 'directions.dart';
 /// card, outside it, the button that closes directions over the one that swaps the
 /// ends.
 ///
-/// A filled card on Android, a grouped inset one on iOS. A row is at least 44 tall
+/// A filled card on Android, a grouped inset one on iOS, tinted rather than opaque. A
+/// row is at least 44 tall
 /// and grows with the system's text; a place's name stays on one line.
 class TripCard extends StatelessWidget {
   const TripCard({
@@ -92,7 +93,11 @@ class TripCard extends StatelessWidget {
           children: [
             Expanded(
               child: cupertino
-                  ? AppListSection(children: ends)
+                  // A tint, as the sheet is glass while it's low.
+                  ? AppListSection(
+                      color: groupedRowTint(context),
+                      children: ends,
+                    )
                   : Card.filled(
                       margin: EdgeInsets.zero,
                       clipBehavior: Clip.antiAlias,
