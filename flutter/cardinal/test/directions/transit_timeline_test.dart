@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:cardinal/directions/connections.dart';
 import 'package:cardinal/directions/transit_timeline.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +15,7 @@ TimelinePiece piece(TimelineKind kind, int start, int end) =>
     TimelinePiece(kind: kind, start: at(start), end: at(end));
 
 void main() {
+  timelineEases();
   group('pieces', () {
     test('follow the legs, with waits filling the time between', () {
       final journey = fakePlan().journeys.single;
@@ -300,5 +303,61 @@ void main() {
       ).firstWhere((p) => p.ride == 0).route!.name,
       '7',
     );
+  });
+}
+
+void timelineEases() {
+  testWidgets('a timeline following choices eases from one to the next', (
+    tester,
+  ) async {
+    final journey = connectionsJourney();
+    var chain = ConnectionChain(journey);
+    late StateSetter update;
+    TimelineAxis axisOf(ConnectionChain c) =>
+        TimelineAxis(c.departure, c.arrival!);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              update = setState;
+              return JourneyTimeline(
+                journey: journey,
+                chain: chain,
+                axis: axisOf(chain),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    final state = tester.state<JourneyTimelineState>(
+      find.byType(JourneyTimeline),
+    );
+    DrawnPiece ride(int r) =>
+        state.drawn.lastWhere((p) => p.piece.ride == r && p.opacity > 0);
+    final before = ride(0);
+    // A 7 in place of the 40: later, another color, another label.
+    update(() => chain = chain.select(0, 3));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final mid = ride(0);
+    await tester.pumpAndSettle();
+    final after = ride(0);
+    expect(after.piece.route!.name, '7');
+    expect(after.left, isNot(moreOrLessEquals(before.left)));
+    expect(
+      mid.left,
+      inExclusiveRange(
+        math.min(before.left, after.left),
+        math.max(before.left, after.left),
+      ),
+    );
+    expect(mid.color, isNot(before.color));
+    expect(mid.color, isNot(after.color));
+    // The 40's label fading out under the 7's.
+    expect(mid.fromRoute?.name, '40');
+    expect(mid.labelT, inExclusiveRange(0, 1));
+    expect(after.fromRoute, isNull);
   });
 }
