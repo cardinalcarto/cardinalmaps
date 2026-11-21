@@ -247,10 +247,7 @@ List<Rect> slotRects(WidgetTester tester) => [
         (element.renderObject! as RenderBox).size,
 ];
 
-const headerAnchor = SheetAnchor.section(
-  #directionsHeader,
-  gravity: double.infinity,
-);
+const headerAnchor = DirectionsPage.headerAnchor;
 const footerAnchor = SheetAnchor.footer();
 
 /// Where [anchor] rests, in logical pixels of sheet.

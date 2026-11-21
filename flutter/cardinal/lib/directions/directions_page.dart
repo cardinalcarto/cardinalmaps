@@ -106,7 +106,9 @@ const structureSettle = Duration(milliseconds: 400);
 ///
 /// The sheet rests at two anchors, each with the held row above the buttons: with
 /// only the handle over it, and with the ends and tabs over it. From the second up it
-/// rests wherever it's let go. The rows, the placeholders and the message are one
+/// rests wherever it's let go. A fling stops at the second only if it's slow by the
+/// time it gets there ([headerGravity]); otherwise one swipe carries the sheet from the
+/// first up into the list, or from the list down to the first. The rows, the placeholders and the message are one
 /// height in every way, and so are the buttons, so the anchors are the same in every
 /// way and state. Where no row is held, the anchors are the same without it.
 class DirectionsPage extends StatefulWidget {
@@ -115,15 +117,37 @@ class DirectionsPage extends StatefulWidget {
   /// The ID of the place to go to.
   final String to;
 
+  /// The trip's ends and the tabs.
+  static const _headerSection = #directionsHeader;
+
+  /// How hard the sheet's header anchor ([headerAnchor]) holds a fling passing over
+  /// it, in logical pixels per second (see [SheetAnchor.gravity]): a fling still going
+  /// at least this fast when it gets there carries on, down to where only the held
+  /// row and the buttons show or up into the list, and a slower one stops with the
+  /// ends and tabs showing. So one swipe gets between the two, and a gentle one stops
+  /// on the way.
+  ///
+  /// Tuned by feel on the phone, from the sheet library's first default.
+  static const headerGravity = 1200.0;
+
+  /// Where the sheet rests with the ends and tabs showing, over the held row or, where
+  /// no row is held, over the buttons. A waypoint between the sheet's lowest anchor
+  /// and the list, not a guard: see [headerGravity].
+  ///
+  /// The one value for the page's anchors, the end of its range, and whatever moves
+  /// the sheet there or asks whether it's there, as an anchor is the same as another
+  /// only with the same gravity.
+  static const headerAnchor = SheetAnchor.section(
+    _headerSection,
+    gravity: headerGravity,
+  );
+
   @override
   State<DirectionsPage> createState() => _DirectionsPageState();
 }
 
 class _DirectionsPageState extends State<DirectionsPage>
     with TickerProviderStateMixin {
-  /// The trip's ends and the tabs.
-  static const _headerSection = #directionsHeader;
-
   /// Ends under the last row the sheet first opens to show.
   static const _opening = #directionsOpening;
 
@@ -131,17 +155,10 @@ class _DirectionsPageState extends State<DirectionsPage>
   /// arrives, how long until a journey does, and "Go in".
   static const _tick = Duration(seconds: 30);
 
-  /// With the ends and tabs showing, over the held row. Flings always stop here, on
-  /// the way up or down.
-  static const _headerAnchor = SheetAnchor.section(
-    _headerSection,
-    gravity: double.infinity,
-  );
-
-  /// From there up the sheet rests wherever it's let go, with no anchor at the top to
-  /// spring to, and a fling up carries on into scrolling the list.
+  /// From the header anchor up the sheet rests wherever it's let go, with no anchor at
+  /// the top to spring to, and a fling up carries on into scrolling the list.
   static const _tripRange = SheetRange(
-    _headerAnchor,
+    DirectionsPage.headerAnchor,
     SheetAnchor.full(),
     carriesIntoScroll: true,
   );
@@ -985,7 +1002,7 @@ class _DirectionsPageState extends State<DirectionsPage>
     setState(() => _editing = null);
     _chrome.forward();
     _focus.unfocus();
-    _sheet!.animateTo(_headerAnchor);
+    _sheet!.animateTo(DirectionsPage.headerAnchor);
     _scheduleRefresh();
   }
 
@@ -1049,7 +1066,7 @@ class _DirectionsPageState extends State<DirectionsPage>
       child: SheetContent(
         anchors: editing != null
             ? const [SheetAnchor.full()]
-            : const [SheetAnchor.footer(), _headerAnchor],
+            : const [SheetAnchor.footer(), DirectionsPage.headerAnchor],
         freeRanges: editing != null ? const [] : const [_tripRange],
         initialAnchor: 1,
         initialSection: _opening,
@@ -1273,7 +1290,7 @@ class _DirectionsPageState extends State<DirectionsPage>
   /// The trip's ends and the tabs: what shows above the selected row at the header
   /// anchor. It's the same height whatever the tabs say and whichever is selected.
   Widget _header(Directions directions, DateTime now) => SheetSection(
-    id: _headerSection,
+    id: DirectionsPage._headerSection,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
