@@ -41,6 +41,7 @@ import 'transit_details.dart';
 import 'transit_plan.dart';
 import 'transit_sheet.dart';
 import 'transit_timeline.dart';
+import 'trip_buttons.dart';
 import 'trip_card.dart';
 
 /// Directions to the place with [to], as a choice among the ways to get there: the
@@ -356,24 +357,6 @@ class _DirectionsPageState extends State<DirectionsPage>
       _showAll(flat: true);
       _placeCallouts();
     }
-  }
-
-  /// Starts navigating the selected route, and opens the navigation screen over this
-  /// page.
-  void _startNavigation() {
-    final directions = _directions!;
-    final route = directions.selectedRoute;
-    if (route == null) return;
-    NavigationScope.of(context).controller.start(
-      route: route,
-      mode: directions.mode,
-      wheelchair: directions.wheelchair,
-      destinationName: switch (directions.to) {
-        RouteEndpoint(:final place?) => placeTitle(place),
-        _ => null,
-      },
-    );
-    unawaited(context.push(navigationLocation(widget.to)));
   }
 
   /// Opens the selected route's steps over this page.
@@ -760,13 +743,17 @@ class _DirectionsPageState extends State<DirectionsPage>
                 opacity: _chrome,
                 child: IgnorePointer(
                   ignoring: editing != null,
-                  child: _TripButtons(
+                  child: TripButtons(
                     onSteps: directions.selectedRoute == null
                         ? null
                         : _openSteps,
                     onStart: directions.selectedRoute == null
                         ? null
-                        : _startNavigation,
+                        : () => startNavigation(
+                            context,
+                            directions,
+                            to: widget.to,
+                          ),
                   ),
                 ),
               )
@@ -1245,83 +1232,4 @@ class _ChoiceCard extends StatelessWidget {
       onTap: onTap,
     ),
   );
-}
-
-/// Steps and Start along the bottom of the window, acting on the selected route:
-/// Start the main action, twice as wide. Null disables either.
-///
-/// They're as tall as their labels need at the system's text size, and keep clear of
-/// the navigation bar. Nothing is painted behind them: the sheet clips its content out
-/// from under them.
-class _TripButtons extends StatelessWidget {
-  const _TripButtons({required this.onSteps, required this.onStart});
-
-  final VoidCallback? onSteps;
-  final VoidCallback? onStart;
-
-  @override
-  Widget build(BuildContext context) {
-    final cupertino = isCupertinoOf(context);
-    // One line, shrunk to fit its button rather than cut off.
-    Widget label(String text) => FittedBox(
-      fit: BoxFit.scaleDown,
-      child: Text(text, maxLines: 1, softWrap: false),
-    );
-    final Widget steps, start;
-    if (cupertino) {
-      // Capsules, the lesser one a tint, as the sheet is glass while it's low.
-      const size = Size(0, 50);
-      final radius = BorderRadius.circular(100);
-      steps = CupertinoButton.tinted(
-        minimumSize: size,
-        borderRadius: radius,
-        onPressed: onSteps,
-        child: label('Steps'),
-      );
-      start = CupertinoButton.filled(
-        minimumSize: size,
-        borderRadius: radius,
-        onPressed: onStart,
-        child: label('Start'),
-      );
-    } else {
-      final style = FilledButton.styleFrom(minimumSize: const Size(0, 48));
-      steps = FilledButton.tonal(
-        style: style,
-        onPressed: onSteps,
-        child: label('Steps'),
-      );
-      start = FilledButton(
-        style: style,
-        onPressed: onStart,
-        child: label('Start'),
-      );
-    }
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (!cupertino) const Divider(height: 1),
-        SafeArea(
-          top: false,
-          minimum: EdgeInsets.only(bottom: cupertino ? 8 : 10),
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              cupertino ? 16 : 12,
-              10,
-              cupertino ? 16 : 12,
-              0,
-            ),
-            child: Row(
-              spacing: 10,
-              children: [
-                Expanded(child: steps),
-                Expanded(flex: 2, child: start),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 }

@@ -900,8 +900,8 @@ void main() {
       expect(router.state.uri.toString(), stepsLocation(destination.id));
       expect(find.text('Drive south.'), findsOneWidget);
       expect(find.text('Take I-5.'), findsOneWidget);
-      expect(find.text('22 min'), findsOneWidget);
-      expect(find.text('via I-5 South'), findsOneWidget);
+      // The time and the name, on the one line.
+      expect(find.text('22 min via I-5 South'), findsOneWidget);
       expect(find.text('0.4 mi'), findsOneWidget);
       expect(footer.hitTestable(), findsNothing);
       expect(sheet.restingAt, const SheetAnchor.fraction(0.4));
@@ -910,7 +910,7 @@ void main() {
       routeTaps.add(1);
       await tester.pumpAndSettle();
       expect(find.text('Take SR 99.'), findsOneWidget);
-      expect(find.text('via SR 99 and SR 509'), findsOneWidget);
+      expect(find.text('25 min via SR 99 and SR 509'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();

@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:cardinal/directions/directions_page.dart';
 import 'package:cardinal/directions/mode_tabs.dart';
 import 'package:cardinal/directions/option_row.dart';
 import 'package:cardinal/directions/route_source.dart';
+import 'package:cardinal/directions/trip_buttons.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/navigation/navigation_controller.dart';
 import 'package:cardinal/routes.dart';
@@ -71,6 +73,20 @@ final viaStreets = fakeRoute(
   duration: 2040,
   roadNames: const ['East Marginal Way South'],
   runs: [fakeRun(34, 10.3)],
+  steps: const [
+    DirectionsStep(
+      instruction:
+          'Keep left at the fork to stay on East Marginal Way South, then '
+          'continue past the freight yards toward the museum entrance.',
+      distance: 21080,
+      duration: 2040,
+    ),
+    DirectionsStep(
+      instruction: 'Arrive at Museum of Flight.',
+      distance: 0,
+      duration: 0,
+    ),
+  ],
 );
 final viaFerry = fakeRoute(_line, distance: 30000, duration: 2700, ferry: true);
 final drivingRoutes = [viaFreeway, viaToll, viaStreets, viaFerry];
@@ -186,9 +202,10 @@ Finder get tabs => find.byType(ModeTabs);
 Finder get rows => find.byType(OptionRow);
 Finder get slots => find.byType(SheetSlot);
 
-/// The buttons along the bottom of the window.
-Finder get footer => find.byWidgetPredicate(
-  (widget) => widget.runtimeType.toString() == '_TripButtons',
+/// The directions page's buttons along the bottom of the window.
+Finder get footer => find.descendant(
+  of: find.byType(DirectionsPage),
+  matching: find.byType(TripButtons),
 );
 
 SheetController sheetOf(WidgetTester tester) =>

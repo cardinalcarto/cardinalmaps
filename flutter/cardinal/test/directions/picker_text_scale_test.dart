@@ -1,6 +1,9 @@
+import 'package:cardinal/directions/directions_page.dart';
 import 'package:cardinal/directions/mode_tabs.dart';
 import 'package:cardinal/directions/option_row.dart';
 import 'package:cardinal/directions/route_source.dart';
+import 'package:cardinal/directions/steps_page.dart';
+import 'package:cardinal/map/route_layer.dart';
 import 'package:cardinal/sheet/sheet.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,11 +19,14 @@ const _scales = [1.0, 1.3, 1.5, 2.0, 3.1];
 /// A current phone's window, and a small one's.
 const _windows = [Size(390, 844), Size(320, 568)];
 
-/// Fails if any text of the directions sheet is cut off: taller than the box that
-/// holds it, running past its lines where it has no ellipsis to say so, or wider than
-/// its one line.
-void _expectNoTextCutOff(WidgetTester tester, String state) {
-  final content = find.ancestor(of: tabs, matching: find.byType(SheetContent));
+/// Fails if any text of the directions sheet is cut off, or of [page]'s if it's given:
+/// taller than the box that holds it, running past its lines where it has no ellipsis
+/// to say so, or wider than its one line.
+void _expectNoTextCutOff(WidgetTester tester, String state, {Type? page}) {
+  final content = find.descendant(
+    of: page == null ? find.byType(DirectionsPage) : find.byType(page),
+    matching: find.byType(SheetContent),
+  );
   final paragraphs = find.descendant(
     of: content,
     matching: find.byType(RichText),
@@ -196,6 +202,65 @@ void main() {
         }
       });
     }
+  }
+
+  for (final (platform, window, scale) in [
+    for (final platform in [TargetPlatform.android, TargetPlatform.iOS])
+      for (final window in _windows)
+        for (final scale in _scales) (platform, window, scale),
+  ]) {
+    final where =
+        'at $scale× in ${window.width.round()}×${window.height.round()} on '
+        '${platform.name}';
+
+    Future<void> open(WidgetTester tester) async {
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      ignoreOtherPages();
+      await picker.open(tester, size: window, platform: platform);
+    }
+
+    /// Checks [page] at each place the sheet rests on it, and with its content
+    /// scrolled to its end.
+    Future<void> checkPage(WidgetTester tester, Type page) async {
+      final sheet = SheetScaffold.controllerOf(
+        tester.element(find.byType(page)),
+      );
+      void check(String state) {
+        expect(tester.takeException(), isNull, reason: state);
+        _expectNoTextCutOff(tester, state, page: page);
+      }
+
+      check('$page, opened');
+      sheet.animateTo(const SheetAnchor.full());
+      await tester.pumpAndSettle();
+      check('$page, full');
+      await tester.fling(
+        find
+            .descendant(
+              of: find.byType(page),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+        const Offset(0, -20000),
+        8000,
+      );
+      await tester.pumpAndSettle();
+      check('$page, scrolled to its end');
+    }
+
+    testWidgets('the steps: nothing overflows or is cut off, $where', (
+      tester,
+    ) async {
+      await open(tester);
+      // The one with a long step, and one that arrives.
+      routeTaps.add(2);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Steps'));
+      await tester.pumpAndSettle();
+      expect(find.byType(StepsPage), findsOneWidget);
+      await checkPage(tester, StepsPage);
+    });
   }
 
   testWidgets('a tab\'s time is scaled no further than 1.3×', (tester) async {

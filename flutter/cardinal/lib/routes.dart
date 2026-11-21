@@ -146,7 +146,10 @@ List<RouteBase> sheetRoutes() => [
                 pageBuilder: (context, state) => _page(
                   state,
                   HidesMapOverlays(
-                    child: StepsPage(directions: state.extra! as Directions),
+                    child: StepsPage(
+                      directions: state.extra! as Directions,
+                      to: state.pathParameters['id']!,
+                    ),
                   ),
                 ),
               ),

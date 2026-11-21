@@ -347,6 +347,15 @@ class RouteScale {
       slowest > 0 ? (route.duration / slowest).clamp(0.0, 1.0) : 1;
 }
 
+/// When [route] arrives if it leaves at [now], as its row says it: "Arrive 3:42 PM".
+String routeArrival(BuildContext context, DirectionsRoute route, DateTime now) {
+  final arrives = clock(
+    context,
+    now.add(Duration(milliseconds: (route.duration * 1000).round())),
+  );
+  return 'Arrive $arrives';
+}
+
 /// A street route as a row: how long it takes and when it arrives, what it's called,
 /// its graph, and how it differs from the others.
 ///
@@ -392,11 +401,7 @@ class OptionRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final route = routes[index];
     final duration = formatDuration(route.duration);
-    final arrives = clock(
-      context,
-      now.add(Duration(milliseconds: (route.duration * 1000).round())),
-    );
-    final arrival = 'Arrive $arrives';
+    final arrival = routeArrival(context, route, now);
     final name = routeName(AppLocalizations.of(context), route);
     final facts = routeFacts(routes, index, driving: driving, units: units);
     final tones = profileTones(scheme);
